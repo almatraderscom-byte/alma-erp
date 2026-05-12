@@ -151,21 +151,27 @@ export default function InvoicePage() {
             <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-amber-400 mb-2">Pending Invoices</p>
             <div className="space-y-2">
               {uninvoiced.map(o => (
-                <Card key={o.id} className="p-4 flex items-center gap-3 border-amber-400/15 hover:border-amber-400/30 transition-colors cursor-pointer" onClick={() => setPreview(o)}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
-                      <StatusBadge status={o.status} />
-                    </div>
-                    <p className="text-sm font-semibold text-cream">{o.customer}</p>
-                    <p className="text-[11px] text-zinc-500">{o.product}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-bold text-cream">{fmt(o.sell_price)}</p>
-                    <p className="text-[10px] text-zinc-500">{o.date}</p>
-                  </div>
-                  <Button variant="gold" size="xs">Generate</Button>
-                </Card>
+                <div
+  key={o.id}
+  className="p-4 flex items-center gap-3 border border-amber-400/15 hover:border-amber-400/30 transition-colors cursor-pointer rounded-xl bg-card"
+  onClick={() => setPreview(o)}
+>
+  <div className="flex-1 min-w-0">
+    <div className="flex items-center gap-2 mb-0.5">
+      <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
+      <StatusBadge status={o.status} />
+    </div>
+    <p className="text-sm font-semibold text-cream">{o.customer}</p>
+    <p className="text-[11px] text-zinc-500">{o.product}</p>
+  </div>
+
+  <div className="text-right shrink-0">
+    <p className="font-bold text-cream">{fmt(o.sell_price)}</p>
+    <p className="text-[10px] text-zinc-500">{o.date}</p>
+  </div>
+
+  <Button variant="gold" size="xs">Generate</Button>
+</div>
               ))}
             </div>
           </div>
