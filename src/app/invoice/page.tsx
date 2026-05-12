@@ -169,7 +169,7 @@ export default function InvoicePage() {
                     <p className="font-bold text-cream">{fmt(o.sell_price)}</p>
                     <p className="text-[10px] text-zinc-500">{o.date}</p>
                   </div>
-                  <Button variant="gold" size="xs" onClick={e => e.stopPropagation()}>Generate</Button>
+                  <Button variant="gold" size="xs" >Generate</Button>
                 </button>
               ))}
             </div>

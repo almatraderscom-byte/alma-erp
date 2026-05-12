@@ -372,7 +372,14 @@ export const api = {
     alerts: (): Promise<SlaResponse> =>
       IS_LIVE
         ? gasGet<SlaResponse>('sla_alerts', {}, { revalidate: 60 })
-        : Promise.resolve({ breaches: MOCK_DASHBOARD.sla_breaches, count: MOCK_DASHBOARD.sla_breaches.length }),
+        : Promise.resolve({
+    breaches: MOCK_DASHBOARD.sla_breaches.map((b: any) => ({
+      ...b,
+      courier: '',
+      tracking_id: ''
+    })),
+    count: MOCK_DASHBOARD.sla_breaches.length
+  }),
   },
 
   invoice: {
