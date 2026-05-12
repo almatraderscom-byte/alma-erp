@@ -290,35 +290,44 @@ export default function OrdersPage() {
           </div>
         </Card>
 
-        {/* Orders cards — mobile */}
-        <div className="md:hidden space-y-2">
-          {loading
-            ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
-            : orders.map(o => (
-                <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full text-left">
-                  <Card className={`p-4 transition-colors ${o.id === selected?.id ? 'border-gold-dim/50' : ''}`}>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
-                        <p className="text-sm font-semibold text-cream mt-0.5">{o.customer}</p>
-                        <p className="text-[11px] text-zinc-500 truncate">{o.product}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <StatusBadge status={o.status} />
-                        <p className="text-sm font-bold text-cream mt-1">{fmt(o.sell_price)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <PaymentTag method={o.payment} />
-                      <span className="text-[10px] text-zinc-600">{o.courier || '—'}</span>
-                      <span className="ml-auto text-[11px] font-bold text-green-400">{fmt(o.profit)}</span>
-                    </div>
-                  </Card>
-                </button>
-              ))
-          }
-          {!loading && orders.length === 0 && <Empty icon="◫" title="No orders match" desc="Try adjusting filters" />}
-        </div>
+  {/* Orders cards — mobile */}
+<div className="md:hidden space-y-2">
+  {loading
+    ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+    : orders.map(o => (
+        <button
+          key={o.id}
+          onClick={() => setSelected(o.id === selected?.id ? null : o)}
+          className="w-full text-left"
+        >
+          <div className={`p-4 rounded-xl border border-border bg-card transition-colors ${o.id === selected?.id ? 'border-gold-dim/50' : ''}`}>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div>
+                <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
+                <p className="text-sm font-semibold text-cream mt-0.5">{o.customer}</p>
+                <p className="text-[11px] text-zinc-500 truncate">{o.product}</p>
+              </div>
+
+              <div className="text-right shrink-0">
+                <StatusBadge status={o.status} />
+                <p className="text-sm font-bold text-cream mt-1">{fmt(o.sell_price)}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <PaymentTag method={o.payment} />
+              <span className="text-[10px] text-zinc-600">{o.courier || '—'}</span>
+              <span className="ml-auto text-[11px] font-bold text-green-400">{fmt(o.profit)}</span>
+            </div>
+          </div>
+        </button>
+      ))
+  }
+
+  {!loading && orders.length === 0 && (
+    <Empty icon="◫" title="No orders match" desc="Try adjusting filters" />
+  )}
+</div>
 
       </div>
 
