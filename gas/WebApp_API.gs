@@ -17,6 +17,10 @@
 // CONFIG
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Hardcoded to prevent writing to a wrong spreadsheet when deployed standalone.
+// Override via Script Properties: SPREADSHEET_ID
+var HARDCODED_SS_ID = '17E-mhUWCmSP9Odq5QKw5-6f0-v45OMKZt0UG4RBayr8';
+
 var CFG = {
   orderSheets: ['📦 ORDERS', 'ORDERS', 'Orders'],
   logSheets:   ['🤖 AUTOMATION LOG', 'LOG', 'AUTOMATION_LOG', 'Automation Log'],
@@ -32,8 +36,15 @@ function getSecret_() {
 }
 
 function getSS_() {
-  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '';
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || HARDCODED_SS_ID;
+  try {
+    var ss = SpreadsheetApp.openById(id);
+    Logger.log('getSS_: opened "' + ss.getName() + '" id=' + ss.getId());
+    return ss;
+  } catch (e) {
+    Logger.log('getSS_: openById failed for ' + id + ', falling back to getActiveSpreadsheet');
+    return SpreadsheetApp.getActiveSpreadsheet();
+  }
 }
 
 function findSheet_(names) {
@@ -81,38 +92,67 @@ function buildColMap_(sheet) {
   return r2.count >= r1.count ? r2.map : r1.map;
 }
 
-/** Write a value to a cell identified by header name. Silent if column missing. */
+/** Write a value to a cell identified by header name. Silent if column missing.
+ *  Tries: exact key, key+"_NAME", key+"_METHOD", then prefix-match.
+ *  This handles sheets where "CUSTOMER NAME" header maps to key CUSTOMER_NAME
+ *  even when we write using the shorter logical name "CUSTOMER".
+ */
 function writeCell_(sheet, row, colMap, headerName, value) {
-  // Try exact match, then common aliases
-  var aliases = [
-    headerName.toUpperCase().replace(/[\s\-]+/g, '_'),
-    headerName.toUpperCase(),
-  ];
-  for (var i = 0; i < aliases.length; i++) {
-    var col = colMap[aliases[i]];
-    if (col) {
-      var cell = sheet.getRange(row, col);
-      // Skip formula columns
-      if (cell.getFormula()) return;
-      cell.setValue(value);
-      return;
+  var key = headerName.toUpperCase().replace(/[\s\/\-()]+/g, '_').replace(/_+$/, '');
+  var col = colMap[key];
+
+  if (!col) col = colMap[key + '_NAME'];    // CUSTOMER → CUSTOMER_NAME
+  if (!col) col = colMap[key + '_METHOD'];  // PAYMENT  → PAYMENT_METHOD
+
+  if (!col) {
+    // Prefix-match: find first colMap key that starts with our key
+    var keys = Object.keys(colMap);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf(key) === 0) { col = colMap[keys[i]]; break; }
     }
   }
-  Logger.log('writeCell_: no column for "' + headerName + '" in colMap');
+
+  if (!col) {
+    Logger.log('writeCell_: no column for "' + headerName + '" (key=' + key + ') colMapKeys=' + Object.keys(colMap).join(','));
+    return;
+  }
+
+  var cell = sheet.getRange(row, col);
+  if (cell.getFormula()) return; // skip formula-driven cells
+  cell.setValue(value);
 }
 
-/** Find the next empty row after the last row that has data in the first 3 columns. */
-function nextDataRow_(sheet) {
-  var last = sheet.getLastRow();
-  if (last < 2) return 2;
-  // Scan backwards to find last non-empty row in col 1..3
-  var range = sheet.getRange(1, 1, last, Math.min(3, sheet.getLastColumn())).getValues();
-  for (var r = range.length - 1; r >= 0; r--) {
-    if (range[r][0] || range[r][1] || (range[r][2] && String(range[r][2]).trim())) {
-      return r + 2; // 1-based + 1
+/** Find the next empty row by scanning the ORDER_ID column for the last non-empty value.
+ *  This is robust against sheets that have formulas or data-validation pre-filled in
+ *  many rows (which would cause the old "first 3 cols" scan to find row 500+).
+ *  colMap is optional; falls back to column 1 (col A) if ORDER_ID not found.
+ */
+function nextDataRow_(sheet, colMap) {
+  var headerRow  = _detectHeaderRow_(sheet);
+  var dataStart  = headerRow + 1;
+  var idCol      = (colMap && (colMap['ORDER_ID'] || colMap['ID'])) || 1;
+  var last       = sheet.getLastRow();
+
+  Logger.log('nextDataRow_: headerRow=' + headerRow + ' dataStart=' + dataStart +
+             ' idCol=' + idCol + ' getLastRow()=' + last);
+
+  if (last < dataStart) return dataStart;
+
+  var numRows = last - dataStart + 1;
+  var ids = sheet.getRange(dataStart, idCol, numRows, 1).getValues();
+
+  // Scan from bottom to find last row with a real ORDER_ID value (not formula, not empty)
+  for (var r = ids.length - 1; r >= 0; r--) {
+    var v = String(ids[r][0]).trim();
+    if (v && v !== '0') {
+      var nextRow = dataStart + r + 1;
+      Logger.log('nextDataRow_: last data at row ' + (dataStart + r) + ', writing to row ' + nextRow);
+      return nextRow;
     }
   }
-  return 2;
+
+  Logger.log('nextDataRow_: no existing data, writing to row ' + dataStart);
+  return dataStart;
 }
 
 /** Find a row by ORDER_ID value. */
@@ -154,9 +194,10 @@ function doGet(e) {
       case 'log':       return respond_(getLog_(p));
       case 'stock':     return respond_(getStock_());
       case 'finance':   return respond_(getFinance_());
+      case 'debug':     return respond_(getDebugInfo_());
       default:
         return respond_({ ok: true, service: 'Alma ERP API', version: '3.0',
-          routes: ['orders','order','customers','dashboard','analytics','log','stock','finance'] });
+          routes: ['orders','order','customers','dashboard','analytics','log','stock','finance','debug'] });
     }
   } catch (err) {
     Logger.log('doGet error: ' + err.message);
@@ -207,9 +248,18 @@ function createOrder_(body) {
   if (!body.product)        throw new Error('Missing required field: product');
   if (!body.payment_method) throw new Error('Missing required field: payment_method');
 
+  var ss     = getSS_();
   var sheet  = findSheet_(CFG.orderSheets);
   var colMap = buildColMap_(sheet);
-  var newRow = nextDataRow_(sheet);
+  var newRow = nextDataRow_(sheet, colMap);
+
+  Logger.log('createOrder_ DIAG: ssId=' + ss.getId() +
+             ' ssName="' + ss.getName() + '"' +
+             ' sheet="' + sheet.getName() + '"' +
+             ' sheetGid=' + sheet.getSheetId() +
+             ' getLastRow=' + sheet.getLastRow() +
+             ' newRow=' + newRow +
+             ' colMapKeys=[' + Object.keys(colMap).join(',') + ']');
 
   var qty         = Number(body.qty)          || 1;
   var unitPrice   = Number(body.unit_price)   || 0;
@@ -683,6 +733,49 @@ function getFinance_() {
     net_profit:      Math.round(orders.summary.total_profit - totalExpense),
     expense_by_cat:  byCat,
     recent_expenses: expenses.slice(-20).reverse(),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEBUG
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getDebugInfo_() {
+  var ss = getSS_();
+  var sheets = ss.getSheets().map(function(s) {
+    var colMap = {};
+    try { colMap = buildColMap_(s); } catch(e) {}
+    return {
+      name:      s.getName(),
+      gid:       s.getSheetId(),
+      last_row:  s.getLastRow(),
+      last_col:  s.getLastColumn(),
+      hidden:    s.isSheetHidden(),
+      col_headers: Object.keys(colMap),
+    };
+  });
+
+  var ordersSheet = null;
+  try {
+    var os = findSheet_(CFG.orderSheets);
+    var cm = buildColMap_(os);
+    var nr = nextDataRow_(os, cm);
+    ordersSheet = {
+      name:       os.getName(),
+      gid:        os.getSheetId(),
+      last_row:   os.getLastRow(),
+      next_write_row: nr,
+      col_headers: Object.keys(cm),
+    };
+  } catch(e) {
+    ordersSheet = { error: e.message };
+  }
+
+  return {
+    spreadsheet_id:   ss.getId(),
+    spreadsheet_name: ss.getName(),
+    orders_sheet:     ordersSheet,
+    all_sheets:       sheets,
   };
 }
 
