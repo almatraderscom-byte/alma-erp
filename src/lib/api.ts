@@ -96,6 +96,78 @@ async function gasGet<T>(
 }
 
 // ── Core POST ─────────────────────────────────────────────────────────────
+//
+// WHY THIS ROUTES THROUGH /api/* INSTEAD OF CALLING GAS DIRECTLY:
+//
+// process.env.API_SECRET is a server-only env var (no NEXT_PUBLIC_ prefix).
+// Its value is undefined in the browser. Calling GAS directly from the
+// browser sends { secret: undefined }, which GAS rejects as Unauthorized.
+//
+// The Next.js Route Handlers in src/app/api/* run on the Node.js server
+// where API_SECRET is available. They inject the secret via server-api.ts
+// before forwarding the request to GAS. All mutations must go through them.
+//
+// Route map (browser → Next.js proxy → GAS):
+//   create_order        → POST /api/orders
+//   update_status       → POST /api/orders/[id]/status  (PATCH)
+//   update_tracking     → POST /api/orders/[id]/tracking
+//   update_field        → POST /api/orders/[id]/field
+//   add_expense         → POST /api/expenses
+//   generate_invoice    → POST /api/invoice
+//   create_order_folder → POST /api/orders/[id]/folder
+//   create_customer     → POST /api/customers
+//   backfill_sla        → POST /api/orders/backfill-sla
+//
+async function proxyPost<T>(
+  proxyPath: string,
+  payload: Record<string, unknown> = {},
+  gasRoute?: string,          // forwarded as { route } when the proxy is generic
+): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+  // Build body: include the GAS route name so the proxy knows what to call
+  const body = gasRoute
+    ? JSON.stringify({ route: gasRoute, ...payload })
+    : JSON.stringify(payload)
+
+  try {
+    const res = await fetch(proxyPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: controller.signal,
+      cache: 'no-store',
+    })
+    clearTimeout(timer)
+
+    const text = await res.text()
+    if (!text.trim()) throw new APIError(`POST ${proxyPath} → empty response`, proxyPath)
+
+    let data: { error?: string } & T
+    try { data = JSON.parse(text) }
+    catch { throw new APIError(`POST ${proxyPath} → invalid JSON: ${text.slice(0, 80)}`, proxyPath) }
+
+    if (!res.ok) throw new APIError(
+      data.error ?? `POST ${proxyPath} → HTTP ${res.status}`,
+      proxyPath, res.status
+    )
+    if (data.error) throw new APIError(`POST ${proxyPath} → ${data.error}`, proxyPath)
+
+    return data as T
+  } catch (err) {
+    clearTimeout(timer)
+    if (err instanceof APIError) throw err
+    if ((err as Error).name === 'AbortError')
+      throw new APIError(`POST ${proxyPath} → timeout after ${TIMEOUT_MS}ms`, proxyPath, 408)
+    throw new APIError(`POST ${proxyPath} → ${(err as Error).message}`, proxyPath)
+  }
+}
+
+// Legacy direct-to-GAS POST — still used for mutations that don't yet have
+// a dedicated Next.js proxy route. Kept for backward compatibility.
+// NOTE: only works from server components / route handlers (API_SECRET available).
+// Browser calls MUST use proxyPost instead.
 async function gasPost<T>(
   route: string,
   payload: Record<string, unknown> = {},
@@ -217,13 +289,16 @@ export const api = {
   },
 
   mutations: {
+    // ── createOrder: browser → /api/orders (Next.js) → GAS ──────────────
+    // Must use proxyPost — gasPost would send API_SECRET=undefined from the
+    // browser because API_SECRET has no NEXT_PUBLIC_ prefix.
     createOrder: (order: {
       customer: string; phone: string; address?: string; product: string; category: string
       qty: number; unit_price: number; payment: string; source: string; status?: string
       size?: string; discount?: number; add_discount?: number; adv_cost?: number
       adv_platform?: string; shipping_fee?: number; cogs?: number; courier_charge?: number
       other_costs?: number; courier?: string; notes?: string; handled_by?: string; sku?: string
-    }) => gasPost<CreateOrderResponse>('create_order', order),
+    }) => proxyPost<CreateOrderResponse>('/api/orders', order),
 
     updateStatus: (id: string, status: OrderStatus) =>
       gasPost<StatusResponse>('update_status', { id, status }),
