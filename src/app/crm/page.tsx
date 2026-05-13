@@ -17,7 +17,17 @@ export default function CrmPage() {
 
   const { data, loading } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: search || undefined })
   const customers = data?.customers ?? []
-  const summary   = data?.summary
+  const summary = {
+    total:         customers.length,
+    total_revenue: customers.reduce((a, c) => a + (c.total_spent ?? 0), 0),
+    by_segment: {
+      VIP:  customers.filter(c => c.segment === 'VIP').length,
+      HIGH: customers.filter(c => c.risk_level === 'HIGH').length,
+    },
+    avg_clv: customers.length > 0
+      ? Math.round(customers.reduce((a, c) => a + (c.clv_score ?? 0), 0) / customers.length)
+      : 0,
+  }
 
   return (
     <>

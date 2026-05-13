@@ -1,26 +1,22 @@
 /**
- * ALMA LIFESTYLE ERP — GOOGLE SHEETS API CLIENT
+ * src/lib/api.ts
  *
- * All data comes from the live Apps Script Web App.
- * There is no mock or fallback data. When the sheet is empty
- * the API returns empty arrays and the UI shows an empty state.
+ * Browser-side API client for the Alma Lifestyle ERP.
+ *
+ * All calls go through Next.js Route Handlers (/api/*) which run server-side.
+ * This keeps API_SECRET out of the browser bundle entirely.
+ *
+ * Pattern:
+ *   Component → useXxx hook → api.xxx() → fetch('/api/...') → Next.js handler
+ *               → serverPost/serverGet → Google Apps Script → Google Sheets
  */
 
-import type {
-  Order, Customer, StockItem, DashboardData, LogEvent, OrderStatus,
-} from '@/types'
+import type { Order, Customer, OrderStatus, DashboardData, StockItem, LogEvent } from '@/types'
 
-// ── Config ────────────────────────────────────────────────────────────────
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
-const SECRET   = process.env.API_SECRET ?? 'alma-dev-secret'
+// ── Config ────────────────────────────────────────────────────────────────────
+const TIMEOUT_MS = 15_000
 
-const TIMEOUT_MS  = 15_000
-const MAX_RETRIES = 2
-
-// ── In-flight deduplication ───────────────────────────────────────────────
-const inflight = new Map<string, Promise<unknown>>()
-
-// ── Error class ───────────────────────────────────────────────────────────
+// ── Error type ────────────────────────────────────────────────────────────────
 export class APIError extends Error {
   constructor(
     message: string,
@@ -31,296 +27,263 @@ export class APIError extends Error {
     this.name = 'APIError'
   }
 
-  get retryable(): boolean {
-    return !this.status || this.status >= 500 || this.status === 408
-  }
-
   get userMessage(): string {
-    if (this.status === 401) return 'Authentication failed — check API_SECRET'
-    if (this.status === 408) return 'Request timed out — Google Sheets may be slow'
-    if (this.message.includes('empty response')) return 'No data received — try refreshing'
-    return this.message.replace(/^(GET|POST) \S+ → /, '')
+    if (this.status === 401) return 'Authentication error — check API_SECRET'
+    if (this.status === 408) return 'Request timed out — try again'
+    if (this.message.includes('not configured')) return 'API not connected — check .env.local'
+    return this.message.replace(/^(GET|POST) \/api\/\S+ → /, '')
   }
 }
 
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+// ── Core fetch helpers ────────────────────────────────────────────────────────
 
-// ── Core GET ──────────────────────────────────────────────────────────────
-async function gasGet<T>(
-  route: string,
-  params: Record<string, string> = {},
-  opts: { revalidate?: number } = {},
-): Promise<T> {
-  if (!BASE_URL) throw new APIError('API URL not configured — set NEXT_PUBLIC_API_URL in .env.local', route)
-
-  const url = new URL(BASE_URL)
-  url.searchParams.set('route', route)
+async function apiGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  const url = new URL(path, window.location.origin)
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') url.searchParams.set(k, v) })
-  const key = url.toString()
 
-  if (inflight.has(key)) return inflight.get(key) as Promise<T>
-
-  async function attempt(n: number): Promise<T> {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-    try {
-      const res = await fetch(url.toString(), {
-        method: 'GET',
-        signal: controller.signal,
-        next: opts.revalidate !== undefined ? { revalidate: opts.revalidate } : undefined,
-        redirect: 'follow',
-      })
-      clearTimeout(timer)
-      if (!res.ok) throw new APIError(`GET ${route} → HTTP ${res.status}`, route, res.status)
-      const text = await res.text()
-      if (!text.trim()) {
-        if (n < MAX_RETRIES) { await sleep(500 * n); return attempt(n + 1) }
-        throw new APIError(`GET ${route} → empty response`, route)
-      }
-      let data: { error?: string } & T
-      try { data = JSON.parse(text) } catch { throw new APIError(`GET ${route} → invalid JSON`, route) }
-      if (data.error) throw new APIError(`GET ${route} → ${data.error}`, route)
-      return data as T
-    } catch (err) {
-      clearTimeout(timer)
-      if (err instanceof APIError) throw err
-      if ((err as Error).name === 'AbortError') throw new APIError(`GET ${route} → timeout`, route, 408)
-      if (n < MAX_RETRIES) { await sleep(400 * n); return attempt(n + 1) }
-      throw new APIError(`GET ${route} → ${(err as Error).message}`, route)
-    }
-  }
-
-  const p = attempt(1).finally(() => inflight.delete(key))
-  inflight.set(key, p)
-  return p
-}
-
-// ── Core POST ─────────────────────────────────────────────────────────────
-//
-// WHY THIS ROUTES THROUGH /api/* INSTEAD OF CALLING GAS DIRECTLY:
-//
-// process.env.API_SECRET is a server-only env var (no NEXT_PUBLIC_ prefix).
-// Its value is undefined in the browser. Calling GAS directly from the
-// browser sends { secret: undefined }, which GAS rejects as Unauthorized.
-//
-// The Next.js Route Handlers in src/app/api/* run on the Node.js server
-// where API_SECRET is available. They inject the secret via server-api.ts
-// before forwarding the request to GAS. All mutations must go through them.
-//
-// Route map (browser → Next.js proxy → GAS):
-//   create_order        → POST /api/orders
-//   update_status       → POST /api/orders/[id]/status  (PATCH)
-//   update_tracking     → POST /api/orders/[id]/tracking
-//   update_field        → POST /api/orders/[id]/field
-//   add_expense         → POST /api/expenses
-//   generate_invoice    → POST /api/invoice
-//   create_order_folder → POST /api/orders/[id]/folder
-//   create_customer     → POST /api/customers
-//   backfill_sla        → POST /api/orders/backfill-sla
-//
-async function proxyPost<T>(
-  proxyPath: string,
-  payload: Record<string, unknown> = {},
-  gasRoute?: string,          // forwarded as { route } when the proxy is generic
-): Promise<T> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-
-  // Build body: include the GAS route name so the proxy knows what to call
-  const body = gasRoute
-    ? JSON.stringify({ route: gasRoute, ...payload })
-    : JSON.stringify(payload)
+  const ctrl  = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
 
   try {
-    const res = await fetch(proxyPath, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      signal: controller.signal,
-      cache: 'no-store',
-    })
+    const res  = await fetch(url.toString(), { signal: ctrl.signal, cache: 'no-store' })
     clearTimeout(timer)
-
-    const text = await res.text()
-    if (!text.trim()) throw new APIError(`POST ${proxyPath} → empty response`, proxyPath)
-
-    let data: { error?: string } & T
-    try { data = JSON.parse(text) }
-    catch { throw new APIError(`POST ${proxyPath} → invalid JSON: ${text.slice(0, 80)}`, proxyPath) }
-
-    if (!res.ok) throw new APIError(
-      data.error ?? `POST ${proxyPath} → HTTP ${res.status}`,
-      proxyPath, res.status
-    )
-    if (data.error) throw new APIError(`POST ${proxyPath} → ${data.error}`, proxyPath)
-
+    const data = await safeJson_<{ error?: string } & T>(res, `GET ${path}`)
+    if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    if (err instanceof APIError) throw err
-    if ((err as Error).name === 'AbortError')
-      throw new APIError(`POST ${proxyPath} → timeout after ${TIMEOUT_MS}ms`, proxyPath, 408)
-    throw new APIError(`POST ${proxyPath} → ${(err as Error).message}`, proxyPath)
+    throw wrapError_(err, path)
   }
 }
 
-// Legacy direct-to-GAS POST — still used for mutations that don't yet have
-// a dedicated Next.js proxy route. Kept for backward compatibility.
-// NOTE: only works from server components / route handlers (API_SECRET available).
-// Browser calls MUST use proxyPost instead.
-async function gasPost<T>(
-  route: string,
-  payload: Record<string, unknown> = {},
-): Promise<T> {
-  if (!BASE_URL) throw new APIError('API URL not configured', route)
+async function apiPost<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
+  const ctrl  = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
 
-  for (let n = 1; n <= MAX_RETRIES; n++) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-    try {
-      const res = await fetch(BASE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ route, secret: SECRET, ...payload }),
-        signal: controller.signal,
-        redirect: 'follow',
-        cache: 'no-store',
-      })
-      clearTimeout(timer)
-      if (!res.ok) throw new APIError(`POST ${route} → HTTP ${res.status}`, route, res.status)
-      const text = await res.text()
-      if (!text.trim()) throw new APIError(`POST ${route} → empty response`, route)
-      let data: { error?: string } & T
-      try { data = JSON.parse(text) } catch { throw new APIError(`POST ${route} → invalid JSON`, route) }
-      if (data.error) throw new APIError(`POST ${route} → ${data.error}`, route)
-      return data as T
-    } catch (err) {
-      clearTimeout(timer)
-      if (err instanceof APIError) throw err
-      if ((err as Error).name === 'AbortError') throw new APIError(`POST ${route} timeout`, route, 408)
-      if (n < MAX_RETRIES) { await sleep(400 * n); continue }
-      throw new APIError(`POST ${route} → ${(err as Error).message}`, route)
-    }
+  try {
+    const res  = await fetch(path, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  ctrl.signal,
+      cache:   'no-store',
+    })
+    clearTimeout(timer)
+    const data = await safeJson_<{ error?: string } & T>(res, `POST ${path}`)
+    if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+    return data as T
+  } catch (err) {
+    clearTimeout(timer)
+    throw wrapError_(err, path)
   }
-  throw new APIError(`POST ${route} failed`, route)
 }
 
-// ── Response types ────────────────────────────────────────────────────────
-interface OrdersResponse {
-  orders: Order[]
-  summary: { total: number; total_revenue: number; total_profit: number; by_status: Record<string, number> }
+async function safeJson_<T>(res: Response, ctx: string): Promise<T> {
+  const text = await res.text()
+  if (!text.trim()) throw new APIError(`${ctx} returned empty response`, ctx)
+  try { return JSON.parse(text) as T }
+  catch { throw new APIError(`${ctx} returned non-JSON: ${text.slice(0, 80)}`, ctx) }
 }
-interface CustomersResponse {
+
+function wrapError_(err: unknown, route: string): APIError {
+  if (err instanceof APIError) return err
+  const msg = err instanceof Error ? err.message : String(err)
+  const status = (err as APIError).status
+  if (msg === 'AbortError' || msg.includes('aborted')) return new APIError('Request timed out', route, 408)
+  return new APIError(msg, route, status)
+}
+
+// ── Response types ─────────────────────────────────────────────────────────────
+
+export interface OrdersResponse {
+  orders:  Order[]
+  summary: {
+    total:         number
+    total_revenue: number
+    total_profit:  number
+    by_status:     Record<string, number>
+  }
+}
+
+export interface CustomersResponse {
   customers: Customer[]
-  summary: { total: number; by_segment: Record<string, number>; by_risk: Record<string, number>; total_revenue: number; avg_clv: number }
+  total:     number
 }
-interface StockResponse {
-  items: StockItem[]
-  summary: { total_skus: number; total_value: number; total_sell_val: number; low_stock: number; out_of_stock: number }
-}
-interface MutationOk { ok: boolean }
-interface CreateOrderResponse  extends MutationOk { order_id: string; row: number }
-interface StatusResponse       extends MutationOk { old_status: string; new_status: string; order_id: string }
-interface TrackingResponse     extends MutationOk { auto_shipped: boolean; tracking_id: string }
-interface InvoiceResponse      extends MutationOk { invoice_number: string; file_url: string; file_name: string }
-interface ExpenseResponse      extends MutationOk { exp_id: string; row: number }
-interface CustomerCreateResponse extends MutationOk { profile_row: number }
-interface FolderResponse       extends MutationOk { folder_url: string }
-interface SlaResponse { breaches: Array<{ id: string; customer: string; sla_status: string; days_pending: number; days_in_transit: number; courier: string; tracking_id: string }>; count: number }
-interface LogResponse          { events: LogEvent[] }
-interface FinanceResponse      { total_expenses: number; cash_balance: number; by_category: Record<string, number>; by_type: Record<string, number>; recent_expenses: unknown[] }
-interface InvoiceNumResponse   { next: string }
 
-// ── Public API ────────────────────────────────────────────────────────────
+export interface ProductsResponse {
+  products: Array<{
+    id: string; name: string; category: string
+    default_price: number; default_cogs: number
+    active: boolean; notes: string; updated_at: string
+  }>
+  total: number
+}
+
+export interface StockResponse {
+  items:   StockItem[]
+  summary: {
+    total_skus:  number
+    low_stock:   number
+    out_of_stock: number
+    total_value: number
+  }
+}
+
+export interface FinanceData {
+  cash_balance:    number
+  total_income:    number
+  total_expense:   number
+  net_profit:      number
+  expense_by_cat:  Record<string, number>
+  recent_expenses: Array<{ date: string; category: string; amount: number; notes: string }>
+}
+
+export interface LogResponse {
+  events: LogEvent[]
+  total:  number
+}
+
+export type SlaAlert = {
+  id: string; customer: string; sla_status: string; days_pending: number; days_in_transit: number
+}
+
+interface MutationOk              { ok: boolean }
+interface CreateOrderRes          extends MutationOk { order_id: string; profit: number }
+interface UpdateStatusRes         extends MutationOk { order_id: string; old_status: string; new_status: string }
+interface UpdateTrackingRes       extends MutationOk { order_id: string; tracking_id: string; auto_shipped: boolean }
+interface CreateCustomerRes       extends MutationOk { customer_id: string; created: boolean }
+interface CreateProductRes        extends MutationOk { product_id: string }
+interface GenerateInvoiceRes      extends MutationOk { invoice_number: string; drive_url: string }
+interface NextInvoiceNumberRes    { invoice_number: string }
+interface AddExpenseRes           extends MutationOk { expense_id: string }
+interface CreateOrderFolderRes    extends MutationOk { folder_url: string }
+
+// ── Public API ─────────────────────────────────────────────────────────────────
 export const api = {
 
-  orders: {
-    list: (p?: { status?: string; source?: string; payment?: string; search?: string; limit?: string }) =>
-      gasGet<OrdersResponse>('orders', p as Record<string, string>, { revalidate: 30 }),
-
-    get: (id: string) =>
-      gasGet<{ order: Order }>('order', { id }, { revalidate: 0 }),
+  dashboard: {
+    get: (): Promise<DashboardData> => apiGet('/api/dashboard'),
   },
 
-  dashboard: {
-    get: () => gasGet<DashboardData>('dashboard', {}, { revalidate: 30 }),
+  orders: {
+    /** GET /api/orders/orders → GAS ?route=orders&... */
+    list: (p?: {
+      status?: string; source?: string; payment?: string
+      search?: string; limit?: string; offset?: string
+    }): Promise<OrdersResponse> => apiGet('/api/orders/orders', p as Record<string, string>),
+
+    /** GET /api/orders/orders?id=ALM-0001 → GAS ?route=order&id=... */
+    get: (id: string): Promise<{ order: Order }> => apiGet('/api/orders/orders', { id }),
   },
 
   customers: {
-    list: (p?: { segment?: string; risk_level?: string; search?: string }) =>
-      gasGet<CustomersResponse>('customers', p as Record<string, string>, { revalidate: 60 }),
+    /** GET /api/customers → GAS ?route=customers&... */
+    list: (p?: { search?: string; segment?: string; risk_level?: string }): Promise<CustomersResponse> =>
+      apiGet('/api/customers', p as Record<string, string>),
 
-    get: (name: string) =>
-      gasGet<{ customer: Customer; orders: Order[] }>('customer', { name }, { revalidate: 0 }),
+    /** GET /api/customers?name=... → GAS ?route=customer&name=... */
+    get: (name: string): Promise<{ customer: Customer; orders: Partial<Order>[] }> =>
+      apiGet('/api/customers', { name }),
+  },
+
+  products: {
+    list: (): Promise<ProductsResponse> => apiGet('/api/products'),
   },
 
   stock: {
-    list: () => gasGet<StockResponse>('stock', {}, { revalidate: 120 }),
+    list: (): Promise<StockResponse> => apiGet('/api/stock'),
   },
 
   finance: {
-    get: () => gasGet<FinanceResponse>('finance', {}, { revalidate: 60 }),
-  },
-
-  courier: {
-    list: () => gasGet<{ shipments: unknown[] }>('courier', {}, { revalidate: 30 }),
+    get: (): Promise<FinanceData> => apiGet('/api/finance'),
   },
 
   log: {
-    recent: (limit = 50) => gasGet<LogResponse>('log', { limit: String(limit) }, { revalidate: 30 }),
+    recent: (limit = 100): Promise<LogResponse> =>
+      apiGet('/api/log', { limit: String(limit) }),
   },
 
   sla: {
-    alerts: () => gasGet<SlaResponse>('sla_alerts', {}, { revalidate: 60 }),
+    /** Re-uses the dashboard endpoint — sla_breaches are part of the dashboard payload */
+    alerts: (): Promise<{ alerts: SlaAlert[] }> =>
+      apiGet<DashboardData>('/api/dashboard').then(d => ({ alerts: d.sla_breaches ?? [] })),
   },
 
   invoice: {
-    nextNumber: () => gasGet<InvoiceNumResponse>('next_invoice_num', {}, { revalidate: 0 }),
+    nextNumber: (): Promise<NextInvoiceNumberRes> => apiGet('/api/invoice'),
   },
 
   analytics: {
-    get: () => gasGet<DashboardData & {
-      monthly_trend: Array<{ month: string; revenue: number; profit: number; orders: number; cogs: number }>
-      courier_stats: Record<string, { orders: number; delivered: number; returned: number; revenue: number }>
-      expense_by_cat: Record<string, number>
-      total_expenses: number
-      cash_balance: number
-    }>('analytics', {}, { revalidate: 60 }),
+    get: (): Promise<DashboardData> => apiGet('/api/analytics'),
   },
 
   mutations: {
-    // ── createOrder: browser → /api/orders (Next.js) → GAS ──────────────
-    // Must use proxyPost — gasPost would send API_SECRET=undefined from the
-    // browser because API_SECRET has no NEXT_PUBLIC_ prefix.
+    /**
+     * Create a new order — POST /api/orders/orders
+     * Server handler adds `secret` before forwarding to GAS.
+     */
     createOrder: (order: {
-      customer: string; phone: string; address?: string; product: string; category: string
-      qty: number; unit_price: number; payment: string; source: string; status?: string
-      size?: string; discount?: number; add_discount?: number; adv_cost?: number
-      adv_platform?: string; shipping_fee?: number; cogs?: number; courier_charge?: number
-      other_costs?: number; courier?: string; notes?: string; handled_by?: string; sku?: string
-    }) => proxyPost<CreateOrderResponse>('/api/orders', order),
+      customer_name:     string
+      customer_phone:    string
+      customer_address?: string
+      product_name:      string
+      category?:         string
+      size?:             string
+      qty:               number
+      unit_price:        number
+      sell_price?:       number
+      cogs?:             number
+      courier_charge?:   number
+      shipping_fee?:     number
+      discount?:         number
+      payment:           string
+      source:            string
+      status?:           string
+      courier?:          string
+      tracking_id?:      string
+      notes?:            string
+      sku?:              string
+    }): Promise<CreateOrderRes> => apiPost('/api/orders/orders', order as Record<string, unknown>),
 
-    updateStatus: (id: string, status: OrderStatus) =>
-      gasPost<StatusResponse>('update_status', { id, status }),
+    /** Change order status → POST /api/orders/orders/status */
+    updateStatus: (id: string, status: OrderStatus): Promise<UpdateStatusRes> =>
+      apiPost('/api/orders/orders/status', { id, status }),
 
-    updateTracking: (id: string, tracking_id: string, courier?: string, tracking_status?: string) =>
-      gasPost<TrackingResponse>('update_tracking', { id, tracking_id, courier, tracking_status }),
+    /** Write tracking ID → POST /api/orders/orders/tracking */
+    updateTracking: (id: string, tracking_id: string, courier?: string): Promise<UpdateTrackingRes> =>
+      apiPost('/api/orders/orders/tracking', { id, tracking_id, courier }),
 
-    updateField: (id: string, field: string, value: string | number) =>
-      gasPost<MutationOk>('update_field', { id, field, value }),
+    /** Write any writable field → POST /api/orders/orders/field */
+    updateField: (id: string, field: string, value: string | number): Promise<MutationOk> =>
+      apiPost('/api/orders/orders/field', { id, field, value }),
 
-    addExpense: (expense: { category: string; amount: number; sub_cat?: string; exp_type?: string; description?: string; vendor?: string; payment?: string; notes?: string; linked_order?: string }) =>
-      gasPost<ExpenseResponse>('add_expense', expense),
+    /** Generate a PDF invoice → POST /api/invoice */
+    generateInvoice: (id: string): Promise<GenerateInvoiceRes> =>
+      apiPost('/api/invoice', { id }),
 
-    generateInvoice: (id: string) =>
-      gasPost<InvoiceResponse>('generate_invoice', { id }),
+    /** Create / upsert a customer → POST /api/customers */
+    createCustomer: (
+      name: string,
+      phone: string,
+      address?: string,
+      district?: string,
+      source?: string,
+    ): Promise<CreateCustomerRes> =>
+      apiPost('/api/customers', { name, phone, address, district, source }),
 
-    createOrderFolder: (id: string) =>
-      gasPost<FolderResponse>('create_order_folder', { id }),
+    /** Add a product to the catalog → POST /api/products */
+    createProduct: (p: {
+      name: string; category?: string; default_price?: number; default_cogs?: number; notes?: string
+    }): Promise<CreateProductRes> => apiPost('/api/products', p),
 
-    createCustomer: (name: string, phone: string, address?: string, district?: string, source?: string) =>
-      gasPost<CustomerCreateResponse>('create_customer', { name, phone, address, district, source }),
+    /** Append to the Expense Ledger → POST /api/finance */
+    addExpense: (expense: {
+      date?: string; category: string; amount: number; notes?: string
+    }): Promise<AddExpenseRes> =>
+      apiPost('/api/finance', expense),
 
-    backfillSla: () => gasPost<MutationOk>('backfill_sla', {}),
+    /** Create a Drive folder structure for an order → POST /api/orders/orders/field */
+    createOrderFolder: (id: string): Promise<CreateOrderFolderRes> =>
+      apiPost('/api/orders/orders/field', { id, field: 'create_folder', value: 1 }),
   },
 }

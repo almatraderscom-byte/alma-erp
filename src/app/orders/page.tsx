@@ -119,24 +119,24 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
     }
 
     const payload = {
-      customer:       form.customer.trim(),
-      phone:          form.phone.replace(/\D/g,''),
-      address:        form.address.trim(),
-      product:        form.product.trim(),
-      category:       form.category,
-      size:           form.size.trim(),
-      qty:            Number(form.qty),
-      unit_price:     Number(form.unit_price),
-      // sell_price is a formula column — we don't send it; the sheet calculates it
-      payment:        form.payment,
-      source:         form.source,
-      status:         form.status,
-      courier:        form.courier,
-      notes:          form.notes.trim(),
-      sku:            form.sku.trim(),
-      cogs:           Number(form.cogs) || 0,
-      courier_charge: Number(form.courier_charge) || 0,
-      shipping_fee:   Number(form.shipping_fee) || 0,
+      customer_name:    form.customer.trim(),
+      customer_phone:   form.phone.replace(/\D/g, ''),
+      customer_address: form.address.trim(),
+      product_name:     form.product.trim(),
+      category:         form.category,
+      size:             form.size.trim(),
+      qty:              Number(form.qty),
+      unit_price:       Number(form.unit_price),
+      sell_price:       Number(form.sell_price) || Number(form.unit_price) * Number(form.qty),
+      payment:          form.payment,
+      source:           form.source,
+      status:           form.status,
+      courier:          form.courier,
+      notes:            form.notes.trim(),
+      sku:              form.sku.trim(),
+      cogs:             Number(form.cogs) || 0,
+      courier_charge:   Number(form.courier_charge) || 0,
+      shipping_fee:     Number(form.shipping_fee) || 0,
     }
 
     const result = await createOrder(payload)
