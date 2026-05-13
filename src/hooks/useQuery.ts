@@ -128,6 +128,7 @@ export function useMutation<TArgs extends unknown[], TResult>(
       return result
     } catch (e) {
       const msg = e instanceof APIError ? e.userMessage : (e as Error).message
+      console.error('[Alma ERP mutation error]', msg, e)
       if (mounted.current) setError(msg)
       return null
     } finally {

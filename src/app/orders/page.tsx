@@ -81,7 +81,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
   const [form, setForm] = useState<NewOrderForm>(EMPTY_FORM)
   const [errors, setErrors] = useState<FormErrors>({})
   const [touched, setTouched] = useState<Partial<Record<keyof NewOrderForm, boolean>>>({})
-  const { mutate: createOrder, loading } = useCreateOrder()
+  const { mutate: createOrder, loading, error: createOrderError } = useCreateOrder()
 
   function set<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) {
     setForm(prev => {
@@ -145,7 +145,10 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
       onCreated()
       onClose()
     } else {
-      toast.error('Failed to create order — check your connection')
+      // createOrderError is set synchronously by useMutation before returning null.
+      // Fallback covers the unlikely case GAS returns ok:false without throwing.
+      const msg = createOrderError ?? 'Order creation failed — check the Automation Log'
+      toast.error(msg)
     }
   }
 
@@ -426,8 +429,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
               Cancel
             </Button>
             <button
-              type="submit"
-              form=""
+              type="button"
               disabled={loading}
               onClick={handleSubmit}
               className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-gold-dim/50 bg-gold/10 text-gold-lt text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
