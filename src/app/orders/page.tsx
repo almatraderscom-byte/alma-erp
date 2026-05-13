@@ -170,15 +170,15 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
 
-      {/* Drawer — full height, flex column so footer never leaves screen */}
+      {/* Drawer panel — 3-part flex column, container must not scroll */}
       <motion.div
-        className="relative w-full max-w-lg bg-surface border-l border-border flex flex-col"
-        style={{ height: '100dvh' }}
+        className="relative w-full max-w-lg bg-surface border-l border-border"
+        style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 300 }}
       >
-        {/* ── Header ─────────────────────────────────────────────── */}
-        <div className="shrink-0 bg-surface/95 backdrop-blur border-b border-border z-10">
+        {/* PART 1 — Header: never scrolls */}
+        <div style={{ flexShrink: 0 }} className="bg-surface/95 backdrop-blur border-b border-border">
           <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4">
             <div>
               <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold mb-0.5">New Order</p>
@@ -195,10 +195,12 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
           <div className="h-px bg-gradient-to-r from-transparent via-gold-dim to-transparent" />
         </div>
 
-        {/* ── Form body — flex-1 + min-h-0 is required on iOS so the footer
-            stays visible; without min-h-0 the flex child ignores the container
-            boundary and pushes the footer off screen ────────────────────── */}
-        <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-gold">
+        {/* PART 2 — Body: ONLY this region scrolls */}
+        <form
+          onSubmit={handleSubmit}
+          style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}
+          className="scrollbar-gold"
+        >
           <div className="px-4 py-3 space-y-4 sm:px-5 sm:py-5 sm:space-y-5">
 
             {/* ─ Customer info ─ */}
@@ -428,10 +430,10 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
           </div>
         </form>
 
-        {/* ── Sticky footer — always visible, accounts for iPhone home bar ── */}
+        {/* PART 3 — Footer: always at bottom, never pushed by keyboard */}
         <div
-          className="shrink-0 border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2"
-          style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+          style={{ flexShrink: 0, position: 'sticky', bottom: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+          className="border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2"
         >
           {Number(form.sell_price) > 0 && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
