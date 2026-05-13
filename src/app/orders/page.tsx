@@ -129,7 +129,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
       qty:            Number(form.qty),
       unit_price:     Number(form.unit_price),
       sell_price:     Number(form.sell_price) || Number(form.unit_price) * Number(form.qty),
-      payment:        form.payment,
+      payment_method: form.payment,
       source:         form.source,
       status:         form.status,
       courier:        form.courier,

@@ -236,7 +236,7 @@ export const api = {
       courier_charge?: number
       shipping_fee?:  number
       discount?:      number
-      payment:        string
+      payment_method: string
       source:         string
       status?:        string
       courier?:       string
