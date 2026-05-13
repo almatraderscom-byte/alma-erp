@@ -97,10 +97,10 @@ export function GoldDivider({ className }: { className?: string }) {
 // ── Page Header ───────────────────────────────────────────────────────────
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-20 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex items-center justify-between gap-4">
-      <div>
-        <h1 className="text-base md:text-lg font-bold text-cream tracking-tight">{title}</h1>
-        {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5">{subtitle}</p>}
+    <div className="sticky top-0 z-30 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <h1 className="text-base md:text-lg font-bold text-cream tracking-tight truncate">{title}</h1>
+        {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>

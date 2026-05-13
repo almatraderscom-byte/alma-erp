@@ -791,6 +791,18 @@ export default function OrdersPage() {
 
       </div>
 
+      {/* Mobile FAB — always visible above MobileNav, only on mobile */}
+      {!showNew && !selected && (
+        <button
+          onClick={() => setShowNew(true)}
+          className="md:hidden fixed bottom-[72px] right-4 z-40 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gold/90 text-black text-sm font-bold shadow-lg shadow-gold/20 active:scale-95 transition-transform"
+          style={{ paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}
+        >
+          <span className="text-base leading-none">+</span>
+          <span>New Order</span>
+        </button>
+      )}
+
       {/* Drawers */}
       <AnimatePresence>
         {showNew && (
