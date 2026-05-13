@@ -220,29 +220,29 @@ export const api = {
   mutations: {
     /**
      * Create a new order — POST /api/orders/orders
-     * Server handler adds `secret` before forwarding to GAS.
+     * Field names must match GAS create_order handler exactly.
      */
     createOrder: (order: {
-      customer_name:     string
-      customer_phone:    string
-      customer_address?: string
-      product_name:      string
-      category?:         string
-      size?:             string
-      qty:               number
-      unit_price:        number
-      sell_price?:       number
-      cogs?:             number
-      courier_charge?:   number
-      shipping_fee?:     number
-      discount?:         number
-      payment:           string
-      source:            string
-      status?:           string
-      courier?:          string
-      tracking_id?:      string
-      notes?:            string
-      sku?:              string
+      customer:       string
+      phone:          string
+      address?:       string
+      product:        string
+      category?:      string
+      size?:          string
+      qty:            number
+      unit_price:     number
+      sell_price?:    number
+      cogs?:          number
+      courier_charge?: number
+      shipping_fee?:  number
+      discount?:      number
+      payment:        string
+      source:         string
+      status?:        string
+      courier?:       string
+      tracking_id?:   string
+      notes?:         string
+      sku?:           string
     }): Promise<CreateOrderRes> => apiPost('/api/orders/orders', order as Record<string, unknown>),
 
     /** Change order status → POST /api/orders/orders/status */
