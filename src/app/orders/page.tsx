@@ -170,15 +170,16 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
 
-      {/* Drawer */}
+      {/* Drawer — full height, flex column so footer never leaves screen */}
       <motion.div
-        className="relative w-full max-w-lg bg-surface border-l border-border h-full flex flex-col"
+        className="relative w-full max-w-lg bg-surface border-l border-border flex flex-col"
+        style={{ height: '100dvh' }}
         initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 300 }}
       >
         {/* ── Header ─────────────────────────────────────────────── */}
-        <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border z-10 shrink-0">
-          <div className="flex items-center justify-between px-5 py-4">
+        <div className="shrink-0 bg-surface/95 backdrop-blur border-b border-border z-10">
+          <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4">
             <div>
               <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold mb-0.5">New Order</p>
               <p className="text-sm font-bold text-cream">Create Order</p>
@@ -186,29 +187,31 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-xl border border-border flex items-center justify-center text-zinc-500 hover:text-cream hover:bg-white/[0.04] transition-colors"
+              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-zinc-400 hover:text-cream hover:bg-white/[0.04] transition-colors text-lg"
             >
               ×
             </button>
           </div>
-          {/* Gold rule */}
           <div className="h-px bg-gradient-to-r from-transparent via-gold-dim to-transparent" />
         </div>
 
-        {/* ── Form body ───────────────────────────────────────────── */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto scrollbar-gold">
-          <div className="px-5 py-5 space-y-5">
+        {/* ── Form body — flex-1 + min-h-0 is required on iOS so the footer
+            stays visible; without min-h-0 the flex child ignores the container
+            boundary and pushes the footer off screen ────────────────────── */}
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-gold">
+          <div className="px-4 py-3 space-y-4 sm:px-5 sm:py-5 sm:space-y-5">
 
             {/* ─ Customer info ─ */}
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-3 flex items-center gap-2">
+              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
                 <span className="w-4 h-px bg-gold-dim" />Customer Info
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2 sm:space-y-3">
 
                 <Field label="Customer Name" required error={touched.customer ? errors.customer : undefined}>
                   <input
                     type="text"
+                    autoComplete="name"
                     value={form.customer}
                     onChange={e => set('customer', e.target.value)}
                     onBlur={() => touch('customer')}
@@ -217,10 +220,12 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                   />
                 </Field>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <Field label="Phone" required error={touched.phone ? errors.phone : undefined}>
                     <input
                       type="tel"
+                      inputMode="numeric"
+                      autoComplete="tel"
                       value={form.phone}
                       onChange={e => set('phone', e.target.value)}
                       onBlur={() => touch('phone')}
@@ -238,6 +243,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                 <Field label="Address" hint="District + area (e.g. Gulshan, Dhaka)">
                   <input
                     type="text"
+                    autoComplete="street-address"
                     value={form.address}
                     onChange={e => set('address', e.target.value)}
                     placeholder="Gulshan, Dhaka"
@@ -252,10 +258,10 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
 
             {/* ─ Product info ─ */}
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-3 flex items-center gap-2">
+              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
                 <span className="w-4 h-px bg-gold-dim" />Product Info
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2 sm:space-y-3">
 
                 <Field label="Product Name" required error={touched.product ? errors.product : undefined}>
                   <input
@@ -268,7 +274,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                   />
                 </Field>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <Field label="Category" required>
                     <select value={form.category} onChange={e => set('category', e.target.value)} className={selectCls()}>
                       {CATEGORIES.map(c => <option key={c}>{c}</option>)}
@@ -302,15 +308,16 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
 
             {/* ─ Pricing ─ */}
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-3 flex items-center gap-2">
+              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
                 <span className="w-4 h-px bg-gold-dim" />Pricing & Qty
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2 sm:space-y-3">
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <Field label="Qty" required error={touched.qty ? errors.qty : undefined}>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min="1"
                       value={form.qty}
                       onChange={e => set('qty', e.target.value)}
@@ -321,6 +328,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                   <Field label="Unit Price (৳)" required error={touched.unit_price ? errors.unit_price : undefined}>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       value={form.unit_price}
@@ -336,36 +344,36 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                   label="Sell Price (৳)"
                   required
                   error={touched.sell_price ? errors.sell_price : undefined}
-                  hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto-calculated: ৳${sellPriceComputed.toLocaleString('en-IN')}` : undefined}
+                  hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto: ৳${sellPriceComputed.toLocaleString('en-IN')}` : undefined}
                 >
                   <input
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="0.01"
                     value={form.sell_price}
                     onChange={e => { setTouched(p => ({ ...p, sell_price: true })); set('sell_price', e.target.value) }}
                     onBlur={() => touch('sell_price')}
-                    placeholder="Auto-calculated from unit price × qty"
+                    placeholder="Auto-calculated"
                     className={inputCls(touched.sell_price ? errors.sell_price : undefined)}
                   />
                 </Field>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <Field label="COGS (৳)" hint="Your cost">
-                    <input type="number" min="0" value={form.cogs} onChange={e => set('cogs', e.target.value)} placeholder="0" className={inputCls()} />
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
+                  <Field label="COGS (৳)" hint="Cost">
+                    <input type="number" inputMode="decimal" min="0" value={form.cogs} onChange={e => set('cogs', e.target.value)} placeholder="0" className={inputCls()} />
                   </Field>
-                  <Field label="Courier (৳)" hint="Courier charge">
-                    <input type="number" min="0" value={form.courier_charge} onChange={e => set('courier_charge', e.target.value)} className={inputCls()} />
+                  <Field label="Courier (৳)" hint="Charge">
+                    <input type="number" inputMode="decimal" min="0" value={form.courier_charge} onChange={e => set('courier_charge', e.target.value)} className={inputCls()} />
                   </Field>
-                  <Field label="Shipping (৳)" hint="Collected from customer">
-                    <input type="number" min="0" value={form.shipping_fee} onChange={e => set('shipping_fee', e.target.value)} placeholder="0" className={inputCls()} />
+                  <Field label="Ship (৳)" hint="Collected">
+                    <input type="number" inputMode="decimal" min="0" value={form.shipping_fee} onChange={e => set('shipping_fee', e.target.value)} placeholder="0" className={inputCls()} />
                   </Field>
                 </div>
 
-                {/* Margin preview */}
                 {Number(form.sell_price) > 0 && Number(form.cogs) > 0 && (
-                  <div className="flex items-center justify-between px-3 py-2.5 bg-black/40 border border-border rounded-xl text-xs">
-                    <span className="text-zinc-500">Estimated profit</span>
+                  <div className="flex items-center justify-between px-3 py-2 bg-black/40 border border-border rounded-xl text-xs">
+                    <span className="text-zinc-500">Est. profit</span>
                     <span className="font-bold text-green-400">
                       ৳{(Number(form.sell_price) - Number(form.cogs) - Number(form.courier_charge) + Number(form.shipping_fee)).toLocaleString('en-IN')}
                     </span>
@@ -379,12 +387,12 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
 
             {/* ─ Delivery & Payment ─ */}
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-3 flex items-center gap-2">
+              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
                 <span className="w-4 h-px bg-gold-dim" />Delivery & Payment
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2 sm:space-y-3">
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <Field label="Payment Method" required>
                     <select value={form.payment} onChange={e => set('payment', e.target.value)} className={selectCls()}>
                       {PAYMENTS.map(p => <option key={p}>{p}</option>)}
@@ -404,7 +412,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
                   </select>
                 </Field>
 
-                <Field label="Notes" hint="Optional — gift wrap, size notes, etc.">
+                <Field label="Notes" hint="Gift wrap, size notes, etc.">
                   <textarea
                     value={form.notes}
                     onChange={e => set('notes', e.target.value)}
@@ -420,27 +428,29 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
           </div>
         </form>
 
-        {/* ── Sticky footer ───────────────────────────────────────── */}
-        <div className="shrink-0 border-t border-border bg-surface/95 backdrop-blur px-5 py-4 space-y-2.5">
-          {/* Order summary pill */}
+        {/* ── Sticky footer — always visible, accounts for iPhone home bar ── */}
+        <div
+          className="shrink-0 border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2"
+          style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+        >
           {Number(form.sell_price) > 0 && (
-            <div className="flex items-center gap-3 px-3 py-2 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
-              <span className="text-zinc-500 truncate max-w-[120px]">{form.product || 'Product'}</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
+              <span className="text-zinc-500 truncate max-w-[100px]">{form.product || 'Product'}</span>
               <span className="text-zinc-600">×{form.qty || 1}</span>
               <span className="ml-auto font-bold text-gold">৳{Number(form.sell_price).toLocaleString('en-IN')}</span>
-              {form.customer && <span className="text-zinc-500 truncate max-w-[80px]">→ {form.customer.split(' ')[0]}</span>}
+              {form.customer && <span className="text-zinc-500 truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
             </div>
           )}
 
           <div className="flex gap-2">
-            <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={onClose} disabled={loading}>
+            <Button type="button" variant="ghost" className="flex-1 justify-center py-3 sm:py-2" onClick={onClose} disabled={loading}>
               Cancel
             </Button>
             <button
               type="button"
               disabled={loading}
               onClick={handleSubmit}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-gold-dim/50 bg-gold/10 text-gold-lt text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:py-2.5 rounded-xl border border-gold-dim/50 bg-gold/10 text-gold-lt text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
             >
               {loading ? (
                 <><Spinner size="sm" /><span>Creating…</span></>
