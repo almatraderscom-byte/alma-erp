@@ -1,6 +1,6 @@
 /**
  * Domain-specific hooks — one per data resource.
- * All hooks use the live API when IS_LIVE=true, mock data otherwise.
+ * All hooks fetch exclusively from the live Google Sheets API.
  */
 'use client'
 import { useCallback } from 'react'
