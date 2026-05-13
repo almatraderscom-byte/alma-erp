@@ -122,36 +122,56 @@ function writeCell_(sheet, row, colMap, headerName, value) {
   cell.setValue(value);
 }
 
-/** Find the next empty row by scanning the ORDER_ID column for the last non-empty value.
- *  This is robust against sheets that have formulas or data-validation pre-filled in
- *  many rows (which would cause the old "first 3 cols" scan to find row 500+).
+/** Find the correct next write row in the ORDERS sheet.
+ *
+ *  Problem this solves: the sheet has formulas pre-filled in the ORDER_ID column
+ *  for hundreds of template rows. getValues() returns computed formula results
+ *  (which look non-empty), so a naive value-scan finds row 514 instead of row 6.
+ *
+ *  Solution: getFormulas() alongside getValues().
+ *  - Cells written by setValue() (our code) have NO formula string → real order row.
+ *  - Pre-formatted template rows have a formula string → skip them.
+ *  This distinction is reliable regardless of what the formula evaluates to.
+ *
  *  colMap is optional; falls back to column 1 (col A) if ORDER_ID not found.
  */
 function nextDataRow_(sheet, colMap) {
-  var headerRow  = _detectHeaderRow_(sheet);
-  var dataStart  = headerRow + 1;
-  var idCol      = (colMap && (colMap['ORDER_ID'] || colMap['ID'])) || 1;
-  var last       = sheet.getLastRow();
+  var headerRow = _detectHeaderRow_(sheet);
+  var dataStart = headerRow + 1;
+  var idCol     = (colMap && (colMap['ORDER_ID'] || colMap['ID'])) || 1;
+  var last      = sheet.getLastRow();
 
   Logger.log('nextDataRow_: headerRow=' + headerRow + ' dataStart=' + dataStart +
-             ' idCol=' + idCol + ' getLastRow()=' + last);
+             ' idCol=' + idCol + ' sheet.getLastRow()=' + last);
 
-  if (last < dataStart) return dataStart;
-
-  var numRows = last - dataStart + 1;
-  var ids = sheet.getRange(dataStart, idCol, numRows, 1).getValues();
-
-  // Scan from bottom to find last row with a real ORDER_ID value (not formula, not empty)
-  for (var r = ids.length - 1; r >= 0; r--) {
-    var v = String(ids[r][0]).trim();
-    if (v && v !== '0') {
-      var nextRow = dataStart + r + 1;
-      Logger.log('nextDataRow_: last data at row ' + (dataStart + r) + ', writing to row ' + nextRow);
-      return nextRow;
-    }
+  if (last < dataStart) {
+    Logger.log('nextDataRow_: no data rows yet, writing to dataStart=' + dataStart);
+    return dataStart;
   }
 
-  Logger.log('nextDataRow_: no existing data, writing to row ' + dataStart);
+  var numRows  = last - dataStart + 1;
+  var range    = sheet.getRange(dataStart, idCol, numRows, 1);
+  var values   = range.getValues();
+  var formulas = range.getFormulas();
+
+  // Scan from bottom: find last row with a real ORDER_ID.
+  // "Real" = cell has no formula (was set by setValue) AND value is non-empty.
+  // Rows with formulas are pre-formatted template rows — skip them even if
+  // the formula evaluates to something that looks like an order ID.
+  for (var r = values.length - 1; r >= 0; r--) {
+    var hasFormula = formulas[r][0] !== '';
+    var val        = String(values[r][0]).trim();
+
+    if (hasFormula || !val || val === '0') continue;
+
+    var lastDataRow = dataStart + r;
+    var nextRow     = lastDataRow + 1;
+    Logger.log('nextDataRow_: last real order "' + val + '" at sheet row ' + lastDataRow +
+               ' → new order goes to row ' + nextRow);
+    return nextRow;
+  }
+
+  Logger.log('nextDataRow_: no real order IDs found → writing to dataStart=' + dataStart);
   return dataStart;
 }
 
