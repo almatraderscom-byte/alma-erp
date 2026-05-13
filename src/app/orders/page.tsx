@@ -1,7 +1,8 @@
 'use client'
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useOrders, useUpdateStatus, useUpdateTracking, useGenerateInvoice, useCreateOrder } from '@/hooks/useERP'
+import { useOrders, useUpdateStatus, useUpdateTracking, useGenerateInvoice } from '@/hooks/useERP'
+import { api, APIError } from '@/lib/api'
 import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, GoldDivider, Progress, Skeleton, Empty, Spinner } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
 import { MobileNav } from '@/components/layout/Sidebar'
@@ -81,7 +82,7 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
   const [form, setForm] = useState<NewOrderForm>(EMPTY_FORM)
   const [errors, setErrors] = useState<FormErrors>({})
   const [touched, setTouched] = useState<Partial<Record<keyof NewOrderForm, boolean>>>({})
-  const { mutate: createOrder, loading, error: createOrderError } = useCreateOrder()
+  const [loading, setLoading] = useState(false)
 
   function set<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) {
     setForm(prev => {
@@ -139,16 +140,22 @@ function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
       shipping_fee:     Number(form.shipping_fee) || 0,
     }
 
-    const result = await createOrder(payload)
-    if (result?.ok) {
-      toast.success(`Order ${result.order_id} created successfully`)
-      onCreated()
-      onClose()
-    } else {
-      // createOrderError is set synchronously by useMutation before returning null.
-      // Fallback covers the unlikely case GAS returns ok:false without throwing.
-      const msg = createOrderError ?? 'Order creation failed — check the Automation Log'
+    setLoading(true)
+    try {
+      const result = await api.mutations.createOrder(payload)
+      if (result?.ok) {
+        toast.success(`Order ${result.order_id} created successfully`)
+        onCreated()
+        onClose()
+      } else {
+        toast.error('Order creation returned ok:false — check Automation Log')
+      }
+    } catch (e) {
+      const msg = e instanceof APIError ? e.userMessage : (e as Error).message
+      console.error('[CreateOrder form]', msg, e)
       toast.error(msg)
+    } finally {
+      setLoading(false)
     }
   }
 

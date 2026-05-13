@@ -16,10 +16,12 @@ export async function POST(req: NextRequest) {
   let body: unknown
   try {
     body = await req.json()
+    console.log('[/api/orders/orders POST] received customer_name=', (body as Record<string,unknown>)?.customer_name, 'product_name=', (body as Record<string,unknown>)?.product_name)
     const result = await serverPost('create_order', body as Record<string, unknown>)
+    console.log('[/api/orders/orders POST] success', JSON.stringify(result))
     return NextResponse.json(result)
   } catch (e) {
-    console.error('[/api/orders/orders POST] create_order failed:', (e as Error).message, '| payload:', JSON.stringify(body))
+    console.error('[/api/orders/orders POST] failed:', (e as Error).message, '| body:', JSON.stringify(body))
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }
 }

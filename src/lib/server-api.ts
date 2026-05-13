@@ -49,23 +49,35 @@ export async function serverPost<T>(
   assertConfigured_()
   const ctrl  = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT)
+  const body  = JSON.stringify({ route, secret: SECRET, ...payload })
+
+  console.log(`[serverPost →] route=${route} keys=${Object.keys({ route, ...payload }).join(',')}`)
 
   try {
     const res = await fetch(BASE, {
       method:   'POST',
       headers:  { 'Content-Type': 'application/json' },
-      body:     JSON.stringify({ route, secret: SECRET, ...payload }),
+      body,
       redirect: 'follow',
       cache:    'no-store',
       signal:   ctrl.signal,
     })
     clearTimeout(timer)
+
+    console.log(`[serverPost ←] route=${route} status=${res.status} url=${res.url.slice(0, 80)}`)
+
     if (!res.ok) throw new Error(`GAS POST ${route} → HTTP ${res.status}`)
-    const data = await safeJson_<{ error?: string } & T>(res, route)
+    const text = await res.text()
+    console.log(`[serverPost body] route=${route} response=${text.slice(0, 200)}`)
+    if (!text.trim()) throw new Error(`${route} returned empty response`)
+    let data: { error?: string } & T
+    try { data = JSON.parse(text) as { error?: string } & T }
+    catch { throw new Error(`${route} returned non-JSON: ${text.slice(0, 120)}`) }
     if (data.error) throw new Error(data.error)
     return data as T
   } catch (err) {
     clearTimeout(timer)
+    console.error(`[serverPost ✗] route=${route}`, (err as Error).message)
     throw normalise_(err, `POST ${route}`)
   }
 }
