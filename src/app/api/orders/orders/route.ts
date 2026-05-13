@@ -16,8 +16,19 @@ export async function POST(req: NextRequest) {
   let body: unknown
   try {
     body = await req.json()
-    console.log('[/api/orders/orders POST] received customer_name=', (body as Record<string,unknown>)?.customer_name, 'product_name=', (body as Record<string,unknown>)?.product_name)
-    const result = await serverPost('create_order', body as Record<string, unknown>)
+    const b = body as Record<string, unknown>
+
+    // The deployed GAS uses legacy field names; map frontend names → GAS names
+    const gasPayload: Record<string, unknown> = {
+      ...b,
+      customer_name:    b.customer    ?? b.customer_name,
+      customer_phone:   b.phone       ?? b.customer_phone,
+      customer_address: b.address     ?? b.customer_address,
+      product_name:     b.product     ?? b.product_name,
+    }
+
+    console.log('[/api/orders/orders POST] customer=', b.customer, 'product=', b.product)
+    const result = await serverPost('create_order', gasPayload)
     console.log('[/api/orders/orders POST] success', JSON.stringify(result))
     return NextResponse.json(result)
   } catch (e) {
