@@ -878,7 +878,10 @@ function apiLog_(type, ref, message, detail) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MENU & TEST HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
-
+//
+// IMPORTANT: Your Apps Script project must define onOpen() in exactly ONE file.
+// If you paste both this file and Code.js, remove onOpen from one of them.
+//
 function onOpen() {
   var ui   = SpreadsheetApp.getUi();
   var menu = ui.createMenu('⚡ Alma ERP');
@@ -887,6 +890,9 @@ function onOpen() {
   if (typeof onOpenPhase3Menu_   === 'function') onOpenPhase3Menu_(menu);
   if (typeof onOpenInvoiceMenu_  === 'function') onOpenInvoiceMenu_(menu);
   if (typeof onOpenCrmMenu_      === 'function') onOpenCrmMenu_(menu);
+  if (typeof onOpenProductionCleanupMenu_ === 'function') {
+    onOpenProductionCleanupMenu_(menu);
+  }
   menu
     .addSeparator()
     .addItem('🔑 Verify API Secret',       'verifyApiSecret')
@@ -919,7 +925,7 @@ function testGetDashboard() {
 
 /**
  * Run from editor to test create_order without hitting the HTTP layer.
- * Appends a real test row — delete it from the sheet afterwards.
+ * Appends a real test row — remove via ⚡ Alma ERP → 🧹 Production → Preview / DELETE cleanup.
  */
 function testCreateOrder() {
   var result = createOrder_({

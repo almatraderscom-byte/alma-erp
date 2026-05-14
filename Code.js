@@ -1109,14 +1109,29 @@ function viewLogSummary() {
 /**
  * Add a custom menu to the Google Sheet.
  * This runs automatically when the sheet is opened.
+ * Optional phase menus attach when their script files are present in the project.
+ *
+ * If WebApp_API.gs.js is also in this project with its own onOpen(), delete one
+ * onOpen — keep a single menu entry point only.
  */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('⚡ Alma ERP Automation')
+  const ui = SpreadsheetApp.getUi();
+  const menu = ui.createMenu('⚡ Alma ERP Automation')
     .addItem('🔄 Refresh SLA Status', 'runManualSLARefresh')
     .addItem('📧 Send Test Daily Email', 'testDailySummaryEmail')
     .addItem('📊 View Log Summary', 'viewLogSummary')
     .addSeparator()
     .addItem('⬇️ Backfill All Orders', 'backfillAllOrders')
+    .addSeparator();
+
+  if (typeof onOpenPhase3Menu_ === 'function') onOpenPhase3Menu_(menu);
+  if (typeof onOpenInvoiceMenu_ === 'function') onOpenInvoiceMenu_(menu);
+  if (typeof onOpenCrmMenu_ === 'function') onOpenCrmMenu_(menu);
+  if (typeof onOpenProductionCleanupMenu_ === 'function') {
+    onOpenProductionCleanupMenu_(menu);
+  }
+
+  menu
     .addSeparator()
     .addItem('✅ Install Triggers', 'installTriggers')
     .addItem('⛔ Emergency Stop (Pause Automation)', 'emergencyStop')

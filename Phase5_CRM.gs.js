@@ -671,10 +671,10 @@ function onOpenCrmMenu_(existingMenu) {
 }
 
 /**
- * COMBINED onOpen() — paste into Code.gs replacing the existing one.
- * Includes Phase 2, 3, 4, and 5 menu items.
+ * REFERENCE ONLY — not registered as onOpen (duplicate onOpen breaks GAS).
+ * Merge into your single Code.gs / WebApp_API onOpen, or use WebApp_API.gs.js.
  */
-function onOpen() {
+function onOpenTemplate_Phase2345_() {
   const ui   = SpreadsheetApp.getUi();
   const menu = ui.createMenu('⚡ Alma ERP Automation')
     .addItem('🔄 Refresh SLA Status',       'runManualSLARefresh')
@@ -686,7 +686,10 @@ function onOpen() {
 
   if (typeof onOpenPhase3Menu_ === 'function') onOpenPhase3Menu_(menu);
   if (typeof onOpenInvoiceMenu_ === 'function') onOpenInvoiceMenu_(menu);
-  onOpenCrmMenu_(menu);
+  if (typeof onOpenCrmMenu_ === 'function') onOpenCrmMenu_(menu);
+  if (typeof onOpenProductionCleanupMenu_ === 'function') {
+    onOpenProductionCleanupMenu_(menu);
+  }
 
   menu.addSeparator()
       .addItem('✅ Install All Triggers',    'installTriggers')
