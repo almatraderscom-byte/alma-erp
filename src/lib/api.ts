@@ -153,8 +153,17 @@ interface UpdateStatusRes         extends MutationOk { order_id: string; old_sta
 interface UpdateTrackingRes       extends MutationOk { order_id: string; tracking_id: string; auto_shipped: boolean }
 interface CreateCustomerRes       extends MutationOk { customer_id: string; created: boolean }
 interface CreateProductRes        extends MutationOk { product_id: string }
-interface GenerateInvoiceRes      extends MutationOk { invoice_number: string; drive_url: string }
-interface NextInvoiceNumberRes    { invoice_number: string }
+export interface GenerateInvoiceRes extends MutationOk {
+  invoice_number: string
+  drive_url?: string
+  file_url?: string
+  file_name?: string
+}
+export interface NextInvoiceNumberRes {
+  /** Normalized next invoice label (from GAS `next` or `invoice_number`) */
+  invoice_number: string
+  next?: string
+}
 interface AddExpenseRes           extends MutationOk { expense_id: string }
 interface CreateOrderFolderRes    extends MutationOk { folder_url: string }
 
@@ -268,7 +277,13 @@ export const api = {
   },
 
   invoice: {
-    nextNumber: (): Promise<NextInvoiceNumberRes> => apiGet('/api/invoice'),
+    /** Peek next AL-INV number — GET /api/invoice → GAS `next_invoice_num` */
+    nextNumber: async (): Promise<NextInvoiceNumberRes> => {
+      const d = await apiGet<{ next?: string; invoice_number?: string }>('/api/invoice')
+      const invoice_number = (d.invoice_number || d.next || '').trim()
+      if (!invoice_number) throw new APIError('Next invoice number unavailable from API', '/api/invoice')
+      return { invoice_number, next: d.next }
+    },
   },
 
   analytics: {
@@ -298,9 +313,17 @@ export const api = {
     updateField: (id: string, field: string, value: string | number): Promise<MutationOk> =>
       apiPost('/api/orders/orders/field', { id, field, value }),
 
-    /** Generate a PDF invoice → POST /api/invoice */
-    generateInvoice: (id: string): Promise<GenerateInvoiceRes> =>
-      apiPost('/api/invoice', { id }),
+    /** Generate a PDF invoice → POST /api/invoice (GAS returns file_url + drive_url) */
+    generateInvoice: async (id: string): Promise<GenerateInvoiceRes> => {
+      const raw = await apiPost<GenerateInvoiceRes>('/api/invoice', { id })
+      const url = (raw.drive_url || raw.file_url || '').trim()
+      return {
+        ...raw,
+        ok: raw.ok !== false,
+        drive_url: url,
+        file_url: raw.file_url || url,
+      }
+    },
 
     /** Create / upsert a customer → POST /api/customers */
     createCustomer: (

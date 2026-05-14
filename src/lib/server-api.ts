@@ -66,14 +66,31 @@ export async function serverPost<T>(
 
     console.log(`[serverPost ←] route=${route} status=${res.status} url=${res.url.slice(0, 80)}`)
 
-    if (!res.ok) throw new Error(`GAS POST ${route} → HTTP ${res.status}`)
     const text = await res.text()
-    console.log(`[serverPost body] route=${route} response=${text.slice(0, 200)}`)
+    console.log(`[serverPost body] route=${route} response=${text.slice(0, 400)}`)
     if (!text.trim()) throw new Error(`${route} returned empty response`)
-    let data: { error?: string } & T
-    try { data = JSON.parse(text) as { error?: string } & T }
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const errBody = JSON.parse(text) as { error?: string }
+        if (errBody.error) detail = errBody.error
+        else detail = text.slice(0, 280)
+      } catch {
+        detail = text.slice(0, 280)
+      }
+      throw new Error(`GAS POST ${route} → ${detail}`)
+    }
+
+    let data: { error?: string; ok?: boolean } & T
+    try { data = JSON.parse(text) as { error?: string; ok?: boolean } & T }
     catch { throw new Error(`${route} returned non-JSON: ${text.slice(0, 120)}`) }
     if (data.error) throw new Error(data.error)
+    if (data && typeof data === 'object' && data.ok === false) {
+      const d = data as { error?: string; message?: string }
+      const msg = d.error || d.message || 'Request returned ok: false'
+      throw new Error(msg)
+    }
     return data as T
   } catch (err) {
     clearTimeout(timer)

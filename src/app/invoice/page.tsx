@@ -1,9 +1,10 @@
 'use client'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useOrders, useGenerateInvoice } from '@/hooks/useERP'
+import { useOrders } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, GoldDivider } from '@/components/ui'
 import { fmt } from '@/lib/utils'
+import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 
@@ -104,8 +105,8 @@ function InvoicePreview({ order, onClose, onGenerate, loading }: { order: Order;
 export default function InvoicePage() {
   const [search, setSearch] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
+  const [genLoading, setGenLoading] = useState(false)
   const { data, loading, refetch } = useOrders({ status: 'Delivered' })
-  const { mutate: generateInvoice, loading: genLoading } = useGenerateInvoice()
 
   const orders = (data?.orders ?? []).filter(o =>
     !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
@@ -116,9 +117,26 @@ export default function InvoicePage() {
 
   async function handleGenerate() {
     if (!preview) return
-    const r = await generateInvoice(preview.id)
-    if (r?.ok) { toast.success(`Invoice ${r.invoice_number} saved to Drive`); refetch() }
-    else toast.error('Generation failed — check Automation Log')
+    setGenLoading(true)
+    try {
+      const r = await api.mutations.generateInvoice(preview.id)
+      if (r?.ok) {
+        const url = (r.drive_url || r.file_url || '').trim()
+        toast.success(
+          url ? `Invoice ${r.invoice_number} saved to Google Drive` : `Invoice ${r.invoice_number} recorded`,
+        )
+        if (url) window.open(url, '_blank', 'noopener,noreferrer')
+        refetch()
+      } else {
+        toast.error('Invoice was not created (server returned ok: false)')
+      }
+    } catch (e) {
+      const msg = e instanceof APIError ? e.userMessage : (e as Error).message
+      console.error('[GenerateInvoice]', { orderId: preview.id, err: e })
+      toast.error(msg || 'Generation failed')
+    } finally {
+      setGenLoading(false)
+    }
   }
 
   return (

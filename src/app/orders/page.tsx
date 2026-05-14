@@ -3,11 +3,12 @@ import Link from 'next/link'
 import { Suspense, useLayoutEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useOrders, useUpdateStatus, useGenerateInvoice } from '@/hooks/useERP'
+import { useOrders, useUpdateStatus } from '@/hooks/useERP'
 import { useMdUp } from '@/hooks/useMdUp'
 import { NewOrderDrawer } from '@/components/orders/new-order/new-order-drawer'
 import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
+import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order, OrderStatus } from '@/types'
 
@@ -20,7 +21,7 @@ const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confir
 
 function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose: () => void; onStatusChange: () => void }) {
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
-  const { mutate: generateInvoice, loading: invLoading } = useGenerateInvoice()
+  const [invLoading, setInvLoading] = useState(false)
 
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
@@ -33,9 +34,28 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   }
 
   async function handleInvoice() {
-    const r = await generateInvoice(order.id)
-    if (r?.ok) toast.success(`Invoice ${r.invoice_number} generated`)
-    else toast.error('Invoice generation failed')
+    setInvLoading(true)
+    try {
+      const r = await api.mutations.generateInvoice(order.id)
+      if (r?.ok) {
+        const url = (r.drive_url || r.file_url || '').trim()
+        toast.success(
+          url
+            ? `Invoice ${r.invoice_number} saved to Google Drive`
+            : `Invoice ${r.invoice_number} recorded (no Drive URL returned)`,
+        )
+        if (url) window.open(url, '_blank', 'noopener,noreferrer')
+        onStatusChange()
+      } else {
+        toast.error('Invoice was not created (server returned ok: false)')
+      }
+    } catch (e) {
+      const msg = e instanceof APIError ? e.userMessage : (e as Error).message
+      console.error('[GenerateInvoice]', { orderId: order.id, err: e })
+      toast.error(msg || 'Invoice generation failed')
+    } finally {
+      setInvLoading(false)
+    }
   }
 
   return (

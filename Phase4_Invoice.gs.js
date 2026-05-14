@@ -219,6 +219,38 @@ function existingInvoiceNumber_(ordSh, row) {
   return val ? val.toString() : false;
 }
 
+/**
+ * Validates minimum row data required for a legal invoice (matches ERP + GAS).
+ * @param {Object} order — normalized order object from rowData
+ * @param {string} orderIdStr
+ * @returns {{ok:true}|{ok:false,missing:string}}
+ */
+function validateOrderForInvoice_(order, orderIdStr) {
+  const customer = String(order.customer || '').trim()
+  const phone = String(order.phone || '').replace(/\D/g, '').trim()
+  const address = String(order.address || '').trim()
+  const product = String(order.product || '').trim()
+  const payment = String(order.payment || '').trim()
+  const qty = Number(order.qty || 0)
+  let sell = Number(order.sellPrice || 0)
+  if (!(sell > 0)) {
+    sell =
+      Number(order.unitPrice || 0) * Number(order.qty || 0) -
+      Number(order.discount || 0) -
+      Number(order.addDiscount || 0)
+  }
+  const missing = []
+  if (!String(orderIdStr || '').trim()) missing.push('order_id')
+  if (!customer) missing.push('customer')
+  if (!phone) missing.push('phone')
+  if (!address) missing.push('address')
+  if (!product) missing.push('product')
+  if (!(qty > 0)) missing.push('qty')
+  if (!(sell > 0)) missing.push('sell_price')
+  if (!payment) missing.push('payment')
+  return missing.length ? { ok: false, missing: missing.join(', ') } : { ok: true }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MASTER INVOICE GENERATOR
 // ═══════════════════════════════════════════════════════════════════════════
@@ -230,20 +262,28 @@ function existingInvoiceNumber_(ordSh, row) {
  *   • Reads rowData directly — no sheet re-fetch
  *   • Duplicate check before issuing invoice number
  *   • Invoice number only increments after successful PDF save
- *   • All errors caught and logged — never throws to caller
+ *   • On failure returns { error: string } (never throws)
  *
  * @param {number} row         - 1-based row number in ORDERS sheet
  * @param {Array}  rowData     - full row values array (0-indexed)
- * @returns {{invoiceNumber:string, fileUrl:string}|null}
+ * @returns {{invoiceNumber:string, fileUrl:string, fileName:string}|{error:string}}
  */
 function generateInvoice(row, rowData) {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const ordSh = ss.getSheetByName(INV_CONFIG.sheet);
-  if (!ordSh) return null;
+  if (!ordSh) {
+    const msg = 'Orders sheet not found: ' + INV_CONFIG.sheet;
+    invLog_('CONFIG', '', msg, '');
+    return { error: msg };
+  }
 
   const c       = INV_CONFIG.col;
   const orderId = rowData[c.ORDER_ID - 1];
-  if (!orderId) return null;
+  if (!orderId) {
+    const msg = 'Order row has no ORDER_ID (column A) — fix the sheet formula or refresh.';
+    invLog_('VALIDATION', '', msg, 'row ' + row);
+    return { error: msg };
+  }
 
   // ── Duplicate protection ─────────────────────────────────────────────────
   const existing = existingInvoiceNumber_(ordSh, row);
@@ -276,6 +316,12 @@ function generateInvoice(row, rowData) {
     notes:        rowData[c.NOTES - 1]         || '',
   };
 
+  const check = validateOrderForInvoice_(order, String(orderId));
+  if (!check.ok) {
+    invLog_('VALIDATION', orderId, 'Missing: ' + check.missing, '');
+    return { error: 'Missing invoice data: ' + check.missing };
+  }
+
   // ── Issue invoice number ──────────────────────────────────────────────────
   const invoiceNumber = getNextAlInvoiceNumber_(true);
   const issuedDate    = new Date();
@@ -289,12 +335,16 @@ function generateInvoice(row, rowData) {
     pdfBlob = htmlToPdfBlob_(html, invoiceNumber);
   } catch (e) {
     invLog_('PDF_ERROR', orderId, e.message, invoiceNumber);
-    // Roll back counter on failure
     const year = issuedDate.getFullYear().toString();
     const key  = INV_CONFIG.counterKey + year;
     const cur  = parseInt(PropertiesService.getScriptProperties().getProperty(key) || '1', 10);
     PropertiesService.getScriptProperties().setProperty(key, (cur - 1).toString());
-    return null;
+    return {
+      error:
+        'PDF conversion failed: ' +
+        e.message +
+        ' — Enable Apps Script “Drive API” advanced service, or check execution log (PDF_DRIVE_API / PDF_HTMLSERVICE).',
+    };
   }
 
   // ── Save to Drive ─────────────────────────────────────────────────────────
@@ -304,8 +354,14 @@ function generateInvoice(row, rowData) {
 
   const fileUrl   = savePdfToDrive_(pdfBlob, fileName, order, issuedDate);
   if (!fileUrl) {
-    invLog_('SAVE_ERROR', orderId, 'PDF save to Drive failed', invoiceNumber);
-    return null;
+    const detail =
+      'Could not save PDF to Google Drive. Check Phase3 DRIVE.INVOICES folder ID, Drive permissions, and AUTOMATION LOG (SAVE_ERROR_INVOICES / SAVE_FATAL).';
+    invLog_('SAVE_ERROR', orderId, detail, invoiceNumber);
+    const year = issuedDate.getFullYear().toString();
+    const key  = INV_CONFIG.counterKey + year;
+    const cur  = parseInt(PropertiesService.getScriptProperties().getProperty(key) || '1', 10);
+    PropertiesService.getScriptProperties().setProperty(key, (cur - 1).toString());
+    return { error: detail };
   }
 
   // ── Write invoice number back to ORDERS row ───────────────────────────────
@@ -564,28 +620,41 @@ function buildInvoiceHtml_(order, invoiceNumber, issuedDate) {
  * @returns {GoogleAppsScript.Base.Blob}
  */
 function htmlToPdfBlob_(html, invoiceNumber) {
-  // Create a temporary Google Doc from the HTML
   const tempFileName = `__TEMP_INVOICE_${invoiceNumber}`;
-  const blob = Utilities.newBlob(html, MimeType.HTML, tempFileName + '.html');
 
-  // Upload as a Google Doc (auto-converts HTML)
-  const file = Drive.Files.insert(
-    { title: tempFileName, mimeType: MimeType.GOOGLE_DOCS },
-    blob,
-    { convert: true }
-  );
+  // Prefer Drive Advanced Service (better CSS fidelity) when enabled in the Apps Script project.
+  if (typeof Drive !== 'undefined' && Drive.Files && typeof Drive.Files.insert === 'function') {
+    try {
+      const blob = Utilities.newBlob(html, MimeType.HTML, tempFileName + '.html');
+      const file = Drive.Files.insert(
+        { title: tempFileName, mimeType: MimeType.GOOGLE_DOCS },
+        blob,
+        { convert: true }
+      );
+      Utilities.sleep(2500);
+      const pdfBlob = DriveApp.getFileById(file.id).getAs(MimeType.PDF).copyBlob();
+      try {
+        Drive.Files.remove(file.id);
+      } catch (removeErr) {
+        invLog_('PDF_WARN', '', 'Temp Doc cleanup failed: ' + removeErr.message, String(file.id));
+      }
+      return pdfBlob;
+    } catch (e) {
+      invLog_('PDF_DRIVE_API', invoiceNumber, e.message, (e.stack || '').substring(0, 500));
+    }
+  } else {
+    invLog_('PDF_DRIVE_API', invoiceNumber, 'Drive.Files not available — enable Drive API in Services', '');
+  }
 
-  // Export the Google Doc as PDF
-  Utilities.sleep(3000);
-
-  const pdfBlob = DriveApp.getFileById(file.id)
-    .getAs(MimeType.PDF)
-    .copyBlob();
-
-  // Delete the temporary Google Doc
-  Drive.Files.remove(file.id);
-
-  return pdfBlob;
+  // Fallback: no Advanced Service required; works with default Apps Script + Drive.
+  try {
+    const pdfBlob = HtmlService.createHtmlOutput(html).getAs(MimeType.PDF);
+    invLog_('PDF_HTMLSERVICE', invoiceNumber, 'PDF generated via HtmlService fallback', '');
+    return pdfBlob;
+  } catch (e2) {
+    invLog_('PDF_HTMLSERVICE', invoiceNumber, e2.message, (e2.stack || '').substring(0, 500));
+    throw new Error('PDF conversion failed (Drive API + HtmlService): ' + e2.message);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -652,6 +721,19 @@ function savePdfToDrive_(pdfBlob, fileName, order, issuedDate) {
     // Non-fatal — primary save succeeded
   }
 
+  // ── Last resort: save to My Drive root so invoicing never returns null URL silently ──
+  if (!primaryUrl) {
+    try {
+      const emergency = pdfBlob.copyBlob();
+      emergency.setName(fileName);
+      const f = DriveApp.createFile(emergency);
+      primaryUrl = f.getUrl();
+      invLog_('SAVED_DRIVEAPP_ROOT', order.id, 'Fallback: saved PDF to My Drive root', primaryUrl);
+    } catch (eRoot) {
+      invLog_('SAVE_FATAL', order.id, eRoot.message, fileName);
+    }
+  }
+
   return primaryUrl;
 }
 
@@ -701,8 +783,8 @@ function generateInvoiceManualPhase4() {
 
   const result = generateInvoice(foundRow, rowData);
 
-  if (!result) {
-    ui.alert('❌ Invoice generation failed. Check 🤖 AUTOMATION LOG for details.');
+  if (result.error) {
+    ui.alert('❌ ' + result.error);
   } else if (result.fileUrl === '') {
     ui.alert(`ℹ️ Invoice already exists for ${target}.\nInvoice #: ${result.invoiceNumber}`);
   } else {
@@ -736,9 +818,13 @@ function backfillInvoices() {
     if (status !== 'Delivered') { skipped++; continue; }
 
     const result = generateInvoice(i + 1, data[i]);
-    if (!result) { errors++; }
-    else if (result.fileUrl === '') { skipped++; }  // already had one
-    else { generated++; }
+    if (result.error) {
+      errors++;
+    } else if (result.fileUrl === '') {
+      skipped++;
+    } else {
+      generated++;
+    }
 
     Utilities.sleep(1500); // Drive API rate limit
   }

@@ -70,7 +70,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = JSON.parse((e.postData && e.postData.contents) ? e.postData.contents : '{}');
-    Logger.log('doPost route=' + body.route + ' customer=' + body.customer + ' product=' + body.product);
+    Logger.log('doPost route=' + body.route + ' id=' + (body.id || '') + ' keys=' + Object.keys(body).join(','));
     if (!checkSecret_(body.secret)) {
       Logger.log('doPost: UNAUTHORIZED');
       return respond_({ error: 'Unauthorized' });
@@ -433,14 +433,31 @@ function addExpense_(body) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function triggerInvoice_(body) {
+  Logger.log('triggerInvoice_ start id=' + (body && body.id));
   if (!body.id) return { error: 'id required' };
   if (typeof generateInvoice !== 'function')
     return { error: 'Phase 4 not loaded — add Phase4_Invoice.gs to this project' };
   var found = findOrderRow_(body.id);
   if (!found) return { error: 'Order not found: ' + body.id };
   var result = generateInvoice(found.rowIndex, found.data);
-  if (!result) return { error: 'Invoice generation failed — check Automation Log' };
-  return { ok: true, invoice_number: result.invoiceNumber, file_url: result.fileUrl, file_name: result.fileName };
+  Logger.log('triggerInvoice_ raw result keys=' + (result ? Object.keys(result).join(',') : 'null'));
+  if (!result) {
+    return { error: 'Invoice generation returned no result — check Apps Script Executions and 🤖 AUTOMATION LOG.' };
+  }
+  if (result.error) {
+    Logger.log('triggerInvoice_ error=' + result.error);
+    return { error: result.error };
+  }
+  if (!result.invoiceNumber) {
+    return { error: 'Invoice generation returned no invoice_number' };
+  }
+  return {
+    ok: true,
+    invoice_number: result.invoiceNumber,
+    file_url: result.fileUrl || '',
+    drive_url: result.fileUrl || '',
+    file_name: result.fileName || '',
+  };
 }
 
 function triggerOrderFolder_(body) {
