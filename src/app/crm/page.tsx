@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useCustomers } from '@/hooks/useERP'
 import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty } from '@/components/ui'
 import { fmt, pct } from '@/lib/utils'
-import { MobileNav } from '@/components/layout/Sidebar'
 import type { Customer, CustomerSegment } from '@/types'
 
 const SEGMENTS: CustomerSegment[] = ['VIP','REGULAR','NEW','RISKY','BLACKLIST','COLD']
@@ -216,7 +215,6 @@ export default function CrmPage() {
         )}
       </AnimatePresence>
 
-      <MobileNav />
     </>
   )
 }

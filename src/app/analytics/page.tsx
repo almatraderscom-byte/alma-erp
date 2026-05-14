@@ -3,7 +3,6 @@ import { useDashboard } from '@/hooks/useERP'
 import { PageHeader, Card, KpiCard, GoldDivider, Skeleton, Empty } from '@/components/ui'
 import { RevenueChart, ExpenseBarChart, DonutChart } from '@/components/charts'
 import { fmt, pct } from '@/lib/utils'
-import { MobileNav } from '@/components/layout/Sidebar'
 
 const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020']
 
@@ -204,7 +203,6 @@ export default function AnalyticsPage() {
         </div>
 
       </div>
-      <MobileNav />
     </>
   )
 }

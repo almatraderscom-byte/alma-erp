@@ -1,472 +1,18 @@
 'use client'
-import { useState, useMemo } from 'react'
+import Link from 'next/link'
+import { Suspense, useLayoutEffect, useMemo, useState } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useOrders, useUpdateStatus, useUpdateTracking, useGenerateInvoice } from '@/hooks/useERP'
-import { api, APIError } from '@/lib/api'
-import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, GoldDivider, Progress, Skeleton, Empty, Spinner } from '@/components/ui'
+import { useOrders, useUpdateStatus, useGenerateInvoice } from '@/hooks/useERP'
+import { useMdUp } from '@/hooks/useMdUp'
+import { NewOrderDrawer } from '@/components/orders/new-order/new-order-drawer'
+import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
-import { MobileNav } from '@/components/layout/Sidebar'
 import toast from 'react-hot-toast'
 import type { Order, OrderStatus } from '@/types'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','Returned','Cancelled']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
-
-// ── Dropdown option lists (matching real ERP values) ─────────────────────
-const CATEGORIES = ['Tops','Bottoms','Dresses','Kurtis','Outerwear','Sarees','Accessories','Other']
-const SOURCES     = ['Facebook','WhatsApp','Instagram','Website','Walk-in','Referral']
-const COURIERS    = ['Pathao','Redx','Steadfast','Paperfly','E-courier','Sundarban','SA Paribahan']
-const PAYMENTS    = ['COD','bKash','Nagad','Rocket','Bank Transfer','Card']
-
-// ═══════════════════════════════════════════════════════════════════════════
-// NEW ORDER DRAWER
-// ═══════════════════════════════════════════════════════════════════════════
-
-interface NewOrderForm {
-  customer: string; phone: string; address: string
-  product: string; category: string; size: string
-  qty: string; unit_price: string; sell_price: string
-  courier: string; payment: string; source: string
-  status: OrderStatus; notes: string; sku: string
-  cogs: string; courier_charge: string; shipping_fee: string
-}
-
-const EMPTY_FORM: NewOrderForm = {
-  customer:'', phone:'', address:'', product:'', category:'Tops', size:'',
-  qty:'1', unit_price:'', sell_price:'', courier:'Pathao', payment:'COD',
-  source:'Facebook', status:'Pending', notes:'', sku:'',
-  cogs:'', courier_charge:'80', shipping_fee:'0',
-}
-
-type FormErrors = Partial<Record<keyof NewOrderForm, string>>
-
-function validate(f: NewOrderForm): FormErrors {
-  const e: FormErrors = {}
-  if (!f.customer.trim())                       e.customer    = 'Customer name is required'
-  if (!f.phone.trim())                          e.phone       = 'Phone is required'
-  else if (!/^01[3-9]\d{8}$/.test(f.phone.replace(/\D/g,''))) e.phone = 'Enter a valid BD number (e.g. 01711000000)'
-  if (!f.product.trim())                        e.product     = 'Product name is required'
-  if (!f.unit_price || Number(f.unit_price)<=0) e.unit_price  = 'Unit price must be > 0'
-  if (!f.qty || Number(f.qty)<=0)               e.qty         = 'Qty must be ≥ 1'
-  if (!f.sell_price || Number(f.sell_price)<=0) e.sell_price  = 'Sell price must be > 0'
-  return e
-}
-
-// Shared field component used throughout the form
-function Field({
-  label, required, error, children, hint,
-}: { label: string; required?: boolean; error?: string; children: React.ReactNode; hint?: string }) {
-  return (
-    <div>
-      <label className="block text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-1.5">
-        {label}{required && <span className="text-gold ml-0.5">*</span>}
-      </label>
-      {children}
-      {hint  && !error && <p className="text-[10px] text-zinc-600 mt-1">{hint}</p>}
-      {error && <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1"><span>⚠</span>{error}</p>}
-    </div>
-  )
-}
-
-const inputCls = (err?: string) =>
-  `w-full bg-black/40 border rounded-xl px-3 py-2.5 text-sm text-cream placeholder-zinc-600 focus:outline-none transition-colors ${
-    err ? 'border-red-400/60 focus:border-red-400' : 'border-border focus:border-gold-dim/70'
-  }`
-
-const selectCls = (err?: string) =>
-  `w-full bg-black/40 border rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none transition-colors appearance-none cursor-pointer ${
-    err ? 'border-red-400/60 focus:border-red-400' : 'border-border focus:border-gold-dim/70'
-  }`
-
-function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState<NewOrderForm>(EMPTY_FORM)
-  const [errors, setErrors] = useState<FormErrors>({})
-  const [touched, setTouched] = useState<Partial<Record<keyof NewOrderForm, boolean>>>({})
-  const [loading, setLoading] = useState(false)
-
-  function set<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) {
-    setForm(prev => {
-      const next = { ...prev, [key]: value }
-      // Auto-calculate sell_price from unit_price × qty when not manually overridden
-      if ((key === 'unit_price' || key === 'qty') && !touched.sell_price) {
-        const up = key === 'unit_price' ? Number(value) : Number(prev.unit_price)
-        const q  = key === 'qty'        ? Number(value) : Number(prev.qty)
-        if (up > 0 && q > 0) next.sell_price = String(up * q)
-      }
-      return next
-    })
-    if (touched[key]) {
-      const errs = validate({ ...form, [key]: value })
-      setErrors(prev => ({ ...prev, [key]: errs[key] }))
-    }
-  }
-
-  function touch(key: keyof NewOrderForm) {
-    setTouched(prev => ({ ...prev, [key]: true }))
-    const errs = validate(form)
-    setErrors(prev => ({ ...prev, [key]: errs[key] }))
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    // Touch all validated fields so errors show
-    const allTouched = Object.fromEntries(Object.keys(form).map(k => [k, true])) as typeof touched
-    setTouched(allTouched)
-    const errs = validate(form)
-    setErrors(errs)
-    if (Object.keys(errs).length > 0) {
-      toast.error('Please fix the errors before submitting')
-      return
-    }
-
-    const payload = {
-      customer:       form.customer.trim(),
-      phone:          form.phone.replace(/\D/g, ''),
-      address:        form.address.trim(),
-      product:        form.product.trim(),
-      category:       form.category,
-      size:           form.size.trim(),
-      qty:            Number(form.qty),
-      unit_price:     Number(form.unit_price),
-      sell_price:     Number(form.sell_price) || Number(form.unit_price) * Number(form.qty),
-      payment_method: form.payment,
-      source:         form.source,
-      status:         form.status,
-      courier:        form.courier,
-      notes:          form.notes.trim(),
-      sku:            form.sku.trim(),
-      cogs:           Number(form.cogs) || 0,
-      courier_charge: Number(form.courier_charge) || 0,
-      shipping_fee:   Number(form.shipping_fee) || 0,
-    }
-    console.log('[CreateOrder] payload', payload)
-
-    setLoading(true)
-    try {
-      const result = await api.mutations.createOrder(payload)
-      if (result?.ok) {
-        toast.success(`Order ${result.order_id} created successfully`)
-        onCreated()
-        onClose()
-      } else {
-        toast.error('Order creation returned ok:false — check Automation Log')
-      }
-    } catch (e) {
-      const msg = e instanceof APIError ? e.userMessage : (e as Error).message
-      console.error('[CreateOrder form]', msg, e)
-      toast.error(msg)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const sellPriceComputed = Number(form.unit_price) * Number(form.qty)
-
-  return (
-    <motion.div
-      className="fixed inset-0 z-50 flex justify-end"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Drawer panel — 3-part flex column, container must not scroll */}
-      <motion.div
-        className="relative w-full max-w-lg bg-surface border-l border-border"
-        style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-      >
-        {/* PART 1 — Header: never scrolls */}
-        <div style={{ flexShrink: 0 }} className="bg-surface/95 backdrop-blur border-b border-border">
-          <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4">
-            <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold mb-0.5">New Order</p>
-              <p className="text-sm font-bold text-cream">Create Order</p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-zinc-400 hover:text-cream hover:bg-white/[0.04] transition-colors text-lg"
-            >
-              ×
-            </button>
-          </div>
-          <div className="h-px bg-gradient-to-r from-transparent via-gold-dim to-transparent" />
-        </div>
-
-        {/* PART 2 — Body: ONLY this region scrolls */}
-        <form
-          onSubmit={handleSubmit}
-          style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}
-          className="scrollbar-gold"
-        >
-          <div className="px-4 py-3 space-y-4 sm:px-5 sm:py-5 sm:space-y-5">
-
-            {/* ─ Customer info ─ */}
-            <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
-                <span className="w-4 h-px bg-gold-dim" />Customer Info
-              </p>
-              <div className="space-y-2 sm:space-y-3">
-
-                <Field label="Customer Name" required error={touched.customer ? errors.customer : undefined}>
-                  <input
-                    type="text"
-                    autoComplete="name"
-                    value={form.customer}
-                    onChange={e => set('customer', e.target.value)}
-                    onBlur={() => touch('customer')}
-                    placeholder="e.g. Nusrat Jahan"
-                    className={inputCls(touched.customer ? errors.customer : undefined)}
-                  />
-                </Field>
-
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                  <Field label="Phone" required error={touched.phone ? errors.phone : undefined}>
-                    <input
-                      type="tel"
-                      inputMode="numeric"
-                      autoComplete="tel"
-                      value={form.phone}
-                      onChange={e => set('phone', e.target.value)}
-                      onBlur={() => touch('phone')}
-                      placeholder="01711000000"
-                      className={inputCls(touched.phone ? errors.phone : undefined)}
-                    />
-                  </Field>
-                  <Field label="Source" required>
-                    <select value={form.source} onChange={e => set('source', e.target.value)} className={selectCls()}>
-                      {SOURCES.map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </Field>
-                </div>
-
-                <Field label="Address" hint="District + area (e.g. Gulshan, Dhaka)">
-                  <input
-                    type="text"
-                    autoComplete="street-address"
-                    value={form.address}
-                    onChange={e => set('address', e.target.value)}
-                    placeholder="Gulshan, Dhaka"
-                    className={inputCls()}
-                  />
-                </Field>
-
-              </div>
-            </div>
-
-            <GoldDivider />
-
-            {/* ─ Product info ─ */}
-            <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
-                <span className="w-4 h-px bg-gold-dim" />Product Info
-              </p>
-              <div className="space-y-2 sm:space-y-3">
-
-                <Field label="Product Name" required error={touched.product ? errors.product : undefined}>
-                  <input
-                    type="text"
-                    value={form.product}
-                    onChange={e => set('product', e.target.value)}
-                    onBlur={() => touch('product')}
-                    placeholder="e.g. Classic White Punjabi"
-                    className={inputCls(touched.product ? errors.product : undefined)}
-                  />
-                </Field>
-
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                  <Field label="Category" required>
-                    <select value={form.category} onChange={e => set('category', e.target.value)} className={selectCls()}>
-                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </Field>
-                  <Field label="Size / Variant">
-                    <input
-                      type="text"
-                      value={form.size}
-                      onChange={e => set('size', e.target.value)}
-                      placeholder="S / M / L / XL"
-                      className={inputCls()}
-                    />
-                  </Field>
-                </div>
-
-                <Field label="SKU" hint="Leave blank if not assigned yet">
-                  <input
-                    type="text"
-                    value={form.sku}
-                    onChange={e => set('sku', e.target.value)}
-                    placeholder="PUN-001"
-                    className={inputCls()}
-                  />
-                </Field>
-
-              </div>
-            </div>
-
-            <GoldDivider />
-
-            {/* ─ Pricing ─ */}
-            <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
-                <span className="w-4 h-px bg-gold-dim" />Pricing & Qty
-              </p>
-              <div className="space-y-2 sm:space-y-3">
-
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                  <Field label="Qty" required error={touched.qty ? errors.qty : undefined}>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min="1"
-                      value={form.qty}
-                      onChange={e => set('qty', e.target.value)}
-                      onBlur={() => touch('qty')}
-                      className={inputCls(touched.qty ? errors.qty : undefined)}
-                    />
-                  </Field>
-                  <Field label="Unit Price (৳)" required error={touched.unit_price ? errors.unit_price : undefined}>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="0.01"
-                      value={form.unit_price}
-                      onChange={e => set('unit_price', e.target.value)}
-                      onBlur={() => touch('unit_price')}
-                      placeholder="0"
-                      className={inputCls(touched.unit_price ? errors.unit_price : undefined)}
-                    />
-                  </Field>
-                </div>
-
-                <Field
-                  label="Sell Price (৳)"
-                  required
-                  error={touched.sell_price ? errors.sell_price : undefined}
-                  hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto: ৳${sellPriceComputed.toLocaleString('en-IN')}` : undefined}
-                >
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={form.sell_price}
-                    onChange={e => { setTouched(p => ({ ...p, sell_price: true })); set('sell_price', e.target.value) }}
-                    onBlur={() => touch('sell_price')}
-                    placeholder="Auto-calculated"
-                    className={inputCls(touched.sell_price ? errors.sell_price : undefined)}
-                  />
-                </Field>
-
-                <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
-                  <Field label="COGS (৳)" hint="Cost">
-                    <input type="number" inputMode="decimal" min="0" value={form.cogs} onChange={e => set('cogs', e.target.value)} placeholder="0" className={inputCls()} />
-                  </Field>
-                  <Field label="Courier (৳)" hint="Charge">
-                    <input type="number" inputMode="decimal" min="0" value={form.courier_charge} onChange={e => set('courier_charge', e.target.value)} className={inputCls()} />
-                  </Field>
-                  <Field label="Ship (৳)" hint="Collected">
-                    <input type="number" inputMode="decimal" min="0" value={form.shipping_fee} onChange={e => set('shipping_fee', e.target.value)} placeholder="0" className={inputCls()} />
-                  </Field>
-                </div>
-
-                {Number(form.sell_price) > 0 && Number(form.cogs) > 0 && (
-                  <div className="flex items-center justify-between px-3 py-2 bg-black/40 border border-border rounded-xl text-xs">
-                    <span className="text-zinc-500">Est. profit</span>
-                    <span className="font-bold text-green-400">
-                      ৳{(Number(form.sell_price) - Number(form.cogs) - Number(form.courier_charge) + Number(form.shipping_fee)).toLocaleString('en-IN')}
-                    </span>
-                  </div>
-                )}
-
-              </div>
-            </div>
-
-            <GoldDivider />
-
-            {/* ─ Delivery & Payment ─ */}
-            <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
-                <span className="w-4 h-px bg-gold-dim" />Delivery & Payment
-              </p>
-              <div className="space-y-2 sm:space-y-3">
-
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                  <Field label="Payment Method" required>
-                    <select value={form.payment} onChange={e => set('payment', e.target.value)} className={selectCls()}>
-                      {PAYMENTS.map(p => <option key={p}>{p}</option>)}
-                    </select>
-                  </Field>
-                  <Field label="Courier" required>
-                    <select value={form.courier} onChange={e => set('courier', e.target.value)} className={selectCls()}>
-                      <option value="">Not assigned</option>
-                      {COURIERS.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </Field>
-                </div>
-
-                <Field label="Status">
-                  <select value={form.status} onChange={e => set('status', e.target.value as OrderStatus)} className={selectCls()}>
-                    {STATUSES.map(s => <option key={s}>{s}</option>)}
-                  </select>
-                </Field>
-
-                <Field label="Notes" hint="Gift wrap, size notes, etc.">
-                  <textarea
-                    value={form.notes}
-                    onChange={e => set('notes', e.target.value)}
-                    placeholder="Any special instructions…"
-                    rows={2}
-                    className={`${inputCls()} resize-none`}
-                  />
-                </Field>
-
-              </div>
-            </div>
-
-          </div>
-        </form>
-
-        {/* PART 3 — Footer: always at bottom, never pushed by keyboard */}
-        <div
-          style={{ flexShrink: 0, position: 'sticky', bottom: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
-          className="border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2"
-        >
-          {Number(form.sell_price) > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
-              <span className="text-zinc-500 truncate max-w-[100px]">{form.product || 'Product'}</span>
-              <span className="text-zinc-600">×{form.qty || 1}</span>
-              <span className="ml-auto font-bold text-gold">৳{Number(form.sell_price).toLocaleString('en-IN')}</span>
-              {form.customer && <span className="text-zinc-500 truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button type="button" variant="ghost" className="flex-1 justify-center py-3 sm:py-2" onClick={onClose} disabled={loading}>
-              Cancel
-            </Button>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={handleSubmit}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:py-2.5 rounded-xl border border-gold-dim/50 bg-gold/10 text-gold-lt text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-            >
-              {loading ? (
-                <><Spinner size="sm" /><span>Creating…</span></>
-              ) : (
-                <><span>✦</span><span>Create Order</span></>
-              )}
-            </button>
-          </div>
-        </div>
-
-      </motion.div>
-    </motion.div>
-  )
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ORDER DETAIL DRAWER (unchanged)
@@ -631,13 +177,31 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function OrdersPage() {
-  const [search,   setSearch]   = useState('')
+  return (
+    <Suspense fallback={null}>
+      <OrdersPageContent />
+    </Suspense>
+  )
+}
+
+function OrdersPageContent() {
+  const mdUp = useMdUp()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const [search, setSearch] = useState('')
   const [status,   setStatus]   = useState('')
   const [source,   setSource]   = useState('')
   const [payment,  setPayment]  = useState('')
   const [sort,     setSort]     = useState('newest')
   const [selected, setSelected] = useState<Order | null>(null)
-  const [showNew,  setShowNew]  = useState(false)   // ← new order drawer
+  const [showNew, setShowNew] = useState(false)
+
+  useLayoutEffect(() => {
+    if (searchParams.get('new') === '1' && mdUp) {
+      setShowNew(true)
+      router.replace('/orders', { scroll: false })
+    }
+  }, [searchParams, router, mdUp])
 
   const { data, loading, refetch } = useOrders({
     status:  status  || undefined,
@@ -664,9 +228,17 @@ export default function OrdersPage() {
         title="Orders"
         subtitle={`${summary?.total ?? 0} orders · ${fmt(summary?.total_revenue ?? 0)} revenue`}
         actions={
-          <Button variant="gold" onClick={() => setShowNew(true)}>
-            + New Order
-          </Button>
+          <>
+            <Link
+              href="/orders/new"
+              className="md:hidden inline-flex items-center gap-2 rounded-xl border border-gold-dim/50 bg-gold/10 px-3.5 py-2 text-xs font-semibold text-gold-lt transition-all duration-150 hover:bg-gold/20 active:scale-[0.97]"
+            >
+              + New Order
+            </Link>
+            <Button variant="gold" className="hidden md:inline-flex" onClick={() => setShowNew(true)}>
+              + New Order
+            </Button>
+          </>
         }
       />
 
@@ -795,22 +367,25 @@ export default function OrdersPage() {
 
       {/* Mobile FAB — always visible above MobileNav, only on mobile */}
       {!showNew && !selected && (
-        <button
-          onClick={() => setShowNew(true)}
+        <Link
+          href="/orders/new"
           className="md:hidden fixed bottom-[72px] right-4 z-40 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gold/90 text-black text-sm font-bold shadow-lg shadow-gold/20 active:scale-95 transition-transform"
           style={{ paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}
         >
           <span className="text-base leading-none">+</span>
           <span>New Order</span>
-        </button>
+        </Link>
       )}
 
       {/* Drawers */}
       <AnimatePresence>
-        {showNew && (
+        {showNew && mdUp && (
           <NewOrderDrawer
             onClose={() => setShowNew(false)}
-            onCreated={() => { refetch(); setShowNew(false) }}
+            onCreated={() => {
+              refetch()
+              setShowNew(false)
+            }}
           />
         )}
         {selected && !showNew && (
@@ -821,8 +396,6 @@ export default function OrdersPage() {
           />
         )}
       </AnimatePresence>
-
-      <MobileNav />
     </>
   )
 }

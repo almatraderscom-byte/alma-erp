@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useOrders, useGenerateInvoice } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, GoldDivider } from '@/components/ui'
 import { fmt } from '@/lib/utils'
-import { MobileNav } from '@/components/layout/Sidebar'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 
@@ -215,7 +214,6 @@ export default function InvoicePage() {
         )}
       </AnimatePresence>
 
-      <MobileNav />
     </>
   )
 }

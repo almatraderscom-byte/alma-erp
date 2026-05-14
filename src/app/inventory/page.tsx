@@ -4,7 +4,6 @@ import { motion } from 'framer-motion'
 import { useStock } from '@/hooks/useERP'
 import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty } from '@/components/ui'
 import { fmt, fmtNum } from '@/lib/utils'
-import { MobileNav } from '@/components/layout/Sidebar'
 
 const STATUS_STYLE: Record<string, string> = {
   'IN STOCK':    'text-green-400 bg-green-400/10 border-green-400/25',
@@ -130,7 +129,6 @@ export default function InventoryPage() {
         </div>
 
       </div>
-      <MobileNav />
     </>
   )
 }
