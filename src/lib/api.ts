@@ -158,6 +158,9 @@ export interface GenerateInvoiceRes extends MutationOk {
   drive_url?: string
   file_url?: string
   file_name?: string
+  share_url?: string
+  /** True when invoice number already existed; `drive_url` may be a reused PDF link */
+  duplicate?: boolean
 }
 export interface NextInvoiceNumberRes {
   /** Normalized next invoice label (from GAS `next` or `invoice_number`) */
@@ -315,13 +318,15 @@ export const api = {
 
     /** Generate a PDF invoice → POST /api/invoice (GAS returns file_url + drive_url) */
     generateInvoice: async (id: string): Promise<GenerateInvoiceRes> => {
-      const raw = await apiPost<GenerateInvoiceRes>('/api/invoice', { id })
-      const url = (raw.drive_url || raw.file_url || '').trim()
+      const raw = await apiPost<GenerateInvoiceRes & { share_url?: string; duplicate?: boolean }>('/api/invoice', { id })
+      const url = (raw.drive_url || raw.file_url || raw.share_url || '').trim()
       return {
         ...raw,
         ok: raw.ok !== false,
         drive_url: url,
         file_url: raw.file_url || url,
+        share_url: raw.share_url || url,
+        duplicate: Boolean(raw.duplicate),
       }
     },
 

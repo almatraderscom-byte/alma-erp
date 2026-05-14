@@ -17,8 +17,9 @@
  *   • Reads order data directly from the 📦 ORDERS sheet (no invoice sheet needed)
  *   • Builds a fully branded HTML document in memory
  *   • Converts it to PDF using the Drive API
- *   • Saves to Drive: 06_Invoices / Year / Month / AL-INV-YYYY-NNNN.pdf
- *   • Also copies into the order's own Drive folder (Orders/Year/Month/OrderID/Invoice/)
+ *   • Saves PDF to Drive folder "Alma ERP Invoices" (auto-created) as Invoice-{ORDER_ID}.pdf
+ *   • Link sharing: anyone with the link can view (for WhatsApp / clients)
+ *   • Also copies into legacy 06_Invoices path and the order folder when Phase 3 paths exist
  *   • Writes the invoice number back to the ORDERS sheet for reference
  *   • Duplicate protection: checks for an existing invoice before generating
  *
@@ -104,6 +105,10 @@ const INV_CONFIG = {
     SKU:             33, // AG
     AUTO_FLAG:       43, // AQ — script writes invoice ref here
   },
+
+  // ── Dedicated shareable invoice archive (My Drive → auto-created) ────────
+  almaInvoicesFolderName:        'Alma ERP Invoices',
+  scriptPropAlmaInvoicesFolderId: 'ALMA_ERP_INVOICES_FOLDER_ID',
 
   // ── Sheet name ───────────────────────────────────────────────────────────
   sheet: '📦 ORDERS',
@@ -251,6 +256,71 @@ function validateOrderForInvoice_(order, orderIdStr) {
   return missing.length ? { ok: false, missing: missing.join(', ') } : { ok: true }
 }
 
+/** Public web view URL for a Drive file (PDF opens in browser, shareable). */
+function buildDriveViewShareUrl_(fileId) {
+  return 'https://drive.google.com/file/d/' + fileId + '/view?usp=sharing'
+}
+
+/** Safe segment for Invoice-ORDER_ID.pdf filename. */
+function sanitizeInvoicePdfBaseName_(orderId) {
+  const s = String(orderId || 'ORDER').replace(/[^a-zA-Z0-9\-_.]/g, '')
+  return (s || 'ORDER').substring(0, 64)
+}
+
+function getOrCreateAlmaErpInvoicesFolder_() {
+  const props = PropertiesService.getScriptProperties()
+  const key = INV_CONFIG.scriptPropAlmaInvoicesFolderId || 'ALMA_ERP_INVOICES_FOLDER_ID'
+  const existingId = props.getProperty(key)
+  if (existingId) {
+    try {
+      const f = DriveApp.getFolderById(existingId)
+      return f
+    } catch (e) {
+      invLog_('INVOICE_FOLDER', '', 'Cached Alma ERP Invoices folder invalid — recreating. ' + e.message, existingId)
+      props.deleteProperty(key)
+    }
+  }
+  const root = DriveApp.getRootFolder()
+  const name = INV_CONFIG.almaInvoicesFolderName || 'Alma ERP Invoices'
+  const it = root.getFoldersByName(name)
+  if (it.hasNext()) {
+    const folder = it.next()
+    props.setProperty(key, folder.getId())
+    invLog_('INVOICE_FOLDER', name, 'Found existing folder', folder.getId())
+    return folder
+  }
+  const created = root.createFolder(name)
+  props.setProperty(key, created.getId())
+  invLog_('INVOICE_FOLDER', name, 'Created folder in My Drive root', created.getId())
+  return created
+}
+
+/** Anyone with the link can view (required for WhatsApp / external share). */
+function applyAnyoneWithLinkView_(file) {
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)
+  } catch (e) {
+    invLog_('SHARE_WARN', file.getName(), e.message, file.getId())
+  }
+}
+
+/** If a PDF already exists for this order, return a fresh share URL (duplicate flow). */
+function findShareUrlForInvoicePdf_(orderId) {
+  try {
+    const folder = getOrCreateAlmaErpInvoicesFolder_()
+    const name = 'Invoice-' + sanitizeInvoicePdfBaseName_(orderId) + '.pdf'
+    const files = folder.getFilesByName(name)
+    if (files.hasNext()) {
+      const f = files.next()
+      applyAnyoneWithLinkView_(f)
+      return buildDriveViewShareUrl_(f.getId())
+    }
+  } catch (e) {
+    invLog_('INVOICE_LOOKUP', String(orderId), e.message, '')
+  }
+  return ''
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MASTER INVOICE GENERATOR
 // ═══════════════════════════════════════════════════════════════════════════
@@ -286,10 +356,16 @@ function generateInvoice(row, rowData) {
   }
 
   // ── Duplicate protection ─────────────────────────────────────────────────
-  const existing = existingInvoiceNumber_(ordSh, row);
+  const existing = existingInvoiceNumber_(ordSh, row)
   if (existing) {
-    invLog_('SKIP', orderId, `Invoice already exists: ${existing}`, `Row ${row}`);
-    return { invoiceNumber: existing, fileUrl: '', fileName: '' };
+    const reuseUrl = findShareUrlForInvoicePdf_(String(orderId))
+    invLog_('SKIP', orderId, 'Invoice already exists: ' + existing + ' | pdfUrl=' + (reuseUrl || 'none'), 'Row ' + row)
+    return {
+      invoiceNumber: existing,
+      fileUrl:       reuseUrl,
+      fileName:      'Invoice-' + sanitizeInvoicePdfBaseName_(String(orderId)) + '.pdf',
+      duplicate:     true,
+    }
   }
 
   // ── Extract order fields ─────────────────────────────────────────────────
@@ -314,7 +390,8 @@ function generateInvoice(row, rowData) {
     trackingId:   rowData[c.TRACKING_ID - 1]   || '',
     deliveryDate: rowData[c.ACTUAL_DELIVERY - 1]|| new Date(),
     notes:        rowData[c.NOTES - 1]         || '',
-  };
+    status:       String(rowData[c.STATUS - 1] || '').trim() || 'Pending',
+  }
 
   const check = validateOrderForInvoice_(order, String(orderId));
   if (!check.ok) {
@@ -348,14 +425,13 @@ function generateInvoice(row, rowData) {
   }
 
   // ── Save to Drive ─────────────────────────────────────────────────────────
-  const safeName  = sanitizeForFileName_(order.customer);
-  const fileName  = `${invoiceNumber}_${order.id}_${safeName}.pdf`;
+  const fileName = 'Invoice-' + sanitizeInvoicePdfBaseName_(String(order.id)) + '.pdf';
   pdfBlob.setName(fileName);
 
-  const fileUrl   = savePdfToDrive_(pdfBlob, fileName, order, issuedDate);
+  const fileUrl = savePdfToDrive_(pdfBlob, fileName, order, issuedDate);
   if (!fileUrl) {
     const detail =
-      'Could not save PDF to Google Drive. Check Phase3 DRIVE.INVOICES folder ID, Drive permissions, and AUTOMATION LOG (SAVE_ERROR_INVOICES / SAVE_FATAL).';
+      'Could not save PDF to Google Drive. Check script execution permissions, Drive quota, and 🤖 AUTOMATION LOG (SAVE_ERROR_ALMA / SAVE_FATAL).';
     invLog_('SAVE_ERROR', orderId, detail, invoiceNumber);
     const year = issuedDate.getFullYear().toString();
     const key  = INV_CONFIG.counterKey + year;
@@ -375,7 +451,7 @@ function generateInvoice(row, rowData) {
     `${order.customer} | ৳${order.sellPrice + order.shippingFee} | ${order.id}`,
     fileUrl);
 
-  return { invoiceNumber, fileUrl, fileName };
+  return { invoiceNumber, fileUrl, fileName, duplicate: false };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -398,211 +474,233 @@ function buildInvoiceHtml_(order, invoiceNumber, issuedDate) {
   const orderDate   = order.date instanceof Date
     ? formatDateStr_(order.date) : order.date || '\u2014';
   const issuedStr   = formatDateStr_(issuedDate);
+  const generatedAt = formatDateTimeStr_(issuedDate);
   const hasDiscount = order.discount > 0 || order.addDiscount > 0;
   const totalDiscount = order.discount + order.addDiscount;
+
+  const statusLabel = String(order.status || 'Pending').trim() || 'Pending';
+  const st = statusLabel.toLowerCase();
+  const badgeExtra =
+    /delivered|complete|paid/.test(st) ? 'badge-delivered' :
+      /cancel|refund/.test(st) ? 'badge-cancelled' : 'badge-pending';
 
   const metaParts = [];
   if (order.sku)      metaParts.push(order.sku);
   if (order.size)     metaParts.push('Size ' + order.size);
   if (order.category) metaParts.push(order.category);
-  const productMeta = metaParts.join('   /   ');
+  const productMeta = metaParts.join(' / ');
 
-  const BLK  = '#0D0D0D';
-  const GOLD = '#C9A84C';
-  const GLD2 = '#8B6914';
-  const WHT  = '#FFFFFF';
-  const GRY1 = '#F7F6F3';
-  const GRY2 = '#EBEBEB';
-  const GRY3 = '#888888';
-  const GRY4 = '#444444';
+  const BG   = '#060608';
+  const CARD = '#101018';
+  const GOLD = '#c9a84c';
+  const GOLD2 = '#8b7340';
+  const MUTED = '#9a968c';
+  const TEXT = '#f2f0ea';
+  const LINE = 'rgba(201, 168, 76, 0.22)';
 
   const css = `
-    @page { size: A4; margin: 0; }
+    @page { size: A4; margin: 12mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: Georgia, 'Times New Roman', serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Georgia, serif;
       font-size: 10pt;
-      color: ${BLK};
-      background-color: ${WHT};
-      width: 210mm;
+      color: ${TEXT};
+      background: ${BG};
+      line-height: 1.45;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
-    .hd { background-color: ${BLK}; padding: 32px 44px 28px 44px; }
-    .hd-inner { display: table; width: 100%; }
-    .hd-logo-cell { display: table-cell; vertical-align: middle; width: 55%; }
-    .hd-inv-cell { display: table-cell; vertical-align: bottom; text-align: right; }
-    .logo-img { height: 60px; width: auto; }
-    .brand-name-text { font-family: Georgia, serif; font-size: 22pt; font-weight: bold; color: ${GOLD}; letter-spacing: 0.05em; }
-    .brand-tagline { font-family: Georgia, serif; font-size: 7.5pt; color: #A08840; letter-spacing: 0.20em; text-transform: uppercase; margin-top: 5px; }
-    .inv-word { font-family: Georgia, serif; font-size: 8pt; font-weight: bold; color: ${GOLD}; letter-spacing: 0.30em; text-transform: uppercase; }
-    .inv-number { font-family: 'Courier New', Courier, monospace; font-size: 15pt; font-weight: bold; color: ${WHT}; letter-spacing: 0.04em; margin-top: 4px; }
-    .inv-date { font-family: Georgia, serif; font-size: 7.5pt; color: #888; margin-top: 4px; font-style: italic; }
-    .gold-bar { height: 2px; background-color: ${GOLD}; }
-    .contact-row { background-color: ${GRY1}; padding: 10px 44px; border-bottom: 1px solid ${GRY2}; }
-    .contact-inner { display: table; width: 100%; }
-    .contact-cell { display: table-cell; vertical-align: middle; font-size: 7.5pt; color: ${GRY4}; letter-spacing: 0.04em; }
-    .contact-label { font-size: 6.5pt; color: ${GLD2}; letter-spacing: 0.14em; text-transform: uppercase; font-weight: bold; display: block; margin-bottom: 1px; }
-    .body { padding: 32px 44px; }
-    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
-    .info-bill-cell { width: 52%; vertical-align: top; padding-right: 24px; }
-    .info-order-cell { width: 48%; vertical-align: top; }
-    .info-section-label { font-size: 6.5pt; font-weight: bold; color: ${GLD2}; letter-spacing: 0.22em; text-transform: uppercase; padding-bottom: 6px; border-bottom: 1px solid ${GOLD}; margin-bottom: 10px; display: block; }
-    .info-name { font-family: Georgia, serif; font-size: 13pt; font-weight: bold; color: ${BLK}; margin-top: 10px; margin-bottom: 8px; }
-    .info-row { display: table; width: 100%; margin-bottom: 4px; }
-    .info-key { display: table-cell; font-size: 7.5pt; color: ${GRY3}; width: 80px; vertical-align: top; padding-top: 1px; }
-    .info-val { display: table-cell; font-size: 8.5pt; color: ${BLK}; font-weight: bold; vertical-align: top; }
-    .info-val-mono { display: table-cell; font-family: 'Courier New', Courier, monospace; font-size: 8pt; color: ${BLK}; font-weight: bold; vertical-align: top; }
-    .items-label { font-size: 6.5pt; font-weight: bold; color: ${GLD2}; letter-spacing: 0.22em; text-transform: uppercase; display: block; padding-bottom: 6px; border-bottom: 1px solid ${GOLD}; margin-bottom: 0; }
-    .items-tbl { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-    .items-tbl thead tr { border-bottom: 1px solid ${GRY2}; }
-    .items-tbl thead th { font-size: 7pt; font-weight: bold; color: ${GRY3}; letter-spacing: 0.12em; text-transform: uppercase; padding: 10px 8px 8px 8px; text-align: left; }
-    .items-tbl thead th.r { text-align: right; }
-    .items-tbl tbody tr { border-bottom: 1px solid ${GRY2}; }
-    .items-tbl tbody td { padding: 14px 8px; font-size: 9pt; color: ${BLK}; vertical-align: top; }
-    .items-tbl tbody td.r { text-align: right; }
-    .prod-name { font-size: 10pt; font-weight: bold; color: ${BLK}; display: block; }
-    .prod-meta { font-size: 7.5pt; color: ${GRY3}; display: block; margin-top: 3px; letter-spacing: 0.06em; }
-    .totals-outer { display: table; width: 100%; margin-top: 4px; margin-bottom: 28px; }
-    .totals-spacer { display: table-cell; width: 55%; }
-    .totals-inner { display: table-cell; width: 45%; vertical-align: top; }
-    .tot-row { display: table; width: 100%; border-bottom: 1px solid ${GRY2}; }
-    .tot-lbl { display: table-cell; font-size: 8pt; color: ${GRY4}; padding: 7px 0; }
-    .tot-val { display: table-cell; font-size: 8.5pt; font-weight: bold; color: ${BLK}; text-align: right; padding: 7px 0; }
-    .tot-val-red { display: table-cell; font-size: 8.5pt; font-weight: bold; color: #B71C1C; text-align: right; padding: 7px 0; }
-    .tot-grand { background-color: ${BLK}; display: table; width: 100%; margin-top: 6px; padding: 14px 16px; }
-    .tot-grand-lbl { display: table-cell; font-size: 7.5pt; font-weight: bold; color: ${GOLD}; letter-spacing: 0.18em; text-transform: uppercase; vertical-align: middle; }
-    .tot-grand-val { display: table-cell; font-family: Georgia, serif; font-size: 18pt; font-weight: bold; color: ${WHT}; text-align: right; vertical-align: middle; }
-    .pay-strip { background-color: ${GRY1}; border-top: 1px solid ${GRY2}; border-bottom: 1px solid ${GRY2}; padding: 14px 16px; margin-bottom: 24px; display: table; width: 100%; }
-    .pay-cell { display: table-cell; vertical-align: middle; padding-right: 24px; }
-    .pay-cell-last { display: table-cell; vertical-align: middle; }
-    .pay-lbl { font-size: 6.5pt; color: ${GRY3}; letter-spacing: 0.14em; text-transform: uppercase; display: block; margin-bottom: 3px; }
-    .pay-val { font-family: Georgia, serif; font-size: 11pt; font-weight: bold; color: ${BLK}; }
-    .pay-paid { font-size: 8pt; font-weight: bold; color: ${GLD2}; letter-spacing: 0.06em; }
-    .pay-divider { display: table-cell; width: 1px; background-color: ${GRY2}; padding: 0 12px; vertical-align: middle; }
-    .notes-wrap { border-top: 1px solid ${GRY2}; padding-top: 12px; margin-bottom: 24px; }
-    .notes-label { font-size: 6.5pt; font-weight: bold; color: ${GLD2}; letter-spacing: 0.18em; text-transform: uppercase; display: block; margin-bottom: 5px; }
-    .notes-text { font-size: 8.5pt; color: ${GRY4}; font-style: italic; }
-    .footer-top { border-top: 1px solid ${GRY2}; padding: 20px 44px 0 44px; text-align: center; }
-    .footer-brand { font-family: Georgia, serif; font-size: 13pt; font-weight: bold; color: ${BLK}; letter-spacing: 0.12em; text-transform: uppercase; }
-    .footer-rule { height: 1px; background-color: ${GOLD}; width: 48px; margin: 12px auto; }
-    .footer-policy { font-size: 7.5pt; color: ${GRY3}; margin-bottom: 4px; }
-    .footer-bottom { background-color: ${BLK}; padding: 14px 44px; margin-top: 20px; text-align: center; }
-    .footer-tagline { font-family: Georgia, serif; font-size: 8pt; color: #888; font-style: italic; }
-    .footer-meta { font-size: 6.5pt; color: #555; margin-top: 5px; letter-spacing: 0.06em; }
+    .wrap { max-width: 190mm; margin: 0 auto; }
+    .rim { border: 1px solid ${LINE}; border-radius: 12px; overflow: hidden; background: ${CARD}; }
+    .hb {
+      display: table; width: 100%;
+      background: linear-gradient(135deg, #0b0b10 0%, #14101a 55%, #101018 100%);
+      padding: 22px 26px;
+    }
+    .hbl { display: table-cell; width: 58%; vertical-align: middle; }
+    .hbr { display: table-cell; vertical-align: bottom; text-align: right; }
+    .logo { max-height: 52px; width: auto; }
+    .bn { font-size: 20pt; font-weight: 700; color: ${GOLD}; letter-spacing: 0.06em; }
+    .tg { font-size: 7pt; color: ${GOLD2}; text-transform: uppercase; letter-spacing: 0.22em; margin-top: 6px; }
+    .lw { font-size: 7pt; color: ${MUTED}; text-transform: uppercase; letter-spacing: 0.25em; }
+    .inv { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16pt; font-weight: 700; color: ${TEXT}; margin-top: 4px; }
+    .dt { font-size: 8pt; color: ${MUTED}; margin-top: 6px; }
+    .gen { font-size: 7.5pt; color: ${GOLD2}; margin-top: 4px; }
+    .badge {
+      display: inline-block; margin-top: 10px; padding: 5px 12px; border-radius: 999px;
+      font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em;
+      border: 1px solid ${LINE};
+    }
+    .badge-pending { background: rgba(201, 168, 76, 0.12); color: ${GOLD}; }
+    .badge-delivered { background: rgba(34, 160, 107, 0.15); color: #7dffc4; }
+    .badge-cancelled { background: rgba(220, 80, 80, 0.14); color: #ffb4b4; }
+    .bar { height: 3px; background: linear-gradient(90deg, ${GOLD}, rgba(201, 168, 76, 0.25)); }
+    .cont { padding: 22px 26px 26px; }
+    .grid { display: table; width: 100%; margin-bottom: 22px; }
+    .gc { display: table-cell; vertical-align: top; width: 50%; padding-right: 14px; }
+    .gc2 { display: table-cell; vertical-align: top; width: 50%; padding-left: 14px; }
+    .lbl {
+      font-size: 6.5pt; font-weight: 700; color: ${GOLD2}; letter-spacing: 0.18em; text-transform: uppercase;
+      margin-bottom: 10px; display: block; border-bottom: 1px solid ${LINE}; padding-bottom: 6px;
+    }
+    .nm { font-size: 14pt; font-weight: 700; margin: 10px 0 10px; color: ${TEXT}; }
+    .row { display: table; width: 100%; margin-bottom: 5px; font-size: 8.5pt; }
+    .k { display: table-cell; width: 92px; color: ${MUTED}; vertical-align: top; }
+    .v { display: table-cell; font-weight: 600; color: ${TEXT}; vertical-align: top; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .tbl { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 14px; }
+    .tbl th {
+      font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.12em; color: ${MUTED};
+      text-align: left; padding: 10px 8px; border-bottom: 1px solid ${LINE};
+    }
+    .tbl th.r, .tbl td.r { text-align: right; }
+    .tbl td {
+      padding: 12px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 9.5pt; vertical-align: top; color: ${TEXT};
+    }
+    .pn { font-weight: 700; font-size: 10.5pt; }
+    .pm { font-size: 7.5pt; color: ${MUTED}; margin-top: 4px; display: block; }
+    .tot { display: table; width: 100%; }
+    .tsp { display: table-cell; width: 52%; }
+    .tin { display: table-cell; width: 48%; vertical-align: top; }
+    .tr { display: table; width: 100%; font-size: 8.5pt; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+    .tl { display: table-cell; padding: 7px 0; color: ${MUTED}; }
+    .tv { display: table-cell; padding: 7px 0; text-align: right; font-weight: 700; }
+    .tv-red { color: #ff8a8a; }
+    .grand {
+      margin-top: 10px; padding: 14px 16px;
+      background: linear-gradient(90deg, rgba(201, 168, 76, 0.18), rgba(201, 168, 76, 0.05));
+      border: 1px solid ${LINE}; border-radius: 10px; display: table; width: 100%;
+    }
+    .gl { display: table-cell; font-size: 7pt; font-weight: 800; color: ${GOLD}; letter-spacing: 0.18em; text-transform: uppercase; vertical-align: middle; }
+    .gv { display: table-cell; text-align: right; font-size: 17pt; font-weight: 800; color: ${TEXT}; vertical-align: middle; }
+    .pay {
+      margin-top: 18px; padding: 14px 16px; border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.25); display: table; width: 100%;
+    }
+    .pc { display: table-cell; vertical-align: top; width: 34%; padding-right: 10px; }
+    .ps { font-size: 6.5pt; color: ${MUTED}; text-transform: uppercase; letter-spacing: 0.14em; }
+    .pv { font-size: 10.5pt; font-weight: 700; margin-top: 4px; color: ${TEXT}; }
+    .foot {
+      padding: 18px 26px 22px; border-top: 1px solid ${LINE}; text-align: center; background: rgba(0, 0, 0, 0.35);
+    }
+    .fb { font-weight: 700; color: ${GOLD}; letter-spacing: 0.12em; text-transform: uppercase; font-size: 11pt; }
+    .fp { font-size: 7.5pt; color: ${MUTED}; margin-top: 6px; max-width: 140mm; margin-left: auto; margin-right: auto; }
+    .fm { font-size: 6.5pt; color: ${GOLD2}; margin-top: 10px; }
   `;
 
   const logoBlock = hasLogo
-    ? `<img src="${b.logoUrl}" class="logo-img" alt="${b.name}" />`
-    : `<span class="brand-name-text">${b.name}</span>`;
+    ? `<img src="${b.logoUrl}" class="logo" alt="${escapeHtml_(b.name)}" />`
+    : `<span class="bn">${escapeHtml_(b.name)}</span>`;
 
   const trackingRow = order.trackingId
-    ? `<div class="info-row"><span class="info-key">Tracking</span><span class="info-val-mono">${escapeHtml_(order.trackingId)}</span></div>`
+    ? `<div class="row"><span class="k">Tracking</span><span class="v mono">${escapeHtml_(String(order.trackingId))}</span></div>`
     : '';
 
   const discountRow = hasDiscount
-    ? `<div class="tot-row"><span class="tot-lbl">Discount</span><span class="tot-val-red">-\u09F3${fmtNum_(totalDiscount)}</span></div>`
+    ? `<div class="tr"><span class="tl">Discount</span><span class="tv tv-red">\u2212\u09F3${fmtNum_(totalDiscount)}</span></div>`
     : '';
 
   const shippingRow = order.shippingFee > 0
-    ? `<div class="tot-row"><span class="tot-lbl">Delivery Charge</span><span class="tot-val">\u09F3${fmtNum_(order.shippingFee)}</span></div>`
+    ? `<div class="tr"><span class="tl">Delivery</span><span class="tv mono">\u09F3${fmtNum_(order.shippingFee)}</span></div>`
     : '';
 
   const notesBlock = order.notes
-    ? `<div class="notes-wrap"><span class="notes-label">Notes</span><span class="notes-text">${escapeHtml_(order.notes.toString())}</span></div>`
+    ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid ${LINE}"><div class="lbl" style="border:0;padding:0;margin-bottom:6px">Notes</div><div style="font-size:8.5pt;color:${MUTED};font-style:italic">${escapeHtml_(order.notes.toString())}</div></div>`
     : '';
 
-  const discountTh = hasDiscount ? `<th class="r" style="width:16%;">Discount</th>` : '';
-  const discountTd = hasDiscount ? `<td class="r"><span style="color:#B71C1C;">-\u09F3${fmtNum_(totalDiscount)}</span></td>` : '';
+  const discountTh = hasDiscount ? `<th class="r" style="width:15%">Discount</th>` : '';
+  const discountTd = hasDiscount
+    ? `<td class="r"><span class="tv-red">\u2212\u09F3${fmtNum_(totalDiscount)}</span></td>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>${invoiceNumber}</title><style>${css}</style></head>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml_(invoiceNumber)}</title>
+  <style>${css}</style>
+</head>
 <body>
-<div class="hd">
-  <div class="hd-inner">
-    <div class="hd-logo-cell">${logoBlock}<div class="brand-tagline">${b.tagline}</div></div>
-    <div class="hd-inv-cell">
-      <div class="inv-word">Invoice</div>
-      <div class="inv-number">${invoiceNumber}</div>
-      <div class="inv-date">Issued ${issuedStr}</div>
-    </div>
-  </div>
-</div>
-<div class="gold-bar"></div>
-<div class="contact-row">
-  <div class="contact-inner">
-    <div class="contact-cell"><span class="contact-label">Phone</span>${b.phone}</div>
-    <div class="contact-cell"><span class="contact-label">Email</span>${b.email}</div>
-    <div class="contact-cell"><span class="contact-label">Facebook</span>${b.facebook}</div>
-  </div>
-</div>
-<div class="body">
-  <table class="info-table"><tr>
-    <td class="info-bill-cell">
-      <span class="info-section-label">Bill To</span>
-      <div class="info-name">${escapeHtml_(order.customer)}</div>
-      <div class="info-row"><span class="info-key">Phone</span><span class="info-val-mono">${escapeHtml_(order.phone.toString())}</span></div>
-      <div class="info-row"><span class="info-key">Address</span><span class="info-val">${escapeHtml_(order.address)}</span></div>
-    </td>
-    <td class="info-order-cell">
-      <span class="info-section-label">Order Details</span>
-      <div class="info-row" style="margin-top:10px;"><span class="info-key">Order ID</span><span class="info-val-mono">${order.id}</span></div>
-      <div class="info-row"><span class="info-key">Order Date</span><span class="info-val">${orderDate}</span></div>
-      <div class="info-row"><span class="info-key">Delivered</span><span class="info-val">${delivDate}</span></div>
-      <div class="info-row"><span class="info-key">Courier</span><span class="info-val">${escapeHtml_(order.courier) || '\u2014'}</span></div>
-      ${trackingRow}
-    </td>
-  </tr></table>
-  <span class="items-label">Items Ordered</span>
-  <table class="items-tbl">
-    <thead><tr>
-      <th style="width:44%;">Product</th>
-      <th class="r" style="width:16%;">Unit Price</th>
-      <th class="r" style="width:8%;">Qty</th>
-      <th class="r" style="width:16%;">Subtotal</th>
-      ${discountTh}
-    </tr></thead>
-    <tbody><tr>
-      <td>
-        <span class="prod-name">${escapeHtml_(order.product)}</span>
-        ${productMeta ? `<span class="prod-meta">${productMeta}</span>` : ''}
-      </td>
-      <td class="r">\u09F3${fmtNum_(order.unitPrice)}</td>
-      <td class="r">${order.qty}</td>
-      <td class="r">\u09F3${fmtNum_(order.unitPrice * order.qty)}</td>
-      ${discountTd}
-    </tr></tbody>
-  </table>
-  <div class="totals-outer">
-    <div class="totals-spacer"></div>
-    <div class="totals-inner">
-      <div class="tot-row"><span class="tot-lbl">Item Total</span><span class="tot-val">\u09F3${fmtNum_(order.unitPrice * order.qty)}</span></div>
-      ${discountRow}
-      ${shippingRow}
-      <div class="tot-grand">
-        <span class="tot-grand-lbl">Total Payable</span>
-        <span class="tot-grand-val">\u09F3${fmtNum_(grandTotal)}</span>
+<div class="wrap">
+  <div class="rim">
+    <div class="hb">
+      <div class="hbl">${logoBlock}<div class="tg">${escapeHtml_(b.tagline)}</div></div>
+      <div class="hbr">
+        <div class="lw">Invoice</div>
+        <div class="inv">${escapeHtml_(invoiceNumber)}</div>
+        <div class="dt">Issued ${escapeHtml_(issuedStr)}</div>
+        <div class="gen">Generated ${escapeHtml_(generatedAt)}</div>
+        <span class="badge ${badgeExtra}">${escapeHtml_(statusLabel)}</span>
       </div>
     </div>
+    <div class="bar"></div>
+    <div class="cont">
+      <div class="grid">
+        <div class="gc">
+          <span class="lbl">Bill to</span>
+          <div class="nm">${escapeHtml_(order.customer)}</div>
+          <div class="row"><span class="k">Phone</span><span class="v mono">${escapeHtml_(order.phone.toString())}</span></div>
+          <div class="row"><span class="k">Address</span><span class="v">${escapeHtml_(order.address)}</span></div>
+        </div>
+        <div class="gc2">
+          <span class="lbl">Order</span>
+          <div class="row" style="margin-top:10px"><span class="k">Order ID</span><span class="v mono">${escapeHtml_(String(order.id))}</span></div>
+          <div class="row"><span class="k">Order date</span><span class="v">${escapeHtml_(String(orderDate))}</span></div>
+          <div class="row"><span class="k">Delivered</span><span class="v">${escapeHtml_(String(delivDate))}</span></div>
+          <div class="row"><span class="k">Courier</span><span class="v">${escapeHtml_(order.courier) || '\u2014'}</span></div>
+          ${trackingRow}
+        </div>
+      </div>
+      <span class="lbl">Line items</span>
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:46%">Product</th>
+          <th class="r">Unit</th>
+          <th class="r">Qty</th>
+          <th class="r">Subtotal</th>
+          ${discountTh}
+        </tr></thead>
+        <tbody><tr>
+          <td>
+            <span class="pn">${escapeHtml_(order.product)}</span>
+            ${productMeta ? `<span class="pm">${escapeHtml_(productMeta)}</span>` : ''}
+          </td>
+          <td class="r mono">\u09F3${fmtNum_(order.unitPrice)}</td>
+          <td class="r mono">${order.qty}</td>
+          <td class="r mono">\u09F3${fmtNum_(order.unitPrice * order.qty)}</td>
+          ${discountTd}
+        </tr></tbody>
+      </table>
+      <div class="tot">
+        <div class="tsp"></div>
+        <div class="tin">
+          <div class="tr"><span class="tl">Item total</span><span class="tv mono">\u09F3${fmtNum_(order.unitPrice * order.qty)}</span></div>
+          ${discountRow}
+          ${shippingRow}
+          <div class="grand">
+            <span class="gl">Total payable</span>
+            <span class="gv mono">\u09F3${fmtNum_(grandTotal)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="pay">
+        <div class="pc"><div class="ps">Payment method</div><div class="pv">${escapeHtml_(order.payment)}</div></div>
+        <div class="pc"><div class="ps">Order status</div><div class="pv">${escapeHtml_(statusLabel)}</div></div>
+        <div class="pc"><div class="ps">Amount received</div><div class="pv mono">\u09F3${fmtNum_(grandTotal)}</div></div>
+      </div>
+      ${notesBlock}
+    </div>
+    <div class="foot">
+      <div class="fb">${escapeHtml_(b.name)}</div>
+      <div class="fp">${escapeHtml_(f.policy)}</div>
+      <div class="fm">${escapeHtml_(f.thankYou)} · ${escapeHtml_(f.note)} · ${escapeHtml_(invoiceNumber)} · ${escapeHtml_(generatedAt)}</div>
+    </div>
   </div>
-  <div class="pay-strip">
-    <div class="pay-cell"><span class="pay-lbl">Payment Method</span><span class="pay-val">${escapeHtml_(order.payment)}</span></div>
-    <div class="pay-divider">&nbsp;</div>
-    <div class="pay-cell"><span class="pay-lbl">Status</span><span class="pay-paid">PAID</span></div>
-    <div class="pay-divider">&nbsp;</div>
-    <div class="pay-cell-last"><span class="pay-lbl">Amount Received</span><span class="pay-val">\u09F3${fmtNum_(grandTotal)}</span></div>
-  </div>
-  ${notesBlock}
 </div>
-<div class="footer-top">
-  <div class="footer-brand">${b.name}</div>
-  <div class="footer-rule"></div>
-  <div class="footer-policy">${f.policy}</div>
-</div>
-<div class="footer-bottom">
-  <div class="footer-tagline">${f.thankYou}</div>
-  <div class="footer-meta">${f.note} &middot; ${invoiceNumber} &middot; ${issuedStr}</div>
-</div>
-</body></html>`;
+</body>
+</html>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -662,11 +760,8 @@ function htmlToPdfBlob_(html, invoiceNumber) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Saves the PDF blob to two Drive locations:
- *   1. 06_Invoices / Year / Month / filename.pdf  (primary archive)
- *   2. Orders / Year / Month / OrderID / Invoice / filename.pdf  (order copy)
- *
- * Returns the primary file URL, or null on failure.
+ * Saves the PDF to "Alma ERP Invoices" (auto-created), applies link sharing,
+ * and returns a public /view URL. Falls back to legacy invoice + order paths, then Drive root.
  *
  * @param {GoogleAppsScript.Base.Blob} pdfBlob
  * @param {string} fileName
@@ -678,63 +773,78 @@ function savePdfToDrive_(pdfBlob, fileName, order, issuedDate) {
   const year  = issuedDate.getFullYear().toString();
   const month = Utilities.formatDate(issuedDate, Session.getScriptTimeZone(), 'MMM');
 
-  let primaryUrl = null;
+  let shareUrl = null;
 
-  // ── 1. Primary: 06_Invoices / Year / Month ────────────────────────────────
+  // ── 1. Primary: Alma ERP Invoices (shareable web view URL) ───────────────
   try {
-    const invRootFolder = getFolder_('INVOICES');
-    if (invRootFolder) {
-      const monthFolder = navigatePath_(invRootFolder, [year, month]);
-      if (monthFolder) {
-        pdfBlob.setName(fileName);
-        const saved = monthFolder.createFile(pdfBlob);
-        primaryUrl  = saved.getUrl();
+    const folder = getOrCreateAlmaErpInvoicesFolder_();
+    const blob = pdfBlob.copyBlob();
+    blob.setName(fileName);
+    const saved = folder.createFile(blob);
+    applyAnyoneWithLinkView_(saved);
+    shareUrl = buildDriveViewShareUrl_(saved.getId());
+    if (typeof indexDocument_ === 'function') {
+      indexDocument_('INVOICE', order.id, shareUrl, order.customer, 'Alma ERP Invoices/' + fileName);
+    }
+    invLog_('SAVED_ALMA_INVOICES', order.id, 'Alma ERP Invoices', shareUrl);
+  } catch (e) {
+    invLog_('SAVE_ERROR_ALMA', order.id, e.message, fileName);
+  }
 
-        // Index in Drive Index sheet
-        if (typeof indexDocument_ === 'function') {
-          indexDocument_('INVOICE', order.id, primaryUrl, order.customer,
-            `Invoices/${year}/${month}/${fileName}`);
+  // ── 2. Legacy archive: 06_Invoices / Year / Month (internal, optional) ─────
+  if (typeof getFolder_ === 'function') {
+    try {
+      const invRootFolder = getFolder_('INVOICES');
+      if (invRootFolder) {
+        const monthFolder = navigatePath_(invRootFolder, [year, month]);
+        if (monthFolder) {
+          const b = pdfBlob.copyBlob();
+          b.setName(fileName);
+          monthFolder.createFile(b);
+          invLog_('SAVED_INVOICES_LEGACY', order.id, 'Invoices/' + year + '/' + month + '/', '');
         }
-        invLog_('SAVED_INVOICES', order.id, `Saved to Invoices/${year}/${month}/`, primaryUrl);
       }
+    } catch (e2) {
+      invLog_('SAVE_ERROR_INVOICES', order.id, e2.message, fileName);
     }
-  } catch (e) {
-    invLog_('SAVE_ERROR_INVOICES', order.id, e.message, fileName);
   }
 
-  // ── 2. Copy: Orders / Year / Month / OrderID / Invoice ────────────────────
-  try {
-    const ordersRootFolder = getFolder_('ORDERS');
-    if (ordersRootFolder) {
-      const orderDate = order.date instanceof Date ? order.date : issuedDate;
-      const oYear  = orderDate.getFullYear().toString();
-      const oMonth = Utilities.formatDate(orderDate, Session.getScriptTimeZone(), 'MMM');
-      const orderInvFolder = navigatePath_(ordersRootFolder, [oYear, oMonth, order.id, 'Invoice']);
-      if (orderInvFolder) {
-        pdfBlob.setName(fileName);
-        orderInvFolder.createFile(pdfBlob);
-        invLog_('SAVED_ORDER_COPY', order.id, `Copy saved to Orders/${oYear}/${oMonth}/${order.id}/Invoice/`, '');
+  // ── 3. Copy: Orders / Year / Month / OrderID / Invoice ───────────────────
+  if (typeof getFolder_ === 'function') {
+    try {
+      const ordersRootFolder = getFolder_('ORDERS');
+      if (ordersRootFolder) {
+        const orderDate = order.date instanceof Date ? order.date : issuedDate;
+        const oYear  = orderDate.getFullYear().toString();
+        const oMonth = Utilities.formatDate(orderDate, Session.getScriptTimeZone(), 'MMM');
+        const orderInvFolder = navigatePath_(ordersRootFolder, [oYear, oMonth, order.id, 'Invoice']);
+        if (orderInvFolder) {
+          const b2 = pdfBlob.copyBlob();
+          b2.setName(fileName);
+          orderInvFolder.createFile(b2);
+          invLog_('SAVED_ORDER_COPY', order.id, 'Orders/' + oYear + '/' + oMonth + '/' + order.id + '/Invoice/', '');
+        }
       }
+    } catch (e3) {
+      invLog_('SAVE_ERROR_ORDER_COPY', order.id, e3.message, '');
     }
-  } catch (e) {
-    invLog_('SAVE_ERROR_ORDER_COPY', order.id, e.message, '');
-    // Non-fatal — primary save succeeded
   }
 
-  // ── Last resort: save to My Drive root so invoicing never returns null URL silently ──
-  if (!primaryUrl) {
+  // ── Last resort: My Drive root + link sharing ─────────────────────────────
+  if (!shareUrl) {
     try {
       const emergency = pdfBlob.copyBlob();
       emergency.setName(fileName);
       const f = DriveApp.createFile(emergency);
-      primaryUrl = f.getUrl();
-      invLog_('SAVED_DRIVEAPP_ROOT', order.id, 'Fallback: saved PDF to My Drive root', primaryUrl);
+      applyAnyoneWithLinkView_(f);
+      shareUrl = buildDriveViewShareUrl_(f.getId());
+      invLog_('SAVED_DRIVEAPP_ROOT', order.id, 'Fallback: My Drive root', shareUrl);
     } catch (eRoot) {
       invLog_('SAVE_FATAL', order.id, eRoot.message, fileName);
     }
   }
 
-  return primaryUrl;
+  return shareUrl;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -785,10 +895,13 @@ function generateInvoiceManualPhase4() {
 
   if (result.error) {
     ui.alert('❌ ' + result.error);
-  } else if (result.fileUrl === '') {
-    ui.alert(`ℹ️ Invoice already exists for ${target}.\nInvoice #: ${result.invoiceNumber}`);
+  } else if (result.duplicate) {
+    var dupMsg = 'ℹ️ Invoice already exists for ' + target + '.\n\nInvoice #: ' + result.invoiceNumber;
+    if (result.fileUrl) dupMsg += '\n\nPDF (shareable):\n' + result.fileUrl;
+    else dupMsg += '\n\n(No matching PDF in Alma ERP Invoices folder — check Drive or regenerate after fixing.)';
+    ui.alert(dupMsg);
   } else {
-    ui.alert(`✅ Invoice generated!\n\nInvoice #: ${result.invoiceNumber}\nFile: ${result.fileName}\n\nSaved to Google Drive.`);
+    ui.alert('✅ Invoice generated!\n\nInvoice #: ' + result.invoiceNumber + '\nFile: ' + result.fileName + '\n\nSaved to folder "Alma ERP Invoices".\n\n' + (result.fileUrl || ''));
   }
 }
 
@@ -820,7 +933,7 @@ function backfillInvoices() {
     const result = generateInvoice(i + 1, data[i]);
     if (result.error) {
       errors++;
-    } else if (result.fileUrl === '') {
+    } else if (result.duplicate || !result.fileUrl) {
       skipped++;
     } else {
       generated++;
@@ -854,6 +967,11 @@ function fmtNum_(n) {
 function formatDateStr_(date) {
   if (!(date instanceof Date)) return date ? date.toString() : '—';
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'dd MMM yyyy');
+}
+
+function formatDateTimeStr_(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return String(date || '\u2014');
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "dd MMM yyyy '\u00b7' HH:mm zzz");
 }
 
 function sanitizeForFileName_(str) {

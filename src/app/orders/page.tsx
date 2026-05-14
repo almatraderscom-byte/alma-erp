@@ -22,6 +22,11 @@ const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confir
 function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose: () => void; onStatusChange: () => void }) {
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
   const [invLoading, setInvLoading] = useState(false)
+  const [shareUrl, setShareUrl] = useState('')
+
+  useLayoutEffect(() => {
+    setShareUrl('')
+  }, [order.id])
 
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
@@ -38,12 +43,17 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     try {
       const r = await api.mutations.generateInvoice(order.id)
       if (r?.ok) {
-        const url = (r.drive_url || r.file_url || '').trim()
-        toast.success(
-          url
-            ? `Invoice ${r.invoice_number} saved to Google Drive`
-            : `Invoice ${r.invoice_number} recorded (no Drive URL returned)`,
-        )
+        const url = (r.drive_url || r.file_url || r.share_url || '').trim()
+        setShareUrl(url)
+        if (r.duplicate) {
+          toast.success(
+            url ? `Invoice ${r.invoice_number} already on file — link ready` : `Invoice ${r.invoice_number} already exists`,
+          )
+        } else {
+          toast.success(
+            url ? `Invoice ${r.invoice_number} saved — opening PDF` : `Invoice ${r.invoice_number} recorded (no Drive URL returned)`,
+          )
+        }
         if (url) window.open(url, '_blank', 'noopener,noreferrer')
         onStatusChange()
       } else {
@@ -55,6 +65,17 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
       toast.error(msg || 'Invoice generation failed')
     } finally {
       setInvLoading(false)
+    }
+  }
+
+  async function copyInvoiceLink() {
+    if (!shareUrl) return
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      toast.success('Invoice link copied')
+    } catch (e) {
+      console.error('[CopyInvoiceLink]', e)
+      toast.error('Could not copy — copy the URL from the address bar after opening the PDF')
     }
   }
 
@@ -187,14 +208,34 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
             </Button>
           )}
-          <div className="flex gap-2">
-            <Button variant="ghost" className="flex-1 justify-center" onClick={handleInvoice} disabled={invLoading || !!order.invoice_num}>
-              {invLoading ? 'Generating…' : order.invoice_num ? 'Invoiced ✓' : 'Generate Invoice'}
-            </Button>
-            <Button variant="ghost" className="flex-1 justify-center"
-              onClick={() => window.open(`https://wa.me/880${order.phone.slice(1)}?text=Hi%20${encodeURIComponent(order.customer)}%2C%20your%20order%20${order.id}%20update%3A%20`, '_blank')}>
-              WhatsApp
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <Button variant="ghost" className="flex-1 justify-center" onClick={handleInvoice} disabled={invLoading || !!order.invoice_num}>
+                {invLoading ? 'Generating…' : order.invoice_num ? 'Invoiced ✓' : 'Generate Invoice'}
+              </Button>
+              <Button variant="ghost" className="flex-1 justify-center"
+                onClick={() => window.open(`https://wa.me/880${order.phone.slice(1)}?text=Hi%20${encodeURIComponent(order.customer)}%2C%20your%20order%20${order.id}%20update%3A%20`, '_blank')}>
+                WhatsApp
+              </Button>
+            </div>
+            {shareUrl && (
+              <div className="flex flex-col gap-2 rounded-xl border border-gold-dim/25 bg-gold/[0.04] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Invoice link</p>
+                <Button variant="gold" className="w-full justify-center text-xs" type="button" onClick={copyInvoiceLink}>
+                  Copy invoice link
+                </Button>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
+                    onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}>
+                    Open PDF
+                  </Button>
+                  <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
+                    onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Invoice PDF (${order.id}): ${shareUrl}`)}`, '_blank', 'noopener,noreferrer')}>
+                    Share PDF
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </motion.div>

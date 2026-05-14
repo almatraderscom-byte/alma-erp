@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useOrders } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, GoldDivider } from '@/components/ui'
@@ -8,7 +8,29 @@ import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 
-function InvoicePreview({ order, onClose, onGenerate, loading }: { order: Order; onClose: () => void; onGenerate: () => void; loading: boolean }) {
+function InvoicePreview({
+  order,
+  shareUrl,
+  onClose,
+  onGenerate,
+  loading,
+}: {
+  order: Order
+  shareUrl: string
+  onClose: () => void
+  onGenerate: () => void
+  loading: boolean
+}) {
+  async function copyLink() {
+    if (!shareUrl) return
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      toast.success('Invoice link copied')
+    } catch (e) {
+      console.error('[CopyInvoiceLink]', e)
+      toast.error('Copy failed — open the PDF and copy from the browser bar')
+    }
+  }
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
@@ -88,10 +110,27 @@ function InvoicePreview({ order, onClose, onGenerate, loading }: { order: Order;
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-border flex gap-2">
+        <div className="px-6 py-4 border-t border-border flex flex-col gap-2">
+          {shareUrl && (
+            <div className="flex flex-col gap-2 mb-1">
+              <Button variant="gold" className="w-full justify-center min-h-[44px]" type="button" onClick={copyLink}>
+                Copy invoice link
+              </Button>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
+                  onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}>
+                  Open PDF
+                </Button>
+                <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
+                  onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Invoice PDF (${order.id}): ${shareUrl}`)}`, '_blank', 'noopener,noreferrer')}>
+                  Share WhatsApp
+                </Button>
+              </div>
+            </div>
+          )}
           {order.invoice_num
             ? <div className="flex-1 flex items-center gap-2 text-sm text-green-400 font-bold"><span>✓</span> Invoice generated: {order.invoice_num}</div>
-            : <Button variant="gold" className="flex-1 justify-center" onClick={onGenerate} disabled={loading}>
+            : <Button variant="gold" className="flex-1 justify-center min-h-[44px]" onClick={onGenerate} disabled={loading}>
                 {loading ? 'Generating PDF…' : 'Generate & Save PDF'}
               </Button>
           }
@@ -106,7 +145,12 @@ export default function InvoicePage() {
   const [search, setSearch] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
   const [genLoading, setGenLoading] = useState(false)
+  const [shareUrl, setShareUrl] = useState('')
   const { data, loading, refetch } = useOrders({ status: 'Delivered' })
+
+  useEffect(() => {
+    setShareUrl('')
+  }, [preview?.id])
 
   const orders = (data?.orders ?? []).filter(o =>
     !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
@@ -121,10 +165,17 @@ export default function InvoicePage() {
     try {
       const r = await api.mutations.generateInvoice(preview.id)
       if (r?.ok) {
-        const url = (r.drive_url || r.file_url || '').trim()
-        toast.success(
-          url ? `Invoice ${r.invoice_number} saved to Google Drive` : `Invoice ${r.invoice_number} recorded`,
-        )
+        const url = (r.drive_url || r.file_url || r.share_url || '').trim()
+        setShareUrl(url)
+        if (r.duplicate) {
+          toast.success(
+            url ? `Invoice ${r.invoice_number} already on file — link ready` : `Invoice ${r.invoice_number} exists`,
+          )
+        } else {
+          toast.success(
+            url ? `Invoice ${r.invoice_number} saved — opening PDF` : `Invoice ${r.invoice_number} recorded`,
+          )
+        }
         if (url) window.open(url, '_blank', 'noopener,noreferrer')
         refetch()
       } else {
@@ -228,7 +279,13 @@ export default function InvoicePage() {
 
       <AnimatePresence>
         {preview && (
-          <InvoicePreview order={preview} onClose={() => setPreview(null)} onGenerate={handleGenerate} loading={genLoading} />
+          <InvoicePreview
+            order={preview}
+            shareUrl={shareUrl}
+            onClose={() => setPreview(null)}
+            onGenerate={handleGenerate}
+            loading={genLoading}
+          />
         )}
       </AnimatePresence>
 

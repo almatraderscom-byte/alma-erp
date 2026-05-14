@@ -456,7 +456,9 @@ function triggerInvoice_(body) {
     invoice_number: result.invoiceNumber,
     file_url: result.fileUrl || '',
     drive_url: result.fileUrl || '',
+    share_url: result.fileUrl || '',
     file_name: result.fileName || '',
+    duplicate: !!result.duplicate,
   };
 }
 
