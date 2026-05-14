@@ -267,17 +267,30 @@ function sanitizeInvoicePdfBaseName_(orderId) {
   return (s || 'ORDER').substring(0, 64)
 }
 
+/** One execution: reuse resolved Alma invoice folder (avoids repeat Drive + Properties lookups). */
+var __almaInvoiceFolderInvocationMemo_ = null
+
 function getOrCreateAlmaErpInvoicesFolder_() {
+  if (__almaInvoiceFolderInvocationMemo_) {
+    try {
+      __almaInvoiceFolderInvocationMemo_.getId()
+      return __almaInvoiceFolderInvocationMemo_
+    } catch (ignore) {
+      __almaInvoiceFolderInvocationMemo_ = null
+    }
+  }
   const props = PropertiesService.getScriptProperties()
   const key = INV_CONFIG.scriptPropAlmaInvoicesFolderId || 'ALMA_ERP_INVOICES_FOLDER_ID'
   const existingId = props.getProperty(key)
   if (existingId) {
     try {
       const f = DriveApp.getFolderById(existingId)
+      __almaInvoiceFolderInvocationMemo_ = f
       return f
     } catch (e) {
       invLog_('INVOICE_FOLDER', '', 'Cached Alma ERP Invoices folder invalid — recreating. ' + e.message, existingId)
       props.deleteProperty(key)
+      __almaInvoiceFolderInvocationMemo_ = null
     }
   }
   const root = DriveApp.getRootFolder()
@@ -287,11 +300,13 @@ function getOrCreateAlmaErpInvoicesFolder_() {
     const folder = it.next()
     props.setProperty(key, folder.getId())
     invLog_('INVOICE_FOLDER', name, 'Found existing folder', folder.getId())
+    __almaInvoiceFolderInvocationMemo_ = folder
     return folder
   }
   const created = root.createFolder(name)
   props.setProperty(key, created.getId())
   invLog_('INVOICE_FOLDER', name, 'Created folder in My Drive root', created.getId())
+  __almaInvoiceFolderInvocationMemo_ = created
   return created
 }
 
@@ -339,6 +354,7 @@ function findShareUrlForInvoicePdf_(orderId) {
  * @returns {{invoiceNumber:string, fileUrl:string, fileName:string}|{error:string}}
  */
 function generateInvoice(row, rowData) {
+  const tAll = Date.now();
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const ordSh = ss.getSheetByName(INV_CONFIG.sheet);
   if (!ordSh) {
@@ -360,6 +376,7 @@ function generateInvoice(row, rowData) {
   if (existing) {
     const reuseUrl = findShareUrlForInvoicePdf_(String(orderId))
     invLog_('SKIP', orderId, 'Invoice already exists: ' + existing + ' | pdfUrl=' + (reuseUrl || 'none'), 'Row ' + row)
+    invLog_('TIMING', orderId, 'duplicate_path total_ms=' + (Date.now() - tAll), 'pdf_lookup')
     return {
       invoiceNumber: existing,
       fileUrl:       reuseUrl,
@@ -404,12 +421,17 @@ function generateInvoice(row, rowData) {
   const issuedDate    = new Date();
 
   // ── Build HTML ────────────────────────────────────────────────────────────
+  const tHtml0 = Date.now();
   const html = buildInvoiceHtml_(order, invoiceNumber, issuedDate);
+  const htmlMs = Date.now() - tHtml0;
 
   // ── Convert to PDF blob ───────────────────────────────────────────────────
   let pdfBlob;
+  let pdfMs = 0;
   try {
+    const tPdf0 = Date.now();
     pdfBlob = htmlToPdfBlob_(html, invoiceNumber);
+    pdfMs = Date.now() - tPdf0;
   } catch (e) {
     invLog_('PDF_ERROR', orderId, e.message, invoiceNumber);
     const year = issuedDate.getFullYear().toString();
@@ -428,7 +450,9 @@ function generateInvoice(row, rowData) {
   const fileName = 'Invoice-' + sanitizeInvoicePdfBaseName_(String(order.id)) + '.pdf';
   pdfBlob.setName(fileName);
 
+  const tSave0 = Date.now();
   const fileUrl = savePdfToDrive_(pdfBlob, fileName, order, issuedDate);
+  const driveMs = Date.now() - tSave0;
   if (!fileUrl) {
     const detail =
       'Could not save PDF to Google Drive. Check script execution permissions, Drive quota, and 🤖 AUTOMATION LOG (SAVE_ERROR_ALMA / SAVE_FATAL).';
@@ -450,6 +474,9 @@ function generateInvoice(row, rowData) {
   invLog_('GENERATED', invoiceNumber,
     `${order.customer} | ৳${order.sellPrice + order.shippingFee} | ${order.id}`,
     fileUrl);
+  invLog_('TIMING', orderId,
+    'total_ms=' + (Date.now() - tAll) + ' html_ms=' + htmlMs + ' pdf_ms=' + pdfMs + ' drive_ms=' + driveMs,
+    invoiceNumber);
 
   return { invoiceNumber, fileUrl, fileName, duplicate: false };
 }
@@ -723,14 +750,22 @@ function htmlToPdfBlob_(html, invoiceNumber) {
   // Prefer Drive Advanced Service (better CSS fidelity) when enabled in the Apps Script project.
   if (typeof Drive !== 'undefined' && Drive.Files && typeof Drive.Files.insert === 'function') {
     try {
+      const tDrv0 = Date.now();
       const blob = Utilities.newBlob(html, MimeType.HTML, tempFileName + '.html');
       const file = Drive.Files.insert(
         { title: tempFileName, mimeType: MimeType.GOOGLE_DOCS },
         blob,
         { convert: true }
       );
-      Utilities.sleep(2500);
-      const pdfBlob = DriveApp.getFileById(file.id).getAs(MimeType.PDF).copyBlob();
+      Utilities.sleep(1200);
+      var pdfBlob;
+      try {
+        pdfBlob = DriveApp.getFileById(file.id).getAs(MimeType.PDF).copyBlob();
+      } catch (convWait) {
+        Utilities.sleep(900);
+        pdfBlob = DriveApp.getFileById(file.id).getAs(MimeType.PDF).copyBlob();
+      }
+      invLog_('PDF_TIMING', invoiceNumber, 'drive_api_ms=' + (Date.now() - tDrv0), 'insert+export+sleep');
       try {
         Drive.Files.remove(file.id);
       } catch (removeErr) {
@@ -746,7 +781,9 @@ function htmlToPdfBlob_(html, invoiceNumber) {
 
   // Fallback: no Advanced Service required; works with default Apps Script + Drive.
   try {
+    const tHs0 = Date.now();
     const pdfBlob = HtmlService.createHtmlOutput(html).getAs(MimeType.PDF);
+    invLog_('PDF_TIMING', invoiceNumber, 'htmlservice_ms=' + (Date.now() - tHs0), 'fallback');
     invLog_('PDF_HTMLSERVICE', invoiceNumber, 'PDF generated via HtmlService fallback', '');
     return pdfBlob;
   } catch (e2) {
@@ -939,7 +976,7 @@ function backfillInvoices() {
       generated++;
     }
 
-    Utilities.sleep(1500); // Drive API rate limit
+    Utilities.sleep(700); // batch spacing (web invoice path is single-request)
   }
 
   ui.alert(`✅ Backfill complete.\n\nGenerated: ${generated}\nAlready had invoice: ${skipped}\nErrors: ${errors}\n\nCheck 🤖 AUTOMATION LOG for details.`);
@@ -991,10 +1028,17 @@ function escapeHtml_(str) {
 
 /**
  * Invoice-specific logger. Writes to 🤖 AUTOMATION LOG.
+ * Reuses spreadsheet handle for one invocation (fewer SpreadsheetApp lookups).
  */
+var __invLogSpreadsheetMemo_ = null
+
 function invLog_(eventType, reference, message, detail) {
   try {
-    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = __invLogSpreadsheetMemo_
+    if (!ss) {
+      ss = SpreadsheetApp.getActiveSpreadsheet()
+      __invLogSpreadsheetMemo_ = ss
+    }
     const logSh = ss.getSheetByName('🤖 AUTOMATION LOG');
     if (!logSh) return;
 

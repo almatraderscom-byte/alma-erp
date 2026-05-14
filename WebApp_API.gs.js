@@ -433,6 +433,7 @@ function addExpense_(body) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function triggerInvoice_(body) {
+  var t0 = Date.now();
   Logger.log('triggerInvoice_ start id=' + (body && body.id));
   if (!body.id) return { error: 'id required' };
   if (typeof generateInvoice !== 'function')
@@ -440,17 +441,18 @@ function triggerInvoice_(body) {
   var found = findOrderRow_(body.id);
   if (!found) return { error: 'Order not found: ' + body.id };
   var result = generateInvoice(found.rowIndex, found.data);
-  Logger.log('triggerInvoice_ raw result keys=' + (result ? Object.keys(result).join(',') : 'null'));
+  Logger.log('triggerInvoice_ raw result keys=' + (result ? Object.keys(result).join(',') : 'null') + ' elapsed_ms=' + (Date.now() - t0));
   if (!result) {
     return { error: 'Invoice generation returned no result — check Apps Script Executions and 🤖 AUTOMATION LOG.' };
   }
   if (result.error) {
-    Logger.log('triggerInvoice_ error=' + result.error);
+    Logger.log('triggerInvoice_ error=' + result.error + ' elapsed_ms=' + (Date.now() - t0));
     return { error: result.error };
   }
   if (!result.invoiceNumber) {
     return { error: 'Invoice generation returned no invoice_number' };
   }
+  Logger.log('triggerInvoice_ ok invoice_number=' + result.invoiceNumber + ' elapsed_ms=' + (Date.now() - t0));
   return {
     ok: true,
     invoice_number: result.invoiceNumber,

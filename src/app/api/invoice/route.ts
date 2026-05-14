@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { serverGet, serverPost, INVOICE_SERVER_TIMEOUT_MS } from '@/lib/server-api'
+
+/** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
+export const maxDuration = 120
 
 export async function GET() {
   try {
@@ -15,6 +18,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   let raw: unknown
+  const wallStart = Date.now()
   try {
     raw = await req.json()
     const body = raw as Record<string, unknown>
@@ -23,13 +27,23 @@ export async function POST(req: NextRequest) {
       console.warn('[POST /api/invoice] missing id', JSON.stringify(body))
       return NextResponse.json({ error: 'Missing required field: id', ok: false }, { status: 400 })
     }
-    console.log('[POST /api/invoice] generate_invoice id=', id)
-    const result = await serverPost<Record<string, unknown>>('generate_invoice', { id })
-    console.log('[POST /api/invoice] GAS ok=', result?.ok, 'invoice_number=', result?.invoice_number)
+    const t0 = Date.now()
+    console.log('[POST /api/invoice] generate_invoice id=', id, 'timeoutMs=', INVOICE_SERVER_TIMEOUT_MS)
+    const result = await serverPost<Record<string, unknown>>('generate_invoice', { id }, {
+      timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
+    })
+    console.log(
+      '[POST /api/invoice] GAS ok=',
+      result?.ok,
+      'invoice_number=',
+      result?.invoice_number,
+      'wall_ms=',
+      Date.now() - t0,
+    )
     return NextResponse.json(result)
   } catch (e) {
     const msg = (e as Error).message
-    console.error('[POST /api/invoice]', msg, '| body=', JSON.stringify(raw))
+    console.error('[POST /api/invoice]', msg, 'wall_ms=', Date.now() - wallStart, '| body=', JSON.stringify(raw))
     return NextResponse.json({ error: msg, ok: false }, { status: 502 })
   }
 }

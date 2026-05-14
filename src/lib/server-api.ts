@@ -8,7 +8,12 @@
 
 const BASE    = process.env.NEXT_PUBLIC_API_URL ?? ''
 const SECRET  = process.env.API_SECRET ?? 'alma-dev-secret'
-const TIMEOUT = 20_000    // GAS can be slow on cold starts
+/** Default for most GAS routes (cold start + small payload). */
+const DEFAULT_TIMEOUT_MS = 25_000
+/** Invoice: PDF + Drive can take 20–40s+; keep headroom above Vercel/server limits. */
+export const INVOICE_SERVER_TIMEOUT_MS = 90_000
+
+export type ServerFetchOptions = { timeoutMs?: number }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
 export async function serverGet<T>(
@@ -21,8 +26,9 @@ export async function serverGet<T>(
   url.searchParams.set('route', route)
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') url.searchParams.set(k, v) })
 
+  const timeoutMs = DEFAULT_TIMEOUT_MS
   const ctrl  = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
 
   try {
     const res  = await fetch(url.toString(), {
@@ -37,7 +43,7 @@ export async function serverGet<T>(
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    throw normalise_(err, `GET ${route}`)
+    throw normalise_(err, `GET ${route}`, timeoutMs)
   }
 }
 
@@ -45,10 +51,12 @@ export async function serverGet<T>(
 export async function serverPost<T>(
   route: string,
   payload: Record<string, unknown> = {},
+  options?: ServerFetchOptions,
 ): Promise<T> {
   assertConfigured_()
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const ctrl  = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   const body  = JSON.stringify({ route, secret: SECRET, ...payload })
 
   console.log(`[serverPost →] route=${route} keys=${Object.keys({ route, ...payload }).join(',')}`)
@@ -95,7 +103,7 @@ export async function serverPost<T>(
   } catch (err) {
     clearTimeout(timer)
     console.error(`[serverPost ✗] route=${route}`, (err as Error).message)
-    throw normalise_(err, `POST ${route}`)
+    throw normalise_(err, `POST ${route}`, timeoutMs)
   }
 }
 
@@ -113,9 +121,10 @@ async function safeJson_<T>(res: Response, route: string): Promise<T> {
   catch { throw new Error(`${route} returned non-JSON: ${text.slice(0, 120)}`) }
 }
 
-function normalise_(err: unknown, context: string): Error {
+function normalise_(err: unknown, context: string, timeoutMs: number): Error {
   if (err instanceof Error) {
-    if (err.name === 'AbortError') return new Error(`${context} timed out after ${TIMEOUT}ms`)
+    if (err.name === 'AbortError')
+      return new Error(`${context} timed out after ${timeoutMs}ms — GAS may still be finishing; check Drive and AUTOMATION LOG before retrying.`)
     return err
   }
   return new Error(String(err))

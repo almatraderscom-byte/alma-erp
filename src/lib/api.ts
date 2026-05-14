@@ -14,7 +14,12 @@
 import type { Order, Customer, OrderStatus, DashboardData, StockItem, LogEvent } from '@/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const TIMEOUT_MS = 15_000
+/** Default browser → Next.js API wait (most routes). */
+const DEFAULT_CLIENT_TIMEOUT_MS = 25_000
+/** Invoice PDF + GAS must exceed 60s budget per product requirement (browser abort). */
+export const INVOICE_CLIENT_TIMEOUT_MS = 75_000
+
+export type ApiFetchOptions = { timeoutMs?: number }
 
 // ── Error type ────────────────────────────────────────────────────────────────
 export class APIError extends Error {
@@ -29,7 +34,10 @@ export class APIError extends Error {
 
   get userMessage(): string {
     if (this.status === 401) return 'Authentication error — check API_SECRET'
-    if (this.status === 408) return 'Request timed out — try again'
+    if (this.status === 408)
+      return this.message.includes('Invoice')
+        ? this.message
+        : 'Request timed out — try again. For invoices, generation can take up to about a minute.'
     if (this.message.includes('not configured')) return 'API not connected — check .env.local'
     return this.message.replace(/^(GET|POST) \/api\/\S+ → /, '')
   }
@@ -37,12 +45,13 @@ export class APIError extends Error {
 
 // ── Core fetch helpers ────────────────────────────────────────────────────────
 
-async function apiGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+async function apiGet<T>(path: string, params: Record<string, string> = {}, options?: ApiFetchOptions): Promise<T> {
   const url = new URL(path, window.location.origin)
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') url.searchParams.set(k, v) })
 
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS
   const ctrl  = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
 
   try {
     const res  = await fetch(url.toString(), { signal: ctrl.signal, cache: 'no-store' })
@@ -52,13 +61,18 @@ async function apiGet<T>(path: string, params: Record<string, string> = {}): Pro
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    throw wrapError_(err, path)
+    throw wrapError_(err, path, timeoutMs)
   }
 }
 
-async function apiPost<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
+async function apiPost<T>(
+  path: string,
+  body: Record<string, unknown> = {},
+  options?: ApiFetchOptions,
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS
   const ctrl  = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
 
   try {
     const res  = await fetch(path, {
@@ -74,7 +88,7 @@ async function apiPost<T>(path: string, body: Record<string, unknown> = {}): Pro
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    throw wrapError_(err, path)
+    throw wrapError_(err, path, timeoutMs)
   }
 }
 
@@ -85,11 +99,18 @@ async function safeJson_<T>(res: Response, ctx: string): Promise<T> {
   catch { throw new APIError(`${ctx} returned non-JSON: ${text.slice(0, 80)}`, ctx) }
 }
 
-function wrapError_(err: unknown, route: string): APIError {
+function wrapError_(err: unknown, route: string, timeoutMs?: number): APIError {
   if (err instanceof APIError) return err
   const msg = err instanceof Error ? err.message : String(err)
   const status = (err as APIError).status
-  if (msg === 'AbortError' || msg.includes('aborted')) return new APIError('Request timed out', route, 408)
+  if (msg === 'AbortError' || msg.includes('aborted')) {
+    const ms = timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS
+    const hint =
+      route === '/api/invoice'
+        ? `Invoice generation timed out after ${Math.round(ms / 1000)}s — the server may still be working; wait, check Google Drive, then retry if the PDF is missing.`
+        : `Request timed out after ${Math.round(ms / 1000)}s`
+    return new APIError(hint, route, 408)
+  }
   return new APIError(msg, route, status)
 }
 
@@ -318,7 +339,11 @@ export const api = {
 
     /** Generate a PDF invoice → POST /api/invoice (GAS returns file_url + drive_url) */
     generateInvoice: async (id: string): Promise<GenerateInvoiceRes> => {
-      const raw = await apiPost<GenerateInvoiceRes & { share_url?: string; duplicate?: boolean }>('/api/invoice', { id })
+      const raw = await apiPost<GenerateInvoiceRes & { share_url?: string; duplicate?: boolean }>(
+        '/api/invoice',
+        { id },
+        { timeoutMs: INVOICE_CLIENT_TIMEOUT_MS },
+      )
       const url = (raw.drive_url || raw.file_url || raw.share_url || '').trim()
       return {
         ...raw,
