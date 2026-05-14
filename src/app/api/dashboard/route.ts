@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import { serverGet } from '@/lib/server-api'
-export const revalidate = 30
+
 export async function GET() {
-  try { return NextResponse.json(await serverGet('dashboard')) }
-  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  try {
+    const data = await serverGet('dashboard', {}, 0)
+    return NextResponse.json(data, {
+      headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
+    })
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+  }
 }

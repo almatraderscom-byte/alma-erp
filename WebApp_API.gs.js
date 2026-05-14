@@ -8,11 +8,16 @@
  * ║       Execute as: Me  · Who has access: Anyone → Deploy)                ║
  * ║   2. Project Settings → Script Properties → add if missing:             ║
  * ║        API_SECRET = alma-dev-secret                                     ║
+ * ║        SPREADSHEET_ID = <optional; Sheet ID if script is not bound>     ║
  * ║   3. Run testCreateOrder() from the editor to verify before going live  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  */
 
 // ── Sheet names ──────────────────────────────────────────────────────────────
+// When the script is container-bound to the Alma workbook, leave SPREADSHEET_ID unset.
+// Optional: set Script Property SPREADSHEET_ID for standalone copies (never commit real IDs).
+var HARDCODED_SS_ID = '';
+
 var SHEETS = {
   ORDERS:   '📦 ORDERS',
   STOCK:    '📦 STOCK CONTROL',
@@ -24,6 +29,12 @@ var SHEETS = {
   LOG:      '🤖 AUTOMATION LOG',
   SETTINGS: '⚙️ SETTINGS',
 };
+
+/** PRODUCT MASTER tab aliases — add this sheet to the workbook if missing. */
+var PRODUCT_MASTER_ALIASES = ['PRODUCT MASTER', '📋 PRODUCT MASTER', 'Product Master'];
+
+/** First data row on PRODUCT MASTER (row 1 banner, row 2 headers). */
+var PM_DATA_START = 3;
 
 // ── ORDERS column numbers (1-based, verified against real sheet) ──────────────
 var OC = {
@@ -103,7 +114,9 @@ function routeGet_(route, p) {
     case 'customers':        return getCustomers_(p);
     case 'customer':         return getCustomer_(p.name);
     case 'analytics':        return getAnalytics_();
-    case 'inventory':        return getInventory_();
+    case 'inventory':
+    case 'stock':            return getInventory_();
+    case 'products':         return getProducts_();
     case 'finance':          return getFinance_();
     case 'courier':          return getCourier_();
     case 'log':              return getLog_(parseInt(p.limit || '50', 10));
@@ -112,7 +125,7 @@ function routeGet_(route, p) {
     default:
       return {
         error: 'Unknown GET route: "' + route + '"',
-        available: 'dashboard, orders, order, customers, customer, analytics, inventory, finance, courier, log, sla_alerts, next_invoice_num',
+        available: 'dashboard, orders, order, customers, customer, analytics, inventory, stock, products, finance, courier, log, sla_alerts, next_invoice_num',
       };
   }
 }
@@ -127,6 +140,9 @@ function routePost_(body) {
     case 'generate_invoice':    return triggerInvoice_(body);
     case 'create_order_folder': return triggerOrderFolder_(body);
     case 'create_customer':     return triggerCreateCustomer_(body);
+    case 'create_product':      return createProduct_(body);
+    case 'batch_import_product_master':
+      return batchImportProductMaster_(body);
     case 'backfill_sla':
       if (typeof runManualSLARefresh === 'function') runManualSLARefresh();
       return { ok: true };
@@ -689,6 +705,314 @@ function getInventory_() {
     total_sell_val:items.reduce(function(a,i){return a+i.sell_value;},0),
     low_stock:items.filter(function(i){return i.available>0&&i.available<=i.reorder_level;}).length,
     out_of_stock:items.filter(function(i){return i.available<=0;}).length}};
+}
+
+function getProductMasterSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var i;
+  for (i = 0; i < PRODUCT_MASTER_ALIASES.length; i++) {
+    var sh = ss.getSheetByName(PRODUCT_MASTER_ALIASES[i]);
+    if (sh) return sh;
+  }
+  return null;
+}
+
+/** Headers on row 2 (row 1 may be a brand banner). */
+function productMasterHeaderMap_(sh) {
+  var lc = sh.getLastColumn();
+  if (lc < 1) return {};
+  var headers = sh.getRange(2, 1, 2, lc).getValues()[0];
+  var map = {};
+  var c;
+  for (c = 0; c < headers.length; c++) {
+    var h = String(headers[c] || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-\/.]+/g, '_');
+    if (h) map[h] = c + 1;
+  }
+  return map;
+}
+
+function pmResolveCol_(map, candidates, fallback1Based) {
+  var j;
+  for (j = 0; j < candidates.length; j++) {
+    var k = candidates[j].toUpperCase().replace(/[\s\-\/.]+/g, '_');
+    if (map[k]) return map[k];
+  }
+  return fallback1Based;
+}
+
+function loadExistingProductMasterKeys_(sh, map) {
+  var skus = {};
+  var supplierIds = {};
+  var nameLower = {};
+  var last = sh.getLastRow();
+  if (last < PM_DATA_START) return { skus: skus, supplierIds: supplierIds, nameLower: nameLower };
+  var cSku = pmResolveCol_(map, ['SKU', 'PRODUCT_SKU', 'ITEM_SKU'], 1);
+  var cName = pmResolveCol_(map, ['PRODUCT_NAME', 'PRODUCT', 'NAME', 'ITEM_NAME'], 2);
+  var cSid = pmResolveCol_(map, ['SUPPLIER_PRODUCT_ID', 'SUPPLIER_ID', 'EXTERNAL_ID', 'SOURCE_ID'], 10);
+  var skuCol = sh.getRange(PM_DATA_START, cSku, last, cSku).getValues();
+  var nameCol = sh.getRange(PM_DATA_START, cName, last, cName).getValues();
+  var sidCol = [];
+  if (cSid) {
+    sidCol = sh.getRange(PM_DATA_START, cSid, last, cSid).getValues();
+  }
+  var r;
+  for (r = 0; r < skuCol.length; r++) {
+    var s = String(skuCol[r][0] || '').trim();
+    if (s) skus[s.toLowerCase()] = true;
+    var nm = String(nameCol[r][0] || '').trim().toLowerCase();
+    if (nm) nameLower[nm] = true;
+    if (sidCol.length) {
+      var sid = String(sidCol[r][0] || '').trim();
+      if (sid) supplierIds[sid.toLowerCase()] = true;
+    }
+  }
+  return { skus: skus, supplierIds: supplierIds, nameLower: nameLower };
+}
+
+function nextSupplierSku_() {
+  var p = PropertiesService.getScriptProperties();
+  var key = 'ALMA_SUPPLIER_IMPORT_SKU_SEQ';
+  var n = parseInt(p.getProperty(key) || '0', 10) + 1;
+  p.setProperty(key, String(n));
+  var s = '000000' + String(n % 1000000);
+  return 'ALM-SCH-' + s.slice(-6);
+}
+
+function getProducts_() {
+  var sh = getProductMasterSheet_();
+  if (!sh) return { products: [], total: 0, error: 'PRODUCT MASTER sheet not found' };
+  var map = productMasterHeaderMap_(sh);
+  var cSku = pmResolveCol_(map, ['SKU', 'PRODUCT_SKU'], 1);
+  var cName = pmResolveCol_(map, ['PRODUCT_NAME', 'PRODUCT', 'NAME'], 2);
+  var cCat = pmResolveCol_(map, ['CATEGORY', 'CAT'], 3);
+  var cCogs = pmResolveCol_(map, ['DEFAULT_COGS', 'COGS', 'COST'], 4);
+  var cPrice = pmResolveCol_(map, ['DEFAULT_PRICE', 'PRICE', 'SELL_PRICE', 'RETAIL'], 5);
+  var cActive = pmResolveCol_(map, ['ACTIVE', 'ENABLED', 'STATUS'], 6);
+  var cNotes = pmResolveCol_(map, ['NOTES', 'NOTE', 'REMARKS'], 7);
+  var last = sh.getLastRow();
+  if (last < PM_DATA_START) return { products: [], total: 0 };
+  var lc = Math.max(sh.getLastColumn(), cSku, cName, cCat, cCogs, cPrice, cActive, cNotes);
+  var values = sh.getRange(PM_DATA_START, 1, last, lc).getValues();
+  var out = [];
+  var i;
+  for (i = 0; i < values.length; i++) {
+    var row = values[i];
+    var sku = String(row[cSku - 1] || '').trim();
+    var name = String(row[cName - 1] || '').trim();
+    if (!sku && !name) continue;
+    var activeCell = row[cActive - 1];
+    var active = true;
+    if (activeCell === false) active = false;
+    else {
+      var as = String(activeCell).toUpperCase();
+      if (as === 'N' || as === 'NO' || as === 'FALSE' || as === '0') active = false;
+    }
+    out.push({
+      id: sku || name,
+      sku: sku,
+      name: name,
+      category: String(row[cCat - 1] || ''),
+      default_price: Number(row[cPrice - 1] || 0),
+      default_cogs: Number(row[cCogs - 1] || 0),
+      active: active,
+      notes: String(row[cNotes - 1] || ''),
+      updated_at: '',
+    });
+  }
+  return { products: out, total: out.length };
+}
+
+function batchImportProductMaster_(body) {
+  var items = body.items;
+  if (!items || !items.length) return { error: 'items array required' };
+  var maxB = 40;
+  if (items.length > maxB) return { error: 'Too many items (max ' + maxB + ' per request). Split the import.' };
+  var sh = getProductMasterSheet_();
+  if (!sh) {
+    return {
+      error:
+        'PRODUCT MASTER sheet not found — create a tab named PRODUCT MASTER with headers in row 2 (SKU, Product name, …).',
+    };
+  }
+  var map = productMasterHeaderMap_(sh);
+  var keys = loadExistingProductMasterKeys_(sh, map);
+  var skipDupNames = !!body.skip_duplicate_names;
+  var lastCol = Math.max(sh.getLastColumn(), 12);
+  var created = [];
+  var skipped = [];
+  var errors = [];
+  var setPmCell = function (row, cNum, val) {
+    if (cNum >= 1 && cNum <= row.length) row[cNum - 1] = val;
+  };
+  var idx;
+  for (idx = 0; idx < items.length; idx++) {
+    var raw = items[idx];
+    var skuIn = String(raw.sku || '').trim();
+    var name = String(raw.name || raw.product || '').trim();
+    if (!name) {
+      errors.push({ index: idx, message: 'missing name' });
+      continue;
+    }
+    var sku = skuIn || nextSupplierSku_();
+    var sid = String(raw.supplier_product_id || raw.external_id || '').trim();
+    var sSku = sku.toLowerCase();
+    var sName = name.toLowerCase();
+    var sSid = sid.toLowerCase();
+    if (keys.skus[sSku]) {
+      skipped.push({ sku: sku, reason: 'duplicate_sku' });
+      continue;
+    }
+    if (sid && keys.supplierIds[sSid]) {
+      skipped.push({ sku: sku, reason: 'duplicate_supplier_id' });
+      continue;
+    }
+    if (skipDupNames && keys.nameLower[sName]) {
+      skipped.push({ sku: sku, reason: 'duplicate_name' });
+      continue;
+    }
+    var row = [];
+    var c;
+    for (c = 0; c < lastCol; c++) row.push('');
+    setPmCell(row, pmResolveCol_(map, ['SKU'], 1), sku);
+    setPmCell(row, pmResolveCol_(map, ['PRODUCT_NAME', 'PRODUCT', 'NAME'], 2), name);
+    setPmCell(row, pmResolveCol_(map, ['CATEGORY', 'CAT'], 3), String(raw.category || ''));
+    setPmCell(row, pmResolveCol_(map, ['DEFAULT_COGS', 'COGS', 'COST'], 4), Number(raw.default_cogs || raw.cogs || 0));
+    setPmCell(row, pmResolveCol_(map, ['DEFAULT_PRICE', 'PRICE', 'SELL_PRICE'], 5), Number(raw.default_price || raw.price || 0));
+    var active = raw.active !== false;
+    setPmCell(row, pmResolveCol_(map, ['ACTIVE', 'ENABLED'], 6), active ? 'Y' : 'N');
+    setPmCell(row, pmResolveCol_(map, ['NOTES', 'NOTE'], 7), String(raw.notes || '').slice(0, 500));
+    setPmCell(row, pmResolveCol_(map, ['IMAGE_URL', 'IMAGE', 'PHOTO'], 8), String(raw.image_url || raw.image || '').slice(0, 1000));
+    setPmCell(row, pmResolveCol_(map, ['SUPPLIER', 'SUPPLIER_TAG'], 9), String(raw.supplier || 'SmartChinaHub').slice(0, 120));
+    setPmCell(row, pmResolveCol_(map, ['SUPPLIER_PRODUCT_ID', 'EXTERNAL_ID'], 10), sid.slice(0, 200));
+    setPmCell(row, pmResolveCol_(map, ['DESCRIPTION', 'DESC'], 11), String(raw.description || '').slice(0, 5000));
+    var vj = '';
+    try {
+      vj = typeof raw.variants_json === 'string' ? raw.variants_json : JSON.stringify(raw.variants || []);
+    } catch (e0) {
+      vj = '';
+    }
+    setPmCell(row, pmResolveCol_(map, ['VARIANTS', 'VARIANTS_JSON', 'OPTIONS'], 12), String(vj).slice(0, 8000));
+    try {
+      sh.appendRow(row);
+      keys.skus[sSku] = true;
+      if (sid) keys.supplierIds[sSid] = true;
+      keys.nameLower[sName] = true;
+      created.push(sku);
+    } catch (e1) {
+      errors.push({ index: idx, sku: sku, message: String(e1.message || e1) });
+    }
+  }
+  if (created.length) {
+    apiLog_(
+      'IMPORT',
+      'PRODUCT_MASTER',
+      'Supplier batch',
+      'created=' + created.length + ' skipped=' + skipped.length + ' errors=' + errors.length,
+    );
+  }
+  return { ok: true, created: created, skipped: skipped, errors: errors };
+}
+
+/**
+ * After PRODUCT MASTER insert, append a matching 📦 STOCK CONTROL row so the Inventory UI lists the SKU.
+ * Skips when the sheet is missing, SKU is empty, or that SKU already exists in column A (case-insensitive).
+ */
+function appendStockRowForNewProduct_(body, sku, productName) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
+  if (!sh) return { ok: false, reason: 'no_stock_sheet' };
+  var skuNorm = String(sku || '').trim().toLowerCase();
+  if (!skuNorm) return { ok: false, reason: 'no_sku' };
+  var SSTART = 3;
+  var last = sh.getLastRow();
+  if (last >= SSTART) {
+    var colSkus = sh.getRange(SSTART, 1, last, 1).getValues();
+    var r;
+    for (r = 0; r < colSkus.length; r++) {
+      if (String(colSkus[r][0] || '').trim().toLowerCase() === skuNorm) {
+        return { ok: false, reason: 'stock_sku_exists' };
+      }
+    }
+  }
+  var cat = String(body.category || '');
+  var color = String(body.color || '');
+  var size = String(body.size || '');
+  var qty = Number(body.initial_stock != null ? body.initial_stock : body.stock != null ? body.stock : 0);
+  if (isNaN(qty) || qty < 0) qty = 0;
+  var reorder = Number(body.reorder_level != null ? body.reorder_level : body.reorder != null ? body.reorder : 0);
+  if (isNaN(reorder) || reorder < 0) reorder = 0;
+  var unitPrice = Number(body.default_price || body.price || 0);
+  var unitCogs = Number(body.default_cogs || body.cogs || 0);
+  if (isNaN(unitPrice)) unitPrice = 0;
+  if (isNaN(unitCogs)) unitCogs = 0;
+  var stockVal = unitCogs * qty;
+  var sellVal = unitPrice * qty;
+  var pot = sellVal - stockVal;
+  var statusDisp = qty > 0 ? '✅ IN STOCK' : '❌ OUT OF STOCK';
+  var row = [
+    sku,
+    productName,
+    cat,
+    color,
+    size,
+    qty,
+    0,
+    0,
+    0,
+    0,
+    0,
+    qty,
+    qty,
+    reorder,
+    statusDisp,
+    stockVal,
+    sellVal,
+    pot,
+    '',
+    '',
+  ];
+  while (row.length < 20) row.push('');
+  sh.appendRow(row);
+  return { ok: true, reason: 'appended' };
+}
+
+function createProduct_(body) {
+  var name = String(body.name || '').trim();
+  if (!name) return { error: 'name required' };
+  var sku = String(body.sku || '').trim();
+  if (!sku) sku = nextSupplierSku_();
+  var it = {
+    sku: sku,
+    name: name,
+    category: String(body.category || '').trim(),
+    default_cogs: Number(body.default_cogs || body.cogs || 0),
+    default_price: Number(body.default_price || body.price || 0),
+    active: body.active !== false,
+    notes: String(body.notes || '').trim(),
+    image_url: String(body.image_url || '').trim(),
+    supplier: String(body.supplier || 'manual').trim(),
+    supplier_product_id: String(body.supplier_product_id || '').trim(),
+    description: String(body.description || '').trim(),
+    variants_json: typeof body.variants_json === 'string' ? body.variants_json : '',
+    variants: body.variants,
+  };
+  var res = batchImportProductMaster_({ items: [it], skip_duplicate_names: !!body.skip_duplicate_name_check });
+  if (res.error) return { error: res.error };
+  if (res.errors && res.errors.length) return { error: res.errors[0].message || 'create failed' };
+  if (res.created && res.created.length) {
+    var skuFinal = String(res.created[0] || sku).trim();
+    var stockInfo = { ok: false, reason: 'skipped' };
+    if (body.sync_to_stock !== false) {
+      stockInfo = appendStockRowForNewProduct_(body, skuFinal, name);
+    }
+    return { ok: true, product_id: skuFinal, stock: stockInfo };
+  }
+  if (res.skipped && res.skipped.length) {
+    return { error: 'Duplicate or skipped: ' + res.skipped[0].reason, duplicate: true };
+  }
+  return { error: 'Unknown create result' };
 }
 
 function getFinance_() {

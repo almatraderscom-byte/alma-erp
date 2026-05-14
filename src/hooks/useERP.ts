@@ -3,10 +3,10 @@
  * All hooks fetch exclusively from the live Google Sheets API.
  */
 'use client'
-import { useCallback } from 'react'
 import { api } from '@/lib/api'
 import { useQuery, useMutation } from './useQuery'
 import type { OrderStatus } from '@/types'
+import type { CreateProductInput, SupplierImportCommitResponse } from '@/lib/api'
 
 // ── READ HOOKS ────────────────────────────────────────────────────────────
 
@@ -89,6 +89,30 @@ export function useStock() {
     [],
     { pollMs: 120_000 }
   )
+}
+
+/**
+ * PRODUCT MASTER catalog (GET /api/products → GAS `products`).
+ */
+export function useProducts() {
+  return useQuery(() => api.products.list(), [], { pollMs: 120_000 })
+}
+
+/**
+ * Create PRODUCT MASTER row (+ STOCK row by default). Refetch catalog/stock after success.
+ */
+export function useCreateProduct() {
+  return useMutation((payload: CreateProductInput) => api.mutations.createProduct(payload))
+}
+
+/**
+ * Bulk append supplier-scraped rows to PRODUCT MASTER (chunked, duplicate-safe).
+ */
+export function useSupplierImportCommit() {
+  return useMutation((payload: {
+    items: Record<string, unknown>[]
+    skip_duplicate_names?: boolean
+  }): Promise<SupplierImportCommitResponse> => api.supplierImport.commit(payload))
 }
 
 /**

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
-import { serverApi } from '@/lib/server-api'
-export const revalidate = 120
+import { serverGet } from '@/lib/server-api'
+
 export async function GET() {
-  try { return NextResponse.json(await serverApi.get('stock', {}, 120)) }
-  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  try {
+    const data = await serverGet('stock', {}, 0)
+    return NextResponse.json(data, {
+      headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
+    })
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+  }
 }

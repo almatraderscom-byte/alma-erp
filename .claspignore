@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Alma ERP — clasp push whitelist (deny-by-default)
+# Only Apps Script sources listed under “!…” are uploaded.
+# Prevents Next.js, node, env, and docs from ever reaching Google Apps Script.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Deny everything, then un-ignore only script files that belong in this project.
+**
+
+# Manifest
+!appsscript.json
+
+# Web app API + inventory / PRODUCT MASTER (primary deployment surface)
+!WebApp_API.gs.js
+
+# Maintenance / cleanup tooling
+!ProductionCleanup.gs.js
+
+# Bound automation + integrations (same script ID — keep in sync with Apps Script editor)
+!Code.js
+!Phase3_Drive.js
+!Phase4_Invoice.gs.js
+!Phase5_CRM.gs.js
+
+# ── Explicit excludes (redundant safety; also documents intent) ─────────────
+.clasp.json
+.git/**
+.gitignore
+.cursor/**
+
+.next/**
+out/**
+dist/**
+build/**
+coverage/**
+node_modules/**
+tmp/**
+tmp/**
+
+src/**
+public/**
+scripts/**
+
+gas/**
+
+*.md
+*.mdx
+.env*
+.env.*
+package.json
+package-lock.json
+next.config.js
+next-env.d.ts
+postcss.config.js
+tailwind.config.ts
+tsconfig.json
+tsconfig.tsbuildinfo
+alma-lifestyle-erp@*

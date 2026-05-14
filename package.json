@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "verify": "npm run type-check && npm run build",
+    "gas:status": "clasp status",
+    "gas:push": "clasp push --force",
+    "gas:deploy": "bash scripts/gas-deploy.sh"
   },
   "dependencies": {
     "next": "14.2.3",

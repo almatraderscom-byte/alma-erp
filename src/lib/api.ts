@@ -133,11 +133,25 @@ export interface CustomersResponse {
 
 export interface ProductsResponse {
   products: Array<{
-    id: string; name: string; category: string
-    default_price: number; default_cogs: number
-    active: boolean; notes: string; updated_at: string
+    id: string
+    sku?: string
+    name: string
+    category: string
+    default_price: number
+    default_cogs: number
+    active: boolean
+    notes: string
+    updated_at: string
   }>
   total: number
+  error?: string
+}
+
+export interface SupplierImportCommitResponse {
+  ok: boolean
+  created: string[]
+  skipped: Array<{ sku: string; reason: string }>
+  errors: Array<{ index?: number; sku?: string; message: string }>
 }
 
 export interface StockResponse {
@@ -173,7 +187,11 @@ interface CreateOrderRes          extends MutationOk { order_id: string; profit:
 interface UpdateStatusRes         extends MutationOk { order_id: string; old_status: string; new_status: string }
 interface UpdateTrackingRes       extends MutationOk { order_id: string; tracking_id: string; auto_shipped: boolean }
 interface CreateCustomerRes       extends MutationOk { customer_id: string; created: boolean }
-interface CreateProductRes        extends MutationOk { product_id: string }
+export interface CreateProductRes extends MutationOk {
+  product_id: string
+  duplicate?: boolean
+  stock?: { ok: boolean; reason?: string }
+}
 export interface GenerateInvoiceRes extends MutationOk {
   invoice_number: string
   drive_url?: string
@@ -190,6 +208,30 @@ export interface NextInvoiceNumberRes {
 }
 interface AddExpenseRes           extends MutationOk { expense_id: string }
 interface CreateOrderFolderRes    extends MutationOk { folder_url: string }
+
+export type CreateProductInput = {
+  name: string
+  sku?: string
+  category?: string
+  default_price?: number
+  default_cogs?: number
+  notes?: string
+  active?: boolean
+  image_url?: string
+  supplier?: string
+  supplier_product_id?: string
+  description?: string
+  variants?: string[]
+  variants_json?: string
+  /** When true, GAS skips insert if product name already exists in PRODUCT MASTER */
+  skip_duplicate_name_check?: boolean
+  color?: string
+  size?: string
+  initial_stock?: number
+  reorder_level?: number
+  /** Default true: append matching row to 📦 STOCK CONTROL for Inventory list */
+  sync_to_stock?: boolean
+}
 
 /**
  * Input for `api.mutations.createOrder`. Canonical fields match the ERP form; optional
@@ -281,6 +323,20 @@ export const api = {
     list: (): Promise<ProductsResponse> => apiGet('/api/products'),
   },
 
+  supplierImport: {
+    /**
+     * Chunked append to PRODUCT MASTER via GAS. Skips duplicates server-side.
+     * @param timeoutMs allow long bulk runs (default 3 minutes)
+     */
+    commit: (
+      payload: { items: Record<string, unknown>[]; skip_duplicate_names?: boolean },
+      options?: ApiFetchOptions,
+    ): Promise<SupplierImportCommitResponse> =>
+      apiPost('/api/supplier-import/commit', payload, {
+        timeoutMs: options?.timeoutMs ?? 180_000,
+      }),
+  },
+
   stock: {
     list: (): Promise<StockResponse> => apiGet('/api/stock'),
   },
@@ -365,10 +421,8 @@ export const api = {
     ): Promise<CreateCustomerRes> =>
       apiPost('/api/customers', { name, phone, address, district, source }),
 
-    /** Add a product to the catalog → POST /api/products */
-    createProduct: (p: {
-      name: string; category?: string; default_price?: number; default_cogs?: number; notes?: string
-    }): Promise<CreateProductRes> => apiPost('/api/products', p),
+    /** Add a product to PRODUCT MASTER (+ optional STOCK row) → POST /api/products */
+    createProduct: (p: CreateProductInput): Promise<CreateProductRes> => apiPost('/api/products', p as Record<string, unknown>),
 
     /** Append to the Expense Ledger → POST /api/finance */
     addExpense: (expense: {
