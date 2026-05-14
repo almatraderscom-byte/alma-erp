@@ -59,10 +59,20 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   }
 
   return (
-    <motion.div className="fixed inset-0 z-50 flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <motion.div
+      className="fixed inset-0 z-[100] flex justify-end md:z-50"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <motion.div className="relative w-full max-w-md bg-surface border-l border-border h-full overflow-y-auto scrollbar-gold flex flex-col"
-        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 300 }}>
+      <motion.div
+        className="relative flex h-full max-h-[100dvh] w-full max-w-md flex-col overflow-y-auto border-l border-border bg-surface scrollbar-gold"
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+      >
 
         <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 py-4 z-10">
           <div className="flex items-start justify-between gap-3">
@@ -75,7 +85,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           </div>
         </div>
 
-        <div className="flex-1 p-5 space-y-5">
+        <div className="flex-1 space-y-5 p-5 max-md:pb-[calc(4.75rem+env(safe-area-inset-bottom,0px)+12px)] md:pb-5">
 
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-card rounded-xl p-3 text-center">
@@ -171,7 +181,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
 
         </div>
 
-        <div className="sticky bottom-0 bg-surface/95 backdrop-blur border-t border-border p-4 space-y-2">
+        <div className="sticky bottom-0 z-10 space-y-2 border-t border-border bg-surface/95 px-4 pt-4 pb-[max(1rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] backdrop-blur md:p-4">
           {nextStatus && (
             <Button variant="gold" className="w-full justify-center" onClick={handleStatusAdvance} disabled={statusLoading}>
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
