@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import { useStock, useProducts, useCreateProduct, useDashboard } from '@/hooks/useERP'
 import { AddProductModal } from '@/components/inventory/AddProductModal'
@@ -22,7 +22,11 @@ export default function InventoryPage() {
 
   const [search, setSearch] = useState('')
   const [cat, setCat] = useState('')
-  const [addOpen, setAddOpen] = useState(false)
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+
+  useEffect(() => {
+    console.log('[Inventory] isAddModalOpen →', isAddModalOpen)
+  }, [isAddModalOpen])
 
   const items = (data?.items ?? []).filter(
     i =>
@@ -49,8 +53,9 @@ export default function InventoryPage() {
   const potentialProfit = totalSellVal - totalValue
 
   const openAddModal = useCallback(() => {
+    console.log('[Inventory] OPEN MODAL (button clicked)')
     resetCreate()
-    setAddOpen(true)
+    setIsAddModalOpen(true)
   }, [resetCreate])
 
   const handleCreate = useCallback(
@@ -83,11 +88,11 @@ export default function InventoryPage() {
             >
               Import Supplier Products
             </Link>
-            <Button variant="ghost" size="sm" onClick={openAddModal} disabled={createLoading}>
+            <Button variant="ghost" size="sm" onClick={openAddModal}>
               Add inventory
             </Button>
-            <Button variant="gold" size="sm" onClick={openAddModal} disabled={createLoading}>
-              + Add product
+            <Button variant="gold" size="sm" onClick={openAddModal}>
+              + Add item
             </Button>
           </div>
         }
@@ -99,6 +104,18 @@ export default function InventoryPage() {
             {error}
           </div>
         )}
+
+        <Card className="p-3 flex flex-wrap items-center justify-between gap-2 border-gold-dim/25 md:hidden">
+          <p className="text-[11px] text-zinc-500">Manual product entry</p>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={openAddModal}>
+              Add inventory
+            </Button>
+            <Button variant="gold" size="sm" onClick={openAddModal}>
+              + Add item
+            </Button>
+          </div>
+        </Card>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Total SKUs" value={summary?.total_skus ?? 0} loading={loading} />
@@ -242,8 +259,8 @@ export default function InventoryPage() {
       </div>
 
       <AddProductModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
+        open={isAddModalOpen}
+        onOpenChange={setIsAddModalOpen}
         categoryOptions={categoryOptions}
         saving={createLoading}
         saveError={createError}

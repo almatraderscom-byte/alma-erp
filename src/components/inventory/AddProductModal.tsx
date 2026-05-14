@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { Button, Card, Select, Spinner } from '@/components/ui'
 import type { CreateProductInput, CreateProductRes } from '@/lib/api'
@@ -28,7 +29,8 @@ type FormState = ReturnType<typeof emptyForm>
 
 type Props = {
   open: boolean
-  onClose: () => void
+  /** Controlled open state (same as React Dialog pattern). */
+  onOpenChange: (open: boolean) => void
   categoryOptions: string[]
   saving: boolean
   saveError: string | null
@@ -43,9 +45,19 @@ function parseVariants(text: string): string[] | undefined {
   return lines.length ? lines : undefined
 }
 
-export function AddProductModal({ open, onClose, categoryOptions, saving, saveError, onSubmit }: Props) {
+export function AddProductModal({ open, onOpenChange, categoryOptions, saving, saveError, onSubmit }: Props) {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [localError, setLocalError] = useState<string | null>(null)
+  /** Avoid createPortal during SSR / before document exists. */
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    console.log('[AddProductModal] open →', open)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -56,11 +68,11 @@ export function AddProductModal({ open, onClose, categoryOptions, saving, saveEr
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onOpenChange(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onOpenChange])
 
   const set =
     <K extends keyof FormState>(key: K) =>
@@ -150,12 +162,10 @@ export function AddProductModal({ open, onClose, categoryOptions, saving, saveEr
       }
 
       toast.success(`Saved ${res.product_id}.${stockMsg}`)
-      onClose()
+      onOpenChange(false)
     },
-    [form, onClose, onSubmit, resolvedCategory, saveError],
+    [form, onOpenChange, onSubmit, resolvedCategory, saveError],
   )
-
-  if (!open) return null
 
   const catSelectOptions = [
     { label: '— Select category —', value: '' },
@@ -163,21 +173,32 @@ export function AddProductModal({ open, onClose, categoryOptions, saving, saveEr
     { label: 'Other (type below)', value: '__other__' },
   ]
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+  if (!mounted || typeof document === 'undefined') return null
+
+  if (!open) return null
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-product-modal-title"
+    >
       <button
         type="button"
         className="absolute inset-0 bg-black/70 backdrop-blur-sm border-0 cursor-default"
         aria-label="Close dialog backdrop"
-        onClick={onClose}
+        onClick={() => onOpenChange(false)}
       />
-      <Card className="relative z-[101] w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border-gold-dim/30 shadow-2xl">
+      <Card className="relative z-[10001] w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border-gold-dim/30 shadow-2xl pointer-events-auto">
         <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between gap-3 sticky top-0 bg-card/95 backdrop-blur">
           <div>
-            <h2 className="text-sm font-bold text-cream tracking-tight">Add product</h2>
+            <h2 id="add-product-modal-title" className="text-sm font-bold text-cream tracking-tight">
+              Add product
+            </h2>
             <p className="text-[10px] text-zinc-500 mt-0.5">PRODUCT MASTER + optional STOCK CONTROL row</p>
           </div>
-          <Button variant="ghost" size="xs" onClick={onClose} disabled={saving}>
+          <Button variant="ghost" size="xs" onClick={() => onOpenChange(false)} disabled={saving}>
             Close
           </Button>
         </div>
@@ -353,7 +374,7 @@ export function AddProductModal({ open, onClose, categoryOptions, saving, saveEr
           )}
 
           <div className="flex gap-2 pt-2">
-            <Button type="button" variant="ghost" className="flex-1" onClick={onClose} disabled={saving}>
+            <Button type="button" variant="ghost" className="flex-1" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
             <Button type="submit" variant="gold" className="flex-1" disabled={saving}>
@@ -368,6 +389,7 @@ export function AddProductModal({ open, onClose, categoryOptions, saving, saveEr
           </div>
         </form>
       </Card>
-    </div>
+    </div>,
+    document.body,
   )
 }
