@@ -158,6 +158,64 @@ interface NextInvoiceNumberRes    { invoice_number: string }
 interface AddExpenseRes           extends MutationOk { expense_id: string }
 interface CreateOrderFolderRes    extends MutationOk { folder_url: string }
 
+/**
+ * Input for `api.mutations.createOrder`. Canonical fields match the ERP form; optional
+ * legacy keys are coalesced when the canonical value is empty (GAS / older clients).
+ */
+export type CreateOrderInput = {
+  customer?: string
+  customer_name?: string
+  phone?: string
+  customer_phone?: string
+  address?: string
+  customer_address?: string
+  product?: string
+  product_name?: string
+  category?: string
+  size?: string
+  qty: number
+  unit_price: number
+  sell_price?: number
+  cogs?: number
+  courier_charge?: number
+  shipping_fee?: number
+  discount?: number
+  payment?: string
+  payment_method?: string
+  source: string
+  status?: string
+  courier?: string
+  tracking_id?: string
+  notes?: string
+  sku?: string
+}
+
+/** Ensures GAS-required `payment` plus legacy alias keys are always present on the wire. */
+export function normalizeCreateOrderPayload(order: CreateOrderInput): Record<string, unknown> {
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const digits = (v: unknown) => str(v).replace(/\D/g, '')
+
+  const customer = str(order.customer).trim() || str(order.customer_name).trim()
+  const phone = digits(order.phone) || digits(order.customer_phone)
+  const address = str(order.address).trim() || str(order.customer_address).trim()
+  const product = str(order.product).trim() || str(order.product_name).trim()
+  const paymentMethod = str(order.payment_method).trim() || str(order.payment).trim()
+
+  return {
+    ...order,
+    customer,
+    customer_name: customer,
+    phone,
+    customer_phone: phone,
+    address,
+    customer_address: address,
+    product,
+    product_name: product,
+    payment: paymentMethod,
+    payment_method: paymentMethod,
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 export const api = {
 
@@ -220,30 +278,13 @@ export const api = {
   mutations: {
     /**
      * Create a new order — POST /api/orders/orders
-     * Field names must match GAS create_order handler exactly.
+     *
+     * GAS `createOrder_` validates `payment` (not `payment_method`) and reads canonical
+     * `customer`, `phone`, `address`, `product`. The payload is normalized so both
+     * canonical and legacy alias keys are always sent.
      */
-    createOrder: (order: {
-      customer:       string
-      phone:          string
-      address?:       string
-      product:        string
-      category?:      string
-      size?:          string
-      qty:            number
-      unit_price:     number
-      sell_price?:    number
-      cogs?:          number
-      courier_charge?: number
-      shipping_fee?:  number
-      discount?:      number
-      payment_method: string
-      source:         string
-      status?:        string
-      courier?:       string
-      tracking_id?:   string
-      notes?:         string
-      sku?:           string
-    }): Promise<CreateOrderRes> => apiPost('/api/orders/orders', order as Record<string, unknown>),
+    createOrder: (order: CreateOrderInput): Promise<CreateOrderRes> =>
+      apiPost('/api/orders/orders', normalizeCreateOrderPayload(order)),
 
     /** Change order status → POST /api/orders/orders/status */
     updateStatus: (id: string, status: OrderStatus): Promise<UpdateStatusRes> =>
