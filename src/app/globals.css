@@ -1,10 +1,67 @@
+:root {
+  --brand-primary: #c9a84c;
+  --brand-secondary: #8b6914;
+  --brand-accent: #f0d080;
+}
+
+@page {
+  size: 210mm 297mm;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    width: 210mm;
+    height: 297mm;
+    margin: 0;
+    padding: 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-sans: var(--font-inter), var(--font-bengali), var(--font-hind), 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
+}
+
+/* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */
+.currency {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.currency-symbol {
+  font-family: var(--font-bengali), var(--font-hind), 'Noto Sans Bengali', 'Hind Siliguri', sans-serif;
+}
+
+.currency-amount {
+  font-family: var(--font-inter), 'Inter', var(--font-bengali), 'Noto Sans Bengali', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* PDF blob preview — white canvas so content is never hidden on dark UI */
+.pdf-blob-preview {
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  position: relative;
+  z-index: 1;
+}
+
+.pdf-blob-object,
+.pdf-blob-embed {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  border: none;
+  background: #fff;
 }
 
 /* Scrollbar */

@@ -14,18 +14,22 @@
     "gas:deploy": "bash scripts/gas-deploy.sh"
   },
   "dependencies": {
-    "next": "14.2.3",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "recharts": "2.12.7",
-    "framer-motion": "11.2.9",
+    "@react-pdf/renderer": "^4.5.1",
     "clsx": "2.1.1",
     "date-fns": "3.6.0",
-    "zustand": "4.5.2",
-    "react-hot-toast": "2.4.1"
+    "framer-motion": "11.2.9",
+    "next": "14.2.3",
+    "qrcode": "^1.5.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-hot-toast": "2.4.1",
+    "recharts": "2.12.7",
+    "xlsx": "^0.18.5",
+    "zustand": "4.5.2"
   },
   "devDependencies": {
     "@types/node": "20.13.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "autoprefixer": "10.4.19",

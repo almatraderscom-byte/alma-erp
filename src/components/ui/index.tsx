@@ -1,7 +1,11 @@
 'use client'
 import { motion } from 'framer-motion'
+import { BDT_SYMBOL } from '@/lib/currency'
 import { cn } from '@/lib/utils'
+import { BdtText, Money } from '@/components/ui/Currency'
 import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
+
+export { Money, BdtText } from '@/components/ui/Currency'
 import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS } from '@/lib/utils'
 
 // ── Skeleton ─────────────────────────────────────────────────────────────
@@ -29,7 +33,13 @@ export function KpiCard({ label, value, sub, delta, color, loading }: {
       ) : (
         <>
           <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-2">{label}</p>
-          <p className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')}>{value}</p>
+          {typeof value === 'number' ? (
+            <Money amount={value} className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')} />
+          ) : typeof value === 'string' && value.includes(BDT_SYMBOL) ? (
+            <BdtText value={value} className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')} />
+          ) : (
+            <p className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')}>{value}</p>
+          )}
           {sub && <p className="text-[11px] text-zinc-500 mt-1">{sub}</p>}
           {delta !== undefined && (
             <p className={cn('text-[11px] font-semibold mt-1.5', delta > 0 ? 'text-green-400' : 'text-red-400')}>
@@ -95,12 +105,14 @@ export function GoldDivider({ className }: { className?: string }) {
 }
 
 // ── Page Header ───────────────────────────────────────────────────────────
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
+export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode }) {
   return (
     <div className="sticky top-0 z-30 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
         <h1 className="text-base md:text-lg font-bold text-cream tracking-tight truncate">{title}</h1>
-        {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{subtitle}</p>}
+        {subtitle != null && subtitle !== '' && (
+          <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{subtitle}</p>
+        )}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>
@@ -109,14 +121,15 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 
 // ── Button ────────────────────────────────────────────────────────────────
 export function Button({ children, onClick, variant = 'ghost', size = 'sm', disabled, className, type = 'button' }: {
-  children: React.ReactNode; onClick?: () => void; variant?: 'gold' | 'ghost' | 'danger'; size?: 'xs' | 'sm' | 'md'; disabled?: boolean; className?: string; type?: 'button' | 'submit'
+  children: React.ReactNode; onClick?: () => void; variant?: 'gold' | 'ghost' | 'secondary' | 'danger'; size?: 'xs' | 'sm' | 'md'; disabled?: boolean; className?: string; type?: 'button' | 'submit'
 }) {
   const base = 'inline-flex items-center gap-2 font-semibold rounded-xl transition-all duration-150 disabled:opacity-40 active:scale-[0.97]'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px]', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
-    gold:  'bg-gold/10 border border-gold-dim/50 text-gold-lt hover:bg-gold/20',
-    ghost: 'bg-transparent border border-border text-zinc-400 hover:bg-white/[0.04] hover:text-cream',
-    danger:'bg-red-400/10 border border-red-400/30 text-red-400 hover:bg-red-400/20',
+    gold:      'bg-gold/10 border border-gold-dim/50 text-gold-lt hover:bg-gold/20',
+    secondary: 'bg-white/[0.04] border border-border text-cream hover:bg-white/[0.07] hover:border-gold-dim/30',
+    ghost:     'bg-transparent border border-border text-zinc-400 hover:bg-white/[0.04] hover:text-cream',
+    danger:    'bg-red-400/10 border border-red-400/30 text-red-400 hover:bg-red-400/20',
   }
   return (
     <button type={type} onClick={onClick} disabled={disabled} className={cn(base, sizes[size], variants[variant], className)}>
@@ -151,7 +164,7 @@ export function Select({ value, onChange, options, className }: {
 }
 
 // ── Stat Row ─────────────────────────────────────────────────────────────
-export function StatRow({ label, value, valueClass }: { label: string; value: string | number; valueClass?: string }) {
+export function StatRow({ label, value, valueClass }: { label: string; value: React.ReactNode; valueClass?: string }) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
       <span className="text-[11px] text-zinc-500">{label}</span>

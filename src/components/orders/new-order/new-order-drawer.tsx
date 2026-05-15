@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion'
 import { Button, Spinner } from '@/components/ui'
+import { Money } from '@/components/ui'
 import { NewOrderFormFields } from './new-order-form-fields'
 import { useNewOrderForm } from './use-new-order-form'
 
@@ -74,7 +75,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
               <span className="text-zinc-500 truncate max-w-[100px]">{form.product || 'Product'}</span>
               <span className="text-zinc-600">×{form.qty || 1}</span>
-              <span className="ml-auto font-bold text-gold">৳{Number(form.sell_price).toLocaleString('en-IN')}</span>
+              <Money amount={Number(form.sell_price)} className="ml-auto font-bold text-gold" />
               {form.customer && <span className="text-zinc-500 truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
             </div>
           )}

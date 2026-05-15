@@ -4,6 +4,8 @@ import type { OrderStatus } from '@/types'
 import { GoldDivider } from '@/components/ui'
 import { CATEGORIES, COURIERS, NEW_ORDER_STATUSES, PAYMENTS, SOURCES } from './constants'
 import { NewOrderField, newOrderInputCls, newOrderSelectCls } from './field'
+import { BDT_SYMBOL, formatBDT } from '@/lib/currency'
+import { Money } from '@/components/ui'
 import type { FormErrors, NewOrderForm } from './types'
 
 export function NewOrderFormFields({
@@ -140,7 +142,7 @@ export function NewOrderFormFields({
                 className={newOrderInputCls(touched.qty ? errors.qty : undefined)}
               />
             </NewOrderField>
-            <NewOrderField label="Unit Price (৳)" required error={touched.unit_price ? errors.unit_price : undefined}>
+            <NewOrderField label={`Unit Price (${BDT_SYMBOL})`} required error={touched.unit_price ? errors.unit_price : undefined}>
               <input
                 type="number"
                 inputMode="decimal"
@@ -156,10 +158,10 @@ export function NewOrderFormFields({
           </div>
 
           <NewOrderField
-            label="Sell Price (৳)"
+            label={`Sell Price (${BDT_SYMBOL})`}
             required
             error={touched.sell_price ? errors.sell_price : undefined}
-            hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto: ৳${sellPriceComputed.toLocaleString('en-IN')}` : undefined}
+            hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto: ${formatBDT(sellPriceComputed)}` : undefined}
           >
             <input
               type="number"
@@ -175,7 +177,7 @@ export function NewOrderFormFields({
           </NewOrderField>
 
           <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
-            <NewOrderField label="COGS (৳)" hint="Cost">
+            <NewOrderField label={`COGS (${BDT_SYMBOL})`} hint="Cost">
               <input
                 type="number"
                 inputMode="decimal"
@@ -186,7 +188,7 @@ export function NewOrderFormFields({
                 className={newOrderInputCls()}
               />
             </NewOrderField>
-            <NewOrderField label="Courier (৳)" hint="Charge">
+            <NewOrderField label={`Courier (${BDT_SYMBOL})`} hint="Charge">
               <input
                 type="number"
                 inputMode="decimal"
@@ -196,7 +198,7 @@ export function NewOrderFormFields({
                 className={newOrderInputCls()}
               />
             </NewOrderField>
-            <NewOrderField label="Ship (৳)" hint="Collected">
+            <NewOrderField label={`Ship (${BDT_SYMBOL})`} hint="Collected">
               <input
                 type="number"
                 inputMode="decimal"
@@ -212,12 +214,10 @@ export function NewOrderFormFields({
           {Number(form.sell_price) > 0 && Number(form.cogs) > 0 && (
             <div className="flex items-center justify-between px-3 py-2 bg-black/40 border border-border rounded-xl text-xs">
               <span className="text-zinc-500">Est. profit</span>
-              <span className="font-bold text-green-400">
-                ৳
-                {(Number(form.sell_price) - Number(form.cogs) - Number(form.courier_charge) + Number(form.shipping_fee)).toLocaleString(
-                  'en-IN'
-                )}
-              </span>
+              <Money
+                amount={Number(form.sell_price) - Number(form.cogs) - Number(form.courier_charge) + Number(form.shipping_fee)}
+                className="font-bold text-green-400"
+              />
             </div>
           )}
         </div>

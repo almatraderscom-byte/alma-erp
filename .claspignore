@@ -12,6 +12,8 @@
 
 # Web app API + inventory / PRODUCT MASTER (primary deployment surface)
 !WebApp_API.gs.js
+!Cdit_Module.gs.js
+!Branding_Module.gs.js
 
 # Maintenance / cleanup tooling
 !ProductionCleanup.gs.js

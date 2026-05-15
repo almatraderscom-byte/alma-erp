@@ -1,7 +1,9 @@
 'use client'
-import { useDashboard } from '@/hooks/useERP'
-import { PageHeader, Card, KpiCard, GoldDivider, Skeleton, Empty } from '@/components/ui'
+import { useAnalyticsMerged } from '@/hooks/useERP'
+import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
+import { PageHeader, Card, KpiCard, GoldDivider, Skeleton, Empty , Money, BdtText} from '@/components/ui'
 import { RevenueChart, ExpenseBarChart, DonutChart } from '@/components/charts'
+import { formatBDTk } from '@/lib/currency'
 import { fmt, pct } from '@/lib/utils'
 
 const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020']
@@ -30,7 +32,7 @@ function expenseBar(byCat: Record<string, number>) {
 }
 
 export default function AnalyticsPage() {
-  const { data, loading } = useDashboard()
+  const { data, loading } = useAnalyticsMerged()
 
   const kpis         = data?.kpis        ?? { total_revenue:0, total_profit:0, gross_margin:0, avg_order_value:0, total_orders:0, delivery_rate:0, return_rate:0, sla_breaches:0, pending_action:0, delivered_count:0, total_cogs:0 }
   const byCategory   = data?.by_category ?? {}
@@ -41,14 +43,9 @@ export default function AnalyticsPage() {
     .map(([name, v]) => ({ name, ...v, margin: v.revenue > 0 ? Math.round(v.profit / v.revenue * 100) : 0 }))
     .sort((a, b) => b.revenue - a.revenue)
 
-  // Monthly trend from analytics route (extended dashboard)
-  const monthlyTrend = (data as Record<string, unknown> | null)?.monthly_trend as
-    Array<{ month: string; revenue: number; profit: number }> | undefined ?? []
-
-  // Expense data from analytics route
-  const expenseByCat = (data as Record<string, unknown> | null)?.expense_by_cat as
-    Record<string, number> | undefined ?? {}
-  const totalExpenses = (data as Record<string, unknown> | null)?.total_expenses as number | undefined ?? 0
+  const monthlyTrend = data?.monthly_trend ?? []
+  const expenseByCat = data?.expense_by_cat ?? {}
+  const totalExpenses = Number(data?.total_expenses ?? 0)
 
   const payPie  = paymentPie(byPayment)
   const expBars = expenseBar(expenseByCat)
@@ -57,9 +54,10 @@ export default function AnalyticsPage() {
 
   return (
     <>
-      <PageHeader title="Analytics" subtitle="Revenue intelligence · Category performance · Ad ROI" />
+      <PageHeader title="Analytics" subtitle="Revenue · expenses · payroll context — synced to filters" />
 
       <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-6">
+        <DateRangeFilter />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Total Revenue"   value={loading ? '—' : fmt(kpis.total_revenue)}   color="text-gold-lt"   loading={loading} />
@@ -85,7 +83,7 @@ export default function AnalyticsPage() {
           <Card className="p-5">
             <p className="text-sm font-bold text-cream mb-1">Expense Breakdown</p>
             <p className="text-[10px] text-zinc-500 mb-4">
-              {totalExpenses > 0 ? `৳${(totalExpenses / 1000).toFixed(0)}k total · live data` : 'No expense data yet'}
+              {totalExpenses > 0 ? <><BdtText value={formatBDTk(totalExpenses)} /> total · live data</> : 'No expense data yet'}
             </p>
             {loading ? (
               <Skeleton className="h-48 w-full rounded-xl" />
@@ -128,8 +126,8 @@ export default function AnalyticsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5 text-zinc-400">{c.orders}</td>
-                      <td className="px-4 py-3.5 font-bold text-cream tabular-nums">{fmt(c.revenue)}</td>
-                      <td className="px-4 py-3.5 font-bold text-green-400 tabular-nums">{fmt(c.profit)}</td>
+                      <td className="px-4 py-3.5 font-bold text-cream tabular-nums"><Money amount={c.revenue} /></td>
+                      <td className="px-4 py-3.5 font-bold text-green-400 tabular-nums"><Money amount={c.profit} /></td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 h-1 bg-border rounded-full overflow-hidden w-16">
@@ -185,7 +183,7 @@ export default function AnalyticsPage() {
                         <span className="font-semibold text-cream">{source}</span>
                         <div className="flex gap-3">
                           <span className="text-zinc-500">{v.orders} orders</span>
-                          <span className="font-bold text-gold">{fmt(v.revenue)}</span>
+                          <span className="font-bold text-gold"><Money amount={v.revenue} /></span>
                         </div>
                       </div>
                       <div className="h-1.5 bg-border rounded-full overflow-hidden">

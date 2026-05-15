@@ -1,0 +1,24 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { serverGet, serverPost } from '@/lib/server-api'
+import { withActorPayload } from '@/lib/api-route-actor'
+
+export async function GET(req: NextRequest) {
+  const p = Object.fromEntries(new URL(req.url).searchParams)
+  try {
+    const data = await serverGet('cdit_projects', p, 0)
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'private, no-store' } })
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json()
+    const route = body.action === 'update' ? 'cdit_update_project' : 'cdit_create_project'
+    const data = await serverPost(route, withActorPayload(req, body as Record<string, unknown>))
+    return NextResponse.json(data)
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+  }
+}

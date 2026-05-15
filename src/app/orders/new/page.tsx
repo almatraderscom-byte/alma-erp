@@ -6,6 +6,7 @@ import { useLayoutEffect, useState } from 'react'
 import { NewOrderFormFields } from '@/components/orders/new-order/new-order-form-fields'
 import { useNewOrderForm } from '@/components/orders/new-order/use-new-order-form'
 import { Spinner } from '@/components/ui'
+import { Money } from '@/components/ui'
 import { useMdUp } from '@/hooks/useMdUp'
 
 export default function NewOrderPage() {
@@ -82,7 +83,7 @@ export default function NewOrderPage() {
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-gold-dim/20 bg-gold/5 px-3 py-1.5 text-xs">
             <span className="max-w-[120px] truncate text-zinc-500">{form.product || 'Product'}</span>
             <span className="text-zinc-600">×{form.qty || 1}</span>
-            <span className="ml-auto font-bold text-gold">৳{Number(form.sell_price).toLocaleString('en-IN')}</span>
+            <Money amount={Number(form.sell_price)} className="ml-auto font-bold text-gold" />
             {form.customer && <span className="max-w-[80px] truncate text-zinc-500">→ {form.customer.split(' ')[0]}</span>}
           </div>
         )}

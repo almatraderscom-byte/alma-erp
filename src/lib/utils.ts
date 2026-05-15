@@ -4,13 +4,7 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ')
 }
 
-export function fmt(n: number): string {
-  return '৳' + Math.round(n).toLocaleString('en-IN')
-}
-
-export function fmtNum(n: number): string {
-  return Math.round(n).toLocaleString('en-IN')
-}
+export { formatBDT as fmt, fmtNum, formatBDTk, BDT_SYMBOL, MONEY_CLASS } from '@/lib/currency'
 
 export function pct(n: number): string {
   return Math.round(n) + '%'

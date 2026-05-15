@@ -490,8 +490,13 @@ function generateInvoice(row, rowData) {
  * Uses inline CSS throughout — required for PDF rendering via Drive API.
  */
 function buildInvoiceHtml_(order, invoiceNumber, issuedDate) {
-  const b = INV_CONFIG.brand;
-  const f = INV_CONFIG.footer;
+  const bizId = (order && order.business_id) ? String(order.business_id) : 'ALMA_LIFESTYLE';
+  const brandCfg = typeof getBrandConfigForBusiness_ === 'function'
+    ? getBrandConfigForBusiness_(bizId)
+    : null;
+  const b = brandCfg ? brandCfg.brand : INV_CONFIG.brand;
+  const f = brandCfg ? brandCfg.footer : INV_CONFIG.footer;
+  const brandColors = brandCfg ? brandCfg.colors : INV_CONFIG.colors;
 
   const subTotal    = (order.unitPrice * order.qty) - order.discount - order.addDiscount;
   const grandTotal  = subTotal + order.shippingFee;
@@ -519,8 +524,8 @@ function buildInvoiceHtml_(order, invoiceNumber, issuedDate) {
 
   const BG   = '#060608';
   const CARD = '#101018';
-  const GOLD = '#c9a84c';
-  const GOLD2 = '#8b7340';
+  const GOLD = (brandColors && brandColors.gold) ? brandColors.gold : '#c9a84c';
+  const GOLD2 = (brandColors && brandColors.goldDark) ? brandColors.goldDark : '#8b7340';
   const MUTED = '#9a968c';
   const TEXT = '#f2f0ea';
   const LINE = 'rgba(201, 168, 76, 0.22)';

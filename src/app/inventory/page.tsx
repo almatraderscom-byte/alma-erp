@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import { useStock, useProducts, useCreateProduct, useDashboard } from '@/hooks/useERP'
 import { AddProductModal } from '@/components/inventory/AddProductModal'
-import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty } from '@/components/ui'
+import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt } from '@/lib/utils'
 import type { CreateProductInput } from '@/lib/api'
 
@@ -79,7 +79,7 @@ export default function InventoryPage() {
     <>
       <PageHeader
         title="Inventory"
-        subtitle={`${summary?.total_skus ?? 0} SKUs · ${fmt(totalValue)} stock value`}
+        subtitle={<>{summary?.total_skus ?? 0} SKUs · <BdtText value={fmt(totalValue)} /> stock value</>}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Link
@@ -200,7 +200,7 @@ export default function InventoryPage() {
                             {item.available <= 0 ? 'OUT' : item.available <= item.reorder_level ? 'LOW' : 'IN STOCK'}
                           </span>
                         </td>
-                        <td className="px-3 py-3.5 font-bold text-gold tabular-nums">{fmt(item.stock_value)}</td>
+                        <td className="px-3 py-3.5 font-bold text-gold tabular-nums"><Money amount={item.stock_value} /></td>
                       </tr>
                     )
                   })}
@@ -228,7 +228,7 @@ export default function InventoryPage() {
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-bold text-gold">{fmt(item.stock_value)}</p>
+                        <p className="text-sm font-bold text-gold"><Money amount={item.stock_value} /></p>
                         <p className="text-[10px] text-zinc-500 mt-0.5">Available: {item.available}</p>
                       </div>
                     </div>

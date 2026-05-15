@@ -12,6 +12,35 @@
  */
 
 import type { Order, Customer, OrderStatus, DashboardData, StockItem, LogEvent } from '@/types'
+import type { BusinessId } from '@/lib/businesses'
+import { DEFAULT_BUSINESS_ID } from '@/lib/businesses'
+import type {
+  CditClient, CditProject, CditInvoice, CditPayment, CditDashboardData, CditClientDetail,
+  FinancialReport,
+} from '@/types/cdit'
+import type { BusinessBranding, BrandAssetType } from '@/types/branding'
+import type {
+  ERPFinanceResponse,
+  HREmployeesApi,
+  HRPayrollListApi,
+  HRDashboardApi,
+} from '@/types/hr'
+import { readActorHeadersFromStorage } from '@/lib/actor-headers'
+
+let _businessId: BusinessId = DEFAULT_BUSINESS_ID
+
+/** Set by BusinessProvider — all API calls include business_id */
+export function setApiBusinessId(id: BusinessId) {
+  _businessId = id
+}
+
+export function getApiBusinessId(): BusinessId {
+  return _businessId
+}
+
+function bizParams(p: Record<string, string> = {}): Record<string, string> {
+  return { ...p, business_id: _businessId }
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 /** Default browser → Next.js API wait (most routes). */
@@ -77,14 +106,20 @@ async function apiPost<T>(
   try {
     const res  = await fetch(path, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...readActorHeadersFromStorage(),
+      },
       body:    JSON.stringify(body),
       signal:  ctrl.signal,
       cache:   'no-store',
     })
     clearTimeout(timer)
-    const data = await safeJson_<{ error?: string } & T>(res, `POST ${path}`)
+    const data = await safeJson_<{ error?: string; ok?: boolean } & T>(res, `POST ${path}`)
     if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+    if (data && typeof data === 'object' && data.ok === false) {
+      throw new APIError((data as { error?: string }).error || 'Request failed', path, res.status)
+    }
     return data as T
   } catch (err) {
     clearTimeout(timer)
@@ -162,15 +197,6 @@ export interface StockResponse {
     out_of_stock: number
     total_value: number
   }
-}
-
-export interface FinanceData {
-  cash_balance:    number
-  total_income:    number
-  total_expense:   number
-  net_profit:      number
-  expense_by_cat:  Record<string, number>
-  recent_expenses: Array<{ date: string; category: string; amount: number; notes: string }>
 }
 
 export interface LogResponse {
@@ -295,7 +321,8 @@ export function normalizeCreateOrderPayload(order: CreateOrderInput): Record<str
 export const api = {
 
   dashboard: {
-    get: (): Promise<DashboardData> => apiGet('/api/dashboard'),
+    get: (p?: { startDate?: string; endDate?: string }): Promise<DashboardData> =>
+      apiGet('/api/dashboard', bizParams(p as Record<string, string>)),
   },
 
   orders: {
@@ -303,7 +330,9 @@ export const api = {
     list: (p?: {
       status?: string; source?: string; payment?: string
       search?: string; limit?: string; offset?: string
-    }): Promise<OrdersResponse> => apiGet('/api/orders/orders', p as Record<string, string>),
+      startDate?: string
+      endDate?: string
+    }): Promise<OrdersResponse> => apiGet('/api/orders/orders', bizParams(p as Record<string, string>)),
 
     /** GET /api/orders/orders?id=ALM-0001 → GAS ?route=order&id=... */
     get: (id: string): Promise<{ order: Order }> => apiGet('/api/orders/orders', { id }),
@@ -312,7 +341,7 @@ export const api = {
   customers: {
     /** GET /api/customers → GAS ?route=customers&... */
     list: (p?: { search?: string; segment?: string; risk_level?: string }): Promise<CustomersResponse> =>
-      apiGet('/api/customers', p as Record<string, string>),
+      apiGet('/api/customers', bizParams(p as Record<string, string>)),
 
     /** GET /api/customers?name=... → GAS ?route=customer&name=... */
     get: (name: string): Promise<{ customer: Customer; orders: Partial<Order>[] }> =>
@@ -342,7 +371,103 @@ export const api = {
   },
 
   finance: {
-    get: (): Promise<FinanceData> => apiGet('/api/finance'),
+    get: (p?: { startDate?: string; endDate?: string }): Promise<ERPFinanceResponse> =>
+      apiGet('/api/finance', bizParams(p as Record<string, string>)),
+    report: (p?: { startDate?: string; endDate?: string }): Promise<FinancialReport> =>
+      apiGet('/api/finance/report', bizParams(p as Record<string, string>)),
+  },
+
+  hr: {
+    employees: (p?: { startDate?: string; endDate?: string }): Promise<HREmployeesApi> =>
+      apiGet('/api/hr/employees', bizParams(p as Record<string, string>)),
+    payroll: (p?: {
+      emp_id?: string
+      startDate?: string
+      endDate?: string
+    }): Promise<HRPayrollListApi> =>
+      apiGet('/api/hr/payroll', bizParams(p as Record<string, string>)),
+    dashboard: (p?: {
+      startDate?: string
+      endDate?: string
+    }): Promise<HRDashboardApi> =>
+      apiGet('/api/hr/dashboard', bizParams(p as Record<string, string>)),
+    saveEmployee: (body: Record<string, unknown>): Promise<{ ok: boolean; emp_id?: string; error?: string }> =>
+      apiPost('/api/hr/employees', { ...body, business_id: body.business_id || _businessId }),
+    addPayroll: (body: Record<string, unknown>): Promise<{ ok: boolean; tx_id?: string; error?: string }> =>
+      apiPost('/api/hr/payroll', { ...body, business_id: body.business_id || _businessId }),
+  },
+
+  audit: {
+    list: (p?: { limit?: string }): Promise<{
+      audit: Array<{
+        timestamp: string
+        route: string
+        actor: string
+        actor_role: string
+        business_id: string
+        entity_type: string
+        entity_id: string
+        summary: string
+        detail_json: string
+        status_flag: string
+      }>
+      total: number
+    }> =>
+      apiGet('/api/audit', bizParams(p as Record<string, string>)),
+  },
+
+  digital: {
+    dashboard: (): Promise<CditDashboardData> =>
+      apiGet('/api/digital/dashboard', bizParams()),
+    clients: {
+      list: (p?: { search?: string }): Promise<{ clients: CditClient[]; total: number }> =>
+        apiGet('/api/digital/clients', bizParams(p as Record<string, string>)),
+      detail: (id: string): Promise<CditClientDetail> =>
+        apiGet('/api/digital/clients/' + encodeURIComponent(id), bizParams()),
+      create: (client: Partial<CditClient>): Promise<{ ok: boolean; client_id?: string; client?: CditClient; error?: string }> =>
+        apiPost('/api/digital/clients', { ...client, business_id: client.business_id || _businessId }),
+    },
+    projects: {
+      list: (p?: { status?: string; search?: string; client_id?: string }): Promise<{ projects: CditProject[]; total: number }> =>
+        apiGet('/api/digital/projects', bizParams(p as Record<string, string>)),
+      create: (project: Partial<CditProject>): Promise<{ ok: boolean; project_id?: string; project: CditProject }> =>
+        apiPost('/api/digital/projects', { ...project, business_id: _businessId }),
+      update: (id: string, fields: Partial<CditProject>): Promise<{ ok: boolean }> =>
+        apiPost('/api/digital/projects', { action: 'update', id, ...fields }),
+    },
+    invoices: {
+      list: (p?: { status?: string; client_id?: string }): Promise<{ invoices: CditInvoice[]; total: number }> =>
+        apiGet('/api/digital/invoices', bizParams(p as Record<string, string>)),
+      create: (inv: Partial<CditInvoice>): Promise<{ ok: boolean; invoice_id?: string; invoice: CditInvoice }> =>
+        apiPost('/api/digital/invoices', { ...inv, business_id: _businessId }),
+      updateStatus: (id: string, status: string): Promise<{ ok: boolean }> =>
+        apiPost('/api/digital/invoices', { action: 'update_status', id, status }),
+      generatePdf: (id: string): Promise<{ ok: boolean; pdf_url?: string; error?: string }> =>
+        apiPost('/api/digital/invoices/pdf', { invoice_id: id }, { timeoutMs: INVOICE_CLIENT_TIMEOUT_MS }),
+    },
+    payments: {
+      list: (p?: { client_id?: string; project_id?: string; invoice_id?: string }): Promise<{ payments: CditPayment[] }> =>
+        apiGet('/api/digital/payments', bizParams(p as Record<string, string>)),
+      create: (p: Partial<CditPayment>): Promise<{ ok: boolean; payment_id?: string; payment: CditPayment }> =>
+        apiPost('/api/digital/payments', { ...p, business_id: _businessId }),
+    },
+  },
+
+  branding: {
+    get: (businessId?: BusinessId): Promise<{ ok: boolean; branding: BusinessBranding }> =>
+      apiGet('/api/branding', bizParams(businessId ? { business_id: businessId } : {})),
+    getAll: (): Promise<{ ok: boolean; branding_by_business: Record<string, BusinessBranding> }> =>
+      apiGet('/api/branding', { all: '1' }),
+    save: (data: Partial<BusinessBranding>): Promise<{ ok: boolean; branding: BusinessBranding }> =>
+      apiPost('/api/branding', { action: 'save', ...data, business_id: data.business_id || _businessId }),
+    uploadAsset: (p: {
+      asset_type: BrandAssetType
+      data: string
+      mime_type: string
+      filename?: string
+      business_id?: BusinessId
+    }): Promise<{ ok: boolean; url?: string; branding?: BusinessBranding }> =>
+      apiPost('/api/branding', { action: 'upload', ...p, business_id: p.business_id || _businessId }),
   },
 
   log: {
@@ -367,7 +492,8 @@ export const api = {
   },
 
   analytics: {
-    get: (): Promise<DashboardData> => apiGet('/api/analytics'),
+    get: (p?: { startDate?: string; endDate?: string }): Promise<DashboardData> =>
+      apiGet('/api/analytics', bizParams(p as Record<string, string>)),
   },
 
   mutations: {
@@ -379,7 +505,7 @@ export const api = {
      * canonical and legacy alias keys are always sent.
      */
     createOrder: (order: CreateOrderInput): Promise<CreateOrderRes> =>
-      apiPost('/api/orders/orders', normalizeCreateOrderPayload(order)),
+      apiPost('/api/orders/orders', { ...normalizeCreateOrderPayload(order), business_id: _businessId }),
 
     /** Change order status → POST /api/orders/orders/status */
     updateStatus: (id: string, status: OrderStatus): Promise<UpdateStatusRes> =>
@@ -426,9 +552,23 @@ export const api = {
 
     /** Append to the Expense Ledger → POST /api/finance */
     addExpense: (expense: {
-      date?: string; category: string; amount: number; notes?: string
+      date?: string
+      title?: string
+      category: string
+      amount: number
+      notes?: string
+      note?: string
+      vendor?: string
+      payment_method?: string
+      payment?: string
+      payment_status?: string
+      receipt_ref?: string
+      attachment_url?: string
+      recurring?: boolean
+      expense_kind?: string
+      exp_type?: string
     }): Promise<AddExpenseRes> =>
-      apiPost('/api/finance', expense),
+      apiPost('/api/finance', { ...expense, business_id: _businessId }),
 
     /** Create a Drive folder structure for an order → POST /api/orders/orders/field */
     createOrderFolder: (id: string): Promise<CreateOrderFolderRes> =>

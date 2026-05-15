@@ -18,7 +18,16 @@ const config: Config = {
       },
       fontFamily: {
         mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],
-        sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
+        sans: [
+          'var(--font-inter)',
+          'var(--font-bengali)',
+          'var(--font-hind)',
+          'Inter',
+          'Noto Sans Bengali',
+          'Hind Siliguri',
+          'system-ui',
+          'sans-serif',
+        ],
       },
       animation: {
         'fade-up':    'fadeUp 0.4s ease forwards',

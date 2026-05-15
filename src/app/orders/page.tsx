@@ -3,14 +3,26 @@ import Link from 'next/link'
 import { Suspense, useLayoutEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useOrders, useUpdateStatus } from '@/hooks/useERP'
+import { useUpdateStatus } from '@/hooks/useERP'
+import { useOrdersData } from '@/contexts/OrdersDataContext'
+import { useDateRange } from '@/contexts/DateRangeContext'
+import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
+import {
+  applyOrderFilters,
+  filterOrdersByDateRange,
+  sortOrders,
+  summarizeOrders,
+  statusCountsForPills,
+} from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
 import { NewOrderDrawer } from '@/components/orders/new-order/new-order-drawer'
-import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty } from '@/components/ui'
+import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
 import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order, OrderStatus } from '@/types'
+import { useActor } from '@/contexts/ActorContext'
+import { can } from '@/lib/roles'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','Returned','Cancelled']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
@@ -20,6 +32,9 @@ const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confir
 // ═══════════════════════════════════════════════════════════════════════════
 
 function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose: () => void; onStatusChange: () => void }) {
+  const { role } = useActor()
+  const mayAdvance = can(role, 'ordersAdvanceStatus')
+  const mayInvoice = can(role, 'ordersGenerateInvoice')
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
   const [invLoading, setInvLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
@@ -111,11 +126,11 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-card rounded-xl p-3 text-center">
               <p className="text-[10px] text-zinc-500 mb-1">Total</p>
-              <p className="text-base font-bold text-gold">{fmt(order.sell_price)}</p>
+              <Money amount={order.sell_price ?? 0} className="text-base font-bold text-gold" />
             </div>
             <div className="bg-card rounded-xl p-3 text-center">
               <p className="text-[10px] text-zinc-500 mb-1">Profit</p>
-              <p className="text-base font-bold text-green-400">{fmt(order.profit)}</p>
+              <Money amount={order.profit ?? 0} className="text-base font-bold text-green-400" />
             </div>
             <div className="bg-card rounded-xl p-3 text-center">
               <p className="text-[10px] text-zinc-500 mb-1">Margin</p>
@@ -146,7 +161,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <StatRow label="Product"  value={order.product} />
               <StatRow label="Category" value={order.category} />
               <StatRow label="Size"     value={order.size || '—'} />
-              <StatRow label="Qty"      value={`${order.qty} × ${fmt(order.unit_price)}`} />
+              <StatRow label="Qty" value={<>{order.qty} × <Money amount={order.unit_price ?? 0} /></>} />
               <StatRow label="Payment"  value={order.payment} />
               <StatRow label="Source"   value={order.source} />
               {order.handled_by && <StatRow label="Handled by" value={order.handled_by} />}
@@ -203,15 +218,15 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
         </div>
 
         <div className="sticky bottom-0 z-10 space-y-2 border-t border-border bg-surface/95 px-4 pt-4 pb-[max(1rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] backdrop-blur md:p-4">
-          {nextStatus && (
+          {nextStatus && mayAdvance && (
             <Button variant="gold" className="w-full justify-center" onClick={handleStatusAdvance} disabled={statusLoading}>
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
             </Button>
           )}
           <div className="flex flex-col gap-2">
             <div className="flex gap-2">
-              <Button variant="ghost" className="flex-1 justify-center" onClick={handleInvoice} disabled={invLoading || !!order.invoice_num}>
-                {invLoading ? 'Generating…' : order.invoice_num ? 'Invoiced ✓' : 'Generate Invoice'}
+              <Button variant="ghost" className="flex-1 justify-center" onClick={handleInvoice} disabled={!mayInvoice || invLoading || !!order.invoice_num}>
+                {invLoading ? 'Generating…' : order.invoice_num ? 'Invoiced ✓' : !mayInvoice ? 'Invoice (admin)' : 'Generate Invoice'}
               </Button>
               <Button variant="ghost" className="flex-1 justify-center"
                 onClick={() => window.open(`https://wa.me/880${order.phone.slice(1)}?text=Hi%20${encodeURIComponent(order.customer)}%2C%20your%20order%20${order.id}%20update%3A%20`, '_blank')}>
@@ -274,30 +289,32 @@ function OrdersPageContent() {
     }
   }, [searchParams, router, mdUp])
 
-  const { data, loading, refetch } = useOrders({
-    status:  status  || undefined,
-    source:  source  || undefined,
-    payment: payment || undefined,
-    search:  search  || undefined,
-  })
+  const { orders: allOrders, loading, refetch } = useOrdersData()
+  const { range, label: rangeLabel } = useDateRange()
 
-  const orders = useMemo(() => {
-    const o = data?.orders ?? []
-    if (sort === 'profit') return [...o].sort((a, b) => b.profit - a.profit)
-    if (sort === 'price')  return [...o].sort((a, b) => b.sell_price - a.sell_price)
-    if (sort === 'oldest') return [...o].sort((a, b) => a.date.localeCompare(b.date))
-    return [...o].sort((a, b) => b.date.localeCompare(a.date))
-  }, [data, sort])
+  const dateFiltered = useMemo(
+    () => filterOrdersByDateRange(allOrders, range),
+    [allOrders, range],
+  )
 
-  const summary = data?.summary
-  const statusCounts: Record<string, number> = {}
-  STATUSES.forEach(s => { statusCounts[s] = (data?.orders ?? []).filter(o => o.status === s).length })
+  const filtered = useMemo(
+    () => applyOrderFilters(dateFiltered, { status, source, payment, search }),
+    [dateFiltered, status, source, payment, search],
+  )
+
+  const orders = useMemo(() => sortOrders(filtered, sort), [filtered, sort])
+
+  const summary = useMemo(() => summarizeOrders(filtered), [filtered])
+  const statusCounts = useMemo(
+    () => statusCountsForPills(dateFiltered, STATUSES),
+    [dateFiltered],
+  )
 
   return (
     <>
       <PageHeader
         title="Orders"
-        subtitle={`${summary?.total ?? 0} orders · ${fmt(summary?.total_revenue ?? 0)} revenue`}
+        subtitle={<>{summary.total} orders · <BdtText value={fmt(summary.total_revenue)} /> revenue · {rangeLabel}</>}
         actions={
           <>
             <Link
@@ -313,13 +330,15 @@ function OrdersPageContent() {
         }
       />
 
-      <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
+      <motion.div layout className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
+
+        <DateRangeFilter />
 
         {/* Status pills */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
           <button onClick={() => setStatus('')}
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
-            All <span className="ml-1 opacity-70">{data?.orders?.length ?? 0}</span>
+            All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
           </button>
           {STATUSES.map(s => {
             const c = STATUS_COLORS[s]
@@ -343,15 +362,15 @@ function OrdersPageContent() {
         </div>
 
         {/* Summary bar */}
-        {summary && (
-          <div className="flex items-center gap-4 px-4 py-3 bg-card border border-border rounded-xl text-xs">
-            <span className="text-zinc-500">{summary.total} orders</span>
-            <span className="w-px h-3 bg-border" />
-            <span className="text-gold font-bold">{fmt(summary.total_revenue)}</span>
-            <span className="w-px h-3 bg-border" />
-            <span className="text-green-400 font-bold">{fmt(summary.total_profit)} profit</span>
-          </div>
-        )}
+        <div className="flex items-center gap-4 px-4 py-3 bg-card border border-border rounded-xl text-xs transition-all duration-200">
+          <span className="text-zinc-500">{summary.total} orders</span>
+          <span className="w-px h-3 bg-border" />
+          <Money amount={summary.total_revenue} className="text-gold font-bold" />
+          <span className="w-px h-3 bg-border" />
+          <span className="text-green-400 font-bold inline-flex items-center gap-1">
+            <Money amount={summary.total_profit} /> profit
+          </span>
+        </div>
 
         {/* Orders table — desktop */}
         <Card className="hidden md:block overflow-hidden">
@@ -387,20 +406,22 @@ function OrdersPageContent() {
                           <p className="text-[10px] text-zinc-500">{o.category}</p>
                         </td>
                         <td className="px-3 py-3.5 text-center text-zinc-400">{o.qty}</td>
-                        <td className="px-3 py-3.5 font-bold text-cream tabular-nums whitespace-nowrap">{fmt(o.sell_price)}</td>
+                        <td className="px-3 py-3.5 whitespace-nowrap"><Money amount={o.sell_price ?? 0} className="font-bold text-cream" /></td>
                         <td className="px-3 py-3.5"><PaymentTag method={o.payment} /></td>
                         <td className="px-3 py-3.5"><StatusBadge status={o.status} /></td>
                         <td className="px-3 py-3.5">
                           <p className="text-zinc-400">{o.courier || '—'}</p>
                           {o.tracking_id && <p className="font-mono text-[9px] text-zinc-600">{o.tracking_id}</p>}
                         </td>
-                        <td className="px-3 py-3.5 font-bold text-green-400 tabular-nums whitespace-nowrap">{fmt(o.profit)}</td>
+                        <td className="px-3 py-3.5 whitespace-nowrap"><Money amount={o.profit ?? 0} className="font-bold text-green-400" /></td>
                       </tr>
                     ))
                 }
               </tbody>
             </table>
-            {!loading && orders.length === 0 && <Empty icon="◫" title="No orders match" desc="Try adjusting your filters" />}
+            {!loading && orders.length === 0 && (
+              <Empty icon="◫" title="No orders found for selected period" desc="Try a different date range or filters" />
+            )}
           </div>
         </Card>
 
@@ -419,22 +440,24 @@ function OrdersPageContent() {
                       </div>
                       <div className="text-right shrink-0">
                         <StatusBadge status={o.status} />
-                        <p className="text-sm font-bold text-cream mt-1">{fmt(o.sell_price)}</p>
+                        <Money amount={o.sell_price ?? 0} className="text-sm font-bold text-cream mt-1" />
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <PaymentTag method={o.payment} />
                       <span className="text-[10px] text-zinc-600">{o.courier || '—'}</span>
-                      <span className="ml-auto text-[11px] font-bold text-green-400">{fmt(o.profit)}</span>
+                      <Money amount={o.profit ?? 0} className="ml-auto text-[11px] font-bold text-green-400" />
                     </div>
                   </Card>
                 </button>
               ))
           }
-          {!loading && orders.length === 0 && <Empty icon="◫" title="No orders match" desc="Try adjusting filters" />}
+          {!loading && orders.length === 0 && (
+            <Empty icon="◫" title="No orders found for selected period" desc="Try a different date range or filters" />
+          )}
         </div>
 
-      </div>
+      </motion.div>
 
       {/* Mobile FAB — always visible above MobileNav, only on mobile */}
       {!showNew && !selected && (

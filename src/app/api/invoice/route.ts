@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost, INVOICE_SERVER_TIMEOUT_MS } from '@/lib/server-api'
+import { withActorPayload } from '@/lib/api-route-actor'
 
 /** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
 export const maxDuration = 120
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
     const t0 = Date.now()
     console.log('[POST /api/invoice] generate_invoice id=', id, 'timeoutMs=', INVOICE_SERVER_TIMEOUT_MS)
-    const result = await serverPost<Record<string, unknown>>('generate_invoice', { id }, {
+    const result = await serverPost<Record<string, unknown>>('generate_invoice', withActorPayload(req, { id }), {
       timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
     })
     console.log(

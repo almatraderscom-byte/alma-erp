@@ -1,16 +1,27 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
 import './globals.css'
-import { Sidebar } from '@/components/layout/Sidebar'
-import { MobileBottomSpacer, MobileNavBar } from '@/components/layout/MobileNavChrome'
+import { AppShell } from '@/components/layout/AppShell'
 import { Toaster } from 'react-hot-toast'
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
-const mono  = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
+const notoBengali = Noto_Sans_Bengali({
+  subsets: ['bengali', 'latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-bengali',
+  display: 'swap',
+})
+const hindSiliguri = Hind_Siliguri({
+  subsets: ['bengali', 'latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-hind',
+  display: 'swap',
+})
+const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
 export const metadata: Metadata = {
-  title: { default: 'Alma Lifestyle ERP', template: '%s · Alma ERP' },
-  description: 'Luxury Fashion Brand ERP System — Google Sheets Connected',
+  title: { default: 'Alma ERP', template: '%s · Alma ERP' },
+  description: 'Multi-business ERP — Alma Lifestyle & Creative Digital IT',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Alma ERP' },
 }
@@ -25,21 +36,14 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>
       <body className="bg-black text-cream antialiased font-sans">
-        <div className="flex h-[100dvh] w-full overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto min-w-0 scrollbar-hide">
-            {children}
-            <MobileBottomSpacer />
-          </main>
-        </div>
-        <MobileNavBar />
+        <AppShell>{children}</AppShell>
         <Toaster
           position="top-right"
           toastOptions={{

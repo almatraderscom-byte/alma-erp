@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCustomers } from '@/hooks/useERP'
-import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty } from '@/components/ui'
+import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt, pct } from '@/lib/utils'
 import type { Customer, CustomerSegment } from '@/types'
 
@@ -30,7 +30,10 @@ export default function CrmPage() {
 
   return (
     <>
-      <PageHeader title="CRM" subtitle={`${summary?.total ?? 0} customers · ${fmt(summary?.total_revenue ?? 0)} lifetime revenue`} />
+      <PageHeader
+        title="CRM"
+        subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}
+      />
 
       <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
 
@@ -100,7 +103,7 @@ export default function CrmPage() {
                         <p className="font-bold text-cream">{c.total_orders}</p>
                         <p className="text-[10px] text-zinc-600">D:{c.delivered} R:{c.returned}</p>
                       </td>
-                      <td className="px-3 py-3.5 font-bold text-cream tabular-nums">{fmt(c.total_spent)}</td>
+                      <td className="px-3 py-3.5 font-bold text-cream tabular-nums"><Money amount={c.total_spent} /></td>
                       <td className="px-3 py-3.5 w-28"><ClvBar score={c.clv_score} /></td>
                       <td className="px-3 py-3.5"><RiskBadge level={c.risk_level} /></td>
                       <td className="px-3 py-3.5"><SegmentBadge segment={c.segment} /></td>
@@ -140,7 +143,7 @@ export default function CrmPage() {
                 </div>
                 <div className="grid grid-cols-3 gap-2 mb-2 text-center">
                   <div><p className="text-sm font-bold text-cream">{c.total_orders}</p><p className="text-[10px] text-zinc-600">Orders</p></div>
-                  <div><p className="text-sm font-bold text-gold">{fmt(c.total_spent)}</p><p className="text-[10px] text-zinc-600">Spent</p></div>
+                  <div><p className="text-sm font-bold text-gold"><Money amount={c.total_spent} /></p><p className="text-[10px] text-zinc-600">Spent</p></div>
                   <div><p className="text-sm font-bold text-cream">{c.clv_score}</p><p className="text-[10px] text-zinc-600">CLV</p></div>
                 </div>
                 <ClvBar score={c.clv_score} />
@@ -174,8 +177,8 @@ export default function CrmPage() {
                   {selected.wa_optin === 'Yes' && <span className="text-[10px] bg-green-400/10 text-green-400 border border-green-400/20 px-2 py-1 rounded-full font-bold">WA Opt-in</span>}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold">{fmt(selected.total_spent)}</p><p className="text-[10px] text-zinc-500">Lifetime Spend</p></div>
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-green-400">{fmt(selected.total_profit)}</p><p className="text-[10px] text-zinc-500">Lifetime Profit</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold"><Money amount={selected.total_spent} /></p><p className="text-[10px] text-zinc-500">Lifetime Spend</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-green-400"><Money amount={selected.total_profit} /></p><p className="text-[10px] text-zinc-500">Lifetime Profit</p></div>
                   <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-cream">{selected.delivered}/{selected.total_orders}</p><p className="text-[10px] text-zinc-500">Delivered</p></div>
                   <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold">{selected.loyalty_pts} pts</p><p className="text-[10px] text-zinc-500">Loyalty</p></div>
                 </div>

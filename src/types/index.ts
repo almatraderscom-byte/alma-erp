@@ -6,7 +6,7 @@ export type CustomerSegment = 'VIP' | 'REGULAR' | 'NEW' | 'RISKY' | 'BLACKLIST' 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'
 
 export interface Order {
-  id: string; date: string; customer: string; phone: string; address: string
+  id: string; business_id?: string; date: string; customer: string; phone: string; address: string
   payment: string; source: string; status: OrderStatus; product: string
   category: string; size: string; qty: number; unit_price: number
   discount: number; add_discount: number; adv_cost: number; adv_platform: string
@@ -19,7 +19,7 @@ export interface Order {
 }
 
 export interface Customer {
-  id: string; name: string; phone: string; district: string; address: string
+  id: string; business_id?: string; name: string; phone: string; district: string; address: string
   whatsapp: string; total_orders: number; delivered: number; returned: number
   cancelled: number; pending: number; total_spent: number; avg_order: number
   total_profit: number; cod_orders: number; cod_fails: number; cod_fail_pct: number
@@ -50,6 +50,13 @@ export interface DashboardData {
   sla_breaches: Array<{ id: string; customer: string; sla_status: string; days_pending: number; days_in_transit: number }>
   recent_orders: Partial<Order>[]
   generated_at: string
+  monthly_trend?: Array<{ month: string; revenue: number; profit: number; orders: number; cogs: number }>
+  expense_by_cat?: Record<string, number>
+  total_expenses?: number
+  cash_balance?: number
+  employee_cost_roll?: number
+  net_business_after_opex?: number
+  payroll_kpis?: Record<string, number>
 }
 
 export interface LogEvent {

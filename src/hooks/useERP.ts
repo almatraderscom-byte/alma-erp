@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { useQuery, useMutation } from './useQuery'
 import type { OrderStatus } from '@/types'
 import type { CreateProductInput, SupplierImportCommitResponse } from '@/lib/api'
+import { useDateRange } from '@/contexts/DateRangeContext'
 
 // ── READ HOOKS ────────────────────────────────────────────────────────────
 
@@ -16,10 +17,11 @@ import type { CreateProductInput, SupplierImportCommitResponse } from '@/lib/api
  * On the initial load shows a loading skeleton.
  */
 export function useDashboard() {
+  const { range } = useDateRange()
   return useQuery(
-    () => api.dashboard.get(),
-    [],
-    { pollMs: 60_000 }
+    () => api.dashboard.get({ startDate: range.start, endDate: range.end }),
+    [range.start, range.end],
+    { pollMs: 60_000 },
   )
 }
 
@@ -125,10 +127,21 @@ export function useSupplierImportCommit() {
  * Finance data — expense ledger totals, cash balance.
  */
 export function useFinance() {
+  const { range } = useDateRange()
   return useQuery(
-    () => api.finance.get(),
-    [],
-    { pollMs: 120_000 }
+    () => api.finance.get({ startDate: range.start, endDate: range.end }),
+    [range.start, range.end],
+    { pollMs: 120_000 },
+  )
+}
+
+/** Merged KPIs incl. ledger expenses — respects global date range. */
+export function useAnalyticsMerged() {
+  const { range } = useDateRange()
+  return useQuery(
+    () => api.analytics.get({ startDate: range.start, endDate: range.end }),
+    [range.start, range.end],
+    { pollMs: 90_000 },
   )
 }
 

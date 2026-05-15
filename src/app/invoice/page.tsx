@@ -1,190 +1,52 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
-import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, GoldDivider } from '@/components/ui'
+import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt } from '@/lib/utils'
 import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
-
-function InvoicePreview({
-  order,
-  shareUrl,
-  onClose,
-  onGenerate,
-  loading,
-}: {
-  order: Order
-  shareUrl: string
-  onClose: () => void
-  onGenerate: () => void
-  loading: boolean
-}) {
-  async function copyLink() {
-    if (!shareUrl) return
-    try {
-      await navigator.clipboard.writeText(shareUrl)
-      toast.success('Invoice link copied')
-    } catch (e) {
-      console.error('[CopyInvoiceLink]', e)
-      toast.error('Copy failed — open the PDF and copy from the browser bar')
-    }
-  }
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <motion.div className="relative w-full max-w-lg bg-surface border border-border rounded-2xl overflow-hidden"
-        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}>
-        {/* Invoice preview header */}
-        <div className="bg-black px-6 py-5 flex items-center justify-between">
-          <div>
-            <p className="text-[11px] text-gold font-bold tracking-[0.14em]">ALMA LIFESTYLE</p>
-            <p className="text-[9px] text-gold-dim tracking-[0.16em] mt-0.5">PREMIUM FASHION</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] text-zinc-500 font-bold tracking-[0.12em] uppercase">Invoice</p>
-            <p className="font-mono text-sm text-cream font-bold">{order.invoice_num || 'AL-INV-2026-XXXX'}</p>
-          </div>
-        </div>
-        <div className="h-0.5 bg-gradient-to-r from-transparent via-gold to-transparent" />
-
-        <div className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-[9px] font-bold tracking-[0.14em] uppercase text-zinc-500 mb-2">Bill To</p>
-              <p className="font-bold text-cream">{order.customer}</p>
-              <p className="text-[11px] text-zinc-500 font-mono">{order.phone}</p>
-              <p className="text-[11px] text-zinc-500">{order.address}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[9px] font-bold tracking-[0.14em] uppercase text-zinc-500 mb-2">Order Details</p>
-              <p className="text-[11px] text-zinc-500">Order: <span className="font-mono text-gold">{order.id}</span></p>
-              <p className="text-[11px] text-zinc-500">Date: {order.date}</p>
-              <p className="text-[11px] text-zinc-500">Via: {order.payment}</p>
-            </div>
-          </div>
-
-          <GoldDivider />
-
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border/50">
-                <th className="pb-2 text-left text-[9px] font-bold tracking-[0.10em] uppercase text-zinc-500">Product</th>
-                <th className="pb-2 text-right text-[9px] font-bold tracking-[0.10em] uppercase text-zinc-500">Qty</th>
-                <th className="pb-2 text-right text-[9px] font-bold tracking-[0.10em] uppercase text-zinc-500">Unit</th>
-                <th className="pb-2 text-right text-[9px] font-bold tracking-[0.10em] uppercase text-zinc-500">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-border/50">
-                <td className="py-3">
-                  <p className="font-semibold text-cream">{order.product}</p>
-                  <p className="text-[10px] text-zinc-500">{order.category}{order.size ? ` · ${order.size}` : ''}</p>
-                </td>
-                <td className="py-3 text-right text-zinc-400">{order.qty}</td>
-                <td className="py-3 text-right tabular-nums">{fmt(order.unit_price)}</td>
-                <td className="py-3 text-right font-bold tabular-nums">{fmt(order.unit_price * order.qty)}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div className="flex justify-end">
-            <div className="w-48 space-y-1.5">
-              {order.discount > 0 && (
-                <div className="flex justify-between text-[11px]"><span className="text-zinc-500">Discount</span><span className="text-red-400">-{fmt(order.discount)}</span></div>
-              )}
-              {order.shipping_fee > 0 && (
-                <div className="flex justify-between text-[11px]"><span className="text-zinc-500">Delivery</span><span>{fmt(order.shipping_fee)}</span></div>
-              )}
-              <div className="flex justify-between pt-2 border-t border-border">
-                <span className="text-[11px] font-bold text-zinc-400">TOTAL</span>
-                <span className="text-base font-bold text-gold">{fmt(order.sell_price + order.shipping_fee)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="text-center pt-2">
-            <p className="text-[9px] text-zinc-600">0130-77777-33 · almatraders.com@gmail.com · facebook.com/AlmaLifestyle</p>
-            <p className="text-[9px] text-zinc-700 mt-1">Thank you for choosing Alma Lifestyle.</p>
-          </div>
-        </div>
-
-        <div className="px-6 py-4 border-t border-border flex flex-col gap-2">
-          {shareUrl && (
-            <div className="flex flex-col gap-2 mb-1">
-              <Button variant="gold" className="w-full justify-center min-h-[44px]" type="button" onClick={copyLink}>
-                Copy invoice link
-              </Button>
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
-                  onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}>
-                  Open PDF
-                </Button>
-                <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
-                  onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Invoice PDF (${order.id}): ${shareUrl}`)}`, '_blank', 'noopener,noreferrer')}>
-                  Share WhatsApp
-                </Button>
-              </div>
-            </div>
-          )}
-          {order.invoice_num
-            ? <div className="flex-1 flex items-center gap-2 text-sm text-green-400 font-bold"><span>✓</span> Invoice generated: {order.invoice_num}</div>
-            : <Button variant="gold" className="flex-1 justify-center min-h-[44px]" onClick={onGenerate} disabled={loading}>
-                {loading ? 'Generating PDF…' : 'Generate & Save PDF'}
-              </Button>
-          }
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}
+import { useBranding } from '@/contexts/BrandingContext'
+import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
+import { orderToPdfModel } from '@/lib/pdf/models'
+import { shareSlugAlma } from '@/lib/pdf/format'
+import type { InvoicePdfModel } from '@/lib/pdf/types'
 
 export default function InvoicePage() {
   const [search, setSearch] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
+  const [pdfModel, setPdfModel] = useState<InvoicePdfModel | null>(null)
   const [genLoading, setGenLoading] = useState(false)
-  const [shareUrl, setShareUrl] = useState('')
+  const { branding } = useBranding()
   const { data, loading, refetch } = useOrders({ status: 'Delivered' })
-
-  useEffect(() => {
-    setShareUrl('')
-  }, [preview?.id])
 
   const orders = (data?.orders ?? []).filter(o =>
     !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
   )
 
-  const invoiced    = orders.filter(o => o.invoice_num)
-  const uninvoiced  = orders.filter(o => !o.invoice_num)
+  const invoiced = orders.filter(o => o.invoice_num)
+  const uninvoiced = orders.filter(o => !o.invoice_num)
 
-  async function handleGenerate() {
+  function openPreview(order: Order) {
+    setPreview(order)
+    if (!branding) {
+      toast.error('Brand settings still loading — try again in a moment')
+      return
+    }
+    setPdfModel(orderToPdfModel(order, branding, undefined, order.invoice_num || undefined))
+  }
+
+  async function handleSaveToDrive() {
     if (!preview) return
     setGenLoading(true)
     try {
       const r = await api.mutations.generateInvoice(preview.id)
       if (r?.ok) {
-        const url = (r.drive_url || r.file_url || r.share_url || '').trim()
-        setShareUrl(url)
-        if (r.duplicate) {
-          toast.success(
-            url ? `Invoice ${r.invoice_number} already on file — link ready` : `Invoice ${r.invoice_number} exists`,
-          )
-        } else {
-          toast.success(
-            url ? `Invoice ${r.invoice_number} saved — opening PDF` : `Invoice ${r.invoice_number} recorded`,
-          )
-        }
-        if (url) window.open(url, '_blank', 'noopener,noreferrer')
+        toast.success(`Backed up to Drive: ${r.invoice_number || ''}`)
         refetch()
-      } else {
-        toast.error('Invoice was not created (server returned ok: false)')
       }
     } catch (e) {
-      const msg = e instanceof APIError ? e.userMessage : (e as Error).message
-      console.error('[GenerateInvoice]', { orderId: preview.id, err: e })
-      toast.error(msg || 'Generation failed')
+      toast.error(e instanceof APIError ? e.userMessage : (e as Error).message)
     } finally {
       setGenLoading(false)
     }
@@ -192,11 +54,9 @@ export default function InvoicePage() {
 
   return (
     <>
-      <PageHeader title="Invoices" subtitle={`${invoiced.length} issued · ${uninvoiced.length} pending`}
-        actions={<Button variant="gold">Batch Generate</Button>} />
+      <PageHeader title="Invoices" subtitle={`${invoiced.length} issued · ${uninvoiced.length} pending`} />
 
       <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
-
         <div className="grid grid-cols-3 gap-3">
           <Card className="p-4 text-center">
             <p className="text-2xl font-bold text-cream">{orders.length}</p>
@@ -222,7 +82,7 @@ export default function InvoicePage() {
                 <button
                   key={o.id}
                   type="button"
-                  onClick={() => setPreview(o)}
+                  onClick={() => openPreview(o)}
                   className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-amber-400/15 hover:border-amber-400/30 transition-colors cursor-pointer bg-card"
                 >
                   <div className="flex-1 min-w-0">
@@ -234,10 +94,10 @@ export default function InvoicePage() {
                     <p className="text-[11px] text-zinc-500">{o.product}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-cream">{fmt(o.sell_price)}</p>
+                    <p className="font-bold text-cream"><Money amount={o.sell_price} /></p>
                     <p className="text-[10px] text-zinc-500">{o.date}</p>
                   </div>
-                  <Button variant="gold" size="xs" >Generate</Button>
+                  <Button variant="gold" size="xs">Preview PDF</Button>
                 </button>
               ))}
             </div>
@@ -252,7 +112,7 @@ export default function InvoicePage() {
                 <button
                   key={o.id}
                   type="button"
-                  onClick={() => setPreview(o)}
+                  onClick={() => openPreview(o)}
                   className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-green-400/10 cursor-pointer hover:border-green-400/25 transition-colors bg-card"
                 >
                   <div className="flex-1 min-w-0">
@@ -264,8 +124,8 @@ export default function InvoicePage() {
                     <p className="text-[11px] text-zinc-500">{o.product}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-cream">{fmt(o.sell_price)}</p>
-                    <span className="text-[10px] text-green-400 font-semibold">✓ Issued</span>
+                    <p className="font-bold text-cream"><Money amount={o.sell_price} /></p>
+                    <span className="text-[10px] text-green-400 font-semibold">View PDF</span>
                   </div>
                 </button>
               ))}
@@ -273,22 +133,19 @@ export default function InvoicePage() {
           </div>
         )}
 
-        {!loading && orders.length === 0 && <Empty icon="◈" title="No delivered orders" desc="Invoices are generated for delivered orders" />}
-
+        {!loading && orders.length === 0 && (
+          <Empty icon="◈" title="No delivered orders" desc="Invoices are generated for delivered orders" />
+        )}
       </div>
 
-      <AnimatePresence>
-        {preview && (
-          <InvoicePreview
-            order={preview}
-            shareUrl={shareUrl}
-            onClose={() => setPreview(null)}
-            onGenerate={handleGenerate}
-            loading={genLoading}
-          />
-        )}
-      </AnimatePresence>
-
+      <PdfPreviewModal
+        open={!!preview && !!pdfModel}
+        onClose={() => { setPreview(null); setPdfModel(null) }}
+        baseModel={pdfModel}
+        shareSlug={preview ? shareSlugAlma(preview.id) : undefined}
+        onSaveToDrive={handleSaveToDrive}
+        saveToDriveLoading={genLoading}
+      />
     </>
   )
 }

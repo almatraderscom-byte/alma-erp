@@ -28,6 +28,9 @@ var SHEETS = {
   CASH_FLOW:'💰 CASH FLOW',
   LOG:      '🤖 AUTOMATION LOG',
   SETTINGS: '⚙️ SETTINGS',
+  EMPLOYEES:'👥 HR EMPLOYEES',
+  HR_PAYROLL:'💼 HR PAYROLL',
+  AUDIT:'📜 ERP AUDIT LOG',
 };
 
 /** PRODUCT MASTER tab aliases — add this sheet to the workbook if missing. */
@@ -53,6 +56,7 @@ var OC = {
   CUST_ORDER_NUM:35, // FORMULA — col AI =COUNTIF(C$3:C, C)
   // Automation columns (36-43) written by Phase 2 triggers, not by the API
   INVOICE_NUM:44,
+  BUSINESS_ID:45,
 };
 
 // Columns that contain formulas — never written by setValues / setFormula on new rows
@@ -62,7 +66,7 @@ var FORMULA_SKIP = { 33: true, 35: true }; // SKU VLOOKUP, CUST ORDER #
 
 // Row layout
 var ORDERS_DATA_START = 3;   // row 1 = brand header, row 2 = column headers, row 3+ = data
-var TOTAL_COLS        = 44;  // columns A through AR
+var TOTAL_COLS        = 45;  // columns A through AS (incl. BUSINESS_ID)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENTRY POINTS
@@ -108,47 +112,201 @@ function jsonOutput(obj) {
 
 function routeGet_(route, p) {
   switch (route) {
-    case 'dashboard':        return getDashboard_();
+    case 'dashboard':        return getDashboard_(p);
     case 'orders':           return getOrders_(p);
     case 'order':            return getOrder_(p.id);
     case 'customers':        return getCustomers_(p);
     case 'customer':         return getCustomer_(p.name);
-    case 'analytics':        return getAnalytics_();
+    case 'analytics':        return getAnalytics_(p);
     case 'inventory':
     case 'stock':            return getInventory_();
     case 'products':         return getProducts_();
-    case 'finance':          return getFinance_();
+    case 'finance':          return getFinance_(p);
     case 'courier':          return getCourier_();
     case 'log':              return getLog_(parseInt(p.limit || '50', 10));
     case 'sla_alerts':       return getSlaAlerts_();
     case 'next_invoice_num': return getNextInvoiceNum_();
+    case 'cdit_dashboard':     return getCditDashboard_(p);
+    case 'cdit_clients':       return getCditClients_(p);
+    case 'cdit_projects':      return getCditProjects_(p);
+    case 'cdit_invoices':      return getCditInvoices_(p);
+    case 'cdit_payments':      return getCditPayments_(p);
+    case 'cdit_client':        return getCditClientDetail_(p);
+    case 'branding':           return getBranding_(p);
+    case 'branding_all':       return getAllBranding_();
+    case 'financial_report':   return getFinancialReport_(p);
+    case 'hr_employees':       return hrListEmployees_(p);
+    case 'hr_payroll':         return hrPayrollList_(p);
+    case 'hr_dashboard':       return hrDashboard_(p);
+    case 'audit_log':          return listAuditLogs_(p);
     default:
       return {
         error: 'Unknown GET route: "' + route + '"',
-        available: 'dashboard, orders, order, customers, customer, analytics, inventory, stock, products, finance, courier, log, sla_alerts, next_invoice_num',
+        available: 'dashboard, orders, order, finance, hr_employees, hr_payroll, hr_dashboard, audit_log, financial_report, courier, analytics, cdit_*',
       };
   }
 }
 
-function routePost_(body) {
+function ensureAuditSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEETS.AUDIT);
+  if (!sh) {
+    sh = ss.insertSheet(SHEETS.AUDIT);
+    sh.getRange(1, 1, 1, 10).setValues([[
+      'timestamp_iso', 'route', 'actor', 'actor_role', 'business_id', 'entity_type', 'entity_id', 'summary', 'detail_json', 'status_flag',
+    ]]).setFontWeight('bold');
+  }
+  return sh;
+}
+
+function auditAppend_(body, result) {
+  try {
+    if (!body || !body.route) return;
+    var route = String(body.route);
+    var bid = resolveBusinessId_(body.business_id || '');
+    var actor = String(body.actor || 'Unknown').slice(0, 120);
+    var actorRole = String(body.actor_role || '').slice(0, 48);
+    var entityType = '';
+    var entityId = '';
+    var summary = route;
+    var ok = !(result && result.error);
+
+    if (route === 'create_order' && result && result.order_id) {
+      entityType = 'order';
+      entityId = String(result.order_id);
+      summary = 'Order created ' + entityId;
+    } else if (route === 'update_status') {
+      entityType = 'order';
+      entityId = String(body.id || '');
+      summary = 'Status → ' + String(body.status || '');
+    } else if (route === 'update_tracking') {
+      entityType = 'order';
+      entityId = String(body.id || '');
+      summary = 'Tracking updated';
+    } else if (route === 'update_field') {
+      entityType = 'order';
+      entityId = String(body.id || '');
+      summary = 'Field ' + String(body.field || '');
+    } else if (route === 'add_expense') {
+      entityType = 'expense';
+      entityId = String(result.expense_id || result.exp_id || '');
+      summary = 'Expense ' + String(body.category || '') + ' ৳' + String(body.amount || '');
+    } else if (route === 'hr_employee_save') {
+      entityType = 'employee';
+      entityId = String(result.emp_id || body.emp_id || '');
+      summary = 'Employee saved ' + String(body.name || entityId);
+    } else if (route === 'hr_payroll_add') {
+      entityType = 'payroll';
+      entityId = String(result.tx_id || '');
+      summary = String(body.tx_type || '') + ' ৳' + String(body.amount || '') + ' emp ' + String(body.emp_id || '');
+    } else if (route === 'generate_invoice') {
+      entityType = 'invoice';
+      entityId = String(body.id || '');
+      summary = 'Invoice PDF ' + String(result.invoice_number || '');
+    } else if (route.indexOf('cdit_') === 0 || route === 'create_client') {
+      entityType = 'cdit';
+      entityId = String(result.client_id || result.invoice_id || result.payment_id || result.project_id || body.id || '');
+      summary = route;
+    } else if (route === 'create_product' || route === 'batch_import_product_master') {
+      entityType = 'inventory';
+      entityId = String(result.product_id || 'batch');
+      summary = route;
+    } else if (route === 'create_customer') {
+      entityType = 'customer';
+      entityId = String(body.phone || body.name || '');
+      summary = 'Customer ' + String(body.name || '');
+    } else if (route === 'save_branding' || route === 'upload_brand_asset') {
+      entityType = 'branding';
+      entityId = bid;
+      summary = route;
+    }
+
+    var detail = { route: route, keys: Object.keys(body).filter(function (k) { return k !== 'secret'; }) };
+    var sh = ensureAuditSheet_();
+    var ts = new Date();
+    var iso = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'");
+    sh.appendRow([
+      iso, route, actor, actorRole, bid, entityType, entityId, summary.slice(0, 480),
+      JSON.stringify(detail).slice(0, 12000), ok ? 'OK' : 'FAIL',
+    ]);
+    SpreadsheetApp.flush();
+  } catch (ignore) { /* never block mutations */ }
+}
+
+function listAuditLogs_(p) {
+  p = p || {};
+  var biz = resolveBusinessId_(p.business_id || '');
+  var limit = Math.min(parseInt(p.limit || '100', 10), 400);
+  var sh = ensureAuditSheet_();
+  var last = sh.getLastRow();
+  var rows = [];
+  if (last >= 2) {
+    var takeFrom = Math.max(2, last - limit + 1);
+    var vals = sh.getRange(takeFrom, 1, last, 10).getValues();
+    var i;
+    for (i = vals.length - 1; i >= 0; i--) {
+      var r = vals[i];
+      var rowBiz = String(r[4] || '');
+      if (biz && rowBiz && rowBiz !== biz) continue;
+      rows.push({
+        timestamp: String(r[0] || ''),
+        route: String(r[1] || ''),
+        actor: String(r[2] || ''),
+        actor_role: String(r[3] || ''),
+        business_id: rowBiz || 'ALMA_LIFESTYLE',
+        entity_type: String(r[5] || ''),
+        entity_id: String(r[6] || ''),
+        summary: String(r[7] || ''),
+        detail_json: String(r[8] || ''),
+        status_flag: String(r[9] || ''),
+      });
+    }
+  }
+  return { audit: rows, total: rows.length };
+}
+
+function dispatchRoutePost_(body) {
   switch (body.route) {
     case 'create_order':        return createOrder_(body);
     case 'update_status':       return updateStatus_(body);
     case 'update_tracking':     return updateTracking_(body);
     case 'update_field':        return updateField_(body);
     case 'add_expense':         return addExpense_(body);
+    case 'hr_employee_save':    return hrUpsertEmployee_(body);
+    case 'hr_payroll_add':      return hrPayrollAppend_(body);
     case 'generate_invoice':    return triggerInvoice_(body);
     case 'create_order_folder': return triggerOrderFolder_(body);
-    case 'create_customer':     return triggerCreateCustomer_(body);
+    case 'create_customer':
+      if (body.business_id === 'CREATIVE_DIGITAL_IT') return createCditClient_(body);
+      return triggerCreateCustomer_(body);
+    case 'create_client':
+      return createCditClient_(body);
     case 'create_product':      return createProduct_(body);
     case 'batch_import_product_master':
       return batchImportProductMaster_(body);
     case 'backfill_sla':
       if (typeof runManualSLARefresh === 'function') runManualSLARefresh();
       return { ok: true };
+    case 'cdit_create_client':   return createCditClient_(body);
+    case 'cdit_create_project':  return createCditProject_(body);
+    case 'cdit_update_project':  return updateCditProject_(body);
+    case 'cdit_create_invoice':  return createCditInvoice_(body);
+    case 'cdit_update_invoice':  return updateCditInvoiceStatus_(body);
+    case 'cdit_create_payment':  return createCditPayment_(body);
+    case 'cdit_generate_invoice_pdf': return generateCditInvoicePdf_(body);
+    case 'save_branding':        return saveBranding_(body);
+    case 'upload_brand_asset':   return uploadBrandAsset_(body);
     default:
       return { error: 'Unknown POST route: "' + body.route + '"' };
   }
+}
+
+function routePost_(body) {
+  var result = dispatchRoutePost_(body);
+  if (body.route !== 'backfill_sla') {
+    auditAppend_(body, result);
+  }
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -234,6 +392,7 @@ function createOrder_(body) {
   row[OC.NOTES         - 1] = String(body.notes     || '');
   // OC.SKU (33) — formula column, leave blank (VLOOKUP fills it)
   row[OC.HANDLED_BY    - 1] = String(body.handled_by || '');
+  row[OC.BUSINESS_ID   - 1] = resolveBusinessId_(body.business_id || '');
   // OC.CUST_ORDER_NUM (35) — formula column, leave blank
 
   // ── Write the row ─────────────────────────────────────────────────────────
@@ -412,8 +571,17 @@ function addExpense_(body) {
 
   var newRow = sh.getLastRow() + 1;
   var today  = body.date ? new Date(body.date) : new Date();
+  var biz    = typeof resolveBusinessId_ === 'function'
+    ? resolveBusinessId_(body.business_id || '')
+    : ((body.business_id === 'CREATIVE_DIGITAL_IT') ? 'CREATIVE_DIGITAL_IT' : 'ALMA_LIFESTYLE');
+  var paymentStatus = String(body.payment_status || body.pay_status || 'Paid').trim() || 'Paid';
+  var title = String(body.title || body.description || '').trim();
+  var noteRaw = String(body.notes || body.note || '');
+  var notesMerged = '[PS:' + paymentStatus + ']' + (noteRaw ? ' ' + noteRaw : '');
+  var expType = body.recurring === true || body.expense_kind === 'recurring'
+    ? 'Recurring'
+    : String(body.exp_type || 'One-time');
 
-  // Build row without .fill()
   var row = [];
   for (var c = 0; c < 17; c++) row.push('');
 
@@ -422,26 +590,26 @@ function addExpense_(body) {
   row[2]  = Utilities.formatDate(today, Session.getScriptTimeZone(), 'MMM-yyyy');
   row[3]  = 'W' + getWeekNum_(today);
   row[4]  = body.category;
-  row[5]  = body.sub_cat     || '';
-  row[6]  = body.exp_type    || 'Operational';
-  row[7]  = body.description || '';
-  row[8]  = body.vendor      || '';
+  row[5]  = biz;
+  row[6]  = expType;
+  row[7]  = title || body.category;
+  row[8]  = body.vendor || '';
   row[9]  = Number(body.amount);
-  row[10] = body.payment     || '';
+  row[10] = body.payment_method || body.payment || '';
   row[11] = 'Main Account';
-  row[12] = body.receipt_ref || '';
-  row[13] = body.linked_order|| '';
-  row[14] = 'API';
-  row[15] = 'No';
-  row[16] = body.notes       || '';
+  row[12] = String(body.receipt_ref || body.attachment_url || '').trim();
+  row[13] = body.linked_order || '';
+  row[14] = 'ERP_API';
+  row[15] = String(body.recurring === true ? 'Yes' : 'No');
+  row[16] = notesMerged;
 
-  sh.getRange(newRow, 1, 1, 17).setValues([row]);
+  sh.getRange(newRow, 1, newRow, 17).setValues([row]);
   sh.getRange(newRow, 2).setNumberFormat('DD-MMM-YYYY');
   sh.getRange(newRow, 10).setNumberFormat('৳#,##0');
   SpreadsheetApp.flush();
 
   var expId = sh.getRange(newRow, 1).getValue();
-  return { ok: true, exp_id: expId, row: newRow };
+  return { ok: true, expense_id: String(expId), exp_id: String(expId), row: newRow };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -502,7 +670,18 @@ function triggerCreateCustomer_(body) {
 // GET HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function getDashboard_() {
+function filterOrdersByDateRange_(orders, startDate, endDate) {
+  if (!startDate && !endDate) return orders;
+  return orders.filter(function(o) {
+    if (!o.date) return false;
+    if (startDate && o.date < startDate) return false;
+    if (endDate   && o.date > endDate)   return false;
+    return true;
+  });
+}
+
+function getDashboard_(p) {
+  p = p || {};
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
   var sh    = ss.getSheetByName(SHEETS.ORDERS);
   var last  = sh.getLastRow();
@@ -519,6 +698,8 @@ function getDashboard_() {
 
   var rows   = sh.getRange(ORDERS_DATA_START, 1, last - ORDERS_DATA_START + 1, TOTAL_COLS).getValues();
   var orders = rows.filter(function(r){ return r[OC.ORDER_ID-1]; }).map(rowToOrder_);
+  orders = filterOrdersByDateRange_(orders, p.startDate || '', p.endDate || '');
+  orders = orders.filter(function(o){ return orderMatchesBusiness_(o, resolveBusinessId_(p.business_id || '')); });
 
   if (!orders.length) return emptyResult;
 
@@ -584,13 +765,18 @@ function getDashboard_() {
   };
 }
 
-function getAnalytics_() {
-  var dash    = getDashboard_();
-  var finance = getFinance_();
+function getAnalytics_(p) {
+  p = p || {};
+  var dash    = getDashboard_(p);
+  var finance = getFinance_({ business_id: p.business_id, startDate: p.startDate, endDate: p.endDate });
+  var hrDash = hrDashboard_({ business_id: p.business_id, startDate: p.startDate, endDate: p.endDate });
   return Object.assign({}, dash, {
     expense_by_cat: finance.by_category,
     total_expenses: finance.total_expenses,
     cash_balance:   finance.cash_balance,
+    employee_cost_roll: hrDash.kpis.monthly_payroll_budget || hrDash.kpis.total_monthly_salary,
+    net_business_after_opex: hrDash.kpis.net_business_profit_hint,
+    payroll_kpis: hrDash.kpis,
   });
 }
 
@@ -608,8 +794,10 @@ function getOrders_(p) {
 
   var orders = rows
     .filter(function(r){return r[OC.ORDER_ID-1];})
-    .map(rowToOrder_)
-    .filter(function(o){
+    .map(rowToOrder_);
+  orders = filterOrdersByDateRange_(orders, p.startDate || '', p.endDate || '');
+  orders = orders.filter(function(o){ return orderMatchesBusiness_(o, resolveBusinessId_(p.business_id || '')); });
+  orders = orders.filter(function(o){
       if (statusF  && o.status  !==statusF)  return false;
       if (sourceF  && o.source  !==sourceF)  return false;
       if (paymentF && o.payment !==paymentF) return false;
@@ -1015,33 +1203,330 @@ function createProduct_(body) {
   return { error: 'Unknown create result' };
 }
 
-function getFinance_() {
-  var ss=SpreadsheetApp.getActiveSpreadsheet(),sh=ss.getSheetByName(SHEETS.EXPENSE);
-  var expenses=[],byCat={},byType={};
+function expenseMatchesBiz_(subCatBiz, requestedBiz) {
+  var rq = requestedBiz ? String(requestedBiz).trim() : '';
+  if (!rq) return true;
+  var sb = String(subCatBiz || '').trim();
+  if (!sb && rq === 'ALMA_LIFESTYLE') return true;
+  if (!sb && rq === 'CREATIVE_DIGITAL_IT') return false;
+  return sb === rq;
+}
+
+function expenseInRange_(dateVal, start, end) {
+  var d = fmtDate_(dateVal);
+  if (!d) return !start && !end;
+  var s = start ? String(start).slice(0, 10) : '';
+  var e = end ? String(end).slice(0, 10) : '';
+  if (s && d < s) return false;
+  if (e && d > e) return false;
+  return true;
+}
+
+function parsePaymentStatus_(notes) {
+  var m = String(notes || '').match(/\[PS:([^\]]+)\]/);
+  return m ? m[1] : 'Paid';
+}
+
+function stripPaymentStatus_(notes) {
+  return String(notes || '').replace(/\[PS:[^\]]+\]\s*/, '').trim();
+}
+
+function getFinance_(p) {
+  p = p || {};
+  var reqBiz = p.business_id ? resolveBusinessId_(p.business_id) : '';
+  var start = p.startDate || '';
+  var end = p.endDate || '';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEETS.EXPENSE);
+  var expenses = [];
+  var byCat = {};
+  var byType = {};
   if (sh) {
-    var last=sh.getLastRow(),ESTART=6;
-    if (last>=ESTART) {
-      sh.getRange(ESTART,1,last-ESTART+1,17).getValues()
-        .filter(function(r){return r[4];})
-        .forEach(function(r){
-          var cat=String(r[4]||''),type=String(r[6]||''),amount=Number(r[9]||0);
-          byCat[cat] =(byCat[cat] ||0)+amount;
-          byType[type]=(byType[type]||0)+amount;
-          expenses.push({exp_id:String(r[0]||''),date:fmtDate_(r[1]),month:String(r[2]||''),
-            category:cat,sub_cat:String(r[5]||''),exp_type:type,desc:String(r[7]||''),
-            vendor:String(r[8]||''),amount:amount,payment:String(r[10]||'')});
+    var last = sh.getLastRow();
+    var ESTART = 6;
+    if (last >= ESTART) {
+      sh.getRange(ESTART, 1, last - ESTART + 1, 17).getValues().forEach(function (r) {
+        if (!r[4]) return;
+        var rowBizCell = String(r[5] || '').trim();
+        if (!expenseMatchesBiz_(rowBizCell, reqBiz)) return;
+        if (!expenseInRange_(r[1], start, end)) return;
+        var cat = String(r[4] || '');
+        var type = String(r[6] || '');
+        var amount = Number(r[9] || 0);
+        var nRaw = String(r[16] || '');
+        var ps = parsePaymentStatus_(nRaw);
+        var notesShow = stripPaymentStatus_(nRaw);
+        var bid = rowBizCell || 'ALMA_LIFESTYLE';
+        byCat[cat] = (byCat[cat] || 0) + amount;
+        byType[type] = (byType[type] || 0) + amount;
+        expenses.push({
+          exp_id: String(r[0] || ''),
+          date: fmtDate_(r[1]),
+          month: String(r[2] || ''),
+          category: cat,
+          business_id: bid,
+          sub_cat: String(r[5] || ''),
+          exp_type: type,
+          title: String(r[7] || ''),
+          desc: String(r[7] || ''),
+          vendor: String(r[8] || ''),
+          amount: amount,
+          payment_method: String(r[10] || ''),
+          payment_status: ps,
+          receipt_ref: String(r[12] || ''),
+          recurring: String(r[6] || '').indexOf('Recurring') !== -1,
+          notes: notesShow,
         });
+      });
     }
   }
-  var cashBal=0;
-  var cfSh=ss.getSheetByName(SHEETS.CASH_FLOW);
-  if (cfSh&&cfSh.getLastRow()>=7) {
-    var cfData=cfSh.getRange(7,9,cfSh.getLastRow()-6,1).getValues();
-    for (var i=cfData.length-1;i>=0;i--){if(cfData[i][0]){cashBal=Number(cfData[i][0]);break;}}
+  var cashBal = 0;
+  var cfSh = ss.getSheetByName(SHEETS.CASH_FLOW);
+  if (cfSh && cfSh.getLastRow() >= 7) {
+    var cfData = cfSh.getRange(7, 9, cfSh.getLastRow() - 6, 1).getValues();
+    for (var i = cfData.length - 1; i >= 0; i--) {
+      if (cfData[i][0]) {
+        cashBal = Number(cfData[i][0]);
+        break;
+      }
+    }
   }
-  return {total_expenses:expenses.reduce(function(a,e){return a+e.amount;},0),
-          cash_balance:cashBal,by_category:byCat,by_type:byType,
-          recent_expenses:expenses.slice(-20).reverse()};
+  expenses.sort(function (a, b) {
+    return String(b.date).localeCompare(String(a.date));
+  });
+  return {
+    total_expenses: expenses.reduce(function (a, e) { return a + e.amount; }, 0),
+    cash_balance: cashBal,
+    by_category: byCat,
+    by_type: byType,
+    expenses: expenses,
+    recent_expenses: expenses.slice(0, 20),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HR — Employees & Payroll (shared workbook; filtered by business_id)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function hrEnsureEmployees_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEETS.EMPLOYEES);
+  if (!sh) {
+    sh = ss.insertSheet(SHEETS.EMPLOYEES);
+    sh.getRange(1, 1, 1, 11).setValues([[
+      'emp_id', 'business_id', 'name', 'phone', 'email', 'address', 'role', 'joining_date',
+      'monthly_salary', 'status', 'notes',
+    ]]).setFontWeight('bold');
+  }
+  return sh;
+}
+
+function hrEnsurePayroll_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEETS.HR_PAYROLL);
+  if (!sh) {
+    sh = ss.insertSheet(SHEETS.HR_PAYROLL);
+    sh.getRange(1, 1, 1, 9).setValues([[
+      'tx_id', 'date', 'business_id', 'emp_id', 'emp_name', 'tx_type', 'amount', 'period_ym', 'note',
+    ]]).setFontWeight('bold');
+  }
+  return sh;
+}
+
+function hrListEmployees_(p) {
+  p = p || {};
+  var biz = resolveBusinessId_(p.business_id || '');
+  var sh = hrEnsureEmployees_();
+  var last = sh.getLastRow();
+  var out = [];
+  if (last >= 2) {
+    sh.getRange(2, 1, last - 1, 11).getValues().forEach(function (r) {
+      if (!r[0]) return;
+      if (String(r[1] || '').trim() !== biz) return;
+      out.push({
+        emp_id: String(r[0]),
+        business_id: String(r[1]),
+        name: String(r[2] || ''),
+        phone: String(r[3] || ''),
+        email: String(r[4] || ''),
+        address: String(r[5] || ''),
+        role: String(r[6] || ''),
+        joining_date: fmtDate_(r[7]),
+        monthly_salary: Number(r[8] || 0),
+        status: String(r[9] || 'Active'),
+        notes: String(r[10] || ''),
+      });
+    });
+  }
+  return { employees: out, total: out.length };
+}
+
+function hrUpsertEmployee_(body) {
+  if (!body.name) return { error: 'name required' };
+  var biz = resolveBusinessId_(body.business_id || '');
+  var sh = hrEnsureEmployees_();
+  var id = String(body.emp_id || '').trim();
+  if (!id) id = 'EMP-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
+  var last = sh.getLastRow();
+  var rowIndex = -1;
+  if (last >= 2) {
+    var ids = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === id) {
+        rowIndex = 2 + i;
+        break;
+      }
+    }
+  }
+  var row = [
+    id, biz, String(body.name), String(body.phone || ''), String(body.email || ''),
+    String(body.address || ''), String(body.role || ''), body.joining_date ? new Date(body.joining_date) : '',
+    Number(body.monthly_salary || 0), String(body.status || 'Active'), String(body.notes || ''),
+  ];
+  if (rowIndex > 0) {
+    sh.getRange(rowIndex, 1, rowIndex, 11).setValues([row]);
+  } else {
+    sh.appendRow(row);
+  }
+  sh.getRange(rowIndex > 0 ? rowIndex : sh.getLastRow(), 8).setNumberFormat('yyyy-mm-dd');
+  SpreadsheetApp.flush();
+  return { ok: true, emp_id: id };
+}
+
+function hrPayrollList_(p) {
+  p = p || {};
+  var biz = resolveBusinessId_(p.business_id || '');
+  var empId = String(p.emp_id || '').trim();
+  var sh = hrEnsurePayroll_();
+  var last = sh.getLastRow();
+  var out = [];
+  if (last >= 2) {
+    sh.getRange(2, 1, last - 1, 9).getValues().forEach(function (r) {
+      if (!r[0]) return;
+      if (String(r[2] || '').trim() !== biz) return;
+      if (empId && String(r[3] || '') !== empId) return;
+      if (p.startDate && fmtDate_(r[1]) < String(p.startDate).slice(0, 10)) return;
+      if (p.endDate && fmtDate_(r[1]) > String(p.endDate).slice(0, 10)) return;
+      out.push({
+        tx_id: String(r[0]),
+        date: fmtDate_(r[1]),
+        business_id: String(r[2]),
+        emp_id: String(r[3]),
+        emp_name: String(r[4] || ''),
+        tx_type: String(r[5] || ''),
+        amount: Number(r[6] || 0),
+        period_ym: String(r[7] || ''),
+        note: String(r[8] || ''),
+      });
+    });
+  }
+  out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  return { transactions: out, total: out.length };
+}
+
+function hrPayrollAppend_(body) {
+  if (!body.emp_id) return { error: 'emp_id required' };
+  if (!body.tx_type) return { error: 'tx_type required' };
+  if (body.amount === undefined || body.amount === null) return { error: 'amount required' };
+  var biz = resolveBusinessId_(body.business_id || '');
+  var sh = hrEnsurePayroll_();
+  var txId = 'PAY-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12).toUpperCase();
+  var d = body.date ? new Date(body.date) : new Date();
+  var em = hrListEmployees_({ business_id: biz });
+  var name = '';
+  for (var i = 0; i < em.employees.length; i++) {
+    if (em.employees[i].emp_id === String(body.emp_id)) {
+      name = em.employees[i].name;
+      break;
+    }
+  }
+  var meta = [];
+  if (body.advance_reason) meta.push('Reason: ' + String(body.advance_reason).slice(0, 200));
+  if (body.requested_by) meta.push('Requested by: ' + String(body.requested_by).slice(0, 120));
+  if (body.approved_by) meta.push('Approved by: ' + String(body.approved_by).slice(0, 120));
+  var baseNote = String(body.note || '');
+  var composed = meta.length
+    ? meta.join(' · ') + (baseNote ? ' · ' + baseNote : '')
+    : baseNote;
+  sh.appendRow([
+    txId, d, biz, String(body.emp_id), name, String(body.tx_type), Number(body.amount),
+    String(body.period_ym || ''), composed.slice(0, 1500),
+  ]);
+  sh.getRange(sh.getLastRow(), 2).setNumberFormat('yyyy-mm-dd');
+  sh.getRange(sh.getLastRow(), 7).setNumberFormat('৳#,##0');
+  SpreadsheetApp.flush();
+  return { ok: true, tx_id: txId };
+}
+
+function hrDashboard_(p) {
+  p = p || {};
+  var biz = resolveBusinessId_(p.business_id || '');
+  var dash = getDashboard_(p);
+  var em = hrListEmployees_(p);
+  var txAll = hrPayrollList_({ business_id: biz });
+  var tx = hrPayrollList_({ business_id: biz, startDate: p.startDate, endDate: p.endDate });
+  var fin = getFinance_({ business_id: biz, startDate: p.startDate, endDate: p.endDate });
+  var active = em.employees.filter(function (e) {
+    return String(e.status || '').toLowerCase().indexOf('inactive') === -1;
+  });
+  var monthlySalary = active.reduce(function (a, e) { return a + e.monthly_salary; }, 0);
+  var byEmp = {};
+  active.forEach(function (e) {
+    byEmp[e.emp_id] = {
+      emp_id: e.emp_id,
+      name: e.name,
+      monthly_salary: e.monthly_salary,
+      advance_balance: 0,
+      deposits: 0,
+      salary_paid: 0,
+      adjustments: 0,
+      current_due: e.monthly_salary,
+    };
+  });
+  txAll.transactions.forEach(function (t) {
+    var b = byEmp[t.emp_id];
+    if (!b) return;
+    var amt = Number(t.amount || 0);
+    if (t.tx_type === 'advance') b.advance_balance += amt;
+    else if (t.tx_type === 'deposit') { b.deposits += amt; b.advance_balance -= amt; }
+    else if (t.tx_type === 'salary_payment') b.salary_paid += amt;
+    else if (t.tx_type === 'adjustment') b.adjustments += amt;
+    b.current_due = b.monthly_salary - b.salary_paid + Math.max(0, b.advance_balance);
+  });
+  var empRows = Object.keys(byEmp).map(function (k) { return byEmp[k]; });
+  var periodPaid = tx.transactions
+    .filter(function (x) { return x.tx_type === 'salary_payment'; })
+    .reduce(function (a, x) { return a + x.amount; }, 0);
+  var periodAdv = tx.transactions
+    .filter(function (x) { return x.tx_type === 'advance'; })
+    .reduce(function (a, x) { return a + x.amount; }, 0);
+  var totalAdvances = empRows.reduce(function (a, r) { return a + Math.max(0, r.advance_balance); }, 0);
+  var unpaidSal = empRows.reduce(function (a, r) { return a + Math.max(0, r.current_due); }, 0);
+  var grossProfit = dash.kpis && dash.kpis.total_profit != null ? dash.kpis.total_profit : 0;
+  var revenue = dash.kpis && dash.kpis.total_revenue != null ? dash.kpis.total_revenue : 0;
+  var netHint = grossProfit - fin.total_expenses;
+  return {
+    business_id: biz,
+    kpis: {
+      total_monthly_salary: monthlySalary,
+      monthly_payroll_budget: monthlySalary,
+      unpaid_salary_hint: unpaidSal,
+      period_salary_paid: periodPaid,
+      period_advances: periodAdv,
+      advance_outstanding: totalAdvances,
+      total_expenses: fin.total_expenses,
+      monthly_revenue: revenue,
+      order_gross_profit: grossProfit,
+      employee_cost_budget: monthlySalary,
+      operational_expense: fin.total_expenses,
+      net_operation_hint: monthlySalary + fin.total_expenses,
+      net_business_profit_hint: netHint,
+    },
+    orders_summary: dash.kpis || {},
+    finance: fin,
+    employees_roll: empRows,
+    payroll_timeline: tx.transactions.slice(0, 60),
+  };
 }
 
 function getCourier_() {
@@ -1109,6 +1594,7 @@ function rowToOrder_(r) {
     sku:String(r[OC.SKU-1]||''),handled_by:String(r[OC.HANDLED_BY-1]||''),
     sla_status:String(r[41]||''),days_pending:Number(r[39]||0),days_in_transit:Number(r[40]||0),
     auto_flag:String(r[42]||''),invoice_num:String(r[OC.INVOICE_NUM-1]||''),
+    business_id:String(r[OC.BUSINESS_ID-1]||'')||'ALMA_LIFESTYLE',
     margin_pct:sell>0?Math.round(profit/sell*100):0,
   };
 }
