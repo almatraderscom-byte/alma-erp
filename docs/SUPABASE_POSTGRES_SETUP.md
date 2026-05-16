@@ -68,6 +68,23 @@ Demo seeding is for local development only. In production, demo users are blocke
 - Rotate the DB password if it was pasted into chat or CI logs.
 - **RLS**: Alma uses Prisma with a single DB role; Row Level Security policies are optional and not configured by default — rely on **NextAuth JWT + API guards** for authorization.
 
-## 7. Google Sheets / GAS
+## 7. Supabase Storage for expense receipts
+
+Expense receipt uploads use Supabase Storage separately from Postgres.
+
+Set these server-side values locally and in Vercel Production:
+
+- `SUPABASE_URL`: Supabase project URL, for example `https://PROJECT_REF.supabase.co`.
+- `SUPABASE_SERVICE_ROLE_KEY`: service role key used only by Next.js API routes.
+- `SUPABASE_EXPENSE_RECEIPTS_BUCKET`: optional; defaults to `expense-receipts`.
+
+Optional public values may be set for future browser-side Supabase clients:
+
+- `NEXT_PUBLIC_SUPABASE_URL`: project URL only.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: anon/public key only.
+
+Never store the service role key in a `NEXT_PUBLIC_*` variable. Alma receipt APIs create or use a private bucket, store receipt metadata in Postgres, and return authenticated app URLs that generate short-lived signed Storage URLs.
+
+## 8. Google Sheets / GAS
 
 **No change required** for Apps Script: `NEXT_PUBLIC_API_URL` and `API_SECRET` continue to drive Google Sheets ERP behaviour. Postgres only backs **authentication and user RBAC** in Next.js.

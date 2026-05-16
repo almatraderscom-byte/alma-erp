@@ -7,13 +7,37 @@ export type SupabaseUploadResult = {
 }
 
 export function storageConfig() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || inferSupabaseUrlFromDatabase()
+  const url = resolveSupabaseUrl()
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
   const bucket = process.env.SUPABASE_EXPENSE_RECEIPTS_BUCKET || DEFAULT_BUCKET
   if (!url || !serviceKey) {
     throw new Error('Supabase Storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.')
   }
   return { url: url.replace(/\/$/, ''), serviceKey, bucket }
+}
+
+export function storageReadiness() {
+  const url = resolveSupabaseUrl()
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
+  return {
+    configured: Boolean(url && serviceKey),
+    hasUrl: Boolean(url),
+    hasServiceRoleKey: Boolean(serviceKey),
+    bucket: process.env.SUPABASE_EXPENSE_RECEIPTS_BUCKET || DEFAULT_BUCKET,
+  }
+}
+
+function resolveSupabaseUrl() {
+  const candidates = [
+    process.env.SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    inferSupabaseUrlFromDatabase(),
+  ]
+  return candidates.find(value => isSupabaseProjectUrl(value))?.replace(/\/$/, '') || ''
+}
+
+function isSupabaseProjectUrl(value: string | undefined | null) {
+  return /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(String(value || '').trim().replace(/\/$/, ''))
 }
 
 function inferSupabaseUrlFromDatabase() {

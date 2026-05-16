@@ -15,7 +15,36 @@
 - `NEXT_PUBLIC_API_URL`
 - `API_SECRET`
 - `CRON_SECRET` (recommended; falls back to `NEXTAUTH_SECRET` if unset)
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_EXPENSE_RECEIPTS_BUCKET` (optional, default `expense-receipts`)
 - `SESSION_MAX_AGE_SECONDS` (optional, default 30 days)
+
+## Supabase Storage / Expense Receipts
+
+Expense receipts use a private Supabase Storage bucket and signed, authenticated app URLs.
+
+Configure these in **Vercel → Project → Settings → Environment Variables → Production**:
+
+- `SUPABASE_URL`: Supabase project URL, for example `https://PROJECT_REF.supabase.co`.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only service role key. Never add this as `NEXT_PUBLIC_*`.
+- `SUPABASE_EXPENSE_RECEIPTS_BUCKET`: optional; defaults to `expense-receipts`.
+- `NEXT_PUBLIC_SUPABASE_URL`: optional public project URL only if client-side Supabase is later needed.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: optional public anon key only if client-side Supabase is later needed.
+
+After changing Vercel env vars, redeploy production and verify `/api/health` reports:
+
+```json
+{
+  "storage": {
+    "expense_receipts_configured": true,
+    "expense_receipts_bucket": "expense-receipts",
+    "private_signed_access": true
+  }
+}
+```
+
+The upload route validates auth, business access, file type, and a 10 MB size limit before writing to Storage.
 
 ## Supabase Pooling
 

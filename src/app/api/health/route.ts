@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { serverGet } from '@/lib/server-api'
 import { prisma } from '@/lib/prisma'
 import { validateEnv } from '@/lib/env'
+import { storageReadiness } from '@/lib/supabase-storage'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -43,6 +44,7 @@ export async function GET() {
     gasPayload &&
     gasPayload.ok !== false &&
     !gasPayload.error
+  const storage = storageReadiness()
 
   return NextResponse.json(
     {
@@ -62,8 +64,8 @@ export async function GET() {
         push_configured: Boolean(process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID?.trim() && process.env.ONESIGNAL_REST_API_KEY?.trim()),
       },
       storage: {
-        expense_receipts_configured: Boolean((process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.DATABASE_URL)?.trim() && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY)?.trim()),
-        expense_receipts_bucket: process.env.SUPABASE_EXPENSE_RECEIPTS_BUCKET || 'expense-receipts',
+        expense_receipts_configured: storage.configured,
+        expense_receipts_bucket: storage.bucket,
         private_signed_access: true,
       },
       frontend: {
