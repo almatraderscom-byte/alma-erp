@@ -78,6 +78,10 @@ export interface ERPFinanceExpense {
   payment_method?: string
   payment_status?: string
   receipt_ref?: string
+  receipt_attachment_id?: string
+  receipt_content_type?: string
+  receipt_uploaded_at?: string
+  receipt_uploaded_by?: string
   recurring?: boolean
   notes?: string
 }

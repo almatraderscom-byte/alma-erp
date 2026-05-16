@@ -273,6 +273,26 @@ model InvoiceEvent {
   @@index([type, createdAt])
 }
 
+model ExpenseAttachment {
+  id             String    @id @default(cuid())
+  expenseId      String?
+  businessId     String
+  bucket         String
+  objectPath     String    @unique
+  originalName   String
+  contentType    String
+  sizeBytes      Int
+  publicUrl      String?   @db.Text
+  uploadedById   String?
+  uploadedByName String?
+  uploadedAt     DateTime  @default(now())
+  deletedAt      DateTime?
+
+  @@index([businessId, uploadedAt])
+  @@index([expenseId])
+  @@index([uploadedById])
+}
+
 model Notification {
   id           String               @id @default(cuid())
   userId       String?

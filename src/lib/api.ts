@@ -589,6 +589,7 @@ export const api = {
       payment?: string
       payment_status?: string
       receipt_ref?: string
+      receipt_attachment_id?: string
       attachment_url?: string
       recurring?: boolean
       expense_kind?: string
