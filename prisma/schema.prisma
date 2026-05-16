@@ -101,6 +101,21 @@ enum NotificationDeliveryStatus {
   FAILED
 }
 
+enum InvoicePaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  VOID
+}
+
+enum InvoiceEventType {
+  CREATED
+  REGENERATED
+  OPENED
+  SHARED
+  DELETED
+}
+
 model SalaryAdvanceRequest {
   id           String        @id @default(cuid())
   userId       String
@@ -214,6 +229,48 @@ model PayrollCompensationSetting {
   updatedAt                        DateTime @updatedAt
 
   @@index([businessId])
+}
+
+model InvoiceRecord {
+  id              String               @id @default(cuid())
+  invoiceNumber   String
+  orderId         String
+  customerName    String
+  customerPhone   String?
+  businessId      String
+  amount          Decimal              @db.Decimal(12, 2)
+  paymentStatus   InvoicePaymentStatus @default(UNPAID)
+  driveUrl        String?              @db.Text
+  fileUrl         String?              @db.Text
+  shareUrl        String?              @db.Text
+  fileName        String?
+  generatedById   String?
+  generatedByName String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  deletedAt       DateTime?
+  events          InvoiceEvent[]
+
+  @@unique([businessId, orderId])
+  @@unique([businessId, invoiceNumber])
+  @@index([businessId, createdAt])
+  @@index([businessId, paymentStatus])
+  @@index([orderId])
+}
+
+model InvoiceEvent {
+  id           String           @id @default(cuid())
+  invoiceId    String
+  invoice      InvoiceRecord    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  type         InvoiceEventType
+  actorId      String?
+  actorName    String?
+  note         String?          @db.Text
+  metadataJson String?          @db.Text
+  createdAt    DateTime         @default(now())
+
+  @@index([invoiceId, createdAt])
+  @@index([type, createdAt])
 }
 
 model Notification {

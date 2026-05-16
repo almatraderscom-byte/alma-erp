@@ -1,9 +1,8 @@
 'use client'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
-import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, BdtText } from '@/components/ui'
-import { fmt } from '@/lib/utils'
-import { api, APIError } from '@/lib/api'
+import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, Select } from '@/components/ui'
+import { api, APIError, type InvoiceRegistryRecord } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 import { useBranding } from '@/contexts/BrandingContext'
@@ -18,6 +17,11 @@ import { fetchLogoDataUrl } from '@/lib/pdf/branding'
 import { withTimeout } from '@/lib/pdf/timeout'
 
 const INVOICE_READY_TIMEOUT_MS = 5000
+
+type InvoiceRegistryResponse = {
+  invoices: InvoiceRegistryRecord[]
+  totals: { count: number; amount: number; paid: number; unpaid: number }
+}
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -37,9 +41,12 @@ function preloadImage(url?: string) {
 
 export default function InvoicePage() {
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
   const [pdfModel, setPdfModel] = useState<InvoicePdfModel | null>(null)
   const [genLoading, setGenLoading] = useState(false)
+  const [registry, setRegistry] = useState<InvoiceRegistryResponse | null>(null)
+  const [registryLoading, setRegistryLoading] = useState(true)
   const [isBrandReady, setIsBrandReady] = useState(false)
   const [isInvoiceReady, setIsInvoiceReady] = useState(false)
   const [isPdfReady, setIsPdfReady] = useState(false)
@@ -49,12 +56,41 @@ export default function InvoicePage() {
   const { branding, loading: brandingLoading, refetch: refetchBranding } = useBranding()
   const { data, loading, refetch: refetchOrders } = useOrders({ status: 'Delivered' })
 
-  const orders = (data?.orders ?? []).filter(o =>
+  const loadRegistry = useCallback(async () => {
+    setRegistryLoading(true)
+    try {
+      const params = new URLSearchParams({ business_id: business.id })
+      if (search.trim()) params.set('search', search.trim())
+      if (statusFilter) params.set('payment_status', statusFilter)
+      const res = await fetch(`/api/invoice?${params.toString()}`, { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      setRegistry(j as InvoiceRegistryResponse)
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not load invoices')
+      setRegistry(null)
+    } finally {
+      setRegistryLoading(false)
+    }
+  }, [business.id, search, statusFilter])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => void loadRegistry(), 150)
+    return () => window.clearTimeout(t)
+  }, [loadRegistry])
+
+  const deliveredOrders = data?.orders ?? []
+  const registryByOrder = useMemo(() => new Map((registry?.invoices ?? []).map(inv => [inv.orderId, inv])), [registry])
+  const pendingOrders = deliveredOrders.filter(o =>
+    !registryByOrder.has(o.id) && !o.invoice_num && (
+      !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
+    )
+  )
+  const invoiceOrders = deliveredOrders.filter(o =>
     !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
   )
 
-  const invoiced = orders.filter(o => o.invoice_num)
-  const uninvoiced = orders.filter(o => !o.invoice_num)
+  const invoices = registry?.invoices ?? []
 
   const liveOrFallbackBranding = useCallback(async (): Promise<{ branding: BusinessBranding; logoDataUrl?: string; source: 'live' | 'cached' | 'default' }> => {
     if (branding) {
@@ -128,14 +164,14 @@ export default function InvoicePage() {
     return 'Preparing invoice'
   }, [isBrandReady, isInvoiceReady, isPdfReady, prepLoading, preview])
 
-  async function handleSaveToDrive() {
+  async function handleSaveToDrive(allowRegenerate = false) {
     if (!preview) return
     setGenLoading(true)
     try {
-      const r = await api.mutations.generateInvoice(preview.id)
+      const r = await api.mutations.generateInvoice(preview.id, { allowRegenerate })
       if (r?.ok) {
-        toast.success(`Backed up to Drive: ${r.invoice_number || ''}`)
-        refetchOrders()
+        toast.success(r.duplicate ? `Invoice already exists: ${r.invoice_number || ''}` : `Saved invoice: ${r.invoice_number || ''}`)
+        await Promise.all([refetchOrders(), loadRegistry()])
       }
     } catch (e) {
       toast.error(e instanceof APIError ? e.userMessage : (e as Error).message)
@@ -144,33 +180,91 @@ export default function InvoicePage() {
     }
   }
 
+  async function regenerateInvoice(order: Order) {
+    if (!window.confirm(`Regenerate invoice for order ${order.id}? The existing registry record will be updated and the event will be audited.`)) return
+    setGenLoading(true)
+    try {
+      const r = await api.mutations.generateInvoice(order.id, { allowRegenerate: true })
+      if (!r?.ok) throw new Error('Regeneration failed')
+      toast.success(`Regenerated ${r.invoice_number || order.id}`)
+      await Promise.all([refetchOrders(), loadRegistry()])
+    } catch (e) {
+      toast.error(e instanceof APIError ? e.userMessage : (e as Error).message)
+    } finally {
+      setGenLoading(false)
+    }
+  }
+
+  async function updatePaymentStatus(invoice: InvoiceRegistryRecord, paymentStatus: string) {
+    const res = await fetch('/api/invoice', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: invoice.id, payment_status: paymentStatus }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not update invoice')
+      return
+    }
+    toast.success('Invoice status updated')
+    await loadRegistry()
+  }
+
+  function invoiceUrl(invoice: InvoiceRegistryRecord) {
+    return invoice.driveUrl || invoice.fileUrl || invoice.shareUrl || ''
+  }
+
+  function openInvoice(invoice: InvoiceRegistryRecord) {
+    const url = invoiceUrl(invoice)
+    if (!url) {
+      toast.error('No Drive/PDF URL saved for this invoice')
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  async function shareInvoice(invoice: InvoiceRegistryRecord) {
+    const url = invoiceUrl(invoice) || `${window.location.origin}/invoice/share/${shareSlugAlma(invoice.orderId)}`
+    await navigator.clipboard.writeText(url)
+    toast.success('Invoice link copied')
+  }
+
   return (
     <>
-      <PageHeader title="Invoices" subtitle={`${invoiced.length} issued · ${uninvoiced.length} pending`} />
+      <PageHeader title="Invoices" subtitle={`${invoices.length} issued · ${pendingOrders.length} pending`} />
 
       <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-cream">{orders.length}</p>
+            <p className="text-2xl font-bold text-cream">{deliveredOrders.length}</p>
             <p className="text-[10px] text-zinc-500 mt-1">Delivered orders</p>
           </Card>
           <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-green-400">{invoiced.length}</p>
+            <p className="text-2xl font-bold text-green-400">{registry?.totals.count ?? 0}</p>
             <p className="text-[10px] text-zinc-500 mt-1">Invoiced</p>
           </Card>
           <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-amber-400">{uninvoiced.length}</p>
+            <p className="text-2xl font-bold text-amber-400">{pendingOrders.length}</p>
             <p className="text-[10px] text-zinc-500 mt-1">Pending</p>
           </Card>
         </div>
 
-        <SearchInput value={search} onChange={setSearch} placeholder="Search delivered orders…" />
+        <div className="flex flex-wrap gap-2">
+          <div className="flex-1 min-w-48"><SearchInput value={search} onChange={setSearch} placeholder="Search invoices, orders, customers…" /></div>
+          <Select value={statusFilter} onChange={setStatusFilter} options={[
+            { label: 'All payment status', value: '' },
+            { label: 'Unpaid', value: 'UNPAID' },
+            { label: 'Partial', value: 'PARTIAL' },
+            { label: 'Paid', value: 'PAID' },
+            { label: 'Void', value: 'VOID' },
+          ]} />
+        </div>
 
-        {uninvoiced.length > 0 && (
+        {pendingOrders.length > 0 && !statusFilter && (
           <div>
             <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-amber-400 mb-2">Pending Invoices</p>
             <div className="space-y-2">
-              {uninvoiced.map(o => (
+              {pendingOrders.map(o => (
                 <button
                   key={o.id}
                   type="button"
@@ -196,36 +290,56 @@ export default function InvoicePage() {
           </div>
         )}
 
-        {invoiced.length > 0 && (
-          <div>
-            <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-green-400 mb-2">Issued Invoices</p>
+        <div>
+          <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-green-400 mb-2">Invoice Registry</p>
+          {registryLoading ? (
+            <div className="space-y-2">{Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}</div>
+          ) : invoices.length > 0 ? (
             <div className="space-y-2">
-              {invoiced.map(o => (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => openPreview(o)}
-                  className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-green-400/10 cursor-pointer hover:border-green-400/25 transition-colors bg-card"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
-                      <span className="font-mono text-[10px] text-green-400 font-bold">{o.invoice_num}</span>
+              {invoices.map(inv => {
+                const order = invoiceOrders.find(o => o.id === inv.orderId)
+                return (
+                  <Card key={inv.id} className="p-4 border-green-400/10">
+                    <div className="flex flex-col md:flex-row md:items-center gap-3">
+                      <button type="button" onClick={() => order ? openPreview(order) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="font-mono text-[11px] text-green-400 font-bold">{inv.invoiceNumber}</span>
+                          <span className="font-mono text-[10px] text-gold-lt">Order {inv.orderId}</span>
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[9px] font-bold text-zinc-400">{inv.paymentStatus}</span>
+                        </div>
+                        <p className="text-sm font-semibold text-cream">{inv.customerName}</p>
+                        <p className="text-[11px] text-zinc-500">
+                          ৳ {Number(inv.amount || 0).toLocaleString('en-BD')} · {inv.generatedByName || 'System'} · {String(inv.createdAt).slice(0, 16).replace('T', ' ')}
+                        </p>
+                        {!!inv.events?.length && (
+                          <p className="mt-1 text-[10px] text-zinc-600">
+                            Last: {inv.events[0].type.replace(/_/g, ' ')} · {String(inv.events[0].createdAt).slice(0, 10)}
+                          </p>
+                        )}
+                      </button>
+                      <div className="flex gap-2 flex-wrap md:justify-end">
+                        <Select value={inv.paymentStatus} onChange={value => void updatePaymentStatus(inv, value)} options={[
+                          { label: 'Unpaid', value: 'UNPAID' },
+                          { label: 'Partial', value: 'PARTIAL' },
+                          { label: 'Paid', value: 'PAID' },
+                          { label: 'Void', value: 'VOID' },
+                        ]} />
+                        <Button size="xs" variant="secondary" onClick={() => openInvoice(inv)}>Open</Button>
+                        <Button size="xs" variant="secondary" onClick={() => void shareInvoice(inv)}>Share</Button>
+                        {order && <Button size="xs" variant="gold" onClick={() => openPreview(order)}>Preview</Button>}
+                        {order && <Button size="xs" variant="danger" onClick={() => void regenerateInvoice(order)} disabled={genLoading}>Regenerate</Button>}
+                      </div>
                     </div>
-                    <p className="text-sm font-semibold text-cream">{o.customer}</p>
-                    <p className="text-[11px] text-zinc-500">{o.product}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-bold text-cream"><Money amount={o.sell_price} /></p>
-                    <span className="text-[10px] text-green-400 font-semibold">View PDF</span>
-                  </div>
-                </button>
-              ))}
+                  </Card>
+                )
+              })}
             </div>
-          </div>
-        )}
+          ) : (
+            <Empty icon="◈" title="No invoice records" desc="Generate an invoice to create a persistent registry record." />
+          )}
+        </div>
 
-        {!loading && orders.length === 0 && (
+        {!loading && deliveredOrders.length === 0 && (
           <Empty icon="◈" title="No delivered orders" desc="Invoices are generated for delivered orders" />
         )}
       </div>

@@ -224,8 +224,34 @@ export interface GenerateInvoiceRes extends MutationOk {
   file_url?: string
   file_name?: string
   share_url?: string
+  invoice?: InvoiceRegistryRecord
   /** True when invoice number already existed; `drive_url` may be a reused PDF link */
   duplicate?: boolean
+}
+export interface InvoiceRegistryRecord {
+  id: string
+  invoiceNumber: string
+  orderId: string
+  customerName: string
+  customerPhone?: string | null
+  businessId: string
+  amount: unknown
+  paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID' | 'VOID'
+  driveUrl?: string | null
+  fileUrl?: string | null
+  shareUrl?: string | null
+  fileName?: string | null
+  generatedById?: string | null
+  generatedByName?: string | null
+  createdAt: string
+  updatedAt: string
+  events?: Array<{
+    id: string
+    type: string
+    actorName?: string | null
+    note?: string | null
+    createdAt: string
+  }>
 }
 export interface NextInvoiceNumberRes {
   /** Normalized next invoice label (from GAS `next` or `invoice_number`) */
@@ -520,10 +546,10 @@ export const api = {
       apiPost('/api/orders/orders/field', { id, field, value }),
 
     /** Generate a PDF invoice → POST /api/invoice (GAS returns file_url + drive_url) */
-    generateInvoice: async (id: string): Promise<GenerateInvoiceRes> => {
+    generateInvoice: async (id: string, options?: { allowRegenerate?: boolean }): Promise<GenerateInvoiceRes> => {
       const raw = await apiPost<GenerateInvoiceRes & { share_url?: string; duplicate?: boolean }>(
         '/api/invoice',
-        { id },
+        { id, allow_regenerate: Boolean(options?.allowRegenerate) },
         { timeoutMs: INVOICE_CLIENT_TIMEOUT_MS },
       )
       const url = (raw.drive_url || raw.file_url || raw.share_url || '').trim()

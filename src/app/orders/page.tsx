@@ -55,6 +55,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   const mayInvoice = can(role, 'ordersGenerateInvoice')
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
   const [invLoading, setInvLoading] = useState(false)
+  const [invoiceLookupLoading, setInvoiceLookupLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [confirmStatus, setConfirmStatus] = useState<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY' | null>(null)
 
@@ -126,6 +127,27 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     } catch (e) {
       console.error('[CopyInvoiceLink]', e)
       toast.error('Could not copy — copy the URL from the address bar after opening the PDF')
+    }
+  }
+
+  async function openLinkedInvoice() {
+    setInvoiceLookupLoading(true)
+    try {
+      const res = await fetch(`/api/invoice?order_id=${encodeURIComponent(order.id)}&business_id=${encodeURIComponent(order.business_id || 'ALMA_LIFESTYLE')}`, { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'Could not load invoice')
+      const invoice = j.invoices?.[0]
+      const url = invoice?.driveUrl || invoice?.fileUrl || invoice?.shareUrl || ''
+      if (!url) {
+        window.open(`/invoice?order=${encodeURIComponent(order.id)}`, '_blank', 'noopener,noreferrer')
+        return
+      }
+      setShareUrl(url)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not open invoice')
+    } finally {
+      setInvoiceLookupLoading(false)
     }
   }
 
@@ -241,12 +263,17 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           </div>
 
           {order.invoice_num && (
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-gold/5 border border-gold-dim/30">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gold/5 border border-gold-dim/30">
               <div>
                 <p className="text-[10px] text-zinc-500 mb-1">Invoice</p>
                 <p className="font-mono text-xs text-gold-lt font-bold">{order.invoice_num}</p>
               </div>
-              <span className="text-xs text-green-400 font-semibold">✓ Generated</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-green-400 font-semibold">✓ Generated</span>
+                <Button size="xs" variant="secondary" onClick={openLinkedInvoice} disabled={invoiceLookupLoading}>
+                  {invoiceLookupLoading ? 'Opening…' : 'Open'}
+                </Button>
+              </div>
             </div>
           )}
 
