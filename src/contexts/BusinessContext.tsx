@@ -19,10 +19,12 @@ import {
   resolveBusinessId,
 } from '@/lib/businesses'
 import { setApiBusinessId } from '@/lib/api'
+import { parseBusinessAccess } from '@/lib/business-access'
 
 interface BusinessContextValue {
   businessId: BusinessId
   business: BusinessConfig
+  allowedBusinessIds: BusinessId[]
   setBusinessId: (id: BusinessId) => void
 }
 
@@ -37,21 +39,40 @@ function loadBusinessId(): BusinessId {
   }
 }
 
-export function BusinessProvider({ children }: { children: ReactNode }) {
+export function BusinessProvider({
+  children,
+  allowedBusinessAccess,
+}: {
+  children: ReactNode
+  /** Comma-separated business ids from authenticated session */
+  allowedBusinessAccess?: string | null
+}) {
   const router = useRouter()
   const pathname = usePathname()
   const [businessId, setBusinessIdState] = useState<BusinessId>(DEFAULT_BUSINESS_ID)
   const [hydrated, setHydrated] = useState(false)
 
+  const allowedBusinessIds = useMemo(
+    () => parseBusinessAccess(allowedBusinessAccess ?? undefined),
+    [allowedBusinessAccess],
+  )
+
   useEffect(() => {
     const stored = loadBusinessId()
-    setBusinessIdState(stored)
-    setApiBusinessId(stored)
+    const next = allowedBusinessIds.includes(stored)
+      ? stored
+      : (allowedBusinessIds[0] ?? DEFAULT_BUSINESS_ID)
+    setBusinessIdState(next)
+    setApiBusinessId(next)
+    try {
+      sessionStorage.setItem(STORAGE_KEY, next)
+    } catch { /* ignore */ }
     setHydrated(true)
-  }, [])
+  }, [allowedBusinessIds])
 
   const setBusinessId = useCallback(
     (id: BusinessId) => {
+      if (!allowedBusinessIds.includes(id)) return
       setBusinessIdState(id)
       setApiBusinessId(id)
       try {
@@ -63,7 +84,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
         router.push(home)
       }
     },
-    [pathname, router],
+    [pathname, router, allowedBusinessIds],
   )
 
   useEffect(() => {
@@ -76,9 +97,17 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
   const business = BUSINESSES[businessId]
 
   const value = useMemo(
-    () => ({ businessId, business, setBusinessId }),
-    [businessId, business, setBusinessId],
+    () => ({ businessId, business, allowedBusinessIds, setBusinessId }),
+    [businessId, business, allowedBusinessIds, setBusinessId],
   )
+
+  if (!hydrated) {
+    return (
+      <div className="min-h-[100dvh] bg-black text-zinc-500 flex items-center justify-center text-xs">
+        Loading workspace…
+      </div>
+    )
+  }
 
   return (
     <BusinessContext.Provider value={value}>

@@ -15,7 +15,7 @@ embed, iframe, object {
 /** Open PDF blob in A4-sized window — no browser auto-scaling */
 export function printPdfBlob(blob: Blob) {
   const url = URL.createObjectURL(blob)
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>${A4_PRINT_CSS}</style></head><body><embed src="${url}" type="application/pdf" width="210mm" height="297mm"/><script>window.onload=function(){setTimeout(function(){window.print()},400)}</script></body></html>`
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>${A4_PRINT_CSS}</style></head><body><embed src="${url}" type="application/pdf" width="210mm" height="297mm"/><script>window.onload=function(){setTimeout(function(){window.print()},400)};window.onafterprint=function(){window.close()}</script></body></html>`
   const w = window.open('', '_blank')
   if (!w) {
     URL.revokeObjectURL(url)
@@ -23,4 +23,5 @@ export function printPdfBlob(blob: Blob) {
   }
   w.document.write(html)
   w.document.close()
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }

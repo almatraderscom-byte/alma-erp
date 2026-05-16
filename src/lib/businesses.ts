@@ -54,12 +54,16 @@ const FINANCE_SUITE: NavItem[] = [
 
 const SETTINGS_NAV: NavItem[] = [
   { href: '/settings/session', icon: '⚙', label: 'Session' },
+  { href: '/settings/database', icon: '◈', label: 'Database' },
+  { href: '/settings/users', icon: '◫', label: 'Users' },
+  { href: '/settings/notifications', icon: '◌', label: 'Notifications' },
   { href: '/audit', icon: '◇', label: 'Audit' },
   { href: '/settings/branding', icon: '◉', label: 'Branding' },
 ]
 
 const ALMA_NAV: NavItem[] = [
   { href: '/', icon: '⬡', label: 'Dashboard' },
+  { href: '/portal', icon: '◇', label: 'My desk' },
   { href: '/orders', icon: '◫', label: 'Orders' },
   { href: '/crm', icon: '◎', label: 'CRM' },
   { href: '/inventory', icon: '◧', label: 'Inventory' },
@@ -71,6 +75,7 @@ const ALMA_NAV: NavItem[] = [
 
 const CDIT_NAV: NavItem[] = [
   { href: '/digital', icon: '⬡', label: 'Dashboard' },
+  { href: '/portal', icon: '◇', label: 'My desk' },
   { href: '/digital/clients', icon: '◎', label: 'Clients' },
   { href: '/digital/projects', icon: '◰', label: 'Projects' },
   { href: '/digital/invoices', icon: '◈', label: 'Invoices' },

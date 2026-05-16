@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt } from '@/lib/utils'
@@ -7,18 +7,47 @@ import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 import { useBranding } from '@/contexts/BrandingContext'
+import { useBusiness } from '@/contexts/BusinessContext'
 import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
 import { orderToPdfModel } from '@/lib/pdf/models'
 import { shareSlugAlma } from '@/lib/pdf/format'
 import type { InvoicePdfModel } from '@/lib/pdf/types'
+import type { BusinessBranding } from '@/types/branding'
+import { defaultBusinessBranding, readCachedBranding } from '@/lib/branding-defaults'
+import { fetchLogoDataUrl } from '@/lib/pdf/branding'
+import { withTimeout } from '@/lib/pdf/timeout'
+
+const INVOICE_READY_TIMEOUT_MS = 5000
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function preloadImage(url?: string) {
+  if (!url || typeof window === 'undefined') return Promise.resolve(false)
+  return new Promise<boolean>(resolve => {
+    const img = new Image()
+    const done = (ok: boolean) => resolve(ok)
+    img.onload = () => done(true)
+    img.onerror = () => done(false)
+    img.decoding = 'async'
+    img.src = url
+  })
+}
 
 export default function InvoicePage() {
   const [search, setSearch] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
   const [pdfModel, setPdfModel] = useState<InvoicePdfModel | null>(null)
   const [genLoading, setGenLoading] = useState(false)
-  const { branding } = useBranding()
-  const { data, loading, refetch } = useOrders({ status: 'Delivered' })
+  const [isBrandReady, setIsBrandReady] = useState(false)
+  const [isInvoiceReady, setIsInvoiceReady] = useState(false)
+  const [isPdfReady, setIsPdfReady] = useState(false)
+  const [prepLoading, setPrepLoading] = useState(false)
+  const openGuardRef = useRef(0)
+  const { business } = useBusiness()
+  const { branding, loading: brandingLoading, refetch: refetchBranding } = useBranding()
+  const { data, loading, refetch: refetchOrders } = useOrders({ status: 'Delivered' })
 
   const orders = (data?.orders ?? []).filter(o =>
     !search || [o.id, o.customer, o.product].some(v => v.toLowerCase().includes(search.toLowerCase()))
@@ -27,14 +56,77 @@ export default function InvoicePage() {
   const invoiced = orders.filter(o => o.invoice_num)
   const uninvoiced = orders.filter(o => !o.invoice_num)
 
-  function openPreview(order: Order) {
-    setPreview(order)
-    if (!branding) {
-      toast.error('Brand settings still loading — try again in a moment')
-      return
+  const liveOrFallbackBranding = useCallback(async (): Promise<{ branding: BusinessBranding; logoDataUrl?: string; source: 'live' | 'cached' | 'default' }> => {
+    if (branding) {
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 1500, 'logo preload').catch(() => undefined)
+      await Promise.all([preloadImage(branding.logo_url), preloadImage(branding.favicon_url)])
+      return { branding, logoDataUrl, source: 'live' }
     }
-    setPdfModel(orderToPdfModel(order, branding, undefined, order.invoice_num || undefined))
+
+    const cached = readCachedBranding(business.id)
+    if (cached) {
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 1500, 'cached logo preload').catch(() => undefined)
+      await Promise.all([preloadImage(cached.logo_url), preloadImage(cached.favicon_url)])
+      return { branding: cached, logoDataUrl, source: 'cached' }
+    }
+
+    return { branding: defaultBusinessBranding(business.id), source: 'default' }
+  }, [branding, business.id])
+
+  async function waitForBrandingOnce() {
+    if (branding) return
+    await Promise.race([refetchBranding(), delay(INVOICE_READY_TIMEOUT_MS)])
   }
+
+  async function openPreview(order: Order) {
+    const guard = ++openGuardRef.current
+    setPrepLoading(true)
+    setPreview(order)
+    setPdfModel(null)
+    setIsBrandReady(false)
+    setIsInvoiceReady(false)
+    setIsPdfReady(false)
+
+    try {
+      await waitForBrandingOnce()
+      if (guard !== openGuardRef.current) return
+
+      let resolved = await liveOrFallbackBranding()
+      if (brandingLoading && resolved.source === 'default') {
+        await Promise.race([refetchBranding(), delay(750)])
+        resolved = await liveOrFallbackBranding()
+      }
+      if (guard !== openGuardRef.current) return
+
+      setIsBrandReady(true)
+      setIsInvoiceReady(Boolean(order?.id && order?.customer && order?.product))
+
+      const model = orderToPdfModel(order, resolved.branding, resolved.logoDataUrl, order.invoice_num || undefined)
+      setPdfModel(model)
+      setIsPdfReady(true)
+
+      if (resolved.source === 'default') {
+        console.warn('[invoice-preview] using default branding fallback', { orderId: order.id, businessId: business.id })
+      }
+    } catch (e) {
+      console.error('[invoice-preview] prepare failed; using default branding fallback', e)
+      if (guard !== openGuardRef.current) return
+      setIsBrandReady(true)
+      setIsInvoiceReady(Boolean(order?.id))
+      setPdfModel(orderToPdfModel(order, defaultBusinessBranding(business.id), undefined, order.invoice_num || undefined))
+      setIsPdfReady(true)
+    } finally {
+      if (guard === openGuardRef.current) setPrepLoading(false)
+    }
+  }
+
+  const readinessText = useMemo(() => {
+    if (!prepLoading && !preview) return ''
+    if (isPdfReady) return 'PDF ready'
+    if (isBrandReady && isInvoiceReady) return 'Preparing PDF'
+    if (isInvoiceReady) return 'Loading brand'
+    return 'Preparing invoice'
+  }, [isBrandReady, isInvoiceReady, isPdfReady, prepLoading, preview])
 
   async function handleSaveToDrive() {
     if (!preview) return
@@ -43,7 +135,7 @@ export default function InvoicePage() {
       const r = await api.mutations.generateInvoice(preview.id)
       if (r?.ok) {
         toast.success(`Backed up to Drive: ${r.invoice_number || ''}`)
-        refetch()
+        refetchOrders()
       }
     } catch (e) {
       toast.error(e instanceof APIError ? e.userMessage : (e as Error).message)
@@ -139,12 +231,14 @@ export default function InvoicePage() {
       </div>
 
       <PdfPreviewModal
-        open={!!preview && !!pdfModel}
-        onClose={() => { setPreview(null); setPdfModel(null) }}
+        open={!!preview}
+        onClose={() => { openGuardRef.current += 1; setPreview(null); setPdfModel(null); setPrepLoading(false); setIsPdfReady(false) }}
         baseModel={pdfModel}
         shareSlug={preview ? shareSlugAlma(preview.id) : undefined}
         onSaveToDrive={handleSaveToDrive}
         saveToDriveLoading={genLoading}
+        externalLoading={prepLoading}
+        readinessLabel={readinessText}
       />
     </>
   )

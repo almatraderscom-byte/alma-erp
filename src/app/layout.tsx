@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
 import './globals.css'
-import { AppShell } from '@/components/layout/AppShell'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
@@ -23,6 +25,10 @@ export const metadata: Metadata = {
   title: { default: 'Alma ERP', template: '%s · Alma ERP' },
   description: 'Multi-business ERP — Alma Lifestyle & Creative Digital IT',
   manifest: '/manifest.json',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/icon.svg',
+  },
   appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Alma ERP' },
 }
 
@@ -30,11 +36,11 @@ export const viewport: Viewport = {
   themeColor: '#C9A84C',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: 'cover',
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions)
   return (
     <html lang="en" className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
@@ -43,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>
       <body className="bg-black text-cream antialiased font-sans">
-        <AppShell>{children}</AppShell>
+        <AppProviders session={session}>{children}</AppProviders>
         <Toaster
           position="top-right"
           toastOptions={{

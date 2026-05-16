@@ -138,6 +138,19 @@ export function Button({ children, onClick, variant = 'ghost', size = 'sm', disa
   )
 }
 
+// ── Input ────────────────────────────────────────────────────────────────
+export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={cn(
+        'w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 transition-colors focus:outline-none focus:border-gold-dim/60 focus:ring-1 focus:ring-gold-dim/30',
+        className,
+      )}
+    />
+  )
+}
+
 // ── Search Input ──────────────────────────────────────────────────────────
 export function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (

@@ -10,7 +10,8 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { Card, Button, Skeleton, Empty } from '@/components/ui'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
-import { useMemo, useState } from 'react'
+import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
+import { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 
 export default function EmployeeDetailPage() {
@@ -23,6 +24,8 @@ export default function EmployeeDetailPage() {
   const { business } = useBusiness()
   const { label } = useDateRange()
   const [openPay, setOpenPay] = useState(false)
+  const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
+  const [walletLoading, setWalletLoading] = useState(true)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
   const transactions = txs?.transactions ?? []
@@ -43,6 +46,21 @@ export default function EmployeeDetailPage() {
           generatedAt: new Date().toISOString().slice(0, 10),
         }
       : null
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setWalletLoading(true)
+      try {
+        const res = await fetch(`/api/payroll/wallet/${encodeURIComponent(decoded)}?business_id=${business.id}`, { cache: 'no-store' })
+        const j = await res.json().catch(() => ({}))
+        if (!cancelled) setWallet(res.ok ? (j as EmployeeWalletResponse) : null)
+      } finally {
+        if (!cancelled) setWalletLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [business.id, decoded])
 
   async function submitPay(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -102,9 +120,9 @@ export default function EmployeeDetailPage() {
           </div>
           <div className="text-right space-y-1 font-mono text-gold-lt">
             <p>Salary ৳ {employee.monthly_salary.toLocaleString('en-BD')}</p>
-            <p>Paid ৳ {roll?.salary_paid.toLocaleString('en-BD') ?? '—'}</p>
-            <p>Advance ৳ {Math.max(0, roll?.advance_balance ?? 0).toLocaleString('en-BD')}</p>
-            <p className="text-cream font-bold">Due ৳ {Math.max(0, roll?.current_due ?? 0).toLocaleString('en-BD')}</p>
+            <p>Earned ৳ {Number(wallet?.summary.lifetimeEarned ?? 0).toLocaleString('en-BD')}</p>
+            <p>Withdrawn ৳ {Number(wallet?.summary.lifetimeWithdrawn ?? 0).toLocaleString('en-BD')}</p>
+            <p className="text-cream font-bold">Held ৳ {Number(wallet?.summary.companyLiability ?? 0).toLocaleString('en-BD')}</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 pt-3 justify-between items-center border-t border-border">
@@ -117,8 +135,52 @@ export default function EmployeeDetailPage() {
         <Button size="xs" variant="gold" onClick={() => setOpenPay(true)}>+ Payroll entry</Button>
       </div>
 
+      <Card className="p-5 mb-4 border-gold-dim/25">
+        <p className="text-sm font-bold text-cream mb-3">Postgres wallet ledger</p>
+        {walletLoading ? <Skeleton className="h-44" /> : !wallet ? (
+          <p className="text-xs text-zinc-500">No wallet data available for this employee/business.</p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <MiniStat label="Current balance" value={wallet.summary.currentBalance} color="text-green-400" />
+              <MiniStat label="Company liability" value={wallet.summary.companyLiability} color="text-green-400" />
+              <MiniStat label="Lifetime earned" value={wallet.summary.lifetimeEarned} />
+              <MiniStat label="Lifetime withdrawn" value={wallet.summary.lifetimeWithdrawn} />
+            </div>
+            {!wallet.entries.length ? (
+              <p className="text-xs text-zinc-500">No ledger entries yet. Run monthly accrual from Payroll.</p>
+            ) : (
+              <div className="overflow-x-auto max-h-80 overflow-y-auto text-[11px]">
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                    <tr>
+                      <th className="py-2 pr-3 text-left">Date</th>
+                      <th className="py-2 pr-3 text-left">Type</th>
+                      <th className="py-2 pr-3 text-right">Movement</th>
+                      <th className="py-2 pr-3 text-right">Running</th>
+                      <th className="py-2 text-left">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wallet.entries.slice().reverse().map(tx => (
+                      <tr key={tx.id || `${tx.date}-${tx.type}`} className="border-b border-border/60">
+                        <td className="py-2 pr-3 font-mono">{String(tx.date).slice(0, 10)}</td>
+                        <td className="py-2 pr-3">{tx.type.replace(/_/g, ' ')}</td>
+                        <td className={`py-2 pr-3 text-right font-mono ${tx.signedAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>{tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}</td>
+                        <td className="py-2 pr-3 text-right font-mono text-gold-lt">৳ {tx.runningBalance.toLocaleString('en-BD')}</td>
+                        <td className="py-2 text-zinc-500">{tx.note || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
       <Card className="p-5">
-        <p className="text-sm font-bold text-cream mb-3">Permanent payroll history</p>
+        <p className="text-sm font-bold text-cream mb-3">Legacy GAS payroll history</p>
         {loading ? <Skeleton className="h-44" /> : transactions.length === 0 ? (
           <p className="text-xs text-zinc-500">No transactions logged yet.</p>
         ) : (
@@ -190,5 +252,14 @@ export default function EmployeeDetailPage() {
         </div>
       )}
     </FinancePageChrome>
+  )
+}
+
+function MiniStat({ label, value, color = 'text-cream' }: { label: string; value: number; color?: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-black/20 p-3">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-600">{label}</p>
+      <p className={`mt-1 font-mono text-sm font-bold ${color}`}>৳ {Number(value || 0).toLocaleString('en-BD')}</p>
+    </div>
   )
 }

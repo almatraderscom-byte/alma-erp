@@ -3,11 +3,11 @@
  * ║   ALMA LIFESTYLE ERP — WEB APP API  (Code.gs)                          ║
  * ║                                                                          ║
  * ║   PASTE THIS AS THE ENTIRE CONTENT OF Code.gs, THEN:                   ║
- * ║   1. Deploy → Manage deployments → Edit → Version: New version → Deploy ║
- * ║      (If first deploy: Deploy → New deployment → Web App →              ║
- * ║       Execute as: Me  · Who has access: Anyone → Deploy)                ║
- * ║   2. Project Settings → Script Properties → add if missing:             ║
- * ║        API_SECRET = alma-dev-secret                                     ║
+ * ║   Production: use npm run gas:deploy — redeploys ONE fixed web app URL ║
+ * ║   (see config/gas-production-deployment.txt). Never create ad-hoc URLs. ║
+ * ║   First-time only: Deploy → New deployment → Web App → Anyone → Deploy ║
+ * ║   2. Project Settings → Script Properties → add:                        ║
+ * ║        API_SECRET = <same strong secret as Next.js API_SECRET>          ║
  * ║        SPREADSHEET_ID = <optional; Sheet ID if script is not bound>     ║
  * ║   3. Run testCreateOrder() from the editor to verify before going live  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
@@ -76,6 +76,9 @@ function doGet(e) {
   try {
     var route  = (e && e.parameter && e.parameter.route) ? e.parameter.route : '';
     var params = (e && e.parameter) ? e.parameter : {};
+    if (route !== 'api_health' && !checkSecret_(params.secret)) {
+      return respond_({ error: 'Unauthorized' });
+    }
     return respond_(routeGet_(route, params));
   } catch (err) {
     return respond_({ error: err.message });
@@ -139,12 +142,31 @@ function routeGet_(route, p) {
     case 'hr_payroll':         return hrPayrollList_(p);
     case 'hr_dashboard':       return hrDashboard_(p);
     case 'audit_log':          return listAuditLogs_(p);
+    case 'api_health':         return apiHealth_();
     default:
       return {
         error: 'Unknown GET route: "' + route + '"',
-        available: 'dashboard, orders, order, finance, hr_employees, hr_payroll, hr_dashboard, audit_log, financial_report, courier, analytics, cdit_*',
+        available: 'api_health, dashboard, orders, order, finance, hr_employees, hr_payroll, hr_dashboard, audit_log, financial_report, courier, analytics, cdit_*',
       };
   }
+}
+
+/** Lightweight probe for uptime/version — no secret required on GET. */
+function apiHealth_() {
+  var sid = '';
+  try {
+    sid = ScriptApp.getScriptId();
+  } catch (e) {
+    sid = '';
+  }
+  var stamp = typeof GAS_RELEASE_STAMP !== 'undefined' ? GAS_RELEASE_STAMP : null;
+  return {
+    ok: true,
+    route: 'api_health',
+    script_id: sid,
+    gas_release_stamp: stamp,
+    gas_time: new Date().toISOString(),
+  };
 }
 
 function ensureAuditSheet_() {
@@ -242,7 +264,7 @@ function listAuditLogs_(p) {
   var rows = [];
   if (last >= 2) {
     var takeFrom = Math.max(2, last - limit + 1);
-    var vals = sh.getRange(takeFrom, 1, last, 10).getValues();
+    var vals = sh.getRange(takeFrom, 1, last - takeFrom + 1, 10).getValues();
     var i;
     for (i = vals.length - 1; i >= 0; i--) {
       var r = vals[i];
@@ -603,7 +625,7 @@ function addExpense_(body) {
   row[15] = String(body.recurring === true ? 'Yes' : 'No');
   row[16] = notesMerged;
 
-  sh.getRange(newRow, 1, newRow, 17).setValues([row]);
+  sh.getRange(newRow, 1, 1, 17).setValues([row]);
   sh.getRange(newRow, 2).setNumberFormat('DD-MMM-YYYY');
   sh.getRange(newRow, 10).setNumberFormat('৳#,##0');
   SpreadsheetApp.flush();
@@ -1384,7 +1406,7 @@ function hrUpsertEmployee_(body) {
     Number(body.monthly_salary || 0), String(body.status || 'Active'), String(body.notes || ''),
   ];
   if (rowIndex > 0) {
-    sh.getRange(rowIndex, 1, rowIndex, 11).setValues([row]);
+    sh.getRange(rowIndex, 1, 1, 11).setValues([row]);
   } else {
     sh.appendRow(row);
   }
@@ -1652,10 +1674,11 @@ function respond_(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/** Verify API_SECRET. Falls back to 'alma-dev-secret' if not set in Script Properties. */
+/** Verify API_SECRET. Fails closed when absent or still using a known demo value. */
 function checkSecret_(provided) {
   if (!provided) return false;
-  var stored = PropertiesService.getScriptProperties().getProperty('API_SECRET') || 'alma-dev-secret';
+  var stored = PropertiesService.getScriptProperties().getProperty('API_SECRET') || '';
+  if (!stored || stored === 'alma-dev-secret' || stored.indexOf('REPLACE_') === 0) return false;
   return String(provided) === String(stored);
 }
 
@@ -1716,8 +1739,17 @@ function verifyApiSecret() {
   SpreadsheetApp.getUi().alert(
     stored
       ? '✅ API_SECRET is set.\nFirst 4 chars: ' + stored.substring(0, 4) + '****'
-      : '⚠️ API_SECRET not set.\nGo to Project Settings → Script Properties → add:\n  Key: API_SECRET\n  Value: alma-dev-secret'
+      : '⚠️ API_SECRET not set.\nGo to Project Settings → Script Properties → add the same strong API_SECRET used by Next.js.'
   );
+}
+
+/** Run only through clasp by a project owner when rotating production secrets. */
+function setApiSecretForDeployment(secret) {
+  if (!secret || String(secret).length < 32 || String(secret) === 'alma-dev-secret') {
+    throw new Error('Refusing weak API_SECRET');
+  }
+  PropertiesService.getScriptProperties().setProperty('API_SECRET', String(secret));
+  return { ok: true, updated: true };
 }
 
 /** Run from editor to test GET without deploying. */

@@ -42,7 +42,7 @@ export default function AuditLogPage() {
     <>
       <PageHeader
         title="Audit log"
-        subtitle="Recent mutations forwarded from Apps Script (success and failure rows)."
+        subtitle="Recent mutations from Apps Script with Supabase fallback."
         actions={<Button variant="ghost" size="xs" onClick={() => void load()} disabled={loading}>Refresh</Button>}
       />
       <div className="p-4 md:p-6 pb-24 md:pb-6">
@@ -57,7 +57,7 @@ export default function AuditLogPage() {
                 <thead className="sticky top-0 bg-card border-b border-border z-[1]">
                   <tr className="text-zinc-500 uppercase tracking-wider">
                     <th className="py-2 px-3">Time</th>
-                    <th className="py-2 px-3">Route</th>
+                    <th className="py-2 px-3">Action</th>
                     <th className="py-2 px-3">Actor</th>
                     <th className="py-2 px-3">Role</th>
                     <th className="py-2 px-3">Business</th>

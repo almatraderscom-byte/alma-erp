@@ -9,6 +9,7 @@ import { useQuery, useMutation } from './useQuery'
 import type { OrderStatus } from '@/types'
 import type { CreateProductInput, SupplierImportCommitResponse } from '@/lib/api'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useBusiness } from '@/contexts/BusinessContext'
 
 // ── READ HOOKS ────────────────────────────────────────────────────────────
 
@@ -18,10 +19,11 @@ import { useDateRange } from '@/contexts/DateRangeContext'
  */
 export function useDashboard() {
   const { range } = useDateRange()
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.dashboard.get({ startDate: range.start, endDate: range.end }),
-    [range.start, range.end],
-    { pollMs: 60_000 },
+    [businessId, range.start, range.end],
+    { pollMs: 60_000, cacheKey: `dashboard:${businessId}:${range.start}:${range.end}`, cacheMs: 20_000 },
   )
 }
 
@@ -36,10 +38,11 @@ export function useOrders(filters?: {
   payment?: string
   search?: string
 }) {
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.orders.list(filters),
-    [filters?.status, filters?.source, filters?.payment, filters?.search],
-    { pollMs: 30_000 }
+    [businessId, filters?.status, filters?.source, filters?.payment, filters?.search],
+    { pollMs: 30_000, cacheKey: `orders-hook:${businessId}:${filters?.status || ''}:${filters?.source || ''}:${filters?.payment || ''}:${filters?.search || ''}`, cacheMs: 15_000 }
   )
 }
 
@@ -49,9 +52,10 @@ export function useOrders(filters?: {
  * Skipped entirely when id is null.
  */
 export function useOrder(id: string | null) {
+  const { businessId } = useBusiness()
   return useQuery(
     () => id ? api.orders.get(id) : Promise.resolve(null),
-    [id],
+    [businessId, id],
     { enabled: id !== null }
   )
 }
@@ -64,10 +68,11 @@ export function useCustomers(filters?: {
   risk_level?: string
   search?: string
 }) {
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.customers.list(filters),
-    [filters?.segment, filters?.risk_level, filters?.search],
-    { pollMs: 90_000 }
+    [businessId, filters?.segment, filters?.risk_level, filters?.search],
+    { pollMs: 90_000, cacheKey: `customers:${businessId}:${filters?.segment || ''}:${filters?.risk_level || ''}:${filters?.search || ''}`, cacheMs: 30_000 }
   )
 }
 
@@ -75,9 +80,10 @@ export function useCustomers(filters?: {
  * Single customer + their orders.
  */
 export function useCustomer(name: string | null) {
+  const { businessId } = useBusiness()
   return useQuery(
     () => name ? api.customers.get(name) : Promise.resolve(null),
-    [name],
+    [businessId, name],
     { enabled: name !== null }
   )
 }
@@ -87,10 +93,11 @@ export function useCustomer(name: string | null) {
  * Stock only changes on Delivered/Returned events.
  */
 export function useStock() {
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.stock.list(),
-    [],
-    { pollMs: 120_000 }
+    [businessId],
+    { pollMs: 120_000, cacheKey: `stock:${businessId}`, cacheMs: 30_000 }
   )
 }
 
@@ -98,7 +105,8 @@ export function useStock() {
  * PRODUCT MASTER catalog (GET /api/products → GAS `products`).
  */
 export function useProducts() {
-  return useQuery(() => api.products.list(), [], { pollMs: 120_000 })
+  const { businessId } = useBusiness()
+  return useQuery(() => api.products.list(), [businessId], { pollMs: 120_000, cacheKey: `products:${businessId}`, cacheMs: 30_000 })
 }
 
 /**
@@ -128,20 +136,22 @@ export function useSupplierImportCommit() {
  */
 export function useFinance() {
   const { range } = useDateRange()
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.finance.get({ startDate: range.start, endDate: range.end }),
-    [range.start, range.end],
-    { pollMs: 120_000 },
+    [businessId, range.start, range.end],
+    { pollMs: 120_000, cacheKey: `finance:${businessId}:${range.start}:${range.end}`, cacheMs: 30_000 },
   )
 }
 
 /** Merged KPIs incl. ledger expenses — respects global date range. */
 export function useAnalyticsMerged() {
   const { range } = useDateRange()
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.analytics.get({ startDate: range.start, endDate: range.end }),
-    [range.start, range.end],
-    { pollMs: 90_000 },
+    [businessId, range.start, range.end],
+    { pollMs: 90_000, cacheKey: `analytics:${businessId}:${range.start}:${range.end}`, cacheMs: 30_000 },
   )
 }
 
@@ -149,9 +159,10 @@ export function useAnalyticsMerged() {
  * Automation log, last N events. Polls every 30s.
  */
 export function useAutomationLog(limit = 50) {
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.log.recent(limit),
-    [limit],
+    [businessId, limit],
     { pollMs: 30_000 }
   )
 }
@@ -160,9 +171,10 @@ export function useAutomationLog(limit = 50) {
  * SLA breach alerts. Polls every 2 minutes.
  */
 export function useSlaAlerts() {
+  const { businessId } = useBusiness()
   return useQuery(
     () => api.sla.alerts(),
-    [],
+    [businessId],
     { pollMs: 120_000 }
   )
 }
@@ -171,7 +183,8 @@ export function useSlaAlerts() {
  * Next invoice number preview (peek without incrementing counter).
  */
 export function useNextInvoiceNumber() {
-  return useQuery(() => api.invoice.nextNumber())
+  const { businessId } = useBusiness()
+  return useQuery(() => api.invoice.nextNumber(), [businessId])
 }
 
 // ── WRITE HOOKS ───────────────────────────────────────────────────────────

@@ -24,11 +24,16 @@ interface QueryOptions {
   pollMs?: number
   /** Skip the fetch entirely (e.g. when an id is null). */
   enabled?: boolean
+  /** Optional short-lived client cache for expensive dashboard-style reads. */
+  cacheKey?: string
+  cacheMs?: number
   /** Called when the fetch succeeds. */
   onSuccess?: (data: unknown) => void
   /** Called when the fetch fails. */
   onError?: (err: string) => void
 }
+
+const queryCache = new Map<string, { value: unknown; expiresAt: number }>()
 
 /**
  * Generic data-fetching hook.
@@ -51,19 +56,35 @@ export function useQuery<T>(
   const timerRef   = useRef<ReturnType<typeof setInterval>>()
   // Prevent state updates after unmount
   const mounted    = useRef(true)
+  const requestId  = useRef(0)
 
   const run = useCallback(async (silent = false) => {
     if (opts.enabled === false) { if (!silent) setLoading(false); return }
+    const id = ++requestId.current
+    const cacheKey = opts.cacheKey
+    const cacheMs = opts.cacheMs ?? 0
+    if (cacheKey && cacheMs > 0) {
+      const cached = queryCache.get(cacheKey)
+      if (cached && cached.expiresAt > Date.now()) {
+        setData(cached.value as T)
+        hasFetched.current = true
+        if (!silent) setLoading(false)
+        return
+      }
+    }
     if (!silent) setLoading(true)
     setError(null)
     try {
       const result = await fetcher()
-      if (!mounted.current) return
+      if (!mounted.current || id !== requestId.current) return
       if (result !== null) setData(result)
+      if (cacheKey && cacheMs > 0 && result !== null) {
+        queryCache.set(cacheKey, { value: result, expiresAt: Date.now() + cacheMs })
+      }
       hasFetched.current = true
       opts.onSuccess?.(result)
     } catch (e) {
-      if (!mounted.current) return
+      if (!mounted.current || id !== requestId.current) return
       const msg = e instanceof APIError ? e.userMessage : (e as Error).message
       setError(msg)
       opts.onError?.(msg)
@@ -128,7 +149,6 @@ export function useMutation<TArgs extends unknown[], TResult>(
       return result
     } catch (e) {
       const msg = e instanceof APIError ? e.userMessage : (e as Error).message
-      console.error('[Alma ERP mutation error]', msg, e)
       if (mounted.current) setError(msg)
       return null
     } finally {

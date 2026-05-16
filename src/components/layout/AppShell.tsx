@@ -1,19 +1,7 @@
 'use client'
-import { Sidebar, MobileNav } from '@/components/layout/Sidebar'
-import { MobileBottomSpacer } from '@/components/layout/MobileNavChrome'
-import { AppProviders } from '@/components/providers/AppProviders'
+import type { ReactNode } from 'react'
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  return (
-    <AppProviders>
-      <div className="flex h-[100dvh] w-full overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto min-w-0 scrollbar-hide">
-          {children}
-          <MobileBottomSpacer />
-        </main>
-      </div>
-      <MobileNav />
-    </AppProviders>
-  )
+/** @deprecated ERP chrome is composed in AppProviders — this is a compatibility no-op wrapper. */
+export function AppShell({ children }: { children: ReactNode }) {
+  return <>{children}</>
 }

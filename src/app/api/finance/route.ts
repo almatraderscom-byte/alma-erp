@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { sendFinanceAlert } from '@/lib/resend'
 
 export const revalidate = 0
 
@@ -17,7 +18,20 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const raw = (await req.json()) as Record<string, unknown>
-    return NextResponse.json(await serverPost('add_expense', withActorPayload(req, raw)))
+    const result = await serverPost('add_expense', await mergeActorPayload(req, raw))
+    await sendFinanceAlert({
+      businessId: String(raw.business_id || 'ALMA_LIFESTYLE'),
+      subject: `Expense added · ৳${Number(raw.amount || 0).toLocaleString('en-BD')}`,
+      title: 'Expense added',
+      preview: `${String(raw.category || 'Expense')} · ৳${Number(raw.amount || 0).toLocaleString('en-BD')}`,
+      text: `Expense added: ${String(raw.category || 'Expense')} for ৳${Number(raw.amount || 0).toLocaleString('en-BD')}.`,
+      priority: 'NORMAL',
+      actionUrl: '/finance',
+      actionLabel: 'Open finance',
+      dedupeKey: `expense-added:${String((result as { expense_id?: string }).expense_id || Date.now())}`,
+      metadata: { result, raw },
+    })
+    return NextResponse.json(result)
   }
   catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
 }

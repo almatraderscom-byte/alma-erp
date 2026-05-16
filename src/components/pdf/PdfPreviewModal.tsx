@@ -2,14 +2,13 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { PDFDownloadLink } from '@react-pdf/renderer'
-import { PremiumInvoiceDocument } from '@/components/pdf/PremiumInvoiceDocument'
 import type { InvoicePdfModel } from '@/lib/pdf/types'
 import { enrichPdfModel } from '@/lib/pdf/enrich'
 import { generateInvoicePdfBlob } from '@/lib/pdf/generate'
 import { resetPdfFonts } from '@/lib/pdf/fonts'
 import { pdfSafeMode, PDF_GENERATE_TIMEOUT_MS, PDF_ENRICH_TIMEOUT_MS } from '@/lib/pdf/config'
 import { withTimeout } from '@/lib/pdf/timeout'
+import { stripPdfAssets } from '@/lib/pdf/assets'
 import { publicShareUrl } from '@/lib/pdf/format'
 import { A4_WIDTH_PT, A4_HEIGHT_PT } from '@/lib/pdf/a4'
 import { printPdfBlob } from '@/lib/pdf/print'
@@ -29,6 +28,8 @@ export function PdfPreviewModal({
   shareSlug,
   onSaveToDrive,
   saveToDriveLoading,
+  externalLoading,
+  readinessLabel,
 }: {
   open: boolean
   onClose: () => void
@@ -36,6 +37,8 @@ export function PdfPreviewModal({
   shareSlug?: string
   onSaveToDrive?: () => void
   saveToDriveLoading?: boolean
+  externalLoading?: boolean
+  readinessLabel?: string
 }) {
   const [preparedModel, setPreparedModel] = useState<InvoicePdfModel | null>(null)
   const [phase, setPhase] = useState<PreviewPhase>('idle')
@@ -50,6 +53,7 @@ export function PdfPreviewModal({
   const blobUrlRef = useRef<string | null>(null)
   const generatedForRef = useRef<string | null>(null)
   const genRef = useRef(0)
+  const autoFallbackRef = useRef(false)
 
   const revokeBlobUrl = useCallback(() => {
     if (blobUrlRef.current) {
@@ -81,6 +85,7 @@ export function PdfPreviewModal({
 
     let cancelled = false
     const invoiceKey = baseModel.invoiceId
+    autoFallbackRef.current = false
 
     setPhase('preparing')
     setError(null)
@@ -128,9 +133,41 @@ export function PdfPreviewModal({
       setPhase('generating')
       pdfDebug('generating PDF', { genId, invoiceId: invoiceKey })
 
+      const fallbackTimer = window.setTimeout(async () => {
+        if (cancelled || genId !== genRef.current || autoFallbackRef.current) return
+        autoFallbackRef.current = true
+        pdfDebug('PDF render exceeded 5s — retrying once with fallback assets', { invoiceId: invoiceKey })
+        try {
+          const fallbackResult = await generateInvoicePdfBlob(stripPdfAssets(preparedModel!))
+          if (cancelled || genId !== genRef.current) return
+          if (fallbackResult.ok) {
+            revokeBlobUrl()
+            const url = URL.createObjectURL(fallbackResult.blob)
+            blobRef.current = fallbackResult.blob
+            blobUrlRef.current = url
+            generatedForRef.current = invoiceKey
+            setBlobUrl(url)
+            setBlobSize(fallbackResult.blob.size)
+            setPhase('ready')
+          } else if (!blobRef.current) {
+            setError(fallbackResult.error)
+            setErrorDetails(fallbackResult.details ?? null)
+            setPhase('error')
+          }
+        } catch (err) {
+          pdfDebugError('fallback retry failed', err)
+          if (!blobRef.current) {
+            setError(err instanceof Error ? err.message : 'PDF fallback failed')
+            setPhase('error')
+          }
+        }
+      }, 5000)
+
       const result = await generateInvoicePdfBlob(preparedModel!)
+      window.clearTimeout(fallbackTimer)
 
       if (cancelled || genId !== genRef.current) return
+      if (generatedForRef.current === invoiceKey && blobUrlRef.current) return
 
       if (!result.ok) {
         pdfDebugError('generate failed', result.error)
@@ -203,6 +240,18 @@ export function PdfPreviewModal({
     })
   }, [displayModel])
 
+  const handleDownload = useCallback(() => {
+    if (!blobRef.current) return
+    const url = URL.createObjectURL(blobRef.current)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+  }, [fileName])
+
   const copyShare = useCallback(async () => {
     if (!shareLink) {
       toast.error('No share link')
@@ -234,7 +283,7 @@ export function PdfPreviewModal({
 
   if (!open) return null
 
-  const loading = phase === 'preparing' || phase === 'generating'
+  const loading = externalLoading || phase === 'preparing' || phase === 'generating'
   const showError = phase === 'error' && error
   const showPreview = phase === 'ready' && !!blobUrl
 
@@ -258,20 +307,14 @@ export function PdfPreviewModal({
             <p className="text-[10px] text-zinc-500">
               {displayModel?.branding.companyName || '—'}
               {showPreview && blobSize > 0 ? ` · ${(blobSize / 1024).toFixed(1)} KB` : ''}
-              {loading ? ' · Generating…' : showPreview ? ' · Preview' : ''}
+                {loading ? ` · ${readinessLabel || 'Generating…'}` : showPreview ? ' · Preview' : ''}
             </p>
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end">
             <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-zinc-400" onClick={() => setZoom(z => Math.max(50, z - 10))}>−</button>
             <span className="text-[10px] text-zinc-500 w-10 text-center">{zoom}%</span>
             <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-zinc-400" onClick={() => setZoom(z => Math.min(150, z + 10))}>+</button>
-            {displayModel && showPreview && (
-              <PDFDownloadLink document={<PremiumInvoiceDocument model={displayModel} />} fileName={fileName}>
-                {({ loading: dl }) => (
-                  <Button variant="gold" size="xs" disabled={dl}>{dl ? '…' : 'Download'}</Button>
-                )}
-              </PDFDownloadLink>
-            )}
+            {displayModel && showPreview && <Button variant="gold" size="xs" onClick={handleDownload}>Download</Button>}
             <Button variant="ghost" size="xs" onClick={handlePrint} disabled={!showPreview && !displayModel}>Print</Button>
             {shareLink && (
               <>
@@ -294,7 +337,7 @@ export function PdfPreviewModal({
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <div className="w-10 h-10 border-2 border-gold/30 border-t-gold rounded-full animate-spin" />
               <p className="text-sm text-zinc-400">
-                {phase === 'preparing' ? 'Preparing invoice data…' : `Generating PDF… (max ${PDF_GENERATE_TIMEOUT_MS / 1000}s)`}
+                {externalLoading ? (readinessLabel || 'Resolving invoice assets…') : phase === 'preparing' ? 'Preparing invoice data…' : `Generating PDF… (fallback after 5s)`}
               </p>
               <p className="text-[10px] text-zinc-600 font-mono">
                 {baseModel?.invoiceId}

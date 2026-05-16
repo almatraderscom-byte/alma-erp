@@ -34,7 +34,11 @@ export function OrdersDataProvider({ children }: { children: ReactNode }) {
         endDate: range.end,
       }),
     [businessId, range.start, range.end],
-    { pollMs: 45_000 },
+    {
+      pollMs: 45_000,
+      cacheKey: `orders:${businessId}:${range.start}:${range.end}`,
+      cacheMs: 20_000,
+    },
   )
 
   const orders = useMemo(

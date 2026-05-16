@@ -1,0 +1,4 @@
+# Single line — your permanent Web App deployment ID from:
+# Apps Script → Deploy → Manage deployments → select production Web app → Deployment ID
+
+AKfycbYOUR_PERMANENT_DEPLOYMENT_ID_HERE

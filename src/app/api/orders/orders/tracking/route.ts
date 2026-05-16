@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPost } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { sendOrderAlert } from '@/lib/resend'
 export async function POST(req: NextRequest) {
   try {
     const { id, tracking_id, courier } = await req.json()
     if (!id || !tracking_id) return NextResponse.json({ error: 'id and tracking_id required' }, { status: 400 })
-    return NextResponse.json(await serverPost('update_tracking', withActorPayload(req, { id, tracking_id, courier })))
+    const result = await serverPost('update_tracking', await mergeActorPayload(req, { id, tracking_id, courier }))
+    await sendOrderAlert({
+      businessId: 'ALMA_LIFESTYLE',
+      subject: `Order tracking updated · ${id}`,
+      title: 'Order tracking updated',
+      preview: `Tracking ${tracking_id} added to order ${id}.`,
+      text: `Tracking ${tracking_id} (${courier || 'courier'}) added to order ${id}.`,
+      priority: 'NORMAL',
+      actionUrl: '/orders',
+      actionLabel: 'Open orders',
+      dedupeKey: `order-tracking:${id}:${tracking_id}`,
+      metadata: { orderId: id, trackingId: tracking_id, courier, result },
+    })
+    return NextResponse.json(result)
   } catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
 }

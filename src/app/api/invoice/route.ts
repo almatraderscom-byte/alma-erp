@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost, INVOICE_SERVER_TIMEOUT_MS } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { notifyRole } from '@/lib/notifications'
+import { sendFinanceAlert } from '@/lib/resend'
+import { errorMeta, logEvent } from '@/lib/logger'
 
 /** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
 export const maxDuration = 120
@@ -12,7 +15,7 @@ export async function GET() {
     return NextResponse.json(data)
   } catch (e) {
     const msg = (e as Error).message
-    console.error('[GET /api/invoice]', msg)
+    logEvent('error', 'invoice.next_number_failed', errorMeta(e))
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
@@ -25,26 +28,58 @@ export async function POST(req: NextRequest) {
     const body = raw as Record<string, unknown>
     const id = typeof body?.id === 'string' ? body.id.trim() : ''
     if (!id) {
-      console.warn('[POST /api/invoice] missing id', JSON.stringify(body))
+      logEvent('warn', 'invoice.generate_missing_id')
       return NextResponse.json({ error: 'Missing required field: id', ok: false }, { status: 400 })
     }
     const t0 = Date.now()
-    console.log('[POST /api/invoice] generate_invoice id=', id, 'timeoutMs=', INVOICE_SERVER_TIMEOUT_MS)
-    const result = await serverPost<Record<string, unknown>>('generate_invoice', withActorPayload(req, { id }), {
+    const result = await serverPost<Record<string, unknown>>('generate_invoice', await mergeActorPayload(req, { id }), {
       timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
     })
-    console.log(
-      '[POST /api/invoice] GAS ok=',
-      result?.ok,
-      'invoice_number=',
-      result?.invoice_number,
-      'wall_ms=',
-      Date.now() - t0,
-    )
+    logEvent('info', 'invoice.generate_completed', {
+      orderId: id,
+      invoiceNumber: result?.invoice_number,
+      ok: result?.ok,
+      wallMs: Date.now() - t0,
+    })
+    await Promise.all([
+      notifyRole({
+        role: 'SUPER_ADMIN',
+        businessId: String(body.business_id || 'ALMA_LIFESTYLE'),
+        type: 'INVOICE_CREATED',
+        priority: 'NORMAL',
+        title: 'Invoice created',
+        message: `Invoice ${String(result.invoice_number || id)} was generated successfully.`,
+        actionUrl: '/invoice',
+      }),
+      notifyRole({
+        role: 'ADMIN',
+        businessId: String(body.business_id || 'ALMA_LIFESTYLE'),
+        type: 'INVOICE_CREATED',
+        priority: 'NORMAL',
+        title: 'Invoice created',
+        message: `Invoice ${String(result.invoice_number || id)} was generated successfully.`,
+        actionUrl: '/invoice',
+      }),
+      sendFinanceAlert({
+        businessId: String(body.business_id || 'ALMA_LIFESTYLE'),
+        subject: `Invoice generated · ${String(result.invoice_number || id)}`,
+        title: 'Invoice generated',
+        preview: `Invoice ${String(result.invoice_number || id)} was generated successfully.`,
+        text: `Invoice ${String(result.invoice_number || id)} was generated successfully for order ${id}.`,
+        priority: 'NORMAL',
+        actionUrl: '/invoice',
+        actionLabel: 'Open invoices',
+        dedupeKey: `invoice-generated:${String(result.invoice_number || id)}`,
+        metadata: { orderId: id, invoiceNumber: result.invoice_number },
+      }),
+    ])
     return NextResponse.json(result)
   } catch (e) {
     const msg = (e as Error).message
-    console.error('[POST /api/invoice]', msg, 'wall_ms=', Date.now() - wallStart, '| body=', JSON.stringify(raw))
+    const orderId = typeof raw === 'object' && raw && typeof (raw as Record<string, unknown>).id === 'string'
+      ? (raw as Record<string, unknown>).id
+      : undefined
+    logEvent('error', 'invoice.generate_failed', { ...errorMeta(e), wallMs: Date.now() - wallStart, orderId })
     return NextResponse.json({ error: msg, ok: false }, { status: 502 })
   }
 }

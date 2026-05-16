@@ -1,30 +1,309 @@
 'use client'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { useHRDashboard } from '@/hooks/useHr'
 import Link from 'next/link'
 import { Card, KpiCard, Skeleton, Empty, Button } from '@/components/ui'
+import { useActor } from '@/contexts/ActorContext'
+import { can } from '@/lib/roles'
+import { useBusiness } from '@/contexts/BusinessContext'
+import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
+import { pdf } from '@react-pdf/renderer'
+import { BusinessPayrollSummaryDocument } from '@/components/pdf/PayrollWalletDocuments'
+import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
+import toast from 'react-hot-toast'
 
 export default function PayrollPage() {
+  const { role } = useActor()
+  const { business } = useBusiness()
   const { data, loading } = useHRDashboard()
   const k = data?.kpis
   const roll = data?.employees_roll ?? []
+
+  const [walletData, setWalletData] = useState<WalletSummaryResponse | null>(null)
+  const [walletLoading, setWalletLoading] = useState(false)
+  const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
+  const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
+  const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
+  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; requestedAmount: number; approvedAmount: string } | null>(null)
+  const walletRequestId = useRef(0)
+
+  const showApprovals = can(role, 'advanceApprove')
+
+  const loadWallets = useCallback(async (fresh = false) => {
+    if (!showApprovals) return
+    const requestId = ++walletRequestId.current
+    setWalletLoading(true)
+    try {
+      const res = await fetch(`/api/payroll/wallet/summary?business_id=${business.id}${fresh ? `&refresh=${Date.now()}` : ''}`)
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      if (requestId !== walletRequestId.current) return
+      setWalletData(j as WalletSummaryResponse)
+    } catch (e) {
+      if (requestId !== walletRequestId.current) return
+      toast.error((e as Error).message || 'Could not load employee wallets')
+    } finally {
+      if (requestId === walletRequestId.current) setWalletLoading(false)
+    }
+  }, [business.id, showApprovals])
+
+  useEffect(() => {
+    void loadWallets()
+  }, [loadWallets])
+
+  const loadAutomation = useCallback(async () => {
+    if (!showApprovals) return
+    const [settingRes, previewRes, historyRes] = await Promise.all([
+      fetch('/api/payroll/wallet/automation', { cache: 'no-store' }),
+      fetch(`/api/payroll/wallet/accruals/preview?business_id=${business.id}`, { cache: 'no-store' }),
+      fetch(`/api/payroll/wallet/accruals/history?business_id=${business.id}`, { cache: 'no-store' }),
+    ])
+    if (settingRes.ok) setAutomation((await settingRes.json()).setting)
+    if (previewRes.ok) setPreview(await previewRes.json())
+    if (historyRes.ok) setHistory((await historyRes.json()).runs ?? [])
+  }, [business.id, showApprovals])
+
+  useEffect(() => {
+    void loadAutomation()
+  }, [loadAutomation])
+
+  async function submitReview() {
+    if (!review) return
+    const approvedAmount = review.action === 'APPROVE'
+      ? Number(review.approvedAmount || review.requestedAmount)
+      : undefined
+    if (review.action === 'APPROVE' && (!approvedAmount || approvedAmount <= 0)) {
+      toast.error('Enter a valid approved amount')
+      return
+    }
+    const res = await fetch(`/api/payroll/wallet/requests/${review.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: review.action, approvedAmount, note: '' }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not update')
+      return
+    }
+    toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
+    setReview(null)
+    await loadWallets(true)
+  }
+
+  async function runAccrual() {
+    const res = await fetch('/api/payroll/wallet/accruals/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: business.id }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok || j.ok === false) {
+      toast.error(j.error || 'Accrual run failed')
+      return
+    }
+    toast.success('Monthly salary accrual checked')
+    await loadWallets(true)
+    await loadAutomation()
+  }
+
+  async function toggleAutomation(enabled: boolean) {
+    const res = await fetch('/api/payroll/wallet/automation', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not update automation')
+      return
+    }
+    setAutomation(j.setting)
+    toast.success(enabled ? 'Payroll automation enabled' : 'Payroll automation disabled')
+  }
+
+  async function exportPdf() {
+    const wallets = walletData?.wallets ?? []
+    if (!wallets.length) return
+    const blob = await pdf(
+      <BusinessPayrollSummaryDocument
+        wallets={wallets}
+        businessName={business.name}
+        generatedAt={new Date().toISOString().slice(0, 10)}
+      />,
+    ).toBlob()
+    downloadBlob(`payroll-wallet-${business.id}.pdf`, blob)
+  }
+
+  async function exportXlsx() {
+    const wallets = walletData?.wallets ?? []
+    if (!wallets.length) return
+    const buf = await payrollWalletsToWorkbook(wallets)
+    downloadBlob(`payroll-wallet-${business.id}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+  }
+
+  function exportCsv() {
+    const wallets = walletData?.wallets ?? []
+    if (!wallets.length) return
+    downloadBlob(`payroll-wallet-${business.id}.csv`, new Blob([payrollWalletsToCsv(wallets)], { type: 'text/csv;charset=utf-8' }))
+  }
 
   return (
     <FinancePageChrome
       title="Payroll"
       subtitle="Salary burden · advances · settlement health"
-      actions={<Link href="/employees"><Button size="xs" variant="secondary">Employees</Button></Link>}
+      actions={<div className="flex gap-2 flex-wrap justify-end"><Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run accrual</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportPdf()}>PDF</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => exportCsv()}>CSV</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportXlsx()}>Excel</Button><Link href="/employees"><Button size="xs" variant="secondary">Employees</Button></Link></div>}
     >
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KpiCard label="Monthly salary budget" value={loading ? '—' : Number(k?.total_monthly_salary ?? 0)} loading={loading} />
-        <KpiCard label="Unpaid (roll)" value={loading ? '—' : Number(k?.unpaid_salary_hint ?? 0)} loading={loading} />
-        <KpiCard label="Outstanding advances" value={loading ? '—' : Number(k?.advance_outstanding ?? 0)} loading={loading} />
-        <KpiCard label="Expenses (range)" value={loading ? '—' : Number(k?.total_expenses ?? 0)} loading={loading} />
-        <KpiCard label="Net profit hint" value={loading ? '—' : Number(k?.net_business_profit_hint ?? 0)} color="text-green-400" loading={loading} />
+        <KpiCard label="Company liability" value={walletLoading ? '—' : Number(walletData?.totals.companyLiability ?? 0)} color="text-green-400" loading={walletLoading} />
+        <KpiCard label="Pending withdrawals" value={walletLoading ? '—' : Number(walletData?.pendingWithdrawalCount ?? 0)} loading={walletLoading} />
+        <KpiCard label="Pending advances" value={walletLoading ? '—' : Number(walletData?.pendingAdvanceCount ?? 0)} loading={walletLoading} />
+        <KpiCard label="Lifetime withdrawn" value={walletLoading ? '—' : Number(walletData?.totals.lifetimeWithdrawn ?? 0)} loading={walletLoading} />
       </div>
 
+      {showApprovals && (
+        <Card className="p-5 border-gold-dim/25">
+          <div className="flex justify-between gap-3 items-start flex-wrap">
+            <div>
+              <p className="text-sm font-bold text-cream">Monthly payroll automation</p>
+              <p className="text-[11px] text-zinc-500 mt-1">
+                Runs automatically on day {automation?.dayOfMonth ?? 10} · {automation?.timezone ?? 'Asia/Dhaka'} · Cron path /api/cron/payroll-accrual
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="xs" variant={automation?.enabled ? 'secondary' : 'gold'} onClick={() => void toggleAutomation(!automation?.enabled)}>
+                {automation?.enabled ? 'Disable' : 'Enable'}
+              </Button>
+              <Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run now</Button>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-3 gap-3 mt-4">
+            <div className="rounded-2xl border border-border bg-black/20 p-3">
+              <p className="text-[9px] uppercase tracking-wider text-zinc-600 font-bold">Monthly preview</p>
+              <p className="font-mono text-green-400 text-lg font-bold mt-1">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</p>
+              <p className="text-[10px] text-zinc-500">{preview?.employees.length ?? 0} linked employees · {preview?.alreadyAccruedCount ?? 0} already accrued</p>
+            </div>
+            <div className="md:col-span-2 rounded-2xl border border-border bg-black/20 p-3">
+              <p className="text-[9px] uppercase tracking-wider text-zinc-600 font-bold mb-2">Accrual history</p>
+              {!history.length ? <p className="text-[11px] text-zinc-600">No accrual runs yet.</p> : (
+                <div className="grid gap-1 text-[11px] max-h-28 overflow-y-auto">
+                  {history.slice(0, 6).map(run => (
+                    <div key={run.id} className="flex justify-between gap-2 border-b border-border/50 pb-1">
+                      <span className="font-mono text-zinc-500">{run.periodYm}</span>
+                      <span className={run.status === 'SUCCESS' ? 'text-green-400' : run.status === 'RUNNING' ? 'text-amber-400' : 'text-red-400'}>{run.status}</span>
+                      <span className="text-zinc-500">{run.trigger}</span>
+                      <span className="font-mono text-gold-lt">+{run.createdCount} / skip {run.skippedCount}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {showApprovals && (
+        <Card className="p-5 border-amber-500/20">
+          <div className="flex justify-between items-center gap-3 mb-3 flex-wrap">
+            <p className="text-sm font-bold text-cream">Pending wallet requests</p>
+            <Button size="xs" variant="secondary" type="button" onClick={() => void loadWallets()}>Refresh</Button>
+          </div>
+          {walletLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : !(walletData?.pendingRequests ?? []).length ? (
+            <p className="text-[11px] text-zinc-500">No pending requests for your business scope.</p>
+          ) : (
+            <div className="overflow-x-auto space-y-2">
+              {walletData!.pendingRequests.map(req => (
+                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center gap-2 border border-border rounded-xl p-3 text-[11px]">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-cream font-medium">{req.type.replace(/_/g, ' ')} · {req.employeeId}</p>
+                    <p className="text-zinc-400 mt-1">{req.reason.slice(0, 160)}{req.reason.length > 160 ? '…' : ''}</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">{req.businessId.replace(/_/g, ' ')} · {req.createdAt.slice(0, 10)}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono text-gold-lt text-sm">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
+                    <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount) })}>Reject</Button>
+                    <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount) })}>Approve</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card className="p-5">
-        <p className="text-sm font-bold text-cream mb-4">Rolling balances</p>
+        <p className="text-sm font-bold text-cream mb-4">Employee liabilities overview</p>
+        {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
+          <Empty icon="◈" title="No wallet ledger yet" desc="Run accrual or approve requests to create wallet entries." />
+        ) : (
+          <div className="overflow-x-auto max-h-[480px]">
+            <table className="w-full text-left text-[11px]">
+              <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                <tr>
+                  <th className="py-2 pr-3">Employee</th>
+                  <th className="py-2 pr-3 text-right">Earned</th>
+                  <th className="py-2 pr-3 text-right">Withdrawn</th>
+                  <th className="py-2 pr-3 text-right">Held balance</th>
+                  <th className="py-2 pr-3 text-right">This month</th>
+                  <th className="py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {walletData!.wallets.map((w: PayrollWallet) => (
+                  <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60">
+                    <td className="py-2 pr-3"><span className="text-cream">{w.name}</span><span className="block text-zinc-600 font-mono">{w.employeeId}</span></td>
+                    <td className="py-2 pr-3 font-mono text-right">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-zinc-400">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-green-400">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-gold-lt">৳ {w.summary.thisMonthSalaryAdded.toLocaleString('en-BD')}</td>
+                    <td className="py-2"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-gold hover:underline">Ledger</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {review && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-3xl border border-border bg-card p-5 shadow-2xl">
+            <p className="text-sm font-bold text-cream">
+              {review.action === 'APPROVE' ? 'Approve wallet request' : 'Reject wallet request'}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Requested amount: <span className="font-mono text-gold-lt">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
+            </p>
+            {review.action === 'APPROVE' && (
+              <label className="mt-4 block text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                Approved amount
+                <input
+                  autoFocus
+                  inputMode="decimal"
+                  type="number"
+                  min="1"
+                  value={review.approvedAmount}
+                  onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
+                  className="mt-2 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/60"
+                />
+              </label>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>Cancel</Button>
+              <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" onClick={() => void submitReview()}>
+                {review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Card className="p-5">
+        <p className="text-sm font-bold text-cream mb-4">Legacy GAS rolling balances</p>
         {loading ? <Skeleton className="h-40" /> : roll.length === 0 ? (
           <Empty icon="⌁" title="No active payroll" desc="Add employees then log advances or salary payouts" />
         ) : (

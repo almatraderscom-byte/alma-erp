@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { errorMeta, logEvent } from '@/lib/logger'
 
 /** No CDN stale reads — inventory and product forms need fresh PRODUCT MASTER after writes. */
 export async function GET() {
@@ -17,13 +18,15 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const json = (await req.json()) as Record<string, unknown>
-    console.log('[api/products POST] create_product keys=', Object.keys(json).join(','))
-    const result = await serverPost('create_product', withActorPayload(req, json))
-    console.log('[api/products POST] ok=', (result as { ok?: boolean }).ok, 'product_id=', (result as { product_id?: string }).product_id)
+    const result = await serverPost('create_product', await mergeActorPayload(req, json))
+    logEvent('info', 'products.create_completed', {
+      ok: (result as { ok?: boolean }).ok,
+      productId: (result as { product_id?: string }).product_id,
+    })
     return NextResponse.json(result)
   } catch (e) {
     const msg = (e as Error).message
-    console.error('[api/products POST] error', msg)
+    logEvent('error', 'products.create_failed', errorMeta(e))
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

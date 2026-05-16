@@ -1,0 +1,471 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { Button, Card, Empty, Skeleton } from '@/components/ui'
+import { ALMA_ROLE_OPTIONS, can, normalizeAlmaRole, type AlmaRole } from '@/lib/roles'
+import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
+import { useActor } from '@/contexts/ActorContext'
+import type { UserRole } from '@prisma/client'
+import toast from 'react-hot-toast'
+import { displayBdPhone } from '@/lib/phone'
+
+type RowUser = {
+  id: string
+  email: string | null
+  name: string
+  phone: string | null
+  role: UserRole
+  active: boolean
+  businessAccess: string
+  employeeIdGas: string | null
+  joiningDate: string | null
+  salaryHint: string | null
+  profileImageUrl: string | null
+  createdAt: string
+}
+
+function RoleBadge({ role }: { role: UserRole }) {
+  const tone =
+    role === 'SUPER_ADMIN'
+      ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+      : role === 'ADMIN'
+        ? 'bg-gold/15 text-gold-lt border-gold-dim/40'
+        : role === 'HR'
+          ? 'bg-sky-500/15 text-sky-300 border-sky-500/25'
+          : role === 'STAFF'
+            ? 'bg-zinc-500/15 text-zinc-300 border-zinc-600/40'
+            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+  return (
+    <span className={`inline-flex text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tone}`}>
+      {role.replace(/_/g, ' ')}
+    </span>
+  )
+}
+
+function parseBizCsv(csv: string): BusinessId[] {
+  const ids = csv.split(',').map(s => s.trim()).filter(Boolean) as BusinessId[]
+  return ids.filter(id => id === 'ALMA_LIFESTYLE' || id === 'CREATIVE_DIGITAL_IT')
+}
+
+export default function UsersSettingsPage() {
+  const { role: actorRole } = useActor()
+  const normalized = normalizeAlmaRole(actorRole)
+
+  const [users, setUsers] = useState<RowUser[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editUser, setEditUser] = useState<RowUser | null>(null)
+  const [permUser, setPermUser] = useState<RowUser | null>(null)
+  const [resetUser, setResetUser] = useState<RowUser | null>(null)
+
+  const allowed = useMemo(() => can(normalized, 'userManage'), [normalized])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/users', { cache: 'no-store' })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j.error || res.statusText)
+      }
+      const j = (await res.json()) as { users: RowUser[] }
+      setUsers(j.users)
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not load users')
+      setUsers([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!allowed) return
+    void load()
+  }, [allowed, load])
+
+  const roleOptionsForActor = useMemo(() => {
+    if (normalized === 'SUPER_ADMIN') return ALMA_ROLE_OPTIONS
+    return ALMA_ROLE_OPTIONS.filter(o => o.id !== 'SUPER_ADMIN')
+  }, [normalized])
+
+  async function patchUser(id: string, body: Record<string, unknown>) {
+    const res = await fetch(`/api/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(j.error || res.statusText)
+    toast.success('Saved')
+    await load()
+  }
+
+  if (!allowed) {
+    return (
+      <FinancePageChrome title="Users" subtitle="Employee accounts · roles · access">
+        <Card className="p-8">
+          <Empty icon="◫" title="Restricted" desc="Only administrators can manage ERP accounts." />
+        </Card>
+      </FinancePageChrome>
+    )
+  }
+
+  return (
+    <>
+      <FinancePageChrome
+        title="Users"
+        subtitle="Accounts · roles · business scope · HR linkage"
+        actions={<Button size="xs" variant="gold" onClick={() => setCreateOpen(true)}>+ Add user</Button>}
+      >
+        <Card className="overflow-hidden">
+          <div className="p-4 border-b border-border flex justify-between items-center gap-3 flex-wrap">
+            <p className="text-xs text-zinc-500">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
+            <Button size="xs" variant="secondary" type="button" onClick={() => void load()}>Refresh</Button>
+          </div>
+          {loading ? (
+            <Skeleton className="h-72 m-4" />
+          ) : users.length === 0 ? (
+            <Empty icon="◎" title="No users" desc="Seed the database or create the first employee login." />
+          ) : (
+            <div className="overflow-x-auto max-h-[72vh]">
+              <table className="w-full text-left text-[11px]">
+                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                  <tr>
+                    <th className="py-2 px-4">Name</th>
+                    <th className="py-2 pr-3">Phone</th>
+                    <th className="py-2 pr-3">Email</th>
+                    <th className="py-2 pr-3">Role</th>
+                    <th className="py-2 pr-3">Business</th>
+                    <th className="py-2 pr-3">HR ID</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id} className="border-b border-border/60 hover:bg-white/[0.02]">
+                      <td className="py-2 px-4 text-cream font-medium">{u.name}</td>
+                      <td className="py-2 pr-3 font-mono text-gold-lt">{u.phone ? displayBdPhone(u.phone) : '—'}</td>
+                      <td className="py-2 pr-3 font-mono text-zinc-400">{u.email || '—'}</td>
+                      <td className="py-2 pr-3"><RoleBadge role={u.role} /></td>
+                      <td className="py-2 pr-3 text-zinc-400 max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
+                      <td className="py-2 pr-3 font-mono text-gold-dim">{u.employeeIdGas || '—'}</td>
+                      <td className="py-2 pr-3">
+                        <span className={u.active ? 'text-green-400' : 'text-red-400'}>{u.active ? 'Active' : 'Inactive'}</span>
+                      </td>
+                      <td className="py-2 pr-4 text-right space-x-2 whitespace-nowrap">
+                        <button type="button" className="text-gold-lt hover:underline" onClick={() => setPermUser(u)}>Permissions</button>
+                        <button type="button" className="text-gold hover:underline" onClick={() => setEditUser(u)}>Edit</button>
+                        <button type="button" className="text-zinc-400 hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
+                        <button
+                          type="button"
+                          className="text-zinc-500 hover:text-amber-400"
+                          onClick={() => void patchUser(u.id, { active: !u.active })}
+                        >
+                          {u.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </FinancePageChrome>
+
+      {permUser && (
+        <div className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
+          <Card className="w-full max-w-md p-6 border-gold-dim/30 space-y-4">
+            <div className="flex justify-between gap-3 items-start">
+              <div>
+                <p className="text-sm font-bold text-cream">Role capabilities</p>
+                <p className="text-[11px] text-zinc-500 mt-1">{permUser.name} · server-enforced ERP scope</p>
+              </div>
+              <button type="button" className="text-zinc-500 hover:text-cream text-lg leading-none" onClick={() => setPermUser(null)}>×</button>
+            </div>
+            <RoleBadge role={permUser.role} />
+            <p className="text-[11px] text-zinc-500">Business access: <span className="font-mono text-zinc-400">{permUser.businessAccess}</span></p>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              {ALMA_ROLE_OPTIONS.find(o => o.id === permUser.role)?.hint}
+            </p>
+            <Button variant="secondary" className="w-full justify-center" type="button" onClick={() => setPermUser(null)}>Close</Button>
+          </Card>
+        </div>
+      )}
+
+      {resetUser && (
+        <ResetPasswordModal
+          user={resetUser}
+          onClose={() => setResetUser(null)}
+          onDone={() => { setResetUser(null); void load() }}
+        />
+      )}
+
+      {editUser && (
+        <UserFormModal
+          title="Edit account"
+          actorRole={normalized}
+          roleOptions={roleOptionsForActor}
+          initial={editUser}
+          onClose={() => setEditUser(null)}
+          onSubmit={async fd => {
+            const bizIds = BUSINESS_LIST.filter(b => fd.get(`biz_${b.id}`) === 'on').map(b => b.id)
+            if (!bizIds.length) {
+              toast.error('Select at least one business')
+              return
+            }
+            await patchUser(editUser.id, {
+              name: String(fd.get('name') || '').trim(),
+              phone: String(fd.get('phone') || '').trim() || null,
+              email: String(fd.get('email') || '').trim().toLowerCase() || null,
+              role: String(fd.get('role') || '') as UserRole,
+              businessAccess: bizIds.join(','),
+              employeeIdGas: String(fd.get('employeeIdGas') || '').trim() || null,
+              joiningDate: String(fd.get('joining_date') || '').trim() || null,
+              salaryHint: fd.get('salary_hint') ? Number(fd.get('salary_hint')) : null,
+              profileImageUrl: String(fd.get('profile_url') || '').trim() || null,
+            })
+            setEditUser(null)
+          }}
+        />
+      )}
+
+      {createOpen && (
+        <UserFormModal
+          title="Create account"
+          actorRole={normalized}
+          roleOptions={roleOptionsForActor}
+          initial={null}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async fd => {
+            const bizIds = BUSINESS_LIST.filter(b => fd.get(`biz_${b.id}`) === 'on').map(b => b.id)
+            if (!bizIds.length) {
+              toast.error('Select at least one business')
+              return
+            }
+            const email = String(fd.get('email') || '').trim().toLowerCase()
+            const password = String(fd.get('password') || '')
+            const name = String(fd.get('name') || '').trim()
+            const res = await fetch('/api/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email,
+                password,
+                name,
+                phone: String(fd.get('phone') || '').trim(),
+                role: String(fd.get('role') || 'STAFF') as UserRole,
+                businessAccess: bizIds.join(','),
+                employeeIdGas: String(fd.get('employeeIdGas') || '').trim() || undefined,
+                active: true,
+              }),
+            })
+            const j = await res.json().catch(() => ({}))
+            if (!res.ok) {
+              toast.error(j.error || 'Create failed')
+              return
+            }
+            toast.success('User created')
+            const uid = j.user?.id as string | undefined
+            if (uid) {
+              try {
+                await fetch(`/api/users/${uid}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    joiningDate: String(fd.get('joining_date') || '').trim() || null,
+                    salaryHint: fd.get('salary_hint') ? Number(fd.get('salary_hint')) : null,
+                    profileImageUrl: String(fd.get('profile_url') || '').trim() || null,
+                  }),
+                })
+              } catch {
+                /* optional extras */
+              }
+            }
+            setCreateOpen(false)
+            await load()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ResetPasswordModal({
+  user,
+  onClose,
+  onDone,
+}: {
+  user: RowUser
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    const password = String(fd.get('password') || '')
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/users/${user.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(j.error || 'Failed')
+        return
+      }
+      toast.success('Password updated')
+      onDone()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
+      <Card className="w-full max-w-md p-6 border-gold-dim/30">
+        <div className="flex justify-between gap-3 mb-4">
+          <div>
+            <p className="text-sm font-bold text-cream">Reset password</p>
+            <p className="text-[11px] text-zinc-500 mt-1">{user.email}</p>
+          </div>
+          <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+        </div>
+        <form onSubmit={submit} className="space-y-3">
+          <label className="block space-y-1 text-xs">
+            <span className="text-zinc-500">New password</span>
+            <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+          </label>
+          <div className="flex gap-2 pt-2">
+            <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
+            <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+          </div>
+        </form>
+      </Card>
+    </div>
+  )
+}
+
+function UserFormModal({
+  title,
+  actorRole,
+  roleOptions,
+  initial,
+  onClose,
+  onSubmit,
+}: {
+  title: string
+  actorRole: AlmaRole
+  roleOptions: typeof ALMA_ROLE_OPTIONS
+  initial: RowUser | null
+  onClose: () => void
+  onSubmit: (fd: FormData) => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const selectedBiz = initial ? parseBizCsv(initial.businessAccess) : (['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT'] as BusinessId[])
+
+  async function wrapped(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await onSubmit(new FormData(e.currentTarget))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
+      <Card className="w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto border-gold-dim/30">
+        <div className="flex justify-between gap-3 mb-4">
+          <p className="text-sm font-bold text-cream">{title}</p>
+          <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+        </div>
+        <form onSubmit={wrapped} className="space-y-3 text-xs">
+          {!initial && (
+            <>
+              <label className="block space-y-1">
+                <span className="text-zinc-500">Email (optional)</span>
+                <input name="email" type="email" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-zinc-500">Initial password</span>
+                <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+              </label>
+            </>
+          )}
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Full name</span>
+            <input name="name" required defaultValue={initial?.name || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+          </label>
+          {initial && (
+            <label className="block space-y-1">
+              <span className="text-zinc-500">Email (optional)</span>
+              <input name="email" type="email" defaultValue={initial.email || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+            </label>
+          )}
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Phone (Bangladesh)</span>
+            <input name="phone" required={!initial} inputMode="tel" autoComplete="tel" placeholder="+8801XXXXXXXXX" defaultValue={initial?.phone || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Role</span>
+            <select name="role" required defaultValue={initial?.role || 'STAFF'} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm">
+              {roleOptions.map(o => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          <div className="space-y-2 rounded-xl border border-border p-3 bg-black/30">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Business access</p>
+            {BUSINESS_LIST.map(b => (
+              <label key={b.id} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  name={`biz_${b.id}`}
+                  defaultChecked={selectedBiz.includes(b.id)}
+                  className="rounded border-border"
+                />
+                <span className="text-cream">{b.name}</span>
+              </label>
+            ))}
+          </div>
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Linked HR employee ID (GAS)</span>
+            <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-[11px]" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Joining date</span>
+            <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Salary hint (৳)</span>
+            <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-sm" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Profile photo URL</span>
+            <input name="profile_url" defaultValue={initial?.profileImageUrl || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-[11px]" />
+          </label>
+          {actorRole !== 'SUPER_ADMIN' && (
+            <p className="text-[10px] text-amber-400/90 leading-snug">You cannot assign Super Admin.</p>
+          )}
+          <div className="flex gap-2 pt-2">
+            <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
+            <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+          </div>
+        </form>
+      </Card>
+    </div>
+  )
+}

@@ -11,6 +11,7 @@
 !appsscript.json
 
 # Web app API + inventory / PRODUCT MASTER (primary deployment surface)
+!Gas_Release.gs.js
 !WebApp_API.gs.js
 !Cdit_Module.gs.js
 !Branding_Module.gs.js

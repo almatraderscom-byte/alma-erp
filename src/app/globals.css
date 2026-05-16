@@ -1,7 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --brand-primary: #c9a84c;
   --brand-secondary: #8b6914;
   --brand-accent: #f0d080;
+  --font-sans: var(--font-inter), var(--font-bengali), var(--font-hind), 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
 }
 
 @page {
@@ -19,14 +24,6 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-}
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root {
-  --font-sans: var(--font-inter), var(--font-bengali), var(--font-hind), 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
 }
 
 /* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */

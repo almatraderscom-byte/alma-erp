@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPost } from '@/lib/server-api'
 import { SUPPLIER_IMPORT_CHUNK } from '@/lib/supplier-import'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
 
 const BATCH_TIMEOUT_MS = 120_000
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
         errors?: Array<{ index?: number; sku?: string; message: string }>
       }>(
         'batch_import_product_master',
-        withActorPayload(req, {
+        await mergeActorPayload(req, {
           items: chunk,
           skip_duplicate_names,
         }),

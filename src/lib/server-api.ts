@@ -7,7 +7,7 @@
  */
 
 const BASE    = process.env.NEXT_PUBLIC_API_URL ?? ''
-const SECRET  = process.env.API_SECRET ?? 'alma-dev-secret'
+const SECRET  = process.env.API_SECRET ?? ''
 /** Default for most GAS routes (cold start + small payload). */
 const DEFAULT_TIMEOUT_MS = 25_000
 /** Invoice: PDF + Drive can take 20–40s+; keep headroom above Vercel/server limits. */
@@ -24,6 +24,7 @@ export async function serverGet<T>(
   assertConfigured_()
   const url = new URL(BASE)
   url.searchParams.set('route', route)
+  url.searchParams.set('secret', SECRET)
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') url.searchParams.set(k, v) })
 
   const timeoutMs = DEFAULT_TIMEOUT_MS
@@ -59,8 +60,6 @@ export async function serverPost<T>(
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   const body  = JSON.stringify({ route, secret: SECRET, ...payload })
 
-  console.log(`[serverPost →] route=${route} keys=${Object.keys({ route, ...payload }).join(',')}`)
-
   try {
     const res = await fetch(BASE, {
       method:   'POST',
@@ -72,10 +71,7 @@ export async function serverPost<T>(
     })
     clearTimeout(timer)
 
-    console.log(`[serverPost ←] route=${route} status=${res.status} url=${res.url.slice(0, 80)}`)
-
     const text = await res.text()
-    console.log(`[serverPost body] route=${route} response=${text.slice(0, 400)}`)
     if (!text.trim()) throw new Error(`${route} returned empty response`)
 
     if (!res.ok) {
@@ -102,7 +98,6 @@ export async function serverPost<T>(
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    console.error(`[serverPost ✗] route=${route}`, (err as Error).message)
     throw normalise_(err, `POST ${route}`, timeoutMs)
   }
 }
@@ -111,6 +106,9 @@ export async function serverPost<T>(
 function assertConfigured_() {
   if (!BASE || BASE.includes('YOUR_GOOGLE_SHEET_ID')) {
     throw new Error('NEXT_PUBLIC_API_URL is not configured — check .env.local')
+  }
+  if (!SECRET || /alma-dev-secret|REPLACE_|YOUR_/i.test(SECRET)) {
+    throw new Error('API_SECRET is not configured securely')
   }
 }
 

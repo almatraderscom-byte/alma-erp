@@ -6,7 +6,7 @@ import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { cn } from '@/lib/utils'
 
 export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
-  const { businessId, setBusinessId } = useBusiness()
+  const { businessId, setBusinessId, allowedBusinessIds } = useBusiness()
   const [open, setOpen] = useState(false)
 
   return (
@@ -47,7 +47,7 @@ export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
             exit={{ opacity: 0, height: 0 }}
             className="mt-1 space-y-1 overflow-hidden"
           >
-            {BUSINESS_LIST.map(b => {
+            {BUSINESS_LIST.filter(b => allowedBusinessIds.includes(b.id)).map(b => {
               const active = b.id === businessId
               return (
                 <button
@@ -82,7 +82,8 @@ export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
 
 /** Compact switcher for mobile top bar */
 export function BusinessSwitcherCompact() {
-  const { businessId, setBusinessId } = useBusiness()
+  const { businessId, setBusinessId, allowedBusinessIds } = useBusiness()
+  const list = BUSINESS_LIST.filter(b => allowedBusinessIds.includes(b.id))
   return (
     <select
       value={businessId}
@@ -90,7 +91,7 @@ export function BusinessSwitcherCompact() {
       className="bg-card border border-border rounded-lg px-2 py-1 text-[10px] font-bold text-gold-lt max-w-[140px] truncate"
       aria-label="Select business"
     >
-      {BUSINESS_LIST.map(b => (
+      {list.map(b => (
         <option key={b.id} value={b.id}>{b.shortName}</option>
       ))}
     </select>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   try {
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const raw = (await req.json()) as Record<string, unknown>
-    return NextResponse.json(await serverPost('create_customer', withActorPayload(req, raw)))
+    return NextResponse.json(await serverPost('create_customer', await mergeActorPayload(req, raw)))
   }
   catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
 }

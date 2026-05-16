@@ -14,7 +14,7 @@ function useHideMobileChrome() {
 export function MobileBottomSpacer() {
   const hide = useHideMobileChrome()
   if (hide) return null
-  return <div className="h-16 md:hidden shrink-0" aria-hidden />
+  return <div className="h-24 md:hidden shrink-0" aria-hidden />
 }
 
 export function MobileNavBar() {

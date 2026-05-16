@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet, serverPost } from '@/lib/server-api'
-import { withActorPayload } from '@/lib/api-route-actor'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { errorMeta, logEvent } from '@/lib/logger'
 
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
@@ -16,19 +17,22 @@ export async function POST(req: NextRequest) {
   let body: Record<string, unknown> = {}
   try {
     body = await req.json()
-    console.log('[POST /api/digital/clients] payload keys:', Object.keys(body).join(','))
     const data = await serverPost<{ ok?: boolean; error?: string; client_id?: string }>(
       'cdit_create_client',
-      withActorPayload(req, body as Record<string, unknown>),
+      await mergeActorPayload(req, body as Record<string, unknown>),
     )
-    console.log('[POST /api/digital/clients] GAS ok:', data?.ok, 'client_id:', data?.client_id)
+    logEvent('info', 'digital.clients.create_completed', { ok: data?.ok, clientId: data?.client_id })
     if (data && data.ok === false) {
       return NextResponse.json({ error: data.error || 'Create client failed' }, { status: 400 })
     }
     return NextResponse.json(data)
   } catch (e) {
     const msg = (e as Error).message
-    console.error('[POST /api/digital/clients] error:', msg, '| body:', JSON.stringify(body).slice(0, 200))
+    logEvent('error', 'digital.clients.create_failed', {
+      ...errorMeta(e),
+      businessId: body.business_id,
+      clientName: body.client_name || body.name,
+    })
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
