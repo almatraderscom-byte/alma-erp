@@ -61,6 +61,11 @@ export async function GET() {
         resend_configured: Boolean(process.env.RESEND_API_KEY?.trim() && process.env.EMAIL_FROM?.trim()),
         push_configured: Boolean(process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID?.trim() && process.env.ONESIGNAL_REST_API_KEY?.trim()),
       },
+      storage: {
+        expense_receipts_configured: Boolean((process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.DATABASE_URL)?.trim() && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY)?.trim()),
+        expense_receipts_bucket: process.env.SUPABASE_EXPENSE_RECEIPTS_BUCKET || 'expense-receipts',
+        private_signed_access: true,
+      },
       frontend: {
         git_commit: gitCommit,
       },
