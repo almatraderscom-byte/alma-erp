@@ -25,6 +25,12 @@ export type WalletSummary = {
   lifetimeWithdrawn: number
   totalAccrued: number
   totalBonuses: number
+  totalCommissions: number
+  totalEidBonuses: number
+  totalPerformanceBonuses: number
+  totalOvertime: number
+  totalReimbursements: number
+  totalMealDeductions: number
   totalAdvances: number
   totalWithdrawals: number
   totalPenalties: number
@@ -43,6 +49,37 @@ export type WalletTransaction = WalletEntryLike & {
 
 export const WALLET_ADMIN_ROLES: AlmaRole[] = ['SUPER_ADMIN', 'ADMIN', 'HR']
 
+export const WALLET_CREDIT_TYPES: EmployeeLedgerEntryType[] = [
+  'SALARY_ACCRUAL',
+  'COMMISSION',
+  'EID_BONUS',
+  'PERFORMANCE_BONUS',
+  'OVERTIME',
+  'REIMBURSEMENT',
+  'BONUS',
+]
+
+export const WALLET_DEBIT_TYPES: EmployeeLedgerEntryType[] = [
+  'ADVANCE',
+  'WITHDRAWAL',
+  'MEAL_DEDUCTION',
+  'PENALTY',
+]
+
+export const WALLET_MANUAL_ENTRY_TYPES: EmployeeLedgerEntryType[] = [
+  'SALARY_ACCRUAL',
+  'ADVANCE',
+  'WITHDRAWAL',
+  'ADJUSTMENT',
+  'COMMISSION',
+  'EID_BONUS',
+  'PERFORMANCE_BONUS',
+  'MEAL_DEDUCTION',
+  'OVERTIME',
+  'REIMBURSEMENT',
+  'PENALTY',
+]
+
 export function moneyDecimal(value: unknown): Prisma.Decimal {
   const n = Number(value)
   if (!Number.isFinite(n)) return new Prisma.Decimal(0)
@@ -55,8 +92,8 @@ export function periodFromDate(date = new Date()): string {
 
 export function signedAmount(type: EmployeeLedgerEntryType, amount: unknown): number {
   const n = Number(amount || 0)
-  if (type === 'SALARY_ACCRUAL' || type === 'BONUS') return n
-  if (type === 'ADVANCE' || type === 'WITHDRAWAL' || type === 'PENALTY') return -Math.abs(n)
+  if (WALLET_CREDIT_TYPES.includes(type)) return n
+  if (WALLET_DEBIT_TYPES.includes(type)) return -Math.abs(n)
   return n
 }
 
@@ -83,6 +120,12 @@ export function computeWalletSummary(
   const currentPeriod = periodFromDate(now)
   let totalAccrued = 0
   let totalBonuses = 0
+  let totalCommissions = 0
+  let totalEidBonuses = 0
+  let totalPerformanceBonuses = 0
+  let totalOvertime = 0
+  let totalReimbursements = 0
+  let totalMealDeductions = 0
   let totalAdvances = 0
   let totalWithdrawals = 0
   let totalPenalties = 0
@@ -94,15 +137,22 @@ export function computeWalletSummary(
     if (e.type === 'SALARY_ACCRUAL') {
       totalAccrued += amount
       if (e.periodYm === currentPeriod) thisMonthSalaryAdded += amount
-    } else if (e.type === 'BONUS') totalBonuses += amount
+    } else if (e.type === 'COMMISSION') totalCommissions += amount
+    else if (e.type === 'EID_BONUS') totalEidBonuses += amount
+    else if (e.type === 'PERFORMANCE_BONUS') totalPerformanceBonuses += amount
+    else if (e.type === 'OVERTIME') totalOvertime += amount
+    else if (e.type === 'REIMBURSEMENT') totalReimbursements += amount
+    else if (e.type === 'MEAL_DEDUCTION') totalMealDeductions += Math.abs(amount)
+    else if (e.type === 'BONUS') totalBonuses += amount
     else if (e.type === 'ADVANCE') totalAdvances += Math.abs(amount)
     else if (e.type === 'WITHDRAWAL') totalWithdrawals += Math.abs(amount)
     else if (e.type === 'PENALTY') totalPenalties += Math.abs(amount)
     else if (e.type === 'ADJUSTMENT') totalAdjustments += amount
   }
 
-  const lifetimeEarned = totalAccrued + totalBonuses
-  const lifetimeWithdrawn = totalAdvances + totalWithdrawals + totalPenalties
+  totalBonuses += totalEidBonuses + totalPerformanceBonuses
+  const lifetimeEarned = totalAccrued + totalBonuses + totalCommissions + totalOvertime + totalReimbursements
+  const lifetimeWithdrawn = totalAdvances + totalWithdrawals + totalPenalties + totalMealDeductions
   const currentBalance = lifetimeEarned - lifetimeWithdrawn + totalAdjustments
 
   return {
@@ -112,6 +162,12 @@ export function computeWalletSummary(
     lifetimeWithdrawn,
     totalAccrued,
     totalBonuses,
+    totalCommissions,
+    totalEidBonuses,
+    totalPerformanceBonuses,
+    totalOvertime,
+    totalReimbursements,
+    totalMealDeductions,
     totalAdvances,
     totalWithdrawals,
     totalPenalties,

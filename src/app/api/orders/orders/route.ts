@@ -20,7 +20,11 @@ export async function POST(req: NextRequest) {
   let body: unknown
   try {
     body = await req.json()
-    const result = await serverPost('create_order', await mergeActorPayload(req, body as Record<string, unknown>))
+    const actorPayload = await mergeActorPayload(req, body as Record<string, unknown>)
+    if (!actorPayload.handled_by && actorPayload.actor_user_id) {
+      actorPayload.handled_by = `${String(actorPayload.actor || 'User')} (${String(actorPayload.actor_user_id)})`
+    }
+    const result = await serverPost('create_order', actorPayload)
     const payload = body as Record<string, unknown>
     await Promise.all([
       notifyRole({

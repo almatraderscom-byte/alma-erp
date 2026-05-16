@@ -7,6 +7,12 @@ export type WalletSummary = {
   lifetimeWithdrawn: number
   totalAccrued: number
   totalBonuses: number
+  totalCommissions: number
+  totalEidBonuses: number
+  totalPerformanceBonuses: number
+  totalOvertime: number
+  totalReimbursements: number
+  totalMealDeductions: number
   totalAdvances: number
   totalWithdrawals: number
   totalPenalties: number
@@ -64,6 +70,13 @@ export type WalletSummaryResponse = {
     lifetimeEarned: number
     lifetimeWithdrawn: number
     currentBalance: number
+    totalAccrued: number
+    totalCommissions: number
+    totalBonuses: number
+    totalOvertime: number
+    totalReimbursements: number
+    totalMealDeductions: number
+    totalPenalties: number
   }
   pendingRequests: WalletRequestDto[]
   pendingAdvanceCount: number

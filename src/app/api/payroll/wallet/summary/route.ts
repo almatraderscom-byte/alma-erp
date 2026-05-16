@@ -78,9 +78,28 @@ export async function GET(req: NextRequest) {
       acc.lifetimeEarned += w.summary.lifetimeEarned
       acc.lifetimeWithdrawn += w.summary.lifetimeWithdrawn
       acc.currentBalance += w.summary.currentBalance
+      acc.totalAccrued += w.summary.totalAccrued
+      acc.totalCommissions += w.summary.totalCommissions
+      acc.totalBonuses += w.summary.totalBonuses
+      acc.totalOvertime += w.summary.totalOvertime
+      acc.totalReimbursements += w.summary.totalReimbursements
+      acc.totalMealDeductions += w.summary.totalMealDeductions
+      acc.totalPenalties += w.summary.totalPenalties
       return acc
     },
-    { companyLiability: 0, lifetimeEarned: 0, lifetimeWithdrawn: 0, currentBalance: 0 },
+    {
+      companyLiability: 0,
+      lifetimeEarned: 0,
+      lifetimeWithdrawn: 0,
+      currentBalance: 0,
+      totalAccrued: 0,
+      totalCommissions: 0,
+      totalBonuses: 0,
+      totalOvertime: 0,
+      totalReimbursements: 0,
+      totalMealDeductions: 0,
+      totalPenalties: 0,
+    },
   )
 
   return NextResponse.json({

@@ -16,22 +16,22 @@ enum UserRole {
 }
 
 model User {
-  id                 String                 @id @default(cuid())
-  email              String?                @unique
-  passwordHash       String
-  name               String
-  phone              String?                @unique
-  role               UserRole               @default(STAFF)
-  active             Boolean                @default(true)
+  id                  String                 @id @default(cuid())
+  email               String?                @unique
+  passwordHash        String
+  name                String
+  phone               String?                @unique
+  role                UserRole               @default(STAFF)
+  active              Boolean                @default(true)
   /// Comma-separated BusinessId: ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT
-  businessAccess     String                 @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT")
-  employeeIdGas      String?
-  joiningDate        DateTime?
-  salaryHint         Decimal?               @db.Decimal(12, 2)
-  profileImageUrl    String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-  advanceRequests    SalaryAdvanceRequest[]
+  businessAccess      String                 @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT")
+  employeeIdGas       String?
+  joiningDate         DateTime?
+  salaryHint          Decimal?               @db.Decimal(12, 2)
+  profileImageUrl     String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  advanceRequests     SalaryAdvanceRequest[]
   passwordResetTokens PasswordResetToken[]
 }
 
@@ -46,6 +46,13 @@ enum EmployeeLedgerEntryType {
   ADVANCE
   WITHDRAWAL
   ADJUSTMENT
+  COMMISSION
+  EID_BONUS
+  PERFORMANCE_BONUS
+  MEAL_DEDUCTION
+  OVERTIME
+  REIMBURSEMENT
+  /// Legacy generic bonus rows are still readable; new compensation should use specific bonus types.
   BONUS
   PENALTY
 }
@@ -95,39 +102,39 @@ enum NotificationDeliveryStatus {
 }
 
 model SalaryAdvanceRequest {
-  id            String        @id @default(cuid())
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  businessId    String
-  amount        Decimal       @db.Decimal(12, 2)
-  reason        String        @db.Text
-  status        AdvanceStatus @default(PENDING)
-  reviewedById  String?
-  reviewNote    String?       @db.Text
-  reviewedAt    DateTime?
-  createdAt     DateTime      @default(now())
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId   String
+  amount       Decimal       @db.Decimal(12, 2)
+  reason       String        @db.Text
+  status       AdvanceStatus @default(PENDING)
+  reviewedById String?
+  reviewNote   String?       @db.Text
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
 
   @@index([status])
   @@index([userId])
 }
 
 model EmployeeLedgerEntry {
-  id            String                  @id @default(cuid())
-  employeeId    String
-  userId        String?
-  businessId    String
-  date          DateTime
-  periodYm      String?
-  type          EmployeeLedgerEntryType
-  amount        Decimal                 @db.Decimal(12, 2)
-  note          String?                 @db.Text
-  createdById   String?
-  approvedById  String?
-  source        String?
-  sourceRef     String?
+  id              String                  @id @default(cuid())
+  employeeId      String
+  userId          String?
+  businessId      String
+  date            DateTime
+  periodYm        String?
+  type            EmployeeLedgerEntryType
+  amount          Decimal                 @db.Decimal(12, 2)
+  note            String?                 @db.Text
+  createdById     String?
+  approvedById    String?
+  source          String?
+  sourceRef       String?
   walletRequestId String?
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 
   @@unique([employeeId, businessId, periodYm, type])
   @@unique([source, sourceRef])
@@ -139,21 +146,21 @@ model EmployeeLedgerEntry {
 }
 
 model WalletRequest {
-  id             String              @id @default(cuid())
-  userId         String
-  employeeId     String
-  businessId     String
-  type           WalletRequestType
-  status         WalletRequestStatus @default(PENDING)
-  requestedAmount Decimal            @db.Decimal(12, 2)
-  approvedAmount  Decimal?           @db.Decimal(12, 2)
-  reason         String              @db.Text
-  reviewNote     String?             @db.Text
-  reviewedById   String?
-  reviewedAt     DateTime?
-  ledgerEntryId  String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  id              String              @id @default(cuid())
+  userId          String
+  employeeId      String
+  businessId      String
+  type            WalletRequestType
+  status          WalletRequestStatus @default(PENDING)
+  requestedAmount Decimal             @db.Decimal(12, 2)
+  approvedAmount  Decimal?            @db.Decimal(12, 2)
+  reason          String              @db.Text
+  reviewNote      String?             @db.Text
+  reviewedById    String?
+  reviewedAt      DateTime?
+  ledgerEntryId   String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@index([status])
   @@index([userId])
@@ -162,19 +169,19 @@ model WalletRequest {
 }
 
 model PayrollAccrualRun {
-  id          String                  @id @default(cuid())
-  businessId  String
-  periodYm    String
-  trigger     String                  @default("manual")
-  status      PayrollAccrualRunStatus
-  employeeCount Int                   @default(0)
-  createdCount  Int                   @default(0)
-  skippedCount  Int                   @default(0)
-  error       String?                 @db.Text
-  runById     String?
-  startedAt   DateTime                @default(now())
-  finishedAt  DateTime?
-  createdAt   DateTime                @default(now())
+  id            String                  @id @default(cuid())
+  businessId    String
+  periodYm      String
+  trigger       String                  @default("manual")
+  status        PayrollAccrualRunStatus
+  employeeCount Int                     @default(0)
+  createdCount  Int                     @default(0)
+  skippedCount  Int                     @default(0)
+  error         String?                 @db.Text
+  runById       String?
+  startedAt     DateTime                @default(now())
+  finishedAt    DateTime?
+  createdAt     DateTime                @default(now())
 
   @@unique([businessId, periodYm])
   @@index([status])
@@ -182,34 +189,50 @@ model PayrollAccrualRun {
 }
 
 model PayrollAutomationSetting {
-  id                  String   @id @default("global")
-  enabled             Boolean  @default(true)
-  dayOfMonth           Int      @default(10)
-  timezone            String   @default("Asia/Dhaka")
-  retryAfterMinutes   Int      @default(60)
-  notifyAdminsOnFailure Boolean @default(true)
-  updatedById         String?
-  updatedAt           DateTime @updatedAt
-  createdAt           DateTime @default(now())
+  id                    String   @id @default("global")
+  enabled               Boolean  @default(true)
+  dayOfMonth            Int      @default(10)
+  timezone              String   @default("Asia/Dhaka")
+  retryAfterMinutes     Int      @default(60)
+  notifyAdminsOnFailure Boolean  @default(true)
+  updatedById           String?
+  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now())
+}
+
+model PayrollCompensationSetting {
+  id                               String   @id @default(cuid())
+  businessId                       String   @unique
+  commissionEnabled                Boolean  @default(true)
+  commissionMode                   String   @default("FIXED")
+  fixedCommissionPerDeliveredOrder Decimal  @default(0) @db.Decimal(12, 2)
+  percentageCommissionRate         Decimal? @db.Decimal(6, 3)
+  largeBonusAlertThreshold         Decimal  @default(10000) @db.Decimal(12, 2)
+  abnormalPenaltyAlertThreshold    Decimal  @default(5000) @db.Decimal(12, 2)
+  updatedById                      String?
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
+
+  @@index([businessId])
 }
 
 model Notification {
-  id            String                @id @default(cuid())
-  userId        String?
-  roleTarget    UserRole?
-  businessId    String?
-  type          NotificationType
-  priority      NotificationPriority  @default(NORMAL)
-  title         String
-  message       String                @db.Text
-  actionUrl     String?
-  pinned        Boolean               @default(false)
-  readAt        DateTime?
-  metadataJson  String?               @db.Text
-  broadcastId   String?
-  createdById   String?
-  expiresAt     DateTime?
-  createdAt     DateTime              @default(now())
+  id           String               @id @default(cuid())
+  userId       String?
+  roleTarget   UserRole?
+  businessId   String?
+  type         NotificationType
+  priority     NotificationPriority @default(NORMAL)
+  title        String
+  message      String               @db.Text
+  actionUrl    String?
+  pinned       Boolean              @default(false)
+  readAt       DateTime?
+  metadataJson String?              @db.Text
+  broadcastId  String?
+  createdById  String?
+  expiresAt    DateTime?
+  createdAt    DateTime             @default(now())
 
   @@index([userId, readAt])
   @@index([roleTarget, readAt])
@@ -220,23 +243,23 @@ model Notification {
 }
 
 model NotificationRecipient {
-  id              String                     @id @default(cuid())
-  notificationId  String
-  userId          String
-  businessId      String?
-  deliveryStatus  NotificationDeliveryStatus @default(PENDING)
-  pushStatus      String?
-  emailStatus     String?
-  emailMessageId  String?
-  emailError      String?                    @db.Text
-  emailSentAt     DateTime?
-  deliveredAt     DateTime?
-  seenAt          DateTime?
-  readAt          DateTime?
-  acknowledgedAt  DateTime?
-  lastRemindedAt  DateTime?
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
+  id             String                     @id @default(cuid())
+  notificationId String
+  userId         String
+  businessId     String?
+  deliveryStatus NotificationDeliveryStatus @default(PENDING)
+  pushStatus     String?
+  emailStatus    String?
+  emailMessageId String?
+  emailError     String?                    @db.Text
+  emailSentAt    DateTime?
+  deliveredAt    DateTime?
+  seenAt         DateTime?
+  readAt         DateTime?
+  acknowledgedAt DateTime?
+  lastRemindedAt DateTime?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
 
   @@unique([notificationId, userId])
   @@index([userId, readAt])
@@ -246,19 +269,19 @@ model NotificationRecipient {
 }
 
 model NotificationBroadcast {
-  id              String                @id @default(cuid())
-  title           String
-  message         String                @db.Text
-  type            NotificationType      @default(ADMIN_ANNOUNCEMENT)
-  priority        NotificationPriority  @default(NORMAL)
-  target          String                @default("ALL")
-  targetRole      UserRole?
+  id               String               @id @default(cuid())
+  title            String
+  message          String               @db.Text
+  type             NotificationType     @default(ADMIN_ANNOUNCEMENT)
+  priority         NotificationPriority @default(NORMAL)
+  target           String               @default("ALL")
+  targetRole       UserRole?
   targetBusinessId String?
-  targetUserId    String?
-  actionUrl       String?
-  pinned          Boolean               @default(false)
-  createdById     String?
-  createdAt       DateTime              @default(now())
+  targetUserId     String?
+  actionUrl        String?
+  pinned           Boolean              @default(false)
+  createdById      String?
+  createdAt        DateTime             @default(now())
 
   @@index([createdAt])
   @@index([target])
@@ -266,15 +289,15 @@ model NotificationBroadcast {
 }
 
 model PushSubscription {
-  id             String   @id @default(cuid())
-  userId         String
-  provider       String   @default("onesignal")
-  playerId       String?
-  endpoint       String?
-  platform       String?
-  enabled        Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id        String   @id @default(cuid())
+  userId    String
+  provider  String   @default("onesignal")
+  playerId  String?
+  endpoint  String?
+  platform  String?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([provider, playerId])
   @@index([userId, enabled])

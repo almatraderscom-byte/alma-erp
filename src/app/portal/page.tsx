@@ -170,10 +170,14 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
         <div className="grid grid-cols-2 gap-3">
           <WalletStat label="Current balance" value={money(s.currentBalance)} tone="text-green-400" />
           <WalletStat label="Withdrawable" value={money(s.availableWithdrawable)} tone="text-gold-lt" />
-          <WalletStat label="This month added" value={money(s.thisMonthSalaryAdded)} />
-          <WalletStat label="Company-held" value={money(s.companyLiability)} tone="text-green-400" />
-          <WalletStat label="Lifetime earned" value={money(s.lifetimeEarned)} />
-          <WalletStat label="Lifetime withdrawn" value={money(s.lifetimeWithdrawn)} />
+          <WalletStat label="Salary earned" value={money(s.totalAccrued)} />
+          <WalletStat label="Commission" value={money(s.totalCommissions)} tone="text-green-400" />
+          <WalletStat label="Eid bonus" value={money(s.totalEidBonuses)} />
+          <WalletStat label="Overtime" value={money(s.totalOvertime)} />
+          <WalletStat label="Penalties" value={money(s.totalPenalties)} tone="text-red-400" />
+          <WalletStat label="Meal deductions" value={money(s.totalMealDeductions)} tone="text-red-400" />
+          <WalletStat label="Advances" value={money(s.totalAdvances)} tone="text-amber-300" />
+          <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-zinc-300" />
         </div>
       )}
     </Card>

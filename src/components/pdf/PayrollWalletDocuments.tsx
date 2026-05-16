@@ -41,15 +41,21 @@ function WalletRows({ wallets }: { wallets: PayrollWallet[] }) {
     <View style={styles.section}>
       <View style={[styles.row, styles.th]}>
         <Text style={styles.c2}>Employee</Text>
+        <Text style={styles.cr}>Salary</Text>
+        <Text style={styles.cr}>Commission</Text>
+        <Text style={styles.cr}>Bonus</Text>
+        <Text style={styles.cr}>Deductions</Text>
         <Text style={styles.cr}>Earned</Text>
-        <Text style={styles.cr}>Withdrawn</Text>
         <Text style={styles.cr}>Held Balance</Text>
       </View>
       {wallets.map(w => (
         <View key={`${w.businessId}:${w.employeeId}`} style={styles.row}>
           <Text style={styles.c2}>{w.name || w.employeeId}</Text>
+          <Text style={styles.cr}>{fmt(w.summary.totalAccrued)}</Text>
+          <Text style={styles.cr}>{fmt(w.summary.totalCommissions)}</Text>
+          <Text style={styles.cr}>{fmt(w.summary.totalBonuses)}</Text>
+          <Text style={styles.cr}>{fmt(w.summary.totalMealDeductions + w.summary.totalPenalties)}</Text>
           <Text style={styles.cr}>{fmt(w.summary.lifetimeEarned)}</Text>
-          <Text style={styles.cr}>{fmt(w.summary.lifetimeWithdrawn)}</Text>
           <Text style={styles.cr}>{fmt(w.summary.companyLiability)}</Text>
         </View>
       ))}
@@ -88,6 +94,8 @@ export function BusinessPayrollSummaryDocument({
   generatedAt: string
 }) {
   const liability = wallets.reduce((a, w) => a + w.summary.companyLiability, 0)
+  const commission = wallets.reduce((a, w) => a + w.summary.totalCommissions, 0)
+  const bonuses = wallets.reduce((a, w) => a + w.summary.totalBonuses, 0)
   return (
     <Document title={`Payroll summary — ${businessName}`}>
       <Page size={A4_SIZE} style={styles.page}>
@@ -95,6 +103,7 @@ export function BusinessPayrollSummaryDocument({
           <Text style={styles.h1}>Business Payroll Summary</Text>
           <Text style={styles.muted}>{businessName} · Generated {generatedAt}</Text>
           <Text style={styles.muted}>Total company liability: {fmt(liability)}</Text>
+          <Text style={styles.muted}>Commission: {fmt(commission)} · Bonuses: {fmt(bonuses)}</Text>
         </View>
         <WalletRows wallets={wallets} />
       </Page>

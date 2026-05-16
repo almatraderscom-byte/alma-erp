@@ -26,6 +26,10 @@ export default function PayrollPage() {
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
   const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; requestedAmount: number; approvedAmount: string } | null>(null)
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('ALL')
+  const [employeeFilter, setEmployeeFilter] = useState('')
+  const [compForm, setCompForm] = useState({ employeeId: '', type: 'EID_BONUS', amount: '', note: '', date: new Date().toISOString().slice(0, 10) })
+  const [compBusy, setCompBusy] = useState(false)
   const walletRequestId = useRef(0)
 
   const showApprovals = can(role, 'advanceApprove')
@@ -149,6 +153,46 @@ export default function PayrollPage() {
     downloadBlob(`payroll-wallet-${business.id}.csv`, new Blob([payrollWalletsToCsv(wallets)], { type: 'text/csv;charset=utf-8' }))
   }
 
+  async function submitCompensation(e: React.FormEvent) {
+    e.preventDefault()
+    const amount = Number(compForm.amount)
+    if (!compForm.employeeId || !amount || amount <= 0) {
+      toast.error('Employee and positive amount required')
+      return
+    }
+    setCompBusy(true)
+    try {
+      const res = await fetch('/api/payroll/wallet/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          employee_id: compForm.employeeId,
+          type: compForm.type,
+          amount,
+          note: compForm.note,
+          date: compForm.date,
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'Could not post compensation')
+      toast.success('Compensation ledger entry posted')
+      setCompForm(f => ({ ...f, amount: '', note: '' }))
+      await loadWallets(true)
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setCompBusy(false)
+    }
+  }
+
+  const filteredWallets = (walletData?.wallets ?? []).filter(w => {
+    const employeeNeedle = employeeFilter.trim().toLowerCase()
+    const employeeOk = !employeeNeedle || w.employeeId.toLowerCase().includes(employeeNeedle) || w.name.toLowerCase().includes(employeeNeedle)
+    const typeOk = ledgerTypeFilter === 'ALL' || w.latestEntries.some(e => e.type === ledgerTypeFilter)
+    return employeeOk && typeOk
+  })
+
   return (
     <FinancePageChrome
       title="Payroll"
@@ -158,10 +202,35 @@ export default function PayrollPage() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KpiCard label="Monthly salary budget" value={loading ? '—' : Number(k?.total_monthly_salary ?? 0)} loading={loading} />
         <KpiCard label="Company liability" value={walletLoading ? '—' : Number(walletData?.totals.companyLiability ?? 0)} color="text-green-400" loading={walletLoading} />
-        <KpiCard label="Pending withdrawals" value={walletLoading ? '—' : Number(walletData?.pendingWithdrawalCount ?? 0)} loading={walletLoading} />
-        <KpiCard label="Pending advances" value={walletLoading ? '—' : Number(walletData?.pendingAdvanceCount ?? 0)} loading={walletLoading} />
-        <KpiCard label="Lifetime withdrawn" value={walletLoading ? '—' : Number(walletData?.totals.lifetimeWithdrawn ?? 0)} loading={walletLoading} />
+        <KpiCard label="Commission totals" value={walletLoading ? '—' : Number(walletData?.totals.totalCommissions ?? 0)} color="text-green-400" loading={walletLoading} />
+        <KpiCard label="Bonus totals" value={walletLoading ? '—' : Number(walletData?.totals.totalBonuses ?? 0)} color="text-gold-lt" loading={walletLoading} />
+        <KpiCard label="Meal deductions" value={walletLoading ? '—' : Number(walletData?.totals.totalMealDeductions ?? 0)} color="text-red-400" loading={walletLoading} />
+        <KpiCard label="Unpaid balance" value={walletLoading ? '—' : Number(walletData?.totals.currentBalance ?? 0)} loading={walletLoading} />
       </div>
+
+      {showApprovals && (
+        <Card className="p-5 border-gold-dim/25">
+          <div className="flex justify-between gap-3 items-start flex-wrap mb-4">
+            <div>
+              <p className="text-sm font-bold text-cream">Compensation tools</p>
+              <p className="text-[11px] text-zinc-500 mt-1">Post Eid bonus, performance bonus, overtime, reimbursement, meal deduction, penalty, or manual commission into the unified wallet ledger.</p>
+            </div>
+          </div>
+          <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
+            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
+              <option value="">Select employee</option>
+              {(walletData?.wallets ?? []).map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
+            </select>
+            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
+              {['COMMISSION', 'EID_BONUS', 'PERFORMANCE_BONUS', 'OVERTIME', 'REIMBURSEMENT', 'MEAL_DEDUCTION', 'PENALTY', 'ADJUSTMENT'].map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+            </select>
+            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min="1" step="1" placeholder="Amount" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
+            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+            <Button size="xs" variant="gold" type="submit" disabled={compBusy}>{compBusy ? 'Posting…' : 'Post'}</Button>
+          </form>
+        </Card>
+      )}
 
       {showApprovals && (
         <Card className="p-5 border-gold-dim/25">
@@ -236,7 +305,15 @@ export default function PayrollPage() {
       )}
 
       <Card className="p-5">
-        <p className="text-sm font-bold text-cream mb-4">Employee liabilities overview</p>
+        <div className="flex justify-between gap-3 items-center flex-wrap mb-4">
+          <p className="text-sm font-bold text-cream">Employee profitability and liabilities</p>
+          <div className="flex gap-2 flex-wrap">
+            <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream" />
+            <select value={ledgerTypeFilter} onChange={e => setLedgerTypeFilter(e.target.value)} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream">
+              {['ALL', 'SALARY_ACCRUAL', 'COMMISSION', 'EID_BONUS', 'PERFORMANCE_BONUS', 'OVERTIME', 'REIMBURSEMENT', 'MEAL_DEDUCTION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL', 'ADJUSTMENT'].map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+            </select>
+          </div>
+        </div>
         {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
           <Empty icon="◈" title="No wallet ledger yet" desc="Run accrual or approve requests to create wallet entries." />
         ) : (
@@ -246,20 +323,26 @@ export default function PayrollPage() {
                 <tr>
                   <th className="py-2 pr-3">Employee</th>
                   <th className="py-2 pr-3 text-right">Earned</th>
+                  <th className="py-2 pr-3 text-right">Commission</th>
+                  <th className="py-2 pr-3 text-right">Bonus</th>
+                  <th className="py-2 pr-3 text-right">Deductions</th>
                   <th className="py-2 pr-3 text-right">Withdrawn</th>
                   <th className="py-2 pr-3 text-right">Held balance</th>
-                  <th className="py-2 pr-3 text-right">This month</th>
+                  <th className="py-2 pr-3 text-right">Profitability</th>
                   <th className="py-2" />
                 </tr>
               </thead>
               <tbody>
-                {walletData!.wallets.map((w: PayrollWallet) => (
+                {filteredWallets.map((w: PayrollWallet) => (
                   <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60">
                     <td className="py-2 pr-3"><span className="text-cream">{w.name}</span><span className="block text-zinc-600 font-mono">{w.employeeId}</span></td>
                     <td className="py-2 pr-3 font-mono text-right">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-green-400">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-gold-lt">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-red-400">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
                     <td className="py-2 pr-3 font-mono text-right text-zinc-400">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
                     <td className="py-2 pr-3 font-mono text-right text-green-400">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
-                    <td className="py-2 pr-3 font-mono text-right text-gold-lt">৳ {w.summary.thisMonthSalaryAdded.toLocaleString('en-BD')}</td>
+                    <td className="py-2 pr-3 font-mono text-right text-zinc-400">{w.summary.totalAccrued ? `${Math.round(((w.summary.totalCommissions + w.summary.totalBonuses) / w.summary.totalAccrued) * 100)}% variable` : '—'}</td>
                     <td className="py-2"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-gold hover:underline">Ledger</Link></td>
                   </tr>
                 ))}
