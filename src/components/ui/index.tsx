@@ -55,10 +55,11 @@ export function KpiCard({ label, value, sub, delta, color, loading }: {
 // ── Status Badge ──────────────────────────────────────────────────────────
 export function StatusBadge({ status }: { status: OrderStatus }) {
   const c = STATUS_COLORS[status] ?? STATUS_COLORS.Cancelled
+  const label = status === 'FAILED_DELIVERY' ? 'FAILED DELIVERY' : status
   return (
     <span className={cn('inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border', c.text, c.bg, c.border)}>
       <span className={cn('w-1.5 h-1.5 rounded-full', c.dot)} />
-      {status}
+      {label}
     </span>
   )
 }

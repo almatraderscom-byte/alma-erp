@@ -18,6 +18,9 @@ export const STATUS_COLORS: Record<OrderStatus, { text: string; bg: string; bord
   Delivered: { text:'text-green-400',  bg:'bg-green-400/10',  border:'border-green-400/30',  dot:'bg-green-400'  },
   Returned:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
   Cancelled: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
+  RETURNED:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
+  CANCELLED: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
+  FAILED_DELIVERY: { text:'text-orange-400', bg:'bg-orange-400/10', border:'border-orange-400/30', dot:'bg-orange-400' },
 }
 
 export const SEG_COLORS: Record<CustomerSegment, { text: string; bg: string; border: string }> = {
@@ -49,4 +52,7 @@ export const COURIER_STEPS: Partial<Record<OrderStatus, Array<{ label: string; d
   Shipped:   [{ label:'Placed',    done:true,  active:false }, { label:'Confirmed', done:true,  active:false }, { label:'Packed', done:true,  active:false }, { label:'Shipped', done:true,  active:true  }, { label:'Delivered', done:false, active:false }],
   Delivered: [{ label:'Placed',    done:true,  active:false }, { label:'Confirmed', done:true,  active:false }, { label:'Packed', done:true,  active:false }, { label:'Shipped', done:true,  active:false }, { label:'Delivered', done:true,  active:false }],
   Returned:  [{ label:'Placed',    done:true,  active:false }, { label:'Shipped',   done:true,  active:false }, { label:'Returned', done:true, active:false }],
+  RETURNED:  [{ label:'Placed',    done:true,  active:false }, { label:'Shipped',   done:true,  active:false }, { label:'Returned', done:true, active:false }],
+  CANCELLED: [{ label:'Placed',    done:true,  active:false }, { label:'Cancelled', done:true, active:false }],
+  FAILED_DELIVERY: [{ label:'Placed', done:true, active:false }, { label:'Shipped', done:true, active:false }, { label:'Failed delivery', done:true, active:false }],
 }

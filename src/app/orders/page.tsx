@@ -24,8 +24,26 @@ import type { Order, OrderStatus } from '@/types'
 import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
 
-const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','Returned','Cancelled']
+const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
+const TERMINAL_STATUSES = new Set<OrderStatus>(['Delivered', 'RETURNED', 'CANCELLED', 'FAILED_DELIVERY', 'Returned', 'Cancelled'])
+const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY', { title: string; body: string; label: string }> = {
+  CANCELLED: {
+    title: 'Cancel order?',
+    body: 'This excludes the order from revenue and prevents commission generation.',
+    label: 'Cancel Order',
+  },
+  RETURNED: {
+    title: 'Mark order returned?',
+    body: 'This reverses any delivered-order commission once and marks the sale as returned.',
+    label: 'Mark Returned',
+  },
+  FAILED_DELIVERY: {
+    title: 'Mark failed delivery?',
+    body: 'This marks courier failure, excludes the order from revenue, and prevents commission.',
+    label: 'Mark Failed Delivery',
+  },
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ORDER DETAIL DRAWER (unchanged)
@@ -38,6 +56,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
   const [invLoading, setInvLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
+  const [confirmStatus, setConfirmStatus] = useState<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY' | null>(null)
 
   useLayoutEffect(() => {
     setShareUrl('')
@@ -45,12 +64,28 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
 
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
+  const canCancel = mayAdvance && !TERMINAL_STATUSES.has(order.status)
+  const canReturn = mayAdvance && !['RETURNED', 'Returned', 'CANCELLED', 'Cancelled'].includes(order.status) && ['Delivered', 'Shipped'].includes(order.status)
+  const canFailDelivery = mayAdvance && !TERMINAL_STATUSES.has(order.status) && ['Shipped', 'Packed'].includes(order.status)
 
   async function handleStatusAdvance() {
     if (!nextStatus) return
     const r = await updateStatus(order.id, nextStatus)
     if (r?.ok) { toast.success(`${order.id} → ${nextStatus}`); onStatusChange() }
     else toast.error('Status update failed')
+  }
+
+  async function handleDestructiveStatus() {
+    if (!confirmStatus) return
+    const target = confirmStatus
+    const r = await updateStatus(order.id, target)
+    if (r?.ok) {
+      toast.success(`${order.id} → ${target.replace(/_/g, ' ')}`)
+      setConfirmStatus(null)
+      onStatusChange()
+    } else {
+      toast.error('Status update failed')
+    }
   }
 
   async function handleInvoice() {
@@ -223,6 +258,25 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
             </Button>
           )}
+          {mayAdvance && (canCancel || canReturn || canFailDelivery) && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {canCancel && (
+                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('CANCELLED')} disabled={statusLoading}>
+                  Cancel Order
+                </Button>
+              )}
+              {canReturn && (
+                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('RETURNED')} disabled={statusLoading}>
+                  Mark Returned
+                </Button>
+              )}
+              {canFailDelivery && (
+                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('FAILED_DELIVERY')} disabled={statusLoading}>
+                  Mark Failed Delivery
+                </Button>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-2">
             <div className="flex gap-2">
               <Button variant="ghost" className="flex-1 justify-center" onClick={handleInvoice} disabled={!mayInvoice || invLoading || !!order.invoice_num}>
@@ -253,6 +307,26 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
             )}
           </div>
         </div>
+        {confirmStatus && (
+          <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-sm rounded-3xl border border-red-400/25 bg-card p-5 shadow-2xl">
+              <p className="text-sm font-bold text-cream">{DESTRUCTIVE_STATUS_META[confirmStatus].title}</p>
+              <p className="mt-2 text-xs leading-relaxed text-zinc-400">{DESTRUCTIVE_STATUS_META[confirmStatus].body}</p>
+              <div className="mt-4 rounded-xl border border-border bg-black/25 p-3 text-[11px]">
+                <p className="text-zinc-500">Order</p>
+                <p className="font-mono text-gold-lt">{order.id}</p>
+                <p className="mt-2 text-zinc-500">Current status</p>
+                <p className="text-cream">{order.status}</p>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button size="xs" variant="secondary" onClick={() => setConfirmStatus(null)} disabled={statusLoading}>Keep order</Button>
+                <Button size="xs" variant="danger" onClick={handleDestructiveStatus} disabled={statusLoading}>
+                  {statusLoading ? 'Updating…' : DESTRUCTIVE_STATUS_META[confirmStatus].label}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </motion.div>
     </motion.div>
   )

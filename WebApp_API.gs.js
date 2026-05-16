@@ -244,6 +244,13 @@ function auditAppend_(body, result) {
     }
 
     var detail = { route: route, keys: Object.keys(body).filter(function (k) { return k !== 'secret'; }) };
+    if (route === 'update_status') {
+      detail.order_id = String(body.id || '');
+      detail.previous_status = String(body.previous_status || '');
+      detail.new_status = String(body.status || '');
+      detail.reason = String(body.reason || '').slice(0, 500);
+      detail.actor_user_id = String(body.actor_user_id || '');
+    }
     var sh = ensureAuditSheet_();
     var ts = new Date();
     var iso = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'");
@@ -480,34 +487,70 @@ function updateStatus_(body) {
   if (!body.id)     return { error: 'id required' };
   if (!body.status) return { error: 'status required' };
 
-  var valid = ['Pending','Confirmed','Packed','Shipped','Delivered','Returned','Cancelled'];
-  if (valid.indexOf(body.status) === -1) return { error: 'Invalid status: ' + body.status };
+  var requestedStatus = normalizeOrderStatus_(body.status);
+  var valid = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY'];
+  if (valid.indexOf(requestedStatus) === -1) return { error: 'Invalid status: ' + body.status };
 
   var found = findOrderRow_(body.id);
   if (!found) return { error: 'Order not found: ' + body.id };
 
   var oldStatus = found.data[OC.STATUS - 1];
-  found.sh.getRange(found.rowIndex, OC.STATUS).setValue(body.status);
+  body.previous_status = body.previous_status || oldStatus;
+  body.status = requestedStatus;
+  found.sh.getRange(found.rowIndex, OC.STATUS).setValue(requestedStatus);
+  applyTerminalOrderState_(found.sh, found.rowIndex, requestedStatus, body.reason || '');
 
   // Fire Phase 2 automation if present
   if (typeof handleStatusChange_ === 'function') {
-    try { handleStatusChange_(found.sh, found.rowIndex, found.data, body.status, oldStatus); }
+    try { handleStatusChange_(found.sh, found.rowIndex, found.data, requestedStatus, oldStatus); }
     catch (e) { apiLog_('WARN', 'update_status', 'Phase 2 hook: ' + e.message, ''); }
   } else {
     // Minimal built-in timestamps when Phase 2 is not loaded
     var now = new Date();
     var ts  = found.sh;
-    if (body.status === 'Shipped' && !ts.getRange(found.rowIndex, 37).getValue())
+    if (requestedStatus === 'Shipped' && !ts.getRange(found.rowIndex, 37).getValue())
       ts.getRange(found.rowIndex, 37).setValue(now).setNumberFormat('DD-MMM-YYYY');
-    if (body.status === 'Delivered' && !ts.getRange(found.rowIndex, 38).getValue())
+    if (requestedStatus === 'Delivered' && !ts.getRange(found.rowIndex, 38).getValue())
       ts.getRange(found.rowIndex, 38).setValue(now).setNumberFormat('DD-MMM-YYYY');
-    if (body.status === 'Returned' && !ts.getRange(found.rowIndex, 39).getValue())
+    if (requestedStatus === 'RETURNED' && !ts.getRange(found.rowIndex, 39).getValue())
       ts.getRange(found.rowIndex, 39).setValue(now).setNumberFormat('DD-MMM-YYYY');
   }
 
   SpreadsheetApp.flush();
-  apiLog_('STATUS', body.id, oldStatus + ' → ' + body.status, '');
-  return { ok: true, order_id: body.id, old_status: oldStatus, new_status: body.status };
+  apiLog_('STATUS', body.id, oldStatus + ' → ' + requestedStatus, String(body.actor || '') + ' · ' + String(body.business_id || ''));
+  return { ok: true, order_id: body.id, old_status: oldStatus, new_status: requestedStatus };
+}
+
+function normalizeOrderStatus_(status) {
+  var s = String(status || '').trim();
+  var key = s.toUpperCase().replace(/\s+/g, '_');
+  if (key === 'CANCELLED' || key === 'CANCELED') return 'CANCELLED';
+  if (key === 'RETURNED') return 'RETURNED';
+  if (key === 'FAILED_DELIVERY') return 'FAILED_DELIVERY';
+  if (key === 'PENDING') return 'Pending';
+  if (key === 'CONFIRMED') return 'Confirmed';
+  if (key === 'PACKED') return 'Packed';
+  if (key === 'SHIPPED') return 'Shipped';
+  if (key === 'DELIVERED') return 'Delivered';
+  return s;
+}
+
+function applyTerminalOrderState_(sh, rowIndex, status, reason) {
+  var now = new Date();
+  if (status === 'RETURNED') {
+    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Returned');
+    sh.getRange(rowIndex, OC.RETURN_DATE).setValue(now).setNumberFormat('DD-MMM-YYYY');
+    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Returned');
+    if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
+  } else if (status === 'FAILED_DELIVERY') {
+    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Failed Delivery');
+    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Failed Delivery');
+    if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
+  } else if (status === 'CANCELLED') {
+    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Cancelled');
+    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Cancelled');
+    if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -711,7 +754,7 @@ function getDashboard_(p) {
   var emptyResult = {
     kpis: { total_orders:0,total_revenue:0,total_profit:0,total_cogs:0,gross_margin:0,
             avg_order_value:0,delivered_count:0,delivery_rate:0,return_rate:0,
-            sla_breaches:0,pending_action:0 },
+            sla_breaches:0,pending_action:0,returned_count:0,cancelled_count:0,failed_delivery_count:0 },
     by_status:{},by_source:{},by_payment:{},by_category:{},
     sla_breaches:[],recent_orders:[],generated_at:new Date().toISOString()
   };
@@ -725,24 +768,32 @@ function getDashboard_(p) {
 
   if (!orders.length) return emptyResult;
 
-  var totalRev=0,totalPro=0,totalCOGS=0,delivered=0,returned=0;
+  var totalRev=0,totalPro=0,totalCOGS=0,delivered=0,returned=0,cancelled=0,failedDelivery=0;
   var byStatus={},bySource={},byPayment={},byCat={},slaBreaches=[],monthly={};
 
   orders.forEach(function(o) {
-    totalRev  += o.sell_price;
-    totalPro  += o.profit;
-    totalCOGS += o.cogs;
-    if (o.status==='Delivered') delivered++;
-    if (o.status==='Returned')  returned++;
-    byStatus[o.status]   = (byStatus[o.status]||0)+1;
+    var statusKey = normalizeOrderStatus_(o.status);
+    var revenueActive = statusKey !== 'CANCELLED' && statusKey !== 'RETURNED' && statusKey !== 'FAILED_DELIVERY';
+    if (revenueActive) {
+      totalRev  += o.sell_price;
+      totalPro  += o.profit;
+      totalCOGS += o.cogs;
+    }
+    if (statusKey==='Delivered') delivered++;
+    if (statusKey==='RETURNED')  returned++;
+    if (statusKey==='CANCELLED') cancelled++;
+    if (statusKey==='FAILED_DELIVERY') failedDelivery++;
+    byStatus[statusKey]   = (byStatus[statusKey]||0)+1;
     byPayment[o.payment] = (byPayment[o.payment]||0)+1;
     if (!bySource[o.source]) bySource[o.source]={orders:0,revenue:0};
     bySource[o.source].orders++;
-    bySource[o.source].revenue += o.sell_price;
+    if (revenueActive) bySource[o.source].revenue += o.sell_price;
     if (!byCat[o.category]) byCat[o.category]={orders:0,revenue:0,profit:0};
     byCat[o.category].orders++;
-    byCat[o.category].revenue += o.sell_price;
-    byCat[o.category].profit  += o.profit;
+    if (revenueActive) {
+      byCat[o.category].revenue += o.sell_price;
+      byCat[o.category].profit  += o.profit;
+    }
     if (o.sla_status && o.sla_status.indexOf('BREACH')!==-1)
       slaBreaches.push({id:o.id,customer:o.customer,sla_status:o.sla_status,
                         days_pending:o.days_pending,days_in_transit:o.days_in_transit,
@@ -754,9 +805,11 @@ function getDashboard_(p) {
         var key = d.getFullYear()+'-'+pad_(d.getMonth()+1);
         var mon = Utilities.formatDate(d, Session.getScriptTimeZone(), 'MMM yyyy');
         if (!monthly[key]) monthly[key]={month:mon,revenue:0,profit:0,orders:0,cogs:0};
-        monthly[key].revenue += o.sell_price;
-        monthly[key].profit  += o.profit;
-        monthly[key].cogs    += o.cogs;
+        if (revenueActive) {
+          monthly[key].revenue += o.sell_price;
+          monthly[key].profit  += o.profit;
+          monthly[key].cogs    += o.cogs;
+        }
         monthly[key].orders++;
       }
     }
@@ -775,6 +828,9 @@ function getDashboard_(p) {
       gross_margin:   totalRev>0 ? Math.round(totalPro/totalRev*100):0,
       avg_order_value:n>0 ? Math.round(totalRev/n):0,
       delivered_count:delivered,
+      returned_count:returned,
+      cancelled_count:cancelled,
+      failed_delivery_count:failedDelivery,
       delivery_rate:  n>0 ? Math.round(delivered/n*100):0,
       return_rate:    n>0 ? Math.round(returned/n*100):0,
       sla_breaches:   slaBreaches.length,

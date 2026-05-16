@@ -15,6 +15,20 @@ import {
 } from 'date-fns'
 import type { Order, OrderStatus } from '@/types'
 
+function statusKey(status: string) {
+  return status.trim().toUpperCase().replace(/\s+/g, '_')
+}
+
+function isRevenueStatus(status: string) {
+  return !['CANCELLED', 'RETURNED', 'FAILED_DELIVERY'].includes(statusKey(status))
+}
+
+function displayStatus(status: string) {
+  const key = statusKey(status)
+  if (key === 'CANCELLED' || key === 'RETURNED' || key === 'FAILED_DELIVERY') return key
+  return status
+}
+
 // ── Date presets ─────────────────────────────────────────────────────────────
 
 export type DatePreset =
@@ -115,7 +129,7 @@ export interface OrderFilters {
 export function applyOrderFilters(orders: Order[], filters: OrderFilters): Order[] {
   const search = (filters.search ?? '').trim().toLowerCase()
   return orders.filter(o => {
-    if (filters.status && o.status !== filters.status) return false
+    if (filters.status && statusKey(o.status) !== statusKey(filters.status)) return false
     if (filters.source && o.source !== filters.source) return false
     if (filters.payment && o.payment !== filters.payment) return false
     if (search) {
@@ -147,9 +161,12 @@ export function summarizeOrders(orders: Order[]): OrdersSummary {
   let total_revenue = 0
   let total_profit = 0
   for (const o of orders) {
-    total_revenue += o.sell_price
-    total_profit += o.profit
-    by_status[o.status] = (by_status[o.status] ?? 0) + 1
+    if (isRevenueStatus(o.status)) {
+      total_revenue += o.sell_price
+      total_profit += o.profit
+    }
+    const key = displayStatus(o.status)
+    by_status[key] = (by_status[key] ?? 0) + 1
   }
   return { total: orders.length, total_revenue, total_profit, by_status }
 }
@@ -166,6 +183,8 @@ export interface DashboardKpisExtended {
   delivered_count: number
   pending_count: number
   returned_count: number
+  cancelled_count: number
+  failed_delivery_count: number
   delivery_rate: number
   return_rate: number
   sla_breaches: number
@@ -192,7 +211,7 @@ export interface DashboardMetrics {
 const EMPTY_KPIS: DashboardKpisExtended = {
   total_orders: 0, total_revenue: 0, total_profit: 0, total_cogs: 0,
   gross_margin: 0, avg_order_value: 0, delivered_count: 0, pending_count: 0,
-  returned_count: 0, delivery_rate: 0, return_rate: 0, sla_breaches: 0,
+  returned_count: 0, cancelled_count: 0, failed_delivery_count: 0, delivery_rate: 0, return_rate: 0, sla_breaches: 0,
   pending_action: 0, cod_amount: 0,
 }
 
@@ -208,7 +227,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   }
 
   let totalRev = 0, totalPro = 0, totalCOGS = 0
-  let delivered = 0, returned = 0, pending = 0, codAmount = 0
+  let delivered = 0, returned = 0, cancelled = 0, failedDelivery = 0, pending = 0, codAmount = 0
   const byStatus: Record<string, number> = {}
   const bySource: Record<string, { orders: number; revenue: number }> = {}
   const byPayment: Record<string, number> = {}
@@ -219,33 +238,44 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   const slaBreaches: DashboardMetrics['sla_breaches'] = []
 
   for (const o of orders) {
-    totalRev += o.sell_price
-    totalPro += o.profit
-    totalCOGS += o.cogs
+    const status = statusKey(o.status)
+    const revenueActive = isRevenueStatus(o.status)
+    if (revenueActive) {
+      totalRev += o.sell_price
+      totalPro += o.profit
+      totalCOGS += o.cogs
+    }
 
-    if (o.status === 'Delivered') delivered++
-    if (o.status === 'Returned') returned++
-    if (o.status === 'Pending') pending++
+    if (status === 'DELIVERED') delivered++
+    if (status === 'RETURNED') returned++
+    if (status === 'CANCELLED') cancelled++
+    if (status === 'FAILED_DELIVERY') failedDelivery++
+    if (status === 'PENDING') pending++
 
-    if (String(o.payment).toUpperCase() === 'COD') codAmount += o.sell_price
+    if (revenueActive && String(o.payment).toUpperCase() === 'COD') codAmount += o.sell_price
 
-    byStatus[o.status] = (byStatus[o.status] ?? 0) + 1
+    const statusLabel = displayStatus(o.status)
+    byStatus[statusLabel] = (byStatus[statusLabel] ?? 0) + 1
     byPayment[o.payment] = (byPayment[o.payment] ?? 0) + 1
 
     if (!bySource[o.source]) bySource[o.source] = { orders: 0, revenue: 0 }
     bySource[o.source].orders++
-    bySource[o.source].revenue += o.sell_price
+    if (revenueActive) bySource[o.source].revenue += o.sell_price
 
     if (!byCat[o.category]) byCat[o.category] = { orders: 0, revenue: 0, profit: 0 }
     byCat[o.category].orders++
-    byCat[o.category].revenue += o.sell_price
-    byCat[o.category].profit += o.profit
+    if (revenueActive) {
+      byCat[o.category].revenue += o.sell_price
+      byCat[o.category].profit += o.profit
+    }
 
     const prodKey = o.product || 'Unknown'
     if (!byProduct[prodKey]) byProduct[prodKey] = { orders: 0, revenue: 0, profit: 0 }
     byProduct[prodKey].orders++
-    byProduct[prodKey].revenue += o.sell_price
-    byProduct[prodKey].profit += o.profit
+    if (revenueActive) {
+      byProduct[prodKey].revenue += o.sell_price
+      byProduct[prodKey].profit += o.profit
+    }
 
     if (o.sla_status?.includes('BREACH')) {
       slaBreaches.push({
@@ -257,8 +287,10 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     const d = o.date?.slice(0, 10)
     if (d) {
       if (!daily[d]) daily[d] = { date: d, revenue: 0, profit: 0, orders: 0 }
-      daily[d].revenue += o.sell_price
-      daily[d].profit += o.profit
+      if (revenueActive) {
+        daily[d].revenue += o.sell_price
+        daily[d].profit += o.profit
+      }
       daily[d].orders++
 
       const parsed = parseISO(d)
@@ -266,9 +298,11 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
         const key = format(parsed, 'yyyy-MM')
         const mon = format(parsed, 'MMM yyyy')
         if (!monthly[key]) monthly[key] = { month: mon, revenue: 0, profit: 0, orders: 0, cogs: 0 }
-        monthly[key].revenue += o.sell_price
-        monthly[key].profit += o.profit
-        monthly[key].cogs += o.cogs
+        if (revenueActive) {
+          monthly[key].revenue += o.sell_price
+          monthly[key].profit += o.profit
+          monthly[key].cogs += o.cogs
+        }
         monthly[key].orders++
       }
     }
@@ -299,6 +333,8 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
       delivered_count: delivered,
       pending_count: pending,
       returned_count: returned,
+      cancelled_count: cancelled,
+      failed_delivery_count: failedDelivery,
       delivery_rate: n > 0 ? Math.round(delivered / n * 100) : 0,
       return_rate: n > 0 ? Math.round(returned / n * 100) : 0,
       sla_breaches: slaBreaches.length,
@@ -323,6 +359,9 @@ export function statusCountsForPills(
 ): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const s of statuses) counts[s] = 0
-  for (const o of orders) counts[o.status] = (counts[o.status] ?? 0) + 1
+  for (const o of orders) {
+    const key = displayStatus(o.status)
+    counts[key] = (counts[key] ?? 0) + 1
+  }
   return counts
 }

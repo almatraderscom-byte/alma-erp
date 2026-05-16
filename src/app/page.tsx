@@ -58,7 +58,7 @@ export default function DashboardPage() {
     }))
 
   const statusPie = Object.entries(byStatus)
-    .filter(([s]) => s !== 'Cancelled')
+    .filter(([s]) => !['Cancelled', 'CANCELLED'].includes(s))
     .map(([name, value]) => ({ name, value }))
 
   const topProducts = metrics.top_products.slice(0, 5)
@@ -94,8 +94,8 @@ export default function DashboardPage() {
         <motion.div {...fade(1)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Pending" value={loading ? '—' : fmtNum(kpis.pending_count)} sub="Awaiting action" color="text-amber-400" loading={loading} />
           <KpiCard label="Returns" value={loading ? '—' : fmtNum(kpis.returned_count)} sub={pct(kpis.return_rate) + ' rate'} color={kpis.return_rate > 15 ? 'text-red-400' : 'text-cream'} loading={loading} />
-          <KpiCard label="COD Amount" value={loading ? '—' : fmt(kpis.cod_amount)} sub="Cash on delivery" loading={loading} />
-          <KpiCard label="SLA Breaches" value={loading ? '—' : kpis.sla_breaches} sub="Need attention" color={kpis.sla_breaches > 0 ? 'text-amber-400' : 'text-green-400'} loading={loading} />
+          <KpiCard label="Cancelled" value={loading ? '—' : fmtNum(kpis.cancelled_count)} sub="Excluded from revenue" color="text-zinc-400" loading={loading} />
+          <KpiCard label="Failed Delivery" value={loading ? '—' : fmtNum(kpis.failed_delivery_count)} sub="Courier failures" color="text-orange-400" loading={loading} />
         </motion.div>
 
         {/* Charts row 1: daily + monthly */}

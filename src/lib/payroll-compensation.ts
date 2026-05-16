@@ -173,7 +173,7 @@ async function createDeliveredOrderCommission(order: OrderLike, businessId: stri
   const amount = Number(setting.fixedCommissionPerDeliveredOrder || 0)
   if (!Number.isFinite(amount) || amount <= 0) return { ok: true, skipped: 'commission_not_configured' }
 
-  const owner = await resolveCommissionOwner(order)
+  const owner = await resolveOrderHandlerUser(order)
   if (!owner?.employeeIdGas) return { ok: true, skipped: 'commission_owner_not_linked' }
 
   try {
@@ -235,7 +235,7 @@ async function reverseDeliveredOrderCommission(businessId: string, orderId: stri
   }
 }
 
-async function resolveCommissionOwner(order: OrderLike): Promise<Pick<User, 'id' | 'name' | 'email' | 'employeeIdGas'> | null> {
+export async function resolveOrderHandlerUser(order: OrderLike): Promise<Pick<User, 'id' | 'name' | 'email' | 'employeeIdGas'> | null> {
   const handledBy = String(order.handled_by || '').trim()
   if (!handledBy) return null
   const userIdMatch = handledBy.match(/\(([a-z0-9_-]{8,})\)$/i)?.[1]

@@ -1,6 +1,7 @@
 export type OrderStatus =
   | 'Pending' | 'Confirmed' | 'Packed'
   | 'Shipped' | 'Delivered' | 'Returned' | 'Cancelled'
+  | 'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY'
 
 export type CustomerSegment = 'VIP' | 'REGULAR' | 'NEW' | 'RISKY' | 'BLACKLIST' | 'COLD'
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'
@@ -39,6 +40,7 @@ export interface DashboardKpis {
   total_orders: number; total_revenue: number; total_profit: number; total_cogs: number
   gross_margin: number; avg_order_value: number; delivered_count: number
   delivery_rate: number; return_rate: number; sla_breaches: number; pending_action: number
+  returned_count?: number; cancelled_count?: number; failed_delivery_count?: number
 }
 
 export interface DashboardData {
