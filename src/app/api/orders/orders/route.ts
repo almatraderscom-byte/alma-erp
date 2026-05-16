@@ -8,8 +8,8 @@ import { errorMeta, logEvent } from '@/lib/logger'
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   try {
-    const data = await serverGet(p.id ? 'order' : 'orders', p, 30)
-    return NextResponse.json(data, { headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } })
+    const data = await serverGet(p.id ? 'order' : 'orders', p, 0)
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'private, no-store, must-revalidate' } })
   } catch (e) {
     logEvent('error', 'orders.list_failed', errorMeta(e))
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

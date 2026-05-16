@@ -1748,8 +1748,14 @@ function setApiSecretForDeployment(secret) {
   if (!secret || String(secret).length < 32 || String(secret) === 'alma-dev-secret') {
     throw new Error('Refusing weak API_SECRET');
   }
-  PropertiesService.getScriptProperties().setProperty('API_SECRET', String(secret));
+  var normalized = String(secret).trim();
+  PropertiesService.getScriptProperties().setProperty('API_SECRET', normalized);
   return { ok: true, updated: true };
+}
+
+/** clasp-only rotation probe; does not reveal the stored secret. */
+function testApiSecretForDeployment(secret) {
+  return { ok: checkSecret_(String(secret || '').trim()) };
 }
 
 /** Run from editor to test GET without deploying. */
