@@ -11,7 +11,7 @@ import { withTimeout } from '@/lib/pdf/timeout'
 const MIN_BLOB_BYTES = 512
 
 export type PdfGenerateResult =
-  | { ok: true; blob: Blob; model: InvoicePdfModel }
+  | { ok: true; blob: Blob; model: InvoicePdfModel; durationMs: number }
   | { ok: false; error: string; details?: string }
 
 async function renderBlob(model: InvoicePdfModel): Promise<Blob> {
@@ -42,11 +42,13 @@ export async function generateInvoicePdfBlob(
   })
 
   try {
+    const startedAt = performance.now()
     const blob = await withTimeout(
       renderBlob(model),
       PDF_GENERATE_TIMEOUT_MS,
       'PDF generation',
     )
+    const durationMs = Math.round(performance.now() - startedAt)
 
     if (!blob || blob.size < MIN_BLOB_BYTES) {
       return {
@@ -56,8 +58,8 @@ export async function generateInvoicePdfBlob(
       }
     }
 
-    pdfDebug('step 10: blob validated')
-    return { ok: true, blob, model }
+    pdfDebug('step 10: blob validated', { durationMs })
+    return { ok: true, blob, model, durationMs }
   } catch (err) {
     pdfDebugError('generate failed', err)
     const message =

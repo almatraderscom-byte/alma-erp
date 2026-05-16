@@ -12,7 +12,7 @@ export function pdfSafeMode(): boolean {
   return process.env.NEXT_PUBLIC_PDF_SAFE_MODE !== 'false'
 }
 
-export const PDF_GENERATE_TIMEOUT_MS = 12000
-export const PDF_ENRICH_TIMEOUT_MS = 3000
-export const PDF_FONT_TIMEOUT_MS = 2000
-export const PDF_LOGO_TIMEOUT_MS = 1500
+export const PDF_GENERATE_TIMEOUT_MS = 7000
+export const PDF_ENRICH_TIMEOUT_MS = 2500
+export const PDF_FONT_TIMEOUT_MS = 1500
+export const PDF_LOGO_TIMEOUT_MS = 1000
