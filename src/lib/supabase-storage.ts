@@ -53,7 +53,10 @@ export async function ensureBucket() {
     headers: storageHeaders(cfg.serviceKey),
   })
   if (res.ok) return cfg
-  if (res.status !== 404) throw new Error(`Supabase bucket check failed (${res.status})`)
+  const bucketCheckBody = await res.text()
+  if (res.status !== 404 && !isBucketNotFound(res.status, bucketCheckBody)) {
+    throw new Error(`Supabase bucket check failed (${res.status})`)
+  }
 
   const create = await fetch(`${cfg.url}/storage/v1/bucket`, {
     method: 'POST',
@@ -64,6 +67,12 @@ export async function ensureBucket() {
     throw new Error(`Supabase bucket create failed (${create.status}): ${(await create.text()).slice(0, 200)}`)
   }
   return cfg
+}
+
+function isBucketNotFound(status: number, body: string) {
+  if (status === 404) return true
+  if (status !== 400) return false
+  return /bucket not found|\"statusCode\"\s*:\s*\"?404\"?/i.test(body)
 }
 
 export async function uploadStorageObject(objectPath: string, file: Blob, contentType: string): Promise<SupabaseUploadResult> {
