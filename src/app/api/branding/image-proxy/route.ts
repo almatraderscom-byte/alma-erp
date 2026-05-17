@@ -6,7 +6,8 @@ export async function GET(req: NextRequest) {
   if (!url || !url.startsWith('https://')) {
     return NextResponse.json({ error: 'invalid url' }, { status: 400 })
   }
-  const parsed = new URL(url)
+  const proxiedUrl = normalizeImageUrl(url)
+  const parsed = new URL(proxiedUrl)
   const allowedHosts = ['drive.google.com', 'lh3.googleusercontent.com', 'storage.googleapis.com', 'supabase.co', 'vercel.app']
   if (!allowedHosts.some(host => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
     return NextResponse.json({ error: 'image host not allowed' }, { status: 400 })
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 6000)
   try {
-    const res = await fetch(url, { redirect: 'follow', signal: ctrl.signal })
+    const res = await fetch(proxiedUrl, { redirect: 'follow', signal: ctrl.signal })
     if (!res.ok) return NextResponse.json({ error: 'fetch failed' }, { status: 502 })
     const mime = res.headers.get('content-type') || 'image/png'
     if (!mime.startsWith('image/')) return NextResponse.json({ error: 'unsupported content type' }, { status: 400 })
@@ -29,4 +30,18 @@ export async function GET(req: NextRequest) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+function normalizeImageUrl(url: string) {
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname === 'drive.google.com') {
+      const fileMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/)
+      const id = fileMatch?.[1] || parsed.searchParams.get('id')
+      if (id) return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`
+    }
+  } catch {
+    /* validated by caller */
+  }
+  return url
 }

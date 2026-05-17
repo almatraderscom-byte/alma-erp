@@ -8,7 +8,8 @@ export function stripPdfAssets(model: InvoicePdfModel): InvoicePdfModel {
     branding: {
       ...model.branding,
       logoUrl: '',
-      logoDataUrl: undefined,
+      // Data URLs are already resolved and do not trigger react-pdf network fetches.
+      logoDataUrl: model.branding.logoDataUrl,
     },
   }
 }

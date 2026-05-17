@@ -16,6 +16,8 @@ import { resolveBusinessId } from '@/lib/businesses'
 import { defaultBusinessBranding } from '@/lib/branding-defaults'
 import { orderToPdfModel } from '@/lib/pdf/models'
 import { generateInvoicePdfBlob } from '@/lib/pdf/generate'
+import { fetchLogoDataUrl } from '@/lib/pdf/branding'
+import { withTimeout } from '@/lib/pdf/timeout'
 
 /** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
 export const maxDuration = 120
@@ -193,7 +195,8 @@ async function generateAndSaveDriveInvoice(
 ): Promise<InvoiceResult> {
   const invoiceNumber = existingInvoiceNumber || order.invoice_num || await peekInvoiceNumber()
   const branding = await resolveInvoiceBranding(businessId)
-  const pdfModel = orderToPdfModel(order, branding, undefined, invoiceNumber)
+  const logoDataUrl = await resolveInvoiceLogoDataUrl(branding, order.id)
+  const pdfModel = orderToPdfModel(order, branding, logoDataUrl, invoiceNumber)
   const generated = await generateInvoicePdfBlob(pdfModel)
   if (!generated.ok) {
     throw new Error(generated.error)
@@ -214,6 +217,7 @@ async function generateAndSaveDriveInvoice(
     invoiceNumber: result.invoice_number || invoiceNumber,
     pdfBytes: generated.blob.size,
     renderMs: generated.durationMs,
+    logoLoaded: Boolean(logoDataUrl),
   })
   return result
 }
@@ -232,6 +236,24 @@ async function resolveInvoiceBranding(businessId: string): Promise<BusinessBrand
     logEvent('warn', 'invoice.branding_fallback_for_pdf', { ...errorMeta(e), businessId: resolvedBusinessId })
   }
   return defaultBusinessBranding(resolvedBusinessId)
+}
+
+async function resolveInvoiceLogoDataUrl(branding: BusinessBranding, orderId: string) {
+  if (!branding.logo_url) return undefined
+  try {
+    return await withTimeout(fetchLogoDataUrl(branding.logo_url), 1500, 'invoice logo preload')
+  } catch (e) {
+    logEvent('warn', 'invoice.logo_fallback_for_pdf', { ...errorMeta(e), orderId, logoUrlHost: safeHost(branding.logo_url) })
+    return undefined
+  }
+}
+
+function safeHost(url: string) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return 'invalid-url'
+  }
 }
 
 export async function PATCH(req: NextRequest) {

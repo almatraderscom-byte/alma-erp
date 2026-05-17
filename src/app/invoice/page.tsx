@@ -16,8 +16,6 @@ import { defaultBusinessBranding, readCachedBranding } from '@/lib/branding-defa
 import { fetchLogoDataUrl } from '@/lib/pdf/branding'
 import { withTimeout } from '@/lib/pdf/timeout'
 
-const INVOICE_READY_TIMEOUT_MS = 5000
-
 type InvoiceRegistryResponse = {
   invoices: InvoiceRegistryRecord[]
   totals: { count: number; amount: number; paid: number; unpaid: number }
@@ -27,17 +25,7 @@ function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function preloadImage(url?: string) {
-  if (!url || typeof window === 'undefined') return Promise.resolve(false)
-  return new Promise<boolean>(resolve => {
-    const img = new Image()
-    const done = (ok: boolean) => resolve(ok)
-    img.onload = () => done(true)
-    img.onerror = () => done(false)
-    img.decoding = 'async'
-    img.src = url
-  })
-}
+const INVOICE_READY_TIMEOUT_MS = 5000
 
 export default function InvoicePage() {
   const [search, setSearch] = useState('')
@@ -95,14 +83,12 @@ export default function InvoicePage() {
   const liveOrFallbackBranding = useCallback(async (): Promise<{ branding: BusinessBranding; logoDataUrl?: string; source: 'live' | 'cached' | 'default' }> => {
     if (branding) {
       const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 1500, 'logo preload').catch(() => undefined)
-      await Promise.all([preloadImage(branding.logo_url), preloadImage(branding.favicon_url)])
       return { branding, logoDataUrl, source: 'live' }
     }
 
     const cached = readCachedBranding(business.id)
     if (cached) {
       const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 1500, 'cached logo preload').catch(() => undefined)
-      await Promise.all([preloadImage(cached.logo_url), preloadImage(cached.favicon_url)])
       return { branding: cached, logoDataUrl, source: 'cached' }
     }
 
