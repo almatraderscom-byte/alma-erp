@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader, Card, Button, Skeleton } from '@/components/ui'
 import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
 import { useBusiness } from '@/contexts/BusinessContext'
@@ -8,16 +8,142 @@ import { api } from '@/lib/api'
 import type { BrandAssetType } from '@/types/branding'
 import toast from 'react-hot-toast'
 
-function fileToBase64(file: File): Promise<{ data: string; mime: string }> {
+type AssetDraft = {
+  file: File
+  previewUrl: string
+  width: number
+  height: number
+  warnings: string[]
+  errors: string[]
+}
+
+const ASSET_RULES = {
+  logo: {
+    label: 'Logo',
+    accept: 'image/png,image/jpeg,image/webp,image/svg+xml',
+    recommended: '1200x400 PNG',
+    ratioText: '3:1',
+    minWidth: 900,
+    minHeight: 300,
+    ratio: 3,
+    ratioTolerance: 0.25,
+    targetWidth: 1200,
+    targetHeight: 400,
+    helper: 'Transparent background preferred. Wide logos fit best in invoices and dashboard headers.',
+  },
+  favicon: {
+    label: 'Favicon / PWA icon',
+    accept: 'image/png,image/jpeg,image/webp',
+    recommended: '512x512 PNG',
+    ratioText: '1:1 square',
+    minWidth: 512,
+    minHeight: 512,
+    ratio: 1,
+    ratioTolerance: 0.04,
+    targetWidth: 512,
+    targetHeight: 512,
+    helper: 'Square image required. This also powers browser tab, mobile, and PWA home-screen branding.',
+  },
+} as const satisfies Record<BrandAssetType, {
+  label: string
+  accept: string
+  recommended: string
+  ratioText: string
+  minWidth: number
+  minHeight: number
+  ratio: number
+  ratioTolerance: number
+  targetWidth: number
+  targetHeight: number
+  helper: string
+}>
+
+const SUPPORTED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+
+function fileToBase64(file: Blob, fallbackMime?: string): Promise<{ data: string; mime: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
       const result = String(reader.result || '')
       const base64 = result.includes('base64,') ? result.split('base64,')[1] : result
-      resolve({ data: base64, mime: file.type || 'image/png' })
+      resolve({ data: base64, mime: file.type || fallbackMime || 'image/png' })
     }
     reader.onerror = reject
     reader.readAsDataURL(file)
+  })
+}
+
+function loadImageMeta(file: File): Promise<{ width: number; height: number; previewUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const previewUrl = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, previewUrl })
+    img.onerror = () => {
+      URL.revokeObjectURL(previewUrl)
+      reject(new Error('Could not read image dimensions. Try a PNG or JPG file.'))
+    }
+    img.src = previewUrl
+  })
+}
+
+function validateAsset(assetType: BrandAssetType, file: File, width: number, height: number) {
+  const rules = ASSET_RULES[assetType]
+  const warnings: string[] = []
+  const errors: string[] = []
+  const ratio = width && height ? width / height : 0
+
+  if (!SUPPORTED_MIME.has(file.type)) errors.push('Unsupported file type. Use PNG, JPG, or WebP.')
+  if (assetType === 'logo' && file.type === 'image/svg+xml') warnings.push('SVG can work in the dashboard, but PNG is safest for PDFs.')
+  if (width < rules.minWidth || height < rules.minHeight) {
+    warnings.push(`Resolution is ${width}x${height}. Recommended minimum is ${rules.minWidth}x${rules.minHeight}.`)
+  }
+  if (Math.abs(ratio - rules.ratio) > rules.ratioTolerance) {
+    const message = `${rules.label} ratio is ${ratio.toFixed(2)}:1. Recommended is ${rules.ratioText}.`
+    if (assetType === 'favicon') errors.push(`${message} Upload a square image.`)
+    else warnings.push(message)
+  }
+  if (file.size > 5_000_000) warnings.push('Large file detected. Auto optimize is recommended for faster PDFs and mobile loading.')
+
+  return { warnings, errors }
+}
+
+function optimizeImage(file: File, assetType: BrandAssetType): Promise<Blob> {
+  const rules = ASSET_RULES[assetType]
+  return new Promise((resolve, reject) => {
+    if (file.type === 'image/svg+xml') {
+      resolve(file)
+      return
+    }
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = rules.targetWidth
+      canvas.height = rules.targetHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(url)
+        reject(new Error('Could not optimize image'))
+        return
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      const scale = Math.min(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight)
+      const width = Math.round(img.naturalWidth * scale)
+      const height = Math.round(img.naturalHeight * scale)
+      const x = Math.round((canvas.width - width) / 2)
+      const y = Math.round((canvas.height - height) / 2)
+      ctx.drawImage(img, x, y, width, height)
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(url)
+        if (!blob) reject(new Error('Could not optimize image'))
+        else resolve(blob)
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Could not optimize image'))
+    }
+    img.src = url
   })
 }
 
@@ -26,6 +152,9 @@ export default function BrandingSettingsPage() {
   const { branding, loading, refetch } = useBranding()
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState<BrandAssetType | null>(null)
+  const [drafts, setDrafts] = useState<Partial<Record<BrandAssetType, AssetDraft>>>({})
+  const [autoOptimize, setAutoOptimize] = useState<Record<BrandAssetType, boolean>>({ logo: true, favicon: true })
+  const draftUrlsRef = useRef<string[]>([])
   const [form, setForm] = useState({
     company_name: '', tagline: '', phone: '', email: '', website: '', address: '', facebook: '',
     color_primary: '#C9A84C', color_secondary: '#8B6914', color_accent: '#F0D080',
@@ -53,6 +182,19 @@ export default function BrandingSettingsPage() {
     })
   }, [branding])
 
+  useEffect(() => {
+    draftUrlsRef.current = Object.values(drafts).map(draft => draft?.previewUrl).filter(Boolean) as string[]
+  }, [drafts])
+
+  useEffect(() => () => {
+    draftUrlsRef.current.forEach(url => URL.revokeObjectURL(url))
+  }, [])
+
+  const previewAssets = useMemo(() => ({
+    logo: drafts.logo?.previewUrl || branding?.logo_url || '',
+    favicon: drafts.favicon?.previewUrl || branding?.favicon_url || '',
+  }), [branding?.favicon_url, branding?.logo_url, drafts.favicon?.previewUrl, drafts.logo?.previewUrl])
+
   async function handleSave() {
     setSaving(true)
     try {
@@ -66,20 +208,52 @@ export default function BrandingSettingsPage() {
     }
   }
 
-  async function handleUpload(assetType: BrandAssetType, file: File | null) {
+  async function handleSelectAsset(assetType: BrandAssetType, file: File | null) {
     if (!file) return
+    const oldDraft = drafts[assetType]
+    if (oldDraft?.previewUrl) URL.revokeObjectURL(oldDraft.previewUrl)
+
+    try {
+      const meta = await loadImageMeta(file)
+      const validation = validateAsset(assetType, file, meta.width, meta.height)
+      setDrafts(d => ({
+        ...d,
+        [assetType]: { file, previewUrl: meta.previewUrl, width: meta.width, height: meta.height, ...validation },
+      }))
+      if (validation.errors.length) toast.error(validation.errors[0])
+      else if (validation.warnings.length) toast(validation.warnings[0])
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  async function handleUpload(assetType: BrandAssetType) {
+    const draft = drafts[assetType]
+    if (!draft) return
+    if (draft.errors.length) {
+      toast.error('Fix the image validation issue before uploading.')
+      return
+    }
     setUploading(assetType)
     try {
-      const { data, mime } = await fileToBase64(file)
+      const uploadBlob = autoOptimize[assetType] ? await optimizeImage(draft.file, assetType) : draft.file
+      const { data, mime } = await fileToBase64(uploadBlob, autoOptimize[assetType] ? 'image/png' : draft.file.type)
       const r = await api.branding.uploadAsset({
         asset_type: assetType,
         data,
         mime_type: mime,
-        filename: file.name,
+        filename: autoOptimize[assetType] ? `${assetType}.png` : draft.file.name,
         business_id: business.id,
       })
       if (r?.ok) {
-        toast.success(`${assetType === 'logo' ? 'Logo' : 'Favicon'} uploaded permanently`)
+        toast.success(`${ASSET_RULES[assetType].label} uploaded permanently`)
+        setDrafts(d => {
+          const next = { ...d }
+          const uploaded = next[assetType]
+          if (uploaded?.previewUrl) URL.revokeObjectURL(uploaded.previewUrl)
+          delete next[assetType]
+          return next
+        })
         await refetch()
       } else toast.error('Upload failed')
     } catch (e) {
@@ -106,47 +280,75 @@ export default function BrandingSettingsPage() {
               <p className="text-[11px] text-zinc-500">
                 Files are stored permanently in Google Drive and used on invoices, PDFs, dashboards, and print layouts.
               </p>
+              <div className="rounded-2xl border border-gold/20 bg-gold/[0.04] p-3 text-[11px] text-zinc-400 leading-relaxed">
+                <p><span className="font-bold text-gold-lt">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
+                <p><span className="font-bold text-gold-lt">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
+                <p><span className="font-bold text-gold-lt">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <p className="text-[10px] uppercase tracking-wider text-zinc-500">Logo</p>
-                  <div className="h-20 rounded-xl border border-border bg-black/40 flex items-center justify-center p-3">
-                    {branding?.logo_url ? (
-                      <img src={branding.logo_url} alt="Logo" className="max-h-full max-w-full object-contain" />
-                    ) : (
-                      <span className="text-xs text-zinc-600">No logo</span>
-                    )}
-                  </div>
-                  <label className="block">
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                      className="text-xs text-zinc-400"
-                      disabled={uploading === 'logo'}
-                      onChange={e => handleUpload('logo', e.target.files?.[0] ?? null)}
-                    />
-                  </label>
-                  {uploading === 'logo' && <p className="text-[10px] text-gold">Uploading…</p>}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-[10px] uppercase tracking-wider text-zinc-500">Favicon</p>
-                  <div className="h-20 rounded-xl border border-border bg-black/40 flex items-center justify-center p-3">
-                    {branding?.favicon_url ? (
-                      <img src={branding.favicon_url} alt="Favicon" className="max-h-10 max-w-10 object-contain" />
-                    ) : (
-                      <span className="text-xs text-zinc-600">No favicon</span>
-                    )}
-                  </div>
-                  <label className="block">
-                    <input
-                      type="file"
-                      accept="image/png,image/x-icon,image/jpeg"
-                      className="text-xs text-zinc-400"
-                      disabled={uploading === 'favicon'}
-                      onChange={e => handleUpload('favicon', e.target.files?.[0] ?? null)}
-                    />
-                  </label>
-                  {uploading === 'favicon' && <p className="text-[10px] text-gold">Uploading…</p>}
-                </div>
+                {(['logo', 'favicon'] as const).map(assetType => {
+                  const rules = ASSET_RULES[assetType]
+                  const draft = drafts[assetType]
+                  const previewUrl = previewAssets[assetType]
+                  const isLogo = assetType === 'logo'
+                  return (
+                    <div key={assetType} className="space-y-3 rounded-2xl border border-border bg-black/20 p-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-500">{rules.label}</p>
+                        <p className="mt-1 text-[11px] text-zinc-500">{rules.helper}</p>
+                        <p className="mt-1 text-[10px] text-zinc-600">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
+                      </div>
+                      <div className={`rounded-xl border border-border bg-[linear-gradient(45deg,#111_25%,transparent_25%),linear-gradient(-45deg,#111_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#111_75%),linear-gradient(-45deg,transparent_75%,#111_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 ${isLogo ? 'h-28' : 'h-28'}`}>
+                        {previewUrl ? (
+                          <img
+                            src={previewUrl}
+                            alt={`${rules.label} preview`}
+                            className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-black/40 border border-border p-1'}
+                          />
+                        ) : (
+                          <span className="text-xs text-zinc-600">No {rules.label.toLowerCase()}</span>
+                        )}
+                      </div>
+                      {draft && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] text-zinc-500">
+                            Selected: {draft.width}x{draft.height} · {(draft.file.size / 1024).toFixed(0)} KB
+                          </p>
+                          {draft.warnings.map(w => <p key={w} className="text-[10px] text-amber-300">Warning: {w}</p>)}
+                          {draft.errors.map(e => <p key={e} className="text-[10px] text-red-300">Fix needed: {e}</p>)}
+                        </div>
+                      )}
+                      <label className="block">
+                        <span className="sr-only">Upload {rules.label}</span>
+                        <input
+                          type="file"
+                          accept={rules.accept}
+                          className="block w-full text-xs text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-gold/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-gold-lt"
+                          disabled={uploading === assetType}
+                          onChange={e => void handleSelectAsset(assetType, e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={autoOptimize[assetType]}
+                          onChange={e => setAutoOptimize(v => ({ ...v, [assetType]: e.target.checked }))}
+                          className="accent-gold"
+                        />
+                        Auto optimize {isLogo ? 'to 1200x400 transparent PNG' : 'to 512x512 transparent PNG'}
+                      </label>
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        className="w-full justify-center"
+                        disabled={!draft || draft.errors.length > 0 || uploading === assetType}
+                        onClick={() => void handleUpload(assetType)}
+                      >
+                        {uploading === assetType ? 'Uploading…' : draft ? `Upload ${rules.label}` : 'Choose image first'}
+                      </Button>
+                    </div>
+                  )
+                })}
               </div>
             </Card>
 

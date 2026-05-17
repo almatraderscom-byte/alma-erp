@@ -17,10 +17,8 @@ export function BusinessLogo({
       <img
         src={branding.logo_url}
         alt={branding.company_name || business.name}
-        width={size}
-        height={size}
         className={`object-contain shrink-0 rounded-lg ${className}`}
-        style={{ maxHeight: size, maxWidth: size * 2.5 }}
+        style={{ height: size, width: 'auto', maxWidth: size * 3 }}
       />
     )
   }

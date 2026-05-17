@@ -12,15 +12,24 @@ export function BrandingHead() {
     const title = branding.company_name || business.name
     document.title = document.title.includes('·') ? document.title : `${title} · Alma ERP`
 
-    let link = document.querySelector<HTMLLinkElement>('link[data-brand-favicon]')
+    const iconUrl = branding.favicon_url || branding.logo_url
+    let link = document.querySelector<HTMLLinkElement>('link[data-brand-favicon][rel="icon"]')
     if (!link) {
       link = document.createElement('link')
       link.rel = 'icon'
       link.setAttribute('data-brand-favicon', '1')
       document.head.appendChild(link)
     }
-    if (branding.favicon_url) link.href = branding.favicon_url
-    else if (branding.logo_url) link.href = branding.logo_url
+    if (iconUrl) link.href = iconUrl
+
+    let apple = document.querySelector<HTMLLinkElement>('link[data-brand-favicon][rel="apple-touch-icon"]')
+    if (!apple) {
+      apple = document.createElement('link')
+      apple.rel = 'apple-touch-icon'
+      apple.setAttribute('data-brand-favicon', '1')
+      document.head.appendChild(apple)
+    }
+    if (iconUrl) apple.href = iconUrl
 
     const theme = branding.color_primary || '#C9A84C'
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-brand]')
