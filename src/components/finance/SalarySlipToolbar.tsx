@@ -4,6 +4,7 @@ import { pdf } from '@react-pdf/renderer'
 import { SalarySlipDocument, type SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import { Button } from '@/components/ui'
 import { printPdfBlob } from '@/lib/pdf/print'
+import { pdfMoney } from '@/lib/pdf/format'
 import toast from 'react-hot-toast'
 
 export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
@@ -70,7 +71,7 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
             `Salary slip — ${model.companyName}`,
             `${model.employee.name} (${model.employee.emp_id})`,
             `Period ${model.periodLabel}`,
-            `Due/Balance ৳${model.roll.current_due.toLocaleString('en-BD')}`,
+            `Due/Balance ${pdfMoney(model.roll.current_due)}`,
           ]
           window.open(`https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`, '_blank')
         }}

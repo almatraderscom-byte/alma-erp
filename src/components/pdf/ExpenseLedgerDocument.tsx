@@ -1,7 +1,9 @@
 'use client'
+import React from 'react'
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
+import { pdfMoney } from '@/lib/pdf/format'
 import type { ERPFinanceExpense } from '@/types/hr'
 
 const BG = '#0a0a0c'
@@ -33,7 +35,7 @@ const styles = StyleSheet.create({
 })
 
 function fmtMoney(n: number) {
-  return Number(n || 0).toLocaleString('en-BD')
+  return pdfMoney(n)
 }
 
 export function ExpenseLedgerDocument({
@@ -59,7 +61,7 @@ export function ExpenseLedgerDocument({
           <Text style={styles.cellD}>Date</Text>
           <Text style={styles.cellT}>Title</Text>
           <Text style={styles.cellC}>Category</Text>
-          <Text style={styles.cellA}>৳</Text>
+          <Text style={styles.cellA}>Amount</Text>
           <Text style={styles.cellS}>Notes</Text>
         </View>
         {rows.map((r, i) => (
@@ -76,7 +78,7 @@ export function ExpenseLedgerDocument({
 
         <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: LINE }}>
           <Text style={{ fontWeight: 700, color: TEXT }}>Total</Text>
-          <Text style={{ fontWeight: 700, color: GOLD }}>৳ {fmtMoney(total)}</Text>
+          <Text style={{ fontWeight: 700, color: GOLD }}>{fmtMoney(total)}</Text>
         </View>
       </Page>
     </Document>

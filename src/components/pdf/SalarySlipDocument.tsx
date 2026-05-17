@@ -1,7 +1,9 @@
 'use client'
+import React from 'react'
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer'
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
+import { pdfMoney } from '@/lib/pdf/format'
 import type { HREmployee, PayrollRollComputed } from '@/types/hr'
 
 const BG = '#0a0a0c'
@@ -46,7 +48,7 @@ export type SalarySlipModel = {
 }
 
 function fmtMoney(n: number) {
-  return '৳ ' + Number(n || 0).toLocaleString('en-BD')
+  return pdfMoney(n)
 }
 
 export function SalarySlipDocument({ model }: { model: SalarySlipModel }) {

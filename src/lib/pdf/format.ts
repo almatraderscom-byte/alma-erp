@@ -1,7 +1,10 @@
-import { formatBDT } from '@/lib/currency'
-
 export function pdfMoney(n: number): string {
-  return formatBDT(n)
+  const value = Number(n || 0)
+  const hasDecimals = Math.abs(value % 1) > 0
+  return value.toLocaleString('en-BD', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  })
 }
 
 export function pdfDate(s: string): string {

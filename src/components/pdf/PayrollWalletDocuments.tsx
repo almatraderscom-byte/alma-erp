@@ -1,8 +1,10 @@
 'use client'
 
+import React from 'react'
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
+import { pdfMoney } from '@/lib/pdf/format'
 import type { PayrollWallet, WalletEntryDto } from '@/types/payroll-wallet'
 
 const GOLD = '#c9a84c'
@@ -33,7 +35,7 @@ const styles = StyleSheet.create({
 })
 
 function fmt(n: number) {
-  return 'BDT ' + Number(n || 0).toLocaleString('en-BD')
+  return pdfMoney(n)
 }
 
 function WalletRows({ wallets }: { wallets: PayrollWallet[] }) {
