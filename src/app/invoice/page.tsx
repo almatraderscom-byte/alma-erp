@@ -32,6 +32,7 @@ export default function InvoicePage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [preview, setPreview] = useState<Order | null>(null)
   const [pdfModel, setPdfModel] = useState<InvoicePdfModel | null>(null)
+  const [previewExternalUrl, setPreviewExternalUrl] = useState('')
   const [genLoading, setGenLoading] = useState(false)
   const [registry, setRegistry] = useState<InvoiceRegistryResponse | null>(null)
   const [registryLoading, setRegistryLoading] = useState(true)
@@ -100,10 +101,11 @@ export default function InvoicePage() {
     await Promise.race([refetchBranding(), delay(INVOICE_READY_TIMEOUT_MS)])
   }
 
-  async function openPreview(order: Order) {
+  async function openPreview(order: Order, externalUrl = '') {
     const guard = ++openGuardRef.current
     setPrepLoading(true)
     setPreview(order)
+    setPreviewExternalUrl(externalUrl)
     setPdfModel(null)
     setIsBrandReady(false)
     setIsInvoiceReady(false)
@@ -200,17 +202,16 @@ export default function InvoicePage() {
     return invoice.driveUrl || invoice.fileUrl || invoice.shareUrl || ''
   }
 
+  function internalInvoiceUrl(invoice: InvoiceRegistryRecord) {
+    return `/invoice/share/${shareSlugAlma(invoice.orderId)}`
+  }
+
   function openInvoice(invoice: InvoiceRegistryRecord) {
-    const url = invoiceUrl(invoice)
-    if (!url) {
-      toast.error('No Drive/PDF URL saved for this invoice')
-      return
-    }
-    window.open(url, '_blank', 'noopener,noreferrer')
+    window.open(internalInvoiceUrl(invoice), '_blank', 'noopener,noreferrer')
   }
 
   async function shareInvoice(invoice: InvoiceRegistryRecord) {
-    const url = invoiceUrl(invoice) || `${window.location.origin}/invoice/share/${shareSlugAlma(invoice.orderId)}`
+    const url = `${window.location.origin}${internalInvoiceUrl(invoice)}`
     await navigator.clipboard.writeText(url)
     toast.success('Invoice link copied')
   }
@@ -287,7 +288,7 @@ export default function InvoicePage() {
                 return (
                   <Card key={inv.id} className="p-4 border-green-400/10">
                     <div className="flex flex-col md:flex-row md:items-center gap-3">
-                      <button type="button" onClick={() => order ? openPreview(order) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
+                      <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv)) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="font-mono text-[11px] text-green-400 font-bold">{inv.invoiceNumber}</span>
                           <span className="font-mono text-[10px] text-gold-lt">Order {inv.orderId}</span>
@@ -312,7 +313,7 @@ export default function InvoicePage() {
                         ]} />
                         <Button size="xs" variant="secondary" onClick={() => openInvoice(inv)}>Open</Button>
                         <Button size="xs" variant="secondary" onClick={() => void shareInvoice(inv)}>Share</Button>
-                        {order && <Button size="xs" variant="gold" onClick={() => openPreview(order)}>Preview</Button>}
+                        {order && <Button size="xs" variant="gold" onClick={() => openPreview(order, invoiceUrl(inv))}>Preview</Button>}
                         {order && <Button size="xs" variant="danger" onClick={() => void regenerateInvoice(order)} disabled={genLoading}>Regenerate</Button>}
                       </div>
                     </div>
@@ -332,9 +333,10 @@ export default function InvoicePage() {
 
       <PdfPreviewModal
         open={!!preview}
-        onClose={() => { openGuardRef.current += 1; setPreview(null); setPdfModel(null); setPrepLoading(false); setIsPdfReady(false) }}
+        onClose={() => { openGuardRef.current += 1; setPreview(null); setPreviewExternalUrl(''); setPdfModel(null); setPrepLoading(false); setIsPdfReady(false) }}
         baseModel={pdfModel}
         shareSlug={preview ? shareSlugAlma(preview.id) : undefined}
+        externalUrl={previewExternalUrl}
         onSaveToDrive={handleSaveToDrive}
         saveToDriveLoading={genLoading}
         externalLoading={prepLoading}

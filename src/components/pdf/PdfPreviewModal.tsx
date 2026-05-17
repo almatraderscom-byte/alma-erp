@@ -19,12 +19,46 @@ type PreviewPhase = 'idle' | 'preparing' | 'generating' | 'ready' | 'error'
 
 const PREVIEW_WIDTH_PX = Math.round(A4_WIDTH_PT)
 const PREVIEW_HEIGHT_PX = Math.round(A4_HEIGHT_PT)
+const PREVIEW_BLOB_CACHE_TTL_MS = 10 * 60 * 1000
+const PREVIEW_BLOB_CACHE_MAX = 8
+const previewBlobCache = new Map<string, { blob: Blob; size: number; renderMs: number; createdAt: number }>()
+
+function cacheKeyForModel(model: InvoicePdfModel) {
+  return [
+    model.invoiceId,
+    model.total,
+    model.branding.companyName,
+    model.branding.logoUrl || '',
+    model.branding.logoDataUrl ? `logo:${model.branding.logoDataUrl.length}` : '',
+    model.branding.colorPrimary,
+  ].join('|')
+}
+
+function readCachedBlob(key: string) {
+  const cached = previewBlobCache.get(key)
+  if (!cached) return null
+  if (Date.now() - cached.createdAt > PREVIEW_BLOB_CACHE_TTL_MS) {
+    previewBlobCache.delete(key)
+    return null
+  }
+  return cached
+}
+
+function writeCachedBlob(key: string, entry: { blob: Blob; size: number; renderMs: number }) {
+  previewBlobCache.set(key, { ...entry, createdAt: Date.now() })
+  while (previewBlobCache.size > PREVIEW_BLOB_CACHE_MAX) {
+    const oldest = [...previewBlobCache.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0]
+    if (!oldest) break
+    previewBlobCache.delete(oldest[0])
+  }
+}
 
 export function PdfPreviewModal({
   open,
   onClose,
   baseModel,
   shareSlug,
+  externalUrl,
   onSaveToDrive,
   saveToDriveLoading,
   externalLoading,
@@ -34,6 +68,7 @@ export function PdfPreviewModal({
   onClose: () => void
   baseModel: InvoicePdfModel | null
   shareSlug?: string
+  externalUrl?: string
   onSaveToDrive?: () => void
   saveToDriveLoading?: boolean
   externalLoading?: boolean
@@ -117,11 +152,26 @@ export function PdfPreviewModal({
   useEffect(() => {
     if (!open || !preparedModel) return
 
-    const invoiceKey = preparedModel.invoiceId
+    const invoiceKey = cacheKeyForModel(preparedModel)
     if (generatedForRef.current === invoiceKey && blobUrlRef.current) {
       pdfDebug('skip generate — already have blob for', invoiceKey)
       setPhase('ready')
       setBlobUrl(blobUrlRef.current)
+      return
+    }
+
+    const cached = readCachedBlob(invoiceKey)
+    if (cached) {
+      revokeBlobUrl()
+      const url = URL.createObjectURL(cached.blob)
+      blobRef.current = cached.blob
+      blobUrlRef.current = url
+      generatedForRef.current = invoiceKey
+      setBlobUrl(url)
+      setBlobSize(cached.size)
+      setRenderMs(cached.renderMs)
+      setPhase('ready')
+      pdfDebug('preview ready from cache', { size: cached.size, invoiceId: preparedModel.invoiceId, durationMs: cached.renderMs })
       return
     }
 
@@ -151,6 +201,7 @@ export function PdfPreviewModal({
       blobRef.current = result.blob
       blobUrlRef.current = url
       generatedForRef.current = invoiceKey
+      writeCachedBlob(invoiceKey, { blob: result.blob, size: result.blob.size, renderMs: result.durationMs })
 
       setBlobUrl(url)
       setBlobSize(result.blob.size)
@@ -250,6 +301,12 @@ export function PdfPreviewModal({
     window.location.href = `mailto:?subject=${sub}&body=${body}`
   }, [displayModel, shareLink])
 
+  const openExternally = useCallback(() => {
+    const url = externalUrl || blobUrl
+    if (!url) return
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }, [externalUrl, blobUrl])
+
   if (!open) return null
 
   const loading = externalLoading || phase === 'preparing' || phase === 'generating'
@@ -286,6 +343,9 @@ export function PdfPreviewModal({
             <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-zinc-400" onClick={() => setZoom(z => Math.min(150, z + 10))}>+</button>
             {displayModel && showPreview && <Button variant="gold" size="xs" onClick={handleDownload}>Download</Button>}
             <Button variant="ghost" size="xs" onClick={handlePrint} disabled={!showPreview && !displayModel}>Print</Button>
+            {(externalUrl || blobUrl) && (
+              <Button variant="ghost" size="xs" onClick={openExternally}>Open externally</Button>
+            )}
             {shareLink && (
               <>
                 <Button variant="ghost" size="xs" onClick={copyShare}>Copy link</Button>
@@ -325,6 +385,7 @@ export function PdfPreviewModal({
               )}
               <div className="flex gap-2 justify-center">
                 <Button variant="gold" size="sm" onClick={retry}>Retry</Button>
+                {externalUrl && <Button variant="secondary" size="sm" onClick={openExternally}>Open externally</Button>}
                 <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
               </div>
             </div>

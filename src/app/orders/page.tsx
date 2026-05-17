@@ -23,6 +23,7 @@ import toast from 'react-hot-toast'
 import type { Order, OrderStatus } from '@/types'
 import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
+import { shareSlugAlma } from '@/lib/pdf/format'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
@@ -68,6 +69,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   const canCancel = mayAdvance && !TERMINAL_STATUSES.has(order.status)
   const canReturn = mayAdvance && !['RETURNED', 'Returned', 'CANCELLED', 'Cancelled'].includes(order.status) && ['Delivered', 'Shipped'].includes(order.status)
   const canFailDelivery = mayAdvance && !TERMINAL_STATUSES.has(order.status) && ['Shipped', 'Packed'].includes(order.status)
+  const internalInvoiceUrl = `/invoice/share/${shareSlugAlma(order.id)}`
 
   async function handleStatusAdvance() {
     if (!nextStatus) return
@@ -94,18 +96,17 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     try {
       const r = await api.mutations.generateInvoice(order.id)
       if (r?.ok) {
-        const url = (r.drive_url || r.file_url || r.share_url || '').trim()
+        const url = internalInvoiceUrl
         setShareUrl(url)
         if (r.duplicate) {
           toast.success(
-            url ? `Invoice ${r.invoice_number} already on file — link ready` : `Invoice ${r.invoice_number} already exists`,
+            `Invoice ${r.invoice_number} already on file — preview ready`,
           )
         } else {
           toast.success(
-            url ? `Invoice ${r.invoice_number} saved — opening PDF` : `Invoice ${r.invoice_number} recorded (no Drive URL returned)`,
+            `Invoice ${r.invoice_number} saved — preview ready`,
           )
         }
-        if (url) window.open(url, '_blank', 'noopener,noreferrer')
         onStatusChange()
       } else {
         toast.error('Invoice was not created (server returned ok: false)')
@@ -122,7 +123,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   async function copyInvoiceLink() {
     if (!shareUrl) return
     try {
-      await navigator.clipboard.writeText(shareUrl)
+      const url = shareUrl.startsWith('/') ? `${window.location.origin}${shareUrl}` : shareUrl
+      await navigator.clipboard.writeText(url)
       toast.success('Invoice link copied')
     } catch (e) {
       console.error('[CopyInvoiceLink]', e)
@@ -136,14 +138,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
       const res = await fetch(`/api/invoice?order_id=${encodeURIComponent(order.id)}&business_id=${encodeURIComponent(order.business_id || 'ALMA_LIFESTYLE')}`, { cache: 'no-store' })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Could not load invoice')
-      const invoice = j.invoices?.[0]
-      const url = invoice?.driveUrl || invoice?.fileUrl || invoice?.shareUrl || ''
-      if (!url) {
-        window.open(`/invoice?order=${encodeURIComponent(order.id)}`, '_blank', 'noopener,noreferrer')
-        return
-      }
-      setShareUrl(url)
-      window.open(url, '_blank', 'noopener,noreferrer')
+      setShareUrl(internalInvoiceUrl)
+      window.open(internalInvoiceUrl, '_blank', 'noopener,noreferrer')
     } catch (e) {
       toast.error((e as Error).message || 'Could not open invoice')
     } finally {
@@ -322,11 +318,14 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                 </Button>
                 <div className="grid grid-cols-2 gap-2">
                   <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
-                    onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}>
+                    onClick={() => window.open(shareUrl || internalInvoiceUrl, '_blank', 'noopener,noreferrer')}>
                     Open PDF
                   </Button>
                   <Button variant="ghost" className="justify-center text-xs min-h-[44px]" type="button"
-                    onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Invoice PDF (${order.id}): ${shareUrl}`)}`, '_blank', 'noopener,noreferrer')}>
+                    onClick={() => {
+                      const url = shareUrl.startsWith('/') ? `${window.location.origin}${shareUrl}` : shareUrl
+                      window.open(`https://wa.me/?text=${encodeURIComponent(`Invoice PDF (${order.id}): ${url}`)}`, '_blank', 'noopener,noreferrer')
+                    }}>
                     Share PDF
                   </Button>
                 </div>
