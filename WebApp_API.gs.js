@@ -304,6 +304,7 @@ function dispatchRoutePost_(body) {
     case 'hr_employee_save':    return hrUpsertEmployee_(body);
     case 'hr_payroll_add':      return hrPayrollAppend_(body);
     case 'generate_invoice':    return triggerInvoice_(body);
+    case 'save_invoice_pdf':    return triggerSaveInvoicePdf_(body);
     case 'create_order_folder': return triggerOrderFolder_(body);
     case 'create_customer':
       if (body.business_id === 'CREATIVE_DIGITAL_IT') return createCditClient_(body);
@@ -711,6 +712,88 @@ function triggerInvoice_(body) {
     file_name: result.fileName || '',
     duplicate: !!result.duplicate,
   };
+}
+
+function triggerSaveInvoicePdf_(body) {
+  var t0 = Date.now();
+  if (!body.id) return { error: 'id required' };
+  if (!body.pdf_base64) return { error: 'pdf_base64 required' };
+  if (typeof getNextAlInvoiceNumber_ !== 'function') return { error: 'Phase 4 invoice counter not loaded' };
+  if (typeof savePdfToDrive_ !== 'function') return { error: 'Phase 4 Drive save not loaded' };
+
+  var found = findOrderRow_(body.id);
+  if (!found) return { error: 'Order not found: ' + body.id };
+
+  var order = rowToOrder_(found.data);
+  var existing = String(found.data[OC.INVOICE_NUM - 1] || '').trim();
+  var allowRegenerate = body.allow_regenerate === true || String(body.allow_regenerate || '') === 'true';
+  if (existing && !allowRegenerate && typeof findShareUrlForInvoicePdf_ === 'function') {
+    var existingUrl = findShareUrlForInvoicePdf_(String(body.id));
+    return {
+      ok: true,
+      invoice_number: existing,
+      file_url: existingUrl,
+      drive_url: existingUrl,
+      share_url: existingUrl,
+      file_name: 'Invoice-' + sanitizeInvoicePdfBaseName_(String(body.id)) + '.pdf',
+      duplicate: true,
+    };
+  }
+
+  var invoiceNumber = existing || String(body.invoice_number || '').trim();
+  if (!invoiceNumber) {
+    invoiceNumber = getNextAlInvoiceNumber_(true);
+  } else if (!existing) {
+    // Advance the legacy counter so the next invoice number remains consistent.
+    getNextAlInvoiceNumber_(true);
+  }
+
+  var b64 = String(body.pdf_base64 || '');
+  if (b64.indexOf('base64,') >= 0) b64 = b64.split('base64,')[1];
+  var bytes = Utilities.base64Decode(b64);
+  var fileName = 'Invoice-' + sanitizeInvoicePdfBaseName_(String(body.id)) + '.pdf';
+  var pdfBlob = Utilities.newBlob(bytes, MimeType.PDF, fileName);
+
+  trashExistingAlmaInvoicePdf_(String(body.id));
+  var issuedDate = new Date();
+  var driveOrder = {
+    id: order.id,
+    date: order.date ? new Date(order.date) : issuedDate,
+    customer: order.customer || '',
+  };
+  var fileUrl = savePdfToDrive_(pdfBlob, fileName, driveOrder, issuedDate);
+  if (!fileUrl) return { error: 'Could not save React-rendered PDF to Google Drive' };
+
+  found.sh.getRange(found.rowIndex, OC.INVOICE_NUM).setValue(invoiceNumber)
+    .setFontColor('#8B6914')
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center');
+
+  Logger.log('triggerSaveInvoicePdf_ ok invoice_number=' + invoiceNumber + ' elapsed_ms=' + (Date.now() - t0));
+  return {
+    ok: true,
+    invoice_number: invoiceNumber,
+    file_url: fileUrl,
+    drive_url: fileUrl,
+    share_url: fileUrl,
+    file_name: fileName,
+    duplicate: false,
+    renderer: 'react-pdf',
+  };
+}
+
+function trashExistingAlmaInvoicePdf_(orderId) {
+  try {
+    if (typeof getOrCreateAlmaErpInvoicesFolder_ !== 'function') return;
+    var folder = getOrCreateAlmaErpInvoicesFolder_();
+    var name = 'Invoice-' + sanitizeInvoicePdfBaseName_(String(orderId)) + '.pdf';
+    var files = folder.getFilesByName(name);
+    while (files.hasNext()) {
+      files.next().setTrashed(true);
+    }
+  } catch (e) {
+    Logger.log('trashExistingAlmaInvoicePdf_ warning: ' + e.message);
+  }
 }
 
 function triggerOrderFolder_(body) {

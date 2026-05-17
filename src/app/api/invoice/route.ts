@@ -11,6 +11,11 @@ import { getJwt } from '@/lib/api-guards'
 import { parseBusinessAccess, businessAllowed } from '@/lib/business-access'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import type { Order } from '@/types'
+import type { BusinessBranding } from '@/types/branding'
+import { resolveBusinessId } from '@/lib/businesses'
+import { defaultBusinessBranding } from '@/lib/branding-defaults'
+import { orderToPdfModel } from '@/lib/pdf/models'
+import { generateInvoicePdfBlob } from '@/lib/pdf/generate'
 
 /** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
 export const maxDuration = 120
@@ -121,9 +126,7 @@ export async function POST(req: NextRequest) {
     }
 
     const t0 = Date.now()
-    const result = await serverPost<InvoiceResult>('generate_invoice', await mergeActorPayload(req, { id, business_id: businessId }), {
-      timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
-    })
+    const result = await generateAndSaveDriveInvoice(req, order, businessId, existing?.invoiceNumber)
     const invoice = await upsertInvoiceRecord({
       order,
       businessId,
@@ -180,6 +183,55 @@ export async function POST(req: NextRequest) {
     logEvent('error', 'invoice.generate_failed', { ...errorMeta(e), wallMs: Date.now() - wallStart, orderId })
     return NextResponse.json({ error: msg, ok: false }, { status: 502 })
   }
+}
+
+async function generateAndSaveDriveInvoice(
+  req: NextRequest,
+  order: Order,
+  businessId: string,
+  existingInvoiceNumber?: string | null,
+): Promise<InvoiceResult> {
+  const invoiceNumber = existingInvoiceNumber || order.invoice_num || await peekInvoiceNumber()
+  const branding = await resolveInvoiceBranding(businessId)
+  const pdfModel = orderToPdfModel(order, branding, undefined, invoiceNumber)
+  const generated = await generateInvoicePdfBlob(pdfModel)
+  if (!generated.ok) {
+    throw new Error(generated.error)
+  }
+  const pdfBase64 = Buffer.from(await generated.blob.arrayBuffer()).toString('base64')
+  const result = await serverPost<InvoiceResult>('save_invoice_pdf', await mergeActorPayload(req, {
+    id: order.id,
+    business_id: businessId,
+    invoice_number: invoiceNumber,
+    pdf_base64: pdfBase64,
+    allow_regenerate: true,
+    renderer: 'react-pdf',
+  }), {
+    timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
+  })
+  logEvent('info', 'invoice.react_pdf_saved', {
+    orderId: order.id,
+    invoiceNumber: result.invoice_number || invoiceNumber,
+    pdfBytes: generated.blob.size,
+    renderMs: generated.durationMs,
+  })
+  return result
+}
+
+async function peekInvoiceNumber() {
+  const next = await serverGet<{ next?: string; invoice_number?: string }>('next_invoice_num', {}, 0)
+  return String(next.next || next.invoice_number || '').trim()
+}
+
+async function resolveInvoiceBranding(businessId: string): Promise<BusinessBranding> {
+  const resolvedBusinessId = resolveBusinessId(businessId)
+  try {
+    const data = await serverGet<{ branding?: BusinessBranding }>('branding', { business_id: resolvedBusinessId }, 0)
+    if (data.branding?.business_id) return data.branding
+  } catch (e) {
+    logEvent('warn', 'invoice.branding_fallback_for_pdf', { ...errorMeta(e), businessId: resolvedBusinessId })
+  }
+  return defaultBusinessBranding(resolvedBusinessId)
 }
 
 export async function PATCH(req: NextRequest) {
