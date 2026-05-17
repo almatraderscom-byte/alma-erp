@@ -9,6 +9,7 @@ const ALLOWED_LOGO_HOSTS = ['drive.google.com', 'lh3.googleusercontent.com', 'st
 const logoDataUrlCache = new Map<string, { expiresAt: number; promise: Promise<string | undefined> }>()
 
 export function brandingToPdf(b: BusinessBranding, logoDataUrl?: string): InvoicePdfBranding {
+  const watermarkOpacity = Number(b.invoice_watermark_opacity ?? 0.06)
   return {
     companyName: b.company_name || 'Company',
     tagline: b.tagline || '',
@@ -25,6 +26,8 @@ export function brandingToPdf(b: BusinessBranding, logoDataUrl?: string): Invoic
     footerThanks: b.invoice_footer_thanks || '',
     footerPolicy: b.invoice_footer_policy || '',
     footerNote: b.invoice_footer_note || '',
+    watermarkEnabled: b.invoice_watermark_enabled !== false,
+    watermarkOpacity: Number.isFinite(watermarkOpacity) ? Math.min(0.12, Math.max(0.02, watermarkOpacity)) : 0.06,
   }
 }
 

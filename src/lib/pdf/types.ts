@@ -42,6 +42,8 @@ export interface InvoicePdfBranding {
   footerThanks: string
   footerPolicy: string
   footerNote: string
+  watermarkEnabled?: boolean
+  watermarkOpacity?: number
 }
 
 export interface InvoicePdfModel {

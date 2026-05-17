@@ -81,6 +81,8 @@ export function sanitizePdfModel(model: InvoicePdfModel): InvoicePdfModel {
       footerThanks: safeStr(model.branding?.footerThanks),
       footerPolicy: safeStr(model.branding?.footerPolicy),
       footerNote: safeStr(model.branding?.footerNote),
+      watermarkEnabled: model.branding?.watermarkEnabled !== false,
+      watermarkOpacity: Math.min(0.12, Math.max(0.02, safeNum(model.branding?.watermarkOpacity, 0.06))),
     },
     qrDataUrl: safeDataUrl(model.qrDataUrl),
     theme: model.theme === 'light' ? 'light' : 'dark',

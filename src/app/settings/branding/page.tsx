@@ -164,6 +164,8 @@ export default function BrandingSettingsPage() {
     color_primary: '#C9A84C', color_secondary: '#8B6914', color_accent: '#F0D080',
     invoice_footer_thanks: '', invoice_footer_policy: '', invoice_footer_note: '',
     invoice_prefix: '',
+    invoice_watermark_enabled: true,
+    invoice_watermark_opacity: '0.06',
   })
 
   useEffect(() => {
@@ -183,6 +185,8 @@ export default function BrandingSettingsPage() {
       invoice_footer_policy: branding.invoice_footer_policy || '',
       invoice_footer_note: branding.invoice_footer_note || '',
       invoice_prefix: branding.invoice_prefix || '',
+      invoice_watermark_enabled: branding.invoice_watermark_enabled !== false,
+      invoice_watermark_opacity: branding.invoice_watermark_opacity || '0.06',
     })
   }, [branding])
 
@@ -379,6 +383,41 @@ export default function BrandingSettingsPage() {
                   </label>
                 ))}
               </div>
+            </Card>
+
+            <Card className="p-5 space-y-4">
+              <div>
+                <p className="text-sm font-bold text-cream">Invoice watermark</p>
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Uses the uploaded logo as a subtle centered invoice background. Defaults are print-safe and PDF optimized.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="flex items-center gap-2 rounded-xl border border-border bg-black/20 px-3 py-3 text-sm text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={form.invoice_watermark_enabled}
+                    onChange={e => setForm(f => ({ ...f, invoice_watermark_enabled: e.target.checked }))}
+                    className="accent-gold"
+                  />
+                  Enable invoice watermark
+                </label>
+                <label className="block">
+                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Watermark opacity</span>
+                  <select
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                    value={form.invoice_watermark_opacity}
+                    onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
+                  >
+                    <option value="0.04">4% subtle</option>
+                    <option value="0.06">6% balanced</option>
+                    <option value="0.08">8% visible</option>
+                  </select>
+                </label>
+              </div>
+              <p className="text-[10px] text-zinc-600">
+                These settings are backend-ready; current invoice PDFs use the safe default unless persisted branding config is available.
+              </p>
             </Card>
 
             <Card className="p-5 space-y-4">

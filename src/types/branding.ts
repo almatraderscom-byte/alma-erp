@@ -20,6 +20,8 @@ export interface BusinessBranding {
   invoice_footer_policy: string
   invoice_footer_note: string
   invoice_prefix: string
+  invoice_watermark_enabled?: boolean
+  invoice_watermark_opacity?: string
   created_at?: string
   updated_at?: string
   created_by?: string

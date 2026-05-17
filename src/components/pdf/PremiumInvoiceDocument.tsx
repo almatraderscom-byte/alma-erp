@@ -5,11 +5,13 @@ import {
 import type { InvoicePdfModel } from '@/lib/pdf/types'
 import { compactScale } from '@/lib/pdf/models'
 import { pdfMoney, pdfDate } from '@/lib/pdf/format'
-import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
+import { A4_SIZE, A4_PADDING_PT, A4_WIDTH_PT, A4_HEIGHT_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
 
 const MAX_FIRST_PAGE_ROWS = 12
 const MAX_CONTINUATION_ROWS = 24
+const WATERMARK_WIDTH = 360
+const WATERMARK_HEIGHT = 145
 
 function chunkRows<T>(rows: T[], firstPageMax: number, nextPageMax: number): T[][] {
   if (rows.length <= firstPageMax) return [rows]
@@ -40,6 +42,15 @@ function buildStyles(model: InvoicePdfModel) {
       paddingHorizontal: A4_PADDING_PT.horizontal,
       fontFamily: getPdfFontFamily(),
       fontSize: scale.base,
+    },
+    watermark: {
+      position: 'absolute',
+      left: (A4_WIDTH_PT - WATERMARK_WIDTH) / 2,
+      top: (A4_HEIGHT_PT - WATERMARK_HEIGHT) / 2 + 38,
+      width: WATERMARK_WIDTH,
+      height: WATERMARK_HEIGHT,
+      objectFit: 'contain' as const,
+      opacity: model.branding.watermarkOpacity ?? 0.06,
     },
     header: {
       flexDirection: 'row',
@@ -176,6 +187,11 @@ function buildStyles(model: InvoicePdfModel) {
     continuationTitle: { fontSize: scale.base + 5, fontWeight: 700, color: gold, marginBottom: 8 },
     pageNumber: { fontSize: scale.small, color: muted, textAlign: 'right', marginTop: 6 },
   })
+}
+
+function Watermark({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
+  if (model.branding.watermarkEnabled === false || !model.branding.logoDataUrl) return null
+  return <Image src={model.branding.logoDataUrl} style={s.watermark} fixed />
 }
 
 function Header({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
@@ -322,6 +338,7 @@ export function PremiumInvoiceDocument({ model }: { model: InvoicePdfModel }) {
   return (
     <Document title={model.invoiceId} author={model.branding.companyName} subject={`Invoice ${model.invoiceId}`}>
       <Page size={A4_SIZE} style={s.page}>
+        <Watermark model={model} styles={s} />
         <Header model={model} styles={s} />
         <Parties model={model} styles={s} />
         <ItemsTable model={model} rows={pages[0] ?? []} styles={s} />
@@ -331,6 +348,7 @@ export function PremiumInvoiceDocument({ model }: { model: InvoicePdfModel }) {
 
       {pages.slice(1).map((rows, pageIndex) => (
         <Page key={pageIndex} size={A4_SIZE} style={s.page}>
+          <Watermark model={model} styles={s} />
           <Header model={model} styles={s} />
           <Text style={s.continuationTitle}>Invoice items continued</Text>
           <ItemsTable model={model} rows={rows} styles={s} continuation />
