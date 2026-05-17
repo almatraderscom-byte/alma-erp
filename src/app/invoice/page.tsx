@@ -82,13 +82,13 @@ export default function InvoicePage() {
 
   const liveOrFallbackBranding = useCallback(async (): Promise<{ branding: BusinessBranding; logoDataUrl?: string; source: 'live' | 'cached' | 'default' }> => {
     if (branding) {
-      const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 1500, 'logo preload').catch(() => undefined)
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 5000, 'logo preload').catch(() => undefined)
       return { branding, logoDataUrl, source: 'live' }
     }
 
     const cached = readCachedBranding(business.id)
     if (cached) {
-      const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 1500, 'cached logo preload').catch(() => undefined)
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 5000, 'cached logo preload').catch(() => undefined)
       return { branding: cached, logoDataUrl, source: 'cached' }
     }
 

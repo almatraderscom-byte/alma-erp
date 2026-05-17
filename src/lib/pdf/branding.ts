@@ -3,7 +3,7 @@ import type { InvoicePdfBranding } from '@/lib/pdf/types'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 const LOGO_CACHE_TTL_MS = 10 * 60 * 1000
-const LOGO_FETCH_TIMEOUT_MS = 1200
+const LOGO_FETCH_TIMEOUT_MS = 5000
 const logoDataUrlCache = new Map<string, { expiresAt: number; promise: Promise<string | undefined> }>()
 
 export function brandingToPdf(b: BusinessBranding, logoDataUrl?: string): InvoicePdfBranding {

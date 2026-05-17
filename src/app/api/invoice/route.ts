@@ -241,7 +241,7 @@ async function resolveInvoiceBranding(businessId: string): Promise<BusinessBrand
 async function resolveInvoiceLogoDataUrl(branding: BusinessBranding, orderId: string) {
   if (!branding.logo_url) return undefined
   try {
-    return await withTimeout(fetchLogoDataUrl(branding.logo_url), 1500, 'invoice logo preload')
+    return await withTimeout(fetchLogoDataUrl(branding.logo_url), 5000, 'invoice logo preload')
   } catch (e) {
     logEvent('warn', 'invoice.logo_fallback_for_pdf', { ...errorMeta(e), orderId, logoUrlHost: safeHost(branding.logo_url) })
     return undefined
