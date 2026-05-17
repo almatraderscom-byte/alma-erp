@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+const MAX_BRANDING_IMAGE_BYTES = 5_000_000
+
 /** Proxy Drive/external logos for react-pdf (avoids CORS). */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url).searchParams.get('url')
@@ -20,9 +22,9 @@ export async function GET(req: NextRequest) {
     const mime = res.headers.get('content-type') || 'image/png'
     if (!mime.startsWith('image/')) return NextResponse.json({ error: 'unsupported content type' }, { status: 400 })
     const contentLength = Number(res.headers.get('content-length') || 0)
-    if (contentLength > 2_000_000) return NextResponse.json({ error: 'image too large' }, { status: 413 })
+    if (contentLength > MAX_BRANDING_IMAGE_BYTES) return NextResponse.json({ error: 'image too large' }, { status: 413 })
     const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.byteLength > 2_000_000) return NextResponse.json({ error: 'image too large' }, { status: 413 })
+    if (buf.byteLength > MAX_BRANDING_IMAGE_BYTES) return NextResponse.json({ error: 'image too large' }, { status: 413 })
     const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
     return NextResponse.json({ dataUrl }, { headers: { 'Cache-Control': 'private, max-age=3600' } })
   } catch (e) {
