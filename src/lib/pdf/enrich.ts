@@ -11,22 +11,7 @@ async function enrichFull(model: InvoicePdfModel): Promise<InvoicePdfModel> {
   const base = sanitizePdfModel(model)
   pdfDebug('step 2: enrich — invoice data ready', { invoiceId: base.invoiceId })
 
-  let logoDataUrl = base.branding.logoDataUrl
-  if (!logoDataUrl?.startsWith('data:') && base.branding.logoUrl) {
-    try {
-      logoDataUrl = await withTimeout(
-        fetchLogoDataUrl(base.branding.logoUrl),
-        PDF_LOGO_TIMEOUT_MS,
-        'logo fetch',
-      )
-      pdfDebug('step 3: logo loaded', { ok: !!logoDataUrl })
-    } catch (err) {
-      pdfDebugError('step 3: logo skipped', err)
-      logoDataUrl = undefined
-    }
-  } else {
-    pdfDebug('step 3: logo skipped (none or already data URL)')
-  }
+  const logoDataUrl = await resolveLogoDataUrl(base)
 
   let qrDataUrl: string | undefined
   try {
@@ -50,12 +35,38 @@ async function enrichFull(model: InvoicePdfModel): Promise<InvoicePdfModel> {
   })
 }
 
+async function resolveLogoDataUrl(model: InvoicePdfModel): Promise<string | undefined> {
+  let logoDataUrl = model.branding.logoDataUrl
+  if (!logoDataUrl?.startsWith('data:') && model.branding.logoUrl) {
+    try {
+      logoDataUrl = await withTimeout(
+        fetchLogoDataUrl(model.branding.logoUrl),
+        PDF_LOGO_TIMEOUT_MS,
+        'logo fetch',
+      )
+      pdfDebug('step 3: logo loaded', { ok: !!logoDataUrl })
+    } catch (err) {
+      pdfDebugError('step 3: logo skipped', err)
+      logoDataUrl = undefined
+    }
+  } else {
+    pdfDebug('step 3: logo skipped (none or already data URL)')
+  }
+  return logoDataUrl
+}
+
 export async function enrichPdfModel(model: InvoicePdfModel): Promise<InvoicePdfModel> {
   pdfDebug('step 1: invoice data loaded', { invoiceId: model.invoiceId })
 
   if (pdfSafeMode()) {
-    pdfDebug('safe mode: skip logo, QR, remote fonts')
-    return stripPdfAssets(sanitizePdfModel(model))
+    pdfDebug('safe mode: preload logo data URL; skip QR and remote fonts')
+    const base = sanitizePdfModel(model)
+    const logoDataUrl = await resolveLogoDataUrl(base)
+    return stripPdfAssets(sanitizePdfModel({
+      ...base,
+      branding: { ...base.branding, logoDataUrl },
+      qrDataUrl: undefined,
+    }))
   }
 
   try {
