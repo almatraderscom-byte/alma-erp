@@ -3,6 +3,10 @@ import { useEffect } from 'react'
 import { useBranding } from '@/contexts/BrandingContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 
+function brandIconHref(url: string) {
+  return `/api/branding/image-proxy?raw=1&url=${encodeURIComponent(url)}`
+}
+
 export function BrandingHead() {
   const { branding } = useBranding()
   const { business } = useBusiness()
@@ -13,6 +17,7 @@ export function BrandingHead() {
     document.title = document.title.includes('·') ? document.title : `${title} · Alma ERP`
 
     const iconUrl = branding.favicon_url || branding.logo_url
+    const iconHref = iconUrl ? brandIconHref(iconUrl) : ''
     let link = document.querySelector<HTMLLinkElement>('link[data-brand-favicon][rel="icon"]')
     if (!link) {
       link = document.createElement('link')
@@ -20,7 +25,7 @@ export function BrandingHead() {
       link.setAttribute('data-brand-favicon', '1')
       document.head.appendChild(link)
     }
-    if (iconUrl) link.href = iconUrl
+    if (iconHref) link.href = iconHref
 
     let apple = document.querySelector<HTMLLinkElement>('link[data-brand-favicon][rel="apple-touch-icon"]')
     if (!apple) {
@@ -29,7 +34,7 @@ export function BrandingHead() {
       apple.setAttribute('data-brand-favicon', '1')
       document.head.appendChild(apple)
     }
-    if (iconUrl) apple.href = iconUrl
+    if (iconHref) apple.href = iconHref
 
     const theme = branding.color_primary || '#C9A84C'
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-brand]')

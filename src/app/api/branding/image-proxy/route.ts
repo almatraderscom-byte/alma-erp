@@ -4,7 +4,9 @@ const MAX_BRANDING_IMAGE_BYTES = 5_000_000
 
 /** Proxy Drive/external logos for react-pdf (avoids CORS). */
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url).searchParams.get('url')
+  const searchParams = new URL(req.url).searchParams
+  const url = searchParams.get('url')
+  const raw = searchParams.get('raw') === '1'
   if (!url || !url.startsWith('https://')) {
     return NextResponse.json({ error: 'invalid url' }, { status: 400 })
   }
@@ -25,6 +27,14 @@ export async function GET(req: NextRequest) {
     if (contentLength > MAX_BRANDING_IMAGE_BYTES) return NextResponse.json({ error: 'image too large' }, { status: 413 })
     const buf = Buffer.from(await res.arrayBuffer())
     if (buf.byteLength > MAX_BRANDING_IMAGE_BYTES) return NextResponse.json({ error: 'image too large' }, { status: 413 })
+    if (raw) {
+      return new NextResponse(buf, {
+        headers: {
+          'Content-Type': mime,
+          'Cache-Control': 'private, max-age=3600',
+        },
+      })
+    }
     const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
     return NextResponse.json({ dataUrl }, { headers: { 'Cache-Control': 'private, max-age=3600' } })
   } catch (e) {

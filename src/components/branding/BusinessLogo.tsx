@@ -2,6 +2,10 @@
 import { useBranding } from '@/contexts/BrandingContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 
+function brandImageSrc(url: string) {
+  return `/api/branding/image-proxy?raw=1&url=${encodeURIComponent(url)}`
+}
+
 export function BusinessLogo({
   size = 32,
   className = '',
@@ -15,7 +19,7 @@ export function BusinessLogo({
   if (!loading && branding?.logo_url) {
     return (
       <img
-        src={branding.logo_url}
+        src={brandImageSrc(branding.logo_url)}
         alt={branding.company_name || business.name}
         className={`object-contain shrink-0 rounded-lg ${className}`}
         style={{ height: size, width: 'auto', maxWidth: size * 3 }}

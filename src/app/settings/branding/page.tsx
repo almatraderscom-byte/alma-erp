@@ -60,6 +60,10 @@ const ASSET_RULES = {
 
 const SUPPORTED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
 
+function brandImageSrc(url: string) {
+  return `/api/branding/image-proxy?raw=1&url=${encodeURIComponent(url)}`
+}
+
 function fileToBase64(file: Blob, fallbackMime?: string): Promise<{ data: string; mime: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -191,8 +195,8 @@ export default function BrandingSettingsPage() {
   }, [])
 
   const previewAssets = useMemo(() => ({
-    logo: drafts.logo?.previewUrl || branding?.logo_url || '',
-    favicon: drafts.favicon?.previewUrl || branding?.favicon_url || '',
+    logo: drafts.logo?.previewUrl || (branding?.logo_url ? brandImageSrc(branding.logo_url) : ''),
+    favicon: drafts.favicon?.previewUrl || (branding?.favicon_url ? brandImageSrc(branding.favicon_url) : ''),
   }), [branding?.favicon_url, branding?.logo_url, drafts.favicon?.previewUrl, drafts.logo?.previewUrl])
 
   async function handleSave() {
