@@ -4,6 +4,9 @@ import { getJwt, forbidViewerWrite, validateMutationBusiness } from '@/lib/api-g
 import { parseBusinessAccess } from '@/lib/business-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { sendPayrollAlert } from '@/lib/resend'
+import { notifyRole } from '@/lib/notifications'
+import { enqueuePayrollAdvanceAlertSms } from '@/services/sms/events'
+import { createApprovalRequest } from '@/lib/approvals'
 
 export async function GET(req: NextRequest) {
   const token = await getJwt(req)
@@ -61,7 +64,40 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    await sendPayrollAlert({
+    enqueuePayrollAdvanceAlertSms({ businessId: row.businessId, requestId: row.id })
+    await createApprovalRequest({
+      module: 'PAYROLL',
+      type: 'SALARY_ADVANCE',
+      businessId: row.businessId,
+      entityId: row.id,
+      requestedBy: token.sub,
+      reason,
+      priority: 'HIGH',
+      actionUrl: '/payroll',
+      title: 'Salary advance approval required',
+      message: `Advance request for ৳${amount.toLocaleString('en-BD')}: ${reason}`,
+      payloadSnapshot: { amount, businessId: row.businessId, requestId: row.id },
+    })
+    void Promise.all([
+      notifyRole({
+        role: 'SUPER_ADMIN',
+        businessId: row.businessId,
+        type: 'PAYROLL_ALERT',
+        priority: 'HIGH',
+        title: 'Salary advance request',
+        message: `Advance request for ৳${amount.toLocaleString('en-BD')}: ${reason}`,
+        actionUrl: '/payroll',
+      }),
+      notifyRole({
+        role: 'HR',
+        businessId: row.businessId,
+        type: 'PAYROLL_ALERT',
+        priority: 'HIGH',
+        title: 'Salary advance request',
+        message: `Advance request for ৳${amount.toLocaleString('en-BD')}: ${reason}`,
+        actionUrl: '/payroll',
+      }),
+      sendPayrollAlert({
       businessId: row.businessId,
       subject: `Salary advance requested · ৳${amount.toLocaleString('en-BD')}`,
       title: 'Salary advance request',
@@ -72,7 +108,8 @@ export async function POST(req: NextRequest) {
       actionLabel: 'Review request',
       dedupeKey: `salary-advance-request:${row.id}`,
       metadata: { requestId: row.id, businessId: row.businessId, amount },
-    })
+      }),
+    ]).catch(() => {})
 
     return NextResponse.json({ ok: true, id: row.id })
   } catch (e) {

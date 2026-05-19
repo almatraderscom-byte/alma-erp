@@ -4,6 +4,7 @@ import { mergeActorPayload } from '@/lib/api-route-actor'
 import { getJwt, forbidViewerWrite, validateMutationBusiness } from '@/lib/api-guards'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { serverPost } from '@/lib/server-api'
+import { resolveApprovalRequest } from '@/lib/approvals'
 
 export async function PATCH(
   req: NextRequest,
@@ -50,6 +51,14 @@ export async function PATCH(
           reviewNote: body.note?.slice(0, 500) || null,
         },
       })
+      await resolveApprovalRequest({
+        module: 'PAYROLL',
+        type: 'SALARY_ADVANCE',
+        entityId: adv.id,
+        status: 'REJECTED',
+        actorUserId: token.sub,
+        reason: body.note?.slice(0, 500) || 'Rejected',
+      })
       return NextResponse.json({ ok: true })
     }
 
@@ -78,6 +87,14 @@ export async function PATCH(
         reviewedAt: new Date(),
         reviewNote: body.note?.slice(0, 500) || null,
       },
+    })
+    await resolveApprovalRequest({
+      module: 'PAYROLL',
+      type: 'SALARY_ADVANCE',
+      entityId: adv.id,
+      status: 'APPROVED',
+      actorUserId: token.sub,
+      reason: body.note?.slice(0, 500) || 'Approved',
     })
 
     return NextResponse.json({ ok: true, gas })
