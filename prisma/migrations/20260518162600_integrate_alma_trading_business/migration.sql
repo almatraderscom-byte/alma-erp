@@ -1,0 +1,7 @@
+ALTER TABLE "User"
+  ALTER COLUMN "businessAccess" SET DEFAULT 'ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING';
+
+UPDATE "User"
+SET "businessAccess" = CONCAT("businessAccess", ',ALMA_TRADING')
+WHERE "role" = 'SUPER_ADMIN'
+  AND "businessAccess" NOT LIKE '%ALMA_TRADING%';

@@ -11,7 +11,15 @@ import { filterNavByRole, roleHomePath } from '@/lib/roles'
 import { BusinessSwitcher } from '@/components/layout/BusinessSwitcher'
 import { BusinessLogo } from '@/components/branding/BusinessLogo'
 import { UserAccountMenu } from '@/components/layout/UserAccountMenu'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
+import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 import { cn } from '@/lib/utils'
+
+function updateAppBadge(count: number) {
+  const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
+  if (count > 0) void nav.setAppBadge?.(count).catch(() => {})
+  else void nav.clearAppBadge?.().catch(() => {})
+}
 
 function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: string; label: string; badge: string | null; collapsed: boolean }) {
   const path = usePathname()
@@ -41,7 +49,33 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const { business } = useBusiness()
   const { role } = useActor()
-  const nav = filterNavByRole(getNavForBusiness(business.id), role, business.id)
+  const [approvalCount, setApprovalCount] = useState(0)
+  const nav = filterNavByRole(getNavForBusiness(business.id), role, business.id).map(item => (
+    item.href === '/approvals' ? { ...item, badge: approvalCount ? String(approvalCount) : null } : item
+  ))
+
+  const loadApprovalCount = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    try {
+      const res = await fetch('/api/approvals?summary=1')
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) setApprovalCount(Number(json.totalPending || 0))
+    } catch {
+      setApprovalCount(0)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadApprovalCount()
+    window.addEventListener('alma:approvals-updated', loadApprovalCount)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadApprovalCount()
+    }, 60_000)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('alma:approvals-updated', loadApprovalCount)
+    }
+  }, [loadApprovalCount])
 
   return (
     <motion.aside
@@ -156,10 +190,12 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
 export function MobileNav() {
   const path = usePathname()
   const { data: session } = useSession()
+  const { profileImageUrl } = useMyProfileImage()
   const { business, businessId, allowedBusinessIds, setBusinessId } = useBusiness()
   const { role } = useActor()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [unread, setUnread] = useState(0)
+  const [approvalCount, setApprovalCount] = useState(0)
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
   const dashboardHref = roleHomePath(role, business.id)
@@ -185,8 +221,9 @@ export function MobileNav() {
   }, [nav, primary])
 
   const loadUnread = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
     try {
-      const res = await fetch(`/api/notifications?business_id=${business.id}`, { cache: 'no-store' })
+      const res = await fetch(`/api/notifications?business_id=${business.id}&summary=1`, { cache: 'no-store' })
       const json = await res.json().catch(() => ({}))
       if (res.ok) setUnread(Number(json.unread || json.criticalUnacked || 0))
     } catch {
@@ -194,11 +231,40 @@ export function MobileNav() {
     }
   }, [business.id])
 
+  const loadApprovalCount = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    try {
+      const res = await fetch('/api/approvals?summary=1')
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) setApprovalCount(Number(json.totalPending || 0))
+    } catch {
+      setApprovalCount(0)
+    }
+  }, [])
+
   useEffect(() => {
     void loadUnread()
-    const timer = window.setInterval(() => void loadUnread(), 30_000)
-    return () => window.clearInterval(timer)
-  }, [loadUnread])
+    void loadApprovalCount()
+    function syncNotifications(event: Event) {
+      const detail = (event as CustomEvent<{ unread?: number; criticalUnacked?: number }>).detail
+      setUnread(Number(detail?.unread || detail?.criticalUnacked || 0))
+    }
+    window.addEventListener('alma:notifications-updated', syncNotifications)
+    window.addEventListener('alma:approvals-updated', loadApprovalCount)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadUnread()
+      if (!document.hidden) void loadApprovalCount()
+    }, 60_000)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('alma:notifications-updated', syncNotifications)
+      window.removeEventListener('alma:approvals-updated', loadApprovalCount)
+    }
+  }, [loadUnread, loadApprovalCount])
+
+  useEffect(() => {
+    updateAppBadge(unread + approvalCount)
+  }, [unread, approvalCount])
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -220,12 +286,13 @@ export function MobileNav() {
 
   return (
     <>
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
         <div className="mx-auto max-w-lg rounded-[26px] border border-gold-dim/20 bg-[#09090d]/92 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-2xl">
-          <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(5, primary.slice(0, 3).length + 2)}, minmax(0, 1fr))` }}>
+          <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(6, primary.slice(0, 3).length + 3)}, minmax(0, 1fr))` }}>
             {primary.slice(0, 3).map(item => (
               <MobileTab key={item.key} icon={item.icon} label={item.label} href={item.href} active={activePath(path, item.href)} />
             ))}
+            <MobileTab icon="◆" label="Approvals" badge={approvalCount} href="/approvals" active={activePath(path, '/approvals')} />
             <MobileTab icon="◌" label="Alerts" badge={unread} onClick={openNotifications} />
             <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
           </div>
@@ -245,7 +312,7 @@ export function MobileNav() {
               onClick={() => setDrawerOpen(false)}
             />
             <motion.aside
-              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-gold-dim/30 bg-[#09090d] shadow-2xl shadow-black md:hidden"
+              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-gold-dim/30 bg-[#09090d] shadow-2xl shadow-black md:hidden mobile-sheet"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -254,7 +321,14 @@ export function MobileNav() {
               <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-700" />
               <div className="border-b border-border px-5 pb-4 pt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
+                  <EmployeeAvatar
+                    userId={session?.user?.id}
+                    name={session?.user?.name}
+                    email={session?.user?.email}
+                    imageUrl={profileImageUrl}
+                    size="md"
+                  />
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-black text-cream">{session?.user?.name || 'Account'}</p>
                     <p className="mt-0.5 truncate text-[11px] text-zinc-500">{role.replace(/_/g, ' ')} · {business.name}</p>
                   </div>

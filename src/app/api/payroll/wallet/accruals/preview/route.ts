@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const users = await prisma.user.findMany({
     where: {
       active: true,
+      role: { not: 'SUPER_ADMIN' },
       employeeIdGas: { not: null },
       businessAccess: { contains: ctx.businessIds[0] },
     },

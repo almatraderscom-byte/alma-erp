@@ -5,6 +5,7 @@ import type { UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { normalizeLoginIdentifier } from '@/lib/phone'
 import { errorMeta, logEvent } from '@/lib/logger'
+import { normalizeBusinessAccessForRole } from '@/lib/business-access'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -90,9 +91,17 @@ export const authOptions: NextAuthOptions = {
         token.email = user.email
         token.name = user.name
         token.role = user.role as UserRole
-        token.businessAccess = (user as { businessAccess?: string }).businessAccess ?? ''
+        token.businessAccess = normalizeBusinessAccessForRole((user as { businessAccess?: string }).businessAccess, user.role as string)
         token.employeeIdGas = (user as { employeeIdGas?: string | null }).employeeIdGas ?? ''
         token.phone = (user as { phone?: string | null }).phone ?? ''
+      } else if (token.id && !String(token.employeeIdGas || '').trim()) {
+        const { prisma } = await import('@/lib/prisma')
+        const row = await prisma.user.findUnique({
+          where: { id: String(token.id) },
+          select: { employeeIdGas: true, tradingEmployeeProfile: { select: { employeeIdGas: true } } },
+        })
+        const resolved = row?.tradingEmployeeProfile?.employeeIdGas || row?.employeeIdGas || ''
+        if (resolved) token.employeeIdGas = resolved
       }
       return token
     },
@@ -100,7 +109,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.id as string
         session.user.role = token.role as UserRole
-        session.user.businessAccess = (token.businessAccess as string) || 'ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT'
+        session.user.businessAccess = normalizeBusinessAccessForRole(token.businessAccess as string, token.role as string)
         session.user.employeeIdGas = (token.employeeIdGas as string) || ''
         session.user.phone = (token.phone as string) || ''
       }

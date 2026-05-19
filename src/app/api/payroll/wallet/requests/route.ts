@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { sendPayrollAlert } from '@/lib/resend'
+import { createApprovalRequest } from '@/lib/approvals'
+import { queuePayrollWalletRequestAlert } from '@/lib/telegram-notification/payroll-alerts'
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -45,6 +47,9 @@ export async function POST(req: NextRequest) {
 
   const employeeId = ctx.isAdmin && body.employee_id ? body.employee_id.trim() : ctx.employeeId
   if (!employeeId) {
+    if (ctx.isSystemOwner) {
+      return NextResponse.json({ error: 'System owner accounts do not submit personal wallet requests. Select an employee to create a staff request.' }, { status: 403 })
+    }
     return NextResponse.json({ error: 'No employee profile linked to this account.' }, { status: 400 })
   }
 
@@ -57,6 +62,35 @@ export async function POST(req: NextRequest) {
       requestedAmount: moneyDecimal(amount),
       reason,
     },
+  })
+
+  await createApprovalRequest({
+    module: 'PAYROLL',
+    type: type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+    businessId: request.businessId,
+    entityId: request.id,
+    requestedBy: ctx.userId,
+    reason,
+    priority: 'HIGH',
+    actionUrl: '/payroll',
+    title: `${type === 'WITHDRAWAL' ? 'Wallet withdrawal' : 'Wallet advance'} approval required`,
+    message: `${type} request for employee ${employeeId}: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`,
+    payloadSnapshot: { requestId: request.id, employeeId, type, amount, businessId: request.businessId },
+  })
+
+  const requester = await prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { name: true },
+  })
+  queuePayrollWalletRequestAlert({
+    businessId: request.businessId,
+    userId: ctx.userId,
+    employeeId,
+    employeeName: requester?.name,
+    type,
+    amount,
+    reason,
+    requestId: request.id,
   })
 
   await sendPayrollAlert({

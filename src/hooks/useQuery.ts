@@ -7,6 +7,7 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { APIError } from '@/lib/api'
+import { subscribeMobileRefresh } from '@/lib/mobile-refresh'
 
 // ── QueryState ────────────────────────────────────────────────────────────
 
@@ -35,6 +36,16 @@ interface QueryOptions {
 
 const queryCache = new Map<string, { value: unknown; expiresAt: number }>()
 
+export function invalidateQueryCache(prefix?: string) {
+  if (!prefix) {
+    queryCache.clear()
+    return
+  }
+  for (const key of queryCache.keys()) {
+    if (key.startsWith(prefix)) queryCache.delete(key)
+  }
+}
+
 /**
  * Generic data-fetching hook.
  *
@@ -54,16 +65,17 @@ export function useQuery<T>(
   // Track whether we've ever completed a fetch
   const hasFetched = useRef(false)
   const timerRef   = useRef<ReturnType<typeof setInterval>>()
+  const retryRef   = useRef<ReturnType<typeof setTimeout>>()
   // Prevent state updates after unmount
   const mounted    = useRef(true)
   const requestId  = useRef(0)
 
-  const run = useCallback(async (silent = false) => {
+  const run = useCallback(async (silent = false, forceFresh = false) => {
     if (opts.enabled === false) { if (!silent) setLoading(false); return }
     const id = ++requestId.current
     const cacheKey = opts.cacheKey
     const cacheMs = opts.cacheMs ?? 0
-    if (cacheKey && cacheMs > 0) {
+    if (!forceFresh && cacheKey && cacheMs > 0) {
       const cached = queryCache.get(cacheKey)
       if (cached && cached.expiresAt > Date.now()) {
         setData(cached.value as T)
@@ -72,8 +84,10 @@ export function useQuery<T>(
         return
       }
     }
-    if (!silent) setLoading(true)
-    setError(null)
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const result = await fetcher()
       if (!mounted.current || id !== requestId.current) return
@@ -82,10 +96,24 @@ export function useQuery<T>(
         queryCache.set(cacheKey, { value: result, expiresAt: Date.now() + cacheMs })
       }
       hasFetched.current = true
+      setError(null)
+      if (retryRef.current) {
+        clearTimeout(retryRef.current)
+        retryRef.current = undefined
+      }
       opts.onSuccess?.(result)
     } catch (e) {
       if (!mounted.current || id !== requestId.current) return
       const msg = e instanceof APIError ? e.userMessage : (e as Error).message
+      if (silent && hasFetched.current) {
+        if (!retryRef.current && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+          retryRef.current = setTimeout(() => {
+            retryRef.current = undefined
+            if (mounted.current && (typeof document === 'undefined' || !document.hidden)) run(true, true)
+          }, 5_000)
+        }
+        return
+      }
       setError(msg)
       opts.onError?.(msg)
     } finally {
@@ -95,14 +123,26 @@ export function useQuery<T>(
   }, deps)
 
   useEffect(() => {
+    if (opts.enabled === false) return
+    return subscribeMobileRefresh(() => {
+      void run(false, true)
+    })
+  }, [run, opts.enabled])
+
+  useEffect(() => {
     mounted.current = true
     run()
     if (opts.pollMs && opts.pollMs > 0) {
-      timerRef.current = setInterval(() => run(true), opts.pollMs)
+      timerRef.current = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+        run(true)
+      }, opts.pollMs)
     }
     return () => {
       mounted.current = false
       if (timerRef.current) clearInterval(timerRef.current)
+      if (retryRef.current) clearTimeout(retryRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run])
@@ -111,7 +151,7 @@ export function useQuery<T>(
     data,
     loading,
     error,
-    refetch: () => run(),
+    refetch: () => run(false, true),
     initialLoading: !hasFetched.current && loading,
   }
 }

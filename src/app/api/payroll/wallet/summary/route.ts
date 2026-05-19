@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { serverGet } from '@/lib/server-api'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
-import { computeWalletSummary, runningTransactions } from '@/lib/payroll-wallet'
+import { computeWalletSummary, moneyDecimal, runningTransactions } from '@/lib/payroll-wallet'
 import type { HREmployeesApi } from '@/types/hr'
 
 export async function GET(req: NextRequest) {
@@ -20,23 +20,57 @@ export async function GET(req: NextRequest) {
     ? { businessId: { in: businessIds } }
     : { businessId: { in: businessIds }, employeeId: ctx.employeeId }
 
-  const [entries, pendingRequests, users] = await Promise.all([
-    prisma.employeeLedgerEntry.findMany({ where, orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] }),
+  const [entryGroups, recentEntries, pendingRequests, users] = await Promise.all([
+    prisma.employeeLedgerEntry.groupBy({
+      by: ['businessId', 'employeeId', 'type', 'periodYm'],
+      where,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    prisma.employeeLedgerEntry.findMany({
+      where,
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      take: ctx.isAdmin ? 1200 : 200,
+      select: { id: true, employeeId: true, businessId: true, date: true, periodYm: true, type: true, amount: true, note: true, source: true, createdAt: true },
+    }),
     prisma.walletRequest.findMany({
       where: ctx.isAdmin
         ? { businessId: { in: businessIds }, status: 'PENDING' }
         : { businessId: { in: businessIds }, userId: ctx.userId },
       orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        userId: true,
+        employeeId: true,
+        businessId: true,
+        type: true,
+        status: true,
+        requestedAmount: true,
+        approvedAmount: true,
+        reason: true,
+        reviewNote: true,
+        createdAt: true,
+        reviewedAt: true,
+      },
     }),
     prisma.user.findMany({
-      where: { employeeIdGas: { not: null } },
+      where: {
+        role: { not: 'SUPER_ADMIN' },
+        employeeIdGas: { not: null },
+        OR: businessIds.map(biz => ({ businessAccess: { contains: biz } })),
+      },
       select: { id: true, name: true, email: true, employeeIdGas: true, salaryHint: true },
     }),
   ])
 
   const employeeMeta = new Map<string, { name: string; email?: string; salary?: number }>()
+  const knownEmployeeKeys = new Set<string>()
   users.forEach(u => {
-    if (u.employeeIdGas) employeeMeta.set(u.employeeIdGas, { name: u.name, email: u.email || undefined, salary: Number(u.salaryHint || 0) })
+    if (u.employeeIdGas) {
+      employeeMeta.set(u.employeeIdGas, { name: u.name, email: u.email || undefined, salary: Number(u.salaryHint || 0) })
+      businessIds.forEach(biz => knownEmployeeKeys.add(`${biz}:${u.employeeIdGas}`))
+    }
   })
 
   if (ctx.isAdmin) {
@@ -45,6 +79,7 @@ export async function GET(req: NextRequest) {
         const data = await serverGet<HREmployeesApi>('hr_employees', { business_id: biz }, 0)
         data.employees.forEach(e => {
           employeeMeta.set(e.emp_id, { name: e.name, email: e.email, salary: Number(e.monthly_salary || 0) })
+          knownEmployeeKeys.add(`${biz}:${e.emp_id}`)
         })
       } catch {
         /* GAS roster unavailable: keep auth-linked metadata. */
@@ -52,23 +87,45 @@ export async function GET(req: NextRequest) {
     }))
   }
 
-  const groups = new Map<string, typeof entries>()
-  for (const e of entries) {
+  const groups = new Map<string, Array<{ type: typeof entryGroups[number]['type']; amount: ReturnType<typeof moneyDecimal>; periodYm: string | null; date: Date }>>()
+  const entryCounts = new Map<string, number>()
+  for (const e of entryGroups) {
     const key = `${e.businessId}:${e.employeeId}`
-    groups.set(key, [...(groups.get(key) || []), e])
+    groups.set(key, [
+      ...(groups.get(key) || []),
+      {
+        type: e.type,
+        amount: moneyDecimal(e._sum.amount || 0),
+        periodYm: e.periodYm,
+        date: new Date(),
+      },
+    ])
+    entryCounts.set(key, (entryCounts.get(key) || 0) + e._count._all)
+    knownEmployeeKeys.add(key)
   }
 
-  const wallets = [...groups.entries()].map(([key, rows]) => {
+  const latestByKey = new Map<string, typeof recentEntries>()
+  for (const entry of recentEntries) {
+    const key = `${entry.businessId}:${entry.employeeId}`
+    const rows = latestByKey.get(key) || []
+    if (rows.length < 6) latestByKey.set(key, [...rows, entry])
+    knownEmployeeKeys.add(key)
+  }
+
+  const wallets = [...knownEmployeeKeys].sort().map(key => {
     const [biz, employeeId] = key.split(':')
+    const rows = groups.get(key) || []
     const meta = employeeMeta.get(employeeId)
+    const summary = computeWalletSummary(employeeId, biz, rows)
+    summary.entryCount = entryCounts.get(key) || 0
     return {
       employeeId,
       businessId: biz,
       name: meta?.name || employeeId,
       email: meta?.email || '',
       monthlySalary: meta?.salary || 0,
-      summary: computeWalletSummary(employeeId, biz, rows),
-      latestEntries: runningTransactions(rows).slice(-6).reverse(),
+      summary,
+      latestEntries: runningTransactions([...(latestByKey.get(key) || [])].reverse()).reverse(),
     }
   })
 

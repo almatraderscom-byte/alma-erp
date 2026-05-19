@@ -1,0 +1,442 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import toast from 'react-hot-toast'
+import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { Button, Card, Empty, KpiCard, Skeleton } from '@/components/ui'
+import { useBusiness } from '@/contexts/BusinessContext'
+import { useActor } from '@/contexts/ActorContext'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
+import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
+
+type AttendanceDashboard = {
+  kpis: {
+    employeeCount: number
+    todayAttendance: number
+    absentEmployees: number
+    lateEmployees: number
+    todayPenaltyTotal: number
+    monthPenaltyTotal: number
+    attendanceRate: number
+    pendingWaivers: number
+    suspiciousAttendance: number
+    pendingVerifications: number
+  }
+  records: Array<{
+    id: string
+    userId: string
+    employeeId: string
+    employeeName: string
+    profileImageUrl?: string | null
+    checkInAt: string
+    checkOutAt: string | null
+    totalWorkMinutes: number
+    lateMinutes: number
+    penaltyAmount: number
+    trustStatus: string
+    suspiciousReasons: string[]
+    verificationRequired: boolean
+    selfieCount: number
+  }>
+  absentEmployees: Array<{ id: string; employeeId: string | null; name: string; email: string | null; profileImageUrl?: string | null }>
+  pendingWaivers: Array<{
+    id: string
+    employeeId: string
+    requesterUserId?: string
+    requesterName: string
+    requesterProfileImageUrl?: string | null
+    requestType?: string
+    originalPenaltyAmount: number
+    requestedReductionAmount: number | null
+    finalAppliedPenalty?: number
+    reason: string
+    hasAttachment?: boolean
+    createdAt: string
+    lateMinutes: number
+  }>
+  selfieLogs: Array<{
+    id: string
+    attendanceRecordId: string
+    employeeId: string
+    capturedAt: string
+    sizeBytes: number
+    imageDataUrl: string
+    reviewedAt: string | null
+  }>
+  ranking: Array<{
+    userId?: string
+    employeeId: string | null
+    name: string
+    profileImageUrl?: string | null
+    presentDays: number
+    lateCount: number
+    penaltyTotal: number
+    averageWorkLabel: string
+    punctualityScore: number
+  }>
+}
+
+type ReviewState = {
+  id: string
+  employeeId: string
+  originalPenalty: number
+  requestedAmount: number
+  amount: string
+  action: 'APPROVE' | 'REJECT'
+  note: string
+} | null
+
+type PenaltyAnalytics = {
+  totalPenalties: number
+  waivedAmount: number
+  reducedAmount: number
+  netPenaltiesAfterWaivers: number
+  appealCount: number
+  pendingCount: number
+  approvalRate: number
+  repeatOffenders: Array<{ employeeId: string; penaltyCount: number; penaltyTotal: number }>
+}
+
+export default function AttendancePage() {
+  const { business } = useBusiness()
+  const { role } = useActor()
+  const searchParams = useSearchParams()
+  const [data, setData] = useState<AttendanceDashboard | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [analytics, setAnalytics] = useState<PenaltyAnalytics | null>(null)
+  const [review, setReview] = useState<ReviewState>(null)
+  const canReview = role === 'SUPER_ADMIN' || role === 'ADMIN'
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/attendance?business_id=${business.id}`, { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      setData(j as AttendanceDashboard)
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not load attendance')
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [business.id])
+
+  const loadAnalytics = useCallback(async () => {
+    if (!canReview) return
+    try {
+      const res = await fetch(`/api/attendance/waivers/analytics?business_id=${business.id}`, { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      if (res.ok) setAnalytics(j.analytics as PenaltyAnalytics)
+    } catch {
+      setAnalytics(null)
+    }
+  }, [business.id, canReview])
+
+  useEffect(() => {
+    void load()
+    void loadAnalytics()
+  }, [load, loadAnalytics])
+
+  useRegisterMobileRefresh(
+    useCallback(async () => {
+      await load()
+      await loadAnalytics()
+    }, [load, loadAnalytics]),
+  )
+
+  const reviewId = searchParams.get('review')
+  const openReviewFromUrl = useMemo(() => {
+    if (!reviewId || !data?.pendingWaivers?.length) return null
+    return data.pendingWaivers.find(w => w.id === reviewId) || null
+  }, [reviewId, data?.pendingWaivers])
+
+  useEffect(() => {
+    if (!openReviewFromUrl || review) return
+    setReview({
+      id: openReviewFromUrl.id,
+      employeeId: openReviewFromUrl.employeeId,
+      originalPenalty: Number(openReviewFromUrl.originalPenaltyAmount),
+      requestedAmount: Number(openReviewFromUrl.requestedReductionAmount ?? openReviewFromUrl.originalPenaltyAmount),
+      amount: String(openReviewFromUrl.requestedReductionAmount ?? openReviewFromUrl.originalPenaltyAmount),
+      action: 'APPROVE',
+      note: '',
+    })
+  }, [openReviewFromUrl, review])
+
+  async function submitReview() {
+    if (!review) return
+    const res = await fetch(`/api/attendance/waivers/${review.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        business_id: business.id,
+        action: review.action,
+        approved_reduction_amount: review.action === 'APPROVE' ? Number(review.amount || 0) : undefined,
+        admin_note: review.note,
+      }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not review waiver')
+      return
+    }
+    toast.success(review.action === 'APPROVE' ? 'Penalty appeal approved — wallet credited' : 'Penalty appeal rejected')
+    setReview(null)
+    void load()
+    void loadAnalytics()
+  }
+
+  async function requestVerification(recordId: string) {
+    const res = await fetch(`/api/attendance/${recordId}/verification-request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: business.id }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not request verification')
+      return
+    }
+    toast.success('Verification requested')
+    void load()
+  }
+
+  const k = data?.kpis
+
+  return (
+    <FinancePageChrome
+      title="Attendance"
+      subtitle="Office time, late penalties, wallet deductions, and penalty review queue"
+      actions={<div className="flex gap-2 flex-wrap justify-end"><Link href="/portal"><Button size="xs" variant="secondary">My desk</Button></Link><Button size="xs" variant="gold" onClick={() => void load()}>Refresh</Button></div>}
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard label="Today present" value={loading ? '—' : Number(k?.todayAttendance ?? 0)} loading={loading} />
+        <KpiCard label="Absent today" value={loading ? '—' : Number(k?.absentEmployees ?? 0)} color="text-red-400" loading={loading} />
+        <KpiCard label="Late today" value={loading ? '—' : Number(k?.lateEmployees ?? 0)} color="text-amber-300" loading={loading} />
+        <KpiCard label="Today penalties" value={loading ? '—' : Number(k?.todayPenaltyTotal ?? 0)} color="text-red-400" loading={loading} />
+        <KpiCard label="Employee scope" value={loading ? '—' : Number(k?.employeeCount ?? 0)} loading={loading} />
+        <KpiCard label="Monthly attendance" value={loading ? '—' : `${Number(k?.attendanceRate ?? 0)}%`} loading={loading} />
+        <KpiCard label="Monthly penalties" value={loading ? '—' : Number(k?.monthPenaltyTotal ?? 0)} color="text-red-400" loading={loading} />
+        <KpiCard label="Pending reviews" value={loading ? '—' : Number(k?.pendingWaivers ?? 0)} color="text-gold-lt" loading={loading} />
+        <KpiCard label="Security flags" value={loading ? '—' : Number(k?.suspiciousAttendance ?? 0)} color="text-amber-300" loading={loading} />
+        <KpiCard label="Verification due" value={loading ? '—' : Number(k?.pendingVerifications ?? 0)} color="text-amber-300" loading={loading} />
+      </div>
+
+      {canReview && analytics && (
+        <Card className="p-5 border-gold-dim/25">
+          <p className="text-sm font-bold text-cream mb-3">Penalty appeal analytics (this month)</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+            <AnalyticsStat label="Total penalties" value={money(analytics.totalPenalties)} tone="text-red-400" />
+            <AnalyticsStat label="Waived / reduced" value={money(analytics.waivedAmount)} tone="text-green-400" />
+            <AnalyticsStat label="Net after appeals" value={money(analytics.netPenaltiesAfterWaivers)} />
+            <AnalyticsStat label="Approval rate" value={`${analytics.approvalRate}%`} tone="text-gold-lt" />
+          </div>
+          {analytics.repeatOffenders.length > 0 && (
+            <p className="mt-3 text-[10px] text-zinc-500">
+              Repeat late penalties: {analytics.repeatOffenders.slice(0, 4).map(r => `${r.employeeId} (${money(r.penaltyTotal)})`).join(' · ')}
+            </p>
+          )}
+        </Card>
+      )}
+
+      <Card className="p-5 border-gold-dim/25">
+        <div className="flex justify-between items-center gap-3 mb-4">
+          <div>
+            <p className="text-sm font-bold text-cream">Penalty review queue</p>
+            <p className="text-[11px] text-zinc-500 mt-1">Original PENALTY ledger rows are preserved. Approvals post ADJUSTMENT credits (full or partial).</p>
+          </div>
+        </div>
+        {loading ? <Skeleton className="h-28" /> : !(data?.pendingWaivers ?? []).length ? (
+          <p className="text-[11px] text-zinc-500">No pending penalty review requests.</p>
+        ) : (
+          <div className="grid gap-2">
+            {data!.pendingWaivers.map(w => (
+              <div key={w.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px] flex flex-col md:flex-row md:items-center gap-3">
+                <EmployeeAvatar userId={w.requesterUserId} name={w.requesterName} imageUrl={w.requesterProfileImageUrl} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-cream font-bold">{w.requesterName} · {w.employeeId}</p>
+                  <p className="text-zinc-400 mt-1">{w.reason}</p>
+                  <p className="text-zinc-600 mt-1">
+                    Late {w.lateMinutes}m · {w.requestType?.replace(/_/g, ' ').toLowerCase() || 'appeal'} · asked {money(w.requestedReductionAmount ?? w.originalPenaltyAmount)} of {money(w.originalPenaltyAmount)}
+                    {w.hasAttachment ? ' · 📎 attachment' : ''} · {w.createdAt.slice(0, 10)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="xs" variant="secondary" disabled={!canReview} onClick={() => setReview({ id: w.id, employeeId: w.employeeId, originalPenalty: Number(w.originalPenaltyAmount), requestedAmount: Number(w.requestedReductionAmount ?? w.originalPenaltyAmount), amount: String(w.requestedReductionAmount ?? w.originalPenaltyAmount), action: 'REJECT', note: '' })}>Reject</Button>
+                  <Button size="xs" variant="gold" disabled={!canReview} onClick={() => setReview({ id: w.id, employeeId: w.employeeId, originalPenalty: Number(w.originalPenaltyAmount), requestedAmount: Number(w.requestedReductionAmount ?? w.originalPenaltyAmount), amount: String(w.requestedReductionAmount ?? w.originalPenaltyAmount), action: 'APPROVE', note: '' })}>Approve</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!canReview && <p className="mt-3 text-[11px] text-amber-300">Only Admin or Super Admin can review penalty appeals.</p>}
+      </Card>
+
+      <div className="grid lg:grid-cols-[1.5fr_1fr] gap-4">
+        <Card className="p-5">
+          <p className="text-sm font-bold text-cream mb-4">Today attendance log</p>
+          {loading ? <Skeleton className="h-40" /> : !(data?.records ?? []).length ? (
+            <Empty icon="◇" title="No check-ins yet" desc="Employees will appear here after tapping Start Work." />
+          ) : (
+            <div className="table-scroll max-h-[420px]">
+              <table className="w-full min-w-[760px] text-left text-[11px]">
+                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                  <tr>
+                    <th className="py-2 pr-3">Employee</th>
+                    <th className="py-2 pr-3">Check in</th>
+                    <th className="py-2 pr-3">Check out</th>
+                    <th className="py-2 pr-3 text-right">Worked</th>
+                    <th className="py-2 pr-3 text-right">Late</th>
+                    <th className="py-2 text-right">Penalty</th>
+                    <th className="py-2 text-right">Trust</th>
+                    <th className="py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data!.records.map(r => (
+                    <tr key={r.id} className="border-b border-border/60">
+                      <td className="py-2 pr-3">
+                        <div className="flex items-center gap-2">
+                          <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
+                          <span>
+                            <span className="text-cream">{r.employeeName}</span>
+                            <span className="block text-zinc-600 font-mono">{r.employeeId}</span>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 font-mono">{time(r.checkInAt)}</td>
+                      <td className="py-2 pr-3 font-mono">{r.checkOutAt ? time(r.checkOutAt) : '--'}</td>
+                      <td className="py-2 pr-3 text-right font-mono">{duration(r.totalWorkMinutes)}</td>
+                      <td className={`py-2 pr-3 text-right font-mono ${r.lateMinutes ? 'text-red-400' : 'text-green-400'}`}>{duration(r.lateMinutes)}</td>
+                      <td className="py-2 text-right font-mono text-red-400">{money(r.penaltyAmount)}</td>
+                      <td className={`py-2 text-right font-bold ${r.trustStatus === 'TRUSTED' ? 'text-green-400' : r.trustStatus === 'WARNING' ? 'text-amber-300' : 'text-red-400'}`} title={r.suspiciousReasons.join(', ')}>
+                        {r.trustStatus.replace(/_/g, ' ')}
+                      </td>
+                      <td className="py-2 text-right">
+                        <Button size="xs" variant="secondary" disabled={role !== 'SUPER_ADMIN' || r.verificationRequired || r.selfieCount > 0} onClick={() => void requestVerification(r.id)}>
+                          {r.selfieCount > 0 ? 'Verified' : r.verificationRequired ? 'Requested' : 'Selfie'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <p className="text-sm font-bold text-cream mb-4">Punctuality ranking</p>
+          {loading ? <Skeleton className="h-40" /> : !(data?.ranking ?? []).length ? (
+            <p className="text-[11px] text-zinc-500">No linked employees for this business.</p>
+          ) : (
+            <div className="space-y-2 max-h-[420px] overflow-y-auto">
+              {data!.ranking.slice(0, 20).map((r, i) => (
+                <div key={`${r.employeeId}-${i}`} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+                  <div className="flex justify-between gap-2 items-center">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <EmployeeAvatar userId={r.userId} name={r.name} imageUrl={r.profileImageUrl} size="sm" />
+                      <span className="text-cream font-bold truncate">{i + 1}. {r.name}</span>
+                    </span>
+                    <span className="font-mono text-gold-lt">{r.punctualityScore}%</span>
+                  </div>
+                  <p className="mt-1 text-zinc-500">{r.presentDays} days · {r.lateCount} late · avg {r.averageWorkLabel} · penalty {money(r.penaltyTotal)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <p className="text-sm font-bold text-cream mb-4">Absent employees today</p>
+        {loading ? <Skeleton className="h-20" /> : !(data?.absentEmployees ?? []).length ? (
+          <p className="text-[11px] text-green-400">No absences among linked employees today.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {data!.absentEmployees.map(e => (
+              <span key={`${e.employeeId}-${e.name}`} className="inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-1 text-[11px] text-red-200">
+                <EmployeeAvatar userId={e.id} name={e.name} imageUrl={e.profileImageUrl} size="xs" />
+                {e.name} · {e.employeeId || 'unlinked'}
+              </span>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <p className="text-sm font-bold text-cream mb-4">Selfie verification logs</p>
+        {loading ? <Skeleton className="h-20" /> : !(data?.selfieLogs ?? []).length ? (
+          <p className="text-[11px] text-zinc-500">No selfie verification logs this month.</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {data!.selfieLogs.slice(0, 12).map(log => (
+              <div key={log.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+                <img src={log.imageDataUrl} alt="Attendance selfie" className="h-32 w-full rounded-xl object-cover bg-black/40" />
+                <div className="mt-2 flex justify-between gap-2">
+                  <span className="font-mono text-zinc-500">{log.employeeId}</span>
+                  <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {review && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/70 p-4">
+          <Card className="w-full max-w-md p-5 border-gold-dim/30 space-y-3">
+            <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
+            <p className="text-xs text-zinc-500">
+              {review.employeeId} · original penalty {money(review.originalPenalty)} · requested reduction {money(review.requestedAmount)}
+            </p>
+            {review.action === 'APPROVE' && (
+              <label className="block space-y-1 text-[11px]">
+                <span className="text-zinc-500">Approved reduction (wallet credit)</span>
+                <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
+                <p className="text-zinc-600">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
+              </label>
+            )}
+            <label className="block space-y-1 text-[11px]">
+              <span className="text-zinc-500">Admin note</span>
+              <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button size="xs" variant="secondary" onClick={() => setReview(null)}>Cancel</Button>
+              <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} onClick={() => void submitReview()}>
+                {review.action === 'APPROVE' ? 'Approve' : 'Reject'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </FinancePageChrome>
+  )
+}
+
+function money(value: unknown) {
+  return `৳ ${Number(value || 0).toLocaleString('en-BD')}`
+}
+
+function AnalyticsStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+      <p className="text-[9px] uppercase tracking-wider text-zinc-600">{label}</p>
+      <p className={`mt-0.5 font-mono font-bold ${tone || 'text-cream'}`}>{value}</p>
+    </div>
+  )
+}
+
+function duration(minutes: number) {
+  const h = Math.floor(Number(minutes || 0) / 60)
+  const m = Number(minutes || 0) % 60
+  if (!h) return `${m}m`
+  return `${h}h ${m}m`
+}
+
+function time(value: string) {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}

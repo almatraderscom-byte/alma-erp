@@ -9,6 +9,7 @@ import {
 } from '@/lib/payroll-wallet'
 import { notifyUser } from '@/lib/notifications'
 import { sendPayrollAlert } from '@/lib/resend'
+import { resolveApprovalRequest } from '@/lib/approvals'
 
 export async function PATCH(
   req: NextRequest,
@@ -61,6 +62,14 @@ export async function PATCH(
       actionLabel: 'Open payroll',
       dedupeKey: `wallet-request-rejected:${request.id}`,
       metadata: { requestId: request.id, employeeId: request.employeeId },
+    })
+    await resolveApprovalRequest({
+      module: 'PAYROLL',
+      type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+      entityId: request.id,
+      status: 'REJECTED',
+      actorUserId: ctx.userId,
+      reason: body.note?.slice(0, 500) || 'Rejected',
     })
     return NextResponse.json({ ok: true, request: updated })
   }
@@ -136,6 +145,14 @@ export async function PATCH(
     actionLabel: 'Open payroll',
     dedupeKey: `wallet-request-approved:${request.id}`,
     metadata: { requestId: request.id, employeeId: request.employeeId, approvedAmount },
+  })
+  await resolveApprovalRequest({
+    module: 'PAYROLL',
+    type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+    entityId: request.id,
+    status: 'APPROVED',
+    actorUserId: ctx.userId,
+    reason: body.note?.slice(0, 500) || 'Approved',
   })
 
   return NextResponse.json({ ok: true, ...result })

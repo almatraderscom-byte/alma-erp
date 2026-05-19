@@ -16,23 +16,42 @@ enum UserRole {
 }
 
 model User {
-  id                  String                 @id @default(cuid())
-  email               String?                @unique
-  passwordHash        String
-  name                String
-  phone               String?                @unique
-  role                UserRole               @default(STAFF)
-  active              Boolean                @default(true)
-  /// Comma-separated BusinessId: ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT
-  businessAccess      String                 @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT")
-  employeeIdGas       String?
-  joiningDate         DateTime?
-  salaryHint          Decimal?               @db.Decimal(12, 2)
-  profileImageUrl     String?
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
-  advanceRequests     SalaryAdvanceRequest[]
-  passwordResetTokens PasswordResetToken[]
+  id                      String                         @id @default(cuid())
+  email                   String?                        @unique
+  passwordHash            String
+  name                    String
+  phone                   String?                        @unique
+  role                    UserRole                       @default(STAFF)
+  active                  Boolean                        @default(true)
+  /// Comma-separated BusinessId: ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING
+  businessAccess          String                         @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING")
+  employeeIdGas           String?
+  joiningDate             DateTime?
+  salaryHint              Decimal?                       @db.Decimal(12, 2)
+  profileImageUrl         String?
+  createdAt               DateTime                       @default(now())
+  updatedAt               DateTime                       @updatedAt
+  advanceRequests         SalaryAdvanceRequest[]
+  passwordResetTokens     PasswordResetToken[]
+  assignedTradingAccounts TradingAccount[]               @relation("TradingAccountAssignedUser")
+  tradingTrades           TradingTrade[]                 @relation("TradingTradeUser")
+  tradingExpensesCreated  TradingExpense[]               @relation("TradingExpenseCreatedBy")
+  tradingCapitalCreated   TradingCapitalEntry[]          @relation("TradingCapitalCreatedBy")
+  tradingBkashCreated     TradingBkashDailySummary[]     @relation("TradingBkashSummaryCreatedBy")
+  tradingPerformanceShots TradingPerformanceScreenshot[] @relation("TradingPerformanceUploadedBy")
+  tradingEmployeeProfile  TradingEmployeeProfile?        @relation("TradingEmployeeProfileUser")
+  tradingDailyReports     TradingEmployeeDailyReport[]   @relation("TradingEmployeeDailyReportUser")
+  attendanceRecords       AttendanceRecord[]             @relation("AttendanceRecordUser")
+  attendanceWaivers       AttendanceWaiverRequest[]      @relation("AttendanceWaiverRequester")
+  attendanceReviews       AttendanceWaiverRequest[]      @relation("AttendanceWaiverReviewer")
+  attendanceSelfies       AttendanceSelfieVerification[] @relation("AttendanceSelfieUser")
+  tradingTelegramLinks    TradingTelegramUser[]          @relation("TradingTelegramErpUser")
+  tradingTelegramDrafts   TradingTelegramDraft[]         @relation("TradingTelegramDraftErpUser")
+
+  @@index([active, role])
+  @@index([active, createdAt])
+  @@index([employeeIdGas])
+  @@index([businessAccess])
 }
 
 enum AdvanceStatus {
@@ -69,6 +88,32 @@ enum WalletRequestStatus {
   REJECTED
 }
 
+enum AttendanceRecordStatus {
+  PRESENT
+  LATE
+  COMPLETED
+}
+
+enum AttendanceWaiverStatus {
+  PENDING
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceWaiverRequestType {
+  FULL_WAIVE
+  PARTIAL_REDUCE
+  RECONSIDERATION
+}
+
+enum AttendanceTrustStatus {
+  TRUSTED
+  WARNING
+  REQUIRES_VERIFICATION
+}
+
 enum PayrollAccrualRunStatus {
   RUNNING
   SUCCESS
@@ -86,6 +131,7 @@ enum NotificationType {
   ORDER_ASSIGNED
   LOW_STOCK
   PAYROLL_ALERT
+  EXPENSE_ADDED
 }
 
 enum NotificationPriority {
@@ -101,6 +147,13 @@ enum NotificationDeliveryStatus {
   FAILED
 }
 
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
 enum InvoicePaymentStatus {
   UNPAID
   PARTIAL
@@ -114,6 +167,37 @@ enum InvoiceEventType {
   OPENED
   SHARED
   DELETED
+}
+
+enum TradingAccountStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CLOSED
+}
+
+enum TradingAccountType {
+  BINANCE_P2P
+  MERCHANT
+  STAFF_OPERATED
+  OTHER
+}
+
+enum TradingCapitalEntryType {
+  DEPOSIT
+  WITHDRAW
+  ADJUSTMENT
+}
+
+enum TradingTradeType {
+  BUY
+  SELL
+}
+
+enum TradingCommissionType {
+  NONE
+  PERCENTAGE
+  FIXED
 }
 
 model SalaryAdvanceRequest {
@@ -157,6 +241,8 @@ model EmployeeLedgerEntry {
   @@index([employeeId, businessId, periodYm])
   @@index([businessId, type])
   @@index([businessId, periodYm])
+  @@index([businessId, createdAt])
+  @@index([businessId, employeeId, createdAt])
   @@index([userId])
 }
 
@@ -181,6 +267,113 @@ model WalletRequest {
   @@index([userId])
   @@index([employeeId, businessId])
   @@index([businessId, type])
+  @@index([businessId, status, createdAt])
+  @@index([userId, status, createdAt])
+}
+
+model AttendanceRecord {
+  id                        String                         @id @default(cuid())
+  businessId                String
+  userId                    String
+  user                      User                           @relation("AttendanceRecordUser", fields: [userId], references: [id], onDelete: Cascade)
+  employeeId                String
+  attendanceDate            DateTime
+  status                    AttendanceRecordStatus         @default(PRESENT)
+  officeStartMinutes        Int                            @default(540)
+  officeEndMinutes          Int                            @default(1260)
+  checkInAt                 DateTime
+  checkOutAt                DateTime?
+  totalWorkMinutes          Int                            @default(0)
+  lateMinutes               Int                            @default(0)
+  penaltyAmount             Decimal                        @default(0) @db.Decimal(12, 2)
+  penaltyLedgerEntryId      String?
+  deviceInfo                String?                        @db.Text
+  sessionInfo               String?                        @db.Text
+  ipHash                    String?
+  browserFingerprint        String?
+  deviceKey                 String?
+  sessionId                 String?
+  latitude                  Decimal?                       @db.Decimal(10, 7)
+  longitude                 Decimal?                       @db.Decimal(10, 7)
+  locationAccuracyM         Int?
+  distanceFromOfficeM       Int?
+  trustStatus               AttendanceTrustStatus          @default(TRUSTED)
+  suspiciousReasons         String[]
+  verificationRequired      Boolean                        @default(false)
+  verificationRequestedById String?
+  /// Front-camera face verification at check-in (lightweight thumb only stored).
+  faceVerified              Boolean                        @default(false)
+  faceVerifiedAt            DateTime?
+  faceThumbDataUrl          String?                        @db.Text
+  createdAt                 DateTime                       @default(now())
+  updatedAt                 DateTime                       @updatedAt
+  waiverRequests            AttendanceWaiverRequest[]
+  selfieVerifications       AttendanceSelfieVerification[]
+
+  @@unique([businessId, employeeId, attendanceDate])
+  @@index([businessId, attendanceDate])
+  @@index([businessId, status, attendanceDate])
+  @@index([businessId, trustStatus, attendanceDate])
+  @@index([businessId, verificationRequired, attendanceDate])
+  @@index([businessId, employeeId, attendanceDate])
+  @@index([businessId, userId, attendanceDate])
+  @@index([businessId, employeeId, deviceKey])
+  @@index([penaltyLedgerEntryId])
+}
+
+model AttendanceSelfieVerification {
+  id                 String           @id @default(cuid())
+  attendanceRecordId String
+  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  businessId         String
+  userId             String
+  user               User             @relation("AttendanceSelfieUser", fields: [userId], references: [id], onDelete: Cascade)
+  employeeId         String
+  deviceKey          String?
+  imageDataUrl       String           @db.Text
+  contentType        String           @default("image/jpeg")
+  sizeBytes          Int              @default(0)
+  capturedAt         DateTime         @default(now())
+  reviewedAt         DateTime?
+  reviewedById       String?
+  reviewNote         String?          @db.Text
+  createdAt          DateTime         @default(now())
+
+  @@index([businessId, capturedAt])
+  @@index([businessId, employeeId, capturedAt])
+  @@index([attendanceRecordId, capturedAt])
+  @@index([userId])
+}
+
+model AttendanceWaiverRequest {
+  id                       String                 @id @default(cuid())
+  attendanceRecordId       String
+  attendanceRecord         AttendanceRecord       @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  businessId               String
+  userId                   String
+  requester                User                   @relation("AttendanceWaiverRequester", fields: [userId], references: [id], onDelete: Cascade)
+  employeeId               String
+  status                   AttendanceWaiverStatus @default(PENDING)
+  requestType              AttendanceWaiverRequestType @default(FULL_WAIVE)
+  originalPenaltyAmount    Decimal                @default(0) @db.Decimal(12, 2)
+  requestedReductionAmount Decimal?               @db.Decimal(12, 2)
+  approvedReductionAmount  Decimal?               @db.Decimal(12, 2)
+  reason                   String                 @db.Text
+  attachmentDataUrl        String?                @db.Text
+  adminNote                String?                @db.Text
+  reviewedById             String?
+  reviewer                 User?                  @relation("AttendanceWaiverReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt               DateTime?
+  reversalLedgerEntryId    String?
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+
+  @@unique([attendanceRecordId, userId])
+  @@index([businessId, status, createdAt])
+  @@index([businessId, employeeId, createdAt])
+  @@index([businessId, userId, createdAt])
+  @@index([reviewedById])
+  @@index([reversalLedgerEntryId])
 }
 
 model PayrollAccrualRun {
@@ -255,6 +448,8 @@ model InvoiceRecord {
   @@unique([businessId, invoiceNumber])
   @@index([businessId, createdAt])
   @@index([businessId, paymentStatus])
+  @@index([businessId, customerPhone])
+  @@index([businessId, deletedAt, createdAt])
   @@index([orderId])
 }
 
@@ -314,9 +509,44 @@ model Notification {
   @@index([userId, readAt])
   @@index([roleTarget, readAt])
   @@index([businessId, createdAt])
+  @@index([businessId, type, createdAt])
+  @@index([businessId, priority, createdAt])
+  @@index([userId, createdAt])
+  @@index([roleTarget, createdAt])
   @@index([priority, createdAt])
   @@index([broadcastId])
   @@index([type])
+}
+
+model ApprovalRequest {
+  id              String         @id @default(cuid())
+  module          String
+  type            String
+  businessId      String?
+  entityId        String
+  requestedBy     String
+  approvedBy      String?
+  rejectedBy      String?
+  reason          String         @db.Text
+  payloadSnapshot Json?
+  status          ApprovalStatus @default(PENDING)
+  priority        NotificationPriority @default(NORMAL)
+  actionUrl       String?
+  auditHistory    Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+
+  @@index([status, createdAt])
+  @@index([module, status, createdAt])
+  @@index([businessId, status, createdAt])
+  @@index([priority, status, createdAt])
+  @@index([entityId])
+  @@index([requestedBy, status])
+  @@index([requestedBy, status, createdAt])
+  @@index([approvedBy])
+  @@index([rejectedBy])
 }
 
 model NotificationRecipient {
@@ -341,6 +571,14 @@ model NotificationRecipient {
   @@unique([notificationId, userId])
   @@index([userId, readAt])
   @@index([userId, acknowledgedAt])
+  @@index([userId, businessId, readAt])
+  @@index([userId, businessId, acknowledgedAt])
+  @@index([userId, businessId, createdAt])
+  @@index([userId, createdAt])
+  @@index([notificationId, readAt])
+  @@index([notificationId, seenAt])
+  @@index([notificationId, acknowledgedAt])
+  @@index([acknowledgedAt, deliveredAt, lastRemindedAt])
   @@index([businessId, createdAt])
   @@index([deliveryStatus])
 }
@@ -366,18 +604,348 @@ model NotificationBroadcast {
 }
 
 model PushSubscription {
-  id        String   @id @default(cuid())
-  userId    String
-  provider  String   @default("onesignal")
-  playerId  String?
-  endpoint  String?
-  platform  String?
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String    @id @default(cuid())
+  userId         String
+  provider       String    @default("onesignal")
+  playerId       String?
+  endpoint       String?
+  externalUserId String?
+  businessId     String?
+  role           String?
+  employeeIdGas  String?
+  platform       String?
+  userAgent      String?   @db.Text
+  enabled        Boolean   @default(true)
+  lastSeenAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([provider, playerId])
   @@index([userId, enabled])
+  @@index([businessId, enabled])
+  @@index([role, enabled])
+  @@index([employeeIdGas])
+}
+
+model SmsLog {
+  id           String    @id @default(cuid())
+  businessId   String?
+  phone        String
+  message      String    @db.Text
+  type         String
+  provider     String    @default("sms.net.bd")
+  requestId    String?
+  status       String    @default("QUEUED")
+  errorCode    String?
+  errorMessage String?   @db.Text
+  attempts     Int       @default(0)
+  nextAttemptAt DateTime?
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  metadataJson String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([createdAt])
+  @@index([phone])
+  @@index([status])
+  @@index([businessId])
+  @@index([businessId, type, phone, createdAt])
+  @@index([requestId])
+}
+
+model SmsSetting {
+  id         String   @id @default(cuid())
+  businessId String   @unique
+  enabled    Boolean  @default(false)
+  senderId   String?
+  updatedById String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model TradingAccount {
+  id               String                         @id @default(cuid())
+  businessId       String
+  assignedUserId   String?
+  assignedUser     User?                          @relation("TradingAccountAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  accountTitle     String
+  binanceUid       String?
+  accountType      TradingAccountType             @default(BINANCE_P2P)
+  status           TradingAccountStatus           @default(ACTIVE)
+  startingCapital  Decimal                        @default(0) @db.Decimal(14, 2)
+  currentBalance   Decimal                        @default(0) @db.Decimal(14, 2)
+  totalProfit      Decimal                        @default(0) @db.Decimal(14, 2)
+  totalLoss        Decimal                        @default(0) @db.Decimal(14, 2)
+  totalFees        Decimal                        @default(0) @db.Decimal(14, 2)
+  totalExpenses    Decimal                        @default(0) @db.Decimal(14, 2)
+  totalWithdrawals Decimal                        @default(0) @db.Decimal(14, 2)
+  netRoi           Decimal                        @default(0) @db.Decimal(8, 2)
+  totalBuyUsdt     Decimal                        @default(0) @db.Decimal(18, 8)
+  totalSellUsdt    Decimal                        @default(0) @db.Decimal(18, 8)
+  totalBuyBdt      Decimal                        @default(0) @db.Decimal(14, 2)
+  totalSellBdt     Decimal                        @default(0) @db.Decimal(14, 2)
+  usdtBalance      Decimal                        @default(0) @db.Decimal(18, 8)
+  inventoryCostBdt Decimal                        @default(0) @db.Decimal(14, 2)
+  commissionType   TradingCommissionType          @default(NONE)
+  commissionRate   Decimal                        @default(0) @db.Decimal(8, 4)
+  fixedCommission  Decimal                        @default(0) @db.Decimal(12, 2)
+  completionBonus  Decimal                        @default(0) @db.Decimal(12, 2)
+  merchantTarget   Decimal?                       @db.Decimal(14, 2)
+  merchantProgress Decimal                        @default(0) @db.Decimal(14, 2)
+  startDate        DateTime
+  completedDate    DateTime?
+  notes            String?                        @db.Text
+  deletedAt        DateTime?
+  createdAt        DateTime                       @default(now())
+  updatedAt        DateTime                       @updatedAt
+  trades           TradingTrade[]
+  expenses         TradingExpense[]
+  capitalEntries   TradingCapitalEntry[]
+  dailySnapshots   TradingDailySnapshot[]
+  volumeTargets    TradingDailyVolumeTarget[]
+  bkashSummaries   TradingBkashDailySummary[]
+  performanceShots TradingPerformanceScreenshot[]
+  telegramAliases  TradingAccountAlias[]
+  telegramDrafts   TradingTelegramDraft[]
+
+  @@index([businessId, status])
+  @@index([businessId, assignedUserId])
+  @@index([businessId, deletedAt, createdAt])
+  @@index([businessId, binanceUid])
+  @@index([businessId, currentBalance])
+  @@index([businessId, netRoi])
+  @@index([businessId, usdtBalance])
+  @@index([assignedUserId])
+  @@index([status, startDate])
+}
+
+model TradingTrade {
+  id               String           @id @default(cuid())
+  tradingAccountId String
+  tradingAccount   TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  userId           String
+  user             User             @relation("TradingTradeUser", fields: [userId], references: [id], onDelete: Restrict)
+  businessId       String
+  tradeType        TradingTradeType @default(SELL)
+  usdtAmount       Decimal          @default(0) @db.Decimal(18, 8)
+  bdtRate          Decimal          @default(0) @db.Decimal(12, 4)
+  buyRateBdt       Decimal          @default(0) @db.Decimal(12, 4)
+  sellRateBdt      Decimal          @default(0) @db.Decimal(12, 4)
+  totalBdt         Decimal          @default(0) @db.Decimal(14, 2)
+  netBdt           Decimal          @default(0) @db.Decimal(14, 2)
+  costBasisBdt     Decimal          @default(0) @db.Decimal(14, 2)
+  buyAmount        Decimal          @db.Decimal(14, 2)
+  sellAmount       Decimal          @db.Decimal(14, 2)
+  feeUsdt          Decimal          @default(0) @db.Decimal(18, 8)
+  feeBdt           Decimal          @default(0) @db.Decimal(14, 2)
+  feeAmount        Decimal          @default(0) @db.Decimal(14, 2)
+  netProfit        Decimal          @db.Decimal(14, 2)
+  tradeDate        DateTime
+  notes            String?          @db.Text
+  deletedAt        DateTime?
+  deletedBy        String?
+  deleteReason     String?          @db.Text
+  deleteApprovedBy String?
+  deleteApprovedAt DateTime?
+  editHistory      Json?
+  updatedBy        String?
+  createdAt        DateTime         @default(now())
+
+  @@index([businessId, tradeDate])
+  @@index([businessId, tradeType, tradeDate])
+  @@index([businessId, tradingAccountId, tradeDate])
+  @@index([tradingAccountId, tradeType, tradeDate])
+  @@index([businessId, userId, tradeDate])
+  @@index([businessId, deletedAt, createdAt])
+  @@index([tradingAccountId, tradeDate])
+  @@index([tradingAccountId, deletedAt, createdAt])
+  @@index([userId])
+  @@index([deletedAt, deleteApprovedAt])
+  @@index([updatedBy])
+  @@index([deletedBy])
+}
+
+model TradingDailySnapshot {
+  id               String         @id @default(cuid())
+  businessId       String
+  tradingAccountId String
+  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  date             DateTime
+  tradeCount       Int            @default(0)
+  usdtVolume       Decimal        @default(0) @db.Decimal(18, 8)
+  buyUsdtVolume    Decimal        @default(0) @db.Decimal(18, 8)
+  sellUsdtVolume   Decimal        @default(0) @db.Decimal(18, 8)
+  buyBdtVolume     Decimal        @default(0) @db.Decimal(14, 2)
+  sellBdtVolume    Decimal        @default(0) @db.Decimal(14, 2)
+  grossProfitBdt   Decimal        @default(0) @db.Decimal(14, 2)
+  grossLossBdt     Decimal        @default(0) @db.Decimal(14, 2)
+  feeBdt           Decimal        @default(0) @db.Decimal(14, 2)
+  expenseBdt       Decimal        @default(0) @db.Decimal(14, 2)
+  netResultBdt     Decimal        @default(0) @db.Decimal(14, 2)
+  balanceSnapshot  Decimal        @default(0) @db.Decimal(14, 2)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([tradingAccountId, date])
+  @@index([businessId, date])
+  @@index([businessId, tradingAccountId, date])
+  @@index([tradingAccountId, date])
+}
+
+model TradingExpense {
+  id               String         @id @default(cuid())
+  tradingAccountId String
+  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId       String
+  expenseType      String
+  amount           Decimal        @db.Decimal(14, 2)
+  notes            String?        @db.Text
+  attachmentUrl    String?        @db.Text
+  expenseDate      DateTime
+  createdBy        String
+  creator          User           @relation("TradingExpenseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  deletedAt        DateTime?
+  createdAt        DateTime       @default(now())
+
+  @@index([businessId, expenseDate])
+  @@index([businessId, expenseType])
+  @@index([businessId, deletedAt, createdAt])
+  @@index([tradingAccountId, expenseDate])
+  @@index([tradingAccountId, deletedAt, createdAt])
+  @@index([createdBy])
+}
+
+model TradingBkashDailySummary {
+  id               String         @id @default(cuid())
+  tradingAccountId String
+  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId       String
+  summaryDate      DateTime
+  totalOrders      Int            @default(0)
+  totalProfitBdt   Decimal        @default(0) @db.Decimal(14, 2)
+  totalLossBdt     Decimal        @default(0) @db.Decimal(14, 2)
+  netResultBdt     Decimal        @default(0) @db.Decimal(14, 2)
+  notes            String?        @db.Text
+  createdBy        String
+  creator          User           @relation("TradingBkashSummaryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  deletedAt        DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([tradingAccountId, summaryDate])
+  @@index([businessId, summaryDate])
+  @@index([businessId, tradingAccountId, summaryDate])
+  @@index([tradingAccountId, deletedAt, summaryDate])
+  @@index([createdBy])
+}
+
+model TradingPerformanceScreenshot {
+  id               String         @id @default(cuid())
+  tradingAccountId String
+  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId       String
+  shotDate         DateTime
+  employeeId       String?
+  driveFileId      String
+  driveFolderId    String?
+  previewUrl       String?        @db.Text
+  originalName     String
+  contentType      String
+  sizeBytes        Int
+  contentHash      String?        @db.VarChar(64)
+  note             String?        @db.Text
+  expiryDate       DateTime
+  archivedAt       DateTime?
+  uploadedBy       String
+  uploader         User           @relation("TradingPerformanceUploadedBy", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  deletedAt        DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([businessId, shotDate])
+  @@index([businessId, expiryDate])
+  @@index([businessId, tradingAccountId, shotDate])
+  @@index([tradingAccountId, archivedAt, shotDate])
+  @@index([tradingAccountId, deletedAt, shotDate])
+  @@index([driveFileId])
+  @@index([employeeId])
+  @@index([uploadedBy])
+  @@index([tradingAccountId, contentHash])
+}
+
+model TradingEmployeeProfile {
+  id                      String                       @id @default(cuid())
+  businessId              String
+  userId                  String                       @unique
+  user                    User                         @relation("TradingEmployeeProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+  employeeIdGas           String?
+  roleTitle               String?
+  shift                   String                       @default("DAY")
+  status                  String                       @default("ACTIVE")
+  salary                  Decimal                      @default(0) @db.Decimal(12, 2)
+  commissionType          TradingCommissionType        @default(NONE)
+  commissionRate          Decimal                      @default(0) @db.Decimal(8, 4)
+  fixedCommission         Decimal                      @default(0) @db.Decimal(12, 2)
+  merchantCompletionBonus Decimal                      @default(0) @db.Decimal(12, 2)
+  milestoneBonus          Decimal                      @default(0) @db.Decimal(12, 2)
+  notes                   String?                      @db.Text
+  lastActiveAt            DateTime?
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+  dailyReports            TradingEmployeeDailyReport[]
+
+  @@index([businessId, status])
+  @@index([businessId, shift])
+  @@index([businessId, employeeIdGas])
+  @@index([businessId, lastActiveAt])
+}
+
+model TradingEmployeeDailyReport {
+  id                String                  @id @default(cuid())
+  businessId        String
+  userId            String
+  user              User                    @relation("TradingEmployeeDailyReportUser", fields: [userId], references: [id], onDelete: Cascade)
+  employeeProfileId String?
+  employeeProfile   TradingEmployeeProfile? @relation(fields: [employeeProfileId], references: [id], onDelete: SetNull)
+  reportDate        DateTime
+  accountIds        String[]
+  totalTrades       Int                     @default(0)
+  dailyProfitBdt    Decimal                 @default(0) @db.Decimal(14, 2)
+  dailyLossBdt      Decimal                 @default(0) @db.Decimal(14, 2)
+  issues            String?                 @db.Text
+  screenshotProof   String?                 @db.Text
+  operationalNotes  String?                 @db.Text
+  submittedAt       DateTime                @default(now())
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@unique([userId, reportDate])
+  @@index([businessId, reportDate])
+  @@index([businessId, userId, reportDate])
+  @@index([employeeProfileId, reportDate])
+}
+
+model TradingCapitalEntry {
+  id               String                  @id @default(cuid())
+  tradingAccountId String
+  tradingAccount   TradingAccount          @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId       String
+  entryType        TradingCapitalEntryType
+  amount           Decimal                 @db.Decimal(14, 2)
+  notes            String?                 @db.Text
+  createdBy        String
+  creator          User                    @relation("TradingCapitalCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  deletedAt        DateTime?
+  createdAt        DateTime                @default(now())
+
+  @@index([businessId, entryType, createdAt])
+  @@index([businessId, deletedAt, createdAt])
+  @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountId, deletedAt, createdAt])
+  @@index([createdBy])
 }
 
 model PasswordResetToken {
@@ -389,4 +957,344 @@ model PasswordResetToken {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+enum TradingTelegramDraftStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  POSTED
+  FAILED
+  UNDONE
+  LOCKED
+}
+
+/// Future: OCR, voice, screenshot extraction — not used yet.
+enum TradingTelegramInputChannel {
+  TEXT_COMMAND
+  FUTURE_OCR
+  FUTURE_VOICE
+  FUTURE_SCREENSHOT
+}
+
+/// Maps Telegram identities to ERP users for Alma Trading bot.
+model TradingTelegramUser {
+  id                  String   @id @default(cuid())
+  businessId          String
+  telegramUserId      String
+  telegramUsername    String?
+  telegramFirstName   String?
+  telegramLastName    String?
+  userId              String?
+  user                User?    @relation("TradingTelegramErpUser", fields: [userId], references: [id], onDelete: SetNull)
+  approved               Boolean  @default(false)
+  defaultAccountAlias    String?
+  defaultTradingAccountId String?
+  lastSeenAt             DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([businessId, telegramUserId])
+  @@index([businessId, approved])
+  @@index([userId])
+}
+
+/// Approved Telegram group chats (negative chat ids).
+model TradingTelegramChat {
+  id         String    @id @default(cuid())
+  businessId String
+  chatId     String
+  title      String?
+  approved   Boolean   @default(true)
+  notes      String?   @db.Text
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([businessId, chatId])
+  @@index([businessId, approved])
+}
+
+/// Short aliases for trading accounts (e.g. sh → Shahadat Traders).
+model TradingAccountAlias {
+  id               String         @id @default(cuid())
+  businessId       String
+  alias            String
+  tradingAccountId String
+  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([businessId, alias])
+  @@index([tradingAccountId, active])
+}
+
+/// Telegram-submitted trade drafts awaiting ERP review (or auto-post).
+model TradingTelegramDraft {
+  id                String                     @id @default(cuid())
+  businessId        String
+  status            TradingTelegramDraftStatus @default(PENDING)
+  telegramUserId    String
+  telegramUsername  String?
+  telegramFirstName String?
+  userId            String?
+  user              User?                      @relation("TradingTelegramDraftErpUser", fields: [userId], references: [id], onDelete: SetNull)
+  tradingAccountId  String?
+  tradingAccount    TradingAccount?            @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+  accountAlias      String?
+  accountTitle      String?
+  rawMessage        String                     @db.Text
+  telegramMessageId String?
+  telegramChatId    String
+  tradeType         TradingTradeType?
+  usdtAmount        Decimal?                   @db.Decimal(18, 8)
+  bdtRate           Decimal?                   @db.Decimal(12, 4)
+  feeUsdt           Decimal?                   @db.Decimal(18, 8)
+  parseError        String?                    @db.Text
+  tradingTradeId    String?
+  postedAt          DateTime?
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  lastEditedBy      String?
+  lastEditedAt      DateTime?
+  rejectReason      String?                    @db.Text
+  /// Per-user daily sequence (resets each BD calendar day), not shared across staff.
+  tradeNumber       Int?
+  /// Hash for duplicate detection scoped to telegramUserId + account + day.
+  draftFingerprint  String?
+  undoneAt          DateTime?
+  lockedAt          DateTime?
+  lockedReason      String?                    @db.Text
+  inputChannel      TradingTelegramInputChannel @default(TEXT_COMMAND)
+  /// Reserved for future OCR/voice/screenshot parsers (raw payload, confidence, etc.)
+  futurePayload     Json?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  @@index([businessId, status, createdAt])
+  @@index([telegramUserId, createdAt])
+  @@index([tradingAccountId, createdAt])
+  @@index([userId, createdAt])
+  @@index([businessId, telegramUserId, draftFingerprint, createdAt])
+  @@index([businessId, telegramUserId, tradeNumber, createdAt])
+}
+
+/// Short-lived duplicate confirmation (Save anyway / Cancel) from Telegram inline actions.
+model TradingTelegramPendingDuplicate {
+  id             String   @id @default(cuid())
+  businessId     String
+  telegramUserId String
+  telegramChatId String
+  rawMessage     String   @db.Text
+  payload        Json
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@index([businessId, telegramUserId])
+  @@index([expiresAt])
+}
+
+/// Security / audit log for rejected Telegram bot events.
+model TradingTelegramAuditLog {
+  id               String   @id @default(cuid())
+  businessId       String
+  eventType        String
+  telegramUserId   String?
+  telegramUsername String?
+  telegramChatId   String?
+  rawMessage       String?  @db.Text
+  detail           String?  @db.Text
+  createdAt        DateTime @default(now())
+
+  @@index([businessId, eventType, createdAt])
+  @@index([telegramUserId, createdAt])
+}
+
+enum TelegramNotificationStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum TelegramNotificationEventType {
+  ATTENDANCE_CHECK_IN
+  ATTENDANCE_FACE_VERIFIED_CHECK_IN
+  ATTENDANCE_CHECK_OUT
+  ATTENDANCE_ABSENT
+  ATTENDANCE_NO_CHECKOUT
+  ATTENDANCE_EARLY_LEAVE
+  ATTENDANCE_SUSPICIOUS
+  ATTENDANCE_WAIVER_SUBMITTED
+  ATTENDANCE_WAIVER_REVIEWED
+  TRADING_SCREENSHOT_UPLOAD
+  TRADING_SCREENSHOT_FAILURE
+  TRADING_DELETE_REQUEST
+  TRADING_SUSPICIOUS
+  PAYROLL_WALLET_REQUEST
+  OPS_DAILY_SUMMARY
+}
+
+/// Async outbound Telegram ops alerts (owner control center). Processed by cron worker.
+model TelegramNotificationQueue {
+  id           String                       @id @default(cuid())
+  businessId   String
+  chatId       String
+  eventType    TelegramNotificationEventType
+  dedupeKey    String?
+  message      String                       @db.Text
+  status       TelegramNotificationStatus   @default(QUEUED)
+  attempts     Int                          @default(0)
+  maxAttempts  Int                          @default(3)
+  nextAttemptAt DateTime?
+  sentAt       DateTime?
+  errorMessage String?                      @db.Text
+  metadataJson String?                      @db.Text
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+
+  @@unique([dedupeKey])
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([businessId, createdAt])
+  @@index([eventType, createdAt])
+}
+
+/// Per-business owner Telegram ops settings (attendance monitor + alert toggles).
+model TelegramOpsSetting {
+  id                      String   @id @default(cuid())
+  businessId              String   @unique
+  enabled                 Boolean  @default(true)
+  /// Comma-separated Telegram chat IDs (owner/admin private chats or ops groups).
+  ownerChatIds            String   @default("")
+  officeStartMinutes      Int      @default(540)
+  gracePeriodMinutes      Int      @default(15)
+  checkoutCutoffMinutes   Int      @default(1320)
+  earlyLeaveMinutes       Int      @default(360)
+  alertAttendanceCheckIn  Boolean  @default(true)
+  alertAttendanceLate     Boolean  @default(true)
+  alertAttendanceAbsent   Boolean  @default(true)
+  alertAttendanceCheckOut Boolean  @default(true)
+  alertAttendanceNoCheckout Boolean @default(true)
+  alertAttendanceEarlyLeave Boolean @default(true)
+  alertAttendanceSuspicious Boolean @default(true)
+  alertTradingScreenshot  Boolean  @default(true)
+  alertTradingDeleteRequest Boolean @default(true)
+  alertOpsDailySummary    Boolean  @default(true)
+  updatedById             String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+/// Audit trail for attendance Telegram ops and manual overrides.
+model TelegramOpsAuditLog {
+  id           String   @id @default(cuid())
+  businessId   String
+  eventType    String
+  actorUserId  String?
+  employeeId   String?
+  attendanceRecordId String?
+  detail       String?  @db.Text
+  metadataJson String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([businessId, eventType, createdAt])
+  @@index([employeeId, createdAt])
+  @@index([attendanceRecordId])
+}
+
+enum TradingVolumeTargetStatus {
+  PENDING
+  MET
+  MISSED
+  IGNORED
+}
+
+enum TradingVolumeTargetPenaltyStatus {
+  PENDING
+  APPLIED
+  PARTIALLY_WAIVED
+  WAIVED
+  REJECTED
+}
+
+model TradingDailyVolumeTarget {
+  id               String                   @id @default(cuid())
+  businessId       String
+  tradingAccountId String
+  tradingAccount   TradingAccount           @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  targetDate       DateTime
+  targetUsdt       Decimal                  @db.Decimal(18, 8)
+  actualUsdt       Decimal                  @default(0) @db.Decimal(18, 8)
+  status           TradingVolumeTargetStatus @default(PENDING)
+  penaltyAmountBdt Decimal?               @db.Decimal(12, 2)
+  setById          String
+  notes            String?                  @db.Text
+  ignoredById      String?
+  ignoredAt        DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  penalties        TradingVolumeTargetPenalty[]
+  audits           TradingVolumeTargetAudit[]
+
+  @@unique([tradingAccountId, targetDate])
+  @@index([businessId, targetDate])
+  @@index([businessId, status, targetDate])
+  @@index([tradingAccountId, targetDate])
+}
+
+model TradingVolumeTargetPenalty {
+  id                    String                         @id @default(cuid())
+  targetId              String
+  target                TradingDailyVolumeTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  businessId            String
+  employeeId            String
+  userId                String?
+  status                TradingVolumeTargetPenaltyStatus @default(PENDING)
+  originalAmountBdt     Decimal                        @default(0) @db.Decimal(12, 2)
+  appliedAmountBdt      Decimal?                       @db.Decimal(12, 2)
+  waivedAmountBdt       Decimal?                       @db.Decimal(12, 2)
+  penaltyLedgerEntryId  String?
+  reversalLedgerEntryId String?
+  appliedById           String?
+  waivedById            String?
+  adminNote             String?                        @db.Text
+  appliedAt             DateTime?
+  waivedAt              DateTime?
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
+
+  @@index([businessId, status, createdAt])
+  @@index([targetId])
+  @@index([employeeId, createdAt])
+  @@index([penaltyLedgerEntryId])
+  @@index([reversalLedgerEntryId])
+}
+
+model TradingVolumeTargetAudit {
+  id           String                 @id @default(cuid())
+  targetId     String
+  target       TradingDailyVolumeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  businessId   String
+  action       String
+  actorUserId  String?
+  detail       String?                @db.Text
+  metadataJson String?                @db.Text
+  createdAt    DateTime               @default(now())
+
+  @@index([businessId, action, createdAt])
+  @@index([targetId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model TradingVolumeTargetSettings {
+  businessId            String   @id
+  autoPenaltyEnabled    Boolean  @default(false)
+  defaultPenaltyBdt     Decimal  @default(500) @db.Decimal(12, 2)
+  updatedById           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
