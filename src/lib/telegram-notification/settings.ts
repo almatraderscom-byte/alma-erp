@@ -2,24 +2,27 @@ import type { TelegramNotificationEventType, TelegramOpsSetting } from '@prisma/
 import { prisma } from '@/lib/prisma'
 import type { BusinessId } from '@/lib/businesses'
 import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
+import {
+  envOwnerChatIdsRaw,
+  normalizeOwnerChatIds,
+  parseOwnerChatIdsFromRaw,
+  resolveOwnerChatIds,
+  resolveOwnerChatIdsWithMeta,
+} from '@/lib/telegram-notification/owner-routing'
 
-const CHAT_ID_RE = /^-?\d{5,20}$/
-
-export function parseOwnerChatIds(raw: string | null | undefined): string[] {
-  const fromEnv = (process.env.TELEGRAM_OWNER_CHAT_IDS || '')
-    .split(/[,;\n\r]+/)
-    .map(s => s.trim())
-    .filter(Boolean)
-  const fromSetting = (raw || '')
-    .split(/[,;\n\r]+/)
-    .map(s => s.trim())
-    .filter(Boolean)
-  return [...new Set([...fromSetting, ...fromEnv])]
+export {
+  envOwnerChatIdsRaw,
+  normalizeOwnerChatIds,
+  parseOwnerChatIdsFromRaw,
+  resolveOwnerChatIds,
+  resolveOwnerChatIdsWithMeta,
 }
 
-/** Valid numeric Telegram chat IDs only (user, group, supergroup). */
-export function normalizeOwnerChatIds(ids: string[]): string[] {
-  return [...new Set(ids.map(id => id.trim()).filter(id => CHAT_ID_RE.test(id)))]
+/** Display helper: union of DB + env IDs (not used for delivery routing). */
+export function parseOwnerChatIds(raw: string | null | undefined): string[] {
+  const fromSetting = parseOwnerChatIdsFromRaw(raw)
+  const fromEnv = parseOwnerChatIdsFromRaw(envOwnerChatIdsRaw())
+  return [...new Set([...fromSetting, ...fromEnv])]
 }
 
 export function telegramOpsSettingDto(row: TelegramOpsSetting): TelegramOpsSettingDto {
@@ -50,12 +53,6 @@ export async function getTelegramOpsSetting(businessId: string): Promise<Telegra
   return prisma.telegramOpsSetting.create({
     data: { businessId },
   })
-}
-
-export async function resolveOwnerChatIds(businessId: string): Promise<string[]> {
-  const setting = await getTelegramOpsSetting(businessId)
-  if (!setting.enabled) return []
-  return normalizeOwnerChatIds(parseOwnerChatIds(setting.ownerChatIds))
 }
 
 export function eventTypeEnabled(
@@ -94,7 +91,6 @@ export function eventTypeEnabled(
   }
 }
 
-/** Late-specific alerts piggyback on check-in when alertAttendanceLate is off but check-in is on. */
 export function shouldSendLateDetail(setting: TelegramOpsSetting): boolean {
   return setting.alertAttendanceLate
 }

@@ -26,6 +26,37 @@ type ApiData = {
   stats: Array<{ status: string; count: number }>
 }
 
+type Dashboard = {
+  ownerRouting?: {
+    source: string
+    chatIds: string[]
+    dbIds: string[]
+    envIds: string[]
+    invalidDbTokens?: string[]
+    invalidEnvTokens?: string[]
+  }
+  telegram?: {
+    botOk?: boolean
+    botUsername?: string | null
+    webhookHealthy?: boolean
+    webhookUrl?: string | null
+    expectedWebhookUrl?: string | null
+  }
+  queue?: {
+    byStatus?: Array<{ status: string; count: number }>
+    stuckSending?: number
+    businessPending?: number
+    businessFailed24h?: number
+    stats7d?: Array<{ status: string; count: number }>
+  }
+  delivery?: {
+    lastSuccessfulSend?: { sentAt: string | null; eventType: string; chatId: string } | null
+    lastFailed?: { at: string; eventType: string; errorMessage: string | null } | null
+    sentLast24h?: number
+    recentFailures?: Array<{ id: string; eventType: string; errorMessage: string | null; attempts: number }>
+  }
+}
+
 const ALERT_TOGGLES: Array<{ key: keyof TelegramOpsSettingDto; label: string }> = [
   { key: 'alertAttendanceCheckIn', label: 'Check-in + face verification alerts' },
   { key: 'alertAttendanceLate', label: 'Late detail on check-in' },
@@ -47,13 +78,27 @@ function minutesToTimeLabel(minutes: number) {
   return `${hour12}:${String(m).padStart(2, '0')} ${period}`
 }
 
+function routingLabel(source: string) {
+  switch (source) {
+    case 'database':
+      return 'Database (primary)'
+    case 'env_fallback':
+      return 'Env fallback (TELEGRAM_OWNER_CHAT_IDS)'
+    case 'disabled':
+      return 'Disabled'
+    default:
+      return 'No valid recipients'
+  }
+}
+
 export default function TelegramOpsSettingsPage() {
   const [businessId, setBusinessId] = useState<BusinessId>('ALMA_TRADING')
   const [data, setData] = useState<ApiData | null>(null)
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [processing, setProcessing] = useState(false)
-  const [health, setHealth] = useState<Record<string, unknown> | null>(null)
+  const [testing, setTesting] = useState(false)
   const [ownerChatIds, setOwnerChatIds] = useState('')
 
   async function load() {
@@ -70,16 +115,16 @@ export default function TelegramOpsSettingsPage() {
       toast.error('Could not load Telegram ops settings')
     }
     if (healthRes.ok) {
-      setHealth((await healthRes.json()) as Record<string, unknown>)
+      setDashboard((await healthRes.json()) as Dashboard)
     } else {
-      setHealth(null)
+      setDashboard(null)
     }
     setLoading(false)
   }
 
   async function processQueueNow() {
     setProcessing(true)
-    const res = await fetch('/api/settings/telegram-ops/health', { method: 'POST' })
+    const res = await fetch(`/api/settings/telegram-ops/health?business_id=${businessId}`, { method: 'POST' })
     const json = await res.json().catch(() => ({}))
     setProcessing(false)
     if (!res.ok) {
@@ -89,6 +134,24 @@ export default function TelegramOpsSettingsPage() {
     const reclaimed = (json as { reclaimed?: number }).reclaimed ?? 0
     const processed = (json as { processed?: { processed?: number } }).processed?.processed ?? 0
     toast.success(`Reclaimed ${reclaimed} stuck · processed ${processed}`)
+    await load()
+  }
+
+  async function sendTestNotification() {
+    setTesting(true)
+    const res = await fetch('/api/settings/telegram-ops/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: businessId }),
+    })
+    const json = await res.json().catch(() => ({}))
+    setTesting(false)
+    if (!res.ok || !(json as { ok?: boolean }).ok) {
+      toast.error((json as { error?: string }).error || 'Test send failed')
+      return
+    }
+    const routing = (json as { routing?: { source?: string; chatIds?: string[] } }).routing
+    toast.success(`Test sent to ${routing?.chatIds?.length ?? 0} owner chat(s) via ${routing?.source ?? 'routing'}`)
     await load()
   }
 
@@ -129,18 +192,23 @@ export default function TelegramOpsSettingsPage() {
   }
 
   const setting = data?.setting
+  const routing = dashboard?.ownerRouting
+  const queueStats = Object.fromEntries((dashboard?.queue?.stats7d || []).map(s => [s.status, s.count]))
 
   return (
     <>
       <PageHeader
         title="Telegram Ops"
-        subtitle="Owner control center · async queue · Asia/Dhaka schedules"
+        subtitle="Production health · owner routing · async delivery queue"
         actions={(
-          <div className="flex gap-2">
-            <Button size="xs" variant="gold" disabled={processing} onClick={() => void processQueueNow()}>
+          <div className="flex flex-wrap gap-2">
+            <Button size="xs" variant="gold" disabled={testing} onClick={() => void sendTestNotification()}>
+              {testing ? 'Sending…' : 'Send test'}
+            </Button>
+            <Button size="xs" variant="secondary" disabled={processing} onClick={() => void processQueueNow()}>
               {processing ? 'Processing…' : 'Process queue'}
             </Button>
-            <Button size="xs" variant="secondary" onClick={() => void load()}>Refresh</Button>
+            <Button size="xs" variant="ghost" onClick={() => void load()}>Refresh</Button>
           </div>
         )}
       />
@@ -154,132 +222,223 @@ export default function TelegramOpsSettingsPage() {
         {loading || !setting ? (
           <Skeleton className="h-64 w-full rounded-2xl" />
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card className="space-y-4 p-5">
-              <p className="text-sm font-bold text-cream">Recipients & master switch</p>
-              <div className="flex gap-2">
-                <Button variant={setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: true })} disabled={saving}>
-                  Enabled
-                </Button>
-                <Button variant={!setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: false })} disabled={saving}>
-                  Disabled
-                </Button>
-              </div>
-              <p className="text-[11px] text-zinc-500">Owner chat IDs (comma-separated). Fallback: TELEGRAM_OWNER_CHAT_IDS env.</p>
-              <Input
-                value={ownerChatIds}
-                onChange={e => setOwnerChatIds(e.target.value)}
-                placeholder="-1001234567890, 123456789"
+          <>
+            <Card className="grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4">
+              <HealthStat
+                label="Bot"
+                value={dashboard?.telegram?.botOk ? `@${dashboard.telegram.botUsername || 'ok'}` : 'Offline / misconfigured'}
+                tone={dashboard?.telegram?.botOk ? 'ok' : 'bad'}
               />
-              <Button variant="gold" onClick={() => void save({ ownerChatIds })} disabled={saving}>
-                Save chat IDs
-              </Button>
+              <HealthStat
+                label="Webhook"
+                value={dashboard?.telegram?.webhookHealthy ? 'Healthy' : 'Check URL'}
+                tone={dashboard?.telegram?.webhookHealthy ? 'ok' : 'warn'}
+                hint={dashboard?.telegram?.expectedWebhookUrl || undefined}
+              />
+              <HealthStat
+                label="Owner routing"
+                value={routingLabel(routing?.source || 'none')}
+                tone={routing?.chatIds?.length ? 'ok' : 'bad'}
+                hint={routing?.chatIds?.join(', ')}
+              />
+              <HealthStat
+                label="Pending queue"
+                value={String(dashboard?.queue?.businessPending ?? 0)}
+                tone={(dashboard?.queue?.businessPending ?? 0) > 0 ? 'warn' : 'ok'}
+              />
+              <HealthStat
+                label="Stuck SENDING"
+                value={String(dashboard?.queue?.stuckSending ?? 0)}
+                tone={(dashboard?.queue?.stuckSending ?? 0) > 0 ? 'bad' : 'ok'}
+              />
+              <HealthStat
+                label="Failed (24h)"
+                value={String(dashboard?.queue?.businessFailed24h ?? 0)}
+                tone={(dashboard?.queue?.businessFailed24h ?? 0) > 0 ? 'warn' : 'ok'}
+              />
+              <HealthStat
+                label="Sent (24h)"
+                value={String(dashboard?.delivery?.sentLast24h ?? 0)}
+                tone="ok"
+              />
+              <HealthStat
+                label="Last success"
+                value={
+                  dashboard?.delivery?.lastSuccessfulSend?.sentAt
+                    ? new Date(dashboard.delivery.lastSuccessfulSend.sentAt).toLocaleString()
+                    : '—'
+                }
+                tone={dashboard?.delivery?.lastSuccessfulSend ? 'ok' : 'warn'}
+                hint={dashboard?.delivery?.lastSuccessfulSend?.eventType}
+              />
+            </Card>
 
-              <p className="text-sm font-bold text-cream">Schedule (BD)</p>
-              <p className="text-[11px] text-zinc-500">
-                Office {minutesToTimeLabel(setting.officeStartMinutes)} · grace +{setting.gracePeriodMinutes}m ·
-                no-checkout {minutesToTimeLabel(setting.checkoutCutoffMinutes)}
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {(
-                  [
-                    ['officeStartMinutes', 'Office start (min)'],
-                    ['gracePeriodMinutes', 'Grace (min)'],
-                    ['checkoutCutoffMinutes', 'Checkout cutoff (min)'],
-                    ['earlyLeaveMinutes', 'Early leave under (min)'],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label key={key} className="block text-[11px] text-zinc-500">
-                    {label}
-                    <Input
-                      type="number"
-                      className="mt-1"
-                      value={String(setting[key])}
-                      onChange={e =>
-                        setData(d =>
-                          d
-                            ? {
-                                ...d,
-                                setting: { ...d.setting, [key]: Number(e.target.value) },
-                              }
-                            : d,
-                        )
-                      }
-                      onBlur={() => void save({ [key]: setting[key] })}
+            {routing && (
+              <Card className="p-4 text-[11px] text-zinc-400">
+                <p className="font-bold text-cream">Owner routing diagnostics</p>
+                <p className="mt-2">
+                  Active source: <span className="text-gold-lt">{routingLabel(routing.source)}</span>
+                  {' · '}
+                  Delivering to: <span className="font-mono text-zinc-300">{routing.chatIds.join(', ') || '—'}</span>
+                </p>
+                <p className="mt-1">
+                  DB IDs: {routing.dbIds.join(', ') || '—'} · Env fallback IDs: {routing.envIds.join(', ') || '—'}
+                </p>
+                {(routing.invalidDbTokens?.length || routing.invalidEnvTokens?.length) ? (
+                  <p className="mt-1 text-amber-300">
+                    Invalid tokens ignored: DB [{routing.invalidDbTokens?.join(', ')}] Env [{routing.invalidEnvTokens?.join(', ')}]
+                  </p>
+                ) : null}
+                <p className="mt-2 text-zinc-500">
+                  Priority: database chat IDs first. If empty or invalid, <code className="text-gold-lt">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
+                </p>
+              </Card>
+            )}
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card className="space-y-4 p-5">
+                <p className="text-sm font-bold text-cream">Recipients & master switch</p>
+                <div className="flex gap-2">
+                  <Button variant={setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: true })} disabled={saving}>
+                    Enabled
+                  </Button>
+                  <Button variant={!setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: false })} disabled={saving}>
+                    Disabled
+                  </Button>
+                </div>
+                <p className="text-[11px] text-zinc-500">Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS</p>
+                <Input
+                  value={ownerChatIds}
+                  onChange={e => setOwnerChatIds(e.target.value)}
+                  placeholder="1949042834, -1001234567890"
+                />
+                <Button variant="gold" onClick={() => void save({ ownerChatIds })} disabled={saving}>
+                  Save chat IDs
+                </Button>
+
+                <p className="text-sm font-bold text-cream">Schedule (BD)</p>
+                <p className="text-[11px] text-zinc-500">
+                  Office {minutesToTimeLabel(setting.officeStartMinutes)} · grace +{setting.gracePeriodMinutes}m ·
+                  no-checkout {minutesToTimeLabel(setting.checkoutCutoffMinutes)}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      ['officeStartMinutes', 'Office start (min)'],
+                      ['gracePeriodMinutes', 'Grace (min)'],
+                      ['checkoutCutoffMinutes', 'Checkout cutoff (min)'],
+                      ['earlyLeaveMinutes', 'Early leave under (min)'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="block text-[11px] text-zinc-500">
+                      {label}
+                      <Input
+                        type="number"
+                        className="mt-1"
+                        value={String(setting[key])}
+                        onChange={e =>
+                          setData(d =>
+                            d
+                              ? {
+                                  ...d,
+                                  setting: { ...d.setting, [key]: Number(e.target.value) },
+                                }
+                              : d,
+                          )
+                        }
+                        onBlur={() => void save({ [key]: setting[key] })}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </Card>
+
+              <Card className="space-y-3 p-5">
+                <p className="text-sm font-bold text-cream">Alert toggles</p>
+                {ALERT_TOGGLES.map(t => (
+                  <label
+                    key={t.key}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm text-zinc-300"
+                  >
+                    {t.label}
+                    <input
+                      type="checkbox"
+                      checked={Boolean(setting[t.key])}
+                      onChange={e => void save({ [t.key]: e.target.checked } as Partial<TelegramOpsSettingDto>)}
+                      className="h-4 w-4"
                     />
                   </label>
                 ))}
-              </div>
-            </Card>
 
-            <Card className="space-y-3 p-5">
-              <p className="text-sm font-bold text-cream">Alert toggles</p>
-              {ALERT_TOGGLES.map(t => (
-                <label
-                  key={t.key}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm text-zinc-300"
-                >
-                  {t.label}
-                  <input
-                    type="checkbox"
-                    checked={Boolean(setting[t.key])}
-                    onChange={e => void save({ [t.key]: e.target.checked } as Partial<TelegramOpsSettingDto>)}
-                    className="h-4 w-4"
-                  />
-                </label>
-              ))}
-
-              {health && (
-                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[11px] text-zinc-400">
-                  <p className="font-bold text-amber-200/90">Delivery health</p>
-                  <p className="mt-1">
-                    Bot: {(health.telegram as { botUsername?: string })?.botUsername || '—'} ·
-                    Token: {(health.queue as { botTokenConfigured?: boolean })?.botTokenConfigured ? 'ok' : 'missing'} ·
-                    Stuck SENDING: {(health.queue as { stuckSending?: number })?.stuckSending ?? 0}
-                  </p>
+                <p className="pt-2 text-sm font-bold text-cream">Queue (7 days)</p>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">SENT: {queueStats.SENT ?? 0}</span>
+                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">QUEUED: {queueStats.QUEUED ?? 0}</span>
+                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">FAILED: {queueStats.FAILED ?? 0}</span>
+                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">SENDING: {queueStats.SENDING ?? 0}</span>
                 </div>
-              )}
 
-              <p className="pt-2 text-sm font-bold text-cream">Queue (7 days)</p>
-              <div className="flex flex-wrap gap-2 text-xs">
-                {(data.stats || []).map(s => (
-                  <span key={s.status} className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">
-                    {s.status}: {s.count}
-                  </span>
-                ))}
-              </div>
-              <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-zinc-500">
-                {data.recentQueue.map(row => (
-                  <li key={row.id} className="rounded-lg border border-border/60 p-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="flex items-center gap-2 text-zinc-300">
-                        <EmployeeAvatar
-                          userId={row.userId}
-                          name={row.employeeName || row.eventType}
-                          imageUrl={row.profileImageUrl}
-                          size="xs"
-                        />
-                        {row.eventType} · <b>{row.status}</b>
-                        {row.employeeName ? <span className="text-zinc-500">· {row.employeeName}</span> : null}
-                      </span>
-                      {(row.status === 'FAILED' || row.status === 'QUEUED' || row.status === 'SENDING') && (
-                        <Button size="xs" variant="secondary" onClick={() => void retryQueue(row.id)}>
-                          Retry
-                        </Button>
-                      )}
-                    </div>
-                    <div>Chat {row.chatId} · attempts {row.attempts}</div>
-                    <div>{new Date(row.createdAt).toLocaleString()}</div>
-                    {row.errorMessage ? (
-                      <p className="mt-1 text-red-400/90 break-words">{row.errorMessage}</p>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          </div>
+                {dashboard?.delivery?.lastFailed && (
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-200/90">
+                    <p className="font-bold">Last failure</p>
+                    <p className="mt-1">{dashboard.delivery.lastFailed.eventType}</p>
+                    <p className="mt-1 break-words">{dashboard.delivery.lastFailed.errorMessage}</p>
+                  </div>
+                )}
+
+                <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-zinc-500">
+                  {data.recentQueue.map(row => (
+                    <li key={row.id} className="rounded-lg border border-border/60 p-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="flex items-center gap-2 text-zinc-300">
+                          <EmployeeAvatar
+                            userId={row.userId}
+                            name={row.employeeName || row.eventType}
+                            imageUrl={row.profileImageUrl}
+                            size="xs"
+                          />
+                          {row.eventType} · <b>{row.status}</b>
+                        </span>
+                        {(row.status === 'FAILED' || row.status === 'QUEUED' || row.status === 'SENDING') && (
+                          <Button size="xs" variant="secondary" onClick={() => void retryQueue(row.id)}>
+                            Retry
+                          </Button>
+                        )}
+                      </div>
+                      <div>Chat {row.chatId} · attempts {row.attempts}</div>
+                      <div>{new Date(row.createdAt).toLocaleString()}</div>
+                      {row.errorMessage ? (
+                        <p className="mt-1 break-words text-red-400/90">{row.errorMessage}</p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </div>
+          </>
         )}
       </div>
     </>
+  )
+}
+
+function HealthStat({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string
+  value: string
+  tone: 'ok' | 'warn' | 'bad'
+  hint?: string
+}) {
+  const color = tone === 'ok' ? 'text-green-300' : tone === 'warn' ? 'text-amber-300' : 'text-red-300'
+  return (
+    <div className="rounded-xl border border-border/60 bg-black/20 p-3">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
+      <p className={`mt-1 text-sm font-bold ${color}`}>{value}</p>
+      {hint ? <p className="mt-1 truncate text-[10px] text-zinc-500" title={hint}>{hint}</p> : null}
+    </div>
   )
 }

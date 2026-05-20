@@ -1,12 +1,9 @@
 import type { TelegramNotificationQueue, TelegramNotificationStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { deliverTelegramNotificationRow } from '@/lib/telegram-notification/deliver'
-import {
-  eventTypeEnabled,
-  getTelegramOpsSetting,
-  normalizeOwnerChatIds,
-  resolveOwnerChatIds,
-} from '@/lib/telegram-notification/settings'
+import { isTelegramDeliveryRetryable } from '@/lib/telegram-notification/delivery-policy'
+import { resolveOwnerChatIdsWithMeta } from '@/lib/telegram-notification/owner-routing'
+import { eventTypeEnabled, getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 import type { EnqueueTelegramNotificationInput } from '@/lib/telegram-notification/types'
 
@@ -57,19 +54,29 @@ export async function enqueueTelegramNotification(
   }
 
   const setting = await getTelegramOpsSetting(input.businessId)
-  if (!eventTypeEnabled(setting, input.eventType)) {
+  const forceEnqueue = Boolean((input.metadata as { force?: boolean } | undefined)?.force)
+  if (!forceEnqueue && !eventTypeEnabled(setting, input.eventType)) {
     logTelegram('warn', 'telegram.enqueue.skipped', { reason: 'EVENT_DISABLED', eventType: input.eventType, businessId: input.businessId })
     return { ok: false, skipped: 'EVENT_DISABLED' }
   }
 
-  const chatIds = normalizeOwnerChatIds(
-    input.chatIds?.length ? input.chatIds : await resolveOwnerChatIds(input.businessId),
-  )
+  const routing = input.chatIds?.length
+    ? {
+        chatIds: input.chatIds,
+        source: 'explicit' as const,
+        dbIds: [] as string[],
+        envIds: [] as string[],
+        invalidDbTokens: [] as string[],
+        invalidEnvTokens: [] as string[],
+      }
+    : await resolveOwnerChatIdsWithMeta(input.businessId)
+  const chatIds = routing.chatIds
   if (!chatIds.length) {
     logTelegram('warn', 'telegram.enqueue.skipped', {
       reason: 'NO_OWNER_CHAT_IDS',
       businessId: input.businessId,
       eventType: input.eventType,
+      routingSource: routing.source,
     })
     return { ok: false, skipped: 'NO_OWNER_CHAT_IDS', recipientCount: 0 }
   }
@@ -143,11 +150,11 @@ export async function enqueueTelegramNotification(
     }
   }
 
-  logTelegram('info', 'telegram.enqueue', {
+  logTelegram('info', 'telegram.enqueue.queued', {
     businessId: input.businessId,
     eventType: input.eventType,
-    recipientCount: chatIds.length,
     rowCount: ids.length,
+    routingSource: routing.source,
   })
 
   return { ok: true, ids, recipientCount: chatIds.length }
@@ -259,7 +266,9 @@ export async function processTelegramNotificationQueue(options: { limit?: number
 
     const fresh = await prisma.telegramNotificationQueue.findUnique({ where: { id: row.id } })
     const attempts = fresh?.attempts ?? row.attempts + 1
-    const failed = attempts >= MAX_ATTEMPTS
+    const retryable = isTelegramDeliveryRetryable(send.errorMessage, send.errorCode)
+    const exhausted = attempts >= MAX_ATTEMPTS
+    const failed = !retryable || exhausted
     const updated = await prisma.telegramNotificationQueue.update({
       where: { id: row.id },
       data: {
@@ -268,15 +277,18 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         nextAttemptAt: failed ? null : nextRetryAt(attempts),
       },
     })
-    logTelegram(failed ? 'error' : 'warn', 'telegram.send.failed', {
+    const failureEvent = failed ? 'telegram.send.failed' : 'telegram.retry'
+    logTelegram(failed ? 'error' : 'warn', failureEvent, {
       id: row.id,
       eventType: row.eventType,
       chatId: row.chatId,
       latencyMs: Date.now() - started,
       attempts,
       retryable: !failed,
+      failureClass: retryable ? 'retryable' : 'permanent',
       error: updated.errorMessage,
       errorCode: send.errorCode,
+      nextAttemptAt: updated.nextAttemptAt?.toISOString() ?? null,
     })
     results.push({ id: updated.id, status: updated.status, errorMessage: updated.errorMessage })
   }
