@@ -31,14 +31,16 @@ export async function buildAdminAttendanceDashboard(input: {
   const { businessIds, date, monthStart, monthEnd, scopeAllBusinesses } = input
   const archiveReady = await isBusinessArchiveSchemaReady()
   const archiveClause = archiveReady ? { isArchived: false as const } : {}
-  const businessFilter = businessIds.length === 1
-    ? { businessId: businessIds[0], ...archiveClause }
-    : { businessId: { in: businessIds }, ...archiveClause }
+  const businessOnly = businessIds.length === 1
+    ? { businessId: businessIds[0] }
+    : { businessId: { in: businessIds } }
+  /** Only AttendanceRecord / AttendanceWaiverRequest have isArchived — not SelfieVerification. */
+  const archivedBusinessFilter = { ...businessOnly, ...archiveClause }
 
   const [employees, todayRecords, monthRecords, pendingWaivers, selfieRows, integrity] = await Promise.all([
     loadRosterForScope(businessIds, monthStart, monthEnd),
     prisma.attendanceRecord.findMany({
-      where: { ...businessFilter, attendanceDate: date },
+      where: { ...archivedBusinessFilter, attendanceDate: date },
       include: {
         user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
         waiverRequests: true,
@@ -47,12 +49,12 @@ export async function buildAdminAttendanceDashboard(input: {
       orderBy: [{ businessId: 'asc' }, { checkInAt: 'asc' }],
     }),
     prisma.attendanceRecord.findMany({
-      where: { ...businessFilter, attendanceDate: { gte: monthStart, lt: monthEnd } },
+      where: { ...archivedBusinessFilter, attendanceDate: { gte: monthStart, lt: monthEnd } },
       include: { user: { select: { name: true } } },
       orderBy: { attendanceDate: 'desc' },
     }),
     prisma.attendanceWaiverRequest.findMany({
-      where: { ...businessFilter, status: 'PENDING' },
+      where: { ...archivedBusinessFilter, status: 'PENDING' },
       include: {
         requester: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
         attendanceRecord: true,
@@ -62,7 +64,7 @@ export async function buildAdminAttendanceDashboard(input: {
     }),
     prisma.attendanceSelfieVerification.findMany({
       where: {
-        ...businessFilter,
+        ...businessOnly,
         capturedAt: { gte: monthStart, lt: monthEnd },
       },
       orderBy: { capturedAt: 'desc' },

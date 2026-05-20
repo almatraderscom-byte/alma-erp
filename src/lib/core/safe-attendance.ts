@@ -77,13 +77,21 @@ export function classifyAttendanceDbError(err: unknown): {
   retryable: boolean
 } {
   const msg = (err as Error).message || String(err)
+  if (msg.includes('Unknown argument') && msg.includes('isArchived')) {
+    return {
+      code: 'ARCHIVE_FILTER_MISMATCH',
+      message: 'Attendance archive filter misconfigured. Contact support — data is not lost.',
+      status: 500,
+      retryable: false,
+    }
+  }
   if (
     msg.includes('faceVerified')
     || msg.includes('faceThumbDataUrl')
     || msg.includes('requestType')
     || msg.includes('does not exist')
     || msg.includes('Unknown field')
-    || msg.includes('isArchived')
+    || (msg.includes('isArchived') && msg.includes('column'))
   ) {
     return {
       code: 'SCHEMA_OUTDATED',
