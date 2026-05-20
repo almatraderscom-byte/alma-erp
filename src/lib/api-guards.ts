@@ -6,9 +6,20 @@ import type { AlmaRole } from '@/lib/roles'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { businessAllowed } from '@/lib/business-access'
 
+function isAuthBuildPhase() {
+  return (
+    process.env.NEXT_PHASE === 'phase-production-build' ||
+    process.env.NEXT_PHASE === 'phase-export'
+  )
+}
+
 export async function getJwt(req: NextRequest) {
-  const secret = process.env.NEXTAUTH_SECRET
-  if (!secret) throw new Error('NEXTAUTH_SECRET is not configured')
+  const secret = process.env.NEXTAUTH_SECRET?.trim()
+  if (!secret) {
+    // Next.js may execute route handlers during `next build` without runtime env.
+    if (isAuthBuildPhase()) return null
+    throw new Error('NEXTAUTH_SECRET is not configured')
+  }
   return getToken({ req, secret })
 }
 
