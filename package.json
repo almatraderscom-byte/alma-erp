@@ -15,6 +15,7 @@
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "regression:gate": "tsc --noEmit",
+    "regression:smoke": "node scripts/regression-smoke.mjs",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "node prisma/seed.cjs",
     "backup:prod": "node scripts/backup-production.mjs",

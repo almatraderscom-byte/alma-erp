@@ -112,12 +112,13 @@ export function approvalRouteFailure(
     code: extra?.code,
   })
   if (meta) logApprovalActionPhase('rolled_back', meta, { error: message })
-  return apiFailure('approval_failed', message, {
+  return apiFailure(extra?.code || 'approval_failed', message, {
     status: extra?.status ?? 500,
-    code: extra?.code,
     rolledBack: true,
-    extra: meta
-      ? { operationId: meta.operationId, durationMs: Date.now() - meta.startedAt }
-      : undefined,
+    extra: {
+      ...(meta
+        ? { operationId: meta.operationId, durationMs: Date.now() - meta.startedAt }
+        : {}),
+    },
   })
 }

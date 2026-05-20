@@ -4,6 +4,8 @@ import {
   type AttendanceApiErrorBody,
   type AttendanceErrorCode,
 } from '@/lib/attendance-errors'
+import { readApiError, unwrapApiData } from '@/lib/safe-api-response'
+import { safeFetchJson } from '@/lib/safe-fetch'
 
 export { AttendanceClientError } from '@/lib/attendance-errors'
 
@@ -79,32 +81,27 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 export async function fetchMyAttendance(businessId: string): Promise<MyAttendancePayload> {
   const url = `/api/attendance?business_id=${encodeURIComponent(businessId)}&scope=me`
-  let res: Response
-  try {
-    res = await fetchWithTimeout(
-      url,
-      { method: 'GET', cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } },
-      ATTENDANCE_FETCH_TIMEOUT_MS,
-    )
-  } catch (e) {
-    const aborted = (e as Error).name === 'AbortError'
-    throw new AttendanceClientError(
-      aborted ? 'TIMEOUT' : 'NETWORK',
-      aborted
-        ? 'Attendance request timed out. Check connection and pull down to retry.'
-        : 'Network error while loading attendance. Check connection and retry.',
-      0,
-      true,
-    )
+  const result = await safeFetchJson<MyAttendancePayload>(url, {
+    method: 'GET',
+    cache: 'no-store',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+    timeoutMs: ATTENDANCE_FETCH_TIMEOUT_MS,
+  })
+
+  if (!result.ok) {
+    const err = result.error
+    const code = (err.code?.toUpperCase().replace(/-/g, '_') || 'NETWORK') as AttendanceErrorCode
+    const mapped = mapAttendanceHttpError(result.status, {
+      code,
+      error: err.message,
+      message: err.message,
+      retryable: result.rolledBack,
+    } as AttendanceApiErrorBody)
+    throw new AttendanceClientError(mapped.code, mapped.message, result.status, mapped.retryable)
   }
 
-  const body = (await res.json().catch(() => ({}))) as AttendanceApiErrorBody & MyAttendancePayload
-  if (!res.ok) {
-    const mapped = mapAttendanceHttpError(res.status, body)
-    throw new AttendanceClientError(mapped.code, mapped.message, res.status, mapped.retryable)
-  }
-
-  return body as MyAttendancePayload
+  return unwrapApiData<MyAttendancePayload>(result.data as Record<string, unknown>)
 }
 
 export function attendanceErrorLabel(code: AttendanceErrorCode): string {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { safeResponseJson } from '@/lib/safe-api-response'
+import { safeFetchJson } from '@/lib/safe-fetch'
 import {
   addPendingApprovalOp,
   committedLabel,
@@ -65,17 +65,16 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           startedAt: op.startedAt,
         })
         try {
-          const res = await fetch(`/api/approvals/${encodeURIComponent(op.approvalId)}`, {
-            cache: 'no-store',
-          })
-          const parsed = await safeResponseJson(res)
-          const json = parsed.data
-          if (!parsed.ok || !res.ok) {
+          const parsed = await safeFetchJson<{ approval?: { status?: string } }>(
+            `/api/approvals/${encodeURIComponent(op.approvalId)}`,
+            { cache: 'no-store' },
+          )
+          if (!parsed.ok) {
             removePendingApprovalOp(op.approvalId)
             clearRowState(op.approvalId)
             return
           }
-          const status = String((json as { approval?: { status?: string } }).approval?.status || '')
+          const status = String(parsed.data.approval?.status || '')
           if (status === 'PENDING') {
             setRowState(op.approvalId, {
               state: 'processing',
@@ -152,19 +151,20 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
       )
 
       try {
-        const res = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action, note, operation_id: operationId }),
-          cache: 'no-store',
-        })
-        const parsed = await safeResponseJson(res)
-        const json = parsed.data
+        const parsed = await safeFetchJson<Record<string, unknown>>(
+          `/api/approvals/${encodeURIComponent(approvalId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, note, operation_id: operationId }),
+            cache: 'no-store',
+          },
+        )
 
-        if (!parsed.ok || !res.ok || json.ok === false) {
-          const err = String(json.message || json.error || 'Approval action failed')
-          const code = String(json.code || '')
-          const rolledBack = Boolean(json.rolledBack) || parsed.parseError || res.status >= 500
+        if (!parsed.ok) {
+          const err = parsed.error.message
+          const code = parsed.error.code
+          const rolledBack = Boolean(parsed.rolledBack) || parsed.parseError || parsed.status >= 500
           setRowState(approvalId, {
             state: rolledBack ? 'rolled_back' : 'failed',
             action,
@@ -182,9 +182,10 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           })
           toast.error(err, { id: toastId })
           window.setTimeout(() => clearRowState(approvalId), 8_000)
-          return { ok: false, error: err, rolledBack: Boolean(json.rolledBack) }
+          return { ok: false, error: err, rolledBack: parsed.rolledBack }
         }
 
+        const json = parsed.data
         removePendingApprovalOp(approvalId)
         setRowState(approvalId, {
           state: 'committed',

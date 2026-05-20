@@ -1,85 +1,74 @@
-# Alma ERP — mandatory pre-deploy regression checklist
+# Alma ERP — Pre-Deploy Regression Checklist
 
-**Rule:** No production deploy until every section below is checked for the release scope. A feature fix is incomplete if another workflow regresses.
+Run before every production deployment. **Do not deploy** if any critical item fails.
 
-Last updated: 2026-05-20
+## Automated gate
 
-## 1. Build & types
+```bash
+npm run type-check
+npm run build
+npm run db:migrate:deploy   # production DB only
+REGRESSION_BASE_URL=https://alma-erp-six.vercel.app \
+REGRESSION_COOKIE='next-auth.session-token=…' \
+node scripts/regression-smoke.mjs
+```
 
-- [ ] `npx tsc --noEmit` passes
-- [ ] Production build succeeds (`npm run build` or Vercel preview)
-- [ ] No new secrets committed
+## Attendance
 
-## 2. Global shell (always required)
+- [ ] Admin dashboard loads (`/attendance`) — no “Could not load attendance records”
+- [ ] Super Admin “all businesses” scope shows data
+- [ ] My Desk employee scope (`scope=me`) loads or shows needs-employee-link
+- [ ] Check-in / check-out completes
+- [ ] Face verification request does not block check-in
+- [ ] Archive visibility `active` / `archived` does not 500 the list API
+- [ ] Absent monitor does not false-alert after check-in
 
-- [ ] **Watermark** — “Developed by Maruf” visible on desktop and mobile (above bottom nav, not clipped)
-- [ ] **Mobile bottom nav** — tabs work; no overlap hiding primary actions
-- [ ] **Page header actions** — Orders (and other `PageHeader` pages): Alerts + primary buttons do not overlap at 1280px / 1440px desktop widths
-- [ ] **Sidebar / business switcher** — loads; switching business does not blank the shell
-- [ ] **Login / logout** — session gate; no infinite loading overlay
-- [ ] **Notifications panel** — opens from bell; closes without trapping scroll
-- [ ] **Pull-to-refresh** (mobile) — does not break scroll on dashboard pages
+## Approvals
 
-## 3. Attendance
+- [ ] Pending list loads (`/approvals`)
+- [ ] Approve wallet advance — button disabled while processing; survives refresh
+- [ ] Reject with note ≥ 5 chars
+- [ ] “Pending approval not found” only when row already processed (refresh fixes)
+- [ ] No `Unexpected end of JSON input` in browser console
+- [ ] Integrity scan loads (Super Admin)
 
-- [ ] Employee face check-in succeeds (portal, correct business context)
-- [ ] Admin attendance dashboard shows present/late counts for active business
-- [ ] **No false Telegram absent alert** after check-in (wait through one cron window or verify logs)
-- [ ] **Workflow lifecycle Telegram** — submit → approve → reject a wallet or salary advance request; owner receives all three messages
-- [ ] Face verification CTA appears when admin requests verification
+## Telegram
 
-## 4. Approvals
+- [ ] Queue enqueue does not block approval/attendance API latency
+- [ ] Cron `/api/cron/telegram-notifications` processes pending rows
+- [ ] Failed delivery retries; core ERP unaffected on Telegram outage
 
-- [ ] Pending list loads
-- [ ] Approve shows processing state (banner, row lock, toast) until committed/failed
-- [ ] Reject requires note; cannot double-submit
-- [ ] Wallet / penalty approve does not hang without feedback
+## Archive
 
-## 5. Telegram Ops
+- [ ] Archive Control modules list loads (fail-soft if schema missing)
+- [ ] Active records visible by default
+- [ ] Archived filter returns only archived (or empty if schema not migrated)
 
-- [ ] Check-in alert delivers (face photo or fallback)
-- [ ] Queue health endpoint or settings page shows no stuck `SENDING` rows
-- [ ] Absent alert only for genuinely absent employees (see `attendance.false_positive_blocked` logs)
+## Payroll / wallet
 
-## 6. Payroll & wallet
+- [ ] Advance request creates pending approval
+- [ ] Withdrawal request creates pending approval
+- [ ] Penalty appeal review path works
 
-- [ ] Employee wallet balance loads
-- [ ] Withdrawal/advance request creates pending row
-- [ ] Super admin can approve from Approvals without transaction timeout
+## Task spotlight
 
-## 7. Profile & avatars
+- [ ] Assignment visible on portal
+- [ ] Completion updates state
+- [ ] Archived tasks hidden in active view
 
-- [ ] `EmployeeAvatar` loads image or initials on Approvals, Attendance, Portal
-- [ ] Profile photo upload does not break attendance fetch
+## Observability (production logs)
 
-## 8. Trading (if release touches trading)
+Confirm structured events appear when failures occur:
 
-- [ ] Screenshot upload + Telegram notify
-- [ ] Trading dashboard loads accounts
+- `attendance.api.failed`
+- `approval.transaction.failed` / `approval.api.failed`
+- `telegram.queue.failed`
+- `archive.filter.failed`
+- `safeFetchJson.parse.failed` (client dev console)
 
-## 9. Real devices
+## Post-deploy smoke
 
-- [ ] Android Chrome — watermark + bottom nav + one check-in flow
-- [ ] iPhone Safari — same
-- [ ] Desktop Chrome — watermark bottom-right, modals above watermark
-
-## 10. Logs (production, after deploy)
-
-- [ ] No spike in `approval.action.failed` or `attendance.check_in.failed`
-- [ ] `platform.watermark.missing` absent in logs after navigation
-
----
-
-## Scope notes
-
-When changing **shared** files, re-run sections 2–3 and any module that imports the changed file:
-
-| Shared surface | Typical dependents |
-|----------------|------------------|
-| `src/app/layout.tsx`, `AppProviders.tsx` | Entire app |
-| `MobileNavChrome`, `Sidebar` | All authenticated routes |
-| `EmployeeAvatar`, `profile-resolution` | HR, attendance, approvals, portal |
-| `telegram-notification/*` | Attendance, trading, payroll |
-| `prisma.ts`, `prisma-transaction.ts` | Approvals, wallet, penalties |
-
-Record deploy verifier name, commit SHA, and date in your release notes.
+1. Hit `/api/health` on production URL
+2. Load attendance + approvals as Super Admin
+3. Process one Telegram queue batch (cron or admin)
+4. Verify one pending approval end-to-end

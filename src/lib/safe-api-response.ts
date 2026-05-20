@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server'
 import { logEvent } from '@/lib/logger'
 
+export type ApiErrorShape = {
+  code: string
+  message: string
+}
+
 export type ApiJsonFailure = {
   ok: false
-  error: string
-  message: string
+  error: ApiErrorShape
+  /** @deprecated legacy flat fields — prefer error.code / error.message */
   code?: string
+  message?: string
   rolledBack?: boolean
+  retryable?: boolean
 }
 
 export type ApiJsonSuccess<T extends Record<string, unknown> = Record<string, unknown>> = {
@@ -39,39 +46,33 @@ export async function safeResponseJson<T = Record<string, unknown>>(
   try {
     text = await response.text()
   } catch {
-    logClientRecoverable('approval.response.invalid', { status, reason: 'body_unreadable' })
+    logClientRecoverable('safeFetchJson.parse.failed', { status, reason: 'body_unreadable' })
     return {
       ok: false,
       status,
       parseError: true,
-      data: {
-        ok: false,
-        error: 'response_body_unreadable',
-        message: 'Server response could not be read. Try again.',
-      },
+      data: failurePayload('response_body_unreadable', 'Server response could not be read. Try again.'),
     }
   }
 
   if (!text.trim()) {
-    logClientRecoverable('approval.response.invalid', { status, reason: 'empty_body' })
+    logClientRecoverable('safeFetchJson.parse.failed', { status, reason: 'empty_body' })
     return {
       ok: false,
       status,
       parseError: true,
-      data: {
-        ok: false,
-        error: 'empty_response',
-        message:
-          status >= 500
-            ? 'Server timed out or returned an empty response. Your action may not have completed — refresh and check status.'
-            : 'Empty response from server. Refresh and try again.',
-        rolledBack: status >= 500,
-      },
+      data: failurePayload(
+        'empty_response',
+        status >= 500
+          ? 'Server timed out or returned an empty response. Refresh and check status.'
+          : 'Empty response from server. Refresh and try again.',
+        status >= 500,
+      ),
     }
   }
 
   if (HTML_PREFIX.test(text)) {
-    logClientRecoverable('approval.response.invalid', {
+    logClientRecoverable('safeFetchJson.parse.failed', {
       status,
       reason: 'html_body',
       rawSnippet: snippet(text),
@@ -81,12 +82,11 @@ export async function safeResponseJson<T = Record<string, unknown>>(
       status,
       parseError: true,
       rawSnippet: snippet(text),
-      data: {
-        ok: false,
-        error: 'non_json_response',
-        message: 'Server returned an error page instead of JSON. Try again in a moment.',
-        rolledBack: true,
-      },
+      data: failurePayload(
+        'non_json_response',
+        'Server returned an error page instead of JSON. Try again in a moment.',
+        true,
+      ),
     }
   }
 
@@ -94,7 +94,7 @@ export async function safeResponseJson<T = Record<string, unknown>>(
     const data = JSON.parse(text) as T
     return { ok: true, data, status, parseError: false }
   } catch {
-    logClientRecoverable('approval.response.invalid', {
+    logClientRecoverable('safeFetchJson.parse.failed', {
       status,
       reason: 'invalid_json',
       rawSnippet: snippet(text),
@@ -104,13 +104,45 @@ export async function safeResponseJson<T = Record<string, unknown>>(
       status,
       parseError: true,
       rawSnippet: snippet(text),
-      data: {
-        ok: false,
-        error: 'invalid_json',
-        message: 'Invalid JSON from server. Refresh approvals and retry.',
-        rolledBack: status >= 500,
-      },
+      data: failurePayload(
+        'invalid_json',
+        'Invalid JSON from server. Refresh and retry.',
+        status >= 500,
+      ),
     }
+  }
+}
+
+function failurePayload(code: string, message: string, rolledBack = false): Partial<ApiJsonFailure> & Record<string, unknown> {
+  return {
+    ok: false as const,
+    error: { code, message },
+    code,
+    message,
+    ...(rolledBack ? { rolledBack: true, retryable: true } : {}),
+  }
+}
+
+/** Unwrap { ok, data } envelope or legacy flat JSON. */
+export function unwrapApiData<T>(body: Record<string, unknown>): T {
+  if (body.ok === true && body.data != null && typeof body.data === 'object') {
+    return body.data as T
+  }
+  return body as T
+}
+
+export function readApiError(body: Record<string, unknown>): ApiErrorShape {
+  const nested = body.error
+  if (nested && typeof nested === 'object' && 'message' in nested) {
+    const e = nested as ApiErrorShape
+    return {
+      code: e.code || String(body.code || 'request_failed'),
+      message: e.message || String(body.message || 'Request failed'),
+    }
+  }
+  return {
+    code: String(body.code || body.error || 'request_failed'),
+    message: String(body.message || body.error || 'Request failed'),
   }
 }
 
@@ -124,29 +156,37 @@ export function apiSuccess<T extends Record<string, unknown>>(
   })
 }
 
+export function apiDataSuccess<T extends Record<string, unknown>>(
+  data: T,
+  init?: { status?: number; headers?: HeadersInit },
+) {
+  return apiSuccess({ data }, init)
+}
+
 export function apiFailure(
-  error: string,
+  code: string,
   message: string,
-  init?: { status?: number; code?: string; rolledBack?: boolean; extra?: Record<string, unknown> },
+  init?: { status?: number; rolledBack?: boolean; extra?: Record<string, unknown> },
 ) {
   const status = init?.status ?? 400
-  logEvent(status >= 500 ? 'error' : 'warn', 'approval.api.failed', {
-    error,
+  const event =
+    code.includes('attendance') ? 'attendance.api.failed'
+    : code.includes('approval') || code.includes('wallet') ? 'approval.api.failed'
+    : code.includes('archive') ? 'archive.filter.failed'
+    : code.includes('telegram') ? 'telegram.queue.failed'
+    : 'approval.api.failed'
+
+  logEvent(status >= 500 ? 'error' : 'warn', event, { code, message, status })
+
+  const body: ApiJsonFailure = {
+    ok: false,
+    error: { code, message },
+    code,
     message,
-    code: init?.code,
-    status,
-  })
-  return NextResponse.json(
-    {
-      ok: false,
-      error,
-      message,
-      ...(init?.code ? { code: init.code } : {}),
-      ...(init?.rolledBack ? { rolledBack: true } : {}),
-      ...init?.extra,
-    } satisfies ApiJsonFailure,
-    { status },
-  )
+    ...(init?.rolledBack ? { rolledBack: true, retryable: true } : {}),
+    ...init?.extra,
+  }
+  return NextResponse.json(body, { status })
 }
 
 export function classifyApprovalTxError(err: unknown): {
@@ -156,6 +196,7 @@ export function classifyApprovalTxError(err: unknown): {
 } {
   const msg = (err as Error).message || String(err)
   if (msg.includes('Unable to start a transaction') || msg.includes('pool')) {
+    logEvent('error', 'approval.transaction.failed', { message: msg })
     return {
       error: 'approval_transaction_pool_wait',
       message: 'Database is busy. Wait a few seconds and retry.',
@@ -167,6 +208,7 @@ export function classifyApprovalTxError(err: unknown): {
     || msg.includes('Transaction already closed')
     || msg.includes('expired transaction')
   ) {
+    logEvent('error', 'approval.transaction.failed', { message: msg })
     return {
       error: 'approval_transaction_timeout',
       message: 'Approval timed out before completing. Refresh — no change was committed if the row is still pending.',
@@ -188,7 +230,9 @@ export function classifyApprovalTxError(err: unknown): {
 }
 
 function logClientRecoverable(event: string, meta: Record<string, unknown>) {
-  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-    console.warn(JSON.stringify({ event, ...meta }))
+  if (typeof window !== 'undefined') {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(JSON.stringify({ event, ...meta }))
+    }
   }
 }

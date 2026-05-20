@@ -11,8 +11,29 @@ import { Card, Button, Skeleton, Empty } from '@/components/ui'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeFetchJson } from '@/lib/safe-fetch'
+import { unwrapApiData } from '@/lib/safe-api-response'
+
+type EmployeeAttendanceResponse = {
+  records: Array<{
+    id: string
+    attendanceDate: string
+    checkInAt: string
+    checkOutAt: string | null
+    totalWorkMinutes: number
+    lateMinutes: number
+    penaltyAmount: number
+  }>
+  summary: {
+    presentDays: number
+    lateCount: number
+    totalPenalties: number
+    waivedPenalties: number
+    averageWorkMinutes: number
+  }
+}
 
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -26,6 +47,8 @@ export default function EmployeeDetailPage() {
   const [openPay, setOpenPay] = useState(false)
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
+  const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
+  const [attendanceLoading, setAttendanceLoading] = useState(true)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
   const transactions = txs?.transactions ?? []
@@ -47,20 +70,47 @@ export default function EmployeeDetailPage() {
         }
       : null
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
+  const loadWallet = useCallback(async (signal?: { cancelled: boolean }) => {
       setWalletLoading(true)
       try {
         const res = await fetch(`/api/payroll/wallet/${encodeURIComponent(decoded)}?business_id=${business.id}`, { cache: 'no-store' })
         const j = await res.json().catch(() => ({}))
-        if (!cancelled) setWallet(res.ok ? (j as EmployeeWalletResponse) : null)
+        if (!signal?.cancelled) setWallet(res.ok ? (j as EmployeeWalletResponse) : null)
       } finally {
-        if (!cancelled) setWalletLoading(false)
+        if (!signal?.cancelled) setWalletLoading(false)
       }
-    })()
-    return () => { cancelled = true }
   }, [business.id, decoded])
+
+  useEffect(() => {
+    const signal = { cancelled: false }
+    void loadWallet(signal)
+    return () => { signal.cancelled = true }
+  }, [loadWallet])
+
+  const loadAttendance = useCallback(async (signal?: { cancelled: boolean }) => {
+    setAttendanceLoading(true)
+    try {
+      const result = await safeFetchJson<EmployeeAttendanceResponse>(
+        `/api/attendance?business_id=${business.id}&employee_id=${encodeURIComponent(decoded)}`,
+        { cache: 'no-store' },
+      )
+      if (!signal?.cancelled) {
+        setAttendance(
+          result.ok
+            ? unwrapApiData<EmployeeAttendanceResponse>(result.data as Record<string, unknown>)
+            : null,
+        )
+      }
+    } finally {
+      if (!signal?.cancelled) setAttendanceLoading(false)
+    }
+  }, [business.id, decoded])
+
+  useEffect(() => {
+    const signal = { cancelled: false }
+    void loadAttendance(signal)
+    return () => { signal.cancelled = true }
+  }, [loadAttendance])
 
   async function submitPay(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -83,6 +133,7 @@ export default function EmployeeDetailPage() {
       toast.success('Payroll logged')
       setOpenPay(false)
       refetch()
+      void loadWallet()
       e.currentTarget.reset()
     }
   }
@@ -136,6 +187,53 @@ export default function EmployeeDetailPage() {
       </div>
 
       <Card className="p-5 mb-4 border-gold-dim/25">
+        <p className="text-sm font-bold text-cream mb-3">Attendance summary</p>
+        {attendanceLoading ? <Skeleton className="h-36" /> : !attendance ? (
+          <p className="text-xs text-zinc-500">No attendance data available for this employee/business.</p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <MiniStat label="Present days" valueLabel={`${attendance.summary.presentDays} days`} />
+              <MiniStat label="Late days" valueLabel={`${attendance.summary.lateCount} days`} color="text-amber-300" />
+              <MiniStat label="Penalties" value={attendance.summary.totalPenalties} color="text-red-400" />
+              <MiniStat label="Waived" value={attendance.summary.waivedPenalties} color="text-green-400" />
+              <MiniStat label="Avg duration" valueLabel={durationLabel(attendance.summary.averageWorkMinutes)} />
+            </div>
+            {!attendance.records.length ? (
+              <p className="text-xs text-zinc-500">No attendance records this month.</p>
+            ) : (
+              <div className="table-scroll max-h-72 text-[11px]">
+                <table className="w-full min-w-[720px]">
+                  <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                    <tr>
+                      <th className="py-2 pr-3 text-left">Date</th>
+                      <th className="py-2 pr-3 text-left">Check in</th>
+                      <th className="py-2 pr-3 text-left">Check out</th>
+                      <th className="py-2 pr-3 text-right">Worked</th>
+                      <th className="py-2 pr-3 text-right">Late</th>
+                      <th className="py-2 text-right">Penalty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendance.records.map(row => (
+                      <tr key={row.id} className="border-b border-border/60">
+                        <td className="py-2 pr-3 font-mono">{row.attendanceDate.slice(0, 10)}</td>
+                        <td className="py-2 pr-3 font-mono">{timeLabel(row.checkInAt)}</td>
+                        <td className="py-2 pr-3 font-mono">{row.checkOutAt ? timeLabel(row.checkOutAt) : '—'}</td>
+                        <td className="py-2 pr-3 text-right font-mono">{durationLabel(row.totalWorkMinutes)}</td>
+                        <td className={`py-2 pr-3 text-right font-mono ${row.lateMinutes ? 'text-red-400' : 'text-green-400'}`}>{durationLabel(row.lateMinutes)}</td>
+                        <td className="py-2 text-right font-mono text-red-400">৳ {row.penaltyAmount.toLocaleString('en-BD')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5 mb-4 border-gold-dim/25">
         <p className="text-sm font-bold text-cream mb-3">Postgres wallet ledger</p>
         {walletLoading ? <Skeleton className="h-44" /> : !wallet ? (
           <p className="text-xs text-zinc-500">No wallet data available for this employee/business.</p>
@@ -150,8 +248,8 @@ export default function EmployeeDetailPage() {
             {!wallet.entries.length ? (
               <p className="text-xs text-zinc-500">No ledger entries yet. Run monthly accrual from Payroll.</p>
             ) : (
-              <div className="overflow-x-auto max-h-80 overflow-y-auto text-[11px]">
-                <table className="w-full">
+              <div className="table-scroll max-h-80 text-[11px]">
+                <table className="w-full min-w-[760px]">
                   <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                     <tr>
                       <th className="py-2 pr-3 text-left">Date</th>
@@ -184,8 +282,8 @@ export default function EmployeeDetailPage() {
         {loading ? <Skeleton className="h-44" /> : transactions.length === 0 ? (
           <p className="text-xs text-zinc-500">No transactions logged yet.</p>
         ) : (
-          <div className="overflow-x-auto max-h-96 overflow-y-auto text-[11px]">
-            <table className="w-full">
+          <div className="table-scroll max-h-96 text-[11px]">
+            <table className="w-full min-w-[760px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 pr-3 text-left">Date</th>
@@ -255,11 +353,22 @@ export default function EmployeeDetailPage() {
   )
 }
 
-function MiniStat({ label, value, color = 'text-cream' }: { label: string; value: number; color?: string }) {
+function MiniStat({ label, value = 0, valueLabel, color = 'text-cream' }: { label: string; value?: number; valueLabel?: string; color?: string }) {
   return (
     <div className="rounded-2xl border border-border bg-black/20 p-3">
       <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-600">{label}</p>
-      <p className={`mt-1 font-mono text-sm font-bold ${color}`}>৳ {Number(value || 0).toLocaleString('en-BD')}</p>
+      <p className={`mt-1 font-mono text-sm font-bold ${color}`}>{valueLabel ?? `৳ ${Number(value || 0).toLocaleString('en-BD')}`}</p>
     </div>
   )
+}
+
+function durationLabel(minutes: number) {
+  const h = Math.floor(Number(minutes || 0) / 60)
+  const m = Number(minutes || 0) % 60
+  if (!h) return `${m}m`
+  return `${h}h ${m}m`
+}
+
+function timeLabel(value: string) {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }

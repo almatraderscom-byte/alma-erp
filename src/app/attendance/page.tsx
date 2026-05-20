@@ -10,6 +10,8 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
+import { safeFetchJson } from '@/lib/safe-fetch'
+import { unwrapApiData } from '@/lib/safe-api-response'
 
 type AttendanceDashboard = {
   businessId?: string
@@ -124,10 +126,12 @@ export default function AttendancePage() {
     setLoading(true)
     try {
       const bizParam = viewAllBusinesses && role === 'SUPER_ADMIN' ? 'ALL' : business.id
-      const res = await fetch(`/api/attendance?business_id=${encodeURIComponent(bizParam)}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || res.statusText)
-      setData(j as AttendanceDashboard)
+      const result = await safeFetchJson<AttendanceDashboard>(
+        `/api/attendance?business_id=${encodeURIComponent(bizParam)}`,
+        { cache: 'no-store' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      setData(unwrapApiData<AttendanceDashboard>(result.data as Record<string, unknown>))
     } catch (e) {
       toast.error((e as Error).message || 'Could not load attendance')
       setData(null)
