@@ -12,7 +12,13 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname.startsWith('/invoice/share')) return true
   if (pathname.startsWith('/api/auth')) return true
   if (pathname.startsWith('/api/cron/')) return true
+  if (pathname === '/api/sms/process' || pathname === '/api/sms/trading-daily-summary') return true
+  if (pathname === '/api/trading/screenshots/cleanup') return true
+  if (pathname === '/api/trading/balance-reconcile') return true
+  if (pathname === '/api/trading/screenshot-compliance') return true
   if (pathname.startsWith('/api/invoice/public')) return true
+  if (pathname === '/api/telegram/webhook') return true
+  if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/test-email') return process.env.NODE_ENV !== 'production'
   return false
@@ -23,11 +29,20 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
   if (role === 'VIEWER' && isWrite) return true
 
   if (pathname.startsWith('/api/audit')) return role !== 'SUPER_ADMIN'
+  if (pathname.startsWith('/api/approvals')) return false
+  if (pathname === '/api/users/me' || pathname === '/api/users/me/password') return false
+  if (pathname === '/api/users/me/profile-image') return false
+  if (/^\/api\/users\/[^/]+\/profile-image$/.test(pathname)) {
+    if (!isWrite) return false
+    return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  }
   if (pathname.startsWith('/api/users')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (pathname.startsWith('/api/settings/database-status')) return !['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role)
   if (pathname.startsWith('/api/notifications/broadcast') || pathname.startsWith('/api/notifications/stats') || pathname.startsWith('/api/notifications/reminders')) {
     return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   }
+  if (pathname.startsWith('/api/sms')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  if (pathname.startsWith('/api/settings/telegram-ops')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (pathname.startsWith('/api/payroll/wallet/automation') || pathname.startsWith('/api/payroll/wallet/accruals') || pathname.startsWith('/api/payroll/wallet/migrate') || pathname.startsWith('/api/payroll/wallet/reports')) {
     return !['SUPER_ADMIN', 'HR'].includes(role)
   }
@@ -91,7 +106,7 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/')) {
     const role = normalizeAlmaRole(token.role as string)
     const requestedBusiness = req.nextUrl.searchParams.get('business_id')
-    if (requestedBusiness && !businessAllowed(token.businessAccess as string, requestedBusiness)) {
+    if (requestedBusiness && role !== 'SUPER_ADMIN' && !businessAllowed(token.businessAccess as string, requestedBusiness)) {
       return NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 })
     }
     if (apiRoleDenied(pathname, req.method, role)) {
@@ -101,7 +116,11 @@ export async function middleware(req: NextRequest) {
 
   if (!pathname.startsWith('/api/')) {
     const role = normalizeAlmaRole(token.role as string)
-    const businessId: BusinessId = pathname.startsWith('/digital') ? 'CREATIVE_DIGITAL_IT' : 'ALMA_LIFESTYLE'
+    const businessId: BusinessId = pathname.startsWith('/trading')
+      ? 'ALMA_TRADING'
+      : pathname.startsWith('/digital')
+        ? 'CREATIVE_DIGITAL_IT'
+        : 'ALMA_LIFESTYLE'
     if (!isPathAllowedForRole(pathname, role, businessId)) {
       const url = req.nextUrl.clone()
       url.pathname = roleHomePath(role, businessId)
@@ -115,6 +134,6 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|fonts/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|OneSignalSDKWorker.js|OneSignalSDKUpdaterWorker.js|offline.html|fonts/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],
 }

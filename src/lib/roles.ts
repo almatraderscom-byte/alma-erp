@@ -26,8 +26,16 @@ export function normalizeAlmaRole(raw: string | null | undefined): AlmaRole {
   return 'VIEWER'
 }
 
+export function isSystemOwner(subject: unknown): boolean {
+  const role = typeof subject === 'string'
+    ? subject
+    : (subject as { user?: { role?: string | null }; role?: string | null } | null | undefined)?.user?.role
+      ?? (subject as { role?: string | null } | null | undefined)?.role
+  return normalizeAlmaRole(role) === 'SUPER_ADMIN'
+}
+
 export function roleHomePath(role: AlmaRole, businessId: BusinessId): string {
-  if (role === 'HR') return '/employees'
+  if (role === 'HR') return businessId === 'ALMA_TRADING' ? '/trading/hr' : '/employees'
   if (role === 'VIEWER') return BUSINESSES[businessId].homePath
   return BUSINESSES[businessId].homePath
 }
@@ -55,6 +63,16 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
     return role === 'SUPER_ADMIN' || role === 'ADMIN'
   }
 
+  if (pathname.startsWith('/trading/target-control')) {
+    return role === 'SUPER_ADMIN' || role === 'ADMIN'
+  }
+
+  if (pathname.startsWith('/trading/telegram')) {
+    if (role === 'SUPER_ADMIN' || role === 'ADMIN') return true
+    if (role === 'STAFF' && businessId === 'ALMA_TRADING') return true
+    return false
+  }
+
   if (role === 'SUPER_ADMIN') return true
 
   if (pathname.startsWith('/settings/users')) {
@@ -75,11 +93,19 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
   }
 
   if (role === 'HR') {
-    const hrRoots = ['/finance', '/expenses', '/employees', '/payroll', '/portal']
+    if (businessId === 'ALMA_TRADING') {
+      const hrRoots = ['/trading/hr', '/attendance', '/payroll', '/portal']
+      return hrRoots.some(r => pathname === r || pathname.startsWith(`${r}/`))
+    }
+    const hrRoots = ['/finance', '/expenses', '/employees', '/attendance', '/payroll', '/portal']
     return hrRoots.some(r => pathname === r || pathname.startsWith(`${r}/`))
   }
 
   if (role === 'STAFF') {
+    if (businessId === 'ALMA_TRADING') {
+      const ok = ['/trading', '/portal']
+      return ok.some(r => pathname === r || pathname.startsWith(`${r}/`))
+    }
     if (businessId === 'ALMA_LIFESTYLE') {
       const ok = ['/', '/orders', '/invoice', '/portal']
       return ok.some(r => pathname === r || pathname.startsWith(`${r}/`))
@@ -91,8 +117,32 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
   return false
 }
 
+const TRADING_STAFF_NAV_HIDE = new Set([
+  '/trading/target-control',
+  '/trading/analytics',
+  '/trading/hr',
+  '/approvals',
+  '/attendance',
+  '/settings/database',
+  '/settings/users',
+  '/settings/notifications',
+  '/settings/sms',
+  '/audit',
+  '/settings/branding',
+])
+
 export function filterNavByRole(items: NavItem[], role: AlmaRole, businessId: BusinessId): NavItem[] {
-  return items.filter(item => isPathAllowedForRole(item.href, role, businessId))
+  return items.filter(item => {
+    if (!isPathAllowedForRole(item.href, role, businessId)) return false
+    if (businessId === 'ALMA_TRADING' && item.href === '/trading/target-control' && role !== 'SUPER_ADMIN') {
+      return false
+    }
+    if (businessId === 'ALMA_TRADING' && role === 'STAFF') {
+      if (TRADING_STAFF_NAV_HIDE.has(item.href)) return false
+      if (item.href.startsWith('/trading/analytics')) return false
+    }
+    return true
+  })
 }
 
 /** Fine-grained UI gates — server APIs enforce separately. */

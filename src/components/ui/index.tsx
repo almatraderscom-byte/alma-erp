@@ -1,11 +1,13 @@
 'use client'
 import { motion } from 'framer-motion'
-import { BDT_SYMBOL } from '@/lib/currency'
+import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { BdtText, Money } from '@/components/ui/Currency'
+import { ResponsiveKpiValue, type KpiValueKind } from '@/components/ui/ResponsiveKpiValue'
 import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
 
 export { Money, BdtText } from '@/components/ui/Currency'
+export { SearchableSelect, type SearchableSelectOption } from '@/components/ui/SearchableSelect'
 import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS } from '@/lib/utils'
 
 // ── Skeleton ─────────────────────────────────────────────────────────────
@@ -16,37 +18,77 @@ export function Skeleton({ className }: { className?: string }) {
 // ── Card ─────────────────────────────────────────────────────────────────
 export function Card({ children, className, gold }: { children: React.ReactNode; className?: string; gold?: boolean }) {
   return (
-    <div className={cn('bg-card rounded-2xl border', gold ? 'border-gold-dim/50' : 'border-border', className)}>
+    <div className={cn('min-w-0 bg-card rounded-2xl border', gold ? 'border-gold-dim/50' : 'border-border', className)}>
       {children}
     </div>
   )
 }
 
+/** Auto-fit KPI row: ~5 on desktop, 2–3 on tablet, 1–2 on mobile. */
+export const KPI_AUTO_GRID =
+  'grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,9.75rem),1fr))]'
+
 // ── KPI Card ──────────────────────────────────────────────────────────────
-export function KpiCard({ label, value, sub, delta, color, loading }: {
-  label: string; value: string | number; sub?: string; delta?: number; color?: string; loading?: boolean
+export function KpiCard({ label, value, sub, delta, color, loading, valueKind }: {
+  label: string
+  value: string | number
+  sub?: string
+  delta?: number
+  color?: string
+  loading?: boolean
+  /** Responsive compact/full formatting for numeric KPI values. */
+  valueKind?: KpiValueKind | 'plain'
 }) {
+  const valueColor = color ?? 'text-cream'
+
   return (
-    <Card className="p-5">
+    <Card className="kpi-card min-w-0 p-3.5 sm:p-4 md:p-5">
       {loading ? (
-        <><Skeleton className="h-3 w-20 mb-4" /><Skeleton className="h-8 w-24 mb-2" /><Skeleton className="h-3 w-28" /></>
+        <><Skeleton className="mb-3 h-3 w-20" /><Skeleton className="mb-2 h-8 w-24" /><Skeleton className="h-3 w-28" /></>
       ) : (
-        <>
-          <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-2">{label}</p>
-          {typeof value === 'number' ? (
-            <Money amount={value} className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')} />
-          ) : typeof value === 'string' && value.includes(BDT_SYMBOL) ? (
-            <BdtText value={value} className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')} />
-          ) : (
-            <p className={cn('text-2xl font-bold tracking-tight', color ?? 'text-cream')}>{value}</p>
-          )}
-          {sub && <p className="text-[11px] text-zinc-500 mt-1">{sub}</p>}
+        <div className="flex min-w-0 flex-col gap-1">
+          <p className="text-[10px] font-bold uppercase leading-snug tracking-[0.1em] text-muted line-clamp-2">
+            {label}
+          </p>
+          <div className="min-w-0">
+            {typeof value === 'number' ? (
+              valueKind === 'plain' ? (
+                <p className={cn('min-w-0 max-w-full font-bold tabular-nums leading-tight tracking-tight text-[clamp(0.8125rem,0.55rem+1.1vw,1.375rem)]', valueColor)}>
+                  {fmtNum(value)}
+                </p>
+              ) : (
+                <ResponsiveKpiValue
+                  amount={value}
+                  kind={valueKind === 'number' ? 'number' : valueKind === 'usdt' ? 'usdt' : 'currency'}
+                  className={valueColor}
+                />
+              )
+            ) : typeof value === 'string' && value.includes(BDT_SYMBOL) ? (
+              <BdtText
+                value={value}
+                className={cn(
+                  'block min-w-0 max-w-full font-bold tabular-nums leading-tight tracking-tight break-words text-[clamp(0.8125rem,0.55rem+1.1vw,1.375rem)]',
+                  valueColor,
+                )}
+              />
+            ) : (
+              <p
+                className={cn(
+                  'min-w-0 max-w-full font-bold tabular-nums leading-tight tracking-tight break-words text-[clamp(0.8125rem,0.55rem+1.1vw,1.375rem)]',
+                  valueColor,
+                )}
+              >
+                {value}
+              </p>
+            )}
+          </div>
+          {sub && <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">{sub}</p>}
           {delta !== undefined && (
-            <p className={cn('text-[11px] font-semibold mt-1.5', delta > 0 ? 'text-green-400' : 'text-red-400')}>
+            <p className={cn('text-[11px] font-semibold', delta > 0 ? 'text-green-400' : 'text-red-400')}>
               {delta > 0 ? '▲' : '▼'} {Math.abs(delta)}% vs last month
             </p>
           )}
-        </>
+        </div>
       )}
     </Card>
   )
@@ -108,14 +150,14 @@ export function GoldDivider({ className }: { className?: string }) {
 // ── Page Header ───────────────────────────────────────────────────────────
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-30 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex items-center justify-between gap-3">
+    <div className="sticky top-0 z-30 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div className="min-w-0 flex-1">
         <h1 className="text-base md:text-lg font-bold text-cream tracking-tight truncate">{title}</h1>
         {subtitle != null && subtitle !== '' && (
           <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{subtitle}</p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+      {actions && <div className="flex w-full sm:w-auto min-w-0 flex-wrap items-center justify-start sm:justify-end gap-2">{actions}</div>}
     </div>
   )
 }
