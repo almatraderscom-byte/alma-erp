@@ -18,9 +18,12 @@ export async function getWalletContext(req: NextRequest, requestedBusinessId?: s
     return { error: NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 }) }
   }
   const tokenEmployeeId = String(token.employeeIdGas || '').trim()
-  // Always resolve desk profile for staff — trading employees often store HR id only on TradingEmployeeProfile.
-  const profile = !systemOwner ? await resolveMyDeskProfile(token.sub, businessIds[0]) : null
-  const employeeId = systemOwner ? '' : (tokenEmployeeId || String(profile?.employeeIdGas || '').trim())
+  let employeeId = systemOwner ? '' : tokenEmployeeId
+  // Only hit DB when JWT lacks employee id (trading staff often store HR id on TradingEmployeeProfile).
+  if (!systemOwner && !employeeId) {
+    const profile = await resolveMyDeskProfile(token.sub, businessIds[0])
+    employeeId = String(profile?.employeeIdGas || '').trim()
+  }
 
   return {
     token,

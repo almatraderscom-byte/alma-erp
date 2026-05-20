@@ -28,10 +28,13 @@ import {
   notifyFaceVerifiedCheckIn,
   stageLiveFacePhotoForTelegram,
 } from '@/lib/telegram-notification/face-checkin-notify'
+import { errorMeta, logEvent } from '@/lib/logger'
 
+export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
+  const started = Date.now()
   try {
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
@@ -145,6 +148,13 @@ export async function POST(req: NextRequest) {
       clearLiveFacePhotoForTelegram(record.id)
     }
 
+    logEvent('info', 'attendance.check_in.ok', {
+      userId: ctx.userId,
+      employeeId: ctx.employeeId,
+      businessId: ctx.businessIds[0],
+      attendanceRecordId: record.id,
+      durationMs: Date.now() - started,
+    })
     return NextResponse.json({ ok: true, record: attendanceRecordDto(record) })
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -167,7 +177,7 @@ export async function POST(req: NextRequest) {
     throw e
   }
   } catch (e) {
-    console.error('[attendance-check-in]', (e as Error).message)
+    logEvent('error', 'attendance.check_in.failed', { ...errorMeta(e), durationMs: Date.now() - started })
     const msg = (e as Error).message || ''
     if (msg.includes('faceVerified') || msg.includes('faceThumbDataUrl') || msg.includes('does not exist')) {
       return NextResponse.json(

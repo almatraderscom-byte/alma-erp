@@ -14,6 +14,11 @@ import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
+import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
+import { useMyAttendance } from '@/hooks/useMyAttendance'
+import { attendanceErrorLabel } from '@/lib/attendance-client'
+import type { MyAttendancePayload } from '@/lib/attendance-client'
+import type { AttendanceClientError } from '@/lib/attendance-errors'
 
 type MeUser = {
   id: string
@@ -68,36 +73,23 @@ type AttendanceWaiverDto = {
   createdAt: string
 }
 
-type MyAttendanceResponse = {
-  today: AttendanceRecordDto | null
-  records: AttendanceRecordDto[]
-  waivers: AttendanceWaiverDto[]
-  summary: {
-    presentDays: number
-    lateCount: number
-    totalPenalties: number
-    waivedPenalties: number
-    averageWorkMinutes: number
-  }
-}
-
 export default function EmployeePortalPage() {
   const { data: session } = useSession()
   const { business } = useBusiness()
   const role = normalizeAlmaRole(session?.user?.role)
   const systemOwner = isSystemOwner(session)
 
-  const [me, setMe] = useState<MeUser | null>(null)
-  const [loadingMe, setLoadingMe] = useState(true)
+  const { profile: me, loading: loadingMe, employeeId: empId, refetch: refetchProfile } = useMyDeskProfile(business.id)
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
-  const [attendance, setAttendance] = useState<MyAttendanceResponse | null>(null)
-  const [attendanceLoading, setAttendanceLoading] = useState(true)
 
-  const empId = systemOwner
-    ? null
-    : me?.employeeIdGas?.trim() || session?.user?.employeeIdGas?.trim() || null
-  const profileReady = systemOwner || !loadingMe
+  const attendanceEnabled = !systemOwner && Boolean(empId)
+  const {
+    attendance,
+    loading: attendanceLoading,
+    error: attendanceError,
+    refetch: refetchAttendance,
+  } = useMyAttendance(business.id, empId, attendanceEnabled)
 
   const profileIdentity = me ?? (session?.user?.id
     ? {
@@ -113,24 +105,6 @@ export default function EmployeePortalPage() {
         profileImageUrl: null,
       }
     : null)
-
-  const loadMe = useCallback(async () => {
-    setLoadingMe(true)
-    try {
-      const res = await fetch(`/api/users/me?business_id=${business.id}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || res.statusText)
-      setMe(j.user as MeUser)
-    } catch {
-      setMe(null)
-    } finally {
-      setLoadingMe(false)
-    }
-  }, [business.id])
-
-  useEffect(() => {
-    void loadMe()
-  }, [loadMe])
 
   const loadWallet = useCallback(async () => {
     if (systemOwner) {
@@ -161,46 +135,20 @@ export default function EmployeePortalPage() {
     void loadWallet()
   }, [loadWallet])
 
-  const loadAttendance = useCallback(async () => {
-    if (!profileReady) return
-    if (!empId) {
-      setAttendance(null)
-      setAttendanceLoading(false)
-      return
-    }
-    setAttendanceLoading(true)
-    try {
-      const res = await fetch(`/api/attendance?business_id=${business.id}&scope=me`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        const err = String(j.error || res.statusText)
-        if (res.status === 503 && err.includes('schema')) {
-          throw new Error('Attendance is updating on the server. Try again in a minute or contact admin.')
-        }
-        throw new Error(err)
-      }
-      setAttendance(j as MyAttendanceResponse)
-    } catch (e) {
-      const msg = (e as Error).message || 'Could not load attendance'
-      if (!msg.toLowerCase().includes('forbidden')) {
-        toast.error(msg)
-      }
-      setAttendance(null)
-    } finally {
-      setAttendanceLoading(false)
-    }
-  }, [business.id, empId, profileReady])
-
-  useEffect(() => {
-    void loadAttendance()
-  }, [loadAttendance])
-
   useRegisterMobileRefresh(
     useCallback(async () => {
-      await Promise.all([loadMe(), loadWallet(), loadAttendance()])
-    }, [loadMe, loadWallet, loadAttendance]),
+      await refetchProfile()
+      await loadWallet()
+      await refetchAttendance()
+    }, [refetchProfile, loadWallet, refetchAttendance]),
     !systemOwner,
   )
+
+  const refreshDesk = useCallback(async () => {
+    await refetchProfile()
+    await loadWallet()
+    await refetchAttendance()
+  }, [refetchProfile, loadWallet, refetchAttendance])
 
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
@@ -227,8 +175,8 @@ export default function EmployeePortalPage() {
               name={profileIdentity.name}
               email={profileIdentity.email}
               imageUrl={me?.profileImageUrl ?? profileIdentity.profileImageUrl}
-              onUpdated={payload => {
-                setMe(current => (current ? { ...current, profileImageUrl: payload.imageUrl || null } : current))
+              onUpdated={() => {
+                void refetchProfile()
               }}
             />
           )}
@@ -244,9 +192,9 @@ export default function EmployeePortalPage() {
             empLinked={Boolean(empId)}
             loading={attendanceLoading}
             attendance={attendance}
+            attendanceError={attendanceError}
             onRefresh={() => {
-              void loadAttendance()
-              void loadWallet()
+              void refreshDesk()
             }}
           />
         )}
@@ -257,7 +205,7 @@ export default function EmployeePortalPage() {
             <div>
             <Empty icon="◇" title="Could not load full profile" desc="Your photo is saved above. Retry to load payroll and HR details for this business." />
             <div className="mt-3">
-              <Button size="xs" variant="secondary" onClick={() => void loadMe()}>Retry profile</Button>
+              <Button size="xs" variant="secondary" onClick={() => void refetchProfile()}>Retry profile</Button>
             </div>
             </div>
           ) : (
@@ -286,7 +234,7 @@ export default function EmployeePortalPage() {
             empLinked={Boolean(empId)}
             onSubmitted={() => {
               void loadWallet()
-              void loadMe()
+              void refetchProfile()
             }}
           />
         )}
@@ -358,12 +306,14 @@ function AttendanceCard({
   empLinked,
   loading,
   attendance,
+  attendanceError,
   onRefresh,
 }: {
   businessId: string
   empLinked: boolean
   loading: boolean
-  attendance: MyAttendanceResponse | null
+  attendance: MyAttendancePayload | null
+  attendanceError: AttendanceClientError | null
   onRefresh: () => void
 }) {
   const [busy, setBusy] = useState<'out' | 'cancel' | null>(null)
@@ -435,6 +385,18 @@ function AttendanceCard({
           </Button>
         </div>
       </div>
+
+      {attendanceError && (
+        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+          <p className="font-bold">{attendanceErrorLabel(attendanceError.code)}</p>
+          <p className="mt-1 text-red-100/90">{attendanceError.message}</p>
+          {attendanceError.retryable && (
+            <Button size="xs" variant="secondary" className="mt-3" onClick={onRefresh}>
+              Retry attendance
+            </Button>
+          )}
+        </div>
+      )}
 
       {loading ? <Skeleton className="mt-4 h-28 w-full" /> : !empLinked ? (
         <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">Ask an admin to link your HR employee ID before using attendance.</p>
@@ -512,7 +474,9 @@ function AttendanceCard({
         businessId={businessId}
         open={faceCheckInOpen}
         onClose={() => setFaceCheckInOpen(false)}
-        onSuccess={onRefresh}
+        onSuccess={async () => {
+          await onRefresh()
+        }}
       />
     </Card>
   )

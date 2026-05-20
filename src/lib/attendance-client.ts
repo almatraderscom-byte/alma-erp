@@ -1,0 +1,140 @@
+import {
+  AttendanceClientError,
+  mapAttendanceHttpError,
+  type AttendanceApiErrorBody,
+  type AttendanceErrorCode,
+} from '@/lib/attendance-errors'
+
+export { AttendanceClientError } from '@/lib/attendance-errors'
+
+export type MyAttendancePayload = {
+  businessId?: string
+  employeeId?: string | null
+  needsEmployeeLink?: boolean
+  systemOwner?: boolean
+  today: AttendanceRecordClient | null
+  records: AttendanceRecordClient[]
+  waivers: AttendanceWaiverClient[]
+  summary: {
+    presentDays: number
+    lateCount: number
+    totalPenalties: number
+    waivedPenalties: number
+    averageWorkMinutes: number
+  }
+}
+
+export type AttendanceRecordClient = {
+  id: string
+  attendanceDate: string
+  checkInAt: string
+  checkOutAt: string | null
+  totalWorkMinutes: number
+  lateMinutes: number
+  penaltyAmount: number
+  trustStatus: string
+  suspiciousReasons: string[]
+  verificationRequired: boolean
+  faceVerified: boolean
+  faceVerifiedAt: string | null
+  selfieCount: number
+  waiverRequests: AttendanceWaiverClient[]
+}
+
+export type AttendanceWaiverClient = {
+  id: string
+  status: string
+  statusLabel?: string
+  requestType?: string
+  reason: string
+  originalPenaltyAmount: number
+  requestedReductionAmount: number | null
+  approvedReductionAmount: number | null
+  finalAppliedPenalty?: number
+  hasAttachment?: boolean
+  adminNote?: string | null
+  createdAt: string
+}
+
+const ATTENDANCE_FETCH_TIMEOUT_MS = 25_000
+
+function deviceContext() {
+  if (typeof navigator === 'undefined') return {}
+  return {
+    online: navigator.onLine,
+    visibility: typeof document !== 'undefined' ? document.visibilityState : 'unknown',
+    userAgent: navigator.userAgent.slice(0, 120),
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function fetchMyAttendance(businessId: string): Promise<MyAttendancePayload> {
+  const url = `/api/attendance?business_id=${encodeURIComponent(businessId)}&scope=me`
+  let res: Response
+  try {
+    res = await fetchWithTimeout(
+      url,
+      { method: 'GET', cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } },
+      ATTENDANCE_FETCH_TIMEOUT_MS,
+    )
+  } catch (e) {
+    const aborted = (e as Error).name === 'AbortError'
+    throw new AttendanceClientError(
+      aborted ? 'TIMEOUT' : 'NETWORK',
+      aborted
+        ? 'Attendance request timed out. Check connection and pull down to retry.'
+        : 'Network error while loading attendance. Check connection and retry.',
+      0,
+      true,
+    )
+  }
+
+  const body = (await res.json().catch(() => ({}))) as AttendanceApiErrorBody & MyAttendancePayload
+  if (!res.ok) {
+    const mapped = mapAttendanceHttpError(res.status, body)
+    throw new AttendanceClientError(mapped.code, mapped.message, res.status, mapped.retryable)
+  }
+
+  return body as MyAttendancePayload
+}
+
+export function attendanceErrorLabel(code: AttendanceErrorCode): string {
+  switch (code) {
+    case 'UNAUTHORIZED':
+      return 'Session expired'
+    case 'NEEDS_EMPLOYEE_LINK':
+      return 'Profile not linked'
+    case 'SCHEMA_OUTDATED':
+      return 'Server updating'
+    case 'DB_UNAVAILABLE':
+      return 'Server busy'
+    case 'NETWORK':
+    case 'TIMEOUT':
+      return 'Connection issue'
+    default:
+      return 'Error'
+  }
+}
+
+export function logAttendanceClientFailure(event: string, meta: Record<string, unknown>) {
+  if (typeof window === 'undefined') return
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      event,
+      surface: 'attendance-client',
+      timestamp: new Date().toISOString(),
+      ...deviceContext(),
+      ...meta,
+    }),
+  )
+}

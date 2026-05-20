@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceDateFor, attendanceRecordDto, attendanceWaiverDto } from '@/lib/attendance'
 import { resolveProfileImageForUser } from '@/lib/user-display'
+import { errorMeta, logEvent } from '@/lib/logger'
+import type { AttendanceErrorCode } from '@/lib/attendance-errors'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 25
 
 function parseDateParam(raw: string | null) {
   if (!raw) return attendanceDateFor()
@@ -24,21 +30,36 @@ function minutesLabel(minutes: number) {
   return `${h}h ${m}m`
 }
 
+function attendanceErrorResponse(status: number, code: AttendanceErrorCode, error: string, retryable = false) {
+  return NextResponse.json({ error, code, retryable }, { status })
+}
+
 export async function GET(req: NextRequest) {
+  const started = Date.now()
+  let scope = ''
+  let actorUserId = ''
+  let employeeId = ''
   try {
   const url = new URL(req.url)
   const businessId = url.searchParams.get('business_id')
   const ctx = await getWalletContext(req, businessId)
   if ('error' in ctx) return ctx.error
+  actorUserId = ctx.userId
+  scope = url.searchParams.get('scope') || ''
 
   const selectedBusinessId = ctx.businessIds[0]
   const date = parseDateParam(url.searchParams.get('date'))
   const { start: monthStart, end: monthEnd } = monthRange(date)
-  const employeeId = url.searchParams.get('employee_id')?.trim()
-  const scope = url.searchParams.get('scope')
-  const targetEmployeeId = scope === 'me' ? ctx.employeeId : employeeId
+  const employeeIdParam = url.searchParams.get('employee_id')?.trim()
+  const targetEmployeeId = scope === 'me' ? ctx.employeeId : employeeIdParam
+  employeeId = targetEmployeeId || ''
 
   if (scope === 'me' && !ctx.isSystemOwner && !targetEmployeeId) {
+    logEvent('warn', 'attendance.get.needs_employee_link', {
+      userId: actorUserId,
+      businessId: selectedBusinessId,
+      durationMs: Date.now() - started,
+    })
     return NextResponse.json({
       businessId: selectedBusinessId,
       employeeId: null,
@@ -103,10 +124,18 @@ export async function GET(req: NextRequest) {
       .filter(w => w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED')
       .reduce((sum, w) => sum + Number(w.approvedReductionAmount || 0), 0)
 
+    const todayRow = records.find(r => r.attendanceDate.getTime() === date.getTime()) || null
+    logEvent('info', 'attendance.get.me_ok', {
+      userId: actorUserId,
+      employeeId: targetEmployeeId,
+      businessId: selectedBusinessId,
+      recordCount: records.length,
+      durationMs: Date.now() - started,
+    })
     return NextResponse.json({
       businessId: selectedBusinessId,
       employeeId: targetEmployeeId,
-      today: records.find(r => r.attendanceDate.getTime() === date.getTime()) ? attendanceRecordDto(records.find(r => r.attendanceDate.getTime() === date.getTime())!) : null,
+      today: todayRow ? attendanceRecordDto(todayRow) : null,
       records: records.map(attendanceRecordDto),
       waivers: waivers.map(attendanceWaiverDto),
       summary: {
@@ -240,14 +269,32 @@ export async function GET(req: NextRequest) {
     ranking,
   })
   } catch (e) {
-    console.error('[attendance GET]', (e as Error).message)
+    const meta = {
+      ...errorMeta(e),
+      userId: actorUserId,
+      scope,
+      employeeId,
+      durationMs: Date.now() - started,
+    }
+    logEvent('error', 'attendance.get.failed', meta)
     const msg = (e as Error).message || ''
-    if (msg.includes('faceVerified') || msg.includes('requestType') || msg.includes('does not exist')) {
-      return NextResponse.json(
-        { error: 'Attendance database schema is out of date. Run pending Prisma migrations on production.' },
-        { status: 503 },
+    if (
+      msg.includes('faceVerified')
+      || msg.includes('faceThumbDataUrl')
+      || msg.includes('requestType')
+      || msg.includes('does not exist')
+      || msg.includes('Unknown field')
+    ) {
+      return attendanceErrorResponse(
+        503,
+        'SCHEMA_OUTDATED',
+        'Attendance database schema is out of date. Run pending Prisma migrations on production.',
+        true,
       )
     }
-    return NextResponse.json({ error: 'Could not load attendance records.' }, { status: 500 })
+    if (e instanceof Prisma.PrismaClientKnownRequestError && ['P2024', 'P2034'].includes(e.code)) {
+      return attendanceErrorResponse(503, 'DB_UNAVAILABLE', 'Database is busy. Please retry in a few seconds.', true)
+    }
+    return attendanceErrorResponse(500, 'DB_UNAVAILABLE', 'Could not load attendance records.', true)
   }
 }

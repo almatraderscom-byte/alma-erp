@@ -10,7 +10,7 @@ type Props = {
   businessId: string
   open: boolean
   onClose: () => void
-  onSuccess: () => void
+  onSuccess: () => void | Promise<void>
 }
 
 type Phase = 'capture' | 'confirm' | 'success'
