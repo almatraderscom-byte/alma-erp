@@ -6,6 +6,12 @@ import { resolveOwnerChatIdsWithMeta } from '@/lib/telegram-notification/owner-r
 import { eventTypeEnabled, getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 import type { EnqueueTelegramNotificationInput } from '@/lib/telegram-notification/types'
+import {
+  ABSENT_DELIVERY_MIN_AGE_MS,
+  absentDeliveryAgeOk,
+  verifyAbsentBeforeTelegramAlert,
+} from '@/lib/attendance-absent-safety'
+import { logEvent } from '@/lib/logger'
 
 const MAX_BATCH = 15
 const MAX_ATTEMPTS = 3
@@ -223,6 +229,54 @@ export async function processTelegramNotificationQueue(options: { limit?: number
       continue
     }
 
+    if (row.eventType === 'ATTENDANCE_ABSENT') {
+      let employeeId: string | undefined
+      try {
+        const meta = row.metadataJson ? (JSON.parse(row.metadataJson) as { employeeId?: string }) : {}
+        employeeId = meta.employeeId
+      } catch {
+        employeeId = undefined
+      }
+
+      if (!absentDeliveryAgeOk(row.createdAt)) {
+        await prisma.telegramNotificationQueue.updateMany({
+          where: { id: row.id, status: { in: ['QUEUED', 'FAILED'] } },
+          data: {
+            errorMessage: 'absent_delivery_grace_wait',
+            nextAttemptAt: new Date(row.createdAt.getTime() + ABSENT_DELIVERY_MIN_AGE_MS),
+          },
+        })
+        results.push({ id: row.id, status: 'QUEUED', errorMessage: 'absent_delivery_grace_wait' })
+        continue
+      }
+
+      if (employeeId) {
+        const verification = await verifyAbsentBeforeTelegramAlert({
+          businessId: row.businessId,
+          employeeId,
+        })
+        if (!verification.allow) {
+          await prisma.telegramNotificationQueue.updateMany({
+            where: { id: row.id, status: { in: ['QUEUED', 'FAILED', 'SENDING'] } },
+            data: {
+              status: 'SKIPPED',
+              errorMessage: `false_positive_blocked:${verification.reason}`,
+              nextAttemptAt: null,
+            },
+          })
+          logEvent('info', 'attendance.false_positive_blocked', {
+            businessId: row.businessId,
+            employeeId,
+            reason: verification.reason,
+            phase: 'pre_delivery',
+            queueId: row.id,
+          })
+          results.push({ id: row.id, status: 'SKIPPED', errorMessage: verification.reason })
+          continue
+        }
+      }
+    }
+
     const claimed = await prisma.telegramNotificationQueue.updateMany({
       where: { id: row.id, status: { in: ['QUEUED', 'FAILED'] } },
       data: { status: 'SENDING', attempts: { increment: 1 }, updatedAt: new Date() },
@@ -260,6 +314,21 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         latencyMs: Date.now() - started,
         attempts: updated.attempts,
       })
+      if (row.eventType === 'ATTENDANCE_ABSENT') {
+        let employeeId: string | undefined
+        try {
+          const meta = row.metadataJson ? (JSON.parse(row.metadataJson) as { employeeId?: string }) : {}
+          employeeId = meta.employeeId
+        } catch {
+          employeeId = undefined
+        }
+        logEvent('info', 'attendance.telegram.sent', {
+          businessId: row.businessId,
+          employeeId,
+          queueId: row.id,
+          latencyMs: Date.now() - started,
+        })
+      }
       results.push({ id: updated.id, status: updated.status })
       continue
     }

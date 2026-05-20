@@ -25,6 +25,7 @@ export type QueueRowMeta = {
   waiverId?: string
   userId?: string
   employeeName?: string
+  monitorScanAt?: string
   uploaderName?: string
   shotDate?: string
   type?: string

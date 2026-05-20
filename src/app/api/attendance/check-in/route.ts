@@ -28,6 +28,7 @@ import {
   notifyFaceVerifiedCheckIn,
   stageLiveFacePhotoForTelegram,
 } from '@/lib/telegram-notification/face-checkin-notify'
+import { suppressStaleAbsentAlertsForCheckIn } from '@/lib/attendance-absent-safety'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -139,6 +140,8 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    await suppressStaleAbsentAlertsForCheckIn(record)
+
     stageLiveFacePhotoForTelegram(record.id, parsedFace.buffer, parsedFace.contentType)
     try {
       await notifyFaceVerifiedCheckIn(record)
@@ -148,6 +151,16 @@ export async function POST(req: NextRequest) {
       clearLiveFacePhotoForTelegram(record.id)
     }
 
+    const committedAt = new Date()
+    logEvent('info', 'attendance.checkin.success', {
+      userId: ctx.userId,
+      employeeId: ctx.employeeId,
+      businessId: ctx.businessIds[0],
+      attendanceRecordId: record.id,
+      checkInAt: record.checkInAt.toISOString(),
+      dbCommittedAt: committedAt.toISOString(),
+      durationMs: Date.now() - started,
+    })
     logEvent('info', 'attendance.check_in.ok', {
       userId: ctx.userId,
       employeeId: ctx.employeeId,
@@ -168,6 +181,17 @@ export async function POST(req: NextRequest) {
         },
         include: { waiverRequests: true, selfieVerifications: true },
       })
+      if (existing) {
+        await suppressStaleAbsentAlertsForCheckIn(existing)
+        logEvent('info', 'attendance.checkin.success', {
+          userId: ctx.userId,
+          employeeId: ctx.employeeId,
+          businessId: ctx.businessIds[0],
+          attendanceRecordId: existing.id,
+          duplicate: true,
+          checkInAt: existing.checkInAt.toISOString(),
+        })
+      }
       return NextResponse.json({
         ok: true,
         duplicate: true,

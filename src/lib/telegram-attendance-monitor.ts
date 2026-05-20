@@ -1,5 +1,10 @@
 import { prisma } from '@/lib/prisma'
 import { attendanceDateFor, localMinutesFor } from '@/lib/attendance'
+import { userHasBusinessAccess } from '@/lib/attendance-business'
+import {
+  employeePresentForAbsentMonitor,
+  verifyAbsentBeforeTelegramAlert,
+} from '@/lib/attendance-absent-safety'
 import {
   isPastAbsentThreshold,
   isPastCheckoutCutoff,
@@ -8,10 +13,12 @@ import {
 } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
+import { logEvent } from '@/lib/logger'
 
 export type AttendanceMonitorResult = {
   businessId: string
   absentAlerts: number
+  absentBlocked: number
   noCheckoutAlerts: number
   skipped?: string
 }
@@ -19,47 +26,125 @@ export type AttendanceMonitorResult = {
 async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonitorResult> {
   const setting = await getTelegramOpsSetting(businessId)
   if (!setting.enabled) {
-    return { businessId, absentAlerts: 0, noCheckoutAlerts: 0, skipped: 'disabled' }
+    return { businessId, absentAlerts: 0, absentBlocked: 0, noCheckoutAlerts: 0, skipped: 'disabled' }
   }
 
+  const scanStarted = Date.now()
   const now = new Date()
   const today = attendanceDateFor(now)
   const localMin = localMinutesFor(now)
   let absentAlerts = 0
+  let absentBlocked = 0
   let noCheckoutAlerts = 0
 
-  const employees = await prisma.user.findMany({
-    where: {
-      active: true,
-      role: { not: 'SUPER_ADMIN' },
-      employeeIdGas: { not: null },
-      businessAccess: { contains: businessId },
-    },
-    select: { id: true, name: true, phone: true, employeeIdGas: true },
+  logEvent('info', 'attendance.monitor.scan', {
+    businessId,
+    attendanceDate: today.toISOString(),
+    localMinutesBd: localMin,
+    scanAt: now.toISOString(),
   })
 
-  const todayRecords = await prisma.attendanceRecord.findMany({
-    where: { businessId, attendanceDate: today },
-    select: {
-      id: true,
-      employeeId: true,
-      checkInAt: true,
-      checkOutAt: true,
-      updatedAt: true,
-    },
-  })
+  const [allActiveEmployees, todayRecords, globalTodayRecords] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        active: true,
+        role: { not: 'SUPER_ADMIN' },
+        employeeIdGas: { not: null },
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        employeeIdGas: true,
+        businessAccess: true,
+      },
+    }),
+    prisma.attendanceRecord.findMany({
+      where: { businessId, attendanceDate: today },
+      select: {
+        id: true,
+        employeeId: true,
+        checkInAt: true,
+        checkOutAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.attendanceRecord.findMany({
+      where: { attendanceDate: today },
+      select: { employeeId: true, businessId: true, checkInAt: true },
+    }),
+  ])
 
-  const presentIds = new Set(todayRecords.map(r => r.employeeId))
+  const employees = allActiveEmployees.filter(emp =>
+    userHasBusinessAccess(emp.businessAccess, businessId),
+  )
+
+  const globalPresentEmployeeIds = new Set(globalTodayRecords.map(r => r.employeeId))
 
   if (
-    setting.alertAttendanceAbsent &&
-    isPastAbsentThreshold(setting.officeStartMinutes, setting.gracePeriodMinutes, now)
+    setting.alertAttendanceAbsent
+    && isPastAbsentThreshold(setting.officeStartMinutes, setting.gracePeriodMinutes, now)
   ) {
     const delayMinutes = Math.max(0, localMin - setting.officeStartMinutes)
 
     for (const emp of employees) {
-      if (!emp.employeeIdGas || presentIds.has(emp.employeeIdGas)) continue
-      await queueAttendanceAbsentAlert({
+      if (!emp.employeeIdGas) continue
+
+      const presence = await employeePresentForAbsentMonitor({
+        employeeId: emp.employeeIdGas,
+        monitorBusinessId: businessId,
+        businessAccess: emp.businessAccess,
+        attendanceDate: today,
+        todayRecordsForBusiness: todayRecords,
+        globalPresentEmployeeIds,
+      })
+
+      if (presence.present) {
+        absentBlocked += 1
+        logEvent('info', 'attendance.false_positive_blocked', {
+          businessId,
+          employeeId: emp.employeeIdGas,
+          reason: presence.reason,
+          phase: 'monitor_scan',
+        })
+        continue
+      }
+
+      logEvent('info', 'attendance.absent.recheck', {
+        businessId,
+        employeeId: emp.employeeIdGas,
+        phase: 'pre_enqueue',
+      })
+
+      const verification = await verifyAbsentBeforeTelegramAlert({
+        businessId,
+        employeeId: emp.employeeIdGas,
+        userId: emp.id,
+        businessAccess: emp.businessAccess,
+        attendanceDate: today,
+        monitorScanAt: now,
+      })
+
+      if (!verification.allow) {
+        absentBlocked += 1
+        logEvent('info', 'attendance.false_positive_blocked', {
+          businessId,
+          employeeId: emp.employeeIdGas,
+          reason: verification.reason,
+          phase: 'pre_enqueue_verify',
+        })
+        continue
+      }
+
+      logEvent('info', 'attendance.absent.detected', {
+        businessId,
+        employeeId: emp.employeeIdGas,
+        delayMinutes,
+        officeStartMinutes: setting.officeStartMinutes,
+        gracePeriodMinutes: setting.gracePeriodMinutes,
+      })
+
+      const queued = await queueAttendanceAbsentAlert({
         businessId,
         userId: emp.id,
         employeeId: emp.employeeIdGas,
@@ -67,8 +152,14 @@ async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonito
         phone: emp.phone,
         officeStartMinutes: setting.officeStartMinutes,
         delayMinutes,
+        monitorScanAt: now,
       })
-      absentAlerts += 1
+
+      if (queued?.blocked) {
+        absentBlocked += 1
+      } else if (queued?.queued) {
+        absentAlerts += 1
+      }
     }
   }
 
@@ -90,7 +181,18 @@ async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonito
     }
   }
 
-  return { businessId, absentAlerts, noCheckoutAlerts }
+  logEvent('info', 'attendance.monitor.scan.complete', {
+    businessId,
+    absentAlerts,
+    absentBlocked,
+    noCheckoutAlerts,
+    rosterSize: employees.length,
+    presentInBusiness: todayRecords.length,
+    presentGlobal: globalTodayRecords.length,
+    durationMs: Date.now() - scanStarted,
+  })
+
+  return { businessId, absentAlerts, absentBlocked, noCheckoutAlerts }
 }
 
 export async function runTelegramAttendanceMonitor(): Promise<AttendanceMonitorResult[]> {

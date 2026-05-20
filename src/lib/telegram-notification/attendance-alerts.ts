@@ -16,15 +16,13 @@ import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-
 import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
 import { getTelegramOpsSetting, shouldSendLateDetail } from '@/lib/telegram-notification/settings'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
-
-function ymdBd(date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Dhaka',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
+import {
+  ABSENT_MONITOR_EXTRA_GRACE_MINUTES,
+  absentDedupeKey,
+  verifyAbsentBeforeTelegramAlert,
+  ymdBd,
+} from '@/lib/attendance-absent-safety'
+import { logEvent } from '@/lib/logger'
 
 async function loadEmployeeContext(userId: string | null, employeeId: string) {
   const user = userId
@@ -182,7 +180,25 @@ export async function queueAttendanceAbsentAlert(input: {
   phone: string | null
   officeStartMinutes: number
   delayMinutes: number
-}) {
+  monitorScanAt?: Date
+}): Promise<{ queued: boolean; blocked?: boolean; reason?: string }> {
+  const verification = await verifyAbsentBeforeTelegramAlert({
+    businessId: input.businessId,
+    employeeId: input.employeeId,
+    userId: input.userId,
+    monitorScanAt: input.monitorScanAt,
+  })
+
+  if (!verification.allow) {
+    logEvent('info', 'attendance.false_positive_blocked', {
+      businessId: input.businessId,
+      employeeId: input.employeeId,
+      reason: verification.reason,
+      phase: 'enqueue',
+    })
+    return { queued: false, blocked: true, reason: verification.reason }
+  }
+
   const message = formatAbsentAlert({
     employeeName: input.employeeName,
     department: businessLabel(input.businessId),
@@ -197,13 +213,18 @@ export async function queueAttendanceAbsentAlert(input: {
     businessId: input.businessId,
     eventType: 'ATTENDANCE_ABSENT',
     message,
-    dedupeKey: `attendance:absent:${input.businessId}:${input.employeeId}:${ymdBd()}`,
+    dedupeKey: absentDedupeKey(input.businessId, input.employeeId),
     metadata: withEmployeeAvatarMetadata(
-      { employeeId: input.employeeId },
+      {
+        employeeId: input.employeeId,
+        monitorScanAt: (input.monitorScanAt ?? new Date()).toISOString(),
+      },
       input.userId,
       input.employeeName,
     ),
   })
+
+  return { queued: true }
 }
 
 export async function queueAttendanceNoCheckoutAlert(input: {
@@ -243,7 +264,11 @@ export function isPastAbsentThreshold(
   gracePeriodMinutes: number,
   now = new Date(),
 ) {
-  return localMinutesFor(now) >= attendanceMonitorThresholdMinutes(officeStartMinutes, gracePeriodMinutes)
+  return (
+    localMinutesFor(now)
+    >= attendanceMonitorThresholdMinutes(officeStartMinutes, gracePeriodMinutes)
+      + ABSENT_MONITOR_EXTRA_GRACE_MINUTES
+  )
 }
 
 export function isPastCheckoutCutoff(checkoutCutoffMinutes: number, now = new Date()) {
