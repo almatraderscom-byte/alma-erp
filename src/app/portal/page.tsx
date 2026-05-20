@@ -18,8 +18,8 @@ import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
 import { useMyAttendance } from '@/hooks/useMyAttendance'
 import { attendanceErrorLabel } from '@/lib/attendance-client'
-import { OperationalTaskSpotlightModal } from '@/components/operations/OperationalTaskSpotlightModal'
-import { OperationalTaskSpotlightStrip } from '@/components/operations/OperationalTaskSpotlightStrip'
+import { OperationalTaskHero } from '@/components/operations/OperationalTaskHero'
+import { OperationalTaskDock } from '@/components/operations/OperationalTaskDock'
 import { useOperationalSpotlightTrigger } from '@/components/operations/useOperationalSpotlightTrigger'
 import { invalidateOperationalTasksCache } from '@/hooks/useOperationalTasks'
 import type { MyAttendancePayload } from '@/lib/attendance-client'
@@ -160,6 +160,26 @@ export default function EmployeePortalPage() {
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
+    <>
+      {!systemOwner && (
+        <>
+          <OperationalTaskHero
+            businessId={business.id}
+            assignment={opsSpotlight.spotlight}
+            open={opsSpotlight.heroOpen}
+            onMinimize={opsSpotlight.minimizeHero}
+            onUpdated={opsSpotlight.handleUpdated}
+          />
+          <OperationalTaskDock
+            businessId={business.id}
+            tasks={opsSpotlight.openTasks}
+            primary={opsSpotlight.primaryTask}
+            heroOpen={opsSpotlight.heroOpen}
+            onReopen={() => opsSpotlight.openHero()}
+            onUpdated={opsSpotlight.handleUpdated}
+          />
+        </>
+      )}
     <FinancePageChrome
       title="My desk"
       subtitle="Wallet balance · withdrawal requests · payroll history"
@@ -187,16 +207,6 @@ export default function EmployeePortalPage() {
               }}
             />
           )}
-        </div>
-      )}
-
-      {!systemOwner && (
-        <div className="mb-4">
-          <OperationalTaskSpotlightStrip
-            tasks={opsSpotlight.tasks}
-            loading={opsSpotlight.loading}
-            onOpenSpotlight={opsSpotlight.openManual}
-          />
         </div>
       )}
 
@@ -291,16 +301,8 @@ export default function EmployeePortalPage() {
         </Card>}
       </div>
 
-      {!systemOwner && (
-        <OperationalTaskSpotlightModal
-          businessId={business.id}
-          assignment={opsSpotlight.spotlight}
-          open={opsSpotlight.open}
-          onClose={opsSpotlight.close}
-          onUpdated={opsSpotlight.handleUpdated}
-        />
-      )}
     </FinancePageChrome>
+    </>
   )
 }
 

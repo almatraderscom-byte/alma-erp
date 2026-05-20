@@ -1,56 +1,115 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import {
-  fetchSpotlightAssignment,
   invalidateOperationalTasksCache,
-  markSpotlightShownSession,
   useOperationalTasks,
-  wasSpotlightShownThisSession,
   type OperationalTaskAssignmentDto,
 } from '@/hooks/useOperationalTasks'
+import {
+  isOpsHeroEligible,
+  pickPrimaryOpsTask,
+} from '@/lib/operational-task-spotlight-client'
+
+async function fetchOpenTasks(businessId: string): Promise<OperationalTaskAssignmentDto[]> {
+  const res = await fetch(
+    `/api/operational-tasks/my?business_id=${encodeURIComponent(businessId)}`,
+    { cache: 'no-store' },
+  )
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok) return []
+  return (j.tasks || []) as OperationalTaskAssignmentDto[]
+}
 
 export function useOperationalSpotlightTrigger(businessId: string, enabled = true) {
-  const [spotlight, setSpotlight] = useState<OperationalTaskAssignmentDto | null>(null)
-  const [open, setOpen] = useState(false)
+  const pathname = usePathname()
   const { tasks, loading, refetch } = useOperationalTasks(businessId, enabled)
+  const [spotlight, setSpotlight] = useState<OperationalTaskAssignmentDto | null>(null)
+  const [heroOpen, setHeroOpen] = useState(false)
+  const [deskVisit, setDeskVisit] = useState(0)
+  const prevPathRef = useRef<string | null>(null)
+
+  const openTasks = tasks.filter(t => isOpsHeroEligible(t.status))
+  const primaryTask = pickPrimaryOpsTask(tasks)
+
+  useEffect(() => {
+    if (!enabled) return
+    if (pathname === '/portal' && prevPathRef.current !== '/portal') {
+      setDeskVisit(v => v + 1)
+    }
+    prevPathRef.current = pathname
+  }, [pathname, enabled])
+
+  useEffect(() => {
+    if (!enabled || loading || pathname !== '/portal') return
+    const primary = pickPrimaryOpsTask(tasks)
+    if (!primary) {
+      setSpotlight(null)
+      setHeroOpen(false)
+      return
+    }
+    setSpotlight(primary)
+  }, [enabled, loading, pathname, tasks])
+
+  useEffect(() => {
+    if (!enabled || loading || pathname !== '/portal') return
+    if (!pickPrimaryOpsTask(tasks)) return
+    setHeroOpen(true)
+  }, [deskVisit, enabled, loading, pathname])
+
+  const minimizeHero = useCallback(() => {
+    setHeroOpen(false)
+  }, [])
+
+  const openHero = useCallback(
+    (assignment?: OperationalTaskAssignmentDto) => {
+      const target = assignment ?? pickPrimaryOpsTask(tasks)
+      if (!target) return
+      setSpotlight(target)
+      setHeroOpen(true)
+    },
+    [tasks],
+  )
 
   const triggerAfterCheckIn = useCallback(async () => {
     if (!enabled) return
     invalidateOperationalTasksCache(businessId)
     await refetch(true)
-    const assignment = await fetchSpotlightAssignment(businessId)
-    if (!assignment) return
-    const forceShow = !assignment.lastSpotlightAt
-    if (!forceShow && wasSpotlightShownThisSession(assignment.id)) return
-    setSpotlight(assignment)
-    setOpen(true)
+    const list = await fetchOpenTasks(businessId)
+    const primary = pickPrimaryOpsTask(list)
+    if (!primary) return
+    setSpotlight(primary)
+    setHeroOpen(true)
   }, [businessId, enabled, refetch])
 
-  const close = useCallback(() => {
-    setOpen(false)
-    if (spotlight) markSpotlightShownSession(spotlight.id)
-  }, [spotlight])
-
-  const openManual = useCallback((a: OperationalTaskAssignmentDto) => {
-    setSpotlight(a)
-    setOpen(true)
-  }, [])
-
-  const handleUpdated = useCallback(() => {
+  const handleUpdated = useCallback(async () => {
     invalidateOperationalTasksCache(businessId)
-    void refetch(true)
+    await refetch(true)
+    const list = await fetchOpenTasks(businessId)
+    const primary = pickPrimaryOpsTask(list)
+    if (!primary) {
+      setSpotlight(null)
+      setHeroOpen(false)
+      return
+    }
+    setSpotlight(primary)
+    setHeroOpen(false)
   }, [businessId, refetch])
 
   return {
-    tasks,
+    tasks: openTasks,
+    allTasks: tasks,
     loading,
     refetch,
     spotlight,
-    open,
+    heroOpen,
+    primaryTask,
+    openTasks,
+    minimizeHero,
+    openHero,
     triggerAfterCheckIn,
-    close,
-    openManual,
     handleUpdated,
+    openManual: openHero,
   }
 }

@@ -10,5 +10,6 @@ export const PLATFORM_Z = {
   pageModal: 90,
   notificationPanel: 160,
   fullScreenModal: 10_000,
+  opsTaskDock: 10_055,
   loadingOverlay: 240,
 } as const
