@@ -32,6 +32,12 @@ body {
   }
 }
 
+/* Global developer watermark — must stay above mobile bottom nav (z-50) */
+.developer-watermark {
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85);
+  mix-blend-mode: normal;
+}
+
 button,
 a,
 [role='button'] {

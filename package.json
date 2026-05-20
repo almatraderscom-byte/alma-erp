@@ -14,6 +14,7 @@
     "verify": "npm run type-check && npm run build",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
+    "regression:gate": "tsc --noEmit",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "node prisma/seed.cjs",
     "backup:prod": "node scripts/backup-production.mjs",

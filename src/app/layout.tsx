@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
+import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const notoBengali = Noto_Sans_Bengali({
@@ -50,6 +51,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="bg-black text-cream antialiased font-sans">
         <AppProviders session={session}>{children}</AppProviders>
+        <GlobalPlatformChrome />
         <Toaster
           position="top-right"
           toastOptions={{

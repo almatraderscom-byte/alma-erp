@@ -1,5 +1,15 @@
 # Alma ERP Production Runbook
 
+## Pre-deploy regression (mandatory)
+
+Complete **[REGRESSION_CHECKLIST.md](./REGRESSION_CHECKLIST.md)** for every production deploy. See **[PLATFORM_STABILITY.md](./PLATFORM_STABILITY.md)** for shared-shell architecture and regression root causes.
+
+Quick gate:
+
+```bash
+npx tsc --noEmit
+```
+
 ## Deployment
 
 1. Configure Vercel env vars from `.env.production.example`.

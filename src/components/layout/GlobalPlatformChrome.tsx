@@ -1,0 +1,17 @@
+'use client'
+
+import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
+import { PlatformDiagnostics } from '@/components/layout/PlatformDiagnostics'
+
+/**
+ * Global shell chrome mounted once from root layout.
+ * Keeps watermark + diagnostics outside page-level wrappers so refactors cannot drop them.
+ */
+export function GlobalPlatformChrome() {
+  return (
+    <>
+      <DeveloperWatermark />
+      <PlatformDiagnostics />
+    </>
+  )
+}
