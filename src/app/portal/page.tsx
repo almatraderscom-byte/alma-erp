@@ -8,6 +8,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { isSystemOwner, normalizeAlmaRole } from '@/lib/roles'
 import type { EmployeeWalletResponse, WalletRequestDto } from '@/types/payroll-wallet'
 import { FaceVerificationCheckIn } from '@/components/attendance/FaceVerificationCheckIn'
+import { needsSelfieVerification, SelfieVerificationModal } from '@/components/attendance/SelfieVerificationModal'
 import { PenaltyAppealModal } from '@/components/attendance/PenaltyAppealModal'
 import { PenaltyAppealStatus } from '@/components/attendance/PenaltyAppealStatus'
 import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
@@ -321,6 +322,16 @@ function AttendanceCard({
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
   const today = attendance?.today || null
+  const selfieActionRequired = needsSelfieVerification(today)
+  const selfieSubmitted = Boolean(today && today.selfieCount > 0 && !today.verificationRequired)
+
+  useEffect(() => {
+    if (!selfieActionRequired) return
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void onRefresh()
+    }, 20_000)
+    return () => window.clearInterval(timer)
+  }, [selfieActionRequired, onRefresh])
 
   async function postCheckOut() {
     setBusy('out')
@@ -410,12 +421,28 @@ function AttendanceCard({
         </div>
       )}
 
-      {today?.trustStatus && today.trustStatus !== 'TRUSTED' && (
+      {selfieActionRequired && (
+        <div className="mt-4 rounded-2xl border-2 border-amber-400/40 bg-amber-500/15 p-4 shadow-lg shadow-amber-500/10">
+          <p className="text-sm font-black text-amber-100">Verification required</p>
+          <p className="mt-1 text-xs text-amber-100/80">
+            Admin requested a quick face photo. Your check-in is saved — complete verification now.
+          </p>
+          <Button
+            variant="gold"
+            className="mt-4 h-[52px] w-full justify-center text-base font-black touch-manipulation min-h-[52px]"
+            onClick={() => setVerifyRecord(today)}
+          >
+            📸 Verify Face Now
+          </Button>
+        </div>
+      )}
+
+      {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
         <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200">
           <p className="font-bold">Attendance marked for review</p>
           <p className="mt-1 text-amber-100/80">{today.suspiciousReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
-          {today.verificationRequired && today.selfieCount === 0 && !today.faceVerified && (
-            <Button size="xs" variant="secondary" className="mt-3" onClick={() => setVerifyRecord(today)}>Quick verification</Button>
+          {selfieSubmitted && (
+            <p className="mt-2 text-green-300/90">Verification submitted — waiting for admin review.</p>
           )}
           {today.faceVerified && (
             <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${new Date(today.faceVerifiedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</p>
@@ -462,11 +489,12 @@ function AttendanceCard({
       {verifyRecord && (
         <SelfieVerificationModal
           businessId={businessId}
-          record={verifyRecord}
+          attendanceRecordId={verifyRecord.id}
+          open={Boolean(verifyRecord)}
           onClose={() => setVerifyRecord(null)}
-          onDone={() => {
+          onSuccess={async () => {
             setVerifyRecord(null)
-            onRefresh()
+            await onRefresh()
           }}
         />
       )}
@@ -540,99 +568,6 @@ async function quietLocation(): Promise<{ latitude: number; longitude: number; a
       () => resolve(null),
       { enableHighAccuracy: false, maximumAge: 10 * 60_000, timeout: 1200 },
     )
-  })
-}
-
-function SelfieVerificationModal({
-  businessId,
-  record,
-  onClose,
-  onDone,
-}: {
-  businessId: string
-  record: AttendanceRecordDto
-  onClose: () => void
-  onDone: () => void
-}) {
-  const [busy, setBusy] = useState(false)
-
-  async function upload(file: File) {
-    setBusy(true)
-    try {
-      const imageDataUrl = await compressImage(file)
-      const res = await fetch('/api/attendance/selfies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          business_id: businessId,
-          attendance_record_id: record.id,
-          image_data_url: imageDataUrl,
-          content_type: 'image/jpeg',
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Could not upload selfie')
-      toast.success('Verification saved')
-      onDone()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-[140] flex items-end sm:items-center justify-center bg-black/75 p-4">
-      <Card className="w-full max-w-sm p-5 border-gold-dim/30">
-        <p className="text-sm font-bold text-cream">Quick verification required</p>
-        <p className="mt-2 text-xs text-zinc-500">This only happens for a new device, unusual location, or an admin request. Attendance is already recorded.</p>
-        <label className="mt-4 block">
-          <input
-            type="file"
-            accept="image/*"
-            capture="user"
-            className="hidden"
-            disabled={busy}
-            onChange={e => {
-              const file = e.target.files?.[0]
-              if (file) void upload(file)
-            }}
-          />
-          <span className="block cursor-pointer rounded-2xl bg-gold px-4 py-3 text-center text-sm font-black text-black">
-            {busy ? 'Uploading...' : 'Take quick selfie'}
-          </span>
-        </label>
-        <Button variant="ghost" className="mt-3 w-full justify-center" disabled={busy} onClick={onClose}>Later</Button>
-      </Card>
-    </div>
-  )
-}
-
-function compressImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      const max = 480
-      const scale = Math.min(1, max / Math.max(img.width, img.height))
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(img.width * scale))
-      canvas.height = Math.max(1, Math.round(img.height * scale))
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        URL.revokeObjectURL(url)
-        reject(new Error('Could not process selfie'))
-        return
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/jpeg', 0.55))
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('Could not read selfie'))
-    }
-    img.src = url
   })
 }
 

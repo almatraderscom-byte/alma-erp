@@ -200,9 +200,29 @@ export default function AttendancePage() {
       toast.error(j.error || 'Could not request verification')
       return
     }
-    toast.success('Verification requested')
+    toast.success('Verification requested — employee will see Verify Face Now on My Desk')
     void load()
   }
+
+  async function reviewSelfie(selfieId: string, action: 'APPROVE' | 'REJECT') {
+    const res = await fetch(`/api/attendance/selfies/${selfieId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: business.id, action }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(j.error || 'Could not review verification')
+      return
+    }
+    toast.success(action === 'APPROVE' ? 'Verification approved' : 'Verification rejected')
+    void load()
+  }
+
+  const pendingSelfieReviews = useMemo(
+    () => (data?.selfieLogs ?? []).filter(log => !log.reviewedAt),
+    [data?.selfieLogs],
+  )
 
   const k = data?.kpis
 
@@ -367,6 +387,32 @@ export default function AttendancePage() {
         )}
       </Card>
 
+      <Card className="p-5 border-gold-dim/25">
+        <p className="text-sm font-bold text-cream mb-4">Pending face verification reviews</p>
+        {loading ? <Skeleton className="h-20" /> : !pendingSelfieReviews.length ? (
+          <p className="text-[11px] text-zinc-500">No submitted verification photos awaiting review.</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {pendingSelfieReviews.map(log => (
+              <div key={log.id} className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={log.imageDataUrl} alt="Verification selfie" className="h-36 w-full rounded-xl object-cover bg-black/40" />
+                <div className="mt-2 flex justify-between gap-2">
+                  <span className="font-mono text-zinc-400">{log.employeeId}</span>
+                  <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
+                </div>
+                {role === 'SUPER_ADMIN' && (
+                  <div className="mt-3 flex gap-2">
+                    <Button size="xs" variant="secondary" onClick={() => void reviewSelfie(log.id, 'REJECT')}>Reject</Button>
+                    <Button size="xs" variant="gold" onClick={() => void reviewSelfie(log.id, 'APPROVE')}>Approve</Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       <Card className="p-5">
         <p className="text-sm font-bold text-cream mb-4">Selfie verification logs</p>
         {loading ? <Skeleton className="h-20" /> : !(data?.selfieLogs ?? []).length ? (
@@ -375,11 +421,17 @@ export default function AttendancePage() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {data!.selfieLogs.slice(0, 12).map(log => (
               <div key={log.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={log.imageDataUrl} alt="Attendance selfie" className="h-32 w-full rounded-xl object-cover bg-black/40" />
                 <div className="mt-2 flex justify-between gap-2">
                   <span className="font-mono text-zinc-500">{log.employeeId}</span>
                   <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
                 </div>
+                {log.reviewedAt ? (
+                  <p className="mt-1 text-green-400">Reviewed {new Date(log.reviewedAt).toLocaleString()}</p>
+                ) : (
+                  <p className="mt-1 text-amber-300">Awaiting review</p>
+                )}
               </div>
             ))}
           </div>
