@@ -16,6 +16,11 @@ import {
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import { canReviewPenaltyAppeals, penaltyAppealDto, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
+import {
+  buildApprovalActionMeta,
+  logApprovalActionPhase,
+  stampApprovalActionResponse,
+} from '@/lib/approval-action-server'
 import { runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
@@ -67,6 +72,26 @@ function tradeSnapshot(trade: {
   }
 }
 
+export async function GET(req: NextRequest, { params }: RouteContext) {
+  const token = await getJwt(req)
+  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const approval = await prisma.approvalRequest.findUnique({
+    where: { id: params.id },
+    select: {
+      id: true,
+      status: true,
+      module: true,
+      type: true,
+      updatedAt: true,
+      approvedAt: true,
+      rejectedAt: true,
+    },
+  })
+  if (!approval) return NextResponse.json({ error: 'Approval not found' }, { status: 404 })
+  return NextResponse.json({ approval })
+}
+
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   const token = await getJwt(req)
   if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -76,47 +101,67 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     action?: 'APPROVE' | 'REJECT'
     note?: string
     approvedAmount?: number
+    operation_id?: string
   }
   if (body.action !== 'APPROVE' && body.action !== 'REJECT') {
     return NextResponse.json({ error: 'action APPROVE|REJECT required' }, { status: 400 })
   }
 
+  const meta = buildApprovalActionMeta({
+    approvalId: params.id,
+    adminId: token.sub,
+    action: body.action,
+    operationId: body.operation_id,
+  })
+  logApprovalActionPhase('started', meta)
+  logApprovalActionPhase('processing', meta)
+
   try {
     const approval = await prisma.approvalRequest.findUnique({ where: { id: params.id } })
     if (!approval || approval.status !== 'PENDING') {
-      return NextResponse.json({ error: 'Pending approval not found' }, { status: 404 })
+      return stampApprovalActionResponse(
+        NextResponse.json({ ok: false, error: 'Pending approval not found' }, { status: 404 }),
+        meta,
+      )
     }
 
     const isPenaltyAppeal = approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.PENALTY_APPEAL
     if (!isPenaltyAppeal && role !== 'SUPER_ADMIN') {
-      return NextResponse.json({ error: 'Only Super Admin can process this approval type.' }, { status: 403 })
+      return stampApprovalActionResponse(
+        NextResponse.json({ ok: false, error: 'Only Super Admin can process this approval type.' }, { status: 403 }),
+        meta,
+      )
     }
     if (isPenaltyAppeal && !canReviewPenaltyAppeals(role)) {
-      return NextResponse.json({ error: 'Only Admin or Super Admin can process penalty appeals.' }, { status: 403 })
+      return stampApprovalActionResponse(
+        NextResponse.json({ ok: false, error: 'Only Admin or Super Admin can process penalty appeals.' }, { status: 403 }),
+        meta,
+      )
     }
 
+    let response: NextResponse
     if (isPenaltyAppeal) {
-      return await processPenaltyAppeal(approval, body.action, token.sub, body.note, body.approvedAmount)
-    }
-
-    if (approval.module === 'ALMA_TRADING' && approval.type === 'TRADE_DELETE') {
-      return await processTradingDelete(approval.id, approval.entityId, body.action, token.sub, role, body.note)
-    }
-    if (approval.module === 'PAYROLL' && approval.type === 'SALARY_ADVANCE') {
-      return await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
-    }
-    if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
-      return await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount)
-    }
-
-    if (body.action === 'REJECT') {
+      response = await processPenaltyAppeal(approval, body.action, token.sub, body.note, body.approvedAmount)
+    } else if (approval.module === 'ALMA_TRADING' && approval.type === 'TRADE_DELETE') {
+      response = await processTradingDelete(approval.id, approval.entityId, body.action, token.sub, role, body.note)
+    } else if (approval.module === 'PAYROLL' && approval.type === 'SALARY_ADVANCE') {
+      response = await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
+    } else if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
+      response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount)
+    } else if (body.action === 'REJECT') {
       const updated = await resolveApprovalRequestById({ id: approval.id, status: 'REJECTED', actorUserId: token.sub, reason: body.note || 'Rejected' })
-      return NextResponse.json({ ok: true, approval: updated, moduleResult: null })
+      response = NextResponse.json({ ok: true, approval: updated, moduleResult: null })
+    } else {
+      response = NextResponse.json({ error: `${approval.module} ${approval.type} is not executable from the central approval center yet.` }, { status: 400 })
     }
-    return NextResponse.json({ error: `${approval.module} ${approval.type} is not executable from the central approval center yet.` }, { status: 400 })
+    return stampApprovalActionResponse(response, meta)
   } catch (e) {
+    logApprovalActionPhase('failed', meta, { error: (e as Error).message })
     logEvent('error', 'approval.execute_failed', { approvalId: params.id, error: (e as Error).message })
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+    return NextResponse.json(
+      { ok: false, error: (e as Error).message, operationId: meta.operationId, durationMs: Date.now() - meta.startedAt },
+      { status: 500 },
+    )
   }
 }
 

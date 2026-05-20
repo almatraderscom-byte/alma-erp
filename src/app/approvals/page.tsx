@@ -1,8 +1,10 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
+import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
 import { Button, Card, Empty, KpiCard, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
+import { useApprovalActions } from '@/hooks/useApprovalActions'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 
@@ -55,7 +57,6 @@ export default function ApprovalsPage() {
   const [selected, setSelected] = useState<ApprovalRow | null>(null)
   const [actionTarget, setActionTarget] = useState<{ row: ApprovalRow; action: 'APPROVE' | 'REJECT' } | null>(null)
   const [note, setNote] = useState('')
-  const [processingId, setProcessingId] = useState<string | null>(null)
   const [integrity, setIntegrity] = useState<IntegrityReport | null>(null)
   const [integrityLoading, setIntegrityLoading] = useState(false)
   const [repairing, setRepairing] = useState(false)
@@ -73,6 +74,9 @@ export default function ApprovalsPage() {
     }
   }, [status])
 
+  const refreshApprovals = useCallback(async () => { await load(true) }, [load])
+  const { hasProcessing, processingOps, executeApproval, isRowProcessing, getRowUi } = useApprovalActions(refreshApprovals)
+
   useEffect(() => { void load() }, [load])
   useEffect(() => {
     const onUpdated = () => { void load(true) }
@@ -81,10 +85,10 @@ export default function ApprovalsPage() {
   }, [load])
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (!document.hidden) void load(true)
+      if (!document.hidden && !hasProcessing) void load(true)
     }, 30_000)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [hasProcessing, load])
   useRegisterMobileRefresh(() => load(true))
 
   const loadIntegrity = useCallback(async () => {
@@ -120,49 +124,32 @@ export default function ApprovalsPage() {
   const orphanCount = integrity?.orphans?.length ?? 0
 
   async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '') {
-    if (action === 'REJECT' && actionNote.trim().length < 5) {
-      toast.error('Rejection reason must be at least 5 characters')
-      return
-    }
-    setProcessingId(row.id)
-    const previous = data
-    if (row.status === 'PENDING') {
-      setData(current => current ? {
-        ...current,
-        approvals: current.approvals.filter(item => item.id !== row.id),
-        totalPending: Math.max(0, current.totalPending - 1),
-      } : current)
-      window.dispatchEvent(new Event('alma:approvals-updated'))
-    }
-    try {
-      const res = await fetch(`/api/approvals/${encodeURIComponent(row.id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, note: actionNote }),
-        cache: 'no-store',
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok || !json.ok) throw new Error(json.error || 'Approval action failed')
-      if (json.reconciled) {
-        toast.success(action === 'REJECT' ? 'Approval synced (already handled in Payroll)' : 'Approval synced with existing payroll decision')
-      } else {
-        toast.success(action === 'APPROVE' ? 'Approval processed' : 'Request rejected')
-      }
-      setSelected(null)
+    if (isRowProcessing(row.id)) return
+    const result = await executeApproval({
+      approvalId: row.id,
+      action,
+      note: actionNote,
+      rowLabel: row.type.replace(/_/g, ' '),
+    })
+    if (result.ok) {
+      setSelected(current => (current?.id === row.id ? null : current))
       setActionTarget(null)
       setNote('')
-      await load(true)
-      window.dispatchEvent(new Event('alma:approvals-updated'))
-    } catch (e) {
-      setData(previous)
-      toast.error((e as Error).message)
-    } finally {
-      setProcessingId(null)
     }
   }
 
+  const actionsGloballyDisabled = hasProcessing
+
   return (
     <main className="space-y-5 p-4 md:p-6">
+      <ApprovalProcessingBanner
+        count={processingOps.length}
+        message={
+          hasProcessing
+            ? 'Approval still processing — stay on this page until you see committed or failed.'
+            : undefined
+        }
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.16em] text-gold">Global Control</p>
@@ -180,7 +167,7 @@ export default function ApprovalsPage() {
             Integrity
           </Button>
           {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
-            <Button key={value} variant={status === value ? 'gold' : 'ghost'} onClick={() => setStatus(value)}>
+            <Button key={value} variant={status === value ? 'gold' : 'ghost'} disabled={actionsGloballyDisabled} onClick={() => setStatus(value)}>
               {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
             </Button>
           ))}
@@ -257,8 +244,20 @@ export default function ApprovalsPage() {
         <Card className="overflow-hidden">
           {loading && !data ? <Skeleton className="h-96" /> : !(data?.approvals.length) ? <Empty icon="◆" title="No approval requests" /> : (
             <div className="divide-y divide-border">
-              {data.approvals.map(row => (
-                <div key={row.id} className="grid gap-3 px-4 py-3 text-xs md:grid-cols-[1fr_0.8fr_1.2fr_0.9fr_1.1fr]">
+              {data.approvals.map(row => {
+                const ui = getRowUi(row.id)
+                const rowBusy = isRowProcessing(row.id)
+                const actionDisabled = rowBusy || actionsGloballyDisabled
+                return (
+                <div key={row.id} className={`relative grid gap-3 px-4 py-3 text-xs md:grid-cols-[1fr_0.8fr_1.2fr_0.9fr_1.1fr] ${approvalRowLockClass(ui)}`}>
+                  {ui.state === 'processing' && (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-[1px]">
+                      <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-black/80 px-3 py-2 text-[11px] font-black text-amber-200">
+                        <Spinner />
+                        {ui.message || 'Processing approval…'}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <p className="font-black text-cream">{row.type.replace(/_/g, ' ')}</p>
                     <p className="mt-1 text-zinc-500">{row.module.replace(/_/g, ' ')} · {row.businessName || row.businessId || 'Global'}</p>
@@ -299,38 +298,59 @@ export default function ApprovalsPage() {
                         via {lastAuditSource(row.auditHistory)}
                       </p>
                     )}
+                    <ApprovalRowProcessingBadge ui={ui} />
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button size="xs" variant="ghost" onClick={() => setSelected(row)}>View Details</Button>
+                    <Button size="xs" variant="ghost" disabled={rowBusy} onClick={() => setSelected(row)}>View Details</Button>
                     {row.status === 'PENDING' && row.executable && (
-                      <Button size="xs" variant="gold" disabled={processingId === row.id} onClick={() => void processApproval(row, 'APPROVE')}>
-                        {processingId === row.id ? <Spinner /> : 'Approve'}
+                      <Button size="xs" variant="gold" disabled={actionDisabled} onClick={() => void processApproval(row, 'APPROVE')}>
+                        {ui.state === 'processing' ? <><Spinner /> Processing</> : 'Approve'}
                       </Button>
                     )}
                     {row.status === 'PENDING' && (
-                      <Button size="xs" variant="danger" disabled={processingId === row.id} onClick={() => { setActionTarget({ row, action: 'REJECT' }); setNote('') }}>
+                      <Button size="xs" variant="danger" disabled={actionDisabled} onClick={() => { if (!actionDisabled) { setActionTarget({ row, action: 'REJECT' }); setNote('') } }}>
                         Reject
+                      </Button>
+                    )}
+                    {(ui.state === 'failed' || ui.state === 'rolled_back') && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={actionDisabled}
+                        onClick={() => void processApproval(row, ui.action || 'APPROVE')}
+                      >
+                        Retry
                       </Button>
                     )}
                     {row.status === 'PENDING' && !row.executable && <span className="text-[10px] font-bold text-amber-300">Manual review</span>}
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </Card>
       </div>
 
-      {selected && (
+      {selected && (() => {
+        const selectedUi = getRowUi(selected.id)
+        const selectedBusy = isRowProcessing(selected.id)
+        const selectedActionDisabled = selectedBusy || actionsGloballyDisabled
+        return (
         <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <Card className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto p-5">
+          <Card className={`max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto p-5 ${approvalRowLockClass(selectedUi)}`}>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-black text-cream">{selected.type.replace(/_/g, ' ')}</p>
                 <p className="mt-1 text-xs text-zinc-500">{selected.module} · {new Date(selected.createdAt).toLocaleString()}</p>
               </div>
-              <Button size="xs" variant="ghost" onClick={() => setSelected(null)}>Close</Button>
+              <Button size="xs" variant="ghost" disabled={selectedBusy} onClick={() => setSelected(null)}>Close</Button>
             </div>
+            {selectedUi.state === 'processing' && (
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                <Spinner />
+                {selectedUi.message || 'Processing approval…'}
+              </div>
+            )}
             <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/20 p-3">
               <EmployeeAvatar
                 userId={selected.requester?.id}
@@ -350,16 +370,34 @@ export default function ApprovalsPage() {
               <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
               <Info label="Reason" value={selected.reason} />
               <div className="flex flex-wrap gap-2">
-                {selected.status === 'PENDING' && selected.executable && <Button variant="gold" disabled={processingId === selected.id} onClick={() => void processApproval(selected, 'APPROVE')}>{processingId === selected.id ? <><Spinner /> Processing</> : 'Approve'}</Button>}
-                {selected.status === 'PENDING' && <Button variant="danger" disabled={processingId === selected.id} onClick={() => { setActionTarget({ row: selected, action: 'REJECT' }); setNote('') }}>Reject</Button>}
+                {selected.status === 'PENDING' && selected.executable && (
+                  <Button variant="gold" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, 'APPROVE')}>
+                    {selectedUi.state === 'processing' ? <><Spinner /> Processing approval…</> : 'Approve'}
+                  </Button>
+                )}
+                {selected.status === 'PENDING' && (
+                  <Button variant="danger" disabled={selectedActionDisabled} onClick={() => { if (!selectedActionDisabled) { setActionTarget({ row: selected, action: 'REJECT' }); setNote('') } }}>
+                    Reject
+                  </Button>
+                )}
+                {(selectedUi.state === 'failed' || selectedUi.state === 'rolled_back') && (
+                  <Button variant="ghost" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, selectedUi.action || 'APPROVE')}>
+                    Retry safely
+                  </Button>
+                )}
                 {selected.actionUrl && <a href={selected.actionUrl} className="inline-flex rounded-xl border border-gold-dim/40 px-3 py-2 font-bold text-gold-lt">Open related record</a>}
               </div>
               <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
             </div>
           </Card>
         </div>
-      )}
-      {actionTarget && (
+        )
+      })()}
+      {actionTarget && (() => {
+        const rejectUi = getRowUi(actionTarget.row.id)
+        const rejectBusy = isRowProcessing(actionTarget.row.id)
+        const rejectActionDisabled = rejectBusy || actionsGloballyDisabled
+        return (
         <div className="fixed inset-0 z-[10001] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <Card className="w-full max-w-lg p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
@@ -367,15 +405,28 @@ export default function ApprovalsPage() {
                 <p className="text-sm font-black text-cream">Reject Approval</p>
                 <p className="mt-1 text-xs text-zinc-500">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
               </div>
-              <Button size="xs" variant="ghost" onClick={() => setActionTarget(null)}>Close</Button>
+              <Button size="xs" variant="ghost" disabled={rejectBusy} onClick={() => setActionTarget(null)}>Close</Button>
             </div>
-            <textarea value={note} onChange={e => setNote(e.target.value)} className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Rejection reason required" />
-            <Button variant="danger" className="mt-3 w-full justify-center" disabled={processingId === actionTarget.row.id} onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}>
-              {processingId === actionTarget.row.id ? <><Spinner /> Rejecting</> : 'Reject request'}
+            {rejectUi.state === 'processing' && (
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                <Spinner />
+                Processing rejection…
+              </div>
+            )}
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              disabled={rejectActionDisabled}
+              className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+              placeholder="Rejection reason required"
+            />
+            <Button variant="danger" className="mt-3 w-full justify-center" disabled={rejectActionDisabled} onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}>
+              {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
             </Button>
           </Card>
         </div>
-      )}
+        )
+      })()}
     </main>
   )
 }
