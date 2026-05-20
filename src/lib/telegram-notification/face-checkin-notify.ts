@@ -4,10 +4,7 @@ import {
   businessLabel,
   formatFaceVerifiedCheckInAlert,
 } from '@/lib/telegram-notification/formatters'
-import {
-  enqueueTelegramNotification,
-  flushTelegramNotificationQueue,
-} from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { shouldSendLateDetail, getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
 
@@ -22,7 +19,7 @@ async function loadEmployeeContext(userId: string | null, employeeId: string) {
 }
 
 /**
- * Enqueue + flush face-verified check-in with photo (thumb stored on attendance row).
+ * Enqueue face-verified check-in alert (async delivery via queue worker).
  * Never throws — attendance must succeed even if Telegram fails.
  */
 export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
@@ -46,7 +43,7 @@ export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
   const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka' }).format(record.checkInAt)
 
   try {
-    const enqueued = await enqueueTelegramNotification({
+    scheduleTelegramNotification({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_FACE_VERIFIED_CHECK_IN',
       message,
@@ -60,33 +57,15 @@ export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
       },
     })
 
-    if (!enqueued.ok) {
-      console.warn('[telegram-face-checkin] not enqueued', {
-        attendanceRecordId: record.id,
-        skipped: enqueued.skipped,
-      })
-      return enqueued
-    }
-
-    if (enqueued.duplicate) return enqueued
-
-    let delivered = { processed: 0, results: [] as Array<{ id: string; status: string }> }
-    if (enqueued.ids?.length) {
-      delivered = await flushTelegramNotificationQueue({
-        ids: enqueued.ids,
-        limit: enqueued.ids.length,
-      })
-    }
-
-    await logTelegramOpsAudit({
+    void logTelegramOpsAudit({
       businessId: record.businessId,
       eventType: 'FACE_CHECKIN_TELEGRAM',
       employeeId: record.employeeId,
       attendanceRecordId: record.id,
-      detail: `rows=${enqueued.ids?.length ?? 0}; sent=${delivered.results.filter(r => r.status === 'SENT').length}`,
-    })
+      detail: 'queued_async',
+    }).catch(() => {})
 
-    return { ...enqueued, delivered }
+    return { ok: true, queued: true }
   } catch (e) {
     console.error('[telegram-face-checkin] notify failed', {
       attendanceRecordId: record.id,

@@ -1288,8 +1288,9 @@ model TelegramNotificationQueue {
   message      String                       @db.Text
   status       TelegramNotificationStatus   @default(QUEUED)
   attempts     Int                          @default(0)
-  maxAttempts  Int                          @default(3)
+  maxAttempts  Int                          @default(4)
   nextAttemptAt DateTime?
+  processingStartedAt DateTime?
   sentAt       DateTime?
   errorMessage String?                      @db.Text
   metadataJson String?                      @db.Text
@@ -1298,6 +1299,7 @@ model TelegramNotificationQueue {
 
   @@unique([dedupeKey])
   @@index([status, nextAttemptAt, createdAt])
+  @@index([status, processingStartedAt])
   @@index([businessId, createdAt])
   @@index([eventType, createdAt])
 }

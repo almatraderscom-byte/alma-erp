@@ -1,6 +1,6 @@
 import type { OperationalTaskPriority } from '@prisma/client'
 import { createNotification } from '@/lib/notifications'
-import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { erpBaseUrl } from '@/lib/telegram-notification/formatters'
 
 const PRIORITY_LABEL: Record<OperationalTaskPriority, string> = {
@@ -31,7 +31,7 @@ export function queueOperationalTaskAssigned(params: {
   const deadline = params.deadline
     ? ` · deadline ${params.deadline.toLocaleString('en-BD', { timeZone: 'Asia/Dhaka' })}`
     : ''
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: params.businessId || 'ALMA_LIFESTYLE',
     eventType: 'OPERATIONAL_TASK_ASSIGNED',
     message: `📋 Task spotlight assigned to ${params.assigneeName}: ${params.title} (${PRIORITY_LABEL[params.priority]})${deadline}. ${erpBaseUrl()}/portal`,
@@ -48,7 +48,7 @@ export function queueOperationalTaskStatusToAdmin(params: {
   action: 'ACKNOWLEDGED' | 'COMPLETED'
 }) {
   const label = params.action === 'COMPLETED' ? 'completed' : 'acknowledged'
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: params.businessId || 'ALMA_LIFESTYLE',
     eventType: 'OPERATIONAL_TASK_UPDATED',
     message: `📋 Task spotlight · ${label}: ${params.title} — ${params.assigneeName}. ${erpBaseUrl()}/operations/task-spotlight`,

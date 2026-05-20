@@ -23,7 +23,7 @@ import {
 } from '@/lib/prisma-transaction'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { attendanceDeepLink, escapeHtml } from '@/lib/telegram-notification/formatters'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
 import { logEvent } from '@/lib/logger'
@@ -544,7 +544,7 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
     }
   })
 
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_REVIEWED',
     message: [
@@ -609,7 +609,7 @@ export async function notifyPenaltyAppealSubmitted(
     || 'https://alma-erp-six.vercel.app'
   const erpUrl = `${appBase.replace(/\/$/, '')}/attendance?review=${waiver.id}`
 
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_SUBMITTED',
     message: formatPenaltyAppealTelegramMessage({

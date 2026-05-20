@@ -6,6 +6,7 @@ import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
+import { safeResponseJson } from '@/lib/safe-api-response'
 
 type QueueRow = {
   id: string
@@ -45,9 +46,14 @@ type Dashboard = {
   queue?: {
     byStatus?: Array<{ status: string; count: number }>
     stuckSending?: number
+    processingCount?: number
+    retryWaitCount?: number
+    pendingDepth?: number
+    averageDeliveryLatencyMs?: number | null
     businessPending?: number
     businessFailed24h?: number
     stats7d?: Array<{ status: string; count: number }>
+    architecture?: string
   }
   delivery?: {
     lastSuccessfulSend?: { sentAt: string | null; eventType: string; chatId: string } | null
@@ -100,6 +106,7 @@ export default function TelegramOpsSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [retryingFailed, setRetryingFailed] = useState(false)
   const [ownerChatIds, setOwnerChatIds] = useState('')
 
   async function load() {
@@ -115,8 +122,9 @@ export default function TelegramOpsSettingsPage() {
     } else {
       toast.error('Could not load Telegram ops settings')
     }
-    if (healthRes.ok) {
-      setDashboard((await healthRes.json()) as Dashboard)
+    const healthParsed = await safeResponseJson<Dashboard & { ok?: boolean }>(healthRes)
+    if (healthParsed.ok && healthRes.ok) {
+      setDashboard(healthParsed.data)
     } else {
       setDashboard(null)
     }
@@ -159,6 +167,23 @@ export default function TelegramOpsSettingsPage() {
   useEffect(() => {
     void load()
   }, [businessId])
+
+  async function retryAllFailed() {
+    setRetryingFailed(true)
+    const res = await fetch('/api/settings/telegram-ops/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ retry_all: true, business_id: businessId }),
+    })
+    const parsed = await safeResponseJson<{ requeued?: number; message?: string }>(res)
+    setRetryingFailed(false)
+    if (!parsed.ok || !res.ok) {
+      toast.error(String(parsed.data.message || 'Retry failed jobs failed'))
+      return
+    }
+    toast.success(`Requeued ${parsed.data.requeued ?? 0} failed job(s)`)
+    await load()
+  }
 
   async function retryQueue(id: string) {
     const res = await fetch('/api/settings/telegram-ops/retry', {
@@ -209,6 +234,9 @@ export default function TelegramOpsSettingsPage() {
             <Button size="xs" variant="secondary" disabled={processing} onClick={() => void processQueueNow()}>
               {processing ? 'Processing…' : 'Process queue'}
             </Button>
+            <Button size="xs" variant="ghost" disabled={retryingFailed} onClick={() => void retryAllFailed()}>
+              {retryingFailed ? 'Retrying…' : 'Retry failed'}
+            </Button>
             <Button size="xs" variant="ghost" onClick={() => void load()}>Refresh</Button>
           </div>
         )}
@@ -243,9 +271,28 @@ export default function TelegramOpsSettingsPage() {
                 hint={routing?.chatIds?.join(', ')}
               />
               <HealthStat
-                label="Pending queue"
-                value={String(dashboard?.queue?.businessPending ?? 0)}
-                tone={(dashboard?.queue?.businessPending ?? 0) > 0 ? 'warn' : 'ok'}
+                label="Queue depth"
+                value={String(dashboard?.queue?.pendingDepth ?? dashboard?.queue?.businessPending ?? 0)}
+                tone={(dashboard?.queue?.pendingDepth ?? 0) > 5 ? 'warn' : 'ok'}
+              />
+              <HealthStat
+                label="Processing"
+                value={String(dashboard?.queue?.processingCount ?? 0)}
+                tone={(dashboard?.queue?.processingCount ?? 0) > 0 ? 'warn' : 'ok'}
+              />
+              <HealthStat
+                label="Retry wait"
+                value={String(dashboard?.queue?.retryWaitCount ?? 0)}
+                tone={(dashboard?.queue?.retryWaitCount ?? 0) > 0 ? 'warn' : 'ok'}
+              />
+              <HealthStat
+                label="Avg latency (24h)"
+                value={
+                  dashboard?.queue?.averageDeliveryLatencyMs != null
+                    ? `${dashboard.queue.averageDeliveryLatencyMs}ms`
+                    : '—'
+                }
+                tone="ok"
               />
               <HealthStat
                 label="Stuck SENDING"
@@ -292,6 +339,10 @@ export default function TelegramOpsSettingsPage() {
                 ) : null}
                 <p className="mt-2 text-zinc-500">
                   Priority: database chat IDs first. If empty or invalid, <code className="text-gold-lt">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
+                </p>
+                <p className="mt-2 text-zinc-500">
+                  Delivery: <span className="text-gold-lt">enqueue → cron/worker</span> (ERP never waits on Telegram API).
+                  High priority: approvals, penalties, wallet. Low priority: screenshots, summaries (45s delay).
                 </p>
               </Card>
             )}

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   }
 
   const started = Date.now()
-  const queue = await processTelegramNotificationQueue({ limit: 25 })
+  const queue = await processTelegramNotificationQueue({ limit: 30 })
   logTelegram('info', 'telegram.cron.processed', {
     processed: queue.processed,
     stuckSending: queue.stuckSending,

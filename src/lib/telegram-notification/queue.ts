@@ -3,6 +3,11 @@ import { prisma } from '@/lib/prisma'
 import { deliverTelegramNotificationRow } from '@/lib/telegram-notification/deliver'
 import { isTelegramDeliveryRetryable } from '@/lib/telegram-notification/delivery-policy'
 import { resolveOwnerChatIdsWithMeta } from '@/lib/telegram-notification/owner-routing'
+import {
+  compareTelegramQueueRows,
+  lowPriorityInitialDelay,
+  telegramEventPriority,
+} from '@/lib/telegram-notification/priority'
 import { eventTypeEnabled, getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 import type { EnqueueTelegramNotificationInput } from '@/lib/telegram-notification/types'
@@ -13,9 +18,9 @@ import {
 } from '@/lib/attendance-absent-safety'
 import { logEvent } from '@/lib/logger'
 
-const MAX_BATCH = 15
-const MAX_ATTEMPTS = 3
-const RETRY_MINUTES = [1, 5, 15]
+const MAX_BATCH = 20
+const MAX_ATTEMPTS = 4
+const RETRY_MINUTES = [1, 5, 15, 60]
 /** Serverless may die after claiming SENDING — reclaim rows older than this. */
 export const STUCK_SENDING_MS = 2 * 60_000
 
@@ -133,6 +138,8 @@ export async function enqueueTelegramNotification(
   const metadataJson = input.metadata ? JSON.stringify(input.metadata).slice(0, 8000) : null
   const ids: string[] = []
 
+  const initialDelay = lowPriorityInitialDelay(input.eventType)
+
   for (const chatId of chatIds) {
     const dedupeKey =
       chatIds.length === 1 ? input.dedupeKey : input.dedupeKey ? `${input.dedupeKey}:${chatId}` : null
@@ -146,6 +153,8 @@ export async function enqueueTelegramNotification(
           message: input.message.slice(0, 4000),
           status: 'QUEUED',
           metadataJson,
+          maxAttempts: MAX_ATTEMPTS,
+          nextAttemptAt: initialDelay,
         },
       })
       ids.push(row.id)
@@ -156,11 +165,13 @@ export async function enqueueTelegramNotification(
     }
   }
 
-  logTelegram('info', 'telegram.enqueue.queued', {
+  const priority = telegramEventPriority(input.eventType)
+  logTelegram('info', 'telegram.enqueue', {
     businessId: input.businessId,
     eventType: input.eventType,
     rowCount: ids.length,
     routingSource: routing.source,
+    priority,
   })
   logEvent('info', 'notification.telegram.queued', {
     businessId: input.businessId,
@@ -171,35 +182,34 @@ export async function enqueueTelegramNotification(
   return { ok: true, ids, recipientCount: chatIds.length }
 }
 
-/** Reliable flush — await this after critical alerts (e.g. screenshot upload). */
-export async function flushTelegramNotificationQueue(options: { limit?: number; ids?: string[] } = {}) {
-  return processTelegramNotificationQueue(options)
-}
-
-export async function enqueueTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
-  const result = await enqueueTelegramNotification(input)
-  if (!result.ok) {
-    if (result.skipped) {
-      logTelegram('warn', 'telegram.flush.skipped', { reason: result.skipped, eventType: input.eventType })
-    }
-    return result
-  }
-
-  const ids = result.ids
-  if (!ids?.length) return result
-
-  const delivered = await processTelegramNotificationQueue({ limit: ids.length, ids })
-  return { ...result, delivered }
-}
-
-/** Fire-and-forget wrapper — prefer await enqueueTelegramNotificationAndFlush in API routes. */
-export function scheduleTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
-  void enqueueTelegramNotificationAndFlush(input).catch(err => {
-    logTelegram('error', 'telegram.flush.async_error', {
+/**
+ * Enqueue only — never blocks on Telegram API. Background cron/worker delivers later.
+ */
+export function scheduleTelegramNotification(input: EnqueueTelegramNotificationInput) {
+  void enqueueTelegramNotification(input).catch(err => {
+    logTelegram('error', 'telegram.enqueue.async_error', {
       eventType: input.eventType,
       message: (err as Error).message,
     })
   })
+}
+
+/** @deprecated Use scheduleTelegramNotification — flush removed from ERP hot paths. */
+export function scheduleTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
+  scheduleTelegramNotification(input)
+}
+
+/** Explicit processor invoke (cron, admin "Process queue", tests). */
+export async function flushTelegramNotificationQueue(options: { limit?: number; ids?: string[] } = {}) {
+  return processTelegramNotificationQueue(options)
+}
+
+/** Admin/cron only — enqueue then process in same invocation. */
+export async function enqueueTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
+  const result = await enqueueTelegramNotification(input)
+  if (!result.ok || !result.ids?.length) return result
+  const delivered = await processTelegramNotificationQueue({ limit: result.ids.length, ids: result.ids })
+  return { ...result, delivered }
 }
 
 export async function processTelegramNotificationQueue(options: { limit?: number; ids?: string[] } = {}) {
@@ -208,7 +218,7 @@ export async function processTelegramNotificationQueue(options: { limit?: number
   const now = new Date()
   const take = Math.min(Math.max(options.limit ?? MAX_BATCH, 1), MAX_BATCH)
 
-  const rows = options.ids?.length
+  const rowsRaw = options.ids?.length
     ? await prisma.telegramNotificationQueue.findMany({
         where: { id: { in: options.ids } },
         orderBy: { createdAt: 'asc' },
@@ -220,8 +230,15 @@ export async function processTelegramNotificationQueue(options: { limit?: number
           OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
         },
         orderBy: { createdAt: 'asc' },
-        take,
+        take: take * 2,
       })
+
+  const rows = [...rowsRaw].sort(compareTelegramQueueRows).slice(0, take)
+
+  logTelegram('info', 'telegram.process.start', {
+    batch: rows.length,
+    explicitIds: Boolean(options.ids?.length),
+  })
 
   const results: Array<{ id: string; status: TelegramNotificationStatus; errorMessage?: string | null }> = []
 
@@ -230,7 +247,8 @@ export async function processTelegramNotificationQueue(options: { limit?: number
       results.push({ id: row.id, status: row.status })
       continue
     }
-    if (row.attempts >= MAX_ATTEMPTS && row.status === 'FAILED' && !options.ids?.includes(row.id)) {
+    const rowMax = row.maxAttempts ?? MAX_ATTEMPTS
+    if (row.attempts >= rowMax && row.status === 'FAILED' && !options.ids?.includes(row.id)) {
       continue
     }
 
@@ -282,13 +300,26 @@ export async function processTelegramNotificationQueue(options: { limit?: number
       }
     }
 
+    const claimAt = new Date()
     const claimed = await prisma.telegramNotificationQueue.updateMany({
       where: { id: row.id, status: { in: ['QUEUED', 'FAILED'] } },
-      data: { status: 'SENDING', attempts: { increment: 1 }, updatedAt: new Date() },
+      data: {
+        status: 'SENDING',
+        attempts: { increment: 1 },
+        processingStartedAt: claimAt,
+        updatedAt: claimAt,
+      },
     })
     if (!claimed.count) continue
 
     const started = Date.now()
+    logTelegram('info', 'telegram.process.job', {
+      queueJobId: row.id,
+      eventType: row.eventType,
+      businessId: row.businessId,
+      priority: telegramEventPriority(row.eventType),
+      attempt: row.attempts + 1,
+    })
     let send: Awaited<ReturnType<typeof deliverTelegramNotificationRow>>
     try {
       send = await deliverTelegramNotificationRow(row)
@@ -310,6 +341,7 @@ export async function processTelegramNotificationQueue(options: { limit?: number
           sentAt: new Date(),
           errorMessage: null,
           nextAttemptAt: null,
+          processingStartedAt: null,
         },
       })
       logTelegram('info', 'telegram.send.success', {
@@ -346,8 +378,9 @@ export async function processTelegramNotificationQueue(options: { limit?: number
 
     const fresh = await prisma.telegramNotificationQueue.findUnique({ where: { id: row.id } })
     const attempts = fresh?.attempts ?? row.attempts + 1
+    const maxAttempts = fresh?.maxAttempts ?? row.maxAttempts ?? MAX_ATTEMPTS
     const retryable = isTelegramDeliveryRetryable(send.errorMessage, send.errorCode)
-    const exhausted = attempts >= MAX_ATTEMPTS
+    const exhausted = attempts >= maxAttempts
     const failed = !retryable || exhausted
     const updated = await prisma.telegramNotificationQueue.update({
       where: { id: row.id },
@@ -355,8 +388,18 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         status: failed ? 'FAILED' : 'QUEUED',
         errorMessage: send.errorMessage?.slice(0, 500) || 'delivery_failed',
         nextAttemptAt: failed ? null : nextRetryAt(attempts),
+        processingStartedAt: null,
       },
     })
+    if (!failed) {
+      logTelegram('warn', 'telegram.retry', {
+        queueJobId: row.id,
+        eventType: row.eventType,
+        attempts,
+        nextAttemptAt: updated.nextAttemptAt?.toISOString(),
+        error: updated.errorMessage,
+      })
+    }
     const failureEvent = failed ? 'telegram.send.failed' : 'telegram.retry'
     logTelegram(failed ? 'error' : 'warn', failureEvent, {
       id: row.id,
@@ -383,6 +426,34 @@ export async function processTelegramNotificationQueue(options: { limit?: number
   return { processed: results.length, results, stuckSending: stuck }
 }
 
+export async function retryAllFailedTelegramNotifications(businessId?: string, limit = 40) {
+  const rows = await prisma.telegramNotificationQueue.findMany({
+    where: {
+      status: 'FAILED',
+      ...(businessId ? { businessId } : {}),
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: limit,
+    select: { id: true },
+  })
+  let requeued = 0
+  for (const row of rows) {
+    await prisma.telegramNotificationQueue.update({
+      where: { id: row.id },
+      data: {
+        status: 'QUEUED',
+        attempts: 0,
+        nextAttemptAt: null,
+        errorMessage: null,
+        processingStartedAt: null,
+      },
+    })
+    requeued += 1
+  }
+  const processed = requeued ? await processTelegramNotificationQueue({ limit: Math.min(requeued, MAX_BATCH) }) : { processed: 0, results: [] }
+  return { requeued, processed }
+}
+
 export async function retryTelegramNotification(id: string) {
   const row = await prisma.telegramNotificationQueue.findUnique({ where: { id } })
   if (!row) return { ok: false, error: 'NOT_FOUND' }
@@ -397,25 +468,68 @@ export async function retryTelegramNotification(id: string) {
   return processTelegramNotificationQueue({ ids: [id], limit: 1 })
 }
 
-export async function getTelegramQueueHealth() {
+export async function getTelegramQueueHealth(businessId?: string) {
   const cutoff = stuckSendingCutoff()
-  const [byStatus, stuckSending, oldestQueued] = await Promise.all([
+  const businessWhere = businessId ? { businessId } : {}
+  const [byStatus, stuckSending, oldestQueued, processingCount, retryWaitCount, avgLatency] = await Promise.all([
     prisma.telegramNotificationQueue.groupBy({
       by: ['status'],
+      where: businessWhere,
       _count: { _all: true },
     }),
     prisma.telegramNotificationQueue.count({
-      where: { status: 'SENDING', updatedAt: { lt: cutoff } },
+      where: { status: 'SENDING', updatedAt: { lt: cutoff }, ...businessWhere },
     }),
     prisma.telegramNotificationQueue.findFirst({
-      where: { status: 'QUEUED' },
+      where: { status: 'QUEUED', ...businessWhere },
       orderBy: { createdAt: 'asc' },
       select: { id: true, createdAt: true, eventType: true },
     }),
+    prisma.telegramNotificationQueue.count({
+      where: { status: 'SENDING', ...businessWhere },
+    }),
+    prisma.telegramNotificationQueue.count({
+      where: {
+        status: 'QUEUED',
+        attempts: { gt: 0 },
+        nextAttemptAt: { not: null },
+        ...businessWhere,
+      },
+    }),
+    prisma.telegramNotificationQueue.findMany({
+      where: {
+        status: 'SENT',
+        sentAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) },
+        processingStartedAt: { not: null },
+        ...businessWhere,
+      },
+      select: { createdAt: true, sentAt: true, processingStartedAt: true },
+      take: 200,
+      orderBy: { sentAt: 'desc' },
+    }),
   ])
+
+  const latencySamples = avgLatency
+    .map(r => {
+      if (!r.sentAt || !r.processingStartedAt) return null
+      return r.sentAt.getTime() - r.processingStartedAt.getTime()
+    })
+    .filter((n): n is number => n != null && n >= 0)
+  const averageDeliveryLatencyMs = latencySamples.length
+    ? Math.round(latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length)
+    : null
+
+  const pendingDepth =
+    (byStatus.find(s => s.status === 'QUEUED')?._count._all ?? 0)
+    + (byStatus.find(s => s.status === 'FAILED')?._count._all ?? 0)
+
   return {
     byStatus: byStatus.map(s => ({ status: s.status, count: s._count._all })),
     stuckSending,
+    processingCount,
+    retryWaitCount,
+    pendingDepth,
+    averageDeliveryLatencyMs,
     oldestQueued: oldestQueued
       ? { id: oldestQueued.id, eventType: oldestQueued.eventType, ageMinutes: Math.round((Date.now() - oldestQueued.createdAt.getTime()) / 60_000) }
       : null,

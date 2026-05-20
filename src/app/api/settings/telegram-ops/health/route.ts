@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
 
   const started = Date.now()
   const reclaimed = await reclaimStuckTelegramSendingRows()
-  const processed = await processTelegramNotificationQueue({ limit: 25 })
+  const processed = await processTelegramNotificationQueue({ limit: 30 })
   const queue = await getTelegramQueueHealth()
   const businessId = resolveBusinessId(req.nextUrl.searchParams.get('business_id'))
 

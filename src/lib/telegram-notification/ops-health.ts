@@ -63,7 +63,7 @@ export async function getTelegramOpsDashboard(businessId: string) {
     await Promise.all([
       getTelegramOpsSetting(businessId),
       resolveOwnerChatIdsWithMeta(businessId),
-      getTelegramQueueHealth(),
+      getTelegramQueueHealth(businessId),
       fetchTelegramBotDiagnostics(),
       prisma.telegramNotificationQueue.findFirst({
         where: { businessId, status: 'SENT', sentAt: { not: null } },
@@ -131,6 +131,7 @@ export async function getTelegramOpsDashboard(businessId: string) {
       businessRetryableFailed: retryableFailed,
       stats7d: stats7d.map(s => ({ status: s.status, count: s._count._all })),
       stuckSendingThresholdMinutes: Math.round(STUCK_SENDING_MS / 60_000),
+      architecture: 'async_enqueue_cron_deliver',
     },
     delivery: {
       lastSuccessfulSend: lastSent

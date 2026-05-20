@@ -2,11 +2,7 @@ import {
   formatScreenshotUploadAlert,
   tradingDeepLink,
 } from '@/lib/telegram-notification/formatters'
-import {
-  enqueueTelegramNotification,
-  flushTelegramNotificationQueue,
-} from '@/lib/telegram-notification/queue'
-
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
 
 export type ScreenshotUploadNotifyInput = {
@@ -20,7 +16,7 @@ export type ScreenshotUploadNotifyInput = {
 }
 
 /**
- * Enqueue + immediately deliver screenshot upload alerts (awaited from upload route).
+ * Enqueue screenshot upload alert (low priority — delivered by async queue worker).
  * Does not throw — logs failures only.
  */
 export async function notifyTradingScreenshotUploaded(input: ScreenshotUploadNotifyInput) {
@@ -33,7 +29,7 @@ export async function notifyTradingScreenshotUploaded(input: ScreenshotUploadNot
   })
 
   try {
-    const enqueued = await enqueueTelegramNotification({
+    scheduleTelegramNotification({
       businessId: input.businessId,
       eventType: 'TRADING_SCREENSHOT_UPLOAD',
       message,
@@ -51,35 +47,7 @@ export async function notifyTradingScreenshotUploaded(input: ScreenshotUploadNot
         input.uploaderName,
       ),
     })
-
-    if (!enqueued.ok) {
-      console.warn('[telegram-screenshot] not enqueued', {
-        screenshotId: input.screenshotId,
-        skipped: enqueued.skipped,
-        recipients: enqueued.recipientCount,
-      })
-      return enqueued
-    }
-
-    if (enqueued.duplicate) {
-      return enqueued
-    }
-
-    if (enqueued.ids?.length) {
-      const delivered = await flushTelegramNotificationQueue({
-        ids: enqueued.ids,
-        limit: enqueued.ids.length,
-      })
-      console.info('[telegram-screenshot] delivered', {
-        screenshotId: input.screenshotId,
-        rows: enqueued.ids.length,
-        processed: delivered.processed,
-        results: delivered.results,
-      })
-      return { ...enqueued, delivered }
-    }
-
-    return enqueued
+    return { ok: true, queued: true }
   } catch (e) {
     console.error('[telegram-screenshot] notify failed', {
       screenshotId: input.screenshotId,

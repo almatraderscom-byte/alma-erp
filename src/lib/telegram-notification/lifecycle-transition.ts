@@ -9,7 +9,7 @@ import {
   formatBdTime,
 } from '@/lib/telegram-notification/formatters'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 
 export type WorkflowTransitionState =
@@ -270,7 +270,7 @@ export async function dispatchWorkflowTransitionNotification(input: {
       entityType: workflowKey(approval),
     })
 
-    scheduleTelegramNotificationAndFlush({
+    scheduleTelegramNotification({
       businessId: approval.businessId,
       eventType,
       message,

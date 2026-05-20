@@ -4,7 +4,7 @@ import {
   tradingDeepLink,
 } from '@/lib/telegram-notification/formatters'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
 import { notifyTradingScreenshotUploaded } from '@/lib/telegram-notification/screenshot-notify'
 
 export async function queueTradingScreenshotUploadAlert(input: {
@@ -28,7 +28,7 @@ export function queueTradingScreenshotFailureAlert(input: {
   error: string
   screenshotId?: string
 }) {
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'TRADING_SCREENSHOT_FAILURE',
     message: formatScreenshotFailureAlert({
@@ -57,7 +57,7 @@ export function queueTradingDeleteRequestAlert(input: {
   approvalPath: string
   entityId: string
 }) {
-  scheduleTelegramNotificationAndFlush({
+  scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'TRADING_DELETE_REQUEST',
     message: formatDeleteRequestAlert({
