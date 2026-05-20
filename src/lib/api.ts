@@ -25,6 +25,30 @@ import type {
   HRPayrollListApi,
   HRDashboardApi,
 } from '@/types/hr'
+import type {
+  TradingAccount,
+  TradingAccountDetailResponse,
+  TradingAccountInput,
+  TradingAccountsResponse,
+  TradingAnalyticsFilters,
+  TradingAnalyticsResponse,
+  TradingBkashSummaryInput,
+  TradingBusinessSummaryResponse,
+  TradingCapitalInput,
+  TradingDashboardResponse,
+  TradingExpenseInput,
+  TradingEmployeeDailyReport,
+  TradingEmployeeReportInput,
+  TradingHrProfileInput,
+  TradingHrResponse,
+  TradingMutationResponse,
+  TradingPerformanceScreenshot,
+  TradingStaffSummaryResponse,
+  TradingTradeActionInput,
+  TradingTradeActionResponse,
+  TradingTradeInput,
+  TradingUser,
+} from '@/types/trading'
 import { readActorHeadersFromStorage } from '@/lib/actor-headers'
 
 let _businessId: BusinessId = DEFAULT_BUSINESS_ID
@@ -49,6 +73,13 @@ const DEFAULT_CLIENT_TIMEOUT_MS = 25_000
 export const INVOICE_CLIENT_TIMEOUT_MS = 75_000
 
 export type ApiFetchOptions = { timeoutMs?: number }
+
+type ApiHealthEventDetail = {
+  ok: boolean
+  route: string
+  status?: number
+  critical?: boolean
+}
 
 // ── Error type ────────────────────────────────────────────────────────────────
 export class APIError extends Error {
@@ -87,10 +118,13 @@ async function apiGet<T>(path: string, params: Record<string, string> = {}, opti
     clearTimeout(timer)
     const data = await safeJson_<{ error?: string } & T>(res, `GET ${path}`)
     if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+    reportApiHealth({ ok: true, route: path, status: res.status })
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    throw wrapError_(err, path, timeoutMs)
+    const wrapped = wrapError_(err, path, timeoutMs)
+    reportApiHealth({ ok: false, route: path, status: wrapped.status, critical: isCriticalApiFailure(wrapped) })
+    throw wrapped
   }
 }
 
@@ -120,10 +154,73 @@ async function apiPost<T>(
     if (data && typeof data === 'object' && data.ok === false) {
       throw new APIError((data as { error?: string }).error || 'Request failed', path, res.status)
     }
+    reportApiHealth({ ok: true, route: path, status: res.status })
     return data as T
   } catch (err) {
     clearTimeout(timer)
-    throw wrapError_(err, path, timeoutMs)
+    const wrapped = wrapError_(err, path, timeoutMs)
+    reportApiHealth({ ok: false, route: path, status: wrapped.status, critical: isCriticalApiFailure(wrapped) })
+    throw wrapped
+  }
+}
+
+async function apiPatch<T>(
+  path: string,
+  body: Record<string, unknown> = {},
+  options?: ApiFetchOptions,
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(path, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...readActorHeadersFromStorage(),
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    clearTimeout(timer)
+    const data = await safeJson_<{ error?: string; ok?: boolean } & T>(res, `PATCH ${path}`)
+    if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+    if (data && typeof data === 'object' && data.ok === false) {
+      throw new APIError((data as { error?: string }).error || 'Request failed', path, res.status)
+    }
+    reportApiHealth({ ok: true, route: path, status: res.status })
+    return data as T
+  } catch (err) {
+    clearTimeout(timer)
+    const wrapped = wrapError_(err, path, timeoutMs)
+    reportApiHealth({ ok: false, route: path, status: wrapped.status, critical: isCriticalApiFailure(wrapped) })
+    throw wrapped
+  }
+}
+
+async function apiDelete<T>(path: string, options?: ApiFetchOptions): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(path, {
+      method: 'DELETE',
+      headers: readActorHeadersFromStorage(),
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    clearTimeout(timer)
+    const data = await safeJson_<{ error?: string } & T>(res, `DELETE ${path}`)
+    if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+    reportApiHealth({ ok: true, route: path, status: res.status })
+    return data as T
+  } catch (err) {
+    clearTimeout(timer)
+    const wrapped = wrapError_(err, path, timeoutMs)
+    reportApiHealth({ ok: false, route: path, status: wrapped.status, critical: isCriticalApiFailure(wrapped) })
+    throw wrapped
   }
 }
 
@@ -132,6 +229,71 @@ async function safeJson_<T>(res: Response, ctx: string): Promise<T> {
   if (!text.trim()) throw new APIError(`${ctx} returned empty response`, ctx)
   try { return JSON.parse(text) as T }
   catch { throw new APIError(`${ctx} returned non-JSON: ${text.slice(0, 80)}`, ctx) }
+}
+
+function xhrFormPost_(
+  path: string,
+  form: FormData,
+  options: {
+    headers: Record<string, string>
+    timeoutMs: number
+    signal?: AbortSignal
+    onProgress?: (percent: number) => void
+  },
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    Object.entries(options.headers).forEach(([key, value]) => {
+      if (value) xhr.setRequestHeader(key, value)
+    })
+    xhr.timeout = options.timeoutMs
+    xhr.responseType = 'text'
+
+    const onAbort = () => {
+      xhr.abort()
+      reject(new DOMException('Upload cancelled', 'AbortError'))
+    }
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort()
+        return
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    xhr.upload.onprogress = event => {
+      if (!options.onProgress || !event.lengthComputable) return
+      options.onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    }
+
+    xhr.onload = () => {
+      options.signal?.removeEventListener('abort', onAbort)
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+        }),
+      )
+    }
+
+    xhr.onerror = () => {
+      options.signal?.removeEventListener('abort', onAbort)
+      reject(new Error('Network error during upload'))
+    }
+
+    xhr.ontimeout = () => {
+      options.signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('Upload timed out', 'AbortError'))
+    }
+
+    xhr.onabort = () => {
+      options.signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('Upload cancelled', 'AbortError'))
+    }
+
+    xhr.send(form)
+  })
 }
 
 function wrapError_(err: unknown, route: string, timeoutMs?: number): APIError {
@@ -147,6 +309,18 @@ function wrapError_(err: unknown, route: string, timeoutMs?: number): APIError {
     return new APIError(hint, route, 408)
   }
   return new APIError(msg, route, status)
+}
+
+function isCriticalApiFailure(err: APIError) {
+  if (err.status === 408) return false
+  if (err.status && err.status < 500) return false
+  const message = err.message.toLowerCase()
+  return !message.includes('timed out') && !message.includes('abort')
+}
+
+function reportApiHealth(detail: ApiHealthEventDetail) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent<ApiHealthEventDetail>('alma:api-health', { detail }))
 }
 
 // ── Response types ─────────────────────────────────────────────────────────────
@@ -197,6 +371,17 @@ export interface StockResponse {
     out_of_stock: number
     total_value: number
   }
+}
+
+export type InventoryMutationInput = {
+  action: 'edit' | 'archive' | 'restore' | 'adjust' | 'bulk_update'
+  sku?: string
+  items?: Array<Record<string, unknown>>
+  data?: Record<string, unknown>
+  reason?: string
+  note?: string
+  new_stock?: number
+  buying_price?: number
 }
 
 export interface LogResponse {
@@ -283,6 +468,25 @@ export type CreateProductInput = {
   reorder_level?: number
   /** Default true: append matching row to 📦 STOCK CONTROL for Inventory list */
   sync_to_stock?: boolean
+  inventory_mode?: 'single' | 'collection'
+  collection_code?: string
+  collection_type?: 'MEN' | 'WOMEN' | 'SINGLE' | 'CUSTOM'
+  gender_type?: string
+  bulk_rows?: Array<{
+    sku: string
+    collectionCode: string
+    collectionType: string
+    genderType: string
+    sizeCategory?: string
+    sizeValue?: string
+    variantGroup?: string
+    buyingPrice: number
+    stockQty: number
+    barcode?: string
+    active?: boolean
+    product?: string
+    category?: string
+  }>
 }
 
 /**
@@ -315,6 +519,30 @@ export type CreateOrderInput = {
   tracking_id?: string
   notes?: string
   sku?: string
+  paid_amount?: number
+  due_amount?: number
+  estimated_profit?: number
+  inventory_cost?: number
+  courier_cost?: number
+  items?: Array<{
+    line_no: number
+    product_code: string
+    product: string
+    category?: string
+    size?: string
+    variant?: string
+    qty: number
+    unit_price: number
+    sell_price: number
+    subtotal: number
+    sku: string
+    stock_sku?: string
+    cogs?: number
+    collection_code?: string
+    collection_type?: string
+    size_group?: string
+    variant_group?: string
+  }>
 }
 
 /** Ensures GAS-required `payment` plus legacy alias keys are always present on the wire. */
@@ -394,6 +622,8 @@ export const api = {
 
   stock: {
     list: (): Promise<StockResponse> => apiGet('/api/stock'),
+    mutate: (payload: InventoryMutationInput): Promise<MutationOk & Record<string, unknown>> =>
+      apiPost('/api/stock', payload),
   },
 
   finance: {
@@ -520,6 +750,131 @@ export const api = {
   analytics: {
     get: (p?: { startDate?: string; endDate?: string }): Promise<DashboardData> =>
       apiGet('/api/analytics', bizParams(p as Record<string, string>)),
+  },
+
+  trading: {
+    analytics: (p?: TradingAnalyticsFilters): Promise<TradingAnalyticsResponse> =>
+      apiGet('/api/trading/analytics', p as Record<string, string>),
+    dashboard: (): Promise<TradingDashboardResponse> =>
+      apiGet('/api/trading/dashboard'),
+    summary: (): Promise<TradingBusinessSummaryResponse> =>
+      apiGet('/api/trading/summary'),
+    staffSummary: (): Promise<TradingStaffSummaryResponse> =>
+      apiGet('/api/trading/staff-summary'),
+    hr: (): Promise<TradingHrResponse> =>
+      apiGet('/api/trading/hr'),
+    saveHrProfile: (payload: TradingHrProfileInput): Promise<{ ok: boolean; profile: unknown }> =>
+      apiPost('/api/trading/hr', payload as Record<string, unknown>),
+    employeeReports: (p?: { userId?: string; limit?: number }): Promise<{ reports: TradingEmployeeDailyReport[] }> =>
+      apiGet('/api/trading/hr/reports', {
+        userId: p?.userId || '',
+        limit: String(p?.limit || ''),
+      }),
+    submitEmployeeReport: (payload: TradingEmployeeReportInput): Promise<{ ok: boolean; report: TradingEmployeeDailyReport }> =>
+      apiPost('/api/trading/hr/reports', payload as Record<string, unknown>),
+    accounts: (p?: { search?: string; status?: string }): Promise<TradingAccountsResponse> =>
+      apiGet('/api/trading/accounts', {
+        search: p?.search || '',
+        status: p?.status || '',
+      }),
+    accountDetail: (id: string): Promise<TradingAccountDetailResponse> =>
+      apiGet(`/api/trading/accounts/${encodeURIComponent(id)}/summary`),
+    staff: (): Promise<{ staff: TradingUser[] }> =>
+      apiGet('/api/trading/staff'),
+    createAccount: (payload: TradingAccountInput): Promise<{ ok: boolean; account: TradingAccount }> =>
+      apiPost('/api/trading/accounts', payload as Record<string, unknown>),
+    updateAccount: (id: string, payload: Partial<TradingAccountInput> & { action?: 'update' | 'archive' }): Promise<{ ok: boolean; account: TradingAccount }> =>
+      apiPatch(`/api/trading/accounts/${encodeURIComponent(id)}`, payload as Record<string, unknown>),
+    submitTrade: (payload: TradingTradeInput): Promise<TradingMutationResponse> =>
+      apiPost('/api/trading/trades', payload as Record<string, unknown>, { timeoutMs: 20_000 }),
+    updateTrade: (id: string, payload: TradingTradeActionInput): Promise<TradingTradeActionResponse> =>
+      apiPatch(`/api/trading/trades/${encodeURIComponent(id)}`, payload as Record<string, unknown>, { timeoutMs: 20_000 }),
+    addExpense: (payload: TradingExpenseInput): Promise<TradingMutationResponse> =>
+      apiPost('/api/trading/expenses', payload as Record<string, unknown>),
+    addCapital: (payload: TradingCapitalInput): Promise<TradingMutationResponse> =>
+      apiPost('/api/trading/capital', payload as Record<string, unknown>),
+    addBkashSummary: (payload: TradingBkashSummaryInput): Promise<TradingMutationResponse> =>
+      apiPost(`/api/trading/accounts/${encodeURIComponent(payload.tradingAccountId)}/bkash-summary`, payload as Record<string, unknown>),
+    performanceScreenshots: (accountId: string, p?: { archived?: boolean; cursor?: string; limit?: number }): Promise<{ screenshots: TradingPerformanceScreenshot[]; nextCursor: string | null; archived: boolean }> =>
+      apiGet(`/api/trading/accounts/${encodeURIComponent(accountId)}/performance`, {
+        archived: p?.archived ? '1' : '',
+        cursor: p?.cursor || '',
+        limit: String(p?.limit || ''),
+      }),
+    uploadPerformanceScreenshot: async (
+      accountId: string,
+      file: File,
+      payload: { shotDate?: string; note?: string; fingerprint?: string },
+      options?: {
+        onProgress?: (percent: number) => void
+        signal?: AbortSignal
+        timeoutMs?: number
+      },
+    ): Promise<{ ok: boolean; screenshot: TradingPerformanceScreenshot }> => {
+      const path = `/api/trading/accounts/${encodeURIComponent(accountId)}/performance`
+      const form = new FormData()
+      form.set('file', file)
+      if (payload.shotDate) form.set('shotDate', payload.shotDate)
+      if (payload.note) form.set('note', payload.note)
+      if (payload.fingerprint) form.set('fingerprint', payload.fingerprint)
+
+      const timeoutMs = options?.timeoutMs ?? 120_000
+      const headers = readActorHeadersFromStorage()
+
+      const res =
+        typeof XMLHttpRequest !== 'undefined'
+          ? await xhrFormPost_(path, form, { headers, timeoutMs, signal: options?.signal, onProgress: options?.onProgress })
+          : await fetch(path, {
+              method: 'POST',
+              body: form,
+              cache: 'no-store',
+              headers,
+              signal: options?.signal,
+            })
+
+      const data = await safeJson_<{ error?: string; code?: string; ok: boolean; screenshot: TradingPerformanceScreenshot }>(
+        res,
+        'POST /api/trading/accounts/[id]/performance',
+      )
+      if (!res.ok || data.error) {
+        throw new APIError(data.error ?? `HTTP ${res.status}`, path, res.status)
+      }
+      return data
+    },
+    volumeTargets: (p?: { date?: string; status?: string }): Promise<{ date: string; targets: unknown[]; canManage: boolean }> =>
+      apiGet('/api/trading/volume-targets', { date: p?.date || '', status: p?.status || '' }),
+    createVolumeTarget: (payload: Record<string, unknown>): Promise<{ ok: boolean; target: unknown }> =>
+      apiPost('/api/trading/volume-targets', payload),
+    updateVolumeTarget: (id: string, payload: Record<string, unknown>): Promise<{ ok: boolean; target: unknown }> =>
+      apiPatch(`/api/trading/volume-targets/${encodeURIComponent(id)}`, payload),
+    deleteVolumeTarget: (id: string): Promise<{ ok: boolean }> =>
+      apiDelete(`/api/trading/volume-targets/${encodeURIComponent(id)}`),
+    volumeTargetAction: (id: string, payload: Record<string, unknown>): Promise<{ ok: boolean; target: unknown }> =>
+      apiPost(`/api/trading/volume-targets/${encodeURIComponent(id)}/actions`, payload),
+    volumeTargetSettings: (): Promise<{ settings: { autoPenaltyEnabled: boolean; defaultPenaltyBdt: number }; canManage: boolean }> =>
+      apiGet('/api/trading/volume-targets/settings'),
+    updateVolumeTargetSettings: (payload: Record<string, unknown>): Promise<{ ok: boolean; settings: unknown }> =>
+      apiPatch('/api/trading/volume-targets/settings', payload),
+    volumeTargetAnalytics: (p?: { month?: string }): Promise<{ analytics?: unknown; summary?: unknown; canManage: boolean }> =>
+      apiGet('/api/trading/volume-targets/analytics', { month: p?.month || '' }),
+    volumeTargetAudits: (p?: { targetId?: string; limit?: number }): Promise<{ audits: unknown[] }> =>
+      apiGet('/api/trading/volume-targets/audit', {
+        targetId: p?.targetId || '',
+        limit: String(p?.limit || ''),
+      }),
+    uploadAttachment: async (file: File): Promise<{ ok: boolean; attachment: { id: string; url: string; fileName: string } }> => {
+      const form = new FormData()
+      form.set('file', file)
+      const res = await fetch('/api/trading/attachments', {
+        method: 'POST',
+        body: form,
+        cache: 'no-store',
+        headers: readActorHeadersFromStorage(),
+      })
+      const data = await safeJson_<{ error?: string; ok: boolean; attachment: { id: string; url: string; fileName: string } }>(res, 'POST /api/trading/attachments')
+      if (!res.ok || data.error) throw new APIError(data.error ?? `HTTP ${res.status}`, '/api/trading/attachments', res.status)
+      return data
+    },
   },
 
   mutations: {
