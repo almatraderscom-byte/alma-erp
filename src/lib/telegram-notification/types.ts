@@ -29,5 +29,6 @@ export type TelegramOpsSettingDto = {
   alertAttendanceSuspicious: boolean
   alertTradingScreenshot: boolean
   alertTradingDeleteRequest: boolean
+  alertWorkflowLifecycle: boolean
   alertOpsDailySummary: boolean
 }

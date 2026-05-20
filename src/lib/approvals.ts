@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { createNotification } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import type { ApprovalAuditEntry, ApprovalSource } from '@/lib/approval-types'
+import { scheduleWorkflowTransitionNotification } from '@/lib/telegram-notification/lifecycle-transition'
 
 export type ApprovalModule = 'ALMA_TRADING' | 'INVENTORY' | 'PAYROLL' | 'ORDERS_CRM'
 
@@ -88,6 +89,12 @@ export async function createApprovalRequest(
       title: input.title || 'Approval required',
       message: input.message || `${input.module} ${input.type} requires approval.`,
     })
+    scheduleWorkflowTransitionNotification({
+      approval,
+      transition: 'PENDING',
+      actorUserId: input.requestedBy,
+      reason: input.reason,
+    })
   }
   logEvent('info', 'approval.request.created', { approvalId: approval.id, module: approval.module, type: approval.type, entityId: approval.entityId })
   return approval
@@ -165,6 +172,13 @@ export async function notifyApprovalResolved(
     actionUrl: approval.actionUrl || undefined,
     createdById: actorUserId,
     metadata: { approvalId: approval.id, module: approval.module, type: approval.type, status },
+  })
+
+  scheduleWorkflowTransitionNotification({
+    approval,
+    transition: status,
+    actorUserId,
+    reason,
   })
 }
 

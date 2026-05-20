@@ -43,6 +43,7 @@ export function telegramOpsSettingDto(row: TelegramOpsSetting): TelegramOpsSetti
     alertAttendanceSuspicious: row.alertAttendanceSuspicious,
     alertTradingScreenshot: row.alertTradingScreenshot,
     alertTradingDeleteRequest: row.alertTradingDeleteRequest,
+    alertWorkflowLifecycle: row.alertWorkflowLifecycle,
     alertOpsDailySummary: row.alertOpsDailySummary,
   }
 }
@@ -84,6 +85,10 @@ export function eventTypeEnabled(
     case 'TRADING_SUSPICIOUS':
     case 'PAYROLL_WALLET_REQUEST':
       return setting.alertTradingDeleteRequest
+    case 'WORKFLOW_SUBMITTED':
+    case 'WORKFLOW_APPROVED':
+    case 'WORKFLOW_REJECTED':
+      return setting.alertWorkflowLifecycle
     case 'OPS_DAILY_SUMMARY':
       return setting.alertOpsDailySummary
     default:

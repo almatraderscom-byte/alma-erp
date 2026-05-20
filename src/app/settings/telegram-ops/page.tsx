@@ -67,6 +67,7 @@ const ALERT_TOGGLES: Array<{ key: keyof TelegramOpsSettingDto; label: string }> 
   { key: 'alertAttendanceSuspicious', label: 'Suspicious check-in' },
   { key: 'alertTradingScreenshot', label: 'Screenshot upload/failure' },
   { key: 'alertTradingDeleteRequest', label: 'Delete requests' },
+  { key: 'alertWorkflowLifecycle', label: 'Approvals · approve / reject / submit' },
   { key: 'alertOpsDailySummary', label: 'Daily ops summary' },
 ]
 

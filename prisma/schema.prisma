@@ -1134,6 +1134,9 @@ enum TelegramNotificationEventType {
   TRADING_DELETE_REQUEST
   TRADING_SUSPICIOUS
   PAYROLL_WALLET_REQUEST
+  WORKFLOW_SUBMITTED
+  WORKFLOW_APPROVED
+  WORKFLOW_REJECTED
   OPS_DAILY_SUMMARY
 }
 
@@ -1181,6 +1184,7 @@ model TelegramOpsSetting {
   alertAttendanceSuspicious Boolean @default(true)
   alertTradingScreenshot  Boolean  @default(true)
   alertTradingDeleteRequest Boolean @default(true)
+  alertWorkflowLifecycle  Boolean  @default(true)
   alertOpsDailySummary    Boolean  @default(true)
   updatedById             String?
   createdAt               DateTime @default(now())

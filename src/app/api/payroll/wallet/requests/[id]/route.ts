@@ -9,7 +9,7 @@ import {
 } from '@/lib/payroll-wallet'
 import { notifyUser } from '@/lib/notifications'
 import { sendPayrollAlert } from '@/lib/resend'
-import { dispatchApprovalsUpdated, resolveApprovalRequest } from '@/lib/approvals'
+import { dispatchApprovalsUpdated, notifyApprovalResolved, resolveApprovalRequest } from '@/lib/approvals'
 import { logEvent } from '@/lib/logger'
 import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 
@@ -68,6 +68,7 @@ export async function PATCH(
     })
     const updated = result.updated
     deferAfterApprovalCommit('payroll.wallet_reject_notify', async () => {
+      await notifyApprovalResolved(result.approval, ctx.userId, 'REJECTED', body.note?.slice(0, 500) || 'Rejected')
       await notifyUser({
         userId: request.userId,
         businessId: request.businessId,
@@ -165,6 +166,7 @@ export async function PATCH(
   })
 
   deferAfterApprovalCommit('payroll.wallet_approve_notify', async () => {
+    await notifyApprovalResolved(result.approval, ctx.userId, 'APPROVED', body.note?.slice(0, 500) || 'Approved')
     await notifyUser({
       userId: request.userId,
       businessId: request.businessId,

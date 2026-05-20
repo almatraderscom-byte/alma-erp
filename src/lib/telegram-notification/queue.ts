@@ -162,6 +162,11 @@ export async function enqueueTelegramNotification(
     rowCount: ids.length,
     routingSource: routing.source,
   })
+  logEvent('info', 'notification.telegram.queued', {
+    businessId: input.businessId,
+    eventType: input.eventType,
+    rowCount: ids.length,
+  })
 
   return { ok: true, ids, recipientCount: chatIds.length }
 }
@@ -313,6 +318,12 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         chatId: row.chatId,
         latencyMs: Date.now() - started,
         attempts: updated.attempts,
+      })
+      logEvent('info', 'notification.telegram.sent', {
+        id: row.id,
+        eventType: row.eventType,
+        businessId: row.businessId,
+        latencyMs: Date.now() - started,
       })
       if (row.eventType === 'ATTENDANCE_ABSENT') {
         let employeeId: string | undefined

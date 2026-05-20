@@ -7,7 +7,7 @@ import { getJwt } from '@/lib/api-guards'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { serverPost } from '@/lib/server-api'
-import { dispatchApprovalsUpdated, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
+import { dispatchApprovalsUpdated, notifyApprovalResolved, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
 import {
   approvalMatchesResolvedWalletAction,
   reconcilePenaltyApprovalWithSource,
@@ -21,7 +21,7 @@ import {
   logApprovalActionPhase,
   stampApprovalActionResponse,
 } from '@/lib/approval-action-server'
-import { runApprovalTransaction } from '@/lib/prisma-transaction'
+import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
   recalculateTradingAccount,
@@ -436,6 +436,9 @@ async function processWalletRequest(
       return { updated, approval }
     })
     logEvent('info', 'approval.reject.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
+    deferAfterApprovalCommit('approval.center.wallet_reject_notify', async () => {
+      await notifyApprovalResolved(result.approval, actorUserId, 'REJECTED', note?.slice(0, 500) || 'Rejected')
+    })
     dispatchApprovalsUpdated()
     return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { request: result.updated } })
   }
@@ -493,6 +496,9 @@ async function processWalletRequest(
     return { entry, request: updated, approval }
   })
   logEvent('info', 'approval.approve.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
+  deferAfterApprovalCommit('approval.center.wallet_approve_notify', async () => {
+    await notifyApprovalResolved(result.approval, actorUserId, 'APPROVED', note?.slice(0, 500) || 'Approved')
+  })
   dispatchApprovalsUpdated()
   return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { entry: result.entry, request: result.request } })
 }

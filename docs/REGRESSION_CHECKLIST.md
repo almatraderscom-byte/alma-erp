@@ -25,6 +25,7 @@ Last updated: 2026-05-20
 - [ ] Employee face check-in succeeds (portal, correct business context)
 - [ ] Admin attendance dashboard shows present/late counts for active business
 - [ ] **No false Telegram absent alert** after check-in (wait through one cron window or verify logs)
+- [ ] **Workflow lifecycle Telegram** — submit → approve → reject a wallet or salary advance request; owner receives all three messages
 - [ ] Face verification CTA appears when admin requests verification
 
 ## 4. Approvals

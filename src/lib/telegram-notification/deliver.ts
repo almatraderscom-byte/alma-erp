@@ -23,6 +23,9 @@ export type QueueRowMeta = {
   entityId?: string
   requestId?: string
   waiverId?: string
+  approvalId?: string
+  transition?: string
+  workflowModule?: string
   userId?: string
   employeeName?: string
   monitorScanAt?: string
