@@ -1,36 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getJwt, forbidViewerWrite } from '@/lib/api-guards'
+import { NextRequest } from 'next/server'
 import { transitionAssignment } from '@/lib/operational-tasks'
 import { prisma } from '@/lib/prisma'
 import { queueOperationalTaskStatusToAdmin } from '@/lib/operational-task-telegram'
+import { withApiRoute, apiDataSuccess, apiFailure, requireJwt, guardViewerWrite, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { assignmentId: string } },
-) {
-  const denied = await forbidViewerWrite(req)
-  if (denied) return denied
-  const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export const PATCH = withApiRoute('operational_tasks.assignment', async (req: NextRequest, routeCtx?: unknown) => {
+  const { params } = (routeCtx ?? {}) as { params: { assignmentId: string } }
+  const write = await guardViewerWrite(req)
+  if (!write.ok) return write.response
+  const auth = await requireJwt(req)
+  if (!auth.ok) return auth.response
 
-  const body = (await req.json().catch(() => ({}))) as {
-    action?: 'acknowledge' | 'start' | 'complete' | 'dismiss'
-  }
+  const body = await parseJsonBody<{ action?: 'acknowledge' | 'start' | 'complete' | 'dismiss' }>(req)
   const action = body.action
-  if (!action) return NextResponse.json({ error: 'action required' }, { status: 400 })
+  if (!action) return apiFailure('invalid_request', 'action required', { status: 400 })
 
   const assignmentId = params.assignmentId
   const owned = await prisma.operationalTaskAssignment.findFirst({
-    where: { id: assignmentId, userId: token.sub },
+    where: { id: assignmentId, userId: auth.token.sub },
     select: { id: true },
   })
-  if (!owned) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!owned) return apiFailure('forbidden', 'Forbidden', { status: 403 })
 
-  const result = await transitionAssignment(assignmentId, token.sub, action)
+  const result = await transitionAssignment(assignmentId, String(auth.token.sub), action)
   if ('error' in result && result.error) {
-    return NextResponse.json({ error: result.error }, { status: result.status })
+    return apiFailure('transition_failed', result.error, { status: result.status })
   }
 
   if (result.assignment && (action === 'acknowledge' || action === 'complete')) {
@@ -52,5 +48,5 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ assignment: result.assignment })
-}
+  return apiDataSuccess({ assignment: result.assignment })
+})

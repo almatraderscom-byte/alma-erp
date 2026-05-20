@@ -21,7 +21,8 @@ import {
   logApprovalActionPhase,
   stampApprovalActionResponse,
 } from '@/lib/approval-action-server'
-import { apiFailure, classifyApprovalTxError } from '@/lib/safe-api-response'
+import { apiDataSuccess, apiFailure, classifyApprovalTxError } from '@/lib/safe-api-response'
+import { withApiRoute } from '@/lib/core/safe-route-helpers'
 import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
@@ -73,9 +74,10 @@ function tradeSnapshot(trade: {
   }
 }
 
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export const GET = withApiRoute('approvals.detail', async (req: NextRequest, routeCtx?: unknown) => {
+  const { params } = (routeCtx ?? {}) as RouteContext
   const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
 
   const approval = await prisma.approvalRequest.findUnique({
     where: { id: params.id },
@@ -90,14 +92,15 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     },
   })
   if (!approval) {
-    return NextResponse.json({ ok: false, error: 'approval_not_found', message: 'Approval not found' }, { status: 404 })
+    return apiFailure('approval_not_found', 'Approval not found', { status: 404 })
   }
-  return NextResponse.json({ ok: true, approval })
-}
+  return apiDataSuccess({ approval })
+})
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, routeCtx?: unknown) => {
+  const { params } = (routeCtx ?? {}) as RouteContext
   const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
   const role = normalizeAlmaRole(token.role as string)
 
   const body = await req.json().catch(() => ({})) as {
@@ -153,7 +156,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount)
     } else if (body.action === 'REJECT') {
       const updated = await resolveApprovalRequestById({ id: approval.id, status: 'REJECTED', actorUserId: token.sub, reason: body.note || 'Rejected' })
-      response = NextResponse.json({ ok: true, approval: updated, moduleResult: null })
+      response = apiDataSuccess({ approval: updated, moduleResult: null })
     } else {
       response = approvalErrorResponse(
         `${approval.module} ${approval.type} is not executable from the central approval center yet.`,
@@ -178,7 +181,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       meta,
     )
   }
-}
+})
 
 function approvalErrorResponse(
   message: string,
@@ -186,10 +189,7 @@ function approvalErrorResponse(
   code?: string,
   extra?: Record<string, unknown>,
 ) {
-  return NextResponse.json(
-    { ok: false, error: code || 'approval_failed', message, code, ...extra },
-    { status },
-  )
+  return apiFailure(code || 'approval_failed', message, { status, extra })
 }
 
 async function processPenaltyAppeal(
@@ -242,7 +242,7 @@ async function processPenaltyAppeal(
       })
       if (reconciled.ok) {
         dispatchApprovalsUpdated()
-        return NextResponse.json({ ...reconciled, moduleResult: { waiver: penaltyAppealDto(waiver) } })
+        return apiDataSuccess({ ...reconciled, moduleResult: { waiver: penaltyAppealDto(waiver) } })
       }
     }
     return NextResponse.json(
@@ -307,7 +307,7 @@ async function processTradingDelete(
       },
     })
     const approval = await resolveApprovalRequestById({ id: approvalId, status: 'REJECTED', actorUserId, reason: note || 'Rejected' })
-    return NextResponse.json({ ok: true, approval, moduleResult: { trade: updatedTrade } })
+    return apiDataSuccess({ approval, moduleResult: { trade: updatedTrade } })
   }
 
   const result = await runApprovalTransaction('approval.trading_delete', async tx => {
@@ -333,7 +333,7 @@ async function processTradingDelete(
     return { trade: updatedTrade, summary }
   })
   const approval = await resolveApprovalRequestById({ id: approvalId, status: 'APPROVED', actorUserId, reason: note || trade.deleteReason || 'Approved' })
-  return NextResponse.json({ ok: true, approval, moduleResult: result })
+  return apiDataSuccess({ approval, moduleResult: result })
 }
 
 async function processSalaryAdvance(
@@ -354,7 +354,7 @@ async function processSalaryAdvance(
       data: { status: 'REJECTED', reviewedById: actorUserId, reviewedAt: new Date(), reviewNote: note?.slice(0, 500) || null },
     })
     const approval = await resolveApprovalRequestById({ id: approvalId, status: 'REJECTED', actorUserId, reason: note || 'Rejected' })
-    return NextResponse.json({ ok: true, approval, moduleResult: { advance: updated } })
+    return apiDataSuccess({ approval, moduleResult: { advance: updated } })
   }
 
   const empId = adv.user.employeeIdGas?.trim()
@@ -375,7 +375,7 @@ async function processSalaryAdvance(
     data: { status: 'APPROVED', reviewedById: actorUserId, reviewedAt: new Date(), reviewNote: note?.slice(0, 500) || null },
   })
   const approval = await resolveApprovalRequestById({ id: approvalId, status: 'APPROVED', actorUserId, reason: note || 'Approved' })
-  return NextResponse.json({ ok: true, approval, moduleResult: { advance: updated, gas } })
+  return apiDataSuccess({ approval, moduleResult: { advance: updated, gas } })
 }
 
 async function processWalletRequest(
@@ -475,7 +475,7 @@ async function processWalletRequest(
       })
     }
     dispatchApprovalsUpdated()
-    return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { request: result.updated } })
+    return apiDataSuccess({ approval: result.approval, moduleResult: { request: result.updated } })
   }
 
   const requestedAmount = Number(request.requestedAmount)
@@ -547,5 +547,5 @@ async function processWalletRequest(
     })
   }
   dispatchApprovalsUpdated()
-  return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { entry: result.entry, request: result.request } })
+  return apiDataSuccess({ approval: result.approval, moduleResult: { entry: result.entry, request: result.request } })
 }

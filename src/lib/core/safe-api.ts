@@ -57,6 +57,6 @@ export function withApiRoute(
 }
 
 /** Success payload with standard envelope. */
-export function apiDataSuccess<T extends Record<string, unknown>>(data: T, init?: { status?: number }) {
-  return apiSuccess({ data })
+export function apiDataSuccess<T extends Record<string, unknown>>(data: T, init?: { status?: number; headers?: HeadersInit }) {
+  return apiSuccess({ data }, init)
 }

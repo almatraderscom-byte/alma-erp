@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
+import { apiDataSuccess, apiFailure } from '@/lib/safe-api-response'
+import { withApiRoute } from '@/lib/core/safe-route-helpers'
+import { classifyAttendanceDbError } from '@/lib/core/safe-attendance'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
+import { requireWalletContext } from '@/lib/core/safe-route-helpers'
 import {
   attendanceDateFor,
   assessAttendanceTrust,
@@ -34,42 +37,34 @@ import { errorMeta, logEvent } from '@/lib/logger'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-export async function POST(req: NextRequest) {
+export const POST = withApiRoute('attendance.check_in', async (req: NextRequest) => {
   const started = Date.now()
-  try {
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     metadata?: unknown
     face_verification?: { image_data_url?: string; thumb_data_url?: string }
   }
-  const ctx = await getWalletContext(req, body.business_id)
-  if ('error' in ctx) return ctx.error
+  const auth = await requireWalletContext(req, body.business_id)
+  if (!auth.ok) return auth.response
+  const ctx = auth.ctx
   if (ctx.isSystemOwner) {
-    return NextResponse.json({ error: 'System owner accounts do not use employee attendance.' }, { status: 403 })
+    return apiFailure('forbidden', 'System owner accounts do not use employee attendance.', { status: 403 })
   }
   if (!ctx.employeeId) {
-    return NextResponse.json(
-      {
-        error:
-          'Your account is not linked to an HR employee ID. Ask admin to set employee ID (or Trading HR profile) in Users.',
-      },
+    return apiFailure(
+      'invalid_request',
+      'Your account is not linked to an HR employee ID. Ask admin to set employee ID (or Trading HR profile) in Users.',
       { status: 400 },
     )
   }
 
   const faceRaw = String(body.face_verification?.image_data_url || '').trim()
   if (!faceRaw) {
-    return NextResponse.json(
-      { error: 'Face verification photo is required. Use the front camera before starting work.' },
-      { status: 400 },
-    )
+    return apiFailure('invalid_request', 'Face verification photo is required. Use the front camera before starting work.', { status: 400 })
   }
   const parsedFace = await normalizeFaceImageForCheckIn(faceRaw)
   if (!parsedFace) {
-    return NextResponse.json(
-      { error: 'Could not process face photo. Retake in good light with the front camera (JPEG/PNG/WebP).' },
-      { status: 400 },
-    )
+    return apiFailure('invalid_request', 'Could not process face photo. Retake in good light with the front camera (JPEG/PNG/WebP).', { status: 400 })
   }
 
   let faceThumb =
@@ -168,7 +163,7 @@ export async function POST(req: NextRequest) {
       attendanceRecordId: record.id,
       durationMs: Date.now() - started,
     })
-    return NextResponse.json({ ok: true, record: attendanceRecordDto(record) })
+    return apiDataSuccess({ record: attendanceRecordDto(record) })
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       const existing = await prisma.attendanceRecord.findUnique({
@@ -192,26 +187,11 @@ export async function POST(req: NextRequest) {
           checkInAt: existing.checkInAt.toISOString(),
         })
       }
-      return NextResponse.json({
-        ok: true,
+      return apiDataSuccess({
         duplicate: true,
         record: existing ? attendanceRecordDto(existing) : null,
       })
     }
     throw e
   }
-  } catch (e) {
-    logEvent('error', 'attendance.check_in.failed', { ...errorMeta(e), durationMs: Date.now() - started })
-    const msg = (e as Error).message || ''
-    if (msg.includes('faceVerified') || msg.includes('faceThumbDataUrl') || msg.includes('does not exist')) {
-      return NextResponse.json(
-        { error: 'Attendance face verification is not deployed on the database yet. Contact admin to run migrations.' },
-        { status: 503 },
-      )
-    }
-    if (e instanceof Prisma.PrismaClientKnownRequestError) {
-      return NextResponse.json({ error: 'Could not save attendance. Please retry.' }, { status: 500 })
-    }
-    return NextResponse.json({ error: 'Check-in failed. Check network and retry.' }, { status: 500 })
-  }
-}
+}, { classifyError: classifyAttendanceDbError })

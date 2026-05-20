@@ -1,22 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getJwt } from '@/lib/api-guards'
-import { normalizeAlmaRole } from '@/lib/roles'
+import { NextRequest } from 'next/server'
 import { logEvent } from '@/lib/logger'
 import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
-import {
-  defaultStatsForModules,
-  getArchiveStatsSafe,
-} from '@/lib/business-archive/safe'
+import { defaultStatsForModules, getArchiveStatsSafe } from '@/lib/business-archive/safe'
 import { modulesForBusiness } from '@/lib/business-archive/module-registry'
+import { withApiRoute, apiDataSuccess, requireJwtRoles } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
-  const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (normalizeAlmaRole(token.role as string) !== 'SUPER_ADMIN') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+export const GET = withApiRoute('archive.modules', async (req: NextRequest) => {
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
+  if (!auth.ok) return auth.response
 
   const businessId = new URL(req.url).searchParams.get('business_id') || 'ALMA_LIFESTYLE'
   const modules = modulesForBusiness(businessId)
@@ -51,28 +44,26 @@ export async function GET(req: NextRequest) {
       partialFailure,
     })
 
-    return NextResponse.json({
-      ok: true,
+    return apiDataSuccess({
       businessId,
       modules,
       stats,
       schemaReady,
       partialFailure,
       warning,
-      migrationHint: schemaReady ? null : 'Run npm run db:migrate:deploy on production',
     })
   } catch (err) {
-    const message = (err as Error).message || 'Archive modules unavailable'
-    logEvent('error', 'archive.module.failed', { businessId, message })
-    return NextResponse.json({
-      ok: false,
+    logEvent('error', 'archive.module.failed', {
+      businessId,
+      message: (err as Error).message,
+    })
+    return apiDataSuccess({
       businessId,
       modules,
       stats: defaultStatsForModules(modules),
       schemaReady: false,
       partialFailure: true,
-      warning: message,
-      error: message,
+      warning: (err as Error).message || 'Failed to load modules',
     })
   }
-}
+})

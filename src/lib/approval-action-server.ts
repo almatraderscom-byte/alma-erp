@@ -85,17 +85,30 @@ export async function stampApprovalActionResponse(
   }
 
   const status = response.status >= 200 && response.status < 600 ? response.status : 500
+  const httpStatus = bodyEmpty && status < 400 ? 502 : status
+  if (ok) {
+    return NextResponse.json(
+      {
+        ok: true,
+        data: { ...data, operationId: meta.operationId, durationMs },
+        operationId: meta.operationId,
+        durationMs,
+      },
+      { status: httpStatus },
+    )
+  }
+  const code = String(data.code || error || 'approval_failed')
   return NextResponse.json(
     {
-      ...data,
-      ok,
-      error: ok ? undefined : error,
-      message: ok ? data.message : message,
+      ok: false,
+      error: { code, message },
+      code,
+      message,
       operationId: meta.operationId,
       durationMs,
-      ...(bodyEmpty || response.status >= 500 ? { rolledBack: true } : {}),
+      ...(bodyEmpty || response.status >= 500 ? { rolledBack: true, retryable: true } : {}),
     },
-    { status: bodyEmpty && status < 400 ? 502 : status },
+    { status: httpStatus },
   )
 }
 

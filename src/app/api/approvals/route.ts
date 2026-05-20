@@ -14,12 +14,12 @@ import {
   walletLinkageStatus,
 } from '@/lib/approval-integrity'
 import { parseArchiveVisibility, resolveArchiveVisibilityWhere } from '@/lib/business-archive/query'
-import { apiFailure, apiSuccess } from '@/lib/safe-api-response'
+import { apiFailure, apiDataSuccess } from '@/lib/safe-api-response'
+import { withApiRoute } from '@/lib/core/safe-route-helpers'
 import { logEvent } from '@/lib/logger'
 import { resolvePayoutSummariesForUsers } from '@/lib/employee-payment-method'
 
-export async function GET(req: NextRequest) {
-  try {
+export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const token = await getJwt(req)
   if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
   const role = normalizeAlmaRole(token.role as string)
@@ -169,7 +169,7 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return apiSuccess(
+  return apiDataSuccess(
     {
       approvals,
       totalPending,
@@ -178,11 +178,7 @@ export async function GET(req: NextRequest) {
     },
     { headers: { 'Cache-Control': summary ? 'private, max-age=10, stale-while-revalidate=30' : 'private, no-store' } },
   )
-  } catch (e) {
-    logEvent('error', 'approval.api.failed', { route: 'approvals.list', message: (e as Error).message })
-    return apiFailure('approvals_list_failed', (e as Error).message || 'Could not load approvals', { status: 500 })
-  }
-}
+})
 
 function entityLabel(snapshot: unknown, fallback: string) {
   if (!snapshot || typeof snapshot !== 'object') return fallback

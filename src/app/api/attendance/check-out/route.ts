@@ -1,20 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceDateFor, attendanceRecordDto, workDurationMinutes } from '@/lib/attendance'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
+import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
-export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as { business_id?: string }
-  const ctx = await getWalletContext(req, body.business_id)
-  if ('error' in ctx) return ctx.error
+export const POST = withApiRoute('attendance.check_out', async (req: NextRequest) => {
+  const body = await parseJsonBody<{ business_id?: string }>(req)
+  const auth = await requireWalletContext(req, body.business_id)
+  if (!auth.ok) return auth.response
+  const { ctx } = auth
+
   if (ctx.isSystemOwner) {
-    return NextResponse.json({ error: 'System owner accounts do not use employee attendance.' }, { status: 403 })
+    return apiFailure('forbidden', 'System owner accounts do not use employee attendance.', { status: 403 })
   }
   if (!ctx.employeeId) {
-    return NextResponse.json({ error: 'Your user account is not linked to an HR employee ID.' }, { status: 400 })
+    return apiFailure('invalid_request', 'Your user account is not linked to an HR employee ID.', { status: 400 })
   }
 
   const attendanceDate = attendanceDateFor()
@@ -29,11 +31,10 @@ export async function POST(req: NextRequest) {
   })
 
   if (!existing) {
-    return NextResponse.json({ error: "Start work before ending today's attendance." }, { status: 404 })
+    return apiFailure('not_found', "Start work before ending today's attendance.", { status: 404 })
   }
   if (existing.checkOutAt) {
-    return NextResponse.json({
-      ok: true,
+    return apiDataSuccess({
       duplicate: true,
       record: attendanceRecordDto({ ...existing, waiverRequests: [] }),
     })
@@ -59,5 +60,5 @@ export async function POST(req: NextRequest) {
     void archiveOpenAssignmentsOnCheckout(ctx.userId).catch(() => {})
   }
 
-  return NextResponse.json({ ok: true, record: attendanceRecordDto(record) })
-}
+  return apiDataSuccess({ record: attendanceRecordDto(record) })
+})

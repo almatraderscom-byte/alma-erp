@@ -6,7 +6,7 @@ import { PayoutSummaryBlock } from '@/components/approvals/PayoutSummaryBlock'
 import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
-import { safeResponseJson } from '@/lib/safe-api-response'
+import { safeResponseJson, unwrapApiData } from '@/lib/safe-api-response'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 
@@ -79,7 +79,7 @@ export default function ApprovalsPage() {
       const res = await fetch(`/api/approvals?status=${status}&limit=80`, { cache: 'no-store' })
       const parsed = await safeResponseJson<ApprovalResponse & { ok?: boolean; message?: string }>(res)
       if (parsed.ok && res.ok && parsed.data.ok !== false) {
-        setData(parsed.data)
+        setData(unwrapApiData(parsed.data))
       } else if (!parsed.ok || parsed.parseError) {
         toast.error(String(parsed.data.message || parsed.data.error || 'Could not load approvals'))
       }
@@ -112,7 +112,7 @@ export default function ApprovalsPage() {
     try {
       const res = await fetch('/api/approvals/integrity', { cache: 'no-store' })
       const parsed = await safeResponseJson<IntegrityReport & { ok?: boolean; message?: string; warning?: string }>(res)
-      if (parsed.ok && res.ok) setIntegrity(parsed.data)
+      if (parsed.ok && res.ok) setIntegrity(unwrapApiData(parsed.data))
       else toast.error(String((parsed.data as { message?: string; error?: string }).message || (parsed.data as { error?: string }).error || 'Integrity scan failed'))
     } catch (e) {
       toast.error((e as Error).message || 'Integrity scan unavailable')

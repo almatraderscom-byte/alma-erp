@@ -1,15 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { requireRoles } from '@/lib/api-guards'
-import { getToken } from 'next-auth/jwt'
+import { NextRequest } from 'next/server'
 import { resolveBusinessId, type BusinessId } from '@/lib/businesses'
 import { prisma } from '@/lib/prisma'
 import { parseQueueMetadata } from '@/lib/telegram-notification/deliver'
 import { getTelegramOpsSetting, telegramOpsSettingDto, upsertTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { resolveProfileImageForUser } from '@/lib/user-display'
+import { withApiRoute, apiDataSuccess, requireJwtRoles, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
-export async function GET(req: NextRequest) {
-  const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
-  if (denied) return denied
+export const GET = withApiRoute('telegram.ops.queue', async (req: NextRequest) => {
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN', 'ADMIN'])
+  if (!auth.ok) return auth.response
 
   const businessId = resolveBusinessId(req.nextUrl.searchParams.get('business_id'))
   const setting = await getTelegramOpsSetting(businessId)
@@ -52,7 +51,7 @@ export async function GET(req: NextRequest) {
     _count: { _all: true },
   })
 
-  return NextResponse.json({
+  return apiDataSuccess({
     setting: telegramOpsSettingDto(setting),
     recentQueue: recentQueue.map(r => {
       const meta = parseQueueMetadata(r.metadataJson)
@@ -68,18 +67,18 @@ export async function GET(req: NextRequest) {
     }),
     stats: stats.map(s => ({ status: s.status, count: s._count._all })),
   })
-}
+})
 
-export async function PATCH(req: NextRequest) {
-  const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
-  if (denied) return denied
+export const PATCH = withApiRoute('telegram.ops.settings', async (req: NextRequest) => {
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN', 'ADMIN'])
+  if (!auth.ok) return auth.response
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+  const body = await parseJsonBody<Record<string, unknown>>(req)
   const businessId = resolveBusinessId(String(body.business_id || ''))
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  const updatedById = typeof token?.sub === 'string' ? token.sub : undefined
 
-  const patch: Partial<ReturnType<typeof telegramOpsSettingDto>> & { updatedById?: string } = {}
+  const patch: Partial<ReturnType<typeof telegramOpsSettingDto>> & { updatedById?: string } = {
+    updatedById: String(auth.token.sub),
+  }
   const boolKeys = [
     'enabled',
     'alertAttendanceCheckIn',
@@ -109,8 +108,7 @@ export async function PATCH(req: NextRequest) {
     }
   }
   if (typeof body.ownerChatIds === 'string') patch.ownerChatIds = body.ownerChatIds.trim().slice(0, 2000)
-  if (updatedById) patch.updatedById = updatedById
 
   const setting = await upsertTelegramOpsSetting(businessId as BusinessId, patch)
-  return NextResponse.json({ ok: true, setting })
-}
+  return apiDataSuccess({ setting })
+})

@@ -1,18 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { sendPayrollAlert } from '@/lib/resend'
 import { createApprovalRequest } from '@/lib/approvals'
 import { queuePayrollWalletRequestAlert } from '@/lib/telegram-notification/payroll-alerts'
 import { getPrimaryPaymentMethod, toPayoutSummary } from '@/lib/employee-payment-method'
+import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
-export async function GET(req: NextRequest) {
+export const GET = withApiRoute('payroll.wallet.requests.list', async (req: NextRequest) => {
   const url = new URL(req.url)
-  const businessId = url.searchParams.get('business_id')
+  const auth = await requireWalletContext(req, url.searchParams.get('business_id'))
+  if (!auth.ok) return auth.response
+  const { ctx } = auth
   const status = url.searchParams.get('status')
-  const ctx = await getWalletContext(req, businessId)
-  if ('error' in ctx) return ctx.error
 
   const requests = await prisma.walletRequest.findMany({
     where: {
@@ -22,36 +22,37 @@ export async function GET(req: NextRequest) {
     },
     orderBy: { createdAt: 'desc' },
   })
-  return NextResponse.json({ requests })
-}
+  return apiDataSuccess({ requests })
+})
 
-export async function POST(req: NextRequest) {
-  const body = (await req.json()) as {
+export const POST = withApiRoute('payroll.wallet.requests.create', async (req: NextRequest) => {
+  const body = await parseJsonBody<{
     type?: 'ADVANCE' | 'WITHDRAWAL'
     amount?: number
     reason?: string
     business_id?: string
     employee_id?: string
-  }
-  const ctx = await getWalletContext(req, body.business_id)
-  if ('error' in ctx) return ctx.error
+  }>(req)
+  const auth = await requireWalletContext(req, body.business_id)
+  if (!auth.ok) return auth.response
+  const { ctx } = auth
 
   const type = body.type
   const amount = Number(body.amount || 0)
   const reason = String(body.reason || '').trim()
   if (type !== 'ADVANCE' && type !== 'WITHDRAWAL') {
-    return NextResponse.json({ error: 'type ADVANCE|WITHDRAWAL required' }, { status: 400 })
+    return apiFailure('invalid_request', 'type ADVANCE|WITHDRAWAL required', { status: 400 })
   }
   if (!amount || amount <= 0 || !reason) {
-    return NextResponse.json({ error: 'amount and reason required' }, { status: 400 })
+    return apiFailure('invalid_request', 'amount and reason required', { status: 400 })
   }
 
   const employeeId = ctx.isAdmin && body.employee_id ? body.employee_id.trim() : ctx.employeeId
   if (!employeeId) {
     if (ctx.isSystemOwner) {
-      return NextResponse.json({ error: 'System owner accounts do not submit personal wallet requests. Select an employee to create a staff request.' }, { status: 403 })
+      return apiFailure('forbidden', 'System owner accounts do not submit personal wallet requests. Select an employee to create a staff request.', { status: 403 })
     }
-    return NextResponse.json({ error: 'No employee profile linked to this account.' }, { status: 400 })
+    return apiFailure('invalid_request', 'No employee profile linked to this account.', { status: 400 })
   }
 
   const businessId = ctx.businessIds[0]
@@ -125,5 +126,5 @@ export async function POST(req: NextRequest) {
     metadata: { requestId: request.id, employeeId, businessId: request.businessId, type, amount },
   })
 
-  return NextResponse.json({ ok: true, request })
-}
+  return apiDataSuccess({ request })
+})

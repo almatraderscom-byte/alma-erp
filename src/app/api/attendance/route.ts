@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
+import { requireWalletContext } from '@/lib/core/safe-route-helpers'
 import { attendanceRecordDto, attendanceWaiverDto } from '@/lib/attendance'
 import { buildAdminAttendanceDashboard } from '@/lib/attendance-admin-dashboard'
 import { logEvent } from '@/lib/logger'
@@ -20,12 +20,9 @@ export const GET = withApiRoute(
     const started = Date.now()
     const url = new URL(req.url)
     const businessIdParam = url.searchParams.get('business_id')
-    const ctx = await getWalletContext(req, businessIdParam)
-    if ('error' in ctx && ctx.error) {
-      const status = ctx.error.status ?? 403
-      if (status === 401) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
-      return apiFailure('forbidden', 'Business not permitted for this user.', { status: 403 })
-    }
+    const auth = await requireWalletContext(req, businessIdParam)
+    if (!auth.ok) return auth.response
+    const ctx = auth.ctx
 
     const q = await safeAttendanceQuery(req, {
       businessIdParam,

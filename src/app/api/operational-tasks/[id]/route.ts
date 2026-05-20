@@ -1,24 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getJwt, forbidViewerWrite } from '@/lib/api-guards'
-import { normalizeAlmaRole } from '@/lib/roles'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resendSpotlight } from '@/lib/operational-tasks'
+import { withApiRoute, apiDataSuccess, apiFailure, requireJwtRoles, guardViewerWrite, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
-  const denied = await forbidViewerWrite(req)
-  if (denied) return denied
-  const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (normalizeAlmaRole(token.role as string) !== 'SUPER_ADMIN') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+export const PATCH = withApiRoute('operational_tasks.update', async (req: NextRequest, routeCtx?: unknown) => {
+  const { params } = (routeCtx ?? {}) as { params: { id: string } }
+  const write = await guardViewerWrite(req)
+  if (!write.ok) return write.response
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
+  if (!auth.ok) return auth.response
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = await parseJsonBody<{
     action?: 'archive' | 'resend'
     assignment_id?: string
     title?: string
@@ -29,7 +23,7 @@ export async function PATCH(
     acknowledgment_required?: boolean
     allow_dismiss?: boolean
     show_on_check_in?: boolean
-  }
+  }>(req)
 
   if (body.action === 'archive') {
     await prisma.operationalTask.update({
@@ -40,12 +34,12 @@ export async function PATCH(
       where: { taskId: params.id, status: { not: 'COMPLETED' } },
       data: { status: 'ARCHIVED', archivedAt: new Date() },
     })
-    return NextResponse.json({ ok: true })
+    return apiDataSuccess({ archived: true })
   }
 
   if (body.action === 'resend' && body.assignment_id) {
     await resendSpotlight(body.assignment_id)
-    return NextResponse.json({ ok: true })
+    return apiDataSuccess({ resent: true })
   }
 
   const data: Record<string, unknown> = {}
@@ -61,21 +55,17 @@ export async function PATCH(
   if (Object.keys(data).length) {
     await prisma.operationalTask.update({ where: { id: params.id }, data })
   }
-  return NextResponse.json({ ok: true })
-}
+  return apiDataSuccess({ updated: true })
+})
 
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: { id: string } },
-) {
-  const token = await getJwt(_req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (normalizeAlmaRole(token.role as string) !== 'SUPER_ADMIN') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+export const DELETE = withApiRoute('operational_tasks.delete', async (req: NextRequest, routeCtx?: unknown) => {
+  const { params } = (routeCtx ?? {}) as { params: { id: string } }
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
+  if (!auth.ok) return auth.response
+
   await prisma.operationalTask.update({
     where: { id: params.id },
     data: { status: 'ARCHIVED' },
   })
-  return NextResponse.json({ ok: true })
-}
+  return apiDataSuccess({ archived: true })
+})

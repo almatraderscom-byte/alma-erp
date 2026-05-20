@@ -1,28 +1,24 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getJwt, forbidViewerWrite } from '@/lib/api-guards'
-import { normalizeAlmaRole } from '@/lib/roles'
+import { NextRequest } from 'next/server'
 import { runArchiveRestore } from '@/lib/business-archive/service'
+import { withApiRoute, apiDataSuccess, apiFailure, requireJwtRoles, guardViewerWrite, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: NextRequest) {
-  const denied = await forbidViewerWrite(req)
-  if (denied) return denied
-  const token = await getJwt(req)
-  if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (normalizeAlmaRole(token.role as string) !== 'SUPER_ADMIN') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+export const POST = withApiRoute('archive.restore', async (req: NextRequest) => {
+  const write = await guardViewerWrite(req)
+  if (!write.ok) return write.response
+  const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
+  if (!auth.ok) return auth.response
 
-  const body = (await req.json().catch(() => ({}))) as { batch_id?: string }
+  const body = await parseJsonBody<{ batch_id?: string }>(req)
   if (!body.batch_id) {
-    return NextResponse.json({ error: 'batch_id required' }, { status: 400 })
+    return apiFailure('invalid_request', 'batch_id required', { status: 400 })
   }
 
   try {
-    const result = await runArchiveRestore(body.batch_id, token.sub)
-    return NextResponse.json({ ok: true, ...result })
+    const result = await runArchiveRestore(body.batch_id, String(auth.token.sub))
+    return apiDataSuccess(result as Record<string, unknown>)
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 })
+    return apiFailure('archive_restore_failed', (e as Error).message, { status: 400 })
   }
-}
+})

@@ -1,7 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
-import { attendanceWaiverDto } from '@/lib/attendance'
 import {
   defaultRequestedReduction,
   notifyPenaltyAppealSubmitted,
@@ -10,11 +8,13 @@ import {
   submitPenaltyAppeal,
   validateAttachmentDataUrl,
 } from '@/lib/penalty-appeal'
+import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
-export async function GET(req: NextRequest) {
+export const GET = withApiRoute('attendance.waivers.list', async (req: NextRequest) => {
   const url = new URL(req.url)
-  const ctx = await getWalletContext(req, url.searchParams.get('business_id'))
-  if ('error' in ctx) return ctx.error
+  const auth = await requireWalletContext(req, url.searchParams.get('business_id'))
+  if (!auth.ok) return auth.response
+  const { ctx } = auth
 
   const status = url.searchParams.get('status') || undefined
   const rows = await prisma.attendanceWaiverRequest.findMany({
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     take: 100,
   })
 
-  return NextResponse.json({
+  return apiDataSuccess({
     waivers: rows.map(row => ({
       ...penaltyAppealDto(row),
       requesterName: row.requester.name,
@@ -40,34 +40,36 @@ export async function GET(req: NextRequest) {
       attendanceDate: row.attendanceRecord.attendanceDate.toISOString(),
     })),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as {
+export const POST = withApiRoute('attendance.waivers.create', async (req: NextRequest) => {
+  const body = await parseJsonBody<{
     business_id?: string
     attendance_record_id?: string
     reason?: string
     request_type?: string
     requested_reduction_amount?: number
     attachment_data_url?: string
-  }
-  const ctx = await getWalletContext(req, body.business_id)
-  if ('error' in ctx) return ctx.error
+  }>(req)
+  const auth = await requireWalletContext(req, body.business_id)
+  if (!auth.ok) return auth.response
+  const { ctx } = auth
+
   if (ctx.isSystemOwner) {
-    return NextResponse.json({ error: 'System owner accounts do not submit penalty appeals.' }, { status: 403 })
+    return apiFailure('forbidden', 'System owner accounts do not submit penalty appeals.', { status: 403 })
   }
   if (!ctx.employeeId) {
-    return NextResponse.json({ error: 'Your user account is not linked to an HR employee ID.' }, { status: 400 })
+    return apiFailure('invalid_request', 'Your user account is not linked to an HR employee ID.', { status: 400 })
   }
 
   const reason = String(body.reason || '').trim()
   if (!body.attendance_record_id || reason.length < 3) {
-    return NextResponse.json({ error: 'Attendance record and explanation (3+ characters) are required.' }, { status: 400 })
+    return apiFailure('invalid_request', 'Attendance record and explanation (3+ characters) are required.', { status: 400 })
   }
 
   const attachmentCheck = validateAttachmentDataUrl(body.attachment_data_url)
   if (!attachmentCheck.ok) {
-    return NextResponse.json({ error: attachmentCheck.error }, { status: 400 })
+    return apiFailure('invalid_request', attachmentCheck.error, { status: 400 })
   }
 
   const record = await prisma.attendanceRecord.findFirst({
@@ -78,9 +80,11 @@ export async function POST(req: NextRequest) {
       userId: ctx.userId,
     },
   })
-  if (!record) return NextResponse.json({ error: 'Attendance record not found.' }, { status: 404 })
+  if (!record) return apiFailure('not_found', 'Attendance record not found.', { status: 404 })
   const penalty = Number(record.penaltyAmount || 0)
-  if (penalty <= 0) return NextResponse.json({ error: 'This attendance record has no late penalty.' }, { status: 400 })
+  if (penalty <= 0) {
+    return apiFailure('invalid_request', 'This attendance record has no late penalty.', { status: 400 })
+  }
 
   const requestType = parseRequestType(body.request_type)
   const requestedReduction = defaultRequestedReduction(penalty, requestType, body.requested_reduction_amount)
@@ -99,7 +103,7 @@ export async function POST(req: NextRequest) {
   })
 
   if ('error' in result) {
-    return NextResponse.json({ error: result.error }, { status: result.status })
+    return apiFailure('appeal_failed', result.error, { status: result.status })
   }
 
   if (result.repaired) {
@@ -114,14 +118,13 @@ export async function POST(req: NextRequest) {
         userName: waiverRow.requester.name,
       })
     } catch {
-      // Non-blocking: queue visibility is restored even if notify fails
+      // non-blocking
     }
   }
 
-  return NextResponse.json({
-    ok: true,
+  return apiDataSuccess({
     waiver: result.waiver,
     repaired: result.repaired || false,
     reopened: result.reopened || false,
   })
-}
+})
