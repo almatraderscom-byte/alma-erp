@@ -7,6 +7,7 @@ import { parseBusinessAccess } from '@/lib/business-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { BUSINESSES, type BusinessId } from '@/lib/businesses'
 import { resolveProfileImageForUser } from '@/lib/user-display'
+import { isWalletApprovalType, walletLinkageStatus } from '@/lib/approval-integrity'
 
 export async function GET(req: NextRequest) {
   const token = await getJwt(req)
@@ -71,20 +72,45 @@ export async function GET(req: NextRequest) {
       })
     : []
   const requesterMap = new Map(requesters.map(user => [user.id, user]))
-  const approvals = approvalsRaw.map(row => ({
-    ...row,
-    requester: (() => {
-      const requester = requesterMap.get(row.requestedBy)
-      if (!requester) return null
-      return {
-        ...requester,
-        profileImageUrl: resolveProfileImageForUser(requester),
-      }
-    })(),
-    businessName: row.businessId && BUSINESSES[row.businessId as BusinessId] ? BUSINESSES[row.businessId as BusinessId].name : 'Global',
-    entityLabel: entityLabel(row.payloadSnapshot, row.entityId),
-    executable: isExecutable(row.module, row.type),
-  }))
+  const walletEntityIds = approvalsRaw
+    .filter(row => isWalletApprovalType(row.module, row.type))
+    .map(row => row.entityId)
+  const walletRows = walletEntityIds.length
+    ? await prisma.walletRequest.findMany({
+        where: { id: { in: walletEntityIds } },
+        select: { id: true, status: true },
+      })
+    : []
+  const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
+
+  const approvals = approvalsRaw.map(row => {
+    const walletStatus = isWalletApprovalType(row.module, row.type)
+      ? walletStatusMap.get(row.entityId) ?? null
+      : null
+    const linkageStatus = isWalletApprovalType(row.module, row.type)
+      ? walletLinkageStatus(row, {
+          exists: walletStatus != null,
+          status: walletStatus,
+          id: row.entityId,
+        })
+      : 'linked_pending'
+    return {
+      ...row,
+      requester: (() => {
+        const requester = requesterMap.get(row.requestedBy)
+        if (!requester) return null
+        return {
+          ...requester,
+          profileImageUrl: resolveProfileImageForUser(requester),
+        }
+      })(),
+      businessName: row.businessId && BUSINESSES[row.businessId as BusinessId] ? BUSINESSES[row.businessId as BusinessId].name : 'Global',
+      entityLabel: entityLabel(row.payloadSnapshot, row.entityId),
+      executable: isExecutable(row.module, row.type),
+      linkageStatus,
+      sourceStatus: walletStatus,
+    }
+  })
 
   return NextResponse.json({
     approvals,

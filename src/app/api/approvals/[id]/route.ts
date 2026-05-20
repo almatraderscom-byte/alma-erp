@@ -7,7 +7,11 @@ import { getJwt } from '@/lib/api-guards'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { serverPost } from '@/lib/server-api'
-import { dispatchApprovalsUpdated, resolveApprovalRequestById } from '@/lib/approvals'
+import { dispatchApprovalsUpdated, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
+import {
+  approvalMatchesResolvedWalletAction,
+  reconcileWalletApprovalWithSource,
+} from '@/lib/approval-integrity'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import { canReviewPenaltyAppeals, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
@@ -257,15 +261,84 @@ async function processWalletRequest(
   approvedAmountInput?: number,
 ) {
   const request = await prisma.walletRequest.findUnique({ where: { id: requestId } })
-  if (!request || request.status !== 'PENDING') return NextResponse.json({ error: 'Pending wallet request not found' }, { status: 400 })
+  if (!request) {
+    logEvent('error', 'approval.entity.missing', { approvalId, entityId: requestId, module: 'PAYROLL' })
+    const approval = await resolveApprovalRequestById({
+      id: approvalId,
+      status: 'REJECTED',
+      actorUserId,
+      reason: note?.slice(0, 500) || 'Linked wallet request missing — approval auto-closed',
+    })
+    dispatchApprovalsUpdated()
+    return NextResponse.json({
+      ok: true,
+      approval,
+      moduleResult: null,
+      reconciled: true,
+      warning: 'Source wallet request was missing; approval closed to prevent orphan queue items.',
+    })
+  }
+
+  if (request.status !== 'PENDING') {
+    if (approvalMatchesResolvedWalletAction(action, request.status)) {
+      const reconciled = await reconcileWalletApprovalWithSource({
+        approvalId,
+        wallet: request,
+        action,
+        actorUserId,
+        note,
+      })
+      if (!reconciled.ok) {
+        logEvent('warn', 'approval.reject.failed', { approvalId, reason: reconciled.error, walletStatus: request.status })
+        return NextResponse.json({ error: reconciled.error, code: 'SOURCE_ALREADY_RESOLVED' }, { status: 409 })
+      }
+      dispatchApprovalsUpdated()
+      return NextResponse.json(reconciled)
+    }
+    logEvent('warn', 'approval.lookup.failed', {
+      approvalId,
+      entityId: requestId,
+      walletStatus: request.status,
+      action,
+    })
+    return NextResponse.json(
+      {
+        error: `Wallet request is already ${request.status}. It was likely processed from Payroll. Refresh approvals.`,
+        code: 'SOURCE_ALREADY_RESOLVED',
+        sourceStatus: request.status,
+      },
+      { status: 409 },
+    )
+  }
 
   if (action === 'REJECT') {
-    const updated = await prisma.walletRequest.update({
-      where: { id: request.id },
-      data: { status: 'REJECTED', reviewNote: note?.slice(0, 500) || null, reviewedById: actorUserId, reviewedAt: new Date() },
+    const result = await prisma.$transaction(async tx => {
+      const updated = await tx.walletRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'REJECTED',
+          reviewNote: note?.slice(0, 500) || null,
+          reviewedById: actorUserId,
+          reviewedAt: new Date(),
+        },
+      })
+      const approval = await resolveApprovalRequest({
+        module: 'PAYROLL',
+        type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+        entityId: request.id,
+        status: 'REJECTED',
+        actorUserId,
+        reason: note?.slice(0, 500) || 'Rejected',
+        tx,
+      })
+      if (!approval) {
+        throw new Error('LINKAGE_BROKEN: pending approval row missing for wallet request')
+      }
+      return { updated, approval }
     })
-    const approval = await resolveApprovalRequestById({ id: approvalId, status: 'REJECTED', actorUserId, reason: note || 'Rejected' })
-    return NextResponse.json({ ok: true, approval, moduleResult: { request: updated } })
+    logEvent('info', 'approval.reject.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
+    dispatchApprovalsUpdated()
+    return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { request: result.updated } })
   }
 
   const requestedAmount = Number(request.requestedAmount)
@@ -306,8 +379,21 @@ async function processWalletRequest(
         ledgerEntryId: entry.id,
       },
     })
-    return { entry, request: updated }
+    const approval = await resolveApprovalRequest({
+      module: 'PAYROLL',
+      type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+      entityId: request.id,
+      status: 'APPROVED',
+      actorUserId,
+      reason: note?.slice(0, 500) || 'Approved',
+      tx,
+    })
+    if (!approval) {
+      throw new Error('LINKAGE_BROKEN: pending approval row missing for wallet request')
+    }
+    return { entry, request: updated, approval }
   })
-  const approval = await resolveApprovalRequestById({ id: approvalId, status: 'APPROVED', actorUserId, reason: note || 'Approved' })
-  return NextResponse.json({ ok: true, approval, moduleResult: result })
+  logEvent('info', 'approval.approve.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
+  dispatchApprovalsUpdated()
+  return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { entry: result.entry, request: result.request } })
 }

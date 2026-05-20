@@ -28,6 +28,8 @@ type ApprovalRow = {
   businessName?: string
   entityLabel?: string
   executable?: boolean
+  linkageStatus?: string
+  sourceStatus?: string | null
 }
 
 type ApprovalResponse = {
@@ -98,7 +100,11 @@ export default function ApprovalsPage() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) throw new Error(json.error || 'Approval action failed')
-      toast.success(action === 'APPROVE' ? 'Approval processed' : 'Request rejected')
+      if (json.reconciled) {
+        toast.success(action === 'REJECT' ? 'Approval synced (already handled in Payroll)' : 'Approval synced with existing payroll decision')
+      } else {
+        toast.success(action === 'APPROVE' ? 'Approval processed' : 'Request rejected')
+      }
       setSelected(null)
       setActionTarget(null)
       setNote('')
@@ -179,6 +185,14 @@ export default function ApprovalsPage() {
                   <div>
                     <p className={`font-black ${row.priority === 'CRITICAL' ? 'text-red-300' : row.priority === 'HIGH' ? 'text-amber-300' : 'text-zinc-300'}`}>{row.priority}</p>
                     <p className={row.status === 'PENDING' ? 'mt-1 font-black text-gold-lt' : row.status === 'APPROVED' ? 'mt-1 font-black text-green-300' : 'mt-1 font-black text-red-300'}>{row.status}</p>
+                    {row.linkageStatus === 'orphan_source_already_resolved' && (
+                      <p className="mt-1 text-[10px] font-bold text-amber-300">
+                        Payroll already {row.sourceStatus || 'resolved'} — reject will sync queue
+                      </p>
+                    )}
+                    {row.linkageStatus === 'orphan_missing_source' && (
+                      <p className="mt-1 text-[10px] font-bold text-red-300">Source record missing</p>
+                    )}
                     {lastAuditSource(row.auditHistory) && (
                       <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
                         via {lastAuditSource(row.auditHistory)}

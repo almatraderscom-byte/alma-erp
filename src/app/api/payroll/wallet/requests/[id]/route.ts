@@ -9,7 +9,8 @@ import {
 } from '@/lib/payroll-wallet'
 import { notifyUser } from '@/lib/notifications'
 import { sendPayrollAlert } from '@/lib/resend'
-import { resolveApprovalRequest } from '@/lib/approvals'
+import { dispatchApprovalsUpdated, resolveApprovalRequest } from '@/lib/approvals'
+import { logEvent } from '@/lib/logger'
 
 export async function PATCH(
   req: NextRequest,
@@ -33,15 +34,38 @@ export async function PATCH(
   }
 
   if (body.action === 'REJECT') {
-    const updated = await prisma.walletRequest.update({
-      where: { id: request.id },
-      data: {
+    const result = await prisma.$transaction(async tx => {
+      const updated = await tx.walletRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'REJECTED',
+          reviewNote: body.note?.slice(0, 500) || null,
+          reviewedById: ctx.userId,
+          reviewedAt: new Date(),
+        },
+      })
+      const approval = await resolveApprovalRequest({
+        module: 'PAYROLL',
+        type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+        entityId: request.id,
         status: 'REJECTED',
-        reviewNote: body.note?.slice(0, 500) || null,
-        reviewedById: ctx.userId,
-        reviewedAt: new Date(),
-      },
+        actorUserId: ctx.userId,
+        reason: body.note?.slice(0, 500) || 'Rejected',
+        tx,
+      })
+      if (!approval) {
+        throw new Error('LINKAGE_BROKEN: pending approval missing for wallet request')
+      }
+      return { updated, approval }
+    }).catch(e => {
+      logEvent('error', 'approval.reject.failed', {
+        entityId: request.id,
+        source: 'payroll_wallet',
+        error: (e as Error).message,
+      })
+      throw e
     })
+    const updated = result.updated
     await notifyUser({
       userId: request.userId,
       businessId: request.businessId,
@@ -63,15 +87,8 @@ export async function PATCH(
       dedupeKey: `wallet-request-rejected:${request.id}`,
       metadata: { requestId: request.id, employeeId: request.employeeId },
     })
-    await resolveApprovalRequest({
-      module: 'PAYROLL',
-      type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
-      entityId: request.id,
-      status: 'REJECTED',
-      actorUserId: ctx.userId,
-      reason: body.note?.slice(0, 500) || 'Rejected',
-    })
-    return NextResponse.json({ ok: true, request: updated })
+    dispatchApprovalsUpdated()
+    return NextResponse.json({ ok: true, request: updated, approvalId: result.approval.id })
   }
 
   if (body.action !== 'APPROVE') {
@@ -122,7 +139,26 @@ export async function PATCH(
         ledgerEntryId: entry.id,
       },
     })
-    return { entry, request: updated }
+    const approval = await resolveApprovalRequest({
+      module: 'PAYROLL',
+      type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
+      entityId: request.id,
+      status: 'APPROVED',
+      actorUserId: ctx.userId,
+      reason: body.note?.slice(0, 500) || 'Approved',
+      tx,
+    })
+    if (!approval) {
+      throw new Error('LINKAGE_BROKEN: pending approval missing for wallet request')
+    }
+    return { entry, request: updated, approval }
+  }).catch(e => {
+    logEvent('error', 'approval.approve.failed', {
+      entityId: request.id,
+      source: 'payroll_wallet',
+      error: (e as Error).message,
+    })
+    throw e
   })
 
   await notifyUser({
@@ -146,14 +182,6 @@ export async function PATCH(
     dedupeKey: `wallet-request-approved:${request.id}`,
     metadata: { requestId: request.id, employeeId: request.employeeId, approvedAmount },
   })
-  await resolveApprovalRequest({
-    module: 'PAYROLL',
-    type: request.type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
-    entityId: request.id,
-    status: 'APPROVED',
-    actorUserId: ctx.userId,
-    reason: body.note?.slice(0, 500) || 'Approved',
-  })
-
+  dispatchApprovalsUpdated()
   return NextResponse.json({ ok: true, ...result })
 }
