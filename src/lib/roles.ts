@@ -73,6 +73,8 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
     return false
   }
 
+  if (pathname.startsWith('/operations')) return role === 'SUPER_ADMIN'
+
   if (role === 'SUPER_ADMIN') return true
 
   if (pathname.startsWith('/settings/users')) {
@@ -133,6 +135,7 @@ const TRADING_STAFF_NAV_HIDE = new Set([
 
 export function filterNavByRole(items: NavItem[], role: AlmaRole, businessId: BusinessId): NavItem[] {
   return items.filter(item => {
+    if (item.href === '/operations/task-spotlight' && role !== 'SUPER_ADMIN') return false
     if (!isPathAllowedForRole(item.href, role, businessId)) return false
     if (businessId === 'ALMA_TRADING' && item.href === '/trading/target-control' && role !== 'SUPER_ADMIN') {
       return false

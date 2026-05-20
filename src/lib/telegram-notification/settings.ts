@@ -88,6 +88,8 @@ export function eventTypeEnabled(
     case 'WORKFLOW_SUBMITTED':
     case 'WORKFLOW_APPROVED':
     case 'WORKFLOW_REJECTED':
+    case 'OPERATIONAL_TASK_ASSIGNED':
+    case 'OPERATIONAL_TASK_UPDATED':
       return setting.alertWorkflowLifecycle
     case 'OPS_DAILY_SUMMARY':
       return setting.alertOpsDailySummary

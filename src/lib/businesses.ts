@@ -62,6 +62,7 @@ const FINANCE_SUITE: NavItem[] = [
 ]
 
 const SETTINGS_NAV: NavItem[] = [
+  { href: '/operations/task-spotlight', icon: '✦', label: 'Task Spotlight' },
   { href: '/settings/session', icon: '⚙', label: 'Session' },
   { href: '/settings/database', icon: '◈', label: 'Database' },
   { href: '/settings/users', icon: '◫', label: 'Users' },
@@ -123,7 +124,13 @@ export function isRouteAllowed(path: string, businessId: BusinessId): boolean {
     path.startsWith('/attendance') ||
     path.startsWith('/payroll')
 
-  if (path.startsWith('/settings') || path.startsWith('/invoice/share') || path.startsWith('/audit') || path.startsWith('/approvals')) return true
+  if (
+    path.startsWith('/settings')
+    || path.startsWith('/operations')
+    || path.startsWith('/invoice/share')
+    || path.startsWith('/audit')
+    || path.startsWith('/approvals')
+  ) return true
 
   if (businessId === 'CREATIVE_DIGITAL_IT') {
     return digitalOnly || sharedOps || path === '/'

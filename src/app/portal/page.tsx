@@ -18,6 +18,10 @@ import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
 import { useMyAttendance } from '@/hooks/useMyAttendance'
 import { attendanceErrorLabel } from '@/lib/attendance-client'
+import { OperationalTaskSpotlightModal } from '@/components/operations/OperationalTaskSpotlightModal'
+import { OperationalTaskSpotlightStrip } from '@/components/operations/OperationalTaskSpotlightStrip'
+import { useOperationalSpotlightTrigger } from '@/components/operations/useOperationalSpotlightTrigger'
+import { invalidateOperationalTasksCache } from '@/hooks/useOperationalTasks'
 import type { MyAttendancePayload } from '@/lib/attendance-client'
 import type { AttendanceClientError } from '@/lib/attendance-errors'
 
@@ -151,6 +155,8 @@ export default function EmployeePortalPage() {
     await refetchAttendance()
   }, [refetchProfile, loadWallet, refetchAttendance])
 
+  const opsSpotlight = useOperationalSpotlightTrigger(business.id, !systemOwner)
+
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
@@ -184,6 +190,16 @@ export default function EmployeePortalPage() {
         </div>
       )}
 
+      {!systemOwner && (
+        <div className="mb-4">
+          <OperationalTaskSpotlightStrip
+            tasks={opsSpotlight.tasks}
+            loading={opsSpotlight.loading}
+            onOpenSpotlight={opsSpotlight.openManual}
+          />
+        </div>
+      )}
+
       <div className="grid md:grid-cols-2 gap-4">
         {systemOwner ? (
           <SystemOwnerCard businessName={business.name} />
@@ -196,6 +212,11 @@ export default function EmployeePortalPage() {
             attendanceError={attendanceError}
             onRefresh={() => {
               void refreshDesk()
+            }}
+            onCheckInSuccess={opsSpotlight.triggerAfterCheckIn}
+            onEndWork={() => {
+              invalidateOperationalTasksCache(business.id)
+              void opsSpotlight.refetch(true)
             }}
           />
         )}
@@ -269,6 +290,16 @@ export default function EmployeePortalPage() {
           <RequestList requests={wallet?.requests ?? []} />
         </Card>}
       </div>
+
+      {!systemOwner && (
+        <OperationalTaskSpotlightModal
+          businessId={business.id}
+          assignment={opsSpotlight.spotlight}
+          open={opsSpotlight.open}
+          onClose={opsSpotlight.close}
+          onUpdated={opsSpotlight.handleUpdated}
+        />
+      )}
     </FinancePageChrome>
   )
 }
@@ -309,6 +340,8 @@ function AttendanceCard({
   attendance,
   attendanceError,
   onRefresh,
+  onCheckInSuccess,
+  onEndWork,
 }: {
   businessId: string
   empLinked: boolean
@@ -316,6 +349,8 @@ function AttendanceCard({
   attendance: MyAttendancePayload | null
   attendanceError: AttendanceClientError | null
   onRefresh: () => void
+  onCheckInSuccess?: () => void | Promise<void>
+  onEndWork?: () => void
 }) {
   const [busy, setBusy] = useState<'out' | 'cancel' | null>(null)
   const [appealOpen, setAppealOpen] = useState(false)
@@ -344,6 +379,7 @@ function AttendanceCard({
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || 'Attendance update failed')
       toast.success('Work ended')
+      onEndWork?.()
       onRefresh()
     } catch (e) {
       toast.error((e as Error).message)
@@ -504,6 +540,7 @@ function AttendanceCard({
         onClose={() => setFaceCheckInOpen(false)}
         onSuccess={async () => {
           await onRefresh()
+          await onCheckInSuccess?.()
         }}
       />
     </Card>

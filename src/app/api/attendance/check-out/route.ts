@@ -4,6 +4,7 @@ import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceDateFor, attendanceRecordDto, workDurationMinutes } from '@/lib/attendance'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
+import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
 
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { business_id?: string }
@@ -53,6 +54,10 @@ export async function POST(req: NextRequest) {
   const setting = await getTelegramOpsSetting(ctx.businessIds[0])
   const isEarly = totalWorkMinutes < setting.earlyLeaveMinutes
   queueAttendanceCheckOutAlert({ ...record, checkOutAt: now }, { earlyLeave: isEarly })
+
+  if (ctx.userId) {
+    void archiveOpenAssignmentsOnCheckout(ctx.userId).catch(() => {})
+  }
 
   return NextResponse.json({ ok: true, record: attendanceRecordDto(record) })
 }
