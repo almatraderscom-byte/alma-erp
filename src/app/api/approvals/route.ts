@@ -16,6 +16,7 @@ import {
 import { parseArchiveVisibility, resolveArchiveVisibilityWhere } from '@/lib/business-archive/query'
 import { apiFailure, apiSuccess } from '@/lib/safe-api-response'
 import { logEvent } from '@/lib/logger'
+import { resolvePayoutSummariesForUsers } from '@/lib/employee-payment-method'
 
 export async function GET(req: NextRequest) {
   try {
@@ -107,6 +108,22 @@ export async function GET(req: NextRequest) {
   const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
   const penaltyStatusMap = new Map(penaltyRows.map(w => [w.id, w.status]))
 
+  const payoutByUser = new Map<string, Awaited<ReturnType<typeof resolvePayoutSummariesForUsers>> extends Map<string, infer V> ? V : never>()
+  if (role === 'SUPER_ADMIN') {
+    const byBusiness = new Map<string, string[]>()
+    for (const r of approvalsRaw) {
+      if (!isWalletApprovalType(r.module, r.type) && r.type !== 'SALARY_ADVANCE') continue
+      const bid = r.businessId || 'ALMA_LIFESTYLE'
+      const list = byBusiness.get(bid) || []
+      if (!list.includes(r.requestedBy)) list.push(r.requestedBy)
+      byBusiness.set(bid, list)
+    }
+    for (const [bid, userIds] of byBusiness) {
+      const chunk = await resolvePayoutSummariesForUsers(userIds, bid, true).catch(() => new Map())
+      for (const [uid, summary] of chunk) payoutByUser.set(`${bid}:${uid}`, summary)
+    }
+  }
+
   const approvals = approvalsRaw.map(row => {
     const walletStatus = isWalletApprovalType(row.module, row.type)
       ? walletStatusMap.get(row.entityId) ?? null
@@ -142,6 +159,13 @@ export async function GET(req: NextRequest) {
       executable: isExecutable(row.module, row.type),
       linkageStatus,
       sourceStatus: walletStatus ?? penaltyStatus,
+      payoutSummary:
+        isWalletApprovalType(row.module, row.type) || row.type === 'SALARY_ADVANCE'
+          ? payoutByUser.get(`${row.businessId || 'ALMA_LIFESTYLE'}:${row.requestedBy}`)
+            ?? (row.payloadSnapshot && typeof row.payloadSnapshot === 'object'
+              ? (row.payloadSnapshot as { payout?: unknown }).payout
+              : undefined)
+          : undefined,
     }
   })
 

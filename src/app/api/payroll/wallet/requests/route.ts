@@ -5,6 +5,7 @@ import { moneyDecimal } from '@/lib/payroll-wallet'
 import { sendPayrollAlert } from '@/lib/resend'
 import { createApprovalRequest } from '@/lib/approvals'
 import { queuePayrollWalletRequestAlert } from '@/lib/telegram-notification/payroll-alerts'
+import { getPrimaryPaymentMethod, toPayoutSummary } from '@/lib/employee-payment-method'
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -53,14 +54,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No employee profile linked to this account.' }, { status: 400 })
   }
 
+  const businessId = ctx.businessIds[0]
+  let paymentMethodId: string | null = null
+  let payoutSnapshot = null as ReturnType<typeof toPayoutSummary> | null
+  const preferred = await getPrimaryPaymentMethod(ctx.userId, businessId)
+  if (preferred && preferred.status === 'ACTIVE') {
+    paymentMethodId = preferred.id
+    payoutSnapshot = toPayoutSummary(preferred, { reveal: false })
+  }
+
   const request = await prisma.walletRequest.create({
     data: {
       userId: ctx.userId,
       employeeId,
-      businessId: ctx.businessIds[0],
+      businessId,
       type,
       requestedAmount: moneyDecimal(amount),
       reason,
+      paymentMethodId,
     },
   })
 
@@ -75,7 +86,14 @@ export async function POST(req: NextRequest) {
     actionUrl: '/payroll',
     title: `${type === 'WITHDRAWAL' ? 'Wallet withdrawal' : 'Wallet advance'} approval required`,
     message: `${type} request for employee ${employeeId}: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`,
-    payloadSnapshot: { requestId: request.id, employeeId, type, amount, businessId: request.businessId },
+    payloadSnapshot: {
+      requestId: request.id,
+      employeeId,
+      type,
+      amount,
+      businessId: request.businessId,
+      payout: payoutSnapshot,
+    },
   })
 
   const requester = await prisma.user.findUnique({
@@ -91,6 +109,7 @@ export async function POST(req: NextRequest) {
     amount,
     reason,
     requestId: request.id,
+    payout: payoutSnapshot,
   })
 
   await sendPayrollAlert({

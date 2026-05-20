@@ -41,6 +41,8 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
   }
   if (pathname.startsWith('/api/audit')) return role !== 'SUPER_ADMIN'
   if (pathname.startsWith('/api/approvals')) return false
+  if (pathname.startsWith('/api/employee/payment-methods')) return false
+  if (pathname.startsWith('/api/admin/employee-payment-methods')) return role !== 'SUPER_ADMIN'
   if (pathname === '/api/users/me' || pathname === '/api/users/me/password') return false
   if (pathname === '/api/users/me/profile-image') return false
   if (/^\/api\/users\/[^/]+\/profile-image$/.test(pathname)) {

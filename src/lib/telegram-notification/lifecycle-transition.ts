@@ -96,14 +96,20 @@ async function enrichApprovalContext(approval: ApprovalRequest): Promise<Enriche
       where: { id: req.userId },
       select: { id: true, name: true, employeeIdGas: true },
     })
+    const { resolvePayoutForUser } = await import('@/lib/employee-payment-method')
+    const payout = await resolvePayoutForUser(req.userId, req.businessId, false)
     const typeLabel = req.type === 'WITHDRAWAL' ? 'Wallet withdrawal' : 'Salary advance (wallet)'
+    const payoutNote =
+      payout.status !== 'MISSING'
+        ? `Preferred payout: ${payout.label} · ${payout.accountNumberMasked} (${payout.isVerified ? 'verified' : 'unverified'})`
+        : 'Preferred payout: not on file'
     return {
       employeeId: req.employeeId,
       employeeName: user?.name || req.employeeId,
       userId: req.userId,
       requestLabel: typeLabel,
       amount: Number(req.requestedAmount),
-      extraReason: req.reason,
+      extraReason: `${req.reason}\n${payoutNote}`,
     }
   }
 

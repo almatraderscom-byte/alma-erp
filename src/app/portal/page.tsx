@@ -258,6 +258,18 @@ export default function EmployeePortalPage() {
           )}
         </Card>
 
+        {!systemOwner && (
+          <Card className="p-5 border-gold-dim/20 bg-[#0c0c10] flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payout identity</p>
+              <p className="mt-1 text-[11px] text-zinc-500">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
+            </div>
+            <Link href="/portal/payment-accounts">
+              <Button size="sm" variant="gold">Payment accounts</Button>
+            </Link>
+          </Card>
+        )}
+
         {!systemOwner && <WalletOverviewCard loading={walletLoading} wallet={wallet} />}
 
         {!systemOwner && (

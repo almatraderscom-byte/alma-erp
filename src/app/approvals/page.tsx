@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
+import { PayoutSummaryBlock } from '@/components/approvals/PayoutSummaryBlock'
 import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
@@ -33,6 +34,14 @@ type ApprovalRow = {
   executable?: boolean
   linkageStatus?: string
   sourceStatus?: string | null
+  payoutSummary?: {
+    label?: string
+    accountHolder?: string | null
+    accountNumber?: string
+    accountNumberMasked?: string
+    isVerified?: boolean
+    status?: string
+  } | null
 }
 
 type ApprovalResponse = {
@@ -297,6 +306,9 @@ export default function ApprovalsPage() {
                   <div>
                     <p className="font-bold text-zinc-300">{row.entityLabel || row.entityId}</p>
                     <p className="mt-1 line-clamp-2 text-zinc-500">{row.reason}</p>
+                    {(row.type === 'WALLET_ADVANCE' || row.type === 'WALLET_WITHDRAWAL' || row.type === 'SALARY_ADVANCE') && (
+                      <PayoutSummaryBlock payout={row.payoutSummary} />
+                    )}
                   </div>
                   <div>
                     <p className={`font-black ${row.priority === 'CRITICAL' ? 'text-red-300' : row.priority === 'HIGH' ? 'text-amber-300' : 'text-zinc-300'}`}>{row.priority}</p>
@@ -388,6 +400,11 @@ export default function ApprovalsPage() {
               <Info label="Business" value={selected.businessName || selected.businessId || 'Global'} />
               <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
               <Info label="Reason" value={selected.reason} />
+              {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
+                <div className="rounded-2xl border border-border bg-black/20 p-3">
+                  <PayoutSummaryBlock payout={selected.payoutSummary} />
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 {selected.status === 'PENDING' && selected.executable && (
                   <Button variant="gold" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, 'APPROVE')}>

@@ -50,6 +50,7 @@ model User {
   operationalTasksCreated OperationalTask[]              @relation("OperationalTaskCreator")
   operationalTaskAssignments OperationalTaskAssignment[] @relation("OperationalTaskAssignee")
   operationalTaskAcks     OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
+  paymentMethods          EmployeePaymentMethod[]        @relation("UserPaymentMethods")
 
   @@index([active, role])
   @@index([active, createdAt])
@@ -254,6 +255,76 @@ model EmployeeLedgerEntry {
   @@index([userId])
 }
 
+enum EmployeePaymentMethodType {
+  MOBILE_BANKING
+  BANK_ACCOUNT
+}
+
+enum MobileMoneyProvider {
+  BKASH
+  NAGAD
+  ROCKET
+  OTHER
+}
+
+enum PaymentAccountUsage {
+  PERSONAL
+  BUSINESS
+}
+
+enum PaymentMethodStatus {
+  ACTIVE
+  DISABLED
+  SUSPICIOUS
+  ARCHIVED
+}
+
+model EmployeePaymentMethod {
+  id                String                    @id @default(cuid())
+  userId            String
+  user              User                      @relation("UserPaymentMethods", fields: [userId], references: [id], onDelete: Cascade)
+  businessId        String
+  type              EmployeePaymentMethodType
+  provider          MobileMoneyProvider?
+  usageType         PaymentAccountUsage?
+  accountHolderName String
+  accountNumber     String
+  bankName          String?
+  branchName        String?
+  routingNumber     String?
+  qrImageUrl        String?                   @db.Text
+  isPrimary         Boolean                   @default(false)
+  isVerified        Boolean                   @default(false)
+  verifiedAt        DateTime?
+  verifiedById      String?
+  status            PaymentMethodStatus       @default(ACTIVE)
+  suspiciousNote    String?                   @db.Text
+  isArchived        Boolean                   @default(false)
+  archivedAt        DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  auditLogs         EmployeePaymentMethodAuditLog[]
+
+  @@index([userId, businessId, isArchived])
+  @@index([userId, isPrimary])
+  @@index([businessId, status])
+}
+
+model EmployeePaymentMethodAuditLog {
+  id              String   @id @default(cuid())
+  paymentMethodId String?
+  paymentMethod   EmployeePaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  userId          String
+  businessId      String
+  actorUserId     String
+  action          String
+  detailJson      String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([paymentMethodId, createdAt])
+}
+
 model WalletRequest {
   id              String              @id @default(cuid())
   userId          String
@@ -264,6 +335,7 @@ model WalletRequest {
   requestedAmount Decimal             @db.Decimal(12, 2)
   approvedAmount  Decimal?            @db.Decimal(12, 2)
   reason          String              @db.Text
+  paymentMethodId String?
   reviewNote      String?             @db.Text
   reviewedById    String?
   reviewedAt      DateTime?
