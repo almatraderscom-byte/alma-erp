@@ -51,14 +51,18 @@ export default function TaskSpotlightAdminPage() {
     try {
       const [tRes, uRes] = await Promise.all([
         fetch(`/api/operational-tasks?business_id=${encodeURIComponent(business.id)}`, { cache: 'no-store' }),
-        fetch('/api/users?limit=200', { cache: 'no-store' }),
+        fetch(`/api/operational-tasks/assignees?business_id=${encodeURIComponent(business.id)}`, {
+          cache: 'no-store',
+        }),
       ])
       const tj = await tRes.json().catch(() => ({}))
       const uj = await uRes.json().catch(() => ({}))
       if (!tRes.ok) throw new Error(tj.error || 'Failed to load tasks')
+      if (!uRes.ok) throw new Error(uj.error || 'Failed to load employees for this business')
       setTasks(tj.tasks || [])
-      const list = (uj.users || uj.items || []) as UserOption[]
-      setUsers(list.filter(u => u.role !== 'SUPER_ADMIN' && u.role !== 'VIEWER'))
+      const list = (uj.employees || []) as UserOption[]
+      setUsers(list)
+      setAssigneeIds(prev => prev.filter(id => list.some(u => u.id === id)))
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -191,7 +195,9 @@ export default function TaskSpotlightAdminPage() {
           Allow dismiss without completing
         </label>
         <div className="max-h-40 overflow-y-auto rounded-xl border border-border p-3 space-y-1">
-          <p className="text-[10px] font-bold text-zinc-500 mb-2">Assign employees</p>
+          <p className="text-[10px] font-bold text-zinc-500 mb-2">
+            Assign employees · {business.shortName} scope only ({users.length})
+          </p>
           {users.map(u => (
             <label key={u.id} className="flex items-center gap-2 text-xs text-cream cursor-pointer">
               <input

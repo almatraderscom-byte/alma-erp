@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJwt, forbidViewerWrite } from '@/lib/api-guards'
 import { normalizeAlmaRole } from '@/lib/roles'
+import { assertAssigneesInBusinessScope } from '@/lib/operational-task-assignees'
 import { createOperationalTask, listTasksForAdmin } from '@/lib/operational-tasks'
 import { prisma } from '@/lib/prisma'
 import { queueOperationalTaskAssigned } from '@/lib/operational-task-telegram'
@@ -54,6 +55,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Select at least one employee.' }, { status: 400 })
   }
 
+  const businessId = String(body.business_id || '').trim()
+  if (!businessId) {
+    return NextResponse.json({ error: 'business_id is required' }, { status: 400 })
+  }
+
+  const scopeCheck = await assertAssigneesInBusinessScope(businessId, assigneeUserIds, token.sub)
+  if (!scopeCheck.ok) {
+    return NextResponse.json({ error: scopeCheck.error }, { status: 400 })
+  }
+
   const task = await createOperationalTask(token.sub, {
     title,
     description,
@@ -63,7 +74,7 @@ export async function POST(req: NextRequest) {
     acknowledgmentRequired: body.acknowledgment_required,
     allowDismiss: body.allow_dismiss,
     showOnCheckIn: body.show_on_check_in,
-    businessId: body.business_id,
+    businessId,
     assigneeUserIds,
   })
 
