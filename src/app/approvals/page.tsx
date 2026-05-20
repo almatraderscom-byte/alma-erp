@@ -39,6 +39,15 @@ type ApprovalResponse = {
   byPriority: Array<{ priority: string; count: number }>
 }
 
+type IntegrityReport = {
+  scanned: number
+  pendingWaivers?: number
+  walletOrphans?: Array<{ approvalId: string; kind: string }>
+  penaltyApprovalOrphans?: Array<{ approvalId: string; kind: string }>
+  penaltyWaiverOrphans?: Array<{ waiverId: string; kind: string; employeeId?: string }>
+  orphans: Array<{ approvalId?: string; waiverId?: string; kind: string }>
+}
+
 export default function ApprovalsPage() {
   const [data, setData] = useState<ApprovalResponse | null>(null)
   const [status, setStatus] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'>('PENDING')
@@ -47,6 +56,10 @@ export default function ApprovalsPage() {
   const [actionTarget, setActionTarget] = useState<{ row: ApprovalRow; action: 'APPROVE' | 'REJECT' } | null>(null)
   const [note, setNote] = useState('')
   const [processingId, setProcessingId] = useState<string | null>(null)
+  const [integrity, setIntegrity] = useState<IntegrityReport | null>(null)
+  const [integrityLoading, setIntegrityLoading] = useState(false)
+  const [repairing, setRepairing] = useState(false)
+  const [showIntegrity, setShowIntegrity] = useState(false)
 
   const load = useCallback(async (silent = false) => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
@@ -74,7 +87,37 @@ export default function ApprovalsPage() {
   }, [load])
   useRegisterMobileRefresh(() => load(true))
 
+  const loadIntegrity = useCallback(async () => {
+    setIntegrityLoading(true)
+    try {
+      const res = await fetch('/api/approvals/integrity', { cache: 'no-store' })
+      const json = await res.json()
+      if (res.ok) setIntegrity(json)
+      else toast.error(json.error || 'Integrity scan failed')
+    } finally {
+      setIntegrityLoading(false)
+    }
+  }, [])
+
+  async function repairIntegrity() {
+    setRepairing(true)
+    try {
+      const res = await fetch('/api/approvals/integrity', { method: 'POST', cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Repair failed')
+      toast.success(`Repaired ${(json.repaired || []).length} item(s)`)
+      await loadIntegrity()
+      await load(true)
+      window.dispatchEvent(new Event('alma:approvals-updated'))
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setRepairing(false)
+    }
+  }
+
   const priorityCounts = useMemo(() => Object.fromEntries((data?.byPriority || []).map(row => [row.priority, row.count])), [data])
+  const orphanCount = integrity?.orphans?.length ?? 0
 
   async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '') {
     if (action === 'REJECT' && actionNote.trim().length < 5) {
@@ -127,6 +170,15 @@ export default function ApprovalsPage() {
           <p className="mt-1 text-sm text-zinc-500">Persistent authorization requests. Reading notifications never clears this queue.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant={showIntegrity ? 'gold' : 'ghost'}
+            onClick={() => {
+              setShowIntegrity(v => !v)
+              if (!integrity && !showIntegrity) void loadIntegrity()
+            }}
+          >
+            Integrity
+          </Button>
           {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
             <Button key={value} variant={status === value ? 'gold' : 'ghost'} onClick={() => setStatus(value)}>
               {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
@@ -134,6 +186,52 @@ export default function ApprovalsPage() {
           ))}
         </div>
       </div>
+
+      {showIntegrity && (
+        <Card className="border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-cream">Integrity Monitor</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Detects orphan approvals, hidden penalty appeals, and stale pending rows.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" disabled={integrityLoading} onClick={() => void loadIntegrity()}>
+                {integrityLoading ? <Spinner /> : 'Scan'}
+              </Button>
+              <Button size="sm" variant="gold" disabled={repairing || !orphanCount} onClick={() => void repairIntegrity()}>
+                {repairing ? <Spinner /> : `Repair (${orphanCount})`}
+              </Button>
+            </div>
+          </div>
+          {integrity && (
+            <div className="mt-4 grid gap-2 text-xs md:grid-cols-4">
+              <IntegrityStat label="Pending scanned" value={integrity.scanned} />
+              <IntegrityStat label="Pending waivers" value={integrity.pendingWaivers ?? 0} />
+              <IntegrityStat label="Wallet orphans" value={integrity.walletOrphans?.length ?? 0} warn />
+              <IntegrityStat
+                label="Penalty orphans"
+                value={(integrity.penaltyApprovalOrphans?.length ?? 0) + (integrity.penaltyWaiverOrphans?.length ?? 0)}
+                warn
+              />
+            </div>
+          )}
+          {integrity?.orphans?.length ? (
+            <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-[11px] text-zinc-400">
+              {integrity.orphans.slice(0, 12).map((row, i) => (
+                <li key={`${row.kind}-${row.approvalId || row.waiverId || i}`}>
+                  {row.kind.replace(/_/g, ' ')}
+                  {row.approvalId ? ` · approval ${row.approvalId.slice(0, 8)}…` : ''}
+                  {row.waiverId ? ` · waiver ${row.waiverId.slice(0, 8)}…` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : integrity && !integrityLoading ? (
+            <p className="mt-3 text-[11px] font-bold text-green-300">No linkage issues detected in scan window.</p>
+          ) : null}
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label="Pending" value={data?.totalPending ?? 0} loading={loading} color="text-gold-lt" />
@@ -192,6 +290,9 @@ export default function ApprovalsPage() {
                     )}
                     {row.linkageStatus === 'orphan_missing_source' && (
                       <p className="mt-1 text-[10px] font-bold text-red-300">Source record missing</p>
+                    )}
+                    {row.linkageStatus === 'orphan_missing_approval' && (
+                      <p className="mt-1 text-[10px] font-bold text-red-300">Central approval missing — run Integrity repair</p>
                     )}
                     {lastAuditSource(row.auditHistory) && (
                       <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
@@ -294,4 +395,13 @@ function lastAuditSource(auditHistory: unknown): string | null {
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="rounded-2xl border border-border bg-black/20 p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-1 font-bold text-cream">{value}</p></div>
+}
+
+function IntegrityStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+  return (
+    <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">{label}</p>
+      <p className={`mt-1 text-lg font-black ${warn && value > 0 ? 'text-amber-300' : 'text-cream'}`}>{value}</p>
+    </div>
+  )
 }

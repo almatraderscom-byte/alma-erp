@@ -7,7 +7,12 @@ import { parseBusinessAccess } from '@/lib/business-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { BUSINESSES, type BusinessId } from '@/lib/businesses'
 import { resolveProfileImageForUser } from '@/lib/user-display'
-import { isWalletApprovalType, walletLinkageStatus } from '@/lib/approval-integrity'
+import {
+  isPenaltyApprovalType,
+  isWalletApprovalType,
+  penaltyLinkageStatus,
+  walletLinkageStatus,
+} from '@/lib/approval-integrity'
 
 export async function GET(req: NextRequest) {
   const token = await getJwt(req)
@@ -75,17 +80,32 @@ export async function GET(req: NextRequest) {
   const walletEntityIds = approvalsRaw
     .filter(row => isWalletApprovalType(row.module, row.type))
     .map(row => row.entityId)
-  const walletRows = walletEntityIds.length
-    ? await prisma.walletRequest.findMany({
-        where: { id: { in: walletEntityIds } },
-        select: { id: true, status: true },
-      })
-    : []
+  const penaltyEntityIds = approvalsRaw
+    .filter(row => isPenaltyApprovalType(row.module, row.type))
+    .map(row => row.entityId)
+  const [walletRows, penaltyRows] = await Promise.all([
+    walletEntityIds.length
+      ? prisma.walletRequest.findMany({
+          where: { id: { in: walletEntityIds } },
+          select: { id: true, status: true },
+        })
+      : [],
+    penaltyEntityIds.length
+      ? prisma.attendanceWaiverRequest.findMany({
+          where: { id: { in: penaltyEntityIds } },
+          select: { id: true, status: true },
+        })
+      : [],
+  ])
   const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
+  const penaltyStatusMap = new Map(penaltyRows.map(w => [w.id, w.status]))
 
   const approvals = approvalsRaw.map(row => {
     const walletStatus = isWalletApprovalType(row.module, row.type)
       ? walletStatusMap.get(row.entityId) ?? null
+      : null
+    const penaltyStatus = isPenaltyApprovalType(row.module, row.type)
+      ? penaltyStatusMap.get(row.entityId) ?? null
       : null
     const linkageStatus = isWalletApprovalType(row.module, row.type)
       ? walletLinkageStatus(row, {
@@ -93,7 +113,13 @@ export async function GET(req: NextRequest) {
           status: walletStatus,
           id: row.entityId,
         })
-      : 'linked_pending'
+      : isPenaltyApprovalType(row.module, row.type)
+        ? penaltyLinkageStatus(row, {
+            exists: penaltyStatus != null,
+            status: penaltyStatus,
+            id: row.entityId,
+          })
+        : 'linked_pending'
     return {
       ...row,
       requester: (() => {
@@ -108,7 +134,7 @@ export async function GET(req: NextRequest) {
       entityLabel: entityLabel(row.payloadSnapshot, row.entityId),
       executable: isExecutable(row.module, row.type),
       linkageStatus,
-      sourceStatus: walletStatus,
+      sourceStatus: walletStatus ?? penaltyStatus,
     }
   })
 

@@ -10,10 +10,11 @@ import { serverPost } from '@/lib/server-api'
 import { dispatchApprovalsUpdated, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
 import {
   approvalMatchesResolvedWalletAction,
+  reconcilePenaltyApprovalWithSource,
   reconcileWalletApprovalWithSource,
 } from '@/lib/approval-integrity'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
-import { canReviewPenaltyAppeals, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
+import { canReviewPenaltyAppeals, penaltyAppealDto, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
 import {
   TRADING_BUSINESS_ID,
@@ -127,6 +128,58 @@ async function processPenaltyAppeal(
 ) {
   if (!approval.businessId) {
     return NextResponse.json({ error: 'Penalty appeal approval is missing business scope.' }, { status: 400 })
+  }
+
+  const waiver = await prisma.attendanceWaiverRequest.findFirst({
+    where: { id: approval.entityId, businessId: approval.businessId },
+  })
+  if (!waiver) {
+    const closed = await resolveApprovalRequestById({
+      id: approval.id,
+      status: 'REJECTED',
+      actorUserId,
+      reason: note?.slice(0, 500) || 'Linked waiver request missing — approval auto-closed',
+    })
+    dispatchApprovalsUpdated()
+    return NextResponse.json({
+      ok: true,
+      approval: closed,
+      moduleResult: null,
+      reconciled: true,
+      warning: 'Source waiver was missing; approval closed to prevent orphan queue items.',
+    })
+  }
+
+  if (waiver.status !== 'PENDING') {
+    const target =
+      waiver.status === 'REJECTED' || waiver.status === 'CANCELLED'
+        ? 'REJECTED'
+        : waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED'
+          ? 'APPROVED'
+          : null
+    if (
+      target
+      && ((action === 'REJECT' && target === 'REJECTED') || (action === 'APPROVE' && target === 'APPROVED'))
+    ) {
+      const reconciled = await reconcilePenaltyApprovalWithSource({
+        approvalId: approval.id,
+        waiverStatus: waiver.status,
+        actorUserId,
+        note,
+      })
+      if (reconciled.ok) {
+        dispatchApprovalsUpdated()
+        return NextResponse.json({ ...reconciled, moduleResult: { waiver: penaltyAppealDto(waiver) } })
+      }
+    }
+    return NextResponse.json(
+      {
+        error: `Penalty appeal is already ${waiver.status}. It may have been processed from Attendance. Refresh approvals.`,
+        code: 'SOURCE_ALREADY_RESOLVED',
+        sourceStatus: waiver.status,
+      },
+      { status: 409 },
+    )
   }
 
   const result = await reviewPenaltyAppeal({

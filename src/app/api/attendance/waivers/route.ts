@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceWaiverDto } from '@/lib/attendance'
-import { dispatchApprovalsUpdated } from '@/lib/approvals'
 import {
-  createPenaltyAppealApproval,
   defaultRequestedReduction,
   notifyPenaltyAppealSubmitted,
   parseRequestType,
   penaltyAppealDto,
+  submitPenaltyAppeal,
   validateAttachmentDataUrl,
 } from '@/lib/penalty-appeal'
 
@@ -87,41 +85,43 @@ export async function POST(req: NextRequest) {
   const requestType = parseRequestType(body.request_type)
   const requestedReduction = defaultRequestedReduction(penalty, requestType, body.requested_reduction_amount)
 
-  try {
-    const waiver = await prisma.attendanceWaiverRequest.create({
-      data: {
-        attendanceRecordId: record.id,
-        businessId: record.businessId,
-        userId: ctx.userId,
-        employeeId: ctx.employeeId,
-        requestType,
-        originalPenaltyAmount: new Prisma.Decimal(penalty.toFixed(2)),
-        requestedReductionAmount: new Prisma.Decimal(requestedReduction.toFixed(2)),
-        reason: reason.slice(0, 1200),
-        attachmentDataUrl: attachmentCheck.value || null,
-      },
+  const result = await submitPenaltyAppeal({
+    attendanceRecordId: record.id,
+    businessId: record.businessId,
+    userId: ctx.userId,
+    employeeId: ctx.employeeId,
+    userName: undefined,
+    reason,
+    requestType,
+    requestedReduction,
+    originalPenalty: penalty,
+    attachmentDataUrl: attachmentCheck.value || null,
+  })
+
+  if ('error' in result) {
+    return NextResponse.json({ error: result.error }, { status: result.status })
+  }
+
+  if (result.repaired) {
+    const waiverRow = await prisma.attendanceWaiverRequest.findUniqueOrThrow({
+      where: { id: result.waiver.id },
       include: { requester: { select: { name: true } } },
     })
-
-    await createPenaltyAppealApproval(waiver, {
-      employeeId: ctx.employeeId,
-      userId: ctx.userId,
-      userName: waiver.requester.name,
-    })
-
-    await notifyPenaltyAppealSubmitted(waiver, {
-      employeeId: ctx.employeeId,
-      userId: ctx.userId,
-      userName: waiver.requester.name,
-    })
-
-    dispatchApprovalsUpdated()
-
-    return NextResponse.json({ ok: true, waiver: penaltyAppealDto(waiver) })
-  } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return NextResponse.json({ error: 'A review request already exists for this penalty.' }, { status: 409 })
+    try {
+      await notifyPenaltyAppealSubmitted(waiverRow, {
+        employeeId: ctx.employeeId,
+        userId: ctx.userId,
+        userName: waiverRow.requester.name,
+      })
+    } catch {
+      // Non-blocking: queue visibility is restored even if notify fails
     }
-    throw e
   }
+
+  return NextResponse.json({
+    ok: true,
+    waiver: result.waiver,
+    repaired: result.repaired || false,
+    reopened: result.reopened || false,
+  })
 }

@@ -4,7 +4,13 @@ import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { reverseAttendancePenalty } from '@/lib/attendance'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
-import { createApprovalRequest, dispatchApprovalsUpdated, resolveApprovalRequest } from '@/lib/approvals'
+import {
+  createApprovalRequest,
+  dispatchApprovalsUpdated,
+  notifyApprovalSuperAdmins,
+  resolveApprovalRequest,
+  type ApprovalTx,
+} from '@/lib/approvals'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
 import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
@@ -98,13 +104,35 @@ export type ReviewPenaltyAppealInput = {
   source?: 'erp' | 'telegram' | 'attendance' | 'api'
 }
 
-export async function createPenaltyAppealApproval(
+export function penaltyAppealApprovalPayload(
   waiver: AttendanceWaiverRequest & { requester?: { name: string } | null },
   ctx: { employeeId: string; userId: string; userName?: string },
 ) {
   const requested = Number(waiver.requestedReductionAmount ?? waiver.originalPenaltyAmount)
   const original = Number(waiver.originalPenaltyAmount)
   const employeeName = waiver.requester?.name || ctx.userName || ctx.employeeId
+  return {
+    requested,
+    original,
+    employeeName,
+    snapshot: {
+      waiverId: waiver.id,
+      attendanceRecordId: waiver.attendanceRecordId,
+      employeeId: ctx.employeeId,
+      employeeName,
+      requestType: waiver.requestType,
+      originalPenaltyAmount: original,
+      requestedReductionAmount: requested,
+    },
+  }
+}
+
+export async function createPenaltyAppealApproval(
+  waiver: AttendanceWaiverRequest & { requester?: { name: string } | null },
+  ctx: { employeeId: string; userId: string; userName?: string },
+  options?: { tx?: ApprovalTx; skipNotify?: boolean },
+) {
+  const { requested, original, employeeName, snapshot } = penaltyAppealApprovalPayload(waiver, ctx)
 
   return createApprovalRequest({
     module: PENALTY_APPEAL_MODULE,
@@ -117,16 +145,178 @@ export async function createPenaltyAppealApproval(
     actionUrl: `/attendance?review=${waiver.id}`,
     title: 'Penalty reduction review required',
     message: `${employeeName} (${ctx.employeeId}) requested penalty review · ৳${requested.toLocaleString('en-BD')} of ৳${original.toLocaleString('en-BD')}.`,
-    payloadSnapshot: {
-      waiverId: waiver.id,
-      attendanceRecordId: waiver.attendanceRecordId,
-      employeeId: ctx.employeeId,
-      employeeName,
-      requestType: waiver.requestType,
-      originalPenaltyAmount: original,
-      requestedReductionAmount: requested,
-    },
+    payloadSnapshot: snapshot,
+    tx: options?.tx,
+    skipNotify: options?.skipNotify,
   })
+}
+
+/** Ensures a pending central approval exists for a pending waiver (repairs orphan waivers). */
+async function notifyCentralApprovalQueue(
+  waiver: AttendanceWaiverRequest & { requester?: { name: string } | null },
+  ctx: { employeeId: string; userId: string; userName?: string },
+  approvalId: string,
+) {
+  const approval = await prisma.approvalRequest.findUnique({ where: { id: approvalId } })
+  if (!approval || approval.status !== 'PENDING') return
+  const { requested, original, employeeName } = penaltyAppealApprovalPayload(waiver, ctx)
+  await notifyApprovalSuperAdmins(approval, {
+    title: 'Penalty reduction review required',
+    message: `${employeeName} (${ctx.employeeId}) requested penalty review · ৳${requested.toLocaleString('en-BD')} of ৳${original.toLocaleString('en-BD')}.`,
+  })
+}
+
+export async function ensurePenaltyAppealApproval(
+  waiver: AttendanceWaiverRequest & { requester?: { name: string } | null },
+  ctx: { employeeId: string; userId: string; userName?: string },
+) {
+  if (waiver.status !== 'PENDING') {
+    return { ok: false as const, error: `Waiver is ${waiver.status}, not pending.` }
+  }
+  const approval = await createPenaltyAppealApproval(waiver, ctx)
+  await notifyCentralApprovalQueue(waiver, ctx, approval.id)
+  logEvent('info', 'penalty_appeal.approval.repaired', { waiverId: waiver.id, approvalId: approval.id })
+  return { ok: true as const, approval }
+}
+
+export async function findPenaltyAppealByRecord(attendanceRecordId: string, userId: string) {
+  return prisma.attendanceWaiverRequest.findUnique({
+    where: { attendanceRecordId_userId: { attendanceRecordId, userId } },
+    include: { requester: { select: { name: true } } },
+  })
+}
+
+export type SubmitPenaltyAppealInput = {
+  attendanceRecordId: string
+  businessId: string
+  userId: string
+  employeeId: string
+  userName?: string
+  reason: string
+  requestType: AttendanceWaiverRequestType
+  requestedReduction: number
+  originalPenalty: number
+  attachmentDataUrl: string | null
+}
+
+export type SubmitPenaltyAppealResult =
+  | { ok: true; waiver: ReturnType<typeof penaltyAppealDto>; created: boolean; repaired?: boolean; reopened?: boolean }
+  | { error: string; status: number }
+
+/** Atomic penalty appeal submit with orphan repair on duplicate waiver rows. */
+export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Promise<SubmitPenaltyAppealResult> {
+  const ctx = { employeeId: input.employeeId, userId: input.userId, userName: input.userName }
+  const existing = await findPenaltyAppealByRecord(input.attendanceRecordId, input.userId)
+
+  if (existing) {
+    if (existing.status === 'PENDING') {
+      const repair = await ensurePenaltyAppealApproval(existing, ctx)
+      if (!repair.ok) {
+        return { error: repair.error, status: 500 }
+      }
+      dispatchApprovalsUpdated()
+      return {
+        ok: true,
+        waiver: penaltyAppealDto(existing),
+        created: false,
+        repaired: true,
+      }
+    }
+    if (existing.status === 'REJECTED' || existing.status === 'CANCELLED') {
+      const reopened = await prisma.$transaction(async tx => {
+        const waiver = await tx.attendanceWaiverRequest.update({
+          where: { id: existing.id },
+          data: {
+            status: 'PENDING',
+            requestType: input.requestType,
+            originalPenaltyAmount: new Prisma.Decimal(input.originalPenalty.toFixed(2)),
+            requestedReductionAmount: new Prisma.Decimal(input.requestedReduction.toFixed(2)),
+            reason: input.reason.slice(0, 1200),
+            attachmentDataUrl: input.attachmentDataUrl,
+            approvedReductionAmount: null,
+            adminNote: null,
+            reviewedById: null,
+            reviewedAt: null,
+            reversalLedgerEntryId: null,
+          },
+          include: { requester: { select: { name: true } } },
+        })
+        await createPenaltyAppealApproval(waiver, ctx, { tx, skipNotify: true })
+        return waiver
+      })
+      const approval = await prisma.approvalRequest.findFirst({
+        where: {
+          module: PENALTY_APPEAL_MODULE,
+          type: PENALTY_APPEAL_TYPE,
+          entityId: reopened.id,
+          status: 'PENDING',
+        },
+      })
+      if (approval) await notifyCentralApprovalQueue(reopened, ctx, approval.id)
+      try {
+        await notifyPenaltyAppealSubmitted(reopened, ctx)
+      } catch (notifyErr) {
+        logEvent('warn', 'penalty_appeal.notify_failed', { waiverId: reopened.id, error: (notifyErr as Error).message })
+      }
+      dispatchApprovalsUpdated()
+      return { ok: true, waiver: penaltyAppealDto(reopened), created: false, reopened: true }
+    }
+    return {
+      error: 'A review for this penalty was already completed. Contact admin if you need another review.',
+      status: 409,
+    }
+  }
+
+  try {
+    const waiver = await prisma.$transaction(async tx => {
+      const row = await tx.attendanceWaiverRequest.create({
+        data: {
+          attendanceRecordId: input.attendanceRecordId,
+          businessId: input.businessId,
+          userId: input.userId,
+          employeeId: input.employeeId,
+          requestType: input.requestType,
+          originalPenaltyAmount: new Prisma.Decimal(input.originalPenalty.toFixed(2)),
+          requestedReductionAmount: new Prisma.Decimal(input.requestedReduction.toFixed(2)),
+          reason: input.reason.slice(0, 1200),
+          attachmentDataUrl: input.attachmentDataUrl,
+        },
+        include: { requester: { select: { name: true } } },
+      })
+      await createPenaltyAppealApproval(row, ctx, { tx, skipNotify: true })
+      return row
+    })
+
+    const approval = await prisma.approvalRequest.findFirst({
+      where: {
+        module: PENALTY_APPEAL_MODULE,
+        type: PENALTY_APPEAL_TYPE,
+        entityId: waiver.id,
+        status: 'PENDING',
+      },
+    })
+    if (approval) await notifyCentralApprovalQueue(waiver, ctx, approval.id)
+    try {
+      await notifyPenaltyAppealSubmitted(waiver, ctx)
+    } catch (notifyErr) {
+      logEvent('warn', 'penalty_appeal.notify_failed', { waiverId: waiver.id, error: (notifyErr as Error).message })
+    }
+    dispatchApprovalsUpdated()
+    return { ok: true, waiver: penaltyAppealDto(waiver), created: true }
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const row = await findPenaltyAppealByRecord(input.attendanceRecordId, input.userId)
+      if (row?.status === 'PENDING') {
+        const repair = await ensurePenaltyAppealApproval(row, ctx)
+        if (repair.ok) {
+          dispatchApprovalsUpdated()
+          return { ok: true, waiver: penaltyAppealDto(row), created: false, repaired: true }
+        }
+      }
+      return { error: 'A review request already exists for this penalty.', status: 409 }
+    }
+    throw e
+  }
 }
 
 async function rollbackPenaltyReview(waiverId: string) {

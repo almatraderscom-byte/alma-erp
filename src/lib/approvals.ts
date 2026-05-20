@@ -52,8 +52,11 @@ export function dispatchApprovalsUpdated() {
   }
 }
 
-export async function createApprovalRequest(input: CreateApprovalInput) {
-  const existing = await prisma.approvalRequest.findFirst({
+export async function createApprovalRequest(
+  input: CreateApprovalInput & { tx?: ApprovalTx; skipNotify?: boolean },
+) {
+  const db = input.tx || prisma
+  const existing = await db.approvalRequest.findFirst({
     where: {
       module: input.module,
       type: input.type,
@@ -63,7 +66,7 @@ export async function createApprovalRequest(input: CreateApprovalInput) {
   })
   if (existing) return existing
 
-  const approval = await prisma.approvalRequest.create({
+  const approval = await db.approvalRequest.create({
     data: {
       module: input.module,
       type: input.type,
@@ -78,10 +81,12 @@ export async function createApprovalRequest(input: CreateApprovalInput) {
     },
   })
 
-  await notifySuperAdmins(approval, {
-    title: input.title || 'Approval required',
-    message: input.message || `${input.module} ${input.type} requires approval.`,
-  })
+  if (!input.tx && !input.skipNotify) {
+    await notifyApprovalSuperAdmins(approval, {
+      title: input.title || 'Approval required',
+      message: input.message || `${input.module} ${input.type} requires approval.`,
+    })
+  }
   logEvent('info', 'approval.request.created', { approvalId: approval.id, module: approval.module, type: approval.type, entityId: approval.entityId })
   return approval
 }
@@ -187,7 +192,7 @@ export async function resolveApprovalRequestById(input: {
   return updated
 }
 
-async function notifySuperAdmins(approval: ApprovalRequest, content: { title: string; message: string }) {
+export async function notifyApprovalSuperAdmins(approval: ApprovalRequest, content: { title: string; message: string }) {
   const owners = await prisma.user.findMany({
     where: { role: 'SUPER_ADMIN', active: true },
     select: { id: true },

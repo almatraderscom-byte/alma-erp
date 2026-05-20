@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getJwt } from '@/lib/api-guards'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { dispatchApprovalsUpdated } from '@/lib/approvals'
-import { repairWalletApprovalOrphans, scanApprovalIntegrity } from '@/lib/approval-integrity'
+import { repairAllApprovalOrphans, scanApprovalIntegrity } from '@/lib/approval-integrity'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Super Admin only' }, { status: 403 })
   }
 
-  const result = await repairWalletApprovalOrphans(token.sub, 50)
+  const result = await repairAllApprovalOrphans(token.sub, 50)
   dispatchApprovalsUpdated()
   return NextResponse.json({ ok: true, ...result })
 }
