@@ -14,4 +14,5 @@ export const prisma =
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+// Reuse one client per serverless isolate (critical for Supabase pool limits on Vercel).
+globalForPrisma.prisma = prisma

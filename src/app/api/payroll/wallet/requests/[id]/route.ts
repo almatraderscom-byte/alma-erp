@@ -11,6 +11,7 @@ import { notifyUser } from '@/lib/notifications'
 import { sendPayrollAlert } from '@/lib/resend'
 import { dispatchApprovalsUpdated, resolveApprovalRequest } from '@/lib/approvals'
 import { logEvent } from '@/lib/logger'
+import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 
 export async function PATCH(
   req: NextRequest,
@@ -34,7 +35,7 @@ export async function PATCH(
   }
 
   if (body.action === 'REJECT') {
-    const result = await prisma.$transaction(async tx => {
+    const result = await runApprovalTransaction('payroll.wallet_reject', async tx => {
       const updated = await tx.walletRequest.update({
         where: { id: request.id },
         data: {
@@ -66,26 +67,28 @@ export async function PATCH(
       throw e
     })
     const updated = result.updated
-    await notifyUser({
-      userId: request.userId,
-      businessId: request.businessId,
-      type: 'WALLET_REQUEST_REJECTED',
-      priority: 'HIGH',
-      title: `${request.type} request rejected`,
-      message: body.note?.slice(0, 240) || 'Your wallet request was reviewed and rejected.',
-      actionUrl: '/portal',
-    })
-    await sendPayrollAlert({
-      businessId: request.businessId,
-      subject: `${request.type} request rejected · ${request.employeeId}`,
-      title: 'Payroll request rejected',
-      preview: body.note || 'A wallet request was rejected.',
-      text: `${request.type} request for employee ${request.employeeId} was rejected. ${body.note || ''}`,
-      priority: 'HIGH',
-      actionUrl: '/payroll',
-      actionLabel: 'Open payroll',
-      dedupeKey: `wallet-request-rejected:${request.id}`,
-      metadata: { requestId: request.id, employeeId: request.employeeId },
+    deferAfterApprovalCommit('payroll.wallet_reject_notify', async () => {
+      await notifyUser({
+        userId: request.userId,
+        businessId: request.businessId,
+        type: 'WALLET_REQUEST_REJECTED',
+        priority: 'HIGH',
+        title: `${request.type} request rejected`,
+        message: body.note?.slice(0, 240) || 'Your wallet request was reviewed and rejected.',
+        actionUrl: '/portal',
+      })
+      await sendPayrollAlert({
+        businessId: request.businessId,
+        subject: `${request.type} request rejected · ${request.employeeId}`,
+        title: 'Payroll request rejected',
+        preview: body.note || 'A wallet request was rejected.',
+        text: `${request.type} request for employee ${request.employeeId} was rejected. ${body.note || ''}`,
+        priority: 'HIGH',
+        actionUrl: '/payroll',
+        actionLabel: 'Open payroll',
+        dedupeKey: `wallet-request-rejected:${request.id}`,
+        metadata: { requestId: request.id, employeeId: request.employeeId },
+      })
     })
     dispatchApprovalsUpdated()
     return NextResponse.json({ ok: true, request: updated, approvalId: result.approval.id })
@@ -111,7 +114,7 @@ export async function PATCH(
     }
   }
 
-  const result = await prisma.$transaction(async tx => {
+  const result = await runApprovalTransaction('payroll.wallet_approve', async tx => {
     const entry = await tx.employeeLedgerEntry.create({
       data: {
         employeeId: request.employeeId,
@@ -161,26 +164,28 @@ export async function PATCH(
     throw e
   })
 
-  await notifyUser({
-    userId: request.userId,
-    businessId: request.businessId,
-    type: 'WALLET_REQUEST_APPROVED',
-    priority: 'HIGH',
-    title: `${request.type} request approved`,
-    message: `Approved amount: ৳ ${approvedAmount.toLocaleString('en-BD')}. Your wallet ledger was updated.`,
-    actionUrl: '/portal',
-  })
-  await sendPayrollAlert({
-    businessId: request.businessId,
-    subject: `${request.type} request approved · ৳${approvedAmount.toLocaleString('en-BD')}`,
-    title: 'Payroll approved',
-    preview: `Approved amount: ৳${approvedAmount.toLocaleString('en-BD')}`,
-    text: `${request.type} request for employee ${request.employeeId} was approved for ৳${approvedAmount.toLocaleString('en-BD')}.`,
-    priority: 'HIGH',
-    actionUrl: '/payroll',
-    actionLabel: 'Open payroll',
-    dedupeKey: `wallet-request-approved:${request.id}`,
-    metadata: { requestId: request.id, employeeId: request.employeeId, approvedAmount },
+  deferAfterApprovalCommit('payroll.wallet_approve_notify', async () => {
+    await notifyUser({
+      userId: request.userId,
+      businessId: request.businessId,
+      type: 'WALLET_REQUEST_APPROVED',
+      priority: 'HIGH',
+      title: `${request.type} request approved`,
+      message: `Approved amount: ৳ ${approvedAmount.toLocaleString('en-BD')}. Your wallet ledger was updated.`,
+      actionUrl: '/portal',
+    })
+    await sendPayrollAlert({
+      businessId: request.businessId,
+      subject: `${request.type} request approved · ৳${approvedAmount.toLocaleString('en-BD')}`,
+      title: 'Payroll approved',
+      preview: `Approved amount: ৳${approvedAmount.toLocaleString('en-BD')}`,
+      text: `${request.type} request for employee ${request.employeeId} was approved for ৳${approvedAmount.toLocaleString('en-BD')}.`,
+      priority: 'HIGH',
+      actionUrl: '/payroll',
+      actionLabel: 'Open payroll',
+      dedupeKey: `wallet-request-approved:${request.id}`,
+      metadata: { requestId: request.id, employeeId: request.employeeId, approvedAmount },
+    })
   })
   dispatchApprovalsUpdated()
   return NextResponse.json({ ok: true, ...result })

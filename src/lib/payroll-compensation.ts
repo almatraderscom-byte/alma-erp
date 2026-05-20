@@ -57,7 +57,10 @@ export async function getCompensationSetting(businessId: string) {
   })
 }
 
-export async function createCompensationLedgerEntry(input: CompensationInput) {
+export async function createCompensationLedgerEntry(
+  input: CompensationInput,
+  options?: { skipNotify?: boolean },
+) {
   if (!input.employeeId.trim()) throw new Error('employeeId is required')
   if (!input.businessId.trim()) throw new Error('businessId is required')
   if (!isCompensationEntryType(input.type)) throw new Error('Unsupported compensation type')
@@ -83,14 +86,16 @@ export async function createCompensationLedgerEntry(input: CompensationInput) {
     },
   })
 
-  await notifyForCompensation(entry.id, {
-    employeeId: input.employeeId,
-    businessId: input.businessId,
-    type: input.type,
-    amount: input.amount,
-    note: input.note,
-    createdById: input.createdById,
-  })
+  if (!options?.skipNotify) {
+    await notifyForCompensation(entry.id, {
+      employeeId: input.employeeId,
+      businessId: input.businessId,
+      type: input.type,
+      amount: input.amount,
+      note: input.note,
+      createdById: input.createdById,
+    })
+  }
   return entry
 }
 

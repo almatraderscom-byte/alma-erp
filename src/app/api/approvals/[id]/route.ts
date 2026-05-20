@@ -16,6 +16,7 @@ import {
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import { canReviewPenaltyAppeals, penaltyAppealDto, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
+import { runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
   recalculateTradingAccount,
@@ -237,7 +238,7 @@ async function processTradingDelete(
     return NextResponse.json({ ok: true, approval, moduleResult: { trade: updatedTrade } })
   }
 
-  const result = await prisma.$transaction(async tx => {
+  const result = await runApprovalTransaction('approval.trading_delete', async tx => {
     const now = new Date()
     const updatedTrade = await tx.tradingTrade.update({
       where: { id: trade.id },
@@ -258,7 +259,7 @@ async function processTradingDelete(
     const summary = await recalculateTradingAccount(tx, trade.tradingAccountId)
     await refreshTradingDailySnapshot(tx, trade.tradingAccountId, trade.tradeDate, summary)
     return { trade: updatedTrade, summary }
-  }, { maxWait: 10_000, timeout: 20_000 })
+  })
   const approval = await resolveApprovalRequestById({ id: approvalId, status: 'APPROVED', actorUserId, reason: note || trade.deleteReason || 'Approved' })
   return NextResponse.json({ ok: true, approval, moduleResult: result })
 }
@@ -365,7 +366,7 @@ async function processWalletRequest(
   }
 
   if (action === 'REJECT') {
-    const result = await prisma.$transaction(async tx => {
+    const result = await runApprovalTransaction('approval.wallet_reject', async tx => {
       const updated = await tx.walletRequest.update({
         where: { id: request.id },
         data: {
@@ -404,7 +405,7 @@ async function processWalletRequest(
     const balance = computeWalletSummary(request.employeeId, request.businessId, entries).availableWithdrawable
     if (approvedAmount > balance) return NextResponse.json({ error: `Insufficient wallet balance. Available: ${balance}` }, { status: 400 })
   }
-  const result = await prisma.$transaction(async tx => {
+  const result = await runApprovalTransaction('approval.wallet_approve', async tx => {
     const entry = await tx.employeeLedgerEntry.create({
       data: {
         employeeId: request.employeeId,

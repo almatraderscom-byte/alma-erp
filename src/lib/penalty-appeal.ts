@@ -2,15 +2,25 @@ import type { AttendanceWaiverRequest, AttendanceWaiverRequestType, AttendanceWa
 import { Prisma } from '@prisma/client'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { reverseAttendancePenalty } from '@/lib/attendance'
+import {
+  attendanceReversalSourceRef,
+  LATE_PENALTY_REVERSAL_SOURCE,
+} from '@/lib/attendance'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import {
   createApprovalRequest,
   dispatchApprovalsUpdated,
+  notifyApprovalResolved,
   notifyApprovalSuperAdmins,
   resolveApprovalRequest,
-  type ApprovalTx,
 } from '@/lib/approvals'
+import { moneyDecimal } from '@/lib/payroll-wallet'
+import {
+  deferAfterApprovalCommit,
+  FAST_TX_OPTIONS,
+  runApprovalTransaction,
+  type ApprovalTx,
+} from '@/lib/prisma-transaction'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
 import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
@@ -243,7 +253,7 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
         })
         await createPenaltyAppealApproval(waiver, ctx, { tx, skipNotify: true })
         return waiver
-      })
+      }, FAST_TX_OPTIONS)
       const approval = await prisma.approvalRequest.findFirst({
         where: {
           module: PENALTY_APPEAL_MODULE,
@@ -268,7 +278,7 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
   }
 
   try {
-    const waiver = await prisma.$transaction(async tx => {
+    const waiver = await runApprovalTransaction('penalty_appeal.submit', async tx => {
       const row = await tx.attendanceWaiverRequest.create({
         data: {
           attendanceRecordId: input.attendanceRecordId,
@@ -285,7 +295,7 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
       })
       await createPenaltyAppealApproval(row, ctx, { tx, skipNotify: true })
       return row
-    })
+    }, FAST_TX_OPTIONS)
 
     const approval = await prisma.approvalRequest.findFirst({
       where: {
@@ -319,26 +329,51 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
   }
 }
 
-async function rollbackPenaltyReview(waiverId: string) {
-  await prisma.attendanceWaiverRequest.update({
-    where: { id: waiverId },
-    data: {
-      status: 'PENDING',
-      approvedReductionAmount: null,
-      adminNote: null,
-      reviewedById: null,
-      reviewedAt: null,
-    },
-  })
-  const approval = await prisma.approvalRequest.findFirst({
-    where: { module: PENALTY_APPEAL_MODULE, type: PENALTY_APPEAL_TYPE, entityId: waiverId },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (approval && approval.status !== 'PENDING') {
-    await prisma.approvalRequest.update({
-      where: { id: approval.id },
-      data: { status: 'PENDING', approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null },
+async function applyPenaltyReversalInTx(
+  tx: ApprovalTx,
+  waiver: Pick<AttendanceWaiverRequest, 'id' | 'businessId' | 'employeeId' | 'userId' | 'reversalLedgerEntryId'>,
+  approvedReduction: number,
+  actorUserId: string,
+) {
+  if (waiver.reversalLedgerEntryId) return null
+  const amount = Number(approvedReduction || 0)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const sourceRef = attendanceReversalSourceRef(waiver.id)
+  try {
+    const entry = await tx.employeeLedgerEntry.create({
+      data: {
+        employeeId: waiver.employeeId,
+        businessId: waiver.businessId,
+        date: new Date(),
+        type: 'ADJUSTMENT',
+        amount: moneyDecimal(amount),
+        note: `Late attendance waiver reversal · ${waiver.id}`,
+        createdById: actorUserId,
+        approvedById: actorUserId,
+        source: LATE_PENALTY_REVERSAL_SOURCE,
+        sourceRef,
+      },
     })
+    await tx.attendanceWaiverRequest.update({
+      where: { id: waiver.id },
+      data: { reversalLedgerEntryId: entry.id },
+    })
+    return entry
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const existing = await tx.employeeLedgerEntry.findUnique({
+        where: { source_sourceRef: { source: LATE_PENALTY_REVERSAL_SOURCE, sourceRef } },
+      })
+      if (existing) {
+        await tx.attendanceWaiverRequest.update({
+          where: { id: waiver.id },
+          data: { reversalLedgerEntryId: existing.id },
+        })
+        return existing
+      }
+    }
+    throw e
   }
 }
 
@@ -384,7 +419,7 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
   let approvalId: string | null = null
 
   try {
-    const txResult = await prisma.$transaction(async tx => {
+    const txResult = await runApprovalTransaction('penalty_appeal.review', async tx => {
       const locked = await tx.attendanceWaiverRequest.findFirst({
         where: { id: waiver.id, businessId: input.businessId, status: 'PENDING' },
       })
@@ -450,6 +485,10 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
         },
       })
 
+      if (action === 'APPROVE') {
+        await applyPenaltyReversalInTx(tx, locked, approvedReduction, actorUserId)
+      }
+
       if (approval) {
         await resolveApprovalRequest({
           module: PENALTY_APPEAL_MODULE,
@@ -468,42 +507,41 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
     reviewed = txResult.row
     approvalId = txResult.approvalId
   } catch (e) {
-    if ((e as Error).message === 'ALREADY_REVIEWED') {
+    const message = (e as Error).message || ''
+    if (message === 'ALREADY_REVIEWED') {
       const fresh = await prisma.attendanceWaiverRequest.findUniqueOrThrow({ where: { id: waiver.id } })
       return { ok: true as const, waiver: penaltyAppealDto(fresh), alreadyReviewed: true as const }
+    }
+    if (message.includes('Unable to start a transaction')) {
+      return {
+        error: 'Database is busy — please wait a moment and try again.',
+        status: 503 as const,
+      }
     }
     throw e
   }
 
-  if (action === 'APPROVE') {
-    try {
-      await reverseAttendancePenalty(reviewed, actorUserId)
-      reviewed = await prisma.attendanceWaiverRequest.findUniqueOrThrow({ where: { id: reviewed.id } })
-    } catch (walletErr) {
-      await rollbackPenaltyReview(waiver.id)
-      logEvent('error', 'penalty_appeal.wallet_failed', {
-        waiverId: waiver.id,
-        error: (walletErr as Error).message,
-      })
-      return {
-        error: 'Approval was recorded but wallet adjustment failed. Request restored to pending — retry from ERP.',
-        status: 500 as const,
-      }
-    }
-  }
-
+  reviewed = await prisma.attendanceWaiverRequest.findUniqueOrThrow({ where: { id: reviewed.id } })
   const dto = penaltyAppealDto(reviewed)
 
-  await notifyUser({
-    userId: waiver.userId,
-    businessId: waiver.businessId,
-    type: 'PAYROLL_ALERT',
-    priority: 'HIGH',
-    title: action === 'APPROVE' ? 'Penalty appeal approved' : 'Penalty appeal rejected',
-    message: action === 'APPROVE'
-      ? `৳ ${approvedReduction.toLocaleString('en-BD')} was credited back. Final penalty: ৳ ${dto.finalAppliedPenalty.toLocaleString('en-BD')}.`
-      : 'Your penalty review request was rejected. The original penalty remains on your wallet.',
-    actionUrl: '/portal',
+  deferAfterApprovalCommit('penalty_appeal.notify_requester', async () => {
+    await notifyUser({
+      userId: waiver.userId,
+      businessId: waiver.businessId,
+      type: 'PAYROLL_ALERT',
+      priority: 'HIGH',
+      title: action === 'APPROVE' ? 'Penalty appeal approved' : 'Penalty appeal rejected',
+      message: action === 'APPROVE'
+        ? `৳ ${approvedReduction.toLocaleString('en-BD')} was credited back. Final penalty: ৳ ${dto.finalAppliedPenalty.toLocaleString('en-BD')}.`
+        : 'Your penalty review request was rejected. The original penalty remains on your wallet.',
+      actionUrl: '/portal',
+    })
+    if (approvalId) {
+      const approvalRow = await prisma.approvalRequest.findUnique({ where: { id: approvalId } })
+      if (approvalRow) {
+        await notifyApprovalResolved(approvalRow, actorUserId, approvalStatus, adminNote || undefined)
+      }
+    }
   })
 
   scheduleTelegramNotificationAndFlush({
@@ -527,14 +565,16 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
     ),
   })
 
-  await logTelegramOpsAudit({
-    businessId: waiver.businessId,
-    eventType: action === 'APPROVE' ? 'WAIVER_APPROVED' : 'WAIVER_REJECTED',
-    actorUserId,
-    employeeId: waiver.employeeId,
-    attendanceRecordId: waiver.attendanceRecordId,
-    detail: String(input.adminNote || '').slice(0, 500) || undefined,
-    metadata: { approvedReduction, action, finalAppliedPenalty: dto.finalAppliedPenalty, approvalId, source },
+  deferAfterApprovalCommit('penalty_appeal.telegram_audit', async () => {
+    await logTelegramOpsAudit({
+      businessId: waiver.businessId,
+      eventType: action === 'APPROVE' ? 'WAIVER_APPROVED' : 'WAIVER_REJECTED',
+      actorUserId,
+      employeeId: waiver.employeeId,
+      attendanceRecordId: waiver.attendanceRecordId,
+      detail: String(input.adminNote || '').slice(0, 500) || undefined,
+      metadata: { approvedReduction, action, finalAppliedPenalty: dto.finalAppliedPenalty, approvalId, source },
+    })
   })
 
   dispatchApprovalsUpdated()

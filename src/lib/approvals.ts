@@ -6,7 +6,9 @@ import type { ApprovalAuditEntry, ApprovalSource } from '@/lib/approval-types'
 
 export type ApprovalModule = 'ALMA_TRADING' | 'INVENTORY' | 'PAYROLL' | 'ORDERS_CRM'
 
-export type ApprovalTx = Prisma.TransactionClient
+import type { ApprovalTx } from '@/lib/prisma-transaction'
+
+export type { ApprovalTx }
 
 type CreateApprovalInput = {
   module: ApprovalModule
@@ -147,7 +149,7 @@ async function resolveApprovalRecord(input: {
   return updated
 }
 
-async function notifyApprovalResolved(
+export async function notifyApprovalResolved(
   approval: ApprovalRequest,
   actorUserId: string,
   status: Extract<ApprovalStatus, 'APPROVED' | 'REJECTED'>,
