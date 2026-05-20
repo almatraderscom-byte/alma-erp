@@ -52,7 +52,7 @@ export async function queueOpsDailySummary(businessId: BusinessId) {
     `<a href="${erpBaseUrl()}/attendance?business_id=${businessId}">Open attendance →</a>`,
   ].join('\n')
 
-  enqueueTelegramNotificationAndFlush({
+  await enqueueTelegramNotificationAndFlush({
     businessId,
     eventType: 'OPS_DAILY_SUMMARY',
     message,

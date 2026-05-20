@@ -1,5 +1,6 @@
 import type { TelegramNotificationEventType, TelegramNotificationQueue } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 import { fetchTradingScreenshotFromDrive } from '@/lib/trading-drive'
 import { loadTelegramProfileAvatar } from '@/lib/telegram-profile-avatar'
 import {
@@ -177,6 +178,36 @@ async function deliverScreenshotPhoto(
   return sendTelegramMessage(row.chatId, row.message)
 }
 
+const TELEGRAM_DELIVERY_TIMEOUT_MS = 22_000
+
+async function withTelegramDeliveryTimeout<T>(
+  label: string,
+  row: TelegramNotificationQueue,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const started = Date.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_timeout`)), TELEGRAM_DELIVERY_TIMEOUT_MS)
+      }),
+    ])
+  } catch (e) {
+    logTelegram('warn', 'telegram.deliver.timeout', {
+      id: row.id,
+      eventType: row.eventType,
+      label,
+      latencyMs: Date.now() - started,
+      message: (e as Error).message,
+    })
+    throw e
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 async function deliverFaceVerifiedPhoto(
   row: TelegramNotificationQueue,
   meta: QueueRowMeta,
@@ -184,39 +215,48 @@ async function deliverFaceVerifiedPhoto(
   const attendanceRecordId = meta.attendanceRecordId
   if (!attendanceRecordId) return deliverProfileAvatar(row, meta)
 
-  const live = consumeLiveFacePhoto(attendanceRecordId)
-  if (live) {
-    const photo = await sendTelegramPhotoBuffer(
+  try {
+    return await withTelegramDeliveryTimeout('face_photo', row, async () => {
+      const live = consumeLiveFacePhoto(attendanceRecordId)
+      if (live) {
+        const photo = await sendTelegramPhotoBuffer(
+          row.chatId,
+          live.buffer,
+          'face-verification.jpg',
+          live.contentType,
+          row.message,
+        )
+        if (photo.ok) return photo
+      }
+
+      const record = await prisma.attendanceRecord.findFirst({
+        where: { id: attendanceRecordId },
+        select: { faceThumbDataUrl: true, userId: true },
+      })
+      const thumb = thumbBufferFromDataUrl(record?.faceThumbDataUrl)
+      if (thumb) {
+        const photo = await sendTelegramPhotoBuffer(
+          row.chatId,
+          thumb,
+          'face-verification.jpg',
+          'image/jpeg',
+          row.message,
+        )
+        if (photo.ok) return photo
+      }
+
+      if (record?.userId) {
+        return deliverProfileAvatar(row, { ...meta, userId: record.userId })
+      }
+
+      return sendTelegramMessage(row.chatId, `${row.message}\n\n<i>Photo preview unavailable — open ERP link.</i>`)
+    })
+  } catch {
+    return sendTelegramMessage(
       row.chatId,
-      live.buffer,
-      'face-verification.jpg',
-      live.contentType,
-      row.message,
+      `${row.message}\n\n<i>Photo delivery timed out — open ERP link for verification image.</i>`,
     )
-    if (photo.ok) return photo
   }
-
-  const record = await prisma.attendanceRecord.findFirst({
-    where: { id: attendanceRecordId },
-    select: { faceThumbDataUrl: true, userId: true },
-  })
-  const thumb = thumbBufferFromDataUrl(record?.faceThumbDataUrl)
-  if (thumb) {
-    const photo = await sendTelegramPhotoBuffer(
-      row.chatId,
-      thumb,
-      'face-verification.jpg',
-      'image/jpeg',
-      row.message,
-    )
-    if (photo.ok) return photo
-  }
-
-  if (record?.userId) {
-    return deliverProfileAvatar(row, { ...meta, userId: record.userId })
-  }
-
-  return sendTelegramMessage(row.chatId, `${row.message}\n\n<i>Photo preview unavailable — open ERP link.</i>`)
 }
 
 export async function deliverTelegramNotificationRow(

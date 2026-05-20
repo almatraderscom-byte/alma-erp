@@ -1,6 +1,6 @@
 import { escapeHtml, erpBaseUrl } from '@/lib/telegram-notification/formatters'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { enqueueTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
 
 export function queuePayrollWalletRequestAlert(input: {
   businessId: string
@@ -25,7 +25,7 @@ export function queuePayrollWalletRequestAlert(input: {
     `<a href="${link}">Review in Approvals →</a>`,
   ].join('\n')
 
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: input.businessId,
     eventType: 'PAYROLL_WALLET_REQUEST',
     message,

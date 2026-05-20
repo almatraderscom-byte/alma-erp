@@ -13,7 +13,7 @@ import {
   formatSuspiciousCheckInAlert,
 } from '@/lib/telegram-notification/formatters'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { enqueueTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
 import { getTelegramOpsSetting, shouldSendLateDetail } from '@/lib/telegram-notification/settings'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
 
@@ -69,7 +69,7 @@ export async function queueAttendanceCheckInAlert(record: AttendanceRecord) {
 
   const dedupeKey = `attendance:checkin:${record.businessId}:${record.employeeId}:${ymdBd(record.checkInAt)}`
 
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: record.businessId,
     eventType: 'ATTENDANCE_CHECK_IN',
     message,
@@ -96,7 +96,7 @@ export async function queueAttendanceCheckInAlert(record: AttendanceRecord) {
     const reasons = record.suspiciousReasons?.length
       ? record.suspiciousReasons
       : [record.trustStatus]
-    enqueueTelegramNotificationAndFlush({
+    scheduleTelegramNotificationAndFlush({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_SUSPICIOUS',
       message: formatSuspiciousCheckInAlert({
@@ -125,7 +125,7 @@ export async function queueAttendanceCheckOutAlert(
   const worked = record.totalWorkMinutes
 
   if (setting.alertAttendanceCheckOut) {
-    enqueueTelegramNotificationAndFlush({
+    scheduleTelegramNotificationAndFlush({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_CHECK_OUT',
       message: formatCheckOutAlert({
@@ -148,7 +148,7 @@ export async function queueAttendanceCheckOutAlert(
     (worked > 0 && worked < setting.earlyLeaveMinutes)
 
   if (isEarly && setting.alertAttendanceEarlyLeave) {
-    enqueueTelegramNotificationAndFlush({
+    scheduleTelegramNotificationAndFlush({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_EARLY_LEAVE',
       message: formatEarlyLeaveAlert({
@@ -193,7 +193,7 @@ export async function queueAttendanceAbsentAlert(input: {
     erpLink: attendanceDeepLink(input.businessId, input.employeeId),
   })
 
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: input.businessId,
     eventType: 'ATTENDANCE_ABSENT',
     message,
@@ -215,7 +215,7 @@ export async function queueAttendanceNoCheckoutAlert(input: {
   lastActivityAt: Date | null
   attendanceRecordId: string
 }) {
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: input.businessId,
     eventType: 'ATTENDANCE_NO_CHECKOUT',
     message: formatNoCheckoutAlert({

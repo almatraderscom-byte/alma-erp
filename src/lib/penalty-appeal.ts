@@ -7,7 +7,7 @@ import { APPROVAL_TYPES } from '@/lib/approval-types'
 import { createApprovalRequest, dispatchApprovalsUpdated, resolveApprovalRequest } from '@/lib/approvals'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 import { withEmployeeAvatarMetadata } from '@/lib/telegram-notification/enqueue-metadata'
-import { enqueueTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
+import { scheduleTelegramNotificationAndFlush } from '@/lib/telegram-notification/queue'
 import { attendanceDeepLink, escapeHtml } from '@/lib/telegram-notification/formatters'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
 import { logEvent } from '@/lib/logger'
@@ -316,7 +316,7 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
     actionUrl: '/portal',
   })
 
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_REVIEWED',
     message: [
@@ -379,7 +379,7 @@ export async function notifyPenaltyAppealSubmitted(
     || 'https://alma-erp-six.vercel.app'
   const erpUrl = `${appBase.replace(/\/$/, '')}/attendance?review=${waiver.id}`
 
-  enqueueTelegramNotificationAndFlush({
+  scheduleTelegramNotificationAndFlush({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_SUBMITTED',
     message: formatPenaltyAppealTelegramMessage({

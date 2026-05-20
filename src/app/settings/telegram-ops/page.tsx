@@ -52,11 +52,16 @@ export default function TelegramOpsSettingsPage() {
   const [data, setData] = useState<ApiData | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [processing, setProcessing] = useState(false)
+  const [health, setHealth] = useState<Record<string, unknown> | null>(null)
   const [ownerChatIds, setOwnerChatIds] = useState('')
 
   async function load() {
     setLoading(true)
-    const res = await fetch(`/api/settings/telegram-ops?business_id=${businessId}`, { cache: 'no-store' })
+    const [res, healthRes] = await Promise.all([
+      fetch(`/api/settings/telegram-ops?business_id=${businessId}`, { cache: 'no-store' }),
+      fetch(`/api/settings/telegram-ops/health?business_id=${businessId}`, { cache: 'no-store' }),
+    ])
     if (res.ok) {
       const json = (await res.json()) as ApiData
       setData(json)
@@ -64,7 +69,27 @@ export default function TelegramOpsSettingsPage() {
     } else {
       toast.error('Could not load Telegram ops settings')
     }
+    if (healthRes.ok) {
+      setHealth((await healthRes.json()) as Record<string, unknown>)
+    } else {
+      setHealth(null)
+    }
     setLoading(false)
+  }
+
+  async function processQueueNow() {
+    setProcessing(true)
+    const res = await fetch('/api/settings/telegram-ops/health', { method: 'POST' })
+    const json = await res.json().catch(() => ({}))
+    setProcessing(false)
+    if (!res.ok) {
+      toast.error((json as { error?: string }).error || 'Queue processing failed')
+      return
+    }
+    const reclaimed = (json as { reclaimed?: number }).reclaimed ?? 0
+    const processed = (json as { processed?: { processed?: number } }).processed?.processed ?? 0
+    toast.success(`Reclaimed ${reclaimed} stuck · processed ${processed}`)
+    await load()
   }
 
   useEffect(() => {
@@ -110,7 +135,14 @@ export default function TelegramOpsSettingsPage() {
       <PageHeader
         title="Telegram Ops"
         subtitle="Owner control center · async queue · Asia/Dhaka schedules"
-        actions={<Button size="xs" variant="secondary" onClick={() => void load()}>Refresh</Button>}
+        actions={(
+          <div className="flex gap-2">
+            <Button size="xs" variant="gold" disabled={processing} onClick={() => void processQueueNow()}>
+              {processing ? 'Processing…' : 'Process queue'}
+            </Button>
+            <Button size="xs" variant="secondary" onClick={() => void load()}>Refresh</Button>
+          </div>
+        )}
       />
       <div className="space-y-4 p-4 md:p-6">
         <Select
@@ -197,6 +229,17 @@ export default function TelegramOpsSettingsPage() {
                 </label>
               ))}
 
+              {health && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[11px] text-zinc-400">
+                  <p className="font-bold text-amber-200/90">Delivery health</p>
+                  <p className="mt-1">
+                    Bot: {(health.telegram as { botUsername?: string })?.botUsername || '—'} ·
+                    Token: {(health.queue as { botTokenConfigured?: boolean })?.botTokenConfigured ? 'ok' : 'missing'} ·
+                    Stuck SENDING: {(health.queue as { stuckSending?: number })?.stuckSending ?? 0}
+                  </p>
+                </div>
+              )}
+
               <p className="pt-2 text-sm font-bold text-cream">Queue (7 days)</p>
               <div className="flex flex-wrap gap-2 text-xs">
                 {(data.stats || []).map(s => (
@@ -219,7 +262,7 @@ export default function TelegramOpsSettingsPage() {
                         {row.eventType} · <b>{row.status}</b>
                         {row.employeeName ? <span className="text-zinc-500">· {row.employeeName}</span> : null}
                       </span>
-                      {(row.status === 'FAILED' || row.status === 'QUEUED') && (
+                      {(row.status === 'FAILED' || row.status === 'QUEUED' || row.status === 'SENDING') && (
                         <Button size="xs" variant="secondary" onClick={() => void retryQueue(row.id)}>
                           Retry
                         </Button>
