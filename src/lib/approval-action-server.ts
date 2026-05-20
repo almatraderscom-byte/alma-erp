@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { logEvent } from '@/lib/logger'
+import { apiFailure } from '@/lib/safe-api-response'
 
 export type ApprovalActionMeta = {
   approvalId: string
@@ -49,24 +50,74 @@ export async function stampApprovalActionResponse(
 ) {
   const durationMs = Date.now() - meta.startedAt
   let data: Record<string, unknown> = {}
+  let bodyEmpty = false
   try {
-    data = (await response.clone().json()) as Record<string, unknown>
+    const raw = await response.clone().text()
+    if (!raw.trim()) {
+      bodyEmpty = true
+      data = {}
+    } else {
+      data = JSON.parse(raw) as Record<string, unknown>
+    }
   } catch {
+    bodyEmpty = true
     data = {}
   }
 
-  if (response.ok && data.ok) {
+  const ok = Boolean(data.ok) && response.ok && !bodyEmpty
+  const error = String(data.error || data.message || (bodyEmpty ? 'empty_response' : '') || response.statusText || 'approval_failed')
+  const message = String(
+    data.message || data.error || (bodyEmpty ? 'Server returned an empty response. Refresh and check approval status.' : 'Approval action failed'),
+  )
+
+  if (ok) {
     logApprovalActionPhase('committed', meta, { durationMs })
   } else {
-    logApprovalActionPhase('failed', meta, {
+    logApprovalActionPhase(bodyEmpty || response.status >= 500 ? 'rolled_back' : 'failed', meta, {
       durationMs,
-      error: String(data.error || response.statusText || 'unknown'),
+      error,
       code: data.code,
+      bodyEmpty,
     })
+    if (bodyEmpty) {
+      logEvent('warn', 'approval.response.invalid', { approvalId: meta.approvalId, status: response.status })
+    }
   }
 
+  const status = response.status >= 200 && response.status < 600 ? response.status : 500
   return NextResponse.json(
-    { ...data, operationId: meta.operationId, durationMs },
-    { status: response.status },
+    {
+      ...data,
+      ok,
+      error: ok ? undefined : error,
+      message: ok ? data.message : message,
+      operationId: meta.operationId,
+      durationMs,
+      ...(bodyEmpty || response.status >= 500 ? { rolledBack: true } : {}),
+    },
+    { status: bodyEmpty && status < 400 ? 502 : status },
   )
+}
+
+export function approvalRouteFailure(
+  err: unknown,
+  meta?: ApprovalActionMeta,
+  extra?: { status?: number; code?: string },
+) {
+  const message = (err as Error).message || String(err)
+  logEvent('error', 'approval.api.failed', {
+    approvalId: meta?.approvalId,
+    operationId: meta?.operationId,
+    message,
+    code: extra?.code,
+  })
+  if (meta) logApprovalActionPhase('rolled_back', meta, { error: message })
+  return apiFailure('approval_failed', message, {
+    status: extra?.status ?? 500,
+    code: extra?.code,
+    rolledBack: true,
+    extra: meta
+      ? { operationId: meta.operationId, durationMs: Date.now() - meta.startedAt }
+      : undefined,
+  })
 }

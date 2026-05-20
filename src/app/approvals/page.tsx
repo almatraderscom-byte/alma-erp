@@ -5,6 +5,7 @@ import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockCl
 import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
+import { safeResponseJson } from '@/lib/safe-api-response'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 
@@ -67,8 +68,14 @@ export default function ApprovalsPage() {
     if (!silent) setLoading(true)
     try {
       const res = await fetch(`/api/approvals?status=${status}&limit=80`, { cache: 'no-store' })
-      const json = await res.json()
-      if (res.ok) setData(json)
+      const parsed = await safeResponseJson<ApprovalResponse & { ok?: boolean; message?: string }>(res)
+      if (parsed.ok && res.ok && parsed.data.ok !== false) {
+        setData(parsed.data)
+      } else if (!parsed.ok || parsed.parseError) {
+        toast.error(String(parsed.data.message || parsed.data.error || 'Could not load approvals'))
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Network error loading approvals')
     } finally {
       if (!silent) setLoading(false)
     }
@@ -95,9 +102,11 @@ export default function ApprovalsPage() {
     setIntegrityLoading(true)
     try {
       const res = await fetch('/api/approvals/integrity', { cache: 'no-store' })
-      const json = await res.json()
-      if (res.ok) setIntegrity(json)
-      else toast.error(json.error || 'Integrity scan failed')
+      const parsed = await safeResponseJson<IntegrityReport & { ok?: boolean; message?: string; warning?: string }>(res)
+      if (parsed.ok && res.ok) setIntegrity(parsed.data)
+      else toast.error(String((parsed.data as { message?: string; error?: string }).message || (parsed.data as { error?: string }).error || 'Integrity scan failed'))
+    } catch (e) {
+      toast.error((e as Error).message || 'Integrity scan unavailable')
     } finally {
       setIntegrityLoading(false)
     }
@@ -107,9 +116,13 @@ export default function ApprovalsPage() {
     setRepairing(true)
     try {
       const res = await fetch('/api/approvals/integrity', { method: 'POST', cache: 'no-store' })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Repair failed')
-      toast.success(`Repaired ${(json.repaired || []).length} item(s)`)
+      const parsed = await safeResponseJson<{ repaired?: unknown[]; message?: string; error?: string }>(res)
+      const json = parsed.data
+      if (!parsed.ok || !res.ok || (json as { ok?: boolean }).ok === false) {
+        throw new Error(String((json as { message?: string; error?: string }).message || (json as { error?: string }).error || 'Repair failed'))
+      }
+      const repaired = (json as { repaired?: unknown[] }).repaired || []
+      toast.success(`Repaired ${repaired.length} item(s)`)
       await loadIntegrity()
       await load(true)
       window.dispatchEvent(new Event('alma:approvals-updated'))

@@ -21,6 +21,7 @@ import {
   logApprovalActionPhase,
   stampApprovalActionResponse,
 } from '@/lib/approval-action-server'
+import { apiFailure, classifyApprovalTxError } from '@/lib/safe-api-response'
 import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
@@ -88,8 +89,10 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       rejectedAt: true,
     },
   })
-  if (!approval) return NextResponse.json({ error: 'Approval not found' }, { status: 404 })
-  return NextResponse.json({ approval })
+  if (!approval) {
+    return NextResponse.json({ ok: false, error: 'approval_not_found', message: 'Approval not found' }, { status: 404 })
+  }
+  return NextResponse.json({ ok: true, approval })
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
@@ -120,7 +123,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     const approval = await prisma.approvalRequest.findUnique({ where: { id: params.id } })
     if (!approval || approval.status !== 'PENDING') {
       return stampApprovalActionResponse(
-        NextResponse.json({ ok: false, error: 'Pending approval not found' }, { status: 404 }),
+        approvalErrorResponse('Pending approval not found', 404, 'approval_not_found'),
         meta,
       )
     }
@@ -128,13 +131,13 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     const isPenaltyAppeal = approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.PENALTY_APPEAL
     if (!isPenaltyAppeal && role !== 'SUPER_ADMIN') {
       return stampApprovalActionResponse(
-        NextResponse.json({ ok: false, error: 'Only Super Admin can process this approval type.' }, { status: 403 }),
+        approvalErrorResponse('Only Super Admin can process this approval type.', 403, 'forbidden'),
         meta,
       )
     }
     if (isPenaltyAppeal && !canReviewPenaltyAppeals(role)) {
       return stampApprovalActionResponse(
-        NextResponse.json({ ok: false, error: 'Only Admin or Super Admin can process penalty appeals.' }, { status: 403 }),
+        approvalErrorResponse('Only Admin or Super Admin can process penalty appeals.', 403, 'forbidden'),
         meta,
       )
     }
@@ -152,17 +155,41 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       const updated = await resolveApprovalRequestById({ id: approval.id, status: 'REJECTED', actorUserId: token.sub, reason: body.note || 'Rejected' })
       response = NextResponse.json({ ok: true, approval: updated, moduleResult: null })
     } else {
-      response = NextResponse.json({ error: `${approval.module} ${approval.type} is not executable from the central approval center yet.` }, { status: 400 })
+      response = approvalErrorResponse(
+        `${approval.module} ${approval.type} is not executable from the central approval center yet.`,
+        400,
+        'not_executable',
+      )
     }
     return stampApprovalActionResponse(response, meta)
   } catch (e) {
-    logApprovalActionPhase('failed', meta, { error: (e as Error).message })
-    logEvent('error', 'approval.execute_failed', { approvalId: params.id, error: (e as Error).message })
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message, operationId: meta.operationId, durationMs: Date.now() - meta.startedAt },
-      { status: 500 },
+    const classified = classifyApprovalTxError(e)
+    logEvent('error', 'approval.execute_failed', {
+      approvalId: params.id,
+      error: classified.error,
+      message: classified.message,
+    })
+    return stampApprovalActionResponse(
+      apiFailure(classified.error, classified.message, {
+        status: classified.error.includes('timeout') || classified.error.includes('pool') ? 503 : 500,
+        rolledBack: classified.rolledBack,
+        extra: { code: classified.error },
+      }),
+      meta,
     )
   }
+}
+
+function approvalErrorResponse(
+  message: string,
+  status: number,
+  code?: string,
+  extra?: Record<string, unknown>,
+) {
+  return NextResponse.json(
+    { ok: false, error: code || 'approval_failed', message, code, ...extra },
+    { status },
+  )
 }
 
 async function processPenaltyAppeal(
@@ -411,7 +438,9 @@ async function processWalletRequest(
   }
 
   if (action === 'REJECT') {
-    const result = await runApprovalTransaction('approval.wallet_reject', async tx => {
+    let result: { updated: typeof request; approval: NonNullable<Awaited<ReturnType<typeof resolveApprovalRequest>>> }
+    try {
+      result = await runApprovalTransaction('approval.wallet_reject', async tx => {
       const updated = await tx.walletRequest.update({
         where: { id: request.id },
         data: {
@@ -435,10 +464,16 @@ async function processWalletRequest(
       }
       return { updated, approval }
     })
+    } catch (e) {
+      const classified = classifyApprovalTxError(e)
+      return approvalErrorResponse(classified.message, 503, classified.error, { rolledBack: classified.rolledBack })
+    }
     logEvent('info', 'approval.reject.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
-    deferAfterApprovalCommit('approval.center.wallet_reject_notify', async () => {
-      await notifyApprovalResolved(result.approval, actorUserId, 'REJECTED', note?.slice(0, 500) || 'Rejected')
-    })
+    if (result.approval) {
+      deferAfterApprovalCommit('approval.center.wallet_reject_notify', async () => {
+        await notifyApprovalResolved(result.approval!, actorUserId, 'REJECTED', note?.slice(0, 500) || 'Rejected')
+      })
+    }
     dispatchApprovalsUpdated()
     return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { request: result.updated } })
   }
@@ -453,7 +488,13 @@ async function processWalletRequest(
     const balance = computeWalletSummary(request.employeeId, request.businessId, entries).availableWithdrawable
     if (approvedAmount > balance) return NextResponse.json({ error: `Insufficient wallet balance. Available: ${balance}` }, { status: 400 })
   }
-  const result = await runApprovalTransaction('approval.wallet_approve', async tx => {
+  let result: {
+    entry: Awaited<ReturnType<typeof prisma.employeeLedgerEntry.create>>
+    request: typeof request
+    approval: NonNullable<Awaited<ReturnType<typeof resolveApprovalRequest>>>
+  }
+  try {
+    result = await runApprovalTransaction('approval.wallet_approve', async tx => {
     const entry = await tx.employeeLedgerEntry.create({
       data: {
         employeeId: request.employeeId,
@@ -495,10 +536,16 @@ async function processWalletRequest(
     }
     return { entry, request: updated, approval }
   })
+  } catch (e) {
+    const classified = classifyApprovalTxError(e)
+    return approvalErrorResponse(classified.message, 503, classified.error, { rolledBack: classified.rolledBack })
+  }
   logEvent('info', 'approval.approve.success', { approvalId, entityId: requestId, module: 'PAYROLL' })
-  deferAfterApprovalCommit('approval.center.wallet_approve_notify', async () => {
-    await notifyApprovalResolved(result.approval, actorUserId, 'APPROVED', note?.slice(0, 500) || 'Approved')
-  })
+  if (result.approval) {
+    deferAfterApprovalCommit('approval.center.wallet_approve_notify', async () => {
+      await notifyApprovalResolved(result.approval!, actorUserId, 'APPROVED', note?.slice(0, 500) || 'Approved')
+    })
+  }
   dispatchApprovalsUpdated()
   return NextResponse.json({ ok: true, approval: result.approval, moduleResult: { entry: result.entry, request: result.request } })
 }

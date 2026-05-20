@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeResponseJson } from '@/lib/safe-api-response'
 import {
   addPendingApprovalOp,
   committedLabel,
@@ -67,13 +68,14 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           const res = await fetch(`/api/approvals/${encodeURIComponent(op.approvalId)}`, {
             cache: 'no-store',
           })
-          const json = await res.json().catch(() => ({}))
-          if (!res.ok) {
+          const parsed = await safeResponseJson(res)
+          const json = parsed.data
+          if (!parsed.ok || !res.ok) {
             removePendingApprovalOp(op.approvalId)
             clearRowState(op.approvalId)
             return
           }
-          const status = String(json.approval?.status || '')
+          const status = String((json as { approval?: { status?: string } }).approval?.status || '')
           if (status === 'PENDING') {
             setRowState(op.approvalId, {
               state: 'processing',
@@ -156,12 +158,13 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           body: JSON.stringify({ action, note, operation_id: operationId }),
           cache: 'no-store',
         })
-        const json = await res.json().catch(() => ({}))
+        const parsed = await safeResponseJson(res)
+        const json = parsed.data
 
-        if (!res.ok || !json.ok) {
-          const err = String(json.error || 'Approval action failed')
+        if (!parsed.ok || !res.ok || json.ok === false) {
+          const err = String(json.message || json.error || 'Approval action failed')
           const code = String(json.code || '')
-          const rolledBack = Boolean(json.rolledBack) || res.status >= 500
+          const rolledBack = Boolean(json.rolledBack) || parsed.parseError || res.status >= 500
           setRowState(approvalId, {
             state: rolledBack ? 'rolled_back' : 'failed',
             action,
