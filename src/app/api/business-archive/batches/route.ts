@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJwt } from '@/lib/api-guards'
 import { normalizeAlmaRole } from '@/lib/roles'
+import { logEvent } from '@/lib/logger'
 import { listArchiveAudit, listArchiveBatches } from '@/lib/business-archive/service'
 
 export const dynamic = 'force-dynamic'
@@ -13,8 +14,21 @@ export async function GET(req: NextRequest) {
   }
 
   const businessId = new URL(req.url).searchParams.get('business_id') || undefined
-  const batches = await listArchiveBatches(businessId)
-  const audit = businessId ? await listArchiveAudit(businessId) : []
 
-  return NextResponse.json({ batches, audit })
+  try {
+    const batches = await listArchiveBatches(businessId)
+    const audit = businessId ? await listArchiveAudit(businessId) : []
+    return NextResponse.json({ ok: true, batches, audit })
+  } catch (err) {
+    logEvent('warn', 'archive.registry.warning', {
+      businessId,
+      message: (err as Error).message,
+    })
+    return NextResponse.json({
+      ok: false,
+      batches: [],
+      audit: [],
+      warning: (err as Error).message,
+    })
+  }
 }

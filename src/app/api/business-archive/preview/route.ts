@@ -29,8 +29,12 @@ export async function POST(req: NextRequest) {
   try {
     const preview = await runArchivePreview(businessId, moduleKeys)
     const confirmationPhrase = buildArchiveConfirmationPhrase(businessId, moduleKeys)
-    return NextResponse.json({ preview, confirmationPhrase })
+    return NextResponse.json({ ok: true, preview, confirmationPhrase })
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 })
+    return NextResponse.json({
+      ok: false,
+      error: (e as Error).message,
+      preview: null,
+    }, { status: 200 })
   }
 }

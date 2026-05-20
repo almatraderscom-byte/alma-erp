@@ -1,42 +1,17 @@
 import { prisma } from '@/lib/prisma'
 import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
+import {
+  ARCHIVE_MODULES,
+  modulesForBusiness,
+  resolveModule,
+  type ArchiveModuleDef,
+} from '@/lib/business-archive/module-registry'
 import { serverGet } from '@/lib/server-api'
 import type { BusinessId } from '@/lib/businesses'
 import { BUSINESSES } from '@/lib/businesses'
 
-export type ArchiveModuleDef = {
-  key: string
-  label: string
-  description: string
-  /** Prisma-backed archive (indexed isArchived) vs registry-only (GAS/external). */
-  storage: 'prisma' | 'registry'
-  businesses: BusinessId[] | 'ALL'
-}
-
-export const ARCHIVE_MODULES: ArchiveModuleDef[] = [
-  { key: 'approvals', label: 'Approvals', description: 'Approval requests', storage: 'prisma', businesses: 'ALL' },
-  { key: 'attendance', label: 'Attendance', description: 'Attendance records', storage: 'prisma', businesses: 'ALL' },
-  { key: 'attendance_waivers', label: 'Attendance waivers', description: 'Penalty waiver requests', storage: 'prisma', businesses: 'ALL' },
-  { key: 'wallet_requests', label: 'Payroll wallet', description: 'Wallet withdrawal/advance requests', storage: 'prisma', businesses: 'ALL' },
-  { key: 'expenses', label: 'Expenses', description: 'Employee ledger expense entries', storage: 'prisma', businesses: 'ALL' },
-  { key: 'invoices', label: 'Invoices', description: 'Invoice records', storage: 'prisma', businesses: 'ALL' },
-  { key: 'trading_trades', label: 'Trading trades', description: 'Trading trade ledger', storage: 'prisma', businesses: ['ALMA_TRADING'] },
-  { key: 'trading_expenses', label: 'Trading expenses', description: 'Trading account expenses', storage: 'prisma', businesses: ['ALMA_TRADING'] },
-  { key: 'telegram_drafts', label: 'Telegram drafts', description: 'Telegram trade drafts', storage: 'prisma', businesses: ['ALMA_TRADING'] },
-  { key: 'orders', label: 'Orders', description: 'Order workspace (registry — GAS)', storage: 'registry', businesses: ['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT'] },
-  { key: 'inventory', label: 'Inventory', description: 'Stock/inventory (registry — GAS)', storage: 'registry', businesses: ['ALMA_LIFESTYLE'] },
-  { key: 'crm', label: 'CRM', description: 'CRM customers (registry — GAS)', storage: 'registry', businesses: ['ALMA_LIFESTYLE'] },
-]
-
-export function modulesForBusiness(businessId: string): ArchiveModuleDef[] {
-  return ARCHIVE_MODULES.filter(
-    m => m.businesses === 'ALL' || (m.businesses as BusinessId[]).includes(businessId as BusinessId),
-  )
-}
-
-export function resolveModule(key: string) {
-  return ARCHIVE_MODULES.find(m => m.key === key) ?? null
-}
+export type { ArchiveModuleDef }
+export { ARCHIVE_MODULES, modulesForBusiness, resolveModule }
 
 type PreviewRow = {
   moduleKey: string
@@ -198,7 +173,30 @@ export async function previewModuleArchive(
 }
 
 export async function previewArchive(businessId: string, moduleKeys: string[]) {
-  const rows = await Promise.all(moduleKeys.map(k => previewModuleArchive(businessId, k)))
+  const { logEvent } = await import('@/lib/logger')
+  const rows = await Promise.all(
+    moduleKeys.map(async k => {
+      try {
+        return await previewModuleArchive(businessId, k)
+      } catch (err) {
+        logEvent('warn', 'archive.module.failed', {
+          businessId,
+          moduleKey: k,
+          scope: 'preview',
+          message: (err as Error).message,
+        })
+        const mod = resolveModule(k)
+        return {
+          moduleKey: k,
+          label: mod?.label || k,
+          count: 0,
+          oldestAt: null,
+          newestAt: null,
+          storage: mod?.storage || 'prisma',
+        }
+      }
+    }),
+  )
   return {
     businessId,
     modules: rows,
@@ -422,25 +420,10 @@ export async function restoreBatch(batchId: string, actorUserId: string) {
   return entities.length
 }
 
+/** @deprecated Use getArchiveStatsSafe from ./safe */
 export async function getArchiveStats(businessId: string) {
-  const mods = modulesForBusiness(businessId)
-  const ready = await isBusinessArchiveSchemaReady()
-  const stats = await Promise.all(
-    mods.map(async m => {
-      const active = await previewModuleArchive(businessId, m.key)
-      let archived = 0
-      if (ready) {
-        try {
-          archived = await prisma.businessArchiveEntity.count({
-            where: { businessId, moduleKey: m.key, isArchived: true },
-          })
-        } catch {
-          archived = 0
-        }
-      }
-      return { moduleKey: m.key, label: m.label, activeCount: active.count, archivedCount: archived }
-    }),
-  )
+  const { getArchiveStatsSafe } = await import('@/lib/business-archive/safe')
+  const { stats } = await getArchiveStatsSafe(businessId)
   return stats
 }
 

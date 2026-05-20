@@ -30,15 +30,13 @@ export async function isBusinessArchiveSchemaReady(): Promise<boolean> {
     cached = { at: Date.now(), ready: true }
     return true
   } catch (err) {
-    if (isMissingSchemaError(err)) {
-      logEvent('warn', 'businessArchive.schema_unavailable', {
-        message: (err as Error).message,
-        hint: 'Run npm run db:migrate:deploy on production',
-      })
-      cached = { at: Date.now(), ready: false }
-      return false
-    }
-    throw err
+    logEvent('warn', 'businessArchive.schema_unavailable', {
+      message: (err as Error).message,
+      missing: isMissingSchemaError(err),
+      hint: 'Run npm run db:migrate:deploy if tables are missing',
+    })
+    cached = { at: Date.now(), ready: false }
+    return false
   }
 }
 

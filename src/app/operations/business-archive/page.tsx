@@ -5,12 +5,20 @@ import toast from 'react-hot-toast'
 import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { BUSINESS_LIST } from '@/lib/businesses'
+import { modulesForBusiness, type ArchiveModuleDef } from '@/lib/business-archive/module-registry'
 import { isSystemOwner } from '@/lib/roles'
 import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/ui'
 import { useRouter } from 'next/navigation'
 
 type ModuleDef = { key: string; label: string; description: string; storage: string }
-type StatRow = { moduleKey: string; label: string; activeCount: number; archivedCount: number }
+type StatRow = {
+  moduleKey: string
+  label: string
+  activeCount: number
+  archivedCount: number
+  available?: boolean
+  warning?: string | null
+}
 type PreviewModule = {
   moduleKey: string
   label: string
@@ -49,9 +57,13 @@ export default function BusinessArchiveControlPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [schemaReady, setSchemaReady] = useState(true)
   const [migrationHint, setMigrationHint] = useState<string | null>(null)
+  const [loadWarning, setLoadWarning] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadWarning(null)
+    const fallbackModules = modulesForBusiness(business.id)
+
     try {
       const [mRes, bRes] = await Promise.all([
         fetch(`/api/business-archive/modules?business_id=${encodeURIComponent(business.id)}`, {
@@ -63,18 +75,63 @@ export default function BusinessArchiveControlPage() {
       ])
       const mj = await mRes.json().catch(() => ({}))
       const bj = await bRes.json().catch(() => ({}))
-      if (!mRes.ok) throw new Error(mj.error || 'Failed to load modules')
-      setModules(mj.modules || [])
-      setStats(mj.stats || [])
+
+      if (mRes.status === 401) {
+        setLoadWarning('Session expired — sign in again.')
+        return
+      }
+      if (mRes.status === 403) {
+        setLoadWarning('Super Admin access required for Archive Control.')
+        return
+      }
+
+      const modulesList = mj.modules?.length ? mj.modules : fallbackModules
+      setModules(modulesList)
+      setStats(
+        mj.stats?.length
+          ? mj.stats
+          : modulesList.map((m: ArchiveModuleDef) => ({
+              moduleKey: m.key,
+              label: m.label,
+              activeCount: 0,
+              archivedCount: 0,
+              available: m.key !== 'crm' && m.key !== 'inventory',
+              warning: m.integrationNote ?? null,
+            })),
+      )
       setSchemaReady(mj.schemaReady !== false)
       setMigrationHint(mj.migrationHint || null)
       setBatches(bj.batches || [])
+
+      const warn =
+        mj.warning ||
+        mj.error ||
+        (mj.partialFailure ? 'Some modules could not load live stats.' : null) ||
+        (mRes.ok ? null : 'Archive API returned a degraded response.')
+      setLoadWarning(warn)
+
+      if (warn) toast.error(warn, { id: 'archive-load-warn' })
+      else toast.dismiss('archive-load-warn')
+
       setSelected([])
       setPreview(null)
       setConfirmation('')
       setExpectedPhrase('')
     } catch (e) {
-      toast.error((e as Error).message)
+      const msg = (e as Error).message || 'Network error loading archive modules'
+      setModules(fallbackModules)
+      setStats(
+        fallbackModules.map(m => ({
+          moduleKey: m.key,
+          label: m.label,
+          activeCount: 0,
+          archivedCount: 0,
+          available: false,
+          warning: m.integrationNote || 'Offline fallback',
+        })),
+      )
+      setLoadWarning(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
@@ -108,7 +165,8 @@ export default function BusinessArchiveControlPage() {
         body: JSON.stringify({ business_id: business.id, module_keys: selected }),
       })
       const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Preview failed')
+      if (!res.ok && res.status !== 200) throw new Error(j.error || 'Preview failed')
+      if (j.ok === false) throw new Error(j.error || 'Preview unavailable')
       setPreview(j.preview?.modules || [])
       setPreviewTotal(j.preview?.totalRecords || 0)
       setExpectedPhrase(j.confirmationPhrase || '')
@@ -189,6 +247,15 @@ export default function BusinessArchiveControlPage() {
         subtitle="Soft archive only — data stays in the database. Hide from active workspace; restore anytime."
       />
 
+      {loadWarning && (
+        <Card className="border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-100 flex flex-wrap items-center justify-between gap-3">
+          <p>{loadWarning}</p>
+          <Button size="xs" variant="secondary" onClick={() => void load()}>
+            Retry
+          </Button>
+        </Card>
+      )}
+
       {!schemaReady && (
         <Card className="border-red-500/40 bg-red-500/15 p-4 text-sm text-red-100">
           <p className="font-black">Database migration required</p>
@@ -245,27 +312,37 @@ export default function BusinessArchiveControlPage() {
               Step 2–3 · Select modules
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
-              {modules.map(m => (
-                <label
-                  key={m.key}
-                  className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 text-xs transition ${
-                    selected.includes(m.key)
-                      ? 'border-gold/50 bg-gold/10'
-                      : 'border-border bg-black/20 hover:border-zinc-600'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(m.key)}
-                    onChange={() => toggleModule(m.key)}
-                  />
-                  <span>
-                    <span className="font-bold text-cream">{m.label}</span>
-                    <span className="mt-0.5 block text-zinc-500">{m.description}</span>
-                    <span className="text-[10px] text-zinc-600">{m.storage}</span>
-                  </span>
-                </label>
-              ))}
+              {modules.map(m => {
+                const stat = stats.find(s => s.moduleKey === m.key)
+                const unavailable = stat?.available === false
+                return (
+                  <label
+                    key={m.key}
+                    className={`flex gap-3 rounded-xl border px-3 py-2.5 text-xs transition ${
+                      unavailable
+                        ? 'cursor-not-allowed border-zinc-700 bg-zinc-900/40 opacity-80'
+                        : selected.includes(m.key)
+                          ? 'cursor-pointer border-gold/50 bg-gold/10'
+                          : 'cursor-pointer border-border bg-black/20 hover:border-zinc-600'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={unavailable}
+                      checked={selected.includes(m.key)}
+                      onChange={() => !unavailable && toggleModule(m.key)}
+                    />
+                    <span>
+                      <span className="font-bold text-cream">{m.label}</span>
+                      <span className="mt-0.5 block text-zinc-500">{m.description}</span>
+                      <span className="text-[10px] text-zinc-600">{m.storage}</span>
+                      {stat?.warning && (
+                        <span className="mt-1 block text-[10px] text-amber-300/90">{stat.warning}</span>
+                      )}
+                    </span>
+                  </label>
+                )
+              })}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" disabled={busy !== null} onClick={() => void runPreview()}>

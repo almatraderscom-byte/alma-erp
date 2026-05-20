@@ -134,6 +134,19 @@ export async function runArchiveRestore(batchId: string, actorUserId: string) {
 }
 
 export async function listArchiveBatches(businessId?: string) {
+  if (!(await isBusinessArchiveSchemaReady())) return []
+  try {
+    return await listArchiveBatchesInner(businessId)
+  } catch (err) {
+    logEvent('warn', 'archive.registry.warning', {
+      businessId,
+      message: (err as Error).message,
+    })
+    return []
+  }
+}
+
+async function listArchiveBatchesInner(businessId?: string) {
   const rows = await prisma.businessArchiveBatch.findMany({
     where: businessId ? { businessId } : {},
     orderBy: { createdAt: 'desc' },
@@ -174,4 +187,5 @@ export async function listArchiveAudit(businessId: string, limit = 50) {
   }))
 }
 
-export { getArchiveStats, modulesForBusiness, resolveModule } from '@/lib/business-archive/modules'
+export { getArchiveStatsSafe, defaultStatsForModules } from '@/lib/business-archive/safe'
+export { modulesForBusiness, resolveModule } from '@/lib/business-archive/module-registry'
