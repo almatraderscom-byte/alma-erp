@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
+import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
 import { buildArchiveConfirmationPhrase } from '@/lib/business-archive/query'
 import {
   executeModuleArchive,
@@ -10,6 +11,14 @@ import {
   resolveModule,
 } from '@/lib/business-archive/modules'
 
+export async function requireArchiveSchema() {
+  if (!(await isBusinessArchiveSchemaReady())) {
+    throw new Error(
+      'Business Archive schema is not applied on this database. Run: npm run db:migrate:deploy',
+    )
+  }
+}
+
 export async function logArchiveAudit(params: {
   batchId?: string | null
   businessId: string
@@ -17,6 +26,7 @@ export async function logArchiveAudit(params: {
   actorUserId: string
   detail?: Record<string, unknown>
 }) {
+  if (!(await isBusinessArchiveSchemaReady())) return
   await prisma.businessArchiveAuditLog.create({
     data: {
       batchId: params.batchId ?? null,
@@ -35,6 +45,7 @@ export async function logArchiveAudit(params: {
 }
 
 export async function runArchivePreview(businessId: string, moduleKeys: string[]) {
+  await requireArchiveSchema()
   if (!isValidBusinessId(businessId)) throw new Error('Invalid business')
   const allowed = new Set(modulesForBusiness(businessId).map(m => m.key))
   const keys = moduleKeys.filter(k => allowed.has(k))
@@ -49,6 +60,7 @@ export async function runArchiveExecute(params: {
   confirmation: string
   actorUserId: string
 }) {
+  await requireArchiveSchema()
   const { businessId, moduleKeys, batchName, confirmation, actorUserId } = params
   if (!isValidBusinessId(businessId)) throw new Error('Invalid business')
 
@@ -107,6 +119,7 @@ export async function runArchiveExecute(params: {
 }
 
 export async function runArchiveRestore(batchId: string, actorUserId: string) {
+  await requireArchiveSchema()
   const batch = await prisma.businessArchiveBatch.findUnique({ where: { id: batchId } })
   if (!batch) throw new Error('Batch not found')
   const count = await restoreBatch(batchId, actorUserId)
@@ -145,6 +158,7 @@ export async function listArchiveBatches(businessId?: string) {
 }
 
 export async function listArchiveAudit(businessId: string, limit = 50) {
+  if (!(await isBusinessArchiveSchemaReady())) return []
   const rows = await prisma.businessArchiveAuditLog.findMany({
     where: { businessId },
     orderBy: { createdAt: 'desc' },

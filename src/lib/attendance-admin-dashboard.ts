@@ -4,6 +4,7 @@ import { attendanceDateFor, attendanceRecordDto, attendanceWaiverDto } from '@/l
 import { loadAttendanceRoster, dedupeEmployeesByUserId } from '@/lib/attendance-business'
 import { resolveProfileImageForUser } from '@/lib/user-display'
 import { scanAttendanceIntegrity } from '@/lib/attendance-integrity'
+import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
 
 function minutesLabel(minutes: number) {
   const h = Math.floor(minutes / 60)
@@ -28,9 +29,11 @@ export async function buildAdminAttendanceDashboard(input: {
   scopeAllBusinesses: boolean
 }) {
   const { businessIds, date, monthStart, monthEnd, scopeAllBusinesses } = input
+  const archiveReady = await isBusinessArchiveSchemaReady()
+  const archiveClause = archiveReady ? { isArchived: false as const } : {}
   const businessFilter = businessIds.length === 1
-    ? { businessId: businessIds[0], isArchived: false }
-    : { businessId: { in: businessIds }, isArchived: false }
+    ? { businessId: businessIds[0], ...archiveClause }
+    : { businessId: { in: businessIds }, ...archiveClause }
 
   const [employees, todayRecords, monthRecords, pendingWaivers, selfieRows, integrity] = await Promise.all([
     loadRosterForScope(businessIds, monthStart, monthEnd),
@@ -49,7 +52,7 @@ export async function buildAdminAttendanceDashboard(input: {
       orderBy: { attendanceDate: 'desc' },
     }),
     prisma.attendanceWaiverRequest.findMany({
-      where: { ...businessFilter, status: 'PENDING', isArchived: false },
+      where: { ...businessFilter, status: 'PENDING' },
       include: {
         requester: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
         attendanceRecord: true,

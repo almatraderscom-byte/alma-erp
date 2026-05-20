@@ -13,7 +13,7 @@ import {
   penaltyLinkageStatus,
   walletLinkageStatus,
 } from '@/lib/approval-integrity'
-import { archiveVisibilityWhere, parseArchiveVisibility } from '@/lib/business-archive/query'
+import { parseArchiveVisibility, resolveArchiveVisibilityWhere } from '@/lib/business-archive/query'
 
 export async function GET(req: NextRequest) {
   const token = await getJwt(req)
@@ -30,9 +30,10 @@ export async function GET(req: NextRequest) {
     ? {}
     : { OR: [{ businessId: null }, { businessId: { in: allowedBusinesses } }] }
   const archiveVisibility = parseArchiveVisibility(url.searchParams.get('archive_visibility'))
+  const archiveWhere = await resolveArchiveVisibilityWhere(archiveVisibility)
   const where = {
     ...businessScope,
-    ...archiveVisibilityWhere(archiveVisibility),
+    ...archiveWhere,
     ...(status === 'ALL' ? {} : { status: status as never }),
     ...(module ? { module } : {}),
     ...(role === 'SUPER_ADMIN' ? {} : { requestedBy: token.sub }),

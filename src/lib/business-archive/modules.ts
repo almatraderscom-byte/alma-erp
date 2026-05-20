@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
 import { serverGet } from '@/lib/server-api'
 import type { BusinessId } from '@/lib/businesses'
 import { BUSINESSES } from '@/lib/businesses'
@@ -65,11 +66,16 @@ export async function previewModuleArchive(
   const mod = resolveModule(moduleKey)
   if (!mod) throw new Error(`Unknown module: ${moduleKey}`)
 
-  const activeWhere = { businessId, isArchived: false }
+  const ready = await isBusinessArchiveSchemaReady()
+  const activeWhere = ready
+    ? { businessId, isArchived: false }
+    : { businessId }
 
   if (moduleKey === 'approvals') {
     const rows = await prisma.approvalRequest.findMany({
-      where: { OR: [{ businessId }, { businessId: null }], isArchived: false },
+      where: ready
+        ? { OR: [{ businessId }, { businessId: null }], isArchived: false }
+        : { OR: [{ businessId }, { businessId: null }] },
       select: { id: true, createdAt: true },
       take: 5000,
     })
@@ -138,7 +144,7 @@ export async function previewModuleArchive(
   }
 
   if (moduleKey === 'trading_trades') {
-    const where = { businessId, isArchived: false, deletedAt: null }
+    const where = { businessId, deletedAt: null, ...(ready ? { isArchived: false } : {}) }
     const [count, oldest, newest] = await Promise.all([
       prisma.tradingTrade.count({ where }),
       prisma.tradingTrade.findFirst({ where, orderBy: { tradeDate: 'asc' }, select: { tradeDate: true } }),
@@ -148,7 +154,7 @@ export async function previewModuleArchive(
   }
 
   if (moduleKey === 'trading_expenses') {
-    const where = { businessId, isArchived: false, deletedAt: null }
+    const where = { businessId, deletedAt: null, ...(ready ? { isArchived: false } : {}) }
     const [count, oldest, newest] = await Promise.all([
       prisma.tradingExpense.count({ where }),
       prisma.tradingExpense.findFirst({ where, orderBy: { expenseDate: 'asc' }, select: { expenseDate: true } }),
@@ -418,12 +424,20 @@ export async function restoreBatch(batchId: string, actorUserId: string) {
 
 export async function getArchiveStats(businessId: string) {
   const mods = modulesForBusiness(businessId)
+  const ready = await isBusinessArchiveSchemaReady()
   const stats = await Promise.all(
     mods.map(async m => {
       const active = await previewModuleArchive(businessId, m.key)
-      const archived = await prisma.businessArchiveEntity.count({
-        where: { businessId, moduleKey: m.key, isArchived: true },
-      })
+      let archived = 0
+      if (ready) {
+        try {
+          archived = await prisma.businessArchiveEntity.count({
+            where: { businessId, moduleKey: m.key, isArchived: true },
+          })
+        } catch {
+          archived = 0
+        }
+      }
       return { moduleKey: m.key, label: m.label, activeCount: active.count, archivedCount: archived }
     }),
   )

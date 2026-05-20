@@ -47,6 +47,8 @@ export default function BusinessArchiveControlPage() {
   const [preview, setPreview] = useState<PreviewModule[] | null>(null)
   const [previewTotal, setPreviewTotal] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
+  const [schemaReady, setSchemaReady] = useState(true)
+  const [migrationHint, setMigrationHint] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -64,6 +66,8 @@ export default function BusinessArchiveControlPage() {
       if (!mRes.ok) throw new Error(mj.error || 'Failed to load modules')
       setModules(mj.modules || [])
       setStats(mj.stats || [])
+      setSchemaReady(mj.schemaReady !== false)
+      setMigrationHint(mj.migrationHint || null)
       setBatches(bj.batches || [])
       setSelected([])
       setPreview(null)
@@ -184,6 +188,16 @@ export default function BusinessArchiveControlPage() {
         title="Business Archive Control"
         subtitle="Soft archive only — data stays in the database. Hide from active workspace; restore anytime."
       />
+
+      {!schemaReady && (
+        <Card className="border-red-500/40 bg-red-500/15 p-4 text-sm text-red-100">
+          <p className="font-black">Database migration required</p>
+          <p className="mt-1 text-xs">
+            {migrationHint || 'Business Archive tables are not on this database yet.'} ERP continues
+            normally; run migrations on production to enable archive features.
+          </p>
+        </Card>
+      )}
 
       <Card className="border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
         <p className="font-black">Safety mode</p>
