@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
-import { Button, Card, Empty, KpiCard, Skeleton, Spinner } from '@/components/ui'
+import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
@@ -141,7 +141,36 @@ export default function ApprovalsPage() {
   const actionsGloballyDisabled = hasProcessing
 
   return (
-    <main className="space-y-5 p-4 md:p-6">
+    <main className="space-y-5 pb-24 md:pb-6">
+      <PageHeader
+        title="Approvals"
+        subtitle="Persistent authorization requests. Reading notifications never clears this queue."
+        actions={
+          <>
+            <Button
+              variant={showIntegrity ? 'gold' : 'ghost'}
+              onClick={() => {
+                setShowIntegrity(v => !v)
+                if (!integrity && !showIntegrity) void loadIntegrity()
+              }}
+            >
+              Integrity
+            </Button>
+            {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
+              <Button
+                key={value}
+                variant={status === value ? 'gold' : 'ghost'}
+                disabled={actionsGloballyDisabled}
+                onClick={() => setStatus(value)}
+              >
+                {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
+              </Button>
+            ))}
+          </>
+        }
+      />
+
+      <div className="space-y-5 px-4 md:px-6">
       <ApprovalProcessingBanner
         count={processingOps.length}
         message={
@@ -150,29 +179,6 @@ export default function ApprovalsPage() {
             : undefined
         }
       />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-gold">Global Control</p>
-          <h1 className="mt-1 text-2xl font-black text-cream">Approvals</h1>
-          <p className="mt-1 text-sm text-zinc-500">Persistent authorization requests. Reading notifications never clears this queue.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={showIntegrity ? 'gold' : 'ghost'}
-            onClick={() => {
-              setShowIntegrity(v => !v)
-              if (!integrity && !showIntegrity) void loadIntegrity()
-            }}
-          >
-            Integrity
-          </Button>
-          {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
-            <Button key={value} variant={status === value ? 'gold' : 'ghost'} disabled={actionsGloballyDisabled} onClick={() => setStatus(value)}>
-              {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
-            </Button>
-          ))}
-        </div>
-      </div>
 
       {showIntegrity && (
         <Card className="border-amber-500/20 bg-amber-500/5 p-4">
@@ -427,6 +433,7 @@ export default function ApprovalsPage() {
         </div>
         )
       })()}
+      </div>
     </main>
   )
 }

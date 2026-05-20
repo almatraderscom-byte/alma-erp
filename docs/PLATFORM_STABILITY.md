@@ -57,6 +57,13 @@ Root layout
 | `telegram-notification/queue` | Attendance, trading, payroll, penalties |
 | `useRegisterMobileRefresh` | Dashboards that poll on mobile resume |
 
+## Page header / Alerts architecture
+
+- **`PageHeader`** + **`PageActionBar`**: flex-wrap action row; Alerts is the last in-flow item on `md+`.
+- **`AlertsActionButton`**: must never use `fixed` positioning (overlaps page actions — e.g. Orders “+ New Order”).
+- **Mobile**: Alerts remains in bottom nav (`MobileNav`); header Alerts hidden via `hidden md:inline-flex`.
+- **Z-index**: sticky page header uses `PLATFORM_Z.stickyBanner` (70); notification panel uses `PLATFORM_Z.notificationPanel` (160).
+
 ## UI consistency rules
 
 - Loading: prefer `Spinner` / `Skeleton` / `LoadingOverlay` from `@/components/ui` and `loading/*`

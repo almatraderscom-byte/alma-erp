@@ -9,6 +9,10 @@ import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
 export { Money, BdtText } from '@/components/ui/Currency'
 export { SearchableSelect, type SearchableSelectOption } from '@/components/ui/SearchableSelect'
 import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS } from '@/lib/utils'
+import { PageActionBar } from '@/components/layout/PageActionBar'
+import { AlertsActionButton } from '@/components/notifications/AlertsActionButton'
+import { usePathname } from 'next/navigation'
+import { PLATFORM_Z } from '@/lib/platform-z-index'
 
 // ── Skeleton ─────────────────────────────────────────────────────────────
 export function Skeleton({ className }: { className?: string }) {
@@ -148,17 +152,46 @@ export function GoldDivider({ className }: { className?: string }) {
 }
 
 // ── Page Header ───────────────────────────────────────────────────────────
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode }) {
+const PAGE_HEADER_NO_ALERTS = ['/login', '/forgot-password', '/reset-password', '/invoice/share']
+
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+  showAlerts = true,
+}: {
+  title: string
+  subtitle?: React.ReactNode
+  actions?: React.ReactNode
+  /** Desktop in-header Alerts control (mobile uses bottom nav). */
+  showAlerts?: boolean
+}) {
+  const pathname = usePathname() ?? ''
+  const hideAlerts = PAGE_HEADER_NO_ALERTS.some(prefix => pathname.startsWith(prefix))
+  const hasActions = Boolean(actions) || (showAlerts && !hideAlerts)
+
   return (
-    <div className="sticky top-0 z-30 bg-surface/95 backdrop-blur border-b border-border px-4 md:px-8 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div className="min-w-0 flex-1">
-        <h1 className="text-base md:text-lg font-bold text-cream tracking-tight truncate">{title}</h1>
-        {subtitle != null && subtitle !== '' && (
-          <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{subtitle}</p>
+    <header
+      className="page-header sticky top-0 border-b border-border bg-surface/95 px-4 py-4 backdrop-blur md:px-8"
+      style={{ zIndex: PLATFORM_Z.stickyBanner }}
+    >
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-4">
+        <div className="min-w-0">
+          <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>
+          {subtitle != null && subtitle !== '' && (
+            <p className="mt-0.5 truncate text-[11px] text-zinc-500">{subtitle}</p>
+          )}
+        </div>
+        {hasActions && (
+          <PageActionBar className="xl:justify-end">
+            {actions}
+            {showAlerts && !hideAlerts && (
+              <AlertsActionButton className="hidden md:inline-flex" />
+            )}
+          </PageActionBar>
         )}
       </div>
-      {actions && <div className="flex w-full sm:w-auto min-w-0 flex-wrap items-center justify-start sm:justify-end gap-2">{actions}</div>}
-    </div>
+    </header>
   )
 }
 

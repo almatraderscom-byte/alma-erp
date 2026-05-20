@@ -19,8 +19,8 @@ import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoade
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 
-const NotificationCenter = dynamic(
-  () => import('@/components/notifications/NotificationCenter').then(mod => mod.NotificationCenter),
+const NotificationShellProvider = dynamic(
+  () => import('@/contexts/NotificationShellContext').then(mod => mod.NotificationShellProvider),
   { ssr: false, loading: () => null },
 )
 const OneSignalPushManager = dynamic(
@@ -62,7 +62,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
   const mainScrollRef = useRef<HTMLElement>(null)
 
   return (
-    <>
+    <NotificationShellProvider>
       <div className="flex h-[100dvh] w-full overflow-hidden">
         <Sidebar />
         <main ref={mainScrollRef} className="flex-1 overflow-y-auto min-w-0 scrollbar-hide overscroll-y-contain">
@@ -75,9 +75,8 @@ function ErpChrome({ children }: { children: ReactNode }) {
       <MobileNavBar />
       <RouteTransitionLoader />
       <RoutePrefetcher />
-      <NotificationCenter />
       <OneSignalPushManager />
-    </>
+    </NotificationShellProvider>
   )
 }
 

@@ -14,6 +14,7 @@ Last updated: 2026-05-20
 
 - [ ] **Watermark** — “Developed by Maruf” visible on desktop and mobile (above bottom nav, not clipped)
 - [ ] **Mobile bottom nav** — tabs work; no overlap hiding primary actions
+- [ ] **Page header actions** — Orders (and other `PageHeader` pages): Alerts + primary buttons do not overlap at 1280px / 1440px desktop widths
 - [ ] **Sidebar / business switcher** — loads; switching business does not blank the shell
 - [ ] **Login / logout** — session gate; no infinite loading overlay
 - [ ] **Notifications panel** — opens from bell; closes without trapping scroll

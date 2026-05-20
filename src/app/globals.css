@@ -38,6 +38,11 @@ body {
   mix-blend-mode: normal;
 }
 
+/* Page header action row — flex-wrap safe, no fixed overlays */
+.page-header .page-action-bar {
+  row-gap: 0.5rem;
+}
+
 button,
 a,
 [role='button'] {
