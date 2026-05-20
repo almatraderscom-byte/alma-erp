@@ -28,6 +28,9 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
   const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
   if (role === 'VIEWER' && isWrite) return true
 
+  if (pathname.startsWith('/api/business-archive')) {
+    return role !== 'SUPER_ADMIN'
+  }
   if (pathname.startsWith('/api/operational-tasks')) {
     if (pathname.includes('/my') || pathname.includes('/spotlight') || pathname.includes('/assignees')) {
       return false

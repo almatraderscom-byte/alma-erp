@@ -8,6 +8,7 @@ import { resolveAttendanceBusinessScope } from '@/lib/attendance-business'
 import { buildAdminAttendanceDashboard } from '@/lib/attendance-admin-dashboard'
 import { errorMeta, logEvent } from '@/lib/logger'
 import type { AttendanceErrorCode } from '@/lib/attendance-errors'
+import { archiveVisibilityWhere, parseArchiveVisibility } from '@/lib/business-archive/query'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 25
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
   let employeeId = ''
   try {
   const url = new URL(req.url)
+  const archiveVisibility = parseArchiveVisibility(url.searchParams.get('archive_visibility'))
   const businessIdParam = url.searchParams.get('business_id')
   const ctx = await getWalletContext(req, businessIdParam)
   if ('error' in ctx) return ctx.error
@@ -104,17 +106,20 @@ export async function GET(req: NextRequest) {
   if (targetEmployeeId) {
     const [records, waivers] = await Promise.all([
       prisma.attendanceRecord.findMany({
-        where: {
+        where: archiveVisibilityWhere(archiveVisibility, {
           businessId: selectedBusinessId,
           employeeId: targetEmployeeId,
           attendanceDate: { gte: monthStart, lt: monthEnd },
-        },
+        }),
         include: { waiverRequests: true, selfieVerifications: true },
         orderBy: { attendanceDate: 'desc' },
         take: 90,
       }),
       prisma.attendanceWaiverRequest.findMany({
-        where: { businessId: selectedBusinessId, employeeId: targetEmployeeId },
+        where: archiveVisibilityWhere(archiveVisibility, {
+          businessId: selectedBusinessId,
+          employeeId: targetEmployeeId,
+        }),
         orderBy: { createdAt: 'desc' },
         take: 20,
       }),

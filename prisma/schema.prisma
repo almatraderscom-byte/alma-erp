@@ -235,9 +235,14 @@ model EmployeeLedgerEntry {
   source          String?
   sourceRef       String?
   walletRequestId String?
+  isArchived      Boolean                 @default(false)
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveBatchId  String?
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
+  @@index([businessId, isArchived, createdAt])
   @@unique([employeeId, businessId, periodYm, type])
   @@unique([source, sourceRef])
   @@index([employeeId, businessId, date])
@@ -263,9 +268,14 @@ model WalletRequest {
   reviewedById    String?
   reviewedAt      DateTime?
   ledgerEntryId   String?
+  isArchived      Boolean             @default(false)
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveBatchId  String?
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
+  @@index([businessId, isArchived, createdAt])
   @@index([status])
   @@index([userId])
   @@index([employeeId, businessId])
@@ -308,12 +318,17 @@ model AttendanceRecord {
   faceVerified              Boolean                        @default(false)
   faceVerifiedAt            DateTime?
   faceThumbDataUrl          String?                        @db.Text
+  isArchived                Boolean                        @default(false)
+  archivedAt                DateTime?
+  archivedById              String?
+  archiveBatchId            String?
   createdAt                 DateTime                       @default(now())
   updatedAt                 DateTime                       @updatedAt
   waiverRequests            AttendanceWaiverRequest[]
   selfieVerifications       AttendanceSelfieVerification[]
 
   @@unique([businessId, employeeId, attendanceDate])
+  @@index([businessId, isArchived, attendanceDate])
   @@index([businessId, attendanceDate])
   @@index([businessId, status, attendanceDate])
   @@index([businessId, trustStatus, attendanceDate])
@@ -368,10 +383,15 @@ model AttendanceWaiverRequest {
   reviewer                 User?                  @relation("AttendanceWaiverReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt               DateTime?
   reversalLedgerEntryId    String?
+  isArchived               Boolean                @default(false)
+  archivedAt               DateTime?
+  archivedById             String?
+  archiveBatchId           String?
   createdAt                DateTime               @default(now())
   updatedAt                DateTime               @updatedAt
 
   @@unique([attendanceRecordId, userId])
+  @@index([businessId, isArchived, createdAt])
   @@index([businessId, status, createdAt])
   @@index([businessId, employeeId, createdAt])
   @@index([businessId, userId, createdAt])
@@ -442,11 +462,16 @@ model InvoiceRecord {
   fileName        String?
   generatedById   String?
   generatedByName String?
+  isArchived      Boolean              @default(false)
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveBatchId  String?
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
   deletedAt       DateTime?
   events          InvoiceEvent[]
 
+  @@index([businessId, isArchived, createdAt])
   @@unique([businessId, orderId])
   @@unique([businessId, invoiceNumber])
   @@index([businessId, createdAt])
@@ -536,11 +561,16 @@ model ApprovalRequest {
   priority        NotificationPriority @default(NORMAL)
   actionUrl       String?
   auditHistory    Json?
+  isArchived      Boolean        @default(false)
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveBatchId  String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   approvedAt      DateTime?
   rejectedAt      DateTime?
 
+  @@index([businessId, isArchived, createdAt])
   @@index([status, createdAt])
   @@index([module, status, createdAt])
   @@index([businessId, status, createdAt])
@@ -755,8 +785,13 @@ model TradingTrade {
   deleteApprovedAt DateTime?
   editHistory      Json?
   updatedBy        String?
+  isArchived       Boolean          @default(false)
+  archivedAt       DateTime?
+  archivedById     String?
+  archiveBatchId   String?
   createdAt        DateTime         @default(now())
 
+  @@index([businessId, isArchived, tradeDate])
   @@index([businessId, tradeDate])
   @@index([businessId, tradeType, tradeDate])
   @@index([businessId, tradingAccountId, tradeDate])
@@ -811,8 +846,13 @@ model TradingExpense {
   createdBy        String
   creator          User           @relation("TradingExpenseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   deletedAt        DateTime?
+  isArchived       Boolean        @default(false)
+  archivedAt       DateTime?
+  archivedById     String?
+  archiveBatchId   String?
   createdAt        DateTime       @default(now())
 
+  @@index([businessId, isArchived, expenseDate])
   @@index([businessId, expenseDate])
   @@index([businessId, expenseType])
   @@index([businessId, deletedAt, createdAt])
@@ -1072,9 +1112,14 @@ model TradingTelegramDraft {
   inputChannel      TradingTelegramInputChannel @default(TEXT_COMMAND)
   /// Reserved for future OCR/voice/screenshot parsers (raw payload, confidence, etc.)
   futurePayload     Json?
+  isArchived        Boolean                    @default(false)
+  archivedAt        DateTime?
+  archivedById      String?
+  archiveBatchId    String?
   createdAt         DateTime                   @default(now())
   updatedAt         DateTime                   @updatedAt
 
+  @@index([businessId, isArchived, createdAt])
   @@index([businessId, status, createdAt])
   @@index([telegramUserId, createdAt])
   @@index([tradingAccountId, createdAt])
@@ -1394,4 +1439,62 @@ model TradingVolumeTargetSettings {
   updatedById           String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+enum BusinessArchiveBatchStatus {
+  PREVIEW
+  COMPLETED
+  RESTORED
+  PARTIAL
+}
+
+model BusinessArchiveBatch {
+  id                 String                     @id @default(cuid())
+  name               String
+  businessId         String
+  moduleKeys         String
+  status             BusinessArchiveBatchStatus @default(PREVIEW)
+  recordCount        Int                        @default(0)
+  dryRunSnapshot     String?                    @db.Text
+  confirmationPhrase String?
+  createdById        String
+  createdAt          DateTime                   @default(now())
+  completedAt        DateTime?
+  restoredAt         DateTime?
+  entities           BusinessArchiveEntity[]
+
+  @@index([businessId, createdAt])
+  @@index([status, createdAt])
+}
+
+model BusinessArchiveEntity {
+  id           String               @id @default(cuid())
+  batchId      String
+  batch        BusinessArchiveBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  businessId   String
+  moduleKey    String
+  entityType   String
+  entityId     String
+  isArchived   Boolean              @default(true)
+  archivedAt   DateTime             @default(now())
+  archivedById String
+  restoredAt   DateTime?
+  restoredById String?
+
+  @@unique([businessId, moduleKey, entityId])
+  @@index([batchId])
+  @@index([businessId, moduleKey, isArchived])
+}
+
+model BusinessArchiveAuditLog {
+  id          String   @id @default(cuid())
+  batchId     String?
+  businessId  String
+  action      String
+  actorUserId String
+  detailJson  String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([batchId, createdAt])
 }

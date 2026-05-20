@@ -29,8 +29,8 @@ export async function buildAdminAttendanceDashboard(input: {
 }) {
   const { businessIds, date, monthStart, monthEnd, scopeAllBusinesses } = input
   const businessFilter = businessIds.length === 1
-    ? { businessId: businessIds[0] }
-    : { businessId: { in: businessIds } }
+    ? { businessId: businessIds[0], isArchived: false }
+    : { businessId: { in: businessIds }, isArchived: false }
 
   const [employees, todayRecords, monthRecords, pendingWaivers, selfieRows, integrity] = await Promise.all([
     loadRosterForScope(businessIds, monthStart, monthEnd),
@@ -49,7 +49,7 @@ export async function buildAdminAttendanceDashboard(input: {
       orderBy: { attendanceDate: 'desc' },
     }),
     prisma.attendanceWaiverRequest.findMany({
-      where: { ...businessFilter, status: 'PENDING' },
+      where: { ...businessFilter, status: 'PENDING', isArchived: false },
       include: {
         requester: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
         attendanceRecord: true,

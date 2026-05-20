@@ -63,6 +63,7 @@ const FINANCE_SUITE: NavItem[] = [
 
 const SETTINGS_NAV: NavItem[] = [
   { href: '/operations/task-spotlight', icon: '✦', label: 'Task Spotlight' },
+  { href: '/operations/business-archive', icon: '📦', label: 'Archive Control' },
   { href: '/settings/session', icon: '⚙', label: 'Session' },
   { href: '/settings/database', icon: '◈', label: 'Database' },
   { href: '/settings/users', icon: '◫', label: 'Users' },
