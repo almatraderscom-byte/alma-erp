@@ -4,6 +4,7 @@ import { getJwt } from '@/lib/api-guards'
 import { walletBusinessFilter, isWalletAdmin } from '@/lib/payroll-wallet'
 import { isSystemOwner, normalizeAlmaRole } from '@/lib/roles'
 import { resolveMyDeskProfile } from '@/lib/profile-resolution'
+import { isAllBusinessesScope } from '@/lib/attendance-business'
 
 export async function getWalletContext(req: NextRequest, requestedBusinessId?: string | null) {
   const token = await getJwt(req)
@@ -14,7 +15,11 @@ export async function getWalletContext(req: NextRequest, requestedBusinessId?: s
   const role = normalizeAlmaRole(token.role as string)
   const systemOwner = isSystemOwner(role)
   const businessIds = walletBusinessFilter(token.businessAccess, requestedBusinessId)
-  if (requestedBusinessId && !businessIds.includes(requestedBusinessId as never)) {
+  if (
+    requestedBusinessId
+    && !isAllBusinessesScope(requestedBusinessId)
+    && !businessIds.includes(requestedBusinessId as never)
+  ) {
     return { error: NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 }) }
   }
   const tokenEmployeeId = String(token.employeeIdGas || '').trim()

@@ -12,6 +12,14 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 
 type AttendanceDashboard = {
+  businessId?: string
+  businessIds?: string[]
+  scopeAllBusinesses?: boolean
+  integrity?: {
+    issueCount: number
+    issues: Array<{ kind: string; businessId?: string; todayCount?: number; employeeId?: string; name?: string }>
+    crossBusinessHint?: Array<{ businessId: string; todayCount: number }>
+  }
   kpis: {
     employeeCount: number
     todayAttendance: number
@@ -26,6 +34,7 @@ type AttendanceDashboard = {
   }
   records: Array<{
     id: string
+    businessId?: string
     userId: string
     employeeId: string
     employeeName: string
@@ -108,11 +117,14 @@ export default function AttendancePage() {
   const [analytics, setAnalytics] = useState<PenaltyAnalytics | null>(null)
   const [review, setReview] = useState<ReviewState>(null)
   const canReview = role === 'SUPER_ADMIN' || role === 'ADMIN'
+  const [viewAllBusinesses, setViewAllBusinesses] = useState(role === 'SUPER_ADMIN')
+  const [showIntegrity, setShowIntegrity] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/attendance?business_id=${business.id}`, { cache: 'no-store' })
+      const bizParam = viewAllBusinesses && role === 'SUPER_ADMIN' ? 'ALL' : business.id
+      const res = await fetch(`/api/attendance?business_id=${encodeURIComponent(bizParam)}`, { cache: 'no-store' })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || res.statusText)
       setData(j as AttendanceDashboard)
@@ -122,7 +134,7 @@ export default function AttendancePage() {
     } finally {
       setLoading(false)
     }
-  }, [business.id])
+  }, [business.id, viewAllBusinesses, role])
 
   const loadAnalytics = useCallback(async () => {
     if (!canReview) return
@@ -230,8 +242,52 @@ export default function AttendancePage() {
     <FinancePageChrome
       title="Attendance"
       subtitle="Office time, late penalties, wallet deductions, and penalty review queue"
-      actions={<div className="flex gap-2 flex-wrap justify-end"><Link href="/portal"><Button size="xs" variant="secondary">My desk</Button></Link><Button size="xs" variant="gold" onClick={() => void load()}>Refresh</Button></div>}
+      actions={
+        <div className="flex gap-2 flex-wrap justify-end">
+          {role === 'SUPER_ADMIN' && (
+            <Button
+              size="xs"
+              variant={viewAllBusinesses ? 'gold' : 'secondary'}
+              onClick={() => setViewAllBusinesses(v => !v)}
+            >
+              {viewAllBusinesses ? 'All businesses' : business.shortName}
+            </Button>
+          )}
+          <Button size="xs" variant="ghost" onClick={() => setShowIntegrity(v => !v)}>Integrity</Button>
+          <Link href="/portal"><Button size="xs" variant="secondary">My desk</Button></Link>
+          <Button size="xs" variant="gold" onClick={() => void load()}>Refresh</Button>
+        </div>
+      }
     >
+      {showIntegrity && data?.integrity && (
+        <Card className="p-4 border-amber-500/25 bg-amber-500/5">
+          <p className="text-sm font-black text-cream">Attendance Integrity Monitor</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            {data.scopeAllBusinesses ? 'Viewing all businesses' : `Scoped to ${business.name}`}
+            {' · '}{data.integrity.issueCount} issue(s)
+          </p>
+          {(data.integrity.crossBusinessHint ?? []).length > 0 && !viewAllBusinesses && (
+            <p className="mt-2 text-xs font-bold text-amber-300">
+              Activity today in other businesses:{' '}
+              {data.integrity.crossBusinessHint!.map(h => `${h.businessId} (${h.todayCount})`).join(', ')}
+              {' — '}use <strong>All businesses</strong> to view.
+            </p>
+          )}
+          {data.integrity.issueCount > 0 && (
+            <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto text-[11px] text-zinc-400">
+              {data.integrity.issues.map((row, i) => (
+                <li key={`${row.kind}-${i}`}>
+                  {row.kind.replace(/_/g, ' ')}
+                  {row.businessId ? ` · ${row.businessId}` : ''}
+                  {row.employeeId ? ` · ${row.employeeId}` : ''}
+                  {row.name ? ` · ${row.name}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Today present" value={loading ? '—' : Number(k?.todayAttendance ?? 0)} loading={loading} />
         <KpiCard label="Absent today" value={loading ? '—' : Number(k?.absentEmployees ?? 0)} color="text-red-400" loading={loading} />
@@ -306,6 +362,7 @@ export default function AttendancePage() {
                 <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                   <tr>
                     <th className="py-2 pr-3">Employee</th>
+                    {data?.scopeAllBusinesses && <th className="py-2 pr-3">Business</th>}
                     <th className="py-2 pr-3">Check in</th>
                     <th className="py-2 pr-3">Check out</th>
                     <th className="py-2 pr-3 text-right">Worked</th>
@@ -327,6 +384,9 @@ export default function AttendancePage() {
                           </span>
                         </div>
                       </td>
+                      {data?.scopeAllBusinesses && (
+                        <td className="py-2 pr-3 text-zinc-500">{r.businessId?.replace(/_/g, ' ') || '—'}</td>
+                      )}
                       <td className="py-2 pr-3 font-mono">{time(r.checkInAt)}</td>
                       <td className="py-2 pr-3 font-mono">{r.checkOutAt ? time(r.checkOutAt) : '--'}</td>
                       <td className="py-2 pr-3 text-right font-mono">{duration(r.totalWorkMinutes)}</td>

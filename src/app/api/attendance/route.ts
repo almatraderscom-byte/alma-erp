@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
+import { normalizeAlmaRole } from '@/lib/roles'
 import { attendanceDateFor, attendanceRecordDto, attendanceWaiverDto } from '@/lib/attendance'
-import { resolveProfileImageForUser } from '@/lib/user-display'
+import { resolveAttendanceBusinessScope } from '@/lib/attendance-business'
+import { buildAdminAttendanceDashboard } from '@/lib/attendance-admin-dashboard'
 import { errorMeta, logEvent } from '@/lib/logger'
 import type { AttendanceErrorCode } from '@/lib/attendance-errors'
 
@@ -23,13 +25,6 @@ function monthRange(date: Date) {
   return { start, end }
 }
 
-function minutesLabel(minutes: number) {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  if (!h) return `${m}m`
-  return `${h}h ${m}m`
-}
-
 function attendanceErrorResponse(status: number, code: AttendanceErrorCode, error: string, retryable = false) {
   return NextResponse.json({ error, code, retryable }, { status })
 }
@@ -41,13 +36,20 @@ export async function GET(req: NextRequest) {
   let employeeId = ''
   try {
   const url = new URL(req.url)
-  const businessId = url.searchParams.get('business_id')
-  const ctx = await getWalletContext(req, businessId)
+  const businessIdParam = url.searchParams.get('business_id')
+  const ctx = await getWalletContext(req, businessIdParam)
   if ('error' in ctx) return ctx.error
   actorUserId = ctx.userId
   scope = url.searchParams.get('scope') || ''
 
-  const selectedBusinessId = ctx.businessIds[0]
+  const role = normalizeAlmaRole(ctx.role as string)
+  const scopeBusinessIds = resolveAttendanceBusinessScope(
+    String(ctx.token.businessAccess || ''),
+    businessIdParam,
+    role,
+  )
+  const scopeAllBusinesses = scopeBusinessIds.length > 1
+  const selectedBusinessId = scopeBusinessIds[0]
   const date = parseDateParam(url.searchParams.get('date'))
   const { start: monthStart, end: monthEnd } = monthRange(date)
   const employeeIdParam = url.searchParams.get('employee_id')?.trim()
@@ -152,122 +154,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'employee_id or scope=me required' }, { status: 400 })
   }
 
-  const [employees, todayRecords, monthRecords, pendingWaivers, selfieRows] = await Promise.all([
-    prisma.user.findMany({
-      where: {
-        active: true,
-        role: { not: 'SUPER_ADMIN' },
-        employeeIdGas: { not: null },
-        businessAccess: { contains: selectedBusinessId },
-      },
-      select: { id: true, name: true, email: true, employeeIdGas: true, profileImageUrl: true, updatedAt: true },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { businessId: selectedBusinessId, attendanceDate: date },
-      include: {
-        user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
-        waiverRequests: true,
-        selfieVerifications: true,
-      },
-      orderBy: { checkInAt: 'asc' },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { businessId: selectedBusinessId, attendanceDate: { gte: monthStart, lt: monthEnd } },
-      include: { user: { select: { name: true } } },
-      orderBy: { attendanceDate: 'desc' },
-    }),
-    prisma.attendanceWaiverRequest.findMany({
-      where: { businessId: selectedBusinessId, status: 'PENDING' },
-      include: {
-        requester: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
-        attendanceRecord: true,
-      },
-      orderBy: { createdAt: 'asc' },
-      take: 50,
-    }),
-    prisma.attendanceSelfieVerification.findMany({
-      where: { businessId: selectedBusinessId, capturedAt: { gte: monthStart, lt: monthEnd } },
-      orderBy: { capturedAt: 'desc' },
-      take: 8,
-    }),
-  ])
-
-  const presentEmployeeIds = new Set(todayRecords.map(r => r.employeeId))
-  const absentEmployees = employees.filter(e => e.employeeIdGas && !presentEmployeeIds.has(e.employeeIdGas))
-  const lateRecords = todayRecords.filter(r => r.lateMinutes > 0)
-  const suspiciousRecords = todayRecords.filter(r => r.trustStatus !== 'TRUSTED' || r.verificationRequired)
-  const todayPenaltyTotal = todayRecords.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
-  const monthPenaltyTotal = monthRecords.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
-  const elapsedMonthDays = Math.max(1, Math.min(date.getUTCDate(), new Date().getUTCDate()))
-  const attendanceRate = employees.length ? Math.round((monthRecords.length / (employees.length * elapsedMonthDays)) * 100) : 0
-
-  const ranking = employees.map(employee => {
-    const rows = monthRecords.filter(r => r.employeeId === employee.employeeIdGas)
-    const lateCount = rows.filter(r => r.lateMinutes > 0).length
-    const penaltyTotal = rows.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
-    const avgWork = rows.length ? Math.round(rows.reduce((sum, r) => sum + r.totalWorkMinutes, 0) / rows.length) : 0
-    return {
-      userId: employee.id,
-      employeeId: employee.employeeIdGas,
-      name: employee.name,
-      profileImageUrl: resolveProfileImageForUser(employee),
-      presentDays: rows.length,
-      lateCount,
-      penaltyTotal,
-      averageWorkMinutes: avgWork,
-      averageWorkLabel: minutesLabel(avgWork),
-      punctualityScore: Math.max(0, 100 - lateCount * 12 - Math.round(penaltyTotal / 100) * 5),
-    }
-  }).sort((a, b) => b.punctualityScore - a.punctualityScore)
-
-  return NextResponse.json({
-    businessId: selectedBusinessId,
-    date: date.toISOString(),
-    kpis: {
-      employeeCount: employees.length,
-      todayAttendance: todayRecords.length,
-      absentEmployees: absentEmployees.length,
-      lateEmployees: lateRecords.length,
-      todayPenaltyTotal,
-      monthPenaltyTotal,
-      attendanceRate,
-      pendingWaivers: pendingWaivers.length,
-      suspiciousAttendance: suspiciousRecords.length,
-      pendingVerifications: todayRecords.filter(r => r.verificationRequired).length,
-    },
-    records: todayRecords.map(record => ({
-      ...attendanceRecordDto(record),
-      employeeName: record.user.name,
-      employeeEmail: record.user.email,
-      profileImageUrl: resolveProfileImageForUser(record.user),
-    })),
-    absentEmployees: absentEmployees.map(e => ({
-      id: e.id,
-      employeeId: e.employeeIdGas,
-      name: e.name,
-      email: e.email,
-      profileImageUrl: resolveProfileImageForUser(e),
-    })),
-    pendingWaivers: pendingWaivers.map(w => ({
-      ...attendanceWaiverDto(w),
-      requesterUserId: w.requester.id,
-      requesterName: w.requester.name,
-      requesterEmail: w.requester.email,
-      requesterProfileImageUrl: resolveProfileImageForUser(w.requester),
-      lateMinutes: w.attendanceRecord.lateMinutes,
-    })),
-    selfieLogs: selfieRows.map(row => ({
-      id: row.id,
-      attendanceRecordId: row.attendanceRecordId,
-      employeeId: row.employeeId,
-      capturedAt: row.capturedAt.toISOString(),
-      sizeBytes: row.sizeBytes,
-      imageDataUrl: row.imageDataUrl,
-      reviewedAt: row.reviewedAt?.toISOString() || null,
-    })),
-    ranking,
+  const dashboard = await buildAdminAttendanceDashboard({
+    businessIds: scopeBusinessIds,
+    date,
+    monthStart,
+    monthEnd,
+    scopeAllBusinesses,
   })
+
+  logEvent('info', 'attendance.get.admin_ok', {
+    userId: actorUserId,
+    businessIds: scopeBusinessIds,
+    scopeAllBusinesses,
+    employeeCount: dashboard.kpis.employeeCount,
+    todayAttendance: dashboard.kpis.todayAttendance,
+    durationMs: Date.now() - started,
+  })
+
+  return NextResponse.json(dashboard)
   } catch (e) {
     const meta = {
       ...errorMeta(e),
