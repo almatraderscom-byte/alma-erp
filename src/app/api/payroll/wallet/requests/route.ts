@@ -64,13 +64,36 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
     payoutSnapshot = toPayoutSummary(preferred, { reveal: false })
   }
 
-  const request = await prisma.walletRequest.create({
+  // Freeze-window idempotency guard: prevent duplicate PENDING wallet requests
+  // when a client retries (mobile reconnect, double-tap, 502-from-cold-lambda).
+  // Without this, two POSTs with the same fingerprint create two approvable
+  // rows. We look for an exact-fingerprint PENDING row from the last 5 minutes;
+  // the matching ApprovalRequest is then created idempotently below
+  // (createApprovalRequest does its own findFirst-by-entityId), so an orphan
+  // wallet row from an earlier partial failure is auto-healed by the retry.
+  const idempotencyWindow = new Date(Date.now() - 5 * 60_000)
+  const requestedDecimal = moneyDecimal(amount)
+  const existingDuplicate = await prisma.walletRequest.findFirst({
+    where: {
+      userId: ctx.userId,
+      employeeId,
+      businessId,
+      type,
+      status: 'PENDING',
+      requestedAmount: requestedDecimal,
+      reason,
+      createdAt: { gte: idempotencyWindow },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  const request = existingDuplicate ?? await prisma.walletRequest.create({
     data: {
       userId: ctx.userId,
       employeeId,
       businessId,
       type,
-      requestedAmount: moneyDecimal(amount),
+      requestedAmount: requestedDecimal,
       reason,
       paymentMethodId,
     },
@@ -126,5 +149,5 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
     metadata: { requestId: request.id, employeeId, businessId: request.businessId, type, amount },
   })
 
-  return apiDataSuccess({ request })
+  return apiDataSuccess({ request, idempotentReplay: Boolean(existingDuplicate) })
 })
