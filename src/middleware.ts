@@ -4,7 +4,7 @@ import { getToken } from 'next-auth/jwt'
 import { rateLimit } from '@/lib/rate-limit'
 import { isPathAllowedForRole, normalizeAlmaRole, roleHomePath } from '@/lib/roles'
 import type { BusinessId } from '@/lib/businesses'
-import { businessAllowed } from '@/lib/business-access'
+import { businessAllowed, parseBusinessAccess } from '@/lib/business-access'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
 
@@ -89,8 +89,15 @@ export async function middleware(req: NextRequest) {
 
   if (AUTH_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))) {
     if (token?.sub) {
+      const role = normalizeAlmaRole(token.role as string)
+      const allowed = parseBusinessAccess(token.businessAccess as string | undefined)
+      const businessId: BusinessId = allowed.includes('ALMA_TRADING')
+        ? 'ALMA_TRADING'
+        : allowed.includes('CREATIVE_DIGITAL_IT')
+          ? 'CREATIVE_DIGITAL_IT'
+          : allowed[0] ?? 'ALMA_LIFESTYLE'
       const url = req.nextUrl.clone()
-      url.pathname = '/'
+      url.pathname = roleHomePath(role, businessId)
       url.search = ''
       return NextResponse.redirect(url)
     }

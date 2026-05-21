@@ -6,6 +6,7 @@ import { notifyRole, notifyUser } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import { handleOrderCommissionStatus, resolveOrderHandlerUser } from '@/lib/payroll-compensation'
 import type { Order } from '@/types'
+import { enqueueCourierUpdateSms } from '@/services/sms/events'
 
 const VALID_STATUSES = new Set(['Pending', 'Confirmed', 'Packed', 'Shipped', 'Delivered', 'CANCELLED', 'RETURNED', 'FAILED_DELIVERY'])
 const DESTRUCTIVE_STATUSES = new Set(['CANCELLED', 'RETURNED', 'FAILED_DELIVERY'])
@@ -42,6 +43,14 @@ export async function POST(req: NextRequest) {
       commission = { ok: false, error: (commissionError as Error).message }
     }
     const handler = await resolveOrderHandlerUser(beforeOrder)
+    if (nextStatus === 'Shipped') {
+      enqueueCourierUpdateSms({
+        businessId,
+        phone: beforeOrder.phone,
+        tracking: beforeOrder.tracking_id,
+        orderId: id,
+      })
+    }
     const priority = DESTRUCTIVE_STATUSES.has(nextStatus) ? 'HIGH' : 'NORMAL'
     const title = statusTitle(nextStatus)
     const message = `Order ${id} changed from ${previousStatus} to ${nextStatus.replace(/_/g, ' ')}.`

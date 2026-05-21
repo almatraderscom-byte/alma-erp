@@ -10,20 +10,12 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { can } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
+import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 
 type UserAccountMenuProps = {
   collapsed?: boolean
   mobile?: boolean
-}
-
-function initialsFor(nameOrEmail: string | null | undefined) {
-  const base = nameOrEmail?.trim() || 'Account'
-  const parts = base.includes('@') ? [base[0]] : base.split(/\s+/)
-  return parts
-    .map(part => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -47,9 +39,9 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
   const rootRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
 
+  const { userId, profileImageUrl } = useMyProfileImage()
   const displayName = data?.user?.name || 'Account'
   const email = data?.user?.email || ''
-  const initials = initialsFor(displayName || email)
   const businessChoices = BUSINESS_LIST.filter(item => allowedBusinessIds.includes(item.id))
   const canManageTeam = can(role, 'userManage')
   const canOpenAdminSettings = role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'HR'
@@ -119,10 +111,7 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
     >
       <div className="border-b border-border bg-gradient-to-br from-gold/[0.10] to-transparent p-4">
         <div className="flex items-start gap-3">
-          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-gold-dim/50 bg-gold/15 text-xs font-black text-gold-lt">
-            {initials}
-            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0b0b0f] bg-green-400" aria-label="Active session" />
-          </span>
+          <EmployeeAvatar userId={userId} name={displayName} email={email} imageUrl={profileImageUrl} size="md" showStatus className="rounded-2xl" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-bold text-cream">{displayName}</p>
             <div className="mt-1"><RoleBadge role={role} /></div>
@@ -137,7 +126,8 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
 
       <div className="p-2">
         <MenuLink href="/portal" label="My profile" detail="Personal desk and payroll snapshot" onSelect={() => setOpen(false)} />
-        <MenuLink href="/settings/session" label="Session & Security" detail="Profile, diagnostics, password" onSelect={() => setOpen(false)} />
+        <MenuLink href="/portal#profile-photo" label="Profile photo" detail="Upload or update your avatar" onSelect={() => setOpen(false)} />
+        <MenuLink href="/settings/session#profile-photo" label="Session & Security" detail="Photo, name, diagnostics, password" onSelect={() => setOpen(false)} />
 
         <button
           type="button"
@@ -274,10 +264,7 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
           mobile && 'justify-center border-transparent bg-transparent p-0 hover:bg-transparent',
         )}
       >
-        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-gold-dim/45 bg-gold/15 text-[11px] font-black text-gold-lt shadow-inner">
-          {initials}
-          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-green-400" />
-        </span>
+        <EmployeeAvatar userId={userId} name={displayName} email={email} imageUrl={profileImageUrl} size="md" showStatus className="rounded-2xl" />
         {!collapsed && !mobile && (
           <span className="min-w-0 flex-1 overflow-hidden">
             <span className="block truncate text-[12px] font-bold text-cream">{displayName}</span>

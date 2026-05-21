@@ -1,5 +1,6 @@
 'use client'
 import { useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { motion } from 'framer-motion'
 import { useOrdersData } from '@/contexts/OrdersDataContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -7,18 +8,23 @@ import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { aggregateDashboardMetrics } from '@/lib/order-analytics'
 import { Card, KpiCard, Skeleton, StatusBadge, PageHeader, Empty, Money, BdtText } from '@/components/ui'
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
-import {
-  RevenueChart,
-  BarSourceChart,
-  DonutChart,
-  DailySalesChart,
-  MonthlyRevenueChart,
-  StatusPieChart,
-} from '@/components/charts'
 import { fmt, fmtNum, pct } from '@/lib/utils'
 import type { Order } from '@/types'
+import { useBusiness } from '@/contexts/BusinessContext'
+
+const TradingDashboard = dynamic(() => import('@/app/trading/page'), {
+  ssr: false,
+  loading: () => <Skeleton className="m-4 h-80 md:m-8" />,
+})
 
 const PALETTE = ['#C9A84C', '#8B6914', '#E8C96A', '#6B5530', '#4A3A20']
+const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
+const RevenueChart = dynamic(() => import('@/components/charts').then(m => m.RevenueChart), { ssr: false, loading: chartFallback })
+const BarSourceChart = dynamic(() => import('@/components/charts').then(m => m.BarSourceChart), { ssr: false, loading: chartFallback })
+const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
+const DailySalesChart = dynamic(() => import('@/components/charts').then(m => m.DailySalesChart), { ssr: false, loading: chartFallback })
+const MonthlyRevenueChart = dynamic(() => import('@/components/charts').then(m => m.MonthlyRevenueChart), { ssr: false, loading: chartFallback })
+const StatusPieChart = dynamic(() => import('@/components/charts').then(m => m.StatusPieChart), { ssr: false, loading: chartFallback })
 
 const fade = (i: number) => ({
   initial: { opacity: 0, y: 16 },
@@ -27,7 +33,30 @@ const fade = (i: number) => ({
 })
 
 export default function DashboardPage() {
-  const { orders: allOrders, loading, error } = useOrdersData()
+  const { businessId } = useBusiness()
+  if (businessId === 'ALMA_TRADING') return <TradingDashboard />
+  if (businessId === 'CREATIVE_DIGITAL_IT') {
+    return <Skeleton className="m-4 h-40 md:m-8" />
+  }
+  return <LifestyleDashboard />
+}
+
+function LifestyleDashboard() {
+  const { orders: allOrders, loading, error, enabled } = useOrdersData()
+  if (!enabled) {
+    return (
+      <>
+        <PageHeader title="Dashboard" subtitle="Alma Lifestyle orders" actions={<ConnectionStatus />} />
+        <div className="p-4 md:p-8">
+          <Empty
+            icon="◫"
+            title="Lifestyle dashboard only"
+            desc="Switch to Alma Lifestyle in the business menu to load orders KPIs."
+          />
+        </div>
+      </>
+    )
+  }
   const { range, label: rangeLabel } = useDateRange()
 
   const metrics = useMemo(() => {
@@ -78,7 +107,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <motion.div layout className="p-4 md:p-8 space-y-5">
+      <div className="p-4 md:p-8 space-y-5">
 
         <DateRangeFilter />
 
@@ -96,6 +125,13 @@ export default function DashboardPage() {
           <KpiCard label="Returns" value={loading ? '—' : fmtNum(kpis.returned_count)} sub={pct(kpis.return_rate) + ' rate'} color={kpis.return_rate > 15 ? 'text-red-400' : 'text-cream'} loading={loading} />
           <KpiCard label="Cancelled" value={loading ? '—' : fmtNum(kpis.cancelled_count)} sub="Excluded from revenue" color="text-zinc-400" loading={loading} />
           <KpiCard label="Failed Delivery" value={loading ? '—' : fmtNum(kpis.failed_delivery_count)} sub="Courier failures" color="text-orange-400" loading={loading} />
+        </motion.div>
+
+        <motion.div {...fade(1.5)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard label="Realized Profit" value={loading ? '—' : fmt(kpis.total_realized_profit ?? kpis.total_profit)} sub="Delivered only" color="text-green-400" loading={loading} />
+          <KpiCard label="Pending Profit" value={loading ? '—' : fmt(kpis.pending_profit ?? 0)} sub="Open orders" color="text-amber-400" loading={loading} />
+          <KpiCard label="Reversed Profit" value={loading ? '—' : fmt(kpis.reversed_profit ?? 0)} sub="Returned/cancelled/failed" color="text-red-300" loading={loading} />
+          <KpiCard label="Loss Orders" value={loading ? '—' : fmtNum(kpis.loss_orders ?? 0)} sub="Estimated below zero" color="text-red-400" loading={loading} />
         </motion.div>
 
         {/* Charts row 1: daily + monthly */}
@@ -123,14 +159,14 @@ export default function DashboardPage() {
               ) : (
                 <>
                   <MonthlyRevenueChart data={metrics.monthly_trend} />
-                  <motion.div layout className="flex gap-5 mt-3">
+                  <div className="flex gap-5 mt-3">
                     {[{ color: 'bg-gold', label: 'Revenue' }, { color: 'bg-green-400', label: 'Profit' }].map(l => (
                       <div key={l.label} className="flex items-center gap-2">
                         <div className={`w-4 h-0.5 ${l.color} rounded`} />
                         <span className="text-[10px] text-zinc-500">{l.label}</span>
                       </div>
                     ))}
-                  </motion.div>
+                  </div>
                 </>
               )}
             </Card>
@@ -154,10 +190,10 @@ export default function DashboardPage() {
                   <RevenueChart data={metrics.monthly_trend} />
                   <div className="flex gap-5 mt-3">
                     {[{ color: 'bg-gold', label: 'Revenue' }, { color: 'bg-green-400', label: 'Profit' }].map(l => (
-                      <motion.div layout key={l.label} className="flex items-center gap-2">
-                        <motion.div layout className={`w-4 h-0.5 ${l.color} rounded`} />
+                      <div key={l.label} className="flex items-center gap-2">
+                        <div className={`w-4 h-0.5 ${l.color} rounded`} />
                         <span className="text-[10px] text-zinc-500">{l.label}</span>
-                      </motion.div>
+                      </div>
                     ))}
                   </div>
                 </>
@@ -320,7 +356,7 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-      </motion.div>
+      </div>
     </>
   )
 }

@@ -19,17 +19,33 @@ export async function GET(req: NextRequest) {
     prisma.notification.count({ where: { priority: 'CRITICAL' } }),
   ])
 
-  const byBroadcast = await Promise.all(broadcasts.map(async b => {
-    const notificationIds = (await prisma.notification.findMany({ where: { broadcastId: b.id }, select: { id: true } })).map(n => n.id)
-    const where = { notificationId: { in: notificationIds } }
-    const [recipients, deliveredCount, seenCount, acknowledgedCount] = await Promise.all([
-      prisma.notificationRecipient.count({ where }),
-      prisma.notificationRecipient.count({ where: { ...where, deliveredAt: { not: null } } }),
-      prisma.notificationRecipient.count({ where: { ...where, seenAt: { not: null } } }),
-      prisma.notificationRecipient.count({ where: { ...where, acknowledgedAt: { not: null } } }),
-    ])
-    return { ...b, recipients, delivered: deliveredCount, seen: seenCount, acknowledged: acknowledgedCount }
-  }))
+  const broadcastIds = broadcasts.map(b => b.id)
+  const notifications = broadcastIds.length
+    ? await prisma.notification.findMany({
+        where: { broadcastId: { in: broadcastIds } },
+        select: { id: true, broadcastId: true },
+      })
+    : []
+  const notificationToBroadcast = new Map(notifications.map(n => [n.id, n.broadcastId]))
+  const recipientRows = notifications.length
+    ? await prisma.notificationRecipient.findMany({
+        where: { notificationId: { in: notifications.map(n => n.id) } },
+        select: { notificationId: true, deliveredAt: true, seenAt: true, acknowledgedAt: true },
+      })
+    : []
+  const statsByBroadcast = new Map<string, { recipients: number; delivered: number; seen: number; acknowledged: number }>()
+  for (const row of recipientRows) {
+    const broadcastId = notificationToBroadcast.get(row.notificationId)
+    if (!broadcastId) continue
+    const stats = statsByBroadcast.get(broadcastId) || { recipients: 0, delivered: 0, seen: 0, acknowledged: 0 }
+    stats.recipients += 1
+    if (row.deliveredAt) stats.delivered += 1
+    if (row.seenAt) stats.seen += 1
+    if (row.acknowledgedAt) stats.acknowledged += 1
+    statsByBroadcast.set(broadcastId, stats)
+  }
+
+  const byBroadcast = broadcasts.map(b => ({ ...b, ...(statsByBroadcast.get(b.id) || { recipients: 0, delivered: 0, seen: 0, acknowledged: 0 }) }))
 
   return NextResponse.json({
     totals: {

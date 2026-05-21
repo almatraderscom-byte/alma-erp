@@ -71,7 +71,8 @@ export default function CrmPage() {
 
         {/* Table — desktop */}
         <Card className="hidden md:block overflow-hidden">
-          <table className="w-full text-xs border-collapse">
+          <div className="table-scroll">
+          <table className="w-full min-w-[1080px] text-xs border-collapse">
             <thead>
               <tr className="border-b border-border">
                 {['Customer','District','Orders','Revenue','CLV Score','Risk','Segment','Last Order','Actions'].map(h => (
@@ -126,6 +127,7 @@ export default function CrmPage() {
             </tbody>
           </table>
           {!loading && customers.length === 0 && <Empty icon="◎" title="No customers match" desc="Try a different filter" />}
+          </div>
         </Card>
 
         {/* Mobile cards */}

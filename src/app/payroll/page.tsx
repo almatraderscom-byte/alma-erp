@@ -12,6 +12,8 @@ import { pdf } from '@react-pdf/renderer'
 import { BusinessPayrollSummaryDocument } from '@/components/pdf/PayrollWalletDocuments'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import { unwrapApiData } from '@/lib/safe-api-response'
 
 export default function PayrollPage() {
   const { role } = useActor()
@@ -26,6 +28,7 @@ export default function PayrollPage() {
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
   const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; requestedAmount: number; approvedAmount: string } | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState('ALL')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [compForm, setCompForm] = useState({ employeeId: '', type: 'EID_BONUS', amount: '', note: '', date: new Date().toISOString().slice(0, 10) })
@@ -39,11 +42,13 @@ export default function PayrollPage() {
     const requestId = ++walletRequestId.current
     setWalletLoading(true)
     try {
-      const res = await fetch(`/api/payroll/wallet/summary?business_id=${business.id}${fresh ? `&refresh=${Date.now()}` : ''}`)
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || res.statusText)
+      const result = await safeFetchJsonWithToast<WalletSummaryResponse>(
+        `/api/payroll/wallet/summary?business_id=${business.id}${fresh ? `&refresh=${Date.now()}` : ''}`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (!result.ok) throw new Error(result.error.message)
       if (requestId !== walletRequestId.current) return
-      setWalletData(j as WalletSummaryResponse)
+      setWalletData(unwrapApiData<WalletSummaryResponse>(result.data as Record<string, unknown>))
     } catch (e) {
       if (requestId !== walletRequestId.current) return
       toast.error((e as Error).message || 'Could not load employee wallets')
@@ -59,13 +64,19 @@ export default function PayrollPage() {
   const loadAutomation = useCallback(async () => {
     if (!showApprovals) return
     const [settingRes, previewRes, historyRes] = await Promise.all([
-      fetch('/api/payroll/wallet/automation', { cache: 'no-store' }),
-      fetch(`/api/payroll/wallet/accruals/preview?business_id=${business.id}`, { cache: 'no-store' }),
-      fetch(`/api/payroll/wallet/accruals/history?business_id=${business.id}`, { cache: 'no-store' }),
+      safeFetchJsonWithToast<Record<string, unknown>>('/api/payroll/wallet/automation', { cache: 'no-store', toastOnError: false }),
+      safeFetchJsonWithToast<Record<string, unknown>>(`/api/payroll/wallet/accruals/preview?business_id=${business.id}`, { cache: 'no-store', toastOnError: false }),
+      safeFetchJsonWithToast<Record<string, unknown>>(`/api/payroll/wallet/accruals/history?business_id=${business.id}`, { cache: 'no-store', toastOnError: false }),
     ])
-    if (settingRes.ok) setAutomation((await settingRes.json()).setting)
-    if (previewRes.ok) setPreview(await previewRes.json())
-    if (historyRes.ok) setHistory((await historyRes.json()).runs ?? [])
+    if (settingRes.ok) {
+      const s = unwrapApiData<{ setting: { enabled: boolean; dayOfMonth: number; timezone: string } }>(settingRes.data as Record<string, unknown>)
+      setAutomation(s.setting)
+    }
+    if (previewRes.ok) setPreview(unwrapApiData(previewRes.data as Record<string, unknown>) as NonNullable<typeof preview>)
+    if (historyRes.ok) {
+      const h = unwrapApiData<{ runs: typeof history }>(historyRes.data as Record<string, unknown>)
+      setHistory(h.runs ?? [])
+    }
   }, [business.id, showApprovals])
 
   useEffect(() => {
@@ -73,7 +84,7 @@ export default function PayrollPage() {
   }, [loadAutomation])
 
   async function submitReview() {
-    if (!review) return
+    if (!review || reviewBusy) return
     const approvedAmount = review.action === 'APPROVE'
       ? Number(review.approvedAmount || review.requestedAmount)
       : undefined
@@ -81,49 +92,42 @@ export default function PayrollPage() {
       toast.error('Enter a valid approved amount')
       return
     }
-    const res = await fetch(`/api/payroll/wallet/requests/${review.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: review.action, approvedAmount, note: '' }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not update')
-      return
+    setReviewBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast(`/api/payroll/wallet/requests/${review.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: review.action, approvedAmount, note: '' }),
+      })
+      if (!result.ok) return
+      toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
+      setReview(null)
+      void loadWallets(true)
+    } finally {
+      setReviewBusy(false)
     }
-    toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
-    setReview(null)
-    await loadWallets(true)
   }
 
   async function runAccrual() {
-    const res = await fetch('/api/payroll/wallet/accruals/run', {
+    const result = await safeFetchJsonWithToast('/api/payroll/wallet/accruals/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ business_id: business.id }),
     })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok || j.ok === false) {
-      toast.error(j.error || 'Accrual run failed')
-      return
-    }
+    if (!result.ok) return
     toast.success('Monthly salary accrual checked')
-    await loadWallets(true)
-    await loadAutomation()
+    void loadWallets(true)
+    void loadAutomation()
   }
 
   async function toggleAutomation(enabled: boolean) {
-    const res = await fetch('/api/payroll/wallet/automation', {
+    const result = await safeFetchJsonWithToast<{ setting: NonNullable<typeof automation> }>('/api/payroll/wallet/automation', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not update automation')
-      return
-    }
-    setAutomation(j.setting)
+    if (!result.ok) return
+    setAutomation(result.data.setting)
     toast.success(enabled ? 'Payroll automation enabled' : 'Payroll automation disabled')
   }
 
@@ -162,7 +166,7 @@ export default function PayrollPage() {
     }
     setCompBusy(true)
     try {
-      const res = await fetch('/api/payroll/wallet/entries', {
+      const result = await safeFetchJsonWithToast('/api/payroll/wallet/entries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -174,11 +178,10 @@ export default function PayrollPage() {
           date: compForm.date,
         }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Could not post compensation')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Compensation ledger entry posted')
       setCompForm(f => ({ ...f, amount: '', note: '' }))
-      await loadWallets(true)
+      void loadWallets(true)
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -317,8 +320,8 @@ export default function PayrollPage() {
         {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
           <Empty icon="◈" title="No wallet ledger yet" desc="Run accrual or approve requests to create wallet entries." />
         ) : (
-          <div className="overflow-x-auto max-h-[480px]">
-            <table className="w-full text-left text-[11px]">
+          <div className="table-scroll max-h-[480px]">
+            <table className="w-full min-w-[1080px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 pr-3">Employee</th>
@@ -390,8 +393,8 @@ export default function PayrollPage() {
         {loading ? <Skeleton className="h-40" /> : roll.length === 0 ? (
           <Empty icon="⌁" title="No active payroll" desc="Add employees then log advances or salary payouts" />
         ) : (
-          <div className="overflow-x-auto max-h-[480px]">
-            <table className="w-full text-left text-[11px]">
+          <div className="table-scroll max-h-[480px]">
+            <table className="w-full min-w-[980px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 pr-3">Employee</th>

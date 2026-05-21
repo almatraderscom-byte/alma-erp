@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useBusiness } from '@/contexts/BusinessContext'
 import type { BusinessBranding } from '@/types/branding'
 import { defaultBusinessBranding, readCachedBranding, writeCachedBranding } from '@/lib/branding-defaults'
+import { subscribeMobileRefresh } from '@/lib/mobile-refresh'
 
 interface BrandingContextValue {
   branding: BusinessBranding | null
@@ -42,6 +43,12 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refetch()
+  }, [refetch])
+
+  useEffect(() => {
+    return subscribeMobileRefresh(() => {
+      void refetch()
+    })
   }, [refetch])
 
   const value = useMemo(

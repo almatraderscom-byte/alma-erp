@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useState } from 'react'
 import { Button } from '@/components/ui'
+import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import toast from 'react-hot-toast'
 
 function ResetInner() {
@@ -65,7 +66,7 @@ function ResetInner() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<div className="min-h-[100dvh] bg-black" />}>
+    <Suspense fallback={<LoadingOverlay label="Preparing reset" />}>
       <ResetInner />
     </Suspense>
   )

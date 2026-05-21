@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { captureFaceFromFile } from '@/lib/attendance-face-client'
 import { Button, Spinner } from '@/components/ui'
 
@@ -101,7 +102,7 @@ export function SelfieVerificationModal({
     setSubmitting(true)
     setNudgeConfirm(false)
     try {
-      const res = await fetch('/api/attendance/selfies', {
+      const result = await safeFetchJsonWithToast('/api/attendance/selfies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -111,8 +112,7 @@ export function SelfieVerificationModal({
           content_type: 'image/jpeg',
         }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(String(j.error || 'Could not upload verification photo'))
+      if (!result.ok) throw new Error(result.error.message)
 
       setPhase('success')
       toast.success('Verification submitted')

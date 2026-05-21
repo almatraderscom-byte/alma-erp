@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { Button, Card, Input, Skeleton } from '@/components/ui'
-import { safeResponseJson } from '@/lib/safe-api-response'
+import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 
 type MethodRow = {
   id: string
@@ -40,12 +40,12 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await fetch(`/api/employee/payment-methods?business_id=${encodeURIComponent(businessId)}`, {
-      cache: 'no-store',
-    })
-    const parsed = await safeResponseJson<{ methods?: MethodRow[] }>(res)
-    if (parsed.ok && res.ok) setMethods(parsed.data.methods || [])
-    else toast.error('Could not load payment accounts')
+    const result = await safeFetchJsonWithToast<{ methods?: MethodRow[] }>(
+      `/api/employee/payment-methods?business_id=${encodeURIComponent(businessId)}`,
+      { cache: 'no-store', toastOnError: false },
+    )
+    if (result.ok) setMethods(result.data.methods || [])
+    else toast.error(result.error.message || 'Could not load payment accounts')
     setLoading(false)
   }, [businessId])
 
@@ -57,7 +57,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
     setSaving(true)
-    const res = await fetch('/api/employee/payment-methods', {
+    const result = await safeFetchJsonWithToast('/api/employee/payment-methods', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -70,12 +70,8 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
         is_primary: true,
       }),
     })
-    const parsed = await safeResponseJson(res)
     setSaving(false)
-    if (!parsed.ok || !res.ok) {
-      toast.error(String((parsed.data as { message?: string }).message || 'Save failed'))
-      return
-    }
+    if (!result.ok) return
     toast.success('Mobile account saved')
     setForm(null)
     await load()
@@ -85,7 +81,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
     setSaving(true)
-    const res = await fetch('/api/employee/payment-methods', {
+    const result = await safeFetchJsonWithToast('/api/employee/payment-methods', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -99,40 +95,28 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
         is_primary: methods.length === 0,
       }),
     })
-    const parsed = await safeResponseJson(res)
     setSaving(false)
-    if (!parsed.ok || !res.ok) {
-      toast.error(String((parsed.data as { message?: string }).message || 'Save failed'))
-      return
-    }
+    if (!result.ok) return
     toast.success('Bank account saved')
     setForm(null)
     await load()
   }
 
   async function setPrimary(id: string) {
-    const res = await fetch(`/api/employee/payment-methods/${id}`, {
+    const result = await safeFetchJsonWithToast(`/api/employee/payment-methods/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_primary: true }),
     })
-    const parsed = await safeResponseJson(res)
-    if (!parsed.ok || !res.ok) {
-      toast.error('Could not set primary')
-      return
-    }
+    if (!result.ok) return
     toast.success('Default payout updated')
     await load()
   }
 
   async function remove(id: string) {
     if (!confirm('Remove this payout account?')) return
-    const res = await fetch(`/api/employee/payment-methods/${id}`, { method: 'DELETE' })
-    const parsed = await safeResponseJson(res)
-    if (!parsed.ok || !res.ok) {
-      toast.error('Could not remove')
-      return
-    }
+    const result = await safeFetchJsonWithToast(`/api/employee/payment-methods/${id}`, { method: 'DELETE' })
+    if (!result.ok) return
     toast.success('Account removed')
     await load()
   }

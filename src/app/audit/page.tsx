@@ -52,8 +52,8 @@ export default function AuditLogPage() {
           ) : rows.length === 0 ? (
             <div className="p-10"><Empty icon="◇" title="No entries" desc="Perform writes while Session is set — rows appear after GAS records them." /></div>
           ) : (
-            <div className="overflow-x-auto max-h-[min(70vh,560px)] overflow-y-auto scrollbar-hide">
-              <table className="w-full text-left text-[10px]">
+            <div className="table-scroll max-h-[min(70vh,560px)]">
+              <table className="w-full min-w-[960px] text-left text-[10px]">
                 <thead className="sticky top-0 bg-card border-b border-border z-[1]">
                   <tr className="text-zinc-500 uppercase tracking-wider">
                     <th className="py-2 px-3">Time</th>

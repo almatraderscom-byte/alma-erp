@@ -6,7 +6,7 @@ import { PayoutSummaryBlock } from '@/components/approvals/PayoutSummaryBlock'
 import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
-import { safeResponseJson, unwrapApiData } from '@/lib/safe-api-response'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 
@@ -76,12 +76,14 @@ export default function ApprovalsPage() {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
     if (!silent) setLoading(true)
     try {
-      const res = await fetch(`/api/approvals?status=${status}&limit=80`, { cache: 'no-store' })
-      const parsed = await safeResponseJson<ApprovalResponse & { ok?: boolean; message?: string }>(res)
-      if (parsed.ok && res.ok && parsed.data.ok !== false) {
-        setData(unwrapApiData(parsed.data))
-      } else if (!parsed.ok || parsed.parseError) {
-        toast.error(String(parsed.data.message || parsed.data.error || 'Could not load approvals'))
+      const result = await safeFetchJsonWithToast<ApprovalResponse>(
+        `/api/approvals?status=${status}&limit=80`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (result.ok) {
+        setData(result.data)
+      } else if (!silent) {
+        toast.error(result.error.message || 'Could not load approvals')
       }
     } catch (e) {
       toast.error((e as Error).message || 'Network error loading approvals')
@@ -110,10 +112,12 @@ export default function ApprovalsPage() {
   const loadIntegrity = useCallback(async () => {
     setIntegrityLoading(true)
     try {
-      const res = await fetch('/api/approvals/integrity', { cache: 'no-store' })
-      const parsed = await safeResponseJson<IntegrityReport & { ok?: boolean; message?: string; warning?: string }>(res)
-      if (parsed.ok && res.ok) setIntegrity(unwrapApiData(parsed.data))
-      else toast.error(String((parsed.data as { message?: string; error?: string }).message || (parsed.data as { error?: string }).error || 'Integrity scan failed'))
+      const result = await safeFetchJsonWithToast<IntegrityReport>('/api/approvals/integrity', {
+        cache: 'no-store',
+        toastOnError: false,
+      })
+      if (result.ok) setIntegrity(result.data)
+      else toast.error(result.error.message || 'Integrity scan failed')
     } catch (e) {
       toast.error((e as Error).message || 'Integrity scan unavailable')
     } finally {
@@ -124,13 +128,12 @@ export default function ApprovalsPage() {
   async function repairIntegrity() {
     setRepairing(true)
     try {
-      const res = await fetch('/api/approvals/integrity', { method: 'POST', cache: 'no-store' })
-      const parsed = await safeResponseJson<{ repaired?: unknown[]; message?: string; error?: string }>(res)
-      const json = parsed.data
-      if (!parsed.ok || !res.ok || (json as { ok?: boolean }).ok === false) {
-        throw new Error(String((json as { message?: string; error?: string }).message || (json as { error?: string }).error || 'Repair failed'))
-      }
-      const repaired = (json as { repaired?: unknown[] }).repaired || []
+      const result = await safeFetchJsonWithToast<{ repaired?: unknown[] }>('/api/approvals/integrity', {
+        method: 'POST',
+        cache: 'no-store',
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      const repaired = result.data.repaired || []
       toast.success(`Repaired ${repaired.length} item(s)`)
       await loadIntegrity()
       await load(true)

@@ -114,8 +114,8 @@ export default function NotificationSettingsPage() {
             {loading ? <Skeleton className="h-56" /> : !(stats?.broadcasts ?? []).length ? (
               <p className="text-xs text-zinc-600">No broadcasts sent yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-[11px]">
+              <div className="table-scroll">
+                <table className="w-full min-w-[760px] text-left text-[11px]">
                   <thead className="text-zinc-500 border-b border-border">
                     <tr>
                       <th className="py-2 pr-3">Title</th>

@@ -23,7 +23,7 @@ export default function NewOrderPage() {
     if (mdUp) router.replace('/orders?new=1')
   }, [allowRender, mdUp, router])
 
-  const { form, errors, touched, loading, set, touch, handleSubmit, sellPriceComputed } = useNewOrderForm(() => {
+  const { form, errors, touched, loading, set, setItem, addItem, removeItem, touch, handleSubmit, totals } = useNewOrderForm(() => {
     router.push('/orders')
   })
 
@@ -64,8 +64,11 @@ export default function NewOrderPage() {
             errors={errors}
             touched={touched}
             set={set}
+            setItem={setItem}
+            addItem={addItem}
+            removeItem={removeItem}
             touch={touch}
-            sellPriceComputed={sellPriceComputed}
+            totals={totals}
           />
         </div>
       </form>
@@ -79,11 +82,11 @@ export default function NewOrderPage() {
           paddingRight: 'max(16px, env(safe-area-inset-right, 0px))',
         }}
       >
-        {Number(form.sell_price) > 0 && (
+        {totals.payable > 0 && (
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-gold-dim/20 bg-gold/5 px-3 py-1.5 text-xs">
-            <span className="max-w-[120px] truncate text-zinc-500">{form.product || 'Product'}</span>
-            <span className="text-zinc-600">×{form.qty || 1}</span>
-            <Money amount={Number(form.sell_price)} className="ml-auto font-bold text-gold" />
+            <span className="max-w-[120px] truncate text-zinc-500">{form.items[0]?.product || 'Items'}</span>
+            <span className="text-zinc-600">×{totals.totalQty || 1}</span>
+            <Money amount={totals.payable} className="ml-auto font-bold text-gold" />
             {form.customer && <span className="max-w-[80px] truncate text-zinc-500">→ {form.customer.split(' ')[0]}</span>}
           </div>
         )}

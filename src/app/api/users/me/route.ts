@@ -1,31 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getJwt } from '@/lib/api-guards'
-
-const ME_SELECT = {
-  id: true,
-  email: true,
-  name: true,
-  phone: true,
-  role: true,
-  active: true,
-  businessAccess: true,
-  employeeIdGas: true,
-  joiningDate: true,
-  salaryHint: true,
-  profileImageUrl: true,
-  createdAt: true,
-} as const
+import { businessAllowed, parseBusinessAccess } from '@/lib/business-access'
+import { DEFAULT_BUSINESS_ID, resolveBusinessId } from '@/lib/businesses'
+import { resolveMyDeskProfile } from '@/lib/profile-resolution'
 
 export async function GET(req: NextRequest) {
   try {
     const token = await getJwt(req)
     if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const requestedBusinessId = new URL(req.url).searchParams.get('business_id')
+    const allowedBusinesses = parseBusinessAccess(token.businessAccess as string)
+    const businessId = requestedBusinessId
+      ? resolveBusinessId(requestedBusinessId)
+      : allowedBusinesses.length === 1
+        ? allowedBusinesses[0]
+        : DEFAULT_BUSINESS_ID
+    if (!businessAllowed(token.businessAccess as string, businessId)) {
+      return NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 })
+    }
 
-    const user = await prisma.user.findUnique({
-      where: { id: token.sub },
-      select: ME_SELECT,
-    })
+    const user = await resolveMyDeskProfile(token.sub, businessId)
     if (!user) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     return NextResponse.json({ user })
@@ -62,10 +57,7 @@ export async function PATCH(req: NextRequest) {
       data,
     })
 
-    const user = await prisma.user.findUnique({
-      where: { id: token.sub },
-      select: ME_SELECT,
-    })
+    const user = await resolveMyDeskProfile(token.sub, null)
     return NextResponse.json({ ok: true, user })
   } catch (e) {
     const msg = (e as Error).message

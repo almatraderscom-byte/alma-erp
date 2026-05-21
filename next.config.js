@@ -12,4 +12,22 @@ const nextConfig = {
     return [{ source: '/digital/finance', destination: '/finance', permanent: false }]
   },
 }
-module.exports = nextConfig
+
+const { withSentryConfig } = require('@sentry/nextjs')
+
+const sentryBuildOptions = {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  widenClientFileUpload: true,
+  hideSourceMaps: true,
+  disableLogger: true,
+  automaticVercelMonitors: true,
+  tunnelRoute: '/monitoring',
+}
+
+module.exports =
+  process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN
+    ? withSentryConfig(nextConfig, sentryBuildOptions)
+    : nextConfig

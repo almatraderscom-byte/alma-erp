@@ -4,6 +4,7 @@ import { moneyDecimal, periodFromDate } from '@/lib/payroll-wallet'
 import { notifyAdminsFailure, notifyUser } from '@/lib/notifications'
 import { errorMeta, logEvent } from '@/lib/logger'
 import type { HREmployeesApi } from '@/types/hr'
+import { enqueueSalaryReceivedSms } from '@/services/sms/events'
 
 type AccrualRunInput = {
   businessId: string
@@ -88,12 +89,17 @@ export async function runPayrollAccrual({
         continue
       }
 
-      const linked = employee.email
-        ? await prisma.user.findUnique({
-            where: { email: employee.email.trim().toLowerCase() },
-            select: { id: true },
-          })
-        : null
+      const employeeEmail = employee.email?.trim().toLowerCase()
+      const linked = await prisma.user.findFirst({
+        where: {
+          active: true,
+          OR: [
+            ...(employeeEmail ? [{ email: employeeEmail }] : []),
+            { employeeIdGas: employee.emp_id },
+          ],
+        },
+        select: { id: true, phone: true },
+      })
 
       const entry = await prisma.employeeLedgerEntry.create({
         data: {
@@ -118,6 +124,14 @@ export async function runPayrollAccrual({
         title: 'Salary added to wallet',
         message: `৳ ${salary.toLocaleString('en-BD')} salary was accrued for ${periodYm}.`,
         actionUrl: '/portal',
+      })
+      enqueueSalaryReceivedSms({
+        businessId,
+        phone: linked?.phone,
+        employeeId: employee.emp_id,
+        amount: salary,
+        periodYm,
+        entryId: entry.id,
       })
       createdCount += 1
     } catch (e) {
@@ -186,6 +200,7 @@ async function loadAccrualEmployees(businessId: string) {
     const users = await prisma.user.findMany({
       where: {
         active: true,
+        role: { not: 'SUPER_ADMIN' },
         employeeIdGas: { not: null },
         businessAccess: { contains: businessId },
       },

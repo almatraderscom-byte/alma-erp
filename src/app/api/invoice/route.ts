@@ -18,6 +18,7 @@ import { orderToPdfModel } from '@/lib/pdf/models'
 import { generateInvoicePdfBlob } from '@/lib/pdf/generate'
 import { fetchLogoDataUrl } from '@/lib/pdf/branding'
 import { withTimeout } from '@/lib/pdf/timeout'
+import { enqueueInvoiceReadySms } from '@/services/sms/events'
 
 /** Allow GAS PDF + Drive to finish (set Vercel Pro / appropriate plan so this is honored). */
 export const maxDuration = 120
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
     }
 
     const t0 = Date.now()
-    const result = await generateAndSaveDriveInvoice(req, order, businessId, existing?.invoiceNumber)
+    const result = await generateAndSaveDriveInvoice(req, order, businessId, existing?.invoiceNumber, existing?.paymentStatus)
     const invoice = await upsertInvoiceRecord({
       order,
       businessId,
@@ -143,6 +144,12 @@ export async function POST(req: NextRequest) {
       invoiceRecordId: invoice.id,
       ok: result?.ok,
       wallMs: Date.now() - t0,
+    })
+    enqueueInvoiceReadySms({
+      businessId,
+      phone: order.phone,
+      invoice: String(result.invoice_number || invoice.invoiceNumber || id),
+      orderId: id,
     })
     await Promise.all([
       notifyRole({
@@ -192,11 +199,12 @@ async function generateAndSaveDriveInvoice(
   order: Order,
   businessId: string,
   existingInvoiceNumber?: string | null,
+  paymentStatus?: InvoicePaymentStatus | null,
 ): Promise<InvoiceResult> {
   const invoiceNumber = existingInvoiceNumber || order.invoice_num || await peekInvoiceNumber()
   const branding = await resolveInvoiceBranding(businessId)
   const logoDataUrl = await resolveInvoiceLogoDataUrl(branding, order.id)
-  const pdfModel = orderToPdfModel(order, branding, logoDataUrl, invoiceNumber)
+  const pdfModel = orderToPdfModel(order, branding, logoDataUrl, invoiceNumber, { paymentStatus: paymentStatus || undefined })
   const generated = await generateInvoicePdfBlob(pdfModel)
   if (!generated.ok) {
     throw new Error(generated.error)

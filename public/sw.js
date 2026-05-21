@@ -1,17 +1,44 @@
-const CACHE_NAME = 'alma-erp-shell-v1'
-const SHELL_ASSETS = ['/', '/login', '/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
+try {
+  importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js')
+} catch (e) {
+  // Keep core offline support alive even if the push CDN is unavailable.
+}
+
+const SHELL_CACHE = 'alma-erp-shell-v2'
+const ASSET_CACHE = 'alma-erp-assets-v2'
+const MAX_ASSET_ENTRIES = 72
+const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting()))
+  event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting()))
 })
 
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))))
+      .then(keys => Promise.all(keys.filter(key => ![SHELL_CACHE, ASSET_CACHE].includes(key)).map(key => caches.delete(key))))
       .then(() => self.clients.claim()),
   )
 })
+
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName)
+  const keys = await cache.keys()
+  if (keys.length <= maxEntries) return
+  await Promise.all(keys.slice(0, keys.length - maxEntries).map(key => cache.delete(key)))
+}
+
+function isStaticAsset(url) {
+  return url.origin === self.location.origin && (
+    url.pathname.startsWith('/_next/static/')
+    || url.pathname === '/manifest.json'
+    || url.pathname.endsWith('.svg')
+    || url.pathname.endsWith('.png')
+    || url.pathname.endsWith('.webp')
+    || url.pathname.endsWith('.ico')
+    || url.pathname.endsWith('.woff2')
+  )
+}
 
 self.addEventListener('fetch', event => {
   const req = event.request
@@ -19,18 +46,29 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url)
   if (url.pathname.startsWith('/api/')) return
 
+  if (isStaticAsset(url)) {
+    event.respondWith(
+      caches.match(req).then(cached => {
+        const fresh = fetch(req).then(res => {
+          if (res.ok) {
+            const clone = res.clone()
+            caches.open(ASSET_CACHE)
+              .then(cache => cache.put(req, clone))
+              .then(() => trimCache(ASSET_CACHE, MAX_ASSET_ENTRIES))
+              .catch(() => {})
+          }
+          return res
+        }).catch(() => cached)
+        return cached || fresh
+      }),
+    )
+    return
+  }
+
   event.respondWith(
     fetch(req)
-      .then(res => {
-        const clone = res.clone()
-        if (res.ok && req.mode === 'navigate') {
-          caches.open(CACHE_NAME).then(cache => cache.put(req, clone)).catch(() => {})
-        }
-        return res
-      })
+      .then(res => res)
       .catch(async () => {
-        const cached = await caches.match(req)
-        if (cached) return cached
         if (req.mode === 'navigate') return caches.match('/offline.html')
         return Response.error()
       }),

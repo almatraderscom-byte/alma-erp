@@ -5,10 +5,16 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "background_color": "#08080A",
   "theme_color": "#C9A84C",
   "orientation": "portrait",
   "categories": ["business", "productivity", "finance"],
+  "shortcuts": [
+    { "name": "New Order", "short_name": "Order", "url": "/orders/new", "description": "Create a new reseller order" },
+    { "name": "Inventory", "short_name": "Stock", "url": "/inventory", "description": "Open live inventory" },
+    { "name": "Payroll", "short_name": "Payroll", "url": "/payroll", "description": "Open payroll wallet" }
+  ],
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/maskable-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }

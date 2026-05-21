@@ -17,6 +17,31 @@ export interface Order {
   return_reason: string; return_date: string; return_status: string; notes: string
   sku: string; handled_by: string; sla_status: string; days_pending: number
   days_in_transit: number; auto_flag: string; invoice_num: string; margin_pct: number
+  paid_amount?: number; due_amount?: number
+  estimatedProfit?: number; realizedProfit?: number; reversedProfit?: number
+  courierCost?: number; inventoryCost?: number
+  items?: OrderItem[]
+}
+
+export interface OrderItem {
+  order_id?: string
+  line_no: number
+  product_code?: string
+  product: string
+  category?: string
+  size?: string
+  variant?: string
+  qty: number
+  unit_price: number
+  sell_price?: number
+  subtotal: number
+  sku: string
+  stock_sku?: string
+  cogs?: number
+  collection_code?: string
+  collection_type?: string
+  size_group?: string
+  variant_group?: string
 }
 
 export interface Customer {
@@ -34,6 +59,10 @@ export interface StockItem {
   opening: number; purchased: number; sold: number; returned: number; damaged: number
   reserved: number; current_stock: number; available: number; reorder_level: number
   status: string; stock_value: number; sell_value: number; potential_profit: number
+  collectionCode?: string; collectionType?: string; sizeGroup?: string; variantGroup?: string
+  genderType?: string; sizeCategory?: string; sizeValue?: string
+  buyingPrice?: number; stockQty?: number; barcode?: string; active?: boolean; archived?: boolean
+  imageUrl?: string
 }
 
 export interface DashboardKpis {
@@ -41,6 +70,7 @@ export interface DashboardKpis {
   gross_margin: number; avg_order_value: number; delivered_count: number
   delivery_rate: number; return_rate: number; sla_breaches: number; pending_action: number
   returned_count?: number; cancelled_count?: number; failed_delivery_count?: number
+  total_realized_profit?: number; pending_profit?: number; reversed_profit?: number; loss_orders?: number
 }
 
 export interface DashboardData {
@@ -49,6 +79,8 @@ export interface DashboardData {
   by_source: Record<string, { orders: number; revenue: number }>
   by_payment: Record<string, number>
   by_category: Record<string, { orders: number; revenue: number; profit: number }>
+  profit_by_seller?: Record<string, { orders: number; realized_profit: number; pending_profit: number; reversed_profit: number }>
+  profit_by_collection?: Record<string, { orders: number; realized_profit: number; pending_profit: number; reversed_profit: number }>
   sla_breaches: Array<{ id: string; customer: string; sla_status: string; days_pending: number; days_in_transit: number }>
   recent_orders: Partial<Order>[]
   generated_at: string

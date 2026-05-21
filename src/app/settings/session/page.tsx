@@ -6,6 +6,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { useSession } from 'next-auth/react'
 import { normalizeAlmaRole } from '@/lib/roles'
 import toast from 'react-hot-toast'
+import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
 
 function apiHost(url: string | null | undefined): string {
   if (!url) return '—'
@@ -40,6 +41,7 @@ export default function SessionSettingsPage() {
   const [savingPw, setSavingPw] = useState(false)
   const [health, setHealth] = useState<HealthJson | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null)
 
   useEffect(() => {
     setName(session?.user?.name || '')
@@ -51,8 +53,9 @@ export default function SessionSettingsPage() {
       try {
         const res = await fetch('/api/users/me', { cache: 'no-store' })
         const j = await res.json().catch(() => ({}))
-        if (res.ok && j.user?.phone && !cancelled) {
-          setPhone(String(j.user.phone))
+        if (res.ok && !cancelled) {
+          if (j.user?.phone) setPhone(String(j.user.phone))
+          setProfileImageUrl(j.user?.profileImageUrl ?? null)
         }
       } catch {
         /* ignore */
@@ -139,6 +142,17 @@ export default function SessionSettingsPage() {
         subtitle="Signed-in identity · profile · diagnostics"
       />
       <div className="p-4 md:p-6 max-w-lg space-y-4">
+        {session?.user?.id && (
+          <ProfilePhotoSection
+            userId={session.user.id}
+            name={name || session.user.name || 'Account'}
+            email={session.user.email}
+            imageUrl={profileImageUrl}
+            showSettingsLink={false}
+            onUpdated={payload => setProfileImageUrl(payload.imageUrl || null)}
+          />
+        )}
+
         <Card className="p-5 border-gold-dim/25 bg-[#0c0c10] space-y-3">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Build / backend</p>
           {healthLoading ? (
@@ -165,7 +179,7 @@ export default function SessionSettingsPage() {
         </Card>
 
         <Card className="p-5 space-y-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Profile</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Display name & contact</p>
           <form onSubmit={saveProfile} className="space-y-3">
             <label className="block space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Display name</span>

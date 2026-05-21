@@ -32,7 +32,6 @@ export function withApiRoute(
         errMessage: message,
         ...errorMeta(err),
       })
-
       if (custom) {
         return apiFailure(custom.code, custom.message, {
           status: custom.status,

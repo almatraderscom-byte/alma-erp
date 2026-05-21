@@ -30,6 +30,7 @@ const CONFIG = {
   sheets: {
     ORDERS:         '📦 ORDERS',
     STOCK_CONTROL:  '📦 STOCK CONTROL',
+    ORDER_ITEMS:    '🧾 ORDER ITEMS',
     STOCK_MOVEMENTS:'🔄 STOCK MOVEMENTS',
     COURIER:        '🚚 COURIER TRACKER',
     RETURNS:        '↩️ RETURNS',
@@ -316,6 +317,7 @@ function onOrderDelivered_(sheet, row, rowData) {
   const product = rowData[CONFIG.col.PRODUCT - 1];
   const qty     = rowData[CONFIG.col.QTY - 1] || 0;
   const customer= rowData[CONFIG.col.CUSTOMER - 1];
+  const isMultiItemOrder = String(rowData[CONFIG.col.NOTES - 1] || '').indexOf('ORDER_ITEMS_JSON:') !== -1;
 
   // 1. Write actual delivery date
   writeIfEmpty_(sheet, row, CONFIG.col.ACTUAL_DELIVERY, now, 'dd-MMM-yyyy');
@@ -324,7 +326,7 @@ function onOrderDelivered_(sheet, row, rowData) {
   sheet.getRange(row, CONFIG.col.TRACKING_STATUS).setValue('Delivered');
 
   // 3. Deduct stock — critical operation with validation
-  if (product && qty > 0) {
+  if (!isMultiItemOrder && product && qty > 0) {
     deductStock_(product, qty, orderId, customer);
   }
 
@@ -332,8 +334,8 @@ function onOrderDelivered_(sheet, row, rowData) {
   syncCourierTracker_(row, rowData);
 
   // 5. Flag
-  setAutoFlag_(sheet, row, '✓ Delivered ' + formatDate_(now) + ' | Stock deducted');
-  log_('DELIVERED', orderId, `Delivered. Stock deducted: ${product} x${qty}`, `Row ${row}`);
+  setAutoFlag_(sheet, row, '✓ Delivered ' + formatDate_(now) + (isMultiItemOrder ? ' | Multi-item stock already deducted' : ' | Stock deducted'));
+  log_('DELIVERED', orderId, isMultiItemOrder ? 'Delivered. Multi-item stock was deducted at order creation.' : `Delivered. Stock deducted: ${product} x${qty}`, `Row ${row}`);
 
   // 6. Send summary to automation log
   const sellPrice = rowData[CONFIG.col.SELL_PRICE - 1] || 0;
@@ -350,6 +352,7 @@ function onOrderReturned_(sheet, row, rowData) {
   const customer= rowData[CONFIG.col.CUSTOMER - 1];
   const cogs    = rowData[CONFIG.col.COGS - 1] || 0;
   const sellPrice = rowData[CONFIG.col.SELL_PRICE - 1] || 0;
+  const isMultiItemOrder = String(rowData[CONFIG.col.NOTES - 1] || '').indexOf('ORDER_ITEMS_JSON:') !== -1;
 
   // 1. Write return date
   writeIfEmpty_(sheet, row, CONFIG.col.RETURN_DATE, now, 'dd-MMM-yyyy');
@@ -365,7 +368,9 @@ function onOrderReturned_(sheet, row, rowData) {
   }
 
   // 4. Restore stock (return units back)
-  if (product && qty > 0) {
+  if (isMultiItemOrder) {
+    restoreMultiItemStock_(orderId, customer, sheet, row);
+  } else if (product && qty > 0) {
     restoreStock_(product, qty, orderId, customer);
   }
 
@@ -380,7 +385,7 @@ function onOrderReturned_(sheet, row, rowData) {
   log_('RETURN_LOSS', orderId, `Loss: ৳${returnLoss} (COGS: ৳${cogs} + Courier)`, `Row ${row}`);
 
   setAutoFlag_(sheet, row, '⚠️ Returned ' + formatDate_(now) + ' | Stock restored | Loss: ৳' + returnLoss);
-  log_('RETURNED', orderId, `Returned. Stock restored: ${product} x${qty}`, `Row ${row}`);
+  log_('RETURNED', orderId, isMultiItemOrder ? 'Returned. Multi-item stock restored by SKU.' : `Returned. Stock restored: ${product} x${qty}`, `Row ${row}`);
 }
 
 // ─── Cancelled ──────────────────────────────────────────────────
@@ -391,8 +396,13 @@ function onOrderCancelled_(sheet, row, rowData) {
   // Release any reserved stock
   const product = rowData[CONFIG.col.PRODUCT - 1];
   const qty     = rowData[CONFIG.col.QTY - 1] || 0;
+  const customer= rowData[CONFIG.col.CUSTOMER - 1];
+  const isMultiItemOrder = String(rowData[CONFIG.col.NOTES - 1] || '').indexOf('ORDER_ITEMS_JSON:') !== -1;
+  if (isMultiItemOrder) {
+    restoreMultiItemStock_(orderId, customer, sheet, row);
+  }
 
-  setAutoFlag_(sheet, row, '✗ Cancelled ' + formatDate_(now));
+  setAutoFlag_(sheet, row, '✗ Cancelled ' + formatDate_(now) + (isMultiItemOrder ? ' | Multi-item stock restored' : ''));
   log_('CANCELLED', orderId, `Order cancelled. Reserved stock released if applicable.`, `Row ${row}`);
 }
 
@@ -538,6 +548,82 @@ function restoreStock_(productName, qty, orderId, customerName) {
     `Return from ${customerName}`, scData[productRow-1][0]);
 
   log_('STOCK', orderId, `Restored ${qty}x "${productName}" to stock (return)`, 'restoreStock_');
+}
+
+function restoreMultiItemStock_(orderId, customerName, orderSheet, orderRow) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const itemSh = ss.getSheetByName(CONFIG.sheets.ORDER_ITEMS);
+  const scSh = ss.getSheetByName(CONFIG.sheets.STOCK_CONTROL);
+  if (!itemSh || !scSh) return;
+
+  if (orderSheet && orderRow) {
+    const notes = String(orderSheet.getRange(orderRow, CONFIG.col.NOTES).getValue() || '');
+    const meta = parseOrderItemsMetaForAutomation_(notes);
+    if (meta && meta.stockRestored) return;
+  }
+
+  const itemData = itemSh.getDataRange().getValues();
+  const scData = scSh.getDataRange().getValues();
+  const demand = {};
+  for (let i = 1; i < itemData.length; i++) {
+    if (String(itemData[i][0] || '') !== String(orderId)) continue;
+    const sku = String(itemData[i][13] || itemData[i][2] || '').trim();
+    const product = String(itemData[i][4] || sku);
+    const qty = Number(itemData[i][8] || 0);
+    if (!sku || qty <= 0) continue;
+    const key = sku.toLowerCase();
+    if (!demand[key]) demand[key] = { sku, product, qty: 0 };
+    demand[key].qty += qty;
+  }
+
+  Object.keys(demand).forEach(key => {
+    const item = demand[key];
+    let row = -1;
+    for (let i = 1; i < scData.length; i++) {
+      if (String(scData[i][0] || '').trim().toLowerCase() === key) {
+        row = i + 1;
+        break;
+      }
+    }
+    if (row === -1) {
+      log_('STOCK_WARN', orderId, `SKU not found for multi-item return restore: "${item.sku}"`, 'restoreMultiItemStock_');
+      return;
+    }
+    const returnCell = scSh.getRange(row, 9);
+    returnCell.setValue((returnCell.getValue() || 0) + item.qty);
+    scSh.getRange(row, 19).setValue(new Date()).setNumberFormat('dd-MMM-yyyy');
+    logStockMovement_(item.product, CONFIG.mvt.RETURN, item.qty, 0, orderId, `Return from ${customerName}`, item.sku);
+  });
+
+  if (orderSheet && orderRow) {
+    markOrderItemsStockRestored_(orderSheet, orderRow);
+  }
+
+  log_('STOCK', orderId, 'Restored multi-item stock by SKU', 'restoreMultiItemStock_');
+}
+
+function parseOrderItemsMetaForAutomation_(notes) {
+  const marker = 'ORDER_ITEMS_JSON:';
+  const idx = String(notes || '').indexOf(marker);
+  if (idx < 0) return null;
+  try {
+    return JSON.parse(String(notes || '').slice(idx + marker.length).trim());
+  } catch (e) {
+    return null;
+  }
+}
+
+function markOrderItemsStockRestored_(orderSheet, orderRow) {
+  const notes = String(orderSheet.getRange(orderRow, CONFIG.col.NOTES).getValue() || '');
+  const marker = 'ORDER_ITEMS_JSON:';
+  const idx = notes.indexOf(marker);
+  if (idx < 0) return;
+  const clean = notes.slice(0, idx).trim();
+  const meta = parseOrderItemsMetaForAutomation_(notes);
+  if (!meta) return;
+  meta.stockRestored = true;
+  meta.stockRestoredAt = new Date().toISOString();
+  orderSheet.getRange(orderRow, CONFIG.col.NOTES).setValue((clean ? clean + '\n' : '') + marker + JSON.stringify(meta));
 }
 
 /**

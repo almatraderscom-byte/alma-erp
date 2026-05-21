@@ -80,9 +80,15 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
   const users = await prisma.user.findMany({
     where: {
       active: true,
+      role: { not: 'SUPER_ADMIN' },
       businessAccess: { contains: businessId },
       ...(process.env.NODE_ENV === 'production' && process.env.ENABLE_DEMO_USERS !== 'true'
-        ? { NOT: { email: { endsWith: '@alma-erp.demo' } } }
+        ? {
+            AND: [
+              { OR: [{ email: null }, { NOT: { email: { endsWith: '@alma-erp.demo' } } }] },
+              { OR: [{ phone: null }, { NOT: { phone: { startsWith: '+880170000000' } } }] },
+            ],
+          }
         : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -122,9 +128,12 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
 async function validateEmployeeUserLink(userId: string, requestedEmpId: string, businessId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, businessAccess: true, employeeIdGas: true },
+    select: { id: true, name: true, role: true, businessAccess: true, employeeIdGas: true },
   })
   if (!user) return NextResponse.json({ error: 'Selected user not found.' }, { status: 404 })
+  if (user.role === 'SUPER_ADMIN') {
+    return NextResponse.json({ error: 'System owner accounts do not use HR employee links.' }, { status: 400 })
+  }
   if (!businessAllowed(user.businessAccess, businessId)) {
     return NextResponse.json({ error: 'Selected user does not have access to this business.' }, { status: 400 })
   }
@@ -133,7 +142,7 @@ async function validateEmployeeUserLink(userId: string, requestedEmpId: string, 
   }
   if (requestedEmpId) {
     const linked = await prisma.user.findFirst({
-      where: { employeeIdGas: requestedEmpId, NOT: { id: userId } },
+      where: { employeeIdGas: requestedEmpId, role: { not: 'SUPER_ADMIN' }, NOT: { id: userId } },
       select: { name: true },
     })
     if (linked) return NextResponse.json({ error: `Employee ID ${requestedEmpId} is already linked to ${linked.name}.` }, { status: 409 })

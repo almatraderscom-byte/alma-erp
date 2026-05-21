@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { Button, Card } from '@/components/ui'
 
 export type PenaltyAppealTarget = {
@@ -64,13 +65,12 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
       if (requestType === 'PARTIAL_REDUCE') {
         body.requested_reduction_amount = Number(partialAmount || 0)
       }
-      const res = await fetch('/api/attendance/waivers', {
+      const result = await safeFetchJsonWithToast('/api/attendance/waivers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Could not submit request')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Penalty review request submitted')
       onSubmitted()
       onClose()

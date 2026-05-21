@@ -7,6 +7,7 @@ import { Card, Button, Skeleton, Empty } from '@/components/ui'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useBusiness } from '@/contexts/BusinessContext'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { displayBdPhone } from '@/lib/phone'
 import type { UserRole } from '@prisma/client'
 
@@ -41,10 +42,12 @@ export default function EmployeesPage() {
   const loadUsers = useCallback(async () => {
     setUsersLoading(true)
     try {
-      const res = await fetch(`/api/hr/employees?business_id=${business.id}&include_users=1`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || res.statusText)
-      setUsers(j.users || [])
+      const result = await safeFetchJsonWithToast<{ users?: LinkableUser[] }>(
+        `/api/hr/employees?business_id=${business.id}&include_users=1`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      setUsers(result.data.users || [])
     } catch (e) {
       toast.error((e as Error).message || 'Could not load users')
       setUsers([])
@@ -130,8 +133,8 @@ export default function EmployeesPage() {
         {loading ? <Skeleton className="h-64 m-4" /> : !(data?.employees ?? []).length ? (
           <Empty icon="◎" title="No employees yet" desc="Create your roster to unlock payroll tooling" />
         ) : (
-          <div className="overflow-x-auto max-h-[70vh]">
-            <table className="w-full text-left text-[11px]">
+          <div className="table-scroll max-h-[70vh]">
+            <table className="w-full min-w-[760px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 px-4">ID</th>

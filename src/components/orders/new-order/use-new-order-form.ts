@@ -1,37 +1,196 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { api, APIError } from '@/lib/api'
-import { EMPTY_NEW_ORDER_FORM } from './empty-form'
-import type { FormErrors, NewOrderForm } from './types'
+import { EMPTY_NEW_ORDER_FORM, newOrderItem } from './empty-form'
+import type { FormErrors, NewOrderForm, NewOrderItemForm } from './types'
 import { validateNewOrderForm } from './validate'
+import type { StockItem } from '@/types'
+import {
+  buyingPriceForStock,
+  detectCollectionFromStock,
+  inferStockCollection,
+  matchCollectionStock,
+  normalizeWomenVariant,
+  sizeGroupForSize,
+} from './collection-engine'
+
+type ProductOption = {
+  id: string
+  sku?: string
+  name: string
+  category: string
+  default_price: number
+  default_cogs: number
+  active: boolean
+}
+
+export function orderItemSubtotal(item: NewOrderItemForm) {
+  return Math.max(0, Number(item.qty || 0)) * Math.max(0, Number(item.sell_price || 0))
+}
+
+export function orderItemInventoryCost(item: NewOrderItemForm) {
+  return Math.max(0, Number(item.qty || 0)) * Math.max(0, Number(item.cogs || 0))
+}
+
+export function orderItemGrossProfit(item: NewOrderItemForm) {
+  return orderItemSubtotal(item) - orderItemInventoryCost(item)
+}
 
 export function useNewOrderForm(onSuccess?: () => void) {
   const [form, setForm] = useState<NewOrderForm>(EMPTY_NEW_ORDER_FORM)
   const [errors, setErrors] = useState<FormErrors>({})
   const [touched, setTouched] = useState<Partial<Record<keyof NewOrderForm, boolean>>>({})
   const [loading, setLoading] = useState(false)
+  const [products, setProducts] = useState<ProductOption[]>([])
+  const [stockItems, setStockItems] = useState<StockItem[]>([])
 
   const touchedRef = useRef(touched)
   touchedRef.current = touched
 
   function set<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) {
-    if (key === 'sell_price') {
-      touchedRef.current = { ...touchedRef.current, sell_price: true }
-      setTouched(p => ({ ...p, sell_price: true }))
-    }
     setForm(prev => {
       const next = { ...prev, [key]: value }
-      if ((key === 'unit_price' || key === 'qty') && !touchedRef.current.sell_price) {
-        const up = key === 'unit_price' ? Number(value) : Number(prev.unit_price)
-        const q = key === 'qty' ? Number(value) : Number(prev.qty)
-        if (up > 0 && q > 0) next.sell_price = String(up * q)
-      }
       if (touchedRef.current[key]) {
         const errs = validateNewOrderForm(next)
         setErrors(er => ({ ...er, [key]: errs[key] }))
       }
+      return next
+    })
+  }
+
+  useEffect(() => {
+    let alive = true
+    async function loadCatalog() {
+      try {
+        const [productRes, stockRes] = await Promise.all([api.products.list(), api.stock.list()])
+        if (!alive) return
+        setProducts((productRes.products || []).filter(p => p.active !== false))
+        setStockItems(stockRes.items || [])
+      } catch (e) {
+        console.warn('[CreateOrder catalog]', (e as Error).message)
+      }
+    }
+    void loadCatalog()
+    return () => { alive = false }
+  }, [])
+
+  const stockBySku = useMemo(() => {
+    const map = new Map<string, StockItem>()
+    stockItems.forEach(item => {
+      if (item.sku) map.set(item.sku.trim().toLowerCase(), item)
+    })
+    return map
+  }, [stockItems])
+
+  const productByCode = useMemo(() => {
+    const map = new Map<string, ProductOption>()
+    products.forEach(product => {
+      ;[product.sku, product.id, product.name].filter(Boolean).forEach(key => {
+        map.set(String(key).trim().toLowerCase(), product)
+      })
+    })
+    stockItems.forEach(item => {
+      ;[item.sku, item.product].filter(Boolean).forEach(key => {
+        if (!map.has(String(key).trim().toLowerCase())) {
+          map.set(String(key).trim().toLowerCase(), {
+            id: item.sku,
+            sku: item.sku,
+            name: item.product,
+            category: item.category,
+            default_price: 0,
+            default_cogs: 0,
+            active: true,
+          })
+        }
+      })
+    })
+    return map
+  }, [products, stockItems])
+
+  function enrichItemFromCode(raw: NewOrderItemForm, code: string): NewOrderItemForm {
+    const key = code.trim().toLowerCase()
+    const collection = detectCollectionFromStock(stockItems, code)
+    if (collection) {
+      const stock = matchCollectionStock(stockItems, collection, { size: raw.size, variant: raw.variant })
+      return {
+        ...raw,
+        product_code: code,
+        collection_code: collection.collectionCode,
+        collection_type: collection.collectionType,
+        size_group: collection.collectionType === 'MEN' ? sizeGroupForSize(raw.size) || '' : '',
+        variant_group: collection.collectionType === 'WOMEN' ? normalizeWomenVariant(raw.variant) || '' : '',
+        sku: stock?.sku || '',
+        product: stock?.product || `${collection.collectionCode} Collection`,
+        category: stock?.category || (collection.collectionType === 'WOMEN' ? 'Women' : collection.collectionType === 'MEN' ? 'Panjabi' : collection.collectionType === 'SINGLE' ? 'Single Product' : 'Custom Collection'),
+        cogs: stock ? String(buyingPriceForStock(stock)) : '',
+        available: stock?.available,
+        warning: stock ? (stock.available <= 0 ? 'Out of stock' : '') : 'Select a valid size/variant to connect inventory',
+      }
+    }
+    const product = productByCode.get(key)
+    const sku = product?.sku || raw.sku || code.trim()
+    const stock = stockBySku.get(sku.trim().toLowerCase())
+    if (!product && !stock) return { ...raw, product_code: code, sku: raw.sku || code.trim() }
+    return {
+      ...raw,
+      product_code: code,
+      sku,
+      product: product?.name || stock?.product || raw.product,
+      category: product?.category || stock?.category || raw.category,
+      size: stock?.size || raw.size,
+      sell_price: raw.sell_price || (product?.default_price ? String(product.default_price) : ''),
+      cogs: raw.cogs || (product?.default_cogs ? String(product.default_cogs) : ''),
+      available: stock?.available,
+      warning: stock?.available != null && stock.available <= 0 ? 'Out of stock' : '',
+    }
+  }
+
+  function resolveItem(raw: NewOrderItemForm): NewOrderItemForm {
+    const collection = detectCollectionFromStock(stockItems, raw.product_code)
+    if (!collection) return raw
+    const stock = matchCollectionStock(stockItems, collection, { size: raw.size, variant: raw.variant })
+    const meta = stock ? inferStockCollection(stock) : undefined
+    return {
+      ...raw,
+      collection_code: collection.collectionCode,
+      collection_type: collection.collectionType,
+      size_group: collection.collectionType === 'MEN' ? sizeGroupForSize(raw.size) || meta?.sizeGroup || '' : '',
+      variant_group: collection.collectionType === 'WOMEN' ? normalizeWomenVariant(raw.variant) || meta?.variantGroup || '' : '',
+      sku: stock?.sku || '',
+      product: stock?.product || raw.product || `${collection.collectionCode} Collection`,
+      category: stock?.category || raw.category || (collection.collectionType === 'WOMEN' ? 'Women' : collection.collectionType === 'MEN' ? 'Panjabi' : collection.collectionType === 'SINGLE' ? 'Single Product' : 'Custom Collection'),
+      cogs: stock ? String(buyingPriceForStock(stock)) : raw.cogs,
+      available: stock?.available,
+      warning: stock ? (stock.available <= 0 ? 'Out of stock' : '') : 'Unavailable size/variant for this collection',
+    }
+  }
+
+  function setItem(index: number, key: keyof NewOrderItemForm, value: string) {
+    setForm(prev => {
+      const items = prev.items.map((item, i) => {
+        if (i !== index) return item
+        const next = { ...item, [key]: value }
+        if (key === 'product_code') return enrichItemFromCode(next, value)
+        if (key === 'size' || key === 'variant') return resolveItem(next)
+        return next
+      })
+      const next = { ...prev, items }
+      setErrors(validateNewOrderForm(next))
+      return next
+    })
+  }
+
+  function addItem() {
+    setForm(prev => ({ ...prev, items: [...prev.items, newOrderItem(prev.items.length)] }))
+  }
+
+  function removeItem(index: number) {
+    setForm(prev => {
+      if (prev.items.length <= 1) return prev
+      const next = { ...prev, items: prev.items.filter((_, i) => i !== index) }
+      setErrors(validateNewOrderForm(next))
       return next
     })
   }
@@ -62,25 +221,63 @@ export function useNewOrderForm(onSuccess?: () => void) {
         return
       }
 
+      const subtotal = form.items.reduce((sum, item) => sum + orderItemSubtotal(item), 0)
+      const discount = Number(form.discount || 0)
+      const shipping = Number(form.shipping_fee || 0)
+      const payable = Math.max(0, subtotal - discount + shipping)
+      const paidAmount = Math.min(payable, Math.max(0, Number(form.paid_amount || 0)))
+      const totalQty = form.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+      const totalCogs = form.items.reduce((sum, item) => sum + Number(item.cogs || 0) * Number(item.qty || 0), 0)
+      const estimatedProfit = Math.max(0, subtotal - discount) - totalCogs - Number(form.courier_charge || 0)
+      const firstItem = form.items[0]
+      const productLabel = form.items.length === 1
+        ? firstItem.product.trim()
+        : `${firstItem.product.trim()} + ${form.items.length - 1} more`
+
       const payload = {
         customer: form.customer.trim(),
         phone: form.phone.replace(/\D/g, ''),
         address: form.address.trim(),
-        product: form.product.trim(),
-        category: form.category,
-        size: form.size.trim(),
-        qty: Number(form.qty),
-        unit_price: Number(form.unit_price),
-        sell_price: Number(form.sell_price) || Number(form.unit_price) * Number(form.qty),
+        product: productLabel,
+        category: firstItem.category,
+        size: firstItem.size || firstItem.variant,
+        qty: totalQty || 1,
+        unit_price: totalQty > 0 ? subtotal / totalQty : subtotal,
+        sell_price: Math.max(0, subtotal - discount),
         payment_method: form.payment,
         source: form.source,
         status: form.status,
         courier: form.courier,
         notes: form.notes.trim(),
-        sku: form.sku.trim(),
-        cogs: Number(form.cogs) || 0,
+        sku: firstItem.sku.trim(),
+        cogs: totalCogs,
         courier_charge: Number(form.courier_charge) || 0,
-        shipping_fee: Number(form.shipping_fee) || 0,
+        shipping_fee: shipping,
+        discount,
+        paid_amount: paidAmount,
+        due_amount: Math.max(0, payable - paidAmount),
+        estimated_profit: estimatedProfit,
+        inventory_cost: totalCogs,
+        courier_cost: Number(form.courier_charge) || 0,
+        items: form.items.map((item, index) => ({
+          line_no: index + 1,
+          product_code: item.product_code.trim() || item.sku.trim(),
+          product: item.product.trim(),
+          category: item.category,
+          size: item.size.trim(),
+          variant: item.variant.trim(),
+          qty: Number(item.qty),
+          unit_price: Number(item.sell_price),
+          sell_price: Number(item.sell_price),
+          subtotal: orderItemSubtotal(item),
+          sku: item.sku.trim(),
+          stock_sku: item.sku.trim(),
+          cogs: Number(item.cogs || 0),
+          collection_code: item.collection_code,
+          collection_type: item.collection_type,
+          size_group: item.size_group,
+          variant_group: item.variant_group,
+        })),
       }
       console.log('[CreateOrder] payload', payload)
 
@@ -104,7 +301,28 @@ export function useNewOrderForm(onSuccess?: () => void) {
     [form, onSuccess]
   )
 
-  const sellPriceComputed = Number(form.unit_price) * Number(form.qty)
+  const totals = useMemo(() => {
+    const subtotal = form.items.reduce((sum, item) => sum + orderItemSubtotal(item), 0)
+    const discount = Math.max(0, Number(form.discount || 0))
+    const shipping = Math.max(0, Number(form.shipping_fee || 0))
+    const payable = Math.max(0, subtotal - discount + shipping)
+    const paid = Math.min(payable, Math.max(0, Number(form.paid_amount || 0)))
+    const inventoryCost = form.items.reduce((sum, item) => sum + orderItemInventoryCost(item), 0)
+    const courierCost = Math.max(0, Number(form.courier_charge || 0))
+    const estimatedProfit = Math.max(0, subtotal - discount) - inventoryCost - courierCost
+    return {
+      subtotal,
+      discount,
+      shipping,
+      payable,
+      paid,
+      due: Math.max(0, payable - paid),
+      totalQty: form.items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+      inventoryCost,
+      courierCost,
+      estimatedProfit,
+    }
+  }, [form.courier_charge, form.discount, form.items, form.paid_amount, form.shipping_fee])
 
   return {
     form,
@@ -113,8 +331,13 @@ export function useNewOrderForm(onSuccess?: () => void) {
     setTouched,
     loading,
     set,
+    setItem,
+    addItem,
+    removeItem,
     touch,
     handleSubmit,
-    sellPriceComputed,
+    totals,
+    products,
+    stockItems,
   }
 }

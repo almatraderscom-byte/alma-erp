@@ -8,10 +8,46 @@ export function ConnectionStatus() {
   const [latency, setLatency] = useState<number | null>(null)
 
   useEffect(() => {
-    const t0 = Date.now()
-    fetch('/api/dashboard')
-      .then(r => { setLatency(Date.now() - t0); setStatus(r.ok ? 'live' : 'error') })
-      .catch(() => setStatus('error'))
+    let cancelled = false
+    let failures = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const check = () => {
+      const t0 = Date.now()
+      fetch('/api/dashboard', { cache: 'no-store' })
+        .then(r => {
+          if (cancelled) return
+          setLatency(Date.now() - t0)
+          if (r.ok) {
+            failures = 0
+            setStatus('live')
+            return
+          }
+          failures += 1
+          if (failures >= 2) setStatus('error')
+          else timer = setTimeout(check, 5_000)
+        })
+        .catch(() => {
+          if (cancelled) return
+          failures += 1
+          if (failures >= 2 || navigator.onLine === false) setStatus('error')
+          else timer = setTimeout(check, 5_000)
+        })
+    }
+
+    timer = setTimeout(check, 1_000)
+    const recover = () => {
+      failures = 0
+      setStatus('checking')
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(check, 1_000)
+    }
+    window.addEventListener('online', recover)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      window.removeEventListener('online', recover)
+    }
   }, [])
 
   if (status === 'checking') {

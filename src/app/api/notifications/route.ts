@@ -9,14 +9,41 @@ export async function GET(req: NextRequest) {
   const q = (url.searchParams.get('q') || '').trim()
   const status = url.searchParams.get('status') || 'all'
   const priority = url.searchParams.get('priority') || 'all'
+  const summaryOnly = url.searchParams.get('summary') === '1'
   const businessId = url.searchParams.get('business_id') || undefined
   const allowedBusinessIds = businessId ? [businessId] : ctx.businessIds
+  const recipientScope = {
+    userId: ctx.userId,
+    OR: [{ businessId: { in: allowedBusinessIds } }, { businessId: null }],
+  }
+  if (summaryOnly) {
+    const [unread, unackedRows] = await Promise.all([
+      prisma.notificationRecipient.count({
+        where: { ...recipientScope, readAt: null },
+      }),
+      prisma.notificationRecipient.findMany({
+        where: { ...recipientScope, acknowledgedAt: null },
+        select: { notificationId: true },
+        orderBy: { createdAt: 'desc' },
+        take: 250,
+      }),
+    ])
+    const criticalUnacked = unackedRows.length
+      ? await prisma.notification.count({
+          where: { id: { in: unackedRows.map(r => r.notificationId) }, priority: 'CRITICAL' },
+        })
+      : 0
+    return NextResponse.json({
+      notifications: [],
+      unread,
+      criticalUnacked,
+    }, { headers: { 'Cache-Control': 'private, max-age=20, stale-while-revalidate=40' } })
+  }
   const recipientIds = (await prisma.notificationRecipient.findMany({
-    where: {
-      userId: ctx.userId,
-      OR: [{ businessId: { in: allowedBusinessIds } }, { businessId: null }],
-    },
+    where: recipientScope,
     select: { notificationId: true },
+    orderBy: { createdAt: 'desc' },
+    take: 250,
   })).map(r => r.notificationId)
 
   const notifications = await prisma.notification.findMany({
@@ -35,10 +62,32 @@ export async function GET(req: NextRequest) {
       ],
     },
     orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
-    take: 100,
+    select: {
+      id: true,
+      title: true,
+      message: true,
+      type: true,
+      priority: true,
+      pinned: true,
+      actionUrl: true,
+      businessId: true,
+      userId: true,
+      roleTarget: true,
+      readAt: true,
+      createdAt: true,
+    },
+    take: summaryOnly ? 25 : 100,
   })
   const recipientRows = await prisma.notificationRecipient.findMany({
     where: { userId: ctx.userId, notificationId: { in: notifications.map(n => n.id) } },
+    select: {
+      notificationId: true,
+      readAt: true,
+      seenAt: true,
+      acknowledgedAt: true,
+      deliveryStatus: true,
+      pushStatus: true,
+    },
   })
   const recipientMap = new Map(recipientRows.map(r => [r.notificationId, r]))
   const enriched = notifications
@@ -50,13 +99,15 @@ export async function GET(req: NextRequest) {
       return true
     })
 
-  await prisma.notificationRecipient.updateMany({
-    where: { userId: ctx.userId, notificationId: { in: enriched.map(n => n.id) }, seenAt: null },
-    data: { seenAt: new Date() },
-  })
+  if (!summaryOnly) {
+    await prisma.notificationRecipient.updateMany({
+      where: { userId: ctx.userId, notificationId: { in: enriched.map(n => n.id) }, seenAt: null },
+      data: { seenAt: new Date() },
+    })
+  }
 
   return NextResponse.json({
-    notifications: enriched,
+    notifications: summaryOnly ? [] : enriched,
     unread: enriched.filter(n => !n.recipient?.readAt && !n.readAt).length,
     criticalUnacked: enriched.filter(n => n.priority === 'CRITICAL' && !n.recipient?.acknowledgedAt).length,
   })

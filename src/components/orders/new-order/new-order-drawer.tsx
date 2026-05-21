@@ -7,7 +7,7 @@ import { NewOrderFormFields } from './new-order-form-fields'
 import { useNewOrderForm } from './use-new-order-form'
 
 export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const { form, errors, touched, loading, set, touch, handleSubmit, sellPriceComputed } = useNewOrderForm(() => {
+  const { form, errors, touched, loading, set, setItem, addItem, removeItem, touch, handleSubmit, totals } = useNewOrderForm(() => {
     onCreated()
     onClose()
   })
@@ -62,8 +62,11 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             errors={errors}
             touched={touched}
             set={set}
+            setItem={setItem}
+            addItem={addItem}
+            removeItem={removeItem}
             touch={touch}
-            sellPriceComputed={sellPriceComputed}
+            totals={totals}
           />
         </form>
 
@@ -71,11 +74,11 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
           style={{ flexShrink: 0, position: 'sticky', bottom: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
           className="border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2"
         >
-          {Number(form.sell_price) > 0 && (
+          {totals.payable > 0 && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
-              <span className="text-zinc-500 truncate max-w-[100px]">{form.product || 'Product'}</span>
-              <span className="text-zinc-600">×{form.qty || 1}</span>
-              <Money amount={Number(form.sell_price)} className="ml-auto font-bold text-gold" />
+              <span className="text-zinc-500 truncate max-w-[100px]">{form.items[0]?.product || 'Items'}</span>
+              <span className="text-zinc-600">×{totals.totalQty || 1}</span>
+              <Money amount={totals.payable} className="ml-auto font-bold text-gold" />
               {form.customer && <span className="text-zinc-500 truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
             </div>
           )}

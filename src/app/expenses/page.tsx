@@ -197,8 +197,8 @@ export default function ExpensesPage() {
         {loading ? <Skeleton className="h-48" /> : expenses.length === 0 ? (
           <Empty icon="◫" title="No rows" />
         ) : (
-          <div className="overflow-x-auto max-h-[480px] overflow-y-auto scrollbar-hide">
-            <table className="w-full text-left text-[11px]">
+          <div className="table-scroll max-h-[480px]">
+            <table className="w-full min-w-[760px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border">
                 <tr className="text-zinc-500">
                   <th className="py-2 pr-3">Date</th>

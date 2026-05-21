@@ -9,6 +9,8 @@ import { useActor } from '@/contexts/ActorContext'
 import type { UserRole } from '@prisma/client'
 import toast from 'react-hot-toast'
 import { displayBdPhone } from '@/lib/phone'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
+import { ProfilePhotoUploader } from '@/components/profile/ProfilePhotoUploader'
 
 type RowUser = {
   id: string
@@ -129,8 +131,8 @@ export default function UsersSettingsPage() {
           ) : users.length === 0 ? (
             <Empty icon="◎" title="No users" desc="Seed the database or create the first employee login." />
           ) : (
-            <div className="overflow-x-auto max-h-[72vh]">
-              <table className="w-full text-left text-[11px]">
+            <div className="table-scroll max-h-[72vh]">
+              <table className="w-full min-w-[980px] text-left text-[11px]">
                 <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                   <tr>
                     <th className="py-2 px-4">Name</th>
@@ -146,7 +148,12 @@ export default function UsersSettingsPage() {
                 <tbody>
                   {users.map(u => (
                     <tr key={u.id} className="border-b border-border/60 hover:bg-white/[0.02]">
-                      <td className="py-2 px-4 text-cream font-medium">{u.name}</td>
+                      <td className="py-2 px-4">
+                        <div className="flex items-center gap-2">
+                          <EmployeeAvatar userId={u.id} name={u.name} email={u.email} imageUrl={u.profileImageUrl} size="sm" />
+                          <span className="text-cream font-medium">{u.name}</span>
+                        </div>
+                      </td>
                       <td className="py-2 pr-3 font-mono text-gold-lt">{u.phone ? displayBdPhone(u.phone) : '—'}</td>
                       <td className="py-2 pr-3 font-mono text-zinc-400">{u.email || '—'}</td>
                       <td className="py-2 pr-3"><RoleBadge role={u.role} /></td>
@@ -226,7 +233,6 @@ export default function UsersSettingsPage() {
               employeeIdGas: String(fd.get('employeeIdGas') || '').trim() || null,
               joiningDate: String(fd.get('joining_date') || '').trim() || null,
               salaryHint: fd.get('salary_hint') ? Number(fd.get('salary_hint')) : null,
-              profileImageUrl: String(fd.get('profile_url') || '').trim() || null,
             })
             setEditUser(null)
           }}
@@ -261,32 +267,21 @@ export default function UsersSettingsPage() {
                 businessAccess: bizIds.join(','),
                 employeeIdGas: String(fd.get('employeeIdGas') || '').trim() || undefined,
                 active: true,
+                joiningDate: String(fd.get('joining_date') || '').trim() || null,
+                salaryHint: fd.get('salary_hint') ? Number(fd.get('salary_hint')) : null,
               }),
             })
-            const j = await res.json().catch(() => ({}))
+            const j = await res.json().catch(() => ({})) as { error?: string; user?: RowUser }
             if (!res.ok) {
               toast.error(j.error || 'Create failed')
               return
             }
             toast.success('User created')
-            const uid = j.user?.id as string | undefined
-            if (uid) {
-              try {
-                await fetch(`/api/users/${uid}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    joiningDate: String(fd.get('joining_date') || '').trim() || null,
-                    salaryHint: fd.get('salary_hint') ? Number(fd.get('salary_hint')) : null,
-                    profileImageUrl: String(fd.get('profile_url') || '').trim() || null,
-                  }),
-                })
-              } catch {
-                /* optional extras */
-              }
+            if (j.user) {
+              setUsers(current => [j.user!, ...current.filter(u => u.id !== j.user!.id)])
             }
             setCreateOpen(false)
-            await load()
+            void load()
           }}
         />
       )}
@@ -373,7 +368,9 @@ function UserFormModal({
   onSubmit: (fd: FormData) => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
-  const selectedBiz = initial ? parseBizCsv(initial.businessAccess) : (['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT'] as BusinessId[])
+  const [selectedRole, setSelectedRole] = useState<UserRole>(initial?.role || 'STAFF')
+  const selectedBiz = initial ? parseBizCsv(initial.businessAccess) : (['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT', 'ALMA_TRADING'] as BusinessId[])
+  const systemOwnerAccount = selectedRole === 'SUPER_ADMIN'
 
   async function wrapped(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -421,12 +418,17 @@ function UserFormModal({
           </label>
           <label className="block space-y-1">
             <span className="text-zinc-500">Role</span>
-            <select name="role" required defaultValue={initial?.role || 'STAFF'} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm">
+            <select name="role" required value={selectedRole} onChange={e => setSelectedRole(e.target.value as UserRole)} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm">
               {roleOptions.map(o => (
                 <option key={o.id} value={o.id}>{o.label}</option>
               ))}
             </select>
           </label>
+          {systemOwnerAccount && (
+            <p className="rounded-xl border border-gold-dim/30 bg-gold/10 p-3 text-[11px] leading-relaxed text-gold-lt">
+              System owner accounts control the ERP and are not linked to HR employee IDs, salary hints, attendance, or personal wallets.
+            </p>
+          )}
           <div className="space-y-2 rounded-xl border border-border p-3 bg-black/30">
             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Business access</p>
             {BUSINESS_LIST.map(b => (
@@ -441,22 +443,36 @@ function UserFormModal({
               </label>
             ))}
           </div>
-          <label className="block space-y-1">
-            <span className="text-zinc-500">Linked HR employee ID (GAS)</span>
-            <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-[11px]" />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-zinc-500">Joining date</span>
-            <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-zinc-500">Salary hint (৳)</span>
-            <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-sm" />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-zinc-500">Profile photo URL</span>
-            <input name="profile_url" defaultValue={initial?.profileImageUrl || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-[11px]" />
-          </label>
+          {!systemOwnerAccount && (
+            <>
+              <label className="block space-y-1">
+                <span className="text-zinc-500">Linked HR employee ID (GAS)</span>
+                <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-[11px]" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-zinc-500">Joining date</span>
+                <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-zinc-500">Salary hint (৳)</span>
+                <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-sm" />
+              </label>
+            </>
+          )}
+          {initial && (
+            <div className="rounded-xl border border-border bg-black/25 p-4">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Profile photo</p>
+              <ProfilePhotoUploader
+                userId={initial.id}
+                name={initial.name}
+                email={initial.email}
+                imageUrl={initial.profileImageUrl}
+                uploadPath={`/api/users/${initial.id}/profile-image`}
+                canEdit
+                size="lg"
+              />
+            </div>
+          )}
           {actorRole !== 'SUPER_ADMIN' && (
             <p className="text-[10px] text-amber-400/90 leading-snug">You cannot assign Super Admin.</p>
           )}

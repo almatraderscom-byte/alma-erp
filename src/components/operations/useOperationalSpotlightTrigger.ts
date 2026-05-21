@@ -11,15 +11,15 @@ import {
   isOpsHeroEligible,
   pickPrimaryOpsTask,
 } from '@/lib/operational-task-spotlight-client'
+import { safeFetchJson } from '@/lib/safe-fetch'
 
 async function fetchOpenTasks(businessId: string): Promise<OperationalTaskAssignmentDto[]> {
-  const res = await fetch(
+  const result = await safeFetchJson<{ tasks?: OperationalTaskAssignmentDto[] }>(
     `/api/operational-tasks/my?business_id=${encodeURIComponent(businessId)}`,
     { cache: 'no-store' },
   )
-  const j = await res.json().catch(() => ({}))
-  if (!res.ok) return []
-  return (j.tasks || []) as OperationalTaskAssignmentDto[]
+  if (!result.ok) return []
+  return result.data.tasks || []
 }
 
 export function useOperationalSpotlightTrigger(businessId: string, enabled = true) {

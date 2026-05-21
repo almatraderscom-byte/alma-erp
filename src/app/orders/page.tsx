@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
-import { Suspense, useLayoutEffect, useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
+import { Suspense, useCallback, useDeferredValue, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUpdateStatus } from '@/hooks/useERP'
@@ -15,18 +16,26 @@ import {
   statusCountsForPills,
 } from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
-import { NewOrderDrawer } from '@/components/orders/new-order/new-order-drawer'
 import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
 import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
+import { safeFetchJson } from '@/lib/safe-fetch'
 import type { Order, OrderStatus } from '@/types'
 import { useActor } from '@/contexts/ActorContext'
+import { useBusiness } from '@/contexts/BusinessContext'
 import { can } from '@/lib/roles'
 import { shareSlugAlma } from '@/lib/pdf/format'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
+const ORDER_ROW_HEIGHT = 64
+const ORDER_WINDOW_SIZE = 70
+const ORDER_OVERSCAN = 12
+const NewOrderDrawer = dynamic(
+  () => import('@/components/orders/new-order/new-order-drawer').then(mod => mod.NewOrderDrawer),
+  { ssr: false, loading: () => null },
+)
 const TERMINAL_STATUSES = new Set<OrderStatus>(['Delivered', 'RETURNED', 'CANCELLED', 'FAILED_DELIVERY', 'Returned', 'Cancelled'])
 const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY', { title: string; body: string; label: string }> = {
   CANCELLED: {
@@ -135,9 +144,11 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   async function openLinkedInvoice() {
     setInvoiceLookupLoading(true)
     try {
-      const res = await fetch(`/api/invoice?order_id=${encodeURIComponent(order.id)}&business_id=${encodeURIComponent(order.business_id || 'ALMA_LIFESTYLE')}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Could not load invoice')
+      const result = await safeFetchJson<Record<string, unknown>>(
+        `/api/invoice?order_id=${encodeURIComponent(order.id)}&business_id=${encodeURIComponent(order.business_id || 'ALMA_LIFESTYLE')}`,
+        { cache: 'no-store' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
       setShareUrl(internalInvoiceUrl)
       window.open(internalInvoiceUrl, '_blank', 'noopener,noreferrer')
     } catch (e) {
@@ -375,12 +386,14 @@ function OrdersPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [status,   setStatus]   = useState('')
   const [source,   setSource]   = useState('')
   const [payment,  setPayment]  = useState('')
   const [sort,     setSort]     = useState('newest')
   const [selected, setSelected] = useState<Order | null>(null)
   const [showNew, setShowNew] = useState(false)
+  const [rowWindow, setRowWindow] = useState({ start: 0, end: ORDER_WINDOW_SIZE })
 
   useLayoutEffect(() => {
     if (searchParams.get('new') === '1' && mdUp) {
@@ -389,7 +402,8 @@ function OrdersPageContent() {
     }
   }, [searchParams, router, mdUp])
 
-  const { orders: allOrders, loading, refetch } = useOrdersData()
+  const { orders: allOrders, loading, refetch, enabled } = useOrdersData()
+  const { businessId } = useBusiness()
   const { range, label: rangeLabel } = useDateRange()
 
   const dateFiltered = useMemo(
@@ -398,17 +412,47 @@ function OrdersPageContent() {
   )
 
   const filtered = useMemo(
-    () => applyOrderFilters(dateFiltered, { status, source, payment, search }),
-    [dateFiltered, status, source, payment, search],
+    () => applyOrderFilters(dateFiltered, { status, source, payment, search: deferredSearch }),
+    [dateFiltered, status, source, payment, deferredSearch],
   )
 
   const orders = useMemo(() => sortOrders(filtered, sort), [filtered, sort])
+  useLayoutEffect(() => {
+    setRowWindow({ start: 0, end: ORDER_WINDOW_SIZE })
+  }, [deferredSearch, status, source, payment, sort, range.start, range.end])
+  const visibleOrders = useMemo(
+    () => orders.slice(rowWindow.start, Math.min(rowWindow.end, orders.length)),
+    [orders, rowWindow],
+  )
+  const mobileOrders = useMemo(() => orders.slice(0, 80), [orders])
+  const topSpacer = rowWindow.start * ORDER_ROW_HEIGHT
+  const bottomSpacer = Math.max(0, (orders.length - Math.min(rowWindow.end, orders.length)) * ORDER_ROW_HEIGHT)
+  const onOrdersScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
+    const start = Math.max(0, Math.floor(e.currentTarget.scrollTop / ORDER_ROW_HEIGHT) - ORDER_OVERSCAN)
+    const end = start + ORDER_WINDOW_SIZE + ORDER_OVERSCAN * 2
+    setRowWindow(prev => (prev.start === start && prev.end === end ? prev : { start, end }))
+  }, [])
 
   const summary = useMemo(() => summarizeOrders(filtered), [filtered])
   const statusCounts = useMemo(
     () => statusCountsForPills(dateFiltered, STATUSES),
     [dateFiltered],
   )
+
+  if (!enabled || businessId !== 'ALMA_LIFESTYLE') {
+    return (
+      <>
+        <PageHeader title="Orders" subtitle="Alma Lifestyle" />
+        <div className="p-4 md:p-8">
+          <Empty
+            icon="◫"
+            title="Orders are for Alma Lifestyle"
+            desc="Switch to Alma Lifestyle or open Trading from the business menu."
+          />
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -474,8 +518,8 @@ function OrdersPageContent() {
 
         {/* Orders table — desktop */}
         <Card className="hidden md:block overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
+          <div className="table-scroll max-h-[72vh]" onScroll={onOrdersScroll}>
+            <table className="w-full min-w-[1080px] text-xs border-collapse">
               <thead>
                 <tr className="border-b border-border">
                   {['Order ID','Date','Customer','Product','Qty','Amount','Payment','Status','Courier','Profit'].map(h => (
@@ -492,7 +536,14 @@ function OrdersPageContent() {
                         ))}
                       </tr>
                     ))
-                  : orders.map(o => (
+                  : (
+                    <>
+                    {topSpacer > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={10} style={{ height: topSpacer }} className="p-0" />
+                      </tr>
+                    )}
+                    {visibleOrders.map(o => (
                       <tr key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)}
                         className={`border-b border-border/50 cursor-pointer transition-colors ${o.id === selected?.id ? 'bg-gold/5' : 'hover:bg-white/[0.015]'}`}>
                         <td className="px-3 py-3.5 font-mono text-[11px] text-gold font-bold whitespace-nowrap">{o.id}</td>
@@ -515,7 +566,14 @@ function OrdersPageContent() {
                         </td>
                         <td className="px-3 py-3.5 whitespace-nowrap"><Money amount={o.profit ?? 0} className="font-bold text-green-400" /></td>
                       </tr>
-                    ))
+                    ))}
+                    {bottomSpacer > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={10} style={{ height: bottomSpacer }} className="p-0" />
+                      </tr>
+                    )}
+                    </>
+                  )
                 }
               </tbody>
             </table>
@@ -529,7 +587,7 @@ function OrdersPageContent() {
         <div className="md:hidden space-y-2">
           {loading
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
-            : orders.map(o => (
+            : mobileOrders.map(o => (
                 <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full text-left">
                   <Card className={`p-4 transition-colors ${o.id === selected?.id ? 'border-gold-dim/50' : ''}`}>
                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -554,6 +612,11 @@ function OrdersPageContent() {
           }
           {!loading && orders.length === 0 && (
             <Empty icon="◫" title="No orders found for selected period" desc="Try a different date range or filters" />
+          )}
+          {!loading && orders.length > mobileOrders.length && (
+            <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
+              Showing latest {mobileOrders.length.toLocaleString()} matches. Use filters/search for older orders.
+            </p>
           )}
         </div>
 

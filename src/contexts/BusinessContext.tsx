@@ -20,6 +20,7 @@ import {
 } from '@/lib/businesses'
 import { setApiBusinessId } from '@/lib/api'
 import { parseBusinessAccess } from '@/lib/business-access'
+import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 
 interface BusinessContextValue {
   businessId: BusinessId
@@ -59,16 +60,21 @@ export function BusinessProvider({
 
   useEffect(() => {
     const stored = loadBusinessId()
-    const next = allowedBusinessIds.includes(stored)
+    const routeBusiness = pathname.startsWith('/trading') && allowedBusinessIds.includes('ALMA_TRADING')
+      ? 'ALMA_TRADING'
+      : pathname.startsWith('/digital') && allowedBusinessIds.includes('CREATIVE_DIGITAL_IT')
+        ? 'CREATIVE_DIGITAL_IT'
+        : null
+    const next = routeBusiness ?? (allowedBusinessIds.includes(stored)
       ? stored
-      : (allowedBusinessIds[0] ?? DEFAULT_BUSINESS_ID)
+      : (allowedBusinessIds[0] ?? DEFAULT_BUSINESS_ID))
     setBusinessIdState(next)
     setApiBusinessId(next)
     try {
       sessionStorage.setItem(STORAGE_KEY, next)
     } catch { /* ignore */ }
     setHydrated(true)
-  }, [allowedBusinessIds])
+  }, [allowedBusinessIds, pathname])
 
   const setBusinessId = useCallback(
     (id: BusinessId) => {
@@ -102,11 +108,7 @@ export function BusinessProvider({
   )
 
   if (!hydrated) {
-    return (
-      <div className="min-h-[100dvh] bg-black text-zinc-500 flex items-center justify-center text-xs">
-        Loading workspace…
-      </div>
-    )
+    return <LoadingOverlay label="Loading workspace" />
   }
 
   return (

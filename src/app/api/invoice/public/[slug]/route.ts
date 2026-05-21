@@ -4,6 +4,7 @@ import { parseShareSlug } from '@/lib/pdf/format'
 import type { Order } from '@/types'
 import type { CditInvoice, CditPayment } from '@/types/cdit'
 import type { BusinessBranding } from '@/types/branding'
+import { prisma } from '@/lib/prisma'
 
 export async function GET(
   _req: NextRequest,
@@ -26,8 +27,12 @@ export async function GET(
       return NextResponse.json({
         type: 'alma',
         order: (orderRes as { order: Order }).order,
+        invoice: await prisma.invoiceRecord.findFirst({
+          where: { orderId: parsed.id, businessId: 'ALMA_LIFESTYLE', deletedAt: null },
+          select: { invoiceNumber: true, paymentStatus: true },
+        }),
         branding: branding.branding,
-      })
+      }, { headers: { 'Cache-Control': 'private, no-store, must-revalidate' } })
     }
 
     const [invRes, payRes, brandRes] = await Promise.all([
@@ -43,7 +48,7 @@ export async function GET(
       invoice,
       payments,
       branding: brandRes.branding,
-    })
+    }, { headers: { 'Cache-Control': 'private, no-store, must-revalidate' } })
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }

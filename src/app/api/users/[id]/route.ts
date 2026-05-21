@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getJwt, requireRoles } from '@/lib/api-guards'
-import type { AlmaRole } from '@/lib/roles'
+import { isSystemOwner, type AlmaRole } from '@/lib/roles'
 import { isValidBdPhone, normalizeBdPhone } from '@/lib/phone'
 
 function canAssignRole(actor: AlmaRole, target: UserRole): boolean {
@@ -45,6 +45,8 @@ export async function PATCH(
     if (body.role && !canAssignRole(actorRole, body.role)) {
       return NextResponse.json({ error: 'Cannot assign this role' }, { status: 403 })
     }
+    const targetRole = body.role ?? existing.role
+    const systemOwner = isSystemOwner(targetRole)
     const phone = body.phone !== undefined ? normalizeBdPhone(body.phone) : undefined
     if (phone !== undefined && phone && !isValidBdPhone(phone)) {
       return NextResponse.json({ error: 'Enter a valid Bangladesh phone number.' }, { status: 400 })
@@ -58,11 +60,13 @@ export async function PATCH(
         ...(body.phone !== undefined ? { phone: phone || null } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.businessAccess !== undefined ? { businessAccess: body.businessAccess.trim() } : {}),
-        ...(body.employeeIdGas !== undefined ? { employeeIdGas: body.employeeIdGas } : {}),
+        ...(systemOwner ? { employeeIdGas: null } : body.employeeIdGas !== undefined ? { employeeIdGas: body.employeeIdGas } : {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
         ...(body.profileImageUrl !== undefined ? { profileImageUrl: body.profileImageUrl } : {}),
-        ...(body.salaryHint !== undefined ? { salaryHint: body.salaryHint } : {}),
-        ...(body.joiningDate !== undefined
+        ...(systemOwner ? { salaryHint: null } : body.salaryHint !== undefined ? { salaryHint: body.salaryHint } : {}),
+        ...(systemOwner
+          ? { joiningDate: null }
+          : body.joiningDate !== undefined
           ? { joiningDate: body.joiningDate ? new Date(body.joiningDate) : null }
           : {}),
       },

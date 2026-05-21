@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server'
-import { serverGet } from '@/lib/server-api'
+import { NextRequest, NextResponse } from 'next/server'
+import { serverGet, serverPost } from '@/lib/server-api'
 import { prisma } from '@/lib/prisma'
 import { notifyRole } from '@/lib/notifications'
+import { mergeActorPayload } from '@/lib/api-route-actor'
+import { enqueueLowStockAlertSms } from '@/services/sms/events'
+import { logEvent } from '@/lib/logger'
 
 export async function GET() {
   try {
@@ -14,20 +17,44 @@ export async function GET() {
         where: { type: 'LOW_STOCK', businessId: 'ALMA_LIFESTYLE', createdAt: { gte: since } },
       })
       if (!existing) {
-        await notifyRole({
-          role: 'ADMIN',
-          businessId: 'ALMA_LIFESTYLE',
-          type: 'LOW_STOCK',
-          priority: out ? 'HIGH' : 'NORMAL',
-          title: out ? 'Out-of-stock items detected' : 'Low stock alert',
-          message: `${low} SKU(s) are low stock and ${out} SKU(s) are out of stock.`,
-          actionUrl: '/inventory',
-        })
+        void Promise.all([
+          enqueueLowStockAlertSms({ businessId: 'ALMA_LIFESTYLE', product: out ? 'out-of-stock inventory' : 'low-stock inventory' }),
+          notifyRole({
+            role: 'ADMIN',
+            businessId: 'ALMA_LIFESTYLE',
+            type: 'LOW_STOCK',
+            priority: out ? 'HIGH' : 'NORMAL',
+            title: out ? 'Out-of-stock items detected' : 'Low stock alert',
+            message: `${low} SKU(s) are low stock and ${out} SKU(s) are out of stock.`,
+            actionUrl: '/inventory',
+          }),
+        ]).catch(error => logEvent('warn', 'stock.low_stock_dispatch_failed', { error: (error as Error).message }))
       }
     }
     return NextResponse.json(data, {
       headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
     })
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json() as Record<string, unknown>
+    const action = String(body.action || '')
+    const routeByAction: Record<string, string> = {
+      edit: 'inventory_edit',
+      archive: 'inventory_archive',
+      restore: 'inventory_restore',
+      adjust: 'inventory_adjust',
+      bulk_update: 'inventory_bulk_update',
+      consolidate_lifestyle: 'inventory_consolidate_lifestyle',
+    }
+    const route = routeByAction[action]
+    if (!route) return NextResponse.json({ error: 'Invalid inventory action' }, { status: 400 })
+    const result = await serverPost(route, await mergeActorPayload(req, body))
+    return NextResponse.json(result)
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }

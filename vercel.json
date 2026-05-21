@@ -3,6 +3,38 @@
     {
       "path": "/api/cron/payroll-accrual",
       "schedule": "0 0 10 * *"
+    },
+    {
+      "path": "/api/trading/screenshots/cleanup",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/trading/balance-reconcile",
+      "schedule": "15 20 * * *"
+    },
+    {
+      "path": "/api/trading/screenshot-compliance",
+      "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/sms/process",
+      "schedule": "10 18 * * *"
+    },
+    {
+      "path": "/api/sms/trading-daily-summary",
+      "schedule": "55 17 * * *"
+    },
+    {
+      "path": "/api/cron/telegram-attendance-monitor",
+      "schedule": "5,20,35,50 3-16 * * *"
+    },
+    {
+      "path": "/api/cron/telegram-notifications",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/telegram-ops-daily-summary",
+      "schedule": "30 16 * * *"
     }
   ],
   "headers": [
@@ -12,7 +44,7 @@
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=()" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self), payment=()" },
         { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
         { "key": "X-DNS-Prefetch-Control", "value": "on" }
       ]

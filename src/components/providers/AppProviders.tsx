@@ -11,6 +11,7 @@ import { BrandingProvider } from '@/contexts/BrandingContext'
 import { BrandingHead } from '@/components/branding/BrandingHead'
 import { DateRangeProvider } from '@/contexts/DateRangeContext'
 import { OrdersDataProvider } from '@/contexts/OrdersDataContext'
+import { OrdersDataErrorBoundary } from '@/components/providers/OrdersDataErrorBoundary'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { MobileBottomSpacer, MobileNavBar } from '@/components/layout/MobileNavChrome'
 import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
@@ -18,6 +19,7 @@ import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
+import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
 
 const NotificationShellProvider = dynamic(
   () => import('@/contexts/NotificationShellContext').then(mod => mod.NotificationShellProvider),
@@ -63,6 +65,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
 
   return (
     <NotificationShellProvider>
+      <SentryUserBridge />
       <div className="flex h-[100dvh] w-full overflow-hidden">
         <Sidebar />
         <main ref={mainScrollRef} className="flex-1 overflow-y-auto min-w-0 scrollbar-hide overscroll-y-contain">
@@ -80,11 +83,13 @@ function ErpChrome({ children }: { children: ReactNode }) {
   )
 }
 
+/** Orders context is always mounted; fetch is scoped inside the provider by business + route. */
 function OrdersDataScope({ children }: { children: ReactNode }) {
-  const pathname = usePathname()
-  const { businessId } = useBusiness()
-  const needsOrdersData = businessId !== 'ALMA_TRADING' && (pathname === '/' || pathname.startsWith('/orders'))
-  return needsOrdersData ? <OrdersDataProvider>{children}</OrdersDataProvider> : <>{children}</>
+  return (
+    <OrdersDataProvider>
+      <OrdersDataErrorBoundary>{children}</OrdersDataErrorBoundary>
+    </OrdersDataProvider>
+  )
 }
 
 function AuthGate({ children }: { children: ReactNode }) {

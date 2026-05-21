@@ -402,6 +402,7 @@ model AttendanceRecord {
   @@unique([businessId, employeeId, attendanceDate])
   @@index([businessId, isArchived, attendanceDate])
   @@index([businessId, attendanceDate])
+  @@index([userId, attendanceDate])
   @@index([businessId, status, attendanceDate])
   @@index([businessId, trustStatus, attendanceDate])
   @@index([businessId, verificationRequired, attendanceDate])
@@ -1371,6 +1372,7 @@ model TelegramNotificationQueue {
 
   @@unique([dedupeKey])
   @@index([status, nextAttemptAt, createdAt])
+  @@index([status, attempts, nextAttemptAt])
   @@index([status, processingStartedAt])
   @@index([businessId, createdAt])
   @@index([eventType, createdAt])

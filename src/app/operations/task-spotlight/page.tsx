@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import { unwrapApiData } from '@/lib/safe-api-response'
 import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { isSystemOwner } from '@/lib/roles'
@@ -49,18 +51,22 @@ export default function TaskSpotlightAdminPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [tRes, uRes] = await Promise.all([
-        fetch(`/api/operational-tasks?business_id=${encodeURIComponent(business.id)}`, { cache: 'no-store' }),
-        fetch(`/api/operational-tasks/assignees?business_id=${encodeURIComponent(business.id)}`, {
-          cache: 'no-store',
-        }),
+      const [tResult, uResult] = await Promise.all([
+        safeFetchJsonWithToast<{ tasks: TaskRow[] }>(
+          `/api/operational-tasks?business_id=${encodeURIComponent(business.id)}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
+        safeFetchJsonWithToast<{ employees: UserOption[] }>(
+          `/api/operational-tasks/assignees?business_id=${encodeURIComponent(business.id)}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
       ])
-      const tj = await tRes.json().catch(() => ({}))
-      const uj = await uRes.json().catch(() => ({}))
-      if (!tRes.ok) throw new Error(tj.error || 'Failed to load tasks')
-      if (!uRes.ok) throw new Error(uj.error || 'Failed to load employees for this business')
+      if (!tResult.ok) throw new Error(tResult.error.message)
+      if (!uResult.ok) throw new Error(uResult.error.message)
+      const tj = tResult.data
+      const uj = uResult.data
       setTasks(tj.tasks || [])
-      const list = (uj.employees || []) as UserOption[]
+      const list = uj.employees || []
       setUsers(list)
       setAssigneeIds(prev => prev.filter(id => list.some(u => u.id === id)))
     } catch (e) {
@@ -90,7 +96,7 @@ export default function TaskSpotlightAdminPage() {
     }
     setSaving(true)
     try {
-      const res = await fetch('/api/operational-tasks', {
+      const result = await safeFetchJsonWithToast('/api/operational-tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -105,8 +111,7 @@ export default function TaskSpotlightAdminPage() {
           assignee_user_ids: assigneeIds,
         }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Create failed')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Task spotlight published')
       setTitle('')
       setDescription('')
@@ -123,12 +128,12 @@ export default function TaskSpotlightAdminPage() {
 
   async function archiveTask(taskId: string) {
     try {
-      const res = await fetch(`/api/operational-tasks/${taskId}`, {
+      const result = await safeFetchJsonWithToast(`/api/operational-tasks/${taskId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Archive failed')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Task archived')
       await load()
     } catch (e) {
@@ -138,12 +143,12 @@ export default function TaskSpotlightAdminPage() {
 
   async function resend(taskId: string, assignmentId: string) {
     try {
-      const res = await fetch(`/api/operational-tasks/${taskId}`, {
+      const result = await safeFetchJsonWithToast(`/api/operational-tasks/${taskId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'resend', assignment_id: assignmentId }),
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Resend failed')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Spotlight reset — employee will see on next Start Work')
       await load()
     } catch (e) {

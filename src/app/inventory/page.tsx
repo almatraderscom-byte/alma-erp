@@ -1,41 +1,97 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useDeferredValue, type UIEvent } from 'react'
 import Link from 'next/link'
-import { useStock, useProducts, useCreateProduct, useDashboard } from '@/hooks/useERP'
-import { AddProductModal } from '@/components/inventory/AddProductModal'
+import dynamic from 'next/dynamic'
+import { useStock, useProducts, useCreateProduct } from '@/hooks/useERP'
 import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt } from '@/lib/utils'
-import type { CreateProductInput } from '@/lib/api'
+import { api, type CreateProductInput } from '@/lib/api'
+import toast from 'react-hot-toast'
+import type { StockItem } from '@/types'
+
+const AddProductModal = dynamic(
+  () => import('@/components/inventory/AddProductModal').then(mod => mod.AddProductModal),
+  { ssr: false },
+)
 
 const STATUS_STYLE: Record<string, string> = {
   'IN STOCK': 'text-green-400 bg-green-400/10 border-green-400/25',
   'LOW STOCK': 'text-amber-400 bg-amber-400/10 border-amber-400/25',
   'OUT OF STOCK': 'text-red-400 bg-red-400/10 border-red-400/25',
 }
+const INVENTORY_ROW_HEIGHT = 58
+const INVENTORY_WINDOW_SIZE = 80
+const INVENTORY_OVERSCAN = 16
+
+function inventoryPoolLabel(item: StockItem) {
+  if (item.collectionType === 'MEN') return item.sizeGroup || item.sizeCategory || item.sizeValue || item.size
+  if (item.collectionType === 'WOMEN') return item.variantGroup || item.sizeValue || item.size
+  return item.sizeValue || item.variantGroup || item.size
+}
 
 export default function InventoryPage() {
   const { data, loading, error, refetch: refetchStock } = useStock()
   const { data: catalog, refetch: refetchProducts } = useProducts()
-  const { refetch: refetchDashboard } = useDashboard()
   const { mutate: createProduct, loading: createLoading, error: createError, reset: resetCreate } = useCreateProduct()
 
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [cat, setCat] = useState('')
+  const [view, setView] = useState<'active' | 'archived' | 'low' | 'out'>('active')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [archiveOverrides, setArchiveOverrides] = useState<Record<string, boolean>>({})
+  const [pendingInventoryAction, setPendingInventoryAction] = useState<Record<string, string>>({})
+  const [rowWindow, setRowWindow] = useState({ start: 0, end: INVENTORY_WINDOW_SIZE })
 
   useEffect(() => {
-    console.log('[Inventory] isAddModalOpen →', isAddModalOpen)
-  }, [isAddModalOpen])
+    setArchiveOverrides(current => {
+      const next = { ...current }
+      for (const item of data?.items ?? []) {
+        if (next[item.sku] === item.archived) delete next[item.sku]
+      }
+      return Object.keys(next).length === Object.keys(current).length ? current : next
+    })
+  }, [data?.items])
 
-  const items = (data?.items ?? []).filter(
-    i =>
-      (!cat || i.category === cat) &&
-      (!search || [i.sku, i.product, i.category].some(v => v.toLowerCase().includes(search.toLowerCase()))),
+  const items = useMemo(() => {
+    const needle = deferredSearch.trim().toLowerCase()
+    return (data?.items ?? []).filter(i => {
+      const archived = archiveOverrides[i.sku] ?? i.archived
+      return (
+        (view === 'archived' ? archived : !archived && i.active !== false) &&
+        (view !== 'low' || (i.available > 0 && i.available <= i.reorder_level)) &&
+        (view !== 'out' || i.available <= 0) &&
+        (!cat || i.category === cat || i.collectionCode === cat) &&
+        (!needle || [i.sku, i.product, i.category, i.collectionCode, i.barcode, inventoryPoolLabel(i)].some(v => String(v || '').toLowerCase().includes(needle)))
+      )
+    })
+  }, [archiveOverrides, cat, data?.items, deferredSearch, view])
+  useEffect(() => {
+    setRowWindow({ start: 0, end: INVENTORY_WINDOW_SIZE })
+  }, [deferredSearch, cat, view])
+  const visibleItems = useMemo(
+    () => items.slice(rowWindow.start, Math.min(rowWindow.end, items.length)),
+    [items, rowWindow],
   )
+  const mobileItems = useMemo(() => items.slice(0, 120), [items])
+  const topSpacer = rowWindow.start * INVENTORY_ROW_HEIGHT
+  const bottomSpacer = Math.max(0, (items.length - Math.min(rowWindow.end, items.length)) * INVENTORY_ROW_HEIGHT)
+  const onInventoryScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
+    const start = Math.max(0, Math.floor(e.currentTarget.scrollTop / INVENTORY_ROW_HEIGHT) - INVENTORY_OVERSCAN)
+    const end = start + INVENTORY_WINDOW_SIZE + INVENTORY_OVERSCAN * 2
+    setRowWindow(prev => (prev.start === start && prev.end === end ? prev : { start, end }))
+  }, [])
 
   const summary = data?.summary
   const categories = useMemo(() => [...new Set((data?.items ?? []).map(i => i.category))], [data?.items])
+  const activeInventoryItems = useMemo(
+    () => (data?.items ?? []).filter(i => {
+      const archived = archiveOverrides[i.sku] ?? i.archived
+      return !archived && i.active !== false
+    }),
+    [archiveOverrides, data?.items],
+  )
 
   const categoryOptions = useMemo(() => {
     const s = new Set<string>()
@@ -48,32 +104,88 @@ export default function InventoryPage() {
     return [...s].sort((a, b) => a.localeCompare(b))
   }, [categories, catalog?.products])
 
-  const totalValue = (data?.items ?? []).reduce((a, i) => a + i.stock_value, 0)
-  const totalSellVal = (data?.items ?? []).reduce((a, i) => a + i.sell_value, 0)
-  const potentialProfit = totalSellVal - totalValue
+  const inventoryTotals = useMemo(() => {
+    const stockValue = activeInventoryItems.reduce((sum, item) => sum + item.stock_value, 0)
+    const sellValue = activeInventoryItems.reduce((sum, item) => sum + item.sell_value, 0)
+    return { stockValue, sellValue, potentialProfit: sellValue - stockValue }
+  }, [activeInventoryItems])
+  const totalValue = inventoryTotals.stockValue
+  const totalSellVal = inventoryTotals.sellValue
+  const potentialProfit = inventoryTotals.potentialProfit
 
   const openAddModal = useCallback(() => {
-    console.log('[Inventory] OPEN MODAL (button clicked)')
     resetCreate()
     setIsAddModalOpen(true)
   }, [resetCreate])
 
   const handleCreate = useCallback(
     async (payload: CreateProductInput) => {
-      console.log('[InventoryPage] create_product request', payload)
       const res = await createProduct(payload)
       if (res?.ok) {
-        console.log('[InventoryPage] create_product success', res)
+        toast.success('Inventory item created')
         refetchStock()
         refetchProducts()
-        refetchDashboard()
       } else {
-        console.warn('[InventoryPage] create_product returned non-OK', res)
+        toast.error('Inventory creation failed')
       }
       return res
     },
-    [createProduct, refetchStock, refetchProducts, refetchDashboard],
+    [createProduct, refetchStock, refetchProducts],
   )
+
+  const refreshInventory = useCallback(() => {
+    void refetchStock()
+    void refetchProducts()
+  }, [refetchProducts, refetchStock])
+
+  const mutateInventory = useCallback(async (payload: Parameters<typeof api.stock.mutate>[0]) => {
+    const sku = String(payload.sku || '')
+    if (!sku || pendingInventoryAction[sku]) return null
+    const action = String(payload.action || 'update')
+    const optimisticArchive = action === 'archive' ? true : action === 'restore' ? false : null
+
+    setPendingInventoryAction(current => ({ ...current, [sku]: action }))
+    if (optimisticArchive !== null) {
+      setArchiveOverrides(current => ({ ...current, [sku]: optimisticArchive }))
+    }
+
+    try {
+      const res = await api.stock.mutate(payload)
+      if (!res?.ok) throw new Error(String(res?.error || 'Inventory action failed'))
+      toast.success(action === 'archive' ? 'Inventory item archived' : action === 'restore' ? 'Inventory item restored' : 'Inventory updated')
+      refreshInventory()
+      return res
+    } catch (e) {
+      if (optimisticArchive !== null) {
+        setArchiveOverrides(current => {
+          const next = { ...current }
+          delete next[sku]
+          return next
+        })
+      }
+      toast.error((e as Error).message || 'Inventory action failed')
+      return null
+    } finally {
+      setPendingInventoryAction(current => {
+        const next = { ...current }
+        delete next[sku]
+        return next
+      })
+    }
+  }, [pendingInventoryAction, refreshInventory])
+
+  const adjustStock = useCallback(async (sku: string, current: number, buyingPrice?: number) => {
+    const next = window.prompt('New stock quantity', String(current))
+    if (next == null) return
+    const reason = window.prompt('Adjustment reason: damaged, lost, manual correction, supplier update, return restock', 'manual correction') || 'manual correction'
+    await mutateInventory({ action: 'adjust', sku, new_stock: Number(next), buying_price: buyingPrice, reason })
+  }, [mutateInventory])
+
+  const updateBuyingPrice = useCallback(async (sku: string, current?: number) => {
+    const next = window.prompt('New buying price', String(current || 0))
+    if (next == null) return
+    await mutateInventory({ action: 'edit', sku, data: { buyingPrice: Number(next) } })
+  }, [mutateInventory])
 
   return (
     <>
@@ -136,16 +248,27 @@ export default function InventoryPage() {
           <Select
             value={cat}
             onChange={setCat}
-            options={[{ label: 'All categories', value: '' }, ...categories.map(c => ({ label: c, value: c }))]}
+            options={[{ label: 'All categories', value: '' }, ...categoryOptions.map(c => ({ label: c, value: c }))]}
+          />
+          <Select
+            value={view}
+            onChange={v => setView(v as typeof view)}
+            options={[
+              { label: 'Active', value: 'active' },
+              { label: 'Archived', value: 'archived' },
+              { label: 'Low stock', value: 'low' },
+              { label: 'Out of stock', value: 'out' },
+            ]}
           />
         </div>
 
         {/* Desktop table */}
         <Card className="hidden md:block overflow-hidden">
-          <table className="w-full text-xs border-collapse">
+          <div className="table-scroll max-h-[72vh]" onScroll={onInventoryScroll}>
+          <table className="w-full min-w-[1120px] text-xs border-collapse">
             <thead>
               <tr className="border-b border-border">
-                {['SKU', 'Product', 'Cat.', 'Color', 'Size', 'Current', 'Available', 'Reorder', 'Sold', 'Returned', 'Status', 'Value'].map(h => (
+                {['SKU', 'Collection', 'Product', 'Type', 'Size/Variant', 'Available', 'Buying', 'Sold', 'Status', 'Value', 'Actions'].map(h => (
                   <th
                     key={h}
                     className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-zinc-500 whitespace-nowrap"
@@ -161,7 +284,7 @@ export default function InventoryPage() {
                     .fill(0)
                     .map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
-                        {Array(12)
+                        {Array(11)
                           .fill(0)
                           .map((__, j) => (
                             <td key={j} className="px-3 py-3.5">
@@ -170,7 +293,14 @@ export default function InventoryPage() {
                           ))}
                       </tr>
                     ))
-                : items.map(item => {
+                : (
+                  <>
+                  {topSpacer > 0 && (
+                    <tr aria-hidden="true">
+                      <td colSpan={11} style={{ height: topSpacer }} className="p-0" />
+                    </tr>
+                  )}
+                  {visibleItems.map(item => {
                     const utilPct = Math.round((item.sold / (item.opening + item.purchased + 0.01)) * 100)
                     const statusCls =
                       item.available > item.reorder_level
@@ -182,31 +312,51 @@ export default function InventoryPage() {
                       <tr key={item.sku} className="border-b border-border/50 hover:bg-white/[0.015] transition-colors">
                         <td className="px-3 py-3.5 font-mono text-[11px] text-gold font-bold">{item.sku}</td>
                         <td className="px-3 py-3.5">
+                          <p className="font-mono text-[11px] text-gold-lt">{item.collectionCode || '—'}</p>
+                          <p className="text-[10px] text-zinc-600">{item.barcode || item.sku}</p>
+                        </td>
+                        <td className="px-3 py-3.5">
                           <p className="font-semibold text-cream">{item.product}</p>
                           <div className="mt-1 w-20">
                             <Progress value={utilPct} color="bg-gold" />
                           </div>
                         </td>
-                        <td className="px-3 py-3.5 text-zinc-500">{item.category}</td>
-                        <td className="px-3 py-3.5 text-zinc-500">{item.color}</td>
-                        <td className="px-3 py-3.5 text-zinc-400">{item.size}</td>
-                        <td className="px-3 py-3.5 font-bold text-cream text-center">{item.current_stock}</td>
+                        <td className="px-3 py-3.5 text-zinc-500">{item.collectionType || item.category}</td>
+                        <td className="px-3 py-3.5 text-zinc-400">{inventoryPoolLabel(item)}</td>
                         <td className="px-3 py-3.5 font-bold text-cream text-center">{item.available}</td>
-                        <td className="px-3 py-3.5 text-zinc-500 text-center">{item.reorder_level}</td>
+                        <td className="px-3 py-3.5 text-zinc-500 text-center"><Money amount={item.buyingPrice || 0} /></td>
                         <td className="px-3 py-3.5 text-zinc-500 text-center">{item.sold}</td>
-                        <td className="px-3 py-3.5 text-zinc-500 text-center">{item.returned}</td>
                         <td className="px-3 py-3.5">
                           <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${statusCls}`}>
-                            {item.available <= 0 ? 'OUT' : item.available <= item.reorder_level ? 'LOW' : 'IN STOCK'}
+                            {item.archived ? 'ARCHIVED' : item.available <= 0 ? 'OUT' : item.available <= item.reorder_level ? 'LOW' : 'IN STOCK'}
                           </span>
                         </td>
                         <td className="px-3 py-3.5 font-bold text-gold tabular-nums"><Money amount={item.stock_value} /></td>
+                        <td className="px-3 py-3.5">
+                          <div className="flex flex-wrap gap-1">
+                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-zinc-400 hover:text-cream disabled:opacity-40" onClick={() => void adjustStock(item.sku, item.available, item.buyingPrice)}>Adjust</button>
+                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-zinc-400 hover:text-cream disabled:opacity-40" onClick={() => void updateBuyingPrice(item.sku, item.buyingPrice)}>Price</button>
+                            {item.archived ? (
+                              <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-green-400/30 px-2 py-1 text-[10px] text-green-300 disabled:opacity-40" onClick={() => void mutateInventory({ action: 'restore', sku: item.sku })}>{pendingInventoryAction[item.sku] === 'restore' ? 'Restoring…' : 'Restore'}</button>
+                            ) : (
+                              <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-red-400/30 px-2 py-1 text-[10px] text-red-300 disabled:opacity-40" onClick={() => void mutateInventory({ action: 'archive', sku: item.sku, reason: 'manual archive' })}>{pendingInventoryAction[item.sku] === 'archive' ? 'Archiving…' : 'Archive'}</button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     )
                   })}
+                  {bottomSpacer > 0 && (
+                    <tr aria-hidden="true">
+                      <td colSpan={11} style={{ height: bottomSpacer }} className="p-0" />
+                    </tr>
+                  )}
+                  </>
+                )}
             </tbody>
           </table>
           {!loading && items.length === 0 && <Empty icon="◧" title="No items found" />}
+          </div>
         </Card>
 
         {/* Mobile cards */}
@@ -215,7 +365,7 @@ export default function InventoryPage() {
             ? Array(4)
                 .fill(0)
                 .map((_, i) => <div key={i} className="skeleton h-28 rounded-xl" />)
-            : items.map(item => {
+            : mobileItems.map(item => {
                 const utilPct = Math.round((item.sold / (item.opening + item.purchased + 0.01)) * 100)
                 return (
                   <Card key={item.sku} className="p-4">
@@ -224,7 +374,7 @@ export default function InventoryPage() {
                         <p className="font-mono text-[11px] text-gold font-bold">{item.sku}</p>
                         <p className="text-sm font-bold text-cream">{item.product}</p>
                         <p className="text-[11px] text-zinc-500">
-                          {item.category} · {item.color} · {item.size}
+                          {item.collectionCode || item.category} · {item.collectionType || item.color} · {inventoryPoolLabel(item)}
                         </p>
                       </div>
                       <div className="text-right">
@@ -252,9 +402,22 @@ export default function InventoryPage() {
                         <Progress value={utilPct} color="bg-gold" />
                       </div>
                     </div>
+                    <div className="mt-3 flex gap-2">
+                      <Button variant="ghost" size="xs" disabled={!!pendingInventoryAction[item.sku]} onClick={() => void adjustStock(item.sku, item.available, item.buyingPrice)}>Adjust</Button>
+                      {item.archived ? (
+                        <Button variant="ghost" size="xs" disabled={!!pendingInventoryAction[item.sku]} onClick={() => void mutateInventory({ action: 'restore', sku: item.sku })}>{pendingInventoryAction[item.sku] === 'restore' ? 'Restoring…' : 'Restore'}</Button>
+                      ) : (
+                        <Button variant="ghost" size="xs" disabled={!!pendingInventoryAction[item.sku]} onClick={() => void mutateInventory({ action: 'archive', sku: item.sku, reason: 'manual archive' })}>{pendingInventoryAction[item.sku] === 'archive' ? 'Archiving…' : 'Archive'}</Button>
+                      )}
+                    </div>
                   </Card>
                 )
               })}
+          {!loading && items.length > mobileItems.length && (
+            <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
+              Showing first {mobileItems.length.toLocaleString()} matches. Use filters/search for the rest.
+            </p>
+          )}
         </div>
       </div>
 

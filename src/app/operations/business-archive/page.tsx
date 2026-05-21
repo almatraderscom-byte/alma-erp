@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import { unwrapApiData } from '@/lib/safe-api-response'
 import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { BUSINESS_LIST } from '@/lib/businesses'
@@ -65,31 +67,36 @@ export default function BusinessArchiveControlPage() {
     const fallbackModules = modulesForBusiness(business.id)
 
     try {
-      const [mRes, bRes] = await Promise.all([
-        fetch(`/api/business-archive/modules?business_id=${encodeURIComponent(business.id)}`, {
-          cache: 'no-store',
-        }),
-        fetch(`/api/business-archive/batches?business_id=${encodeURIComponent(business.id)}`, {
-          cache: 'no-store',
-        }),
+      const [mResult, bResult] = await Promise.all([
+        safeFetchJsonWithToast<Record<string, unknown>>(
+          `/api/business-archive/modules?business_id=${encodeURIComponent(business.id)}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
+        safeFetchJsonWithToast<Record<string, unknown>>(
+          `/api/business-archive/batches?business_id=${encodeURIComponent(business.id)}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
       ])
-      const mj = await mRes.json().catch(() => ({}))
-      const bj = await bRes.json().catch(() => ({}))
 
-      if (mRes.status === 401) {
+      if (mResult.status === 401) {
         setLoadWarning('Session expired — sign in again.')
         return
       }
-      if (mRes.status === 403) {
+      if (mResult.status === 403) {
         setLoadWarning('Super Admin access required for Archive Control.')
         return
       }
 
-      const modulesList = mj.modules?.length ? mj.modules : fallbackModules
+      const mj = mResult.ok ? unwrapApiData<Record<string, unknown>>(mResult.data as Record<string, unknown>) : {}
+      const bj = bResult.ok ? unwrapApiData<Record<string, unknown>>(bResult.data as Record<string, unknown>) : {}
+
+      const modulesList = (mj.modules as ArchiveModuleDef[] | undefined)?.length
+        ? (mj.modules as ArchiveModuleDef[])
+        : fallbackModules
       setModules(modulesList)
       setStats(
-        mj.stats?.length
-          ? mj.stats
+        (mj.stats as StatRow[] | undefined)?.length
+          ? (mj.stats as StatRow[])
           : modulesList.map((m: ArchiveModuleDef) => ({
               moduleKey: m.key,
               label: m.label,
@@ -100,14 +107,14 @@ export default function BusinessArchiveControlPage() {
             })),
       )
       setSchemaReady(mj.schemaReady !== false)
-      setMigrationHint(mj.migrationHint || null)
-      setBatches(bj.batches || [])
+      setMigrationHint((mj.migrationHint as string | null) || null)
+      setBatches((bj.batches as BatchRow[]) || [])
 
       const warn =
-        mj.warning ||
-        mj.error ||
+        (mj.warning as string | undefined) ||
+        (!mResult.ok ? mResult.error.message : null) ||
         (mj.partialFailure ? 'Some modules could not load live stats.' : null) ||
-        (mRes.ok ? null : 'Archive API returned a degraded response.')
+        (!mResult.ok ? 'Archive API returned a degraded response.' : null)
       setLoadWarning(warn)
 
       if (warn) toast.error(warn, { id: 'archive-load-warn' })
@@ -159,15 +166,19 @@ export default function BusinessArchiveControlPage() {
     }
     setBusy('preview')
     try {
-      const res = await fetch('/api/business-archive/preview', {
+      const result = await safeFetchJsonWithToast<{
+        preview?: { modules?: unknown[]; totalRecords?: number }
+        confirmationPhrase?: string
+        warning?: string
+      }>('/api/business-archive/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ business_id: business.id, module_keys: selected }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok && res.status !== 200) throw new Error(j.error || 'Preview failed')
-      if (j.ok === false) throw new Error(j.error || 'Preview unavailable')
-      setPreview(j.preview?.modules || [])
+      if (!result.ok) throw new Error(result.error.message)
+      const j = result.data
+      if (j.warning) throw new Error(j.warning)
+      setPreview((j.preview?.modules as typeof preview) || [])
       setPreviewTotal(j.preview?.totalRecords || 0)
       setExpectedPhrase(j.confirmationPhrase || '')
       toast.success('Dry run ready — review counts below')
@@ -189,7 +200,7 @@ export default function BusinessArchiveControlPage() {
     }
     setBusy('archive')
     try {
-      const res = await fetch('/api/business-archive/execute', {
+      const result = await safeFetchJsonWithToast<{ recordCount?: number }>('/api/business-archive/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -199,9 +210,8 @@ export default function BusinessArchiveControlPage() {
           confirmation,
         }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Archive failed')
-      toast.success(`Archived ${j.recordCount} records (soft archive — recoverable)`)
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success(`Archived ${result.data.recordCount ?? 0} records (soft archive — recoverable)`)
       setConfirmation('')
       setPreview(null)
       await load()
@@ -216,14 +226,13 @@ export default function BusinessArchiveControlPage() {
     if (!confirm('Restore all records in this archive batch?')) return
     setBusy(`restore-${id}`)
     try {
-      const res = await fetch('/api/business-archive/restore', {
+      const result = await safeFetchJsonWithToast<{ restored?: number }>('/api/business-archive/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batch_id: id }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Restore failed')
-      toast.success(`Restored ${j.restored} records`)
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success(`Restored ${result.data.restored ?? 0} records`)
       await load()
     } catch (e) {
       toast.error((e as Error).message)

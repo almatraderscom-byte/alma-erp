@@ -216,7 +216,8 @@ export default function CditClientDetailPage() {
         {timeline.length === 0 ? (
           <Empty icon="◈" title="No payments yet" desc="Record advance, milestone, or final payments" />
         ) : (
-          <table className="w-full text-left text-xs">
+          <div className="table-scroll">
+          <table className="w-full min-w-[680px] text-left text-xs">
             <thead>
               <tr className="text-zinc-500 border-b border-border">
                 <th className="py-2 pr-2">ID</th>
@@ -238,6 +239,7 @@ export default function CditClientDetailPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </CditPageShell>

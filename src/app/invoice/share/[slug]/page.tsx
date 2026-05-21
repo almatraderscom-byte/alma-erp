@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
 import { orderToPdfModel, cditInvoiceToPdfModel } from '@/lib/pdf/models'
 import type { InvoicePdfModel } from '@/lib/pdf/types'
@@ -8,11 +8,14 @@ import type { Order } from '@/types'
 import type { CditInvoice, CditPayment } from '@/types/cdit'
 import type { BusinessBranding } from '@/types/branding'
 import { Skeleton } from '@/components/ui'
+import type { InvoiceRegistryRecord } from '@/lib/api'
 
 export default function PublicInvoiceSharePage() {
   const params = useParams()
+  const router = useRouter()
   const slug = String(params.slug || '')
   const [baseModel, setBaseModel] = useState<InvoicePdfModel | null>(null)
+  const [open, setOpen] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -24,7 +27,8 @@ export default function PublicInvoiceSharePage() {
         if (data.type === 'alma') {
           const order = data.order as Order
           const branding = data.branding as BusinessBranding
-          setBaseModel(orderToPdfModel(order, branding, undefined, order.invoice_num))
+          const invoice = data.invoice as Pick<InvoiceRegistryRecord, 'invoiceNumber' | 'paymentStatus'> | null | undefined
+          setBaseModel(orderToPdfModel(order, branding, undefined, invoice?.invoiceNumber || order.invoice_num, { paymentStatus: invoice?.paymentStatus }))
           return
         }
         const inv = data.invoice as CditInvoice
@@ -53,8 +57,12 @@ export default function PublicInvoiceSharePage() {
 
   return (
     <PdfPreviewModal
-      open
-      onClose={() => window.history.back()}
+      open={open}
+      onClose={() => {
+        setOpen(false)
+        if (window.history.length > 1) window.history.back()
+        else router.replace('/invoice')
+      }}
       baseModel={baseModel}
       shareSlug={slug}
     />

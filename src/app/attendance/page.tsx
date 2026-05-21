@@ -10,7 +10,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
-import { safeFetchJson } from '@/lib/safe-fetch'
+import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
 
 type AttendanceDashboard = {
@@ -121,6 +121,7 @@ export default function AttendancePage() {
   const canReview = role === 'SUPER_ADMIN' || role === 'ADMIN'
   const [viewAllBusinesses, setViewAllBusinesses] = useState(role === 'SUPER_ADMIN')
   const [showIntegrity, setShowIntegrity] = useState(false)
+  const [reviewBusy, setReviewBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -143,9 +144,11 @@ export default function AttendancePage() {
   const loadAnalytics = useCallback(async () => {
     if (!canReview) return
     try {
-      const res = await fetch(`/api/attendance/waivers/analytics?business_id=${business.id}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (res.ok) setAnalytics(j.analytics as PenaltyAnalytics)
+      const result = await safeFetchJsonWithToast<{ analytics: PenaltyAnalytics }>(
+        `/api/attendance/waivers/analytics?business_id=${business.id}`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (result.ok) setAnalytics(result.data.analytics)
     } catch {
       setAnalytics(null)
     }
@@ -183,54 +186,53 @@ export default function AttendancePage() {
   }, [openReviewFromUrl, review])
 
   async function submitReview() {
-    if (!review) return
-    const res = await fetch(`/api/attendance/waivers/${review.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        business_id: business.id,
-        action: review.action,
-        approved_reduction_amount: review.action === 'APPROVE' ? Number(review.amount || 0) : undefined,
-        admin_note: review.note,
-      }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not review waiver')
-      return
+    if (!review || reviewBusy) return
+    setReviewBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast(
+        `/api/attendance/waivers/${review.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: business.id,
+            action: review.action,
+            approved_reduction_amount: review.action === 'APPROVE' ? Number(review.amount || 0) : undefined,
+            admin_note: review.note,
+          }),
+        },
+      )
+      if (!result.ok) return
+      toast.success(review.action === 'APPROVE' ? 'Penalty appeal approved — wallet credited' : 'Penalty appeal rejected')
+      setReview(null)
+      void load()
+      void loadAnalytics()
+    } finally {
+      setReviewBusy(false)
     }
-    toast.success(review.action === 'APPROVE' ? 'Penalty appeal approved — wallet credited' : 'Penalty appeal rejected')
-    setReview(null)
-    void load()
-    void loadAnalytics()
   }
 
   async function requestVerification(recordId: string) {
-    const res = await fetch(`/api/attendance/${recordId}/verification-request`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: business.id }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not request verification')
-      return
-    }
+    const result = await safeFetchJsonWithToast(
+      `/api/attendance/${recordId}/verification-request`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id }),
+      },
+    )
+    if (!result.ok) return
     toast.success('Verification requested — employee will see Verify Face Now on My Desk')
     void load()
   }
 
   async function reviewSelfie(selfieId: string, action: 'APPROVE' | 'REJECT') {
-    const res = await fetch(`/api/attendance/selfies/${selfieId}`, {
+    const result = await safeFetchJsonWithToast(`/api/attendance/selfies/${selfieId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ business_id: business.id, action }),
     })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not review verification')
-      return
-    }
+    if (!result.ok) return
     toast.success(action === 'APPROVE' ? 'Verification approved' : 'Verification rejected')
     void load()
   }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
+import { safeFetchJson } from '@/lib/safe-fetch'
 
 export function useMyProfileImage() {
   const { data: session } = useSession()
@@ -18,9 +19,11 @@ export function useMyProfileImage() {
     }
     setLoading(true)
     try {
-      const res = await fetch(`/api/users/me?business_id=${business.id}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (res.ok) setProfileImageUrl((j.user as { profileImageUrl?: string | null })?.profileImageUrl ?? null)
+      const result = await safeFetchJson<{ user?: { profileImageUrl?: string | null } }>(
+        `/api/users/me?business_id=${business.id}`,
+        { cache: 'no-store' },
+      )
+      if (result.ok) setProfileImageUrl(result.data.user?.profileImageUrl ?? null)
     } finally {
       setLoading(false)
     }

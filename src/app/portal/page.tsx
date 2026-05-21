@@ -14,6 +14,7 @@ import { PenaltyAppealStatus } from '@/components/attendance/PenaltyAppealStatus
 import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
 import { useMyAttendance } from '@/hooks/useMyAttendance'
@@ -124,10 +125,12 @@ export default function EmployeePortalPage() {
     }
     setWalletLoading(true)
     try {
-      const res = await fetch(`/api/payroll/wallet/${encodeURIComponent(empId)}?business_id=${business.id}`, { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || res.statusText)
-      setWallet(j as EmployeeWalletResponse)
+      const result = await safeFetchJson<EmployeeWalletResponse>(
+        `/api/payroll/wallet/${encodeURIComponent(empId)}?business_id=${business.id}`,
+        { cache: 'no-store' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      setWallet(result.data)
     } catch (e) {
       toast.error((e as Error).message || 'Could not load wallet')
       setWallet(null)
@@ -385,13 +388,12 @@ function AttendanceCard({
   async function postCheckOut() {
     setBusy('out')
     try {
-      const res = await fetch('/api/attendance/check-out', {
+      const result = await safeFetchJsonWithToast('/api/attendance/check-out', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ business_id: businessId }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Attendance update failed')
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Work ended')
       onEndWork?.()
       onRefresh()
@@ -405,11 +407,11 @@ function AttendanceCard({
   async function cancelAppeal(waiverId: string) {
     setBusy('cancel')
     try {
-      const res = await fetch(`/api/attendance/waivers/${waiverId}?business_id=${encodeURIComponent(businessId)}`, {
-        method: 'DELETE',
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Could not cancel')
+      const result = await safeFetchJsonWithToast(
+        `/api/attendance/waivers/${waiverId}?business_id=${encodeURIComponent(businessId)}`,
+        { method: 'DELETE' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
       toast.success('Review request cancelled')
       onRefresh()
     } catch (e) {
@@ -680,16 +682,12 @@ function WalletRequestCard({
     }
     setBusy(true)
     try {
-      const res = await fetch('/api/payroll/wallet/requests', {
+      const result = await safeFetchJsonWithToast('/api/payroll/wallet/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, amount: amt, reason: r, business_id: businessId }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        toast.error(j.error || 'Request failed')
-        return
-      }
+      if (!result.ok) return
       toast.success(`${type === 'WITHDRAWAL' ? 'Withdrawal' : 'Advance'} requested — awaiting approval`)
       setAmount('')
       setReason('')

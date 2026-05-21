@@ -10,16 +10,55 @@ function paymentStatusFromAmounts(total: number, paid: number): InvoicePdfModel[
   return 'Partial Paid'
 }
 
+type OrderPdfOptions = {
+  paymentStatus?: 'UNPAID' | 'PARTIAL' | 'PAID' | 'VOID' | InvoicePdfModel['paymentStatus']
+}
+
+function normalizePaymentStatus(status?: OrderPdfOptions['paymentStatus']): InvoicePdfModel['paymentStatus'] | null {
+  if (!status) return null
+  if (status === 'PAID' || status === 'Paid') return 'Paid'
+  if (status === 'PARTIAL' || status === 'Partial Paid') return 'Partial Paid'
+  if (status === 'UNPAID' || status === 'VOID' || status === 'Unpaid') return 'Unpaid'
+  return null
+}
+
 export function orderToPdfModel(
   order: Order,
   branding: BusinessBranding,
   logoDataUrl?: string,
   invoiceId?: string,
+  options: OrderPdfOptions = {},
 ): InvoicePdfModel {
-  const subtotal = order.unit_price * order.qty
+  const orderItems = Array.isArray(order.items) && order.items.length ? order.items : undefined
+  const lineItems = orderItems?.map(item => ({
+    description: item.product,
+    meta: [item.category, item.size, item.variant, item.sku || item.stock_sku].filter(Boolean).join(' · '),
+    qty: item.qty,
+    unitPrice: item.sell_price ?? item.unit_price,
+    subtotal: item.subtotal || (item.sell_price ?? item.unit_price) * item.qty,
+  })) ?? [{
+    description: order.product,
+    meta: [order.category, order.size, order.sku].filter(Boolean).join(' · '),
+    qty: order.qty,
+    unitPrice: order.unit_price,
+    subtotal: order.unit_price * order.qty,
+  }]
+  const subtotal = lineItems.reduce((sum, item) => sum + item.subtotal, 0)
   const discount = order.discount + order.add_discount
   const total = order.sell_price + order.shipping_fee
-  const totalPaid = total
+  const savedPaymentStatus = normalizePaymentStatus(options.paymentStatus)
+  const orderPaid = order.paid_amount == null ? total : Math.min(total, Math.max(0, Number(order.paid_amount || 0)))
+  const orderDue = order.due_amount == null ? Math.max(0, total - orderPaid) : Math.max(0, Number(order.due_amount || 0))
+  const totalPaid = savedPaymentStatus === 'Paid'
+    ? total
+    : savedPaymentStatus === 'Unpaid'
+      ? 0
+      : orderPaid
+  const dueAmount = savedPaymentStatus === 'Paid'
+    ? 0
+    : savedPaymentStatus === 'Unpaid'
+      ? total
+      : orderDue
   const b = brandingToPdf(branding, logoDataUrl)
 
   return {
@@ -27,32 +66,26 @@ export function orderToPdfModel(
     invoiceId: invoiceId || order.invoice_num || `AL-INV-${order.id}`,
     issueDate: order.date || new Date().toISOString().slice(0, 10),
     dueDate: order.actual_delivery || order.date || '',
-    paymentStatus: paymentStatusFromAmounts(total, totalPaid),
+    paymentStatus: savedPaymentStatus || paymentStatusFromAmounts(total, totalPaid),
     customer: {
       name: order.customer,
       phone: order.phone,
       address: order.address,
     },
-    lineItems: [{
-      description: order.product,
-      meta: [order.category, order.size, order.sku].filter(Boolean).join(' · '),
-      qty: order.qty,
-      unitPrice: order.unit_price,
-      subtotal,
-    }],
+    lineItems,
     subtotal,
     discount,
     vat: 0,
     shipping: order.shipping_fee,
     total,
     totalPaid,
-    dueAmount: Math.max(0, total - totalPaid),
+    dueAmount,
     paidPercentage: total > 0 ? Math.round((totalPaid / total) * 1000) / 10 : 100,
     payments: totalPaid > 0 ? [{
       date: order.date,
       amount: totalPaid,
       method: order.payment || '—',
-      note: 'Full payment',
+      note: dueAmount > 0 ? 'Partial payment' : 'Full payment',
     }] : [],
     branding: b,
     theme: 'dark',
@@ -116,7 +149,7 @@ export function compactScale(model: InvoicePdfModel): {
   maxPayRows: number
 } {
   const rows = model.lineItems.length + model.payments.length
-  if (rows > 10) return { base: 7, small: 6, rowPad: 3, maxPayRows: 3 }
-  if (rows > 6) return { base: 7.5, small: 6.5, rowPad: 4, maxPayRows: 4 }
-  return { base: 8.5, small: 7, rowPad: 5, maxPayRows: 5 }
+  if (rows > 10) return { base: 7, small: 6, rowPad: 3.25, maxPayRows: 3 }
+  if (rows > 6) return { base: 7.5, small: 6.5, rowPad: 4.25, maxPayRows: 4 }
+  return { base: 8.5, small: 7, rowPad: 5.5, maxPayRows: 5 }
 }

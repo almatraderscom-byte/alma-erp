@@ -24,6 +24,7 @@ var SHEETS = {
   COURIER:  '🚚 COURIER TRACKER',
   RETURNS:  '↩️ RETURNS',
   CUSTOMERS:'👥 CUSTOMERS',
+  ORDER_ITEMS:'🧾 ORDER ITEMS',
   EXPENSE:  '💸 EXPENSE LEDGER',
   CASH_FLOW:'💰 CASH FLOW',
   LOG:      '🤖 AUTOMATION LOG',
@@ -229,9 +230,9 @@ function auditAppend_(body, result) {
       entityType = 'cdit';
       entityId = String(result.client_id || result.invoice_id || result.payment_id || result.project_id || body.id || '');
       summary = route;
-    } else if (route === 'create_product' || route === 'batch_import_product_master') {
+    } else if (route === 'create_product' || route === 'batch_import_product_master' || route.indexOf('inventory_') === 0) {
       entityType = 'inventory';
-      entityId = String(result.product_id || 'batch');
+      entityId = String(result.product_id || result.sku || body.sku || 'batch');
       summary = route;
     } else if (route === 'create_customer') {
       entityType = 'customer';
@@ -240,6 +241,10 @@ function auditAppend_(body, result) {
     } else if (route === 'save_branding' || route === 'upload_brand_asset') {
       entityType = 'branding';
       entityId = bid;
+      summary = route;
+    } else if (route.indexOf('trading_') === 0) {
+      entityType = 'trading';
+      entityId = String(result.drive_file_id || body.account_id || '');
       summary = route;
     }
 
@@ -250,6 +255,18 @@ function auditAppend_(body, result) {
       detail.new_status = String(body.status || '');
       detail.reason = String(body.reason || '').slice(0, 500);
       detail.actor_user_id = String(body.actor_user_id || '');
+    } else if (route.indexOf('inventory_') === 0) {
+      detail.sku = String(body.sku || '');
+      detail.reason = String(body.reason || '').slice(0, 500);
+      detail.note = String(body.note || '').slice(0, 1000);
+      if (route === 'inventory_adjust' && result) {
+        detail.before = { stock: result.previous_stock };
+        detail.after = { stock: result.new_stock };
+        detail.adjustment = result.adjustment;
+      }
+      if (route === 'inventory_edit') {
+        detail.changed_fields = Object.keys(body.data || {});
+      }
     }
     var sh = ensureAuditSheet_();
     var ts = new Date();
@@ -314,6 +331,12 @@ function dispatchRoutePost_(body) {
     case 'create_product':      return createProduct_(body);
     case 'batch_import_product_master':
       return batchImportProductMaster_(body);
+    case 'inventory_edit':      return inventoryEdit_(body);
+    case 'inventory_archive':   return inventoryArchive_(body);
+    case 'inventory_restore':   return inventoryRestore_(body);
+    case 'inventory_adjust':    return inventoryAdjust_(body);
+    case 'inventory_bulk_update': return inventoryBulkUpdate_(body);
+    case 'inventory_consolidate_lifestyle': return consolidateLifestyleInventory_(body);
     case 'backfill_sla':
       if (typeof runManualSLARefresh === 'function') runManualSLARefresh();
       return { ok: true };
@@ -326,6 +349,14 @@ function dispatchRoutePost_(body) {
     case 'cdit_generate_invoice_pdf': return generateCditInvoicePdf_(body);
     case 'save_branding':        return saveBranding_(body);
     case 'upload_brand_asset':   return uploadBrandAsset_(body);
+    case 'trading_upload_screenshot': return tradingUploadScreenshot_(body);
+    case 'trading_get_screenshot':    return tradingGetScreenshot_(body);
+    case 'trading_delete_screenshots': return tradingDeleteScreenshots_(body);
+    case 'trading_cleanup_configure': return configureTradingScreenshotCleanup(body.cleanup_secret, body.cleanup_url);
+    case 'trading_cleanup_status': return getTradingScreenshotCleanupStatus(body.expected_secret, body.expected_url);
+    case 'trading_cleanup_install_trigger': return installTradingScreenshotCleanupTrigger();
+    case 'backup_upload': return backupUpload_(body);
+    case 'backup_retention_cleanup': return backupRetentionCleanup_(body);
     default:
       return { error: 'Unknown POST route: "' + body.route + '"' };
   }
@@ -337,6 +368,293 @@ function routePost_(body) {
     auditAppend_(body, result);
   }
   return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALMA ERP — GOOGLE DRIVE BACKUPS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var BACKUP_DRIVE_ROOT_NAME = 'ALMA ERP Backups';
+var BACKUP_KIND_FOLDER_MAP = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  manual: 'Manual'
+};
+
+function backupUpload_(body) {
+  body = body || {};
+  var kind = String(body.kind || 'daily').toLowerCase();
+  var folderName = BACKUP_KIND_FOLDER_MAP[kind] || BACKUP_KIND_FOLDER_MAP.daily;
+  var fileName = sanitizeBackupDriveName_(String(body.file_name || 'alma-erp-backup.bin'));
+  var mimeType = String(body.mime_type || 'application/octet-stream');
+  var data = String(body.data || '');
+  var expectedSha = String(body.sha256 || '').toLowerCase();
+  var expectedSize = Number(body.size_bytes || 0);
+  if (!data) return { ok: false, error: 'backup data required' };
+  if (data.length > 45 * 1024 * 1024) return { ok: false, error: 'backup payload too large for Apps Script upload route' };
+
+  var bytes = Utilities.base64Decode(data);
+  if (expectedSize && bytes.length !== expectedSize) {
+    return { ok: false, error: 'backup size mismatch: expected ' + expectedSize + ', got ' + bytes.length };
+  }
+  if (expectedSha) {
+    var actualSha = sha256Hex_(bytes);
+    if (actualSha !== expectedSha) return { ok: false, error: 'backup sha256 mismatch' };
+  }
+
+  var root = getOrCreateBackupDriveRoot_();
+  var folder = getOrCreateBackupSubfolder_(root, folderName);
+  var dateFolder = getOrCreateBackupSubfolder_(folder, Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
+  var blob = Utilities.newBlob(bytes, mimeType, fileName);
+  var file = dateFolder.createFile(blob);
+  file.setDescription(JSON.stringify({
+    app: 'ALMA ERP',
+    backup_kind: kind,
+    sha256: expectedSha || '',
+    size_bytes: bytes.length,
+    created_at: new Date().toISOString()
+  }));
+  return {
+    ok: true,
+    drive_file_id: file.getId(),
+    drive_folder_id: dateFolder.getId(),
+    file_name: fileName,
+    size_bytes: bytes.length,
+    url: file.getUrl()
+  };
+}
+
+function backupRetentionCleanup_(body) {
+  body = body || {};
+  var dailyDays = Number(body.daily_days || 14);
+  var weeklyDays = Number(body.weekly_days || 56);
+  var monthlyDays = Number(body.monthly_days || 395);
+  var root = getOrCreateBackupDriveRoot_();
+  var deleted = 0;
+  deleted += deleteOldBackupFolders_(getOrCreateBackupSubfolder_(root, 'Daily'), dailyDays);
+  deleted += deleteOldBackupFolders_(getOrCreateBackupSubfolder_(root, 'Weekly'), weeklyDays);
+  deleted += deleteOldBackupFolders_(getOrCreateBackupSubfolder_(root, 'Monthly'), monthlyDays);
+  return { ok: true, deleted: deleted };
+}
+
+function deleteOldBackupFolders_(parent, retentionDays) {
+  var cutoff = new Date(Date.now() - Math.max(1, retentionDays) * 24 * 60 * 60 * 1000);
+  var folders = parent.getFolders();
+  var deleted = 0;
+  while (folders.hasNext()) {
+    var folder = folders.next();
+    if (folder.getDateCreated() < cutoff) {
+      folder.setTrashed(true);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+function getOrCreateBackupDriveRoot_() {
+  var folders = DriveApp.getFoldersByName(BACKUP_DRIVE_ROOT_NAME);
+  var root = folders.hasNext() ? folders.next() : DriveApp.createFolder(BACKUP_DRIVE_ROOT_NAME);
+  Object.keys(BACKUP_KIND_FOLDER_MAP).forEach(function(kind) {
+    getOrCreateBackupSubfolder_(root, BACKUP_KIND_FOLDER_MAP[kind]);
+  });
+  return root;
+}
+
+function getOrCreateBackupSubfolder_(parent, name) {
+  var folders = parent.getFoldersByName(name);
+  return folders.hasNext() ? folders.next() : parent.createFolder(name);
+}
+
+function sanitizeBackupDriveName_(name) {
+  return name.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').slice(0, 180) || 'alma-erp-backup.bin';
+}
+
+function sha256Hex_(bytes) {
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes);
+  return digest.map(function(byte) {
+    var v = (byte < 0 ? byte + 256 : byte).toString(16);
+    return v.length === 1 ? '0' + v : v;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALMA TRADING — GOOGLE DRIVE SCREENSHOT STORAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var TRADING_DRIVE_ROOT_NAME = 'ALMA Trading';
+
+function tradingUploadScreenshot_(body) {
+  body = body || {};
+  var accountId = String(body.account_id || '').trim();
+  var accountName = String(body.account_name || accountId || 'Trading Account').trim();
+  var employeeId = String(body.employee_id || '').trim();
+  var uploadDate = String(body.upload_date || '').trim();
+  var fileName = sanitizeTradingDriveName_(String(body.file_name || 'performance-screenshot.webp'));
+  var mimeType = String(body.mime_type || 'image/webp');
+  var b64 = String(body.data || body.base64 || '');
+  if (b64.indexOf('base64,') >= 0) b64 = b64.split('base64,')[1];
+  if (!accountId) return { ok: false, error: 'account_id required' };
+  if (!b64) return { ok: false, error: 'data required' };
+  if (!/^image\/(jpeg|png|webp)$/i.test(mimeType)) return { ok: false, error: 'Only JPEG, PNG, and WebP are allowed' };
+
+  var date = parseTradingUploadDate_(uploadDate);
+  var dateKey = Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var root = getOrCreateTradingDriveRoot_();
+  var accountFolder = getOrCreateTradingSubfolder_(root, sanitizeTradingDriveName_(accountName));
+  var dateFolder = getOrCreateTradingSubfolder_(accountFolder, dateKey);
+  var bytes = Utilities.base64Decode(b64);
+  var blob = Utilities.newBlob(bytes, mimeType, fileName);
+  var existing = dateFolder.getFilesByName(fileName);
+  while (existing.hasNext()) existing.next().setTrashed(true);
+  var file = dateFolder.createFile(blob);
+  var expiry = new Date(date.getTime());
+  expiry.setDate(expiry.getDate() + 30);
+  file.setDescription(JSON.stringify({
+    system: 'ALMA_TRADING',
+    account_id: accountId,
+    employee_id: employeeId,
+    upload_date: dateKey,
+    expiry_date: Utilities.formatDate(expiry, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'")
+  }));
+  return {
+    ok: true,
+    drive_file_id: file.getId(),
+    drive_folder_id: dateFolder.getId(),
+    preview_url: 'https://drive.google.com/file/d/' + file.getId() + '/view',
+    file_name: file.getName(),
+    size_bytes: bytes.length,
+    expiry_date: Utilities.formatDate(expiry, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'")
+  };
+}
+
+function tradingGetScreenshot_(body) {
+  body = body || {};
+  var fileId = String(body.drive_file_id || '').trim();
+  if (!fileId) return { ok: false, error: 'drive_file_id required' };
+  var file = DriveApp.getFileById(fileId);
+  if (file.isTrashed()) return { ok: false, error: 'Screenshot file is deleted' };
+  var blob = file.getBlob();
+  return {
+    ok: true,
+    file_name: file.getName(),
+    mime_type: blob.getContentType(),
+    base64: Utilities.base64Encode(blob.getBytes())
+  };
+}
+
+function tradingDeleteScreenshots_(body) {
+  body = body || {};
+  var ids = body.drive_file_ids || [];
+  if (!Array.isArray(ids)) ids = String(ids || '').split(',');
+  var deleted = 0;
+  var missing = 0;
+  var errors = [];
+  ids.forEach(function(raw) {
+    var id = String(raw || '').trim();
+    if (!id) return;
+    try {
+      var file = DriveApp.getFileById(id);
+      if (file.isTrashed()) {
+        missing++;
+      } else {
+        file.setTrashed(true);
+        deleted++;
+      }
+    } catch (e) {
+      missing++;
+      errors.push(id + ': ' + e.message);
+    }
+  });
+  return { ok: true, deleted: deleted, missing: missing, errors: errors.slice(0, 20) };
+}
+
+function installTradingScreenshotCleanupTrigger() {
+  var existing = ScriptApp.getProjectTriggers();
+  var hasCleanup = existing.some(function(t) { return t.getHandlerFunction() === 'runTradingScreenshotCleanup'; });
+  if (!hasCleanup) {
+    ScriptApp.newTrigger('runTradingScreenshotCleanup').timeBased().atHour(3).everyDays(1).create();
+  }
+  return { ok: true, installed: !hasCleanup };
+}
+
+function configureTradingScreenshotCleanup(secret, url) {
+  if (!secret) throw new Error('secret required');
+  if (!url) throw new Error('url required');
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('TRADING_SCREENSHOT_CLEANUP_SECRET', String(secret));
+  props.setProperty('TRADING_SCREENSHOT_CLEANUP_URL', String(url).replace(/\/$/, ''));
+  return getTradingScreenshotCleanupStatus(String(secret), String(url).replace(/\/$/, ''));
+}
+
+function getTradingScreenshotCleanupStatus(expectedSecret, expectedUrl) {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('TRADING_SCREENSHOT_CLEANUP_SECRET') || '';
+  var url = props.getProperty('TRADING_SCREENSHOT_CLEANUP_URL') || '';
+  var triggers = ScriptApp.getProjectTriggers()
+    .filter(function(t) { return t.getHandlerFunction() === 'runTradingScreenshotCleanup'; })
+    .map(function(t) {
+      return {
+        handler: t.getHandlerFunction(),
+        event_type: String(t.getEventType()),
+        trigger_source: String(t.getTriggerSource())
+      };
+    });
+  return {
+    ok: true,
+    has_secret: !!secret,
+    secret_matches_expected: expectedSecret ? secret === String(expectedSecret) : null,
+    cleanup_url: url,
+    url_matches_expected: expectedUrl ? url === String(expectedUrl).replace(/\/$/, '') : null,
+    trigger_count: triggers.length,
+    triggers: triggers
+  };
+}
+
+function runTradingScreenshotCleanup() {
+  var props = PropertiesService.getScriptProperties();
+  var url = props.getProperty('TRADING_SCREENSHOT_CLEANUP_URL') || props.getProperty('NEXT_PUBLIC_APP_URL') || '';
+  var secret = props.getProperty('TRADING_SCREENSHOT_CLEANUP_SECRET') || props.getProperty('CRON_SECRET') || '';
+  if (!url || !secret) throw new Error('Set TRADING_SCREENSHOT_CLEANUP_URL and TRADING_SCREENSHOT_CLEANUP_SECRET script properties.');
+  var endpoint = url.replace(/\/$/, '') + '/api/trading/screenshots/cleanup';
+  var res = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    muteHttpExceptions: true,
+    headers: { 'x-cron-secret': secret },
+    contentType: 'application/json',
+    payload: JSON.stringify({ source: 'gas_daily_trigger' })
+  });
+  var text = res.getContentText();
+  if (res.getResponseCode() >= 300) throw new Error('Trading screenshot cleanup failed: ' + text);
+  return JSON.parse(text);
+}
+
+function getOrCreateTradingDriveRoot_() {
+  var props = PropertiesService.getScriptProperties();
+  var cached = props.getProperty('TRADING_DRIVE_ROOT_ID');
+  if (cached) {
+    try { return DriveApp.getFolderById(cached); } catch (e) {}
+  }
+  var folders = DriveApp.getFoldersByName(TRADING_DRIVE_ROOT_NAME);
+  var root = folders.hasNext() ? folders.next() : DriveApp.createFolder(TRADING_DRIVE_ROOT_NAME);
+  props.setProperty('TRADING_DRIVE_ROOT_ID', root.getId());
+  return root;
+}
+
+function getOrCreateTradingSubfolder_(parent, name) {
+  var clean = sanitizeTradingDriveName_(name || 'Unassigned');
+  var existing = parent.getFoldersByName(clean);
+  return existing.hasNext() ? existing.next() : parent.createFolder(clean);
+}
+
+function sanitizeTradingDriveName_(name) {
+  return String(name || 'Trading').replace(/[\\/:*?"<>|#%\u0000-\u001F]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Trading';
+}
+
+function parseTradingUploadDate_(value) {
+  var d = value ? new Date(value) : new Date();
+  if (isNaN(d.getTime())) d = new Date();
+  return d;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -357,12 +675,15 @@ function routePost_(body) {
  */
 function createOrder_(body) {
   // ── Validate required fields ─────────────────────────────────────────────
-  var required = ['customer', 'phone', 'product', 'category', 'qty', 'unit_price', 'payment', 'source'];
+  var items = normalizeOrderItems_(body);
+  var required = ['customer', 'phone', 'payment', 'source'];
   for (var i = 0; i < required.length; i++) {
     if (!body[required[i]] && body[required[i]] !== 0) {
       return { error: 'Missing required field: ' + required[i] };
     }
   }
+  if (!items.length && !body.product) return { error: 'Missing required field: product' };
+  validateOrderInventory_(items);
 
   // ── Get sheet ─────────────────────────────────────────────────────────────
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -392,6 +713,16 @@ function createOrder_(body) {
   for (var c = 0; c < TOTAL_COLS; c++) row.push('');
 
   var today = new Date();
+  var totalQty = items.length ? items.reduce(function(a, it){ return a + it.qty; }, 0) : Number(body.qty) || 1;
+  var subtotal = items.length ? items.reduce(function(a, it){ return a + it.subtotal; }, 0) : (Number(body.unit_price) || 0) * totalQty;
+  var discount = Number(body.discount || 0);
+  var inventoryCost = items.length ? items.reduce(function(a, it){ return a + (Number(it.cogs || 0) * Number(it.qty || 0)); }, 0) : Number(body.cogs || 0);
+  var courierCost = Number(body.courier_charge || 0);
+  var estimatedProfit = Number(body.estimated_profit != null ? body.estimated_profit : (Math.max(0, subtotal - discount - Number(body.add_discount || 0)) - inventoryCost - courierCost - Number(body.other_costs || 0) - Number(body.adv_cost || 0)));
+  var firstItem = items[0] || null;
+  var productSummary = firstItem
+    ? firstItem.product + (items.length > 1 ? ' + ' + (items.length - 1) + ' more' : '')
+    : String(body.product || '').trim();
 
   // Columns written as values (0-indexed in the array):
   row[OC.DATE          - 1] = today;
@@ -401,25 +732,25 @@ function createOrder_(body) {
   row[OC.PAYMENT       - 1] = String(body.payment   || '');
   row[OC.SOURCE        - 1] = String(body.source    || '');
   row[OC.STATUS        - 1] = String(body.status    || 'Pending');
-  row[OC.PRODUCT       - 1] = String(body.product   || '').trim();
-  row[OC.CATEGORY      - 1] = String(body.category  || '');
-  row[OC.SIZE          - 1] = String(body.size      || '');
-  row[OC.QTY           - 1] = Number(body.qty)      || 1;
-  row[OC.UNIT_PRICE    - 1] = Number(body.unit_price)|| 0;
-  row[OC.DISCOUNT      - 1] = Number(body.discount  || 0);
+  row[OC.PRODUCT       - 1] = productSummary;
+  row[OC.CATEGORY      - 1] = firstItem ? firstItem.category : String(body.category  || '');
+  row[OC.SIZE          - 1] = firstItem ? (firstItem.size || firstItem.variant) : String(body.size      || '');
+  row[OC.QTY           - 1] = totalQty;
+  row[OC.UNIT_PRICE    - 1] = totalQty > 0 ? subtotal / totalQty : subtotal;
+  row[OC.DISCOUNT      - 1] = discount;
   row[OC.ADD_DISCOUNT  - 1] = Number(body.add_discount || 0);
   row[OC.ADV_COST      - 1] = Number(body.adv_cost  || 0);
   row[OC.ADV_PLATFORM  - 1] = String(body.adv_platform || '');
   // OC.SELL_PRICE (18) — written as formula below, leave blank here
   row[OC.SHIP_COLLECTED - 1]= Number(body.shipping_fee   || 0);
-  row[OC.COGS          - 1] = Number(body.cogs           || 0);
+  row[OC.COGS          - 1] = inventoryCost;
   row[OC.COURIER_CHARGE - 1]= Number(body.courier_charge || 0);
   row[OC.OTHER_COSTS   - 1] = Number(body.other_costs    || 0);
   // OC.PROFIT (23) — written as formula below, leave blank here
   row[OC.COURIER       - 1] = String(body.courier   || '');
   row[OC.TRACKING_ID   - 1] = '';
   row[OC.TRACKING_STATUS-1] = 'Pending';
-  row[OC.NOTES         - 1] = String(body.notes     || '');
+  row[OC.NOTES         - 1] = buildOrderNotes_(body, items);
   // OC.SKU (33) — formula column, leave blank (VLOOKUP fills it)
   row[OC.HANDLED_BY    - 1] = String(body.handled_by || '');
   row[OC.BUSINESS_ID   - 1] = resolveBusinessId_(body.business_id || '');
@@ -442,9 +773,9 @@ function createOrder_(body) {
     '=IF(C' + newRow + '="","",IFERROR((M' + newRow + '*L' + newRow + ')-N' + newRow + '-O' + newRow + ',0))'
   );
 
-  // PROFIT — col W: sell_price + shipping_collected - COGS - courier_charge - other_costs - adv_cost
+  // PROFIT — col W: seller price after discounts - inventory cost - courier/other/advance costs.
   sh.getRange(newRow, OC.PROFIT).setFormula(
-    '=IF(C' + newRow + '="","",IFERROR(R' + newRow + '+S' + newRow + '-T' + newRow + '-U' + newRow + '-V' + newRow + '-P' + newRow + ',0))'
+    '=IF(C' + newRow + '="","",IFERROR(R' + newRow + '-T' + newRow + '-U' + newRow + '-V' + newRow + '-P' + newRow + ',0))'
   );
 
   // ── Flush and read back the generated Order ID ────────────────────────────
@@ -454,6 +785,11 @@ function createOrder_(body) {
   // Fallback: if the formula hasn't resolved yet (cold evaluation), derive it
   if (!orderId) {
     orderId = 'AL-' + String(newRow - 2).padStart(4, '0');
+  }
+
+  if (items.length) {
+    appendOrderItems_(orderId, items);
+    applyOrderInventoryDeductions_(items);
   }
 
   // ── Fire Phase 5 CRM hook if loaded ──────────────────────────────────────
@@ -466,18 +802,307 @@ function createOrder_(body) {
   }
 
   // ── Compute profit for response (formula in sheet may not resolve yet) ───────
-  var sellPrice   = Number(body.sell_price)     || (Number(body.unit_price) * Number(body.qty));
-  var profit      = sellPrice
-                  + Number(body.shipping_fee    || 0)
+  var sellPrice   = items.length ? Math.max(0, subtotal - discount - Number(body.add_discount || 0)) : Number(body.sell_price) || (Number(body.unit_price) * Number(body.qty));
+  var profit      = Number(body.estimated_profit != null ? body.estimated_profit : (sellPrice
                   - Number(body.cogs            || 0)
                   - Number(body.courier_charge  || 0)
                   - Number(body.other_costs     || 0)
-                  - Number(body.adv_cost        || 0);
+                  - Number(body.adv_cost        || 0)));
 
   // ── Log the event ─────────────────────────────────────────────────────────
-  apiLog_('CREATE_ORDER', orderId, body.product + ' × ' + body.qty + ' | profit=' + Math.round(profit), 'Row ' + newRow);
+  apiLog_('CREATE_ORDER', orderId, productSummary + ' × ' + totalQty + ' | profit=' + Math.round(profit), 'Row ' + newRow);
 
-  return { ok: true, order_id: orderId, profit: Math.round(profit), row: newRow };
+  return { ok: true, order_id: orderId, profit: Math.round(profit), row: newRow, items_count: items.length || 1 };
+}
+
+function normalizeOrderItems_(body) {
+  var raw = body && body.items;
+  if (!raw || !raw.length) return [];
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var item = raw[i] || {};
+    var qty = Number(item.qty || 0);
+    var unit = Number(item.sell_price != null ? item.sell_price : item.unit_price || 0);
+    var sku = String(item.stock_sku || item.sku || item.product_code || '').trim();
+    var product = String(item.product || item.product_name || '').trim();
+    if (!product) throw new Error('Item ' + (i + 1) + ': product is required');
+    if (!sku) throw new Error('Item ' + (i + 1) + ': inventory SKU is required');
+    if (!qty || qty < 1) throw new Error('Item ' + (i + 1) + ': qty must be at least 1');
+    if (!unit || unit <= 0) throw new Error('Item ' + (i + 1) + ': selling price must be greater than 0');
+    out.push({
+      line_no: Number(item.line_no || (i + 1)),
+      product_code: String(item.product_code || sku),
+      product: product,
+      category: String(item.category || ''),
+      size: String(item.size || ''),
+      variant: String(item.variant || ''),
+      qty: qty,
+      unit_price: unit,
+      sell_price: unit,
+      subtotal: Number(item.subtotal || (unit * qty)),
+      sku: sku,
+      stock_sku: sku,
+      cogs: Number(item.cogs || 0),
+      collection_code: String(item.collection_code || ''),
+      collection_type: String(item.collection_type || ''),
+      size_group: String(item.size_group || ''),
+      variant_group: String(item.variant_group || ''),
+    });
+  }
+  return remapOrderItemsToLifestylePools_(out);
+}
+
+function buildOrderNotes_(body, items) {
+  var notes = String(body.notes || '');
+  var inventoryCost = items.length ? items.reduce(function(a, it){ return a + (Number(it.cogs || 0) * Number(it.qty || 0)); }, 0) : Number(body.inventory_cost || body.cogs || 0);
+  var courierCost = Number(body.courier_cost != null ? body.courier_cost : body.courier_charge || 0);
+  var estimatedProfit = Number(body.estimated_profit != null ? body.estimated_profit : 0);
+  if (!items.length && !estimatedProfit && !inventoryCost && !courierCost) return notes;
+  var meta = {
+    items_count: items.length,
+    paid_amount: Number(body.paid_amount || 0),
+    due_amount: Number(body.due_amount || 0),
+    estimatedProfit: estimatedProfit,
+    realizedProfit: 0,
+    reversedProfit: 0,
+    courierCost: courierCost,
+    inventoryCost: inventoryCost,
+    accountingStatus: 'ESTIMATED',
+    stockRestored: false,
+    items: items,
+  };
+  return (notes ? notes + '\n' : '') + 'ORDER_ITEMS_JSON:' + JSON.stringify(meta);
+}
+
+function getStockRowsBySku_() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
+  if (!sh) throw new Error('STOCK sheet not found');
+  var SSTART = 3;
+  var last = sh.getLastRow();
+  var map = {};
+  if (last >= SSTART) {
+    var rows = sh.getRange(SSTART, 1, last - SSTART + 1, 20).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      var sku = String(rows[i][0] || '').trim().toLowerCase();
+      if (sku) map[sku] = { sh: sh, row: SSTART + i, data: rows[i] };
+    }
+  }
+  return map;
+}
+
+function stockItemFromRow_(row) {
+  return {
+    sku: String(row[0] || ''),
+    product: String(row[1] || ''),
+    category: String(row[2] || ''),
+    color: String(row[3] || ''),
+    size: String(row[4] || ''),
+    opening: Number(row[5] || 0),
+    purchased: Number(row[6] || 0),
+    sold: Number(row[7] || 0),
+    returned: Number(row[8] || 0),
+    damaged: Number(row[9] || 0),
+    reserved: Number(row[10] || 0),
+    current_stock: Number(row[11] || 0),
+    available: Number(row[12] || 0),
+    reorder_level: Number(row[13] || 0),
+    status: String(row[14] || ''),
+    stock_value: Number(row[15] || 0),
+    sell_value: Number(row[16] || 0),
+    potential_profit: Number(row[17] || 0),
+  };
+}
+
+function rowIsArchived_(row) {
+  var meta = parseStockMeta_(row[19]);
+  return !!meta.archived || meta.active === false || String(row[14] || '').toUpperCase().indexOf('ARCHIVED') !== -1;
+}
+
+function resolveLifestyleCollectionStock_(item, stockMap) {
+  var type = String(item.collection_type || '').trim().toUpperCase();
+  var code = String(item.collection_code || item.product_code || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!code || (type !== 'MEN' && type !== 'WOMEN')) return null;
+
+  var matches = [];
+  Object.keys(stockMap).forEach(function(key) {
+    var ref = stockMap[key];
+    var rowItem = stockItemFromRow_(ref.data);
+    var meta = mergeStockMeta_(inferCollectionStockMeta_(rowItem), parseStockMeta_(ref.data[19]));
+    if (String(meta.collectionCode || '').toUpperCase() === code && String(meta.collectionType || '').toUpperCase() === type) {
+      matches.push({ ref: ref, item: rowItem, meta: meta, archived: rowIsArchived_(ref.data) });
+    }
+  });
+
+  function pick(predicate, includeArchived) {
+    for (var i = 0; i < matches.length; i++) {
+      if (!includeArchived && matches[i].archived) continue;
+      if (predicate(matches[i])) return matches[i].ref;
+    }
+    return null;
+  }
+
+  if (type === 'MEN') {
+    var group = String(item.size_group || sizeGroupForOrderSize_(item.size || '') || '').toUpperCase();
+    if (!group) return null;
+    return pick(function(m) {
+      return String(m.meta.sizeGroup || m.meta.sizeCategory || m.item.size || '').toUpperCase() === group
+        || String(m.item.sku || '').toUpperCase() === smartFashionSku_(code, group, '');
+    }, false) || pick(function(m) {
+      return String(m.item.size || '').trim() === String(item.size || '').trim();
+    }, false) || pick(function(m) {
+      return String(m.meta.sizeGroup || m.meta.sizeCategory || m.item.size || '').toUpperCase() === group;
+    }, true);
+  }
+
+  var variant = normalizeWomenVariantGroup_(item.variant_group || item.variant || item.size || '');
+  if (!variant) return null;
+  return pick(function(m) {
+    return String(m.meta.variantGroup || m.item.size || m.item.color || '').toUpperCase() === variant
+      || String(m.item.sku || '').toUpperCase() === smartFashionSku_(code, '', variant);
+  }, false) || pick(function(m) {
+    return String(m.meta.variantGroup || '').toUpperCase() === variant;
+  }, true);
+}
+
+function remapOrderItemsToLifestylePools_(items) {
+  if (!items || !items.length) return items;
+  var stock = getStockRowsBySku_();
+  items.forEach(function(item) {
+    var ref = resolveLifestyleCollectionStock_(item, stock);
+    if (!ref) return;
+    var sku = String(ref.data[0] || '').trim();
+    if (!sku) return;
+    item.sku = sku;
+    item.stock_sku = sku;
+    if (!item.product) item.product = String(ref.data[1] || '');
+    if (!item.category) item.category = String(ref.data[2] || '');
+    if (!item.cogs) item.cogs = stockBuyingPrice_(stockItemFromRow_(ref.data));
+    if (String(item.collection_type || '').toUpperCase() === 'MEN') {
+      item.size_group = item.size_group || sizeGroupForOrderSize_(item.size || '');
+    }
+    if (String(item.collection_type || '').toUpperCase() === 'WOMEN') {
+      item.variant_group = normalizeWomenVariantGroup_(item.variant_group || item.variant || '');
+    }
+  });
+  return items;
+}
+
+function validateOrderInventory_(items) {
+  if (!items.length) return;
+  var stock = getStockRowsBySku_();
+  var demand = {};
+  for (var i = 0; i < items.length; i++) {
+    var sku = String(items[i].stock_sku || items[i].sku || '').trim().toLowerCase();
+    if (!stock[sku]) throw new Error('Inventory SKU not found: ' + items[i].sku);
+    demand[sku] = (demand[sku] || 0) + Number(items[i].qty || 0);
+  }
+  Object.keys(demand).forEach(function(sku) {
+    var available = Number(stock[sku].data[12] || 0);
+    if (demand[sku] > available) {
+      throw new Error('Insufficient stock for ' + stock[sku].data[0] + ': requested ' + demand[sku] + ', available ' + available);
+    }
+  });
+}
+
+function applyOrderInventoryDeductions_(items) {
+  if (!items.length) return;
+  var stock = getStockRowsBySku_();
+  var demand = {};
+  items.forEach(function(item) {
+    var sku = String(item.stock_sku || item.sku || '').trim().toLowerCase();
+    demand[sku] = (demand[sku] || 0) + Number(item.qty || 0);
+  });
+  Object.keys(demand).forEach(function(sku) {
+    var ref = stock[sku];
+    if (!ref) throw new Error('Inventory SKU not found while deducting: ' + sku);
+    var qty = demand[sku];
+    var sold = Number(ref.data[7] || 0) + qty;
+    var current = Math.max(0, Number(ref.data[11] || 0) - qty);
+    var available = Math.max(0, Number(ref.data[12] || 0) - qty);
+    var reorder = Number(ref.data[13] || 0);
+    var status = available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
+    ref.sh.getRange(ref.row, 8).setValue(sold);
+    ref.sh.getRange(ref.row, 12).setValue(current);
+    ref.sh.getRange(ref.row, 13).setValue(available);
+    ref.sh.getRange(ref.row, 15).setValue(status);
+  });
+}
+
+function restoreOrderItemsOnce_(orderSheet, rowIndex, orderId, reason) {
+  var meta = parseOrderItemsMeta_(String(orderSheet.getRange(rowIndex, OC.NOTES).getValue() || ''));
+  if (!meta || !meta.items || !meta.items.length || meta.stockRestored) return { ok: true, skipped: 'already_restored_or_no_items' };
+  var stock = getStockRowsBySku_();
+  var demand = {};
+  meta.items.forEach(function(item) {
+    var sku = String(item.stock_sku || item.sku || '').trim().toLowerCase();
+    if (!sku) return;
+    demand[sku] = (demand[sku] || 0) + Number(item.qty || 0);
+  });
+  Object.keys(demand).forEach(function(sku) {
+    var ref = stock[sku];
+    if (!ref) return;
+    var qty = demand[sku];
+    var sold = Math.max(0, Number(ref.data[7] || 0) - qty);
+    var current = Number(ref.data[11] || 0) + qty;
+    var available = Number(ref.data[12] || 0) + qty;
+    var reorder = Number(ref.data[13] || 0);
+    var status = available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
+    ref.sh.getRange(ref.row, 8).setValue(sold);
+    ref.sh.getRange(ref.row, 12).setValue(current);
+    ref.sh.getRange(ref.row, 13).setValue(available);
+    ref.sh.getRange(ref.row, 15).setValue(status);
+  });
+  updateOrderMetaFlag_(orderSheet, rowIndex, function(next) {
+    next.stockRestored = true;
+    next.stockRestoredAt = new Date().toISOString();
+    next.stockRestoreReason = reason;
+  });
+  apiLog_('INVENTORY_RESTORE', String(orderId), 'Order item stock restored for ' + reason, JSON.stringify({ skus: Object.keys(demand) }).slice(0, 1000));
+  return { ok: true, restored: true };
+}
+
+function ensureOrderItemsSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEETS.ORDER_ITEMS);
+  if (!sh) {
+    sh = ss.insertSheet(SHEETS.ORDER_ITEMS);
+    sh.setFrozenRows(1);
+  }
+  sh.getRange(1, 1, 1, 19).setValues([[
+    'ORDER_ID', 'LINE_NO', 'SKU', 'PRODUCT_CODE', 'PRODUCT', 'CATEGORY', 'SIZE', 'VARIANT',
+    'QTY', 'UNIT_PRICE', 'SELL_PRICE', 'SUBTOTAL', 'COGS', 'STOCK_SKU',
+    'COLLECTION_CODE', 'COLLECTION_TYPE', 'SIZE_GROUP', 'VARIANT_GROUP', 'CREATED_AT'
+  ]]);
+  return sh;
+}
+
+function appendOrderItems_(orderId, items) {
+  var sh = ensureOrderItemsSheet_();
+  var now = new Date();
+  var rows = items.map(function(item) {
+    return [
+      orderId,
+      item.line_no,
+      item.sku,
+      item.product_code,
+      item.product,
+      item.category,
+      item.size,
+      item.variant,
+      item.qty,
+      item.unit_price,
+      item.sell_price,
+      item.subtotal,
+      item.cogs,
+      item.stock_sku,
+      item.collection_code,
+      item.collection_type,
+      item.size_group,
+      item.variant_group,
+      now,
+    ];
+  });
+  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, 19).setValues(rows);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -515,6 +1140,11 @@ function updateStatus_(body) {
       ts.getRange(found.rowIndex, 38).setValue(now).setNumberFormat('DD-MMM-YYYY');
     if (requestedStatus === 'RETURNED' && !ts.getRange(found.rowIndex, 39).getValue())
       ts.getRange(found.rowIndex, 39).setValue(now).setNumberFormat('DD-MMM-YYYY');
+  }
+
+  writeOrderAccountingMeta_(found.sh, found.rowIndex, requestedStatus);
+  if (requestedStatus === 'CANCELLED' || requestedStatus === 'FAILED_DELIVERY') {
+    restoreOrderItemsOnce_(found.sh, found.rowIndex, body.id, requestedStatus);
   }
 
   SpreadsheetApp.flush();
@@ -837,8 +1467,10 @@ function getDashboard_(p) {
   var emptyResult = {
     kpis: { total_orders:0,total_revenue:0,total_profit:0,total_cogs:0,gross_margin:0,
             avg_order_value:0,delivered_count:0,delivery_rate:0,return_rate:0,
-            sla_breaches:0,pending_action:0,returned_count:0,cancelled_count:0,failed_delivery_count:0 },
+            sla_breaches:0,pending_action:0,returned_count:0,cancelled_count:0,failed_delivery_count:0,
+            total_realized_profit:0,pending_profit:0,reversed_profit:0,loss_orders:0 },
     by_status:{},by_source:{},by_payment:{},by_category:{},
+    profit_by_seller:{},profit_by_collection:{},
     sla_breaches:[],recent_orders:[],generated_at:new Date().toISOString()
   };
 
@@ -852,16 +1484,24 @@ function getDashboard_(p) {
   if (!orders.length) return emptyResult;
 
   var totalRev=0,totalPro=0,totalCOGS=0,delivered=0,returned=0,cancelled=0,failedDelivery=0;
-  var byStatus={},bySource={},byPayment={},byCat={},slaBreaches=[],monthly={};
+  var pendingProfit=0,reversedProfit=0,lossOrders=0;
+  var byStatus={},bySource={},byPayment={},byCat={},bySeller={},byCollection={},slaBreaches=[],monthly={};
 
   orders.forEach(function(o) {
     var statusKey = normalizeOrderStatus_(o.status);
-    var revenueActive = statusKey !== 'CANCELLED' && statusKey !== 'RETURNED' && statusKey !== 'FAILED_DELIVERY';
+    var revenueActive = statusKey === 'Delivered';
+    var terminalReverse = statusKey === 'CANCELLED' || statusKey === 'RETURNED' || statusKey === 'FAILED_DELIVERY';
+    var estimated = Number(o.estimatedProfit != null ? o.estimatedProfit : o.profit || 0);
     if (revenueActive) {
       totalRev  += o.sell_price;
-      totalPro  += o.profit;
+      totalPro  += Number(o.realizedProfit != null ? o.realizedProfit : estimated);
       totalCOGS += o.cogs;
+    } else if (terminalReverse) {
+      reversedProfit += Number(o.reversedProfit != null ? o.reversedProfit : estimated);
+    } else {
+      pendingProfit += estimated;
     }
+    if (estimated < 0) lossOrders++;
     if (statusKey==='Delivered') delivered++;
     if (statusKey==='RETURNED')  returned++;
     if (statusKey==='CANCELLED') cancelled++;
@@ -875,8 +1515,23 @@ function getDashboard_(p) {
     byCat[o.category].orders++;
     if (revenueActive) {
       byCat[o.category].revenue += o.sell_price;
-      byCat[o.category].profit  += o.profit;
+      byCat[o.category].profit  += Number(o.realizedProfit != null ? o.realizedProfit : estimated);
     }
+    var seller = o.handled_by || 'Unassigned';
+    if (!bySeller[seller]) bySeller[seller] = { orders:0, realized_profit:0, pending_profit:0, reversed_profit:0 };
+    bySeller[seller].orders++;
+    if (revenueActive) bySeller[seller].realized_profit += Number(o.realizedProfit != null ? o.realizedProfit : estimated);
+    else if (terminalReverse) bySeller[seller].reversed_profit += Number(o.reversedProfit != null ? o.reversedProfit : estimated);
+    else bySeller[seller].pending_profit += estimated;
+    (o.items && o.items.length ? o.items : [{ collection_code:'', subtotal:o.sell_price }]).forEach(function(item) {
+      var code = String(item.collection_code || item.product_code || o.category || 'Unknown');
+      if (!byCollection[code]) byCollection[code] = { orders:0, realized_profit:0, pending_profit:0, reversed_profit:0 };
+      byCollection[code].orders++;
+      var share = o.sell_price > 0 ? Number(item.subtotal || 0) / o.sell_price : 1;
+      if (revenueActive) byCollection[code].realized_profit += Number(o.realizedProfit != null ? o.realizedProfit : estimated) * share;
+      else if (terminalReverse) byCollection[code].reversed_profit += Number(o.reversedProfit != null ? o.reversedProfit : estimated) * share;
+      else byCollection[code].pending_profit += estimated * share;
+    });
     if (o.sla_status && o.sla_status.indexOf('BREACH')!==-1)
       slaBreaches.push({id:o.id,customer:o.customer,sla_status:o.sla_status,
                         days_pending:o.days_pending,days_in_transit:o.days_in_transit,
@@ -890,7 +1545,7 @@ function getDashboard_(p) {
         if (!monthly[key]) monthly[key]={month:mon,revenue:0,profit:0,orders:0,cogs:0};
         if (revenueActive) {
           monthly[key].revenue += o.sell_price;
-          monthly[key].profit  += o.profit;
+          monthly[key].profit  += Number(o.realizedProfit != null ? o.realizedProfit : estimated);
           monthly[key].cogs    += o.cogs;
         }
         monthly[key].orders++;
@@ -901,13 +1556,17 @@ function getDashboard_(p) {
   var n = orders.length;
   var recentOrders = orders.slice(-10).reverse().map(function(o){
     return {id:o.id,date:o.date,customer:o.customer,product:o.product,
-            status:o.status,sell_price:o.sell_price,profit:o.profit};
+            status:o.status,sell_price:o.sell_price,profit:o.profit,realizedProfit:o.realizedProfit,pendingProfit:o.estimatedProfit};
   });
   var monthlyArr = Object.keys(monthly).sort().map(function(k){return monthly[k];});
 
   return {
     kpis:{
       total_orders:n, total_revenue:totalRev, total_profit:totalPro, total_cogs:totalCOGS,
+      total_realized_profit:totalPro,
+      pending_profit:pendingProfit,
+      reversed_profit:reversedProfit,
+      loss_orders:lossOrders,
       gross_margin:   totalRev>0 ? Math.round(totalPro/totalRev*100):0,
       avg_order_value:n>0 ? Math.round(totalRev/n):0,
       delivered_count:delivered,
@@ -920,6 +1579,8 @@ function getDashboard_(p) {
       pending_action: (byStatus['Pending']||0)+(byStatus['Confirmed']||0),
     },
     by_status:byStatus, by_source:bySource, by_payment:byPayment, by_category:byCat,
+    profit_by_seller:bySeller,
+    profit_by_collection:byCollection,
     sla_breaches:slaBreaches, recent_orders:recentOrders,
     monthly_trend:monthlyArr,
     generated_at:new Date().toISOString(),
@@ -974,8 +1635,10 @@ function getOrders_(p) {
   return {
     orders:slice,
     summary:{total:total,
-             total_revenue:slice.reduce(function(a,o){return a+o.sell_price;},0),
-             total_profit: slice.reduce(function(a,o){return a+o.profit;},0),
+             total_revenue:slice.reduce(function(a,o){return normalizeOrderStatus_(o.status)==='Delivered' ? a+o.sell_price : a;},0),
+             total_profit: slice.reduce(function(a,o){return a+Number(o.realizedProfit || 0);},0),
+             pending_profit:slice.reduce(function(a,o){var s=normalizeOrderStatus_(o.status); return (s!=='Delivered' && s!=='RETURNED' && s!=='CANCELLED' && s!=='FAILED_DELIVERY') ? a+Number(o.estimatedProfit || o.profit || 0) : a;},0),
+             reversed_profit:slice.reduce(function(a,o){return a+Number(o.reversedProfit || 0);},0),
              by_status:byStatus}
   };
 }
@@ -984,7 +1647,41 @@ function getOrder_(id) {
   if (!id) return {error:'id parameter required'};
   var row = findOrderRow_(id);
   if (!row) return {error:'Order not found: '+id};
-  return {order:rowToOrder_(row.data)};
+  var order = rowToOrder_(row.data);
+  order.items = getOrderItems_(id);
+  return {order:order};
+}
+
+function getOrderItems_(orderId) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ORDER_ITEMS);
+  if (!sh) return [];
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var rows = sh.getRange(2, 1, last - 1, Math.max(19, sh.getLastColumn())).getValues();
+  return rows
+    .filter(function(r){ return String(r[0] || '') === String(orderId); })
+    .map(function(r){
+      return {
+        order_id: String(r[0] || ''),
+        line_no: Number(r[1] || 0),
+        sku: String(r[2] || ''),
+        product_code: String(r[3] || ''),
+        product: String(r[4] || ''),
+        category: String(r[5] || ''),
+        size: String(r[6] || ''),
+        variant: String(r[7] || ''),
+        qty: Number(r[8] || 0),
+        unit_price: Number(r[9] || 0),
+        sell_price: Number(r[10] || 0),
+        subtotal: Number(r[11] || 0),
+        cogs: Number(r[12] || 0),
+        stock_sku: String(r[13] || ''),
+        collection_code: String(r[14] || ''),
+        collection_type: String(r[15] || ''),
+        size_group: String(r[16] || ''),
+        variant_group: String(r[17] || ''),
+      };
+    });
 }
 
 function getCustomers_(p) {
@@ -1041,19 +1738,114 @@ function getInventory_() {
   if (last<SSTART) return {items:[],summary:{total_skus:0,total_value:0,total_sell_val:0,low_stock:0,out_of_stock:0}};
   var rows=sh.getRange(SSTART,1,last-SSTART+1,20).getValues();
   var items=rows.filter(function(r){return r[0];}).map(function(r){
-    return {sku:String(r[0]||''),product:String(r[1]||''),category:String(r[2]||''),
-            color:String(r[3]||''),size:String(r[4]||''),opening:Number(r[5]||0),
-            purchased:Number(r[6]||0),sold:Number(r[7]||0),returned:Number(r[8]||0),
-            damaged:Number(r[9]||0),reserved:Number(r[10]||0),current_stock:Number(r[11]||0),
-            available:Number(r[12]||0),reorder_level:Number(r[13]||0),
-            status:String(r[14]||'').replace(/[✅⚠️❌]\s?/g,''),
-            stock_value:Number(r[15]||0),sell_value:Number(r[16]||0),potential_profit:Number(r[17]||0)};
+    var item = {sku:String(r[0]||''),product:String(r[1]||''),category:String(r[2]||''),
+                color:String(r[3]||''),size:String(r[4]||''),opening:Number(r[5]||0),
+                purchased:Number(r[6]||0),sold:Number(r[7]||0),returned:Number(r[8]||0),
+                damaged:Number(r[9]||0),reserved:Number(r[10]||0),current_stock:Number(r[11]||0),
+                available:Number(r[12]||0),reorder_level:Number(r[13]||0),
+                status:String(r[14]||'').replace(/[✅⚠️❌]\s?/g,''),
+                stock_value:Number(r[15]||0),sell_value:Number(r[16]||0),potential_profit:Number(r[17]||0)};
+    var storedMeta = parseStockMeta_(r[19]);
+    var meta = mergeStockMeta_(inferCollectionStockMeta_(item), storedMeta);
+    item.collectionCode = meta.collectionCode;
+    item.collectionType = meta.collectionType;
+    item.genderType = meta.genderType || meta.collectionType;
+    item.sizeCategory = meta.sizeCategory || meta.sizeGroup;
+    item.sizeValue = meta.sizeValue || item.size;
+    item.sizeGroup = meta.sizeGroup || meta.sizeCategory;
+    item.variantGroup = meta.variantGroup;
+    item.buyingPrice = Number(meta.buyingPrice || stockBuyingPrice_(item));
+    item.stockQty = item.available;
+    item.barcode = meta.barcode || '';
+    item.active = meta.active !== false && !meta.archived && item.status !== 'ARCHIVED';
+    item.archived = !!meta.archived || item.status === 'ARCHIVED';
+    item.imageUrl = meta.imageUrl || '';
+    return item;
   });
-  return {items:items,summary:{total_skus:items.length,
-    total_value:items.reduce(function(a,i){return a+i.stock_value;},0),
-    total_sell_val:items.reduce(function(a,i){return a+i.sell_value;},0),
-    low_stock:items.filter(function(i){return i.available>0&&i.available<=i.reorder_level;}).length,
-    out_of_stock:items.filter(function(i){return i.available<=0;}).length}};
+  var activeItems = items.filter(function(i){ return !i.archived && i.active !== false; });
+  return {items:items,summary:{total_skus:activeItems.length,
+    total_value:activeItems.reduce(function(a,i){return a+i.stock_value;},0),
+    total_sell_val:activeItems.reduce(function(a,i){return a+i.sell_value;},0),
+    low_stock:activeItems.filter(function(i){return i.available>0&&i.available<=i.reorder_level;}).length,
+    out_of_stock:activeItems.filter(function(i){return i.available<=0;}).length,
+    archived:items.filter(function(i){return i.archived;}).length}};
+}
+
+function parseStockMeta_(value) {
+  var s = String(value || '').trim();
+  if (!s || s.charAt(0) !== '{') return {};
+  try { return JSON.parse(s); } catch (e) { return {}; }
+}
+
+function mergeStockMeta_(base, extra) {
+  var out = {};
+  Object.keys(base || {}).forEach(function(k){ out[k] = base[k]; });
+  Object.keys(extra || {}).forEach(function(k){ if (extra[k] !== '' && extra[k] != null) out[k] = extra[k]; });
+  return out;
+}
+
+function writeStockMeta_(sh, row, meta) {
+  sh.getRange(row, 20).setValue(JSON.stringify(meta || {}).slice(0, 12000));
+}
+
+function menCollectionCodeMap_() {
+  var codes = ['133','13','231','111','475','476','240','223','224','345','609','120','130','131','150','110','115','720','20','212'];
+  var map = {};
+  codes.forEach(function(c){ map[c] = true; });
+  return map;
+}
+
+function sizeGroupForOrderSize_(size) {
+  var raw = String(size || '').trim().toUpperCase();
+  if (raw === 'KIDS' || raw === 'ADULT') return raw;
+  var n = Number(size);
+  if (n >= 16 && n <= 36) return 'KIDS';
+  if (n >= 38 && n <= 54) return 'ADULT';
+  return '';
+}
+
+function normalizeWomenVariantGroup_(value) {
+  var v = String(value || '').toUpperCase();
+  if (!v) return '';
+  if (v.indexOf('ORNA') !== -1) return 'ORNA';
+  if (v.indexOf('THREE') !== -1 || v.indexOf('3 PIECE') !== -1 || v.indexOf('3PC') !== -1) return 'THREE PIECE';
+  if (v.indexOf('TWO') !== -1 || v.indexOf('2 PIECE') !== -1 || v.indexOf('2PC') !== -1 || v.indexOf('10Y') !== -1 || v.indexOf('14Y') !== -1 || v.indexOf('10-14') !== -1 || v.indexOf('6Y') !== -1 || v.indexOf('9Y') !== -1 || v.indexOf('6-9') !== -1 || v.indexOf('1Y') !== -1 || v.indexOf('5Y') !== -1 || v.indexOf('1-5') !== -1 || v.indexOf('2Y') !== -1 || v.indexOf('2-5') !== -1) return 'TWO PIECE';
+  return '';
+}
+
+function inferCollectionStockMeta_(item) {
+  var raw = [item.sku, item.product, item.category, item.color, item.size].join(' ').toUpperCase();
+  var match = raw.match(/\b\d{2,3}T?\b/);
+  var code = match ? match[0] : '';
+  var menMap = menCollectionCodeMap_();
+  var type = '';
+  if (/^\d+T$/.test(code)) type = 'WOMEN';
+  else if (menMap[code]) type = 'MEN';
+  return {
+    collectionCode: code,
+    collectionType: type,
+    sizeGroup: type === 'MEN' ? sizeGroupForOrderSize_(item.size) : '',
+    variantGroup: type === 'WOMEN' ? normalizeWomenVariantGroup_([item.size, item.color, item.product].join(' ')) : '',
+  };
+}
+
+function stockBuyingPrice_(item) {
+  if (item.current_stock > 0 && item.stock_value > 0) return Math.round((item.stock_value / item.current_stock) * 100) / 100;
+  if (item.opening > 0 && item.stock_value > 0) return Math.round((item.stock_value / item.opening) * 100) / 100;
+  return 0;
+}
+
+function smartFashionSku_(code, sizeValue, variantGroup) {
+  var c = String(code || '').trim().toUpperCase().replace(/\s+/g, '');
+  var v = String(variantGroup || '').toUpperCase();
+  var s = String(sizeValue || '').trim().toUpperCase();
+  if (s) return c + '-' + s;
+  v = normalizeWomenVariantGroup_(v) || v;
+  if (v === 'ORNA') return c + '-ORNA';
+  if (v === 'THREE PIECE') return c + '-THREE-PIECE';
+  if (v === 'TWO PIECE') return c + '-TWO-PIECE';
+  if (v) return c + '-' + v.replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return c;
 }
 
 function getProductMasterSheet_() {
@@ -1274,17 +2066,29 @@ function appendStockRowForNewProduct_(body, sku, productName) {
   if (!sh) return { ok: false, reason: 'no_stock_sheet' };
   var skuNorm = String(sku || '').trim().toLowerCase();
   if (!skuNorm) return { ok: false, reason: 'no_sku' };
+  var row = buildStockRowForNewProduct_(body, sku, productName);
   var SSTART = 3;
   var last = sh.getLastRow();
   if (last >= SSTART) {
-    var colSkus = sh.getRange(SSTART, 1, last, 1).getValues();
+    var existingRows = sh.getRange(SSTART, 1, last - SSTART + 1, 20).getValues();
     var r;
-    for (r = 0; r < colSkus.length; r++) {
-      if (String(colSkus[r][0] || '').trim().toLowerCase() === skuNorm) {
+    for (r = 0; r < existingRows.length; r++) {
+      if (String(existingRows[r][0] || '').trim().toLowerCase() === skuNorm) {
+        var existingMeta = parseStockMeta_(existingRows[r][19]);
+        var archived = !!existingMeta.archived || String(existingRows[r][14] || '').toUpperCase().indexOf('ARCHIVED') !== -1;
+        if (archived && !inventoryHasLinkedOrders_(sku)) {
+          sh.getRange(SSTART + r, 1, 1, row.length).setValues([row]);
+          return { ok: true, reason: 'reactivated_archived_sku' };
+        }
         return { ok: false, reason: 'stock_sku_exists' };
       }
     }
   }
+  sh.appendRow(row);
+  return { ok: true, reason: 'appended' };
+}
+
+function buildStockRowForNewProduct_(body, sku, productName) {
   var cat = String(body.category || '');
   var color = String(body.color || '');
   var size = String(body.size || '');
@@ -1296,10 +2100,38 @@ function appendStockRowForNewProduct_(body, sku, productName) {
   var unitCogs = Number(body.default_cogs || body.cogs || 0);
   if (isNaN(unitPrice)) unitPrice = 0;
   if (isNaN(unitCogs)) unitCogs = 0;
+  var collectionType = String(body.collection_type || body.collectionType || '').trim().toUpperCase();
+  var sizeCategory = String(body.size_category || body.sizeCategory || body.size_group || body.sizeGroup || '').trim().toUpperCase();
+  var sizeValue = String(body.size_value || body.sizeValue || size || '').trim();
+  if (collectionType === 'MEN') {
+    sizeCategory = sizeGroupForOrderSize_(sizeCategory || sizeValue || size);
+    sizeValue = sizeCategory || sizeValue;
+    size = sizeCategory || size;
+  }
+  var variantGroup = String(body.variant_group || body.variantGroup || '').trim();
+  if (collectionType === 'WOMEN') {
+    variantGroup = normalizeWomenVariantGroup_(variantGroup || sizeValue || size);
+    sizeValue = '';
+    size = variantGroup || size;
+  }
   var stockVal = unitCogs * qty;
   var sellVal = unitPrice * qty;
   var pot = sellVal - stockVal;
   var statusDisp = qty > 0 ? '✅ IN STOCK' : '❌ OUT OF STOCK';
+  var meta = {
+    collectionCode: String(body.collection_code || body.collectionCode || '').trim().toUpperCase(),
+    collectionType: collectionType,
+    genderType: String(body.gender_type || body.genderType || body.collection_type || body.collectionType || '').trim().toUpperCase(),
+    sizeCategory: sizeCategory,
+    sizeValue: sizeValue,
+    variantGroup: variantGroup,
+    buyingPrice: unitCogs,
+    stockQty: qty,
+    barcode: String(body.barcode || '').trim(),
+    active: body.active !== false,
+    archived: false,
+    imageUrl: String(body.image_url || body.imageUrl || '').trim(),
+  };
   var row = [
     sku,
     productName,
@@ -1320,14 +2152,16 @@ function appendStockRowForNewProduct_(body, sku, productName) {
     sellVal,
     pot,
     '',
-    '',
+    JSON.stringify(meta),
   ];
   while (row.length < 20) row.push('');
-  sh.appendRow(row);
-  return { ok: true, reason: 'appended' };
+  return row;
 }
 
 function createProduct_(body) {
+  if (body.inventory_mode === 'collection' && body.bulk_rows && body.bulk_rows.length) {
+    return createFashionCollectionInventory_(body);
+  }
   var name = String(body.name || '').trim();
   if (!name) return { error: 'name required' };
   var sku = String(body.sku || '').trim();
@@ -1362,6 +2196,397 @@ function createProduct_(body) {
     return { error: 'Duplicate or skipped: ' + res.skipped[0].reason, duplicate: true };
   }
   return { error: 'Unknown create result' };
+}
+
+function createFashionCollectionInventory_(body) {
+  var rows = body.bulk_rows || [];
+  if (!rows.length) return { error: 'bulk_rows required' };
+  var created = [];
+  var skipped = [];
+  var stockResults = [];
+  rows.forEach(function(raw) {
+    var code = String(raw.collectionCode || body.collection_code || '').trim().toUpperCase();
+    var type = String(raw.collectionType || body.collection_type || '').trim().toUpperCase();
+    var sizeGroup = type === 'MEN' ? sizeGroupForOrderSize_(raw.sizeCategory || raw.sizeGroup || raw.sizeValue || '') : '';
+    var variantGroup = type === 'WOMEN' ? normalizeWomenVariantGroup_(raw.variantGroup || raw.sizeValue || '') : String(raw.variantGroup || '').trim();
+    var sizeValue = type === 'MEN' ? sizeGroup : String(raw.sizeValue || '');
+    var sku = String(raw.sku || smartFashionSku_(code, sizeValue, variantGroup)).trim();
+    var label = type === 'MEN'
+      ? code + ' ' + sizeGroup
+      : code + ' ' + String(variantGroup || raw.sizeValue || type || 'Inventory');
+    var productBody = {
+      sku: sku,
+      name: raw.product || label,
+      category: raw.category || (type === 'WOMEN' ? 'Women' : type === 'MEN' ? 'Panjabi' : type === 'SINGLE' ? 'Single Product' : 'Custom Collection'),
+      default_cogs: Number(raw.buyingPrice || 0),
+      default_price: 0,
+      color: '',
+      size: sizeValue || variantGroup || '',
+      initial_stock: Number(raw.stockQty || 0),
+      reorder_level: Number(body.reorder_level || 0),
+      image_url: raw.imageUrl || body.image_url || '',
+      collection_code: code,
+      collection_type: type,
+      gender_type: raw.genderType || type,
+      size_category: sizeGroup || raw.sizeCategory || '',
+      size_value: sizeValue || '',
+      variant_group: variantGroup || '',
+      barcode: raw.barcode || '',
+      active: raw.active !== false,
+      skip_duplicate_name_check: false,
+      sync_to_stock: true,
+    };
+    var stock = appendStockRowForNewProduct_(productBody, sku, productBody.name);
+    if (stock.ok) {
+      created.push(sku);
+      stockResults.push({ sku: sku, ok: true });
+    } else {
+      skipped.push({ sku: sku, reason: stock.reason || 'skipped' });
+    }
+  });
+  apiLog_('INVENTORY_CREATE', String(body.collection_code || ''), 'Fashion collection rows created=' + created.length, JSON.stringify({ created: created, skipped: skipped }).slice(0, 1000));
+  return { ok: true, product_id: String(body.collection_code || created[0] || ''), created: created, skipped: skipped, stock: { ok: true, rows: stockResults } };
+}
+
+function findStockRowBySku_(sku) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
+  if (!sh) throw new Error('STOCK sheet not found');
+  var last = sh.getLastRow();
+  if (last < 3) return null;
+  var values = sh.getRange(3, 1, last - 2, 20).getValues();
+  var target = String(sku || '').trim().toLowerCase();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim().toLowerCase() === target) {
+      return { sh: sh, row: i + 3, data: values[i] };
+    }
+  }
+  return null;
+}
+
+function inventoryHasLinkedOrders_(sku) {
+  var target = String(sku || '').trim().toLowerCase();
+  var itemSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ORDER_ITEMS);
+  if (itemSh && itemSh.getLastRow() >= 2) {
+    var vals = itemSh.getRange(2, 1, itemSh.getLastRow() - 1, Math.max(19, itemSh.getLastColumn())).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      if (String(vals[i][13] || vals[i][2] || '').trim().toLowerCase() === target) return true;
+    }
+  }
+  var orderSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ORDERS);
+  if (orderSh && orderSh.getLastRow() >= ORDERS_DATA_START) {
+    var rows = orderSh.getRange(ORDERS_DATA_START, 1, orderSh.getLastRow() - ORDERS_DATA_START + 1, TOTAL_COLS).getValues();
+    for (var j = 0; j < rows.length; j++) {
+      if (String(rows[j][OC.SKU - 1] || '').trim().toLowerCase() === target) return true;
+    }
+  }
+  return false;
+}
+
+function inventoryEdit_(body) {
+  if (!body.sku) return { error: 'sku required' };
+  var ref = findStockRowBySku_(body.sku);
+  if (!ref) return { error: 'Inventory item not found: ' + body.sku };
+  var data = body.data || {};
+  var linked = inventoryHasLinkedOrders_(body.sku);
+  if (linked && (data.sku || data.collectionCode || data.collection_code || data.sizeValue || data.size_value || data.variantGroup || data.variant_group)) {
+    return { error: 'Inventory identity is locked because linked orders exist. Archive and create a new version instead.' };
+  }
+  var meta = parseStockMeta_(ref.data[19]);
+  var before = JSON.stringify({ row: ref.data, meta: meta }).slice(0, 4000);
+  if (data.product) ref.sh.getRange(ref.row, 2).setValue(String(data.product));
+  if (data.category) ref.sh.getRange(ref.row, 3).setValue(String(data.category));
+  if (data.sizeValue || data.size_value) ref.sh.getRange(ref.row, 5).setValue(String(data.sizeValue || data.size_value));
+  if (data.buyingPrice != null || data.buying_price != null) {
+    var buying = Number(data.buyingPrice != null ? data.buyingPrice : data.buying_price);
+    var qty = Number(ref.sh.getRange(ref.row, 12).getValue() || 0);
+    ref.sh.getRange(ref.row, 16).setValue(buying * qty);
+    meta.buyingPrice = buying;
+  }
+  ['collectionCode','collectionType','genderType','sizeCategory','sizeValue','variantGroup','barcode','imageUrl','active'].forEach(function(k) {
+    if (data[k] !== undefined) meta[k] = data[k];
+  });
+  writeStockMeta_(ref.sh, ref.row, meta);
+  apiLog_('INVENTORY_EDIT', String(body.sku), 'Inventory edited', before);
+  return { ok: true, sku: String(body.sku), linked_orders: linked };
+}
+
+function inventoryArchive_(body) {
+  var ref = findStockRowBySku_(body.sku);
+  if (!ref) return { error: 'Inventory item not found: ' + body.sku };
+  var meta = parseStockMeta_(ref.data[19]);
+  meta.archived = true;
+  meta.active = false;
+  meta.archiveReason = String(body.reason || body.note || '');
+  meta.archivedAt = new Date().toISOString();
+  ref.sh.getRange(ref.row, 15).setValue('ARCHIVED');
+  writeStockMeta_(ref.sh, ref.row, meta);
+  apiLog_('INVENTORY_ARCHIVE', String(body.sku), 'Inventory archived', JSON.stringify(meta).slice(0, 1000));
+  return { ok: true, sku: String(body.sku), archived: true };
+}
+
+function inventoryRestore_(body) {
+  var ref = findStockRowBySku_(body.sku);
+  if (!ref) return { error: 'Inventory item not found: ' + body.sku };
+  var meta = parseStockMeta_(ref.data[19]);
+  meta.archived = false;
+  meta.active = true;
+  var available = Number(ref.data[12] || 0);
+  var reorder = Number(ref.data[13] || 0);
+  ref.sh.getRange(ref.row, 15).setValue(available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK');
+  writeStockMeta_(ref.sh, ref.row, meta);
+  apiLog_('INVENTORY_RESTORE', String(body.sku), 'Inventory restored', '');
+  return { ok: true, sku: String(body.sku), archived: false };
+}
+
+function inventoryAdjust_(body) {
+  var ref = findStockRowBySku_(body.sku);
+  if (!ref) return { error: 'Inventory item not found: ' + body.sku };
+  var prev = Number(ref.data[12] || 0);
+  var next = Number(body.new_stock);
+  if (isNaN(next) || next < 0) return { error: 'new_stock must be >= 0' };
+  var buying = Number(body.buying_price != null ? body.buying_price : stockBuyingPrice_({
+    current_stock: Number(ref.data[11] || 0),
+    opening: Number(ref.data[5] || 0),
+    stock_value: Number(ref.data[15] || 0)
+  }));
+  var delta = next - prev;
+  var reorder = Number(ref.data[13] || 0);
+  ref.sh.getRange(ref.row, 12).setValue(next);
+  ref.sh.getRange(ref.row, 13).setValue(next);
+  ref.sh.getRange(ref.row, 16).setValue(buying * next);
+  ref.sh.getRange(ref.row, 15).setValue(next <= 0 ? '❌ OUT OF STOCK' : next <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK');
+  ref.sh.getRange(ref.row, 19).setValue(new Date()).setNumberFormat('dd-MMM-yyyy');
+  var meta = parseStockMeta_(ref.data[19]);
+  meta.buyingPrice = buying;
+  meta.stockQty = next;
+  writeStockMeta_(ref.sh, ref.row, meta);
+  apiLog_('INVENTORY_ADJUST', String(body.sku), 'Stock adjusted ' + prev + ' → ' + next, JSON.stringify({ previous_stock: prev, new_stock: next, adjustment: delta, reason: body.reason || '', note: body.note || '' }));
+  return { ok: true, sku: String(body.sku), previous_stock: prev, new_stock: next, adjustment: delta };
+}
+
+function inventoryBulkUpdate_(body) {
+  var items = body.items || [];
+  var out = [];
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i] || {};
+    out.push(inventoryAdjust_({ sku: item.sku, new_stock: item.new_stock, buying_price: item.buying_price, reason: body.reason || 'bulk_update', note: body.note || '' }));
+  }
+  return { ok: true, results: out };
+}
+
+function consolidateLifestyleInventory_(body) {
+  var dryRun = body.dry_run !== false;
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
+  if (!sh) return { error: 'STOCK sheet not found' };
+  var SSTART = 3;
+  var last = sh.getLastRow();
+  if (last < SSTART) return { ok: true, dry_run: dryRun, groups: [], archived: 0, created: 0, updated: 0 };
+
+  var rows = sh.getRange(SSTART, 1, last - SSTART + 1, 20).getValues();
+  var bySku = {};
+  rows.forEach(function(row, idx) {
+    var sku = String(row[0] || '').trim().toLowerCase();
+    if (sku) bySku[sku] = { row: SSTART + idx, data: row };
+  });
+
+  function emptyAgg(code, type, key, targetSku, label, category) {
+    return {
+      code: code,
+      type: type,
+      key: key,
+      targetSku: targetSku,
+      label: label,
+      category: category,
+      opening: 0,
+      purchased: 0,
+      sold: 0,
+      returned: 0,
+      damaged: 0,
+      reserved: 0,
+      current: 0,
+      available: 0,
+      stockValue: 0,
+      sellValue: 0,
+      potential: 0,
+      reorder: 0,
+      sourceRows: [],
+      sourceSkus: [],
+    };
+  }
+
+  function addNumbers(agg, row, rowIndex) {
+    agg.opening += Number(row[5] || 0);
+    agg.purchased += Number(row[6] || 0);
+    agg.sold += Number(row[7] || 0);
+    agg.returned += Number(row[8] || 0);
+    agg.damaged += Number(row[9] || 0);
+    agg.reserved += Number(row[10] || 0);
+    agg.current += Number(row[11] || 0);
+    agg.available += Number(row[12] || 0);
+    agg.stockValue += Number(row[15] || 0);
+    agg.sellValue += Number(row[16] || 0);
+    agg.potential += Number(row[17] || 0);
+    agg.reorder = Math.max(agg.reorder, Number(row[13] || 0));
+    agg.sourceRows.push(rowIndex);
+    agg.sourceSkus.push(String(row[0] || ''));
+  }
+
+  function statusForQty(available, reorder) {
+    return available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
+  }
+
+  var groups = {};
+  rows.forEach(function(row, idx) {
+    if (!row[0] || rowIsArchived_(row)) return;
+    var item = stockItemFromRow_(row);
+    var meta = mergeStockMeta_(inferCollectionStockMeta_(item), parseStockMeta_(row[19]));
+    var code = String(meta.collectionCode || '').toUpperCase();
+    var type = String(meta.collectionType || '').toUpperCase();
+    if (!code || (type !== 'MEN' && type !== 'WOMEN')) return;
+
+    var targetSku = '';
+    var key = '';
+    var label = '';
+    var category = String(row[2] || (type === 'WOMEN' ? 'Women' : 'Panjabi'));
+    if (type === 'MEN') {
+      var group = sizeGroupForOrderSize_(meta.sizeValue || item.size || '');
+      if (!group) return;
+      targetSku = smartFashionSku_(code, group, '');
+      if (String(item.sku || '').toUpperCase() === targetSku) return;
+      key = code + '|MEN|' + group;
+      label = code + ' ' + group;
+    } else {
+      var variant = normalizeWomenVariantGroup_(meta.variantGroup || item.size || item.product || '');
+      if (!variant) return;
+      targetSku = smartFashionSku_(code, '', variant);
+      if (String(item.sku || '').toUpperCase() === targetSku) return;
+      key = code + '|WOMEN|' + variant;
+      label = code + ' ' + variant;
+    }
+
+    if (!groups[key]) groups[key] = emptyAgg(code, type, key, targetSku, label, category);
+    addNumbers(groups[key], row, SSTART + idx);
+  });
+
+  var summaries = [];
+  var created = 0;
+  var updated = 0;
+  var archived = 0;
+  Object.keys(groups).forEach(function(key) {
+    var agg = groups[key];
+    var target = bySku[String(agg.targetSku).toLowerCase()];
+    summaries.push({
+      target_sku: agg.targetSku,
+      type: agg.type,
+      sources: agg.sourceSkus,
+      source_rows: agg.sourceRows,
+      available_to_merge: agg.available,
+      stock_value_to_merge: agg.stockValue,
+      action: target ? 'update_target' : 'create_target'
+    });
+    if (dryRun) return;
+
+    var buying = agg.current > 0 && agg.stockValue > 0 ? Math.round((agg.stockValue / agg.current) * 100) / 100 : 0;
+    if (target) {
+      var data = target.data;
+      var nextOpening = Number(data[5] || 0) + agg.opening;
+      var nextPurchased = Number(data[6] || 0) + agg.purchased;
+      var nextSold = Number(data[7] || 0) + agg.sold;
+      var nextReturned = Number(data[8] || 0) + agg.returned;
+      var nextDamaged = Number(data[9] || 0) + agg.damaged;
+      var nextReserved = Number(data[10] || 0) + agg.reserved;
+      var nextCurrent = Number(data[11] || 0) + agg.current;
+      var nextAvailable = Number(data[12] || 0) + agg.available;
+      var nextStockValue = Number(data[15] || 0) + agg.stockValue;
+      var nextSellValue = Number(data[16] || 0) + agg.sellValue;
+      var nextPotential = Number(data[17] || 0) + agg.potential;
+      var reorder = Math.max(Number(data[13] || 0), agg.reorder);
+      sh.getRange(target.row, 2, 1, 18).setValues([[
+        agg.label, agg.category, '', agg.type === 'MEN' ? agg.key.split('|')[2] : agg.key.split('|')[2],
+        nextOpening, nextPurchased, nextSold, nextReturned, nextDamaged, nextReserved,
+        nextCurrent, nextAvailable, reorder, statusForQty(nextAvailable, reorder),
+        nextStockValue, nextSellValue, nextPotential, new Date()
+      ]]);
+      var targetMeta = parseStockMeta_(data[19]);
+      targetMeta.collectionCode = agg.code;
+      targetMeta.collectionType = agg.type;
+      targetMeta.genderType = agg.type;
+      targetMeta.active = true;
+      targetMeta.archived = false;
+      targetMeta.buyingPrice = nextCurrent > 0 && nextStockValue > 0 ? Math.round((nextStockValue / nextCurrent) * 100) / 100 : buying;
+      if (agg.type === 'MEN') {
+        targetMeta.sizeCategory = agg.key.split('|')[2];
+        targetMeta.sizeGroup = agg.key.split('|')[2];
+        targetMeta.sizeValue = agg.key.split('|')[2];
+        targetMeta.variantGroup = '';
+      } else {
+        targetMeta.sizeCategory = '';
+        targetMeta.sizeValue = '';
+        targetMeta.variantGroup = agg.key.split('|')[2];
+      }
+      targetMeta.consolidatedAt = new Date().toISOString();
+      targetMeta.consolidatedFrom = (targetMeta.consolidatedFrom || []).concat(agg.sourceSkus).slice(-200);
+      writeStockMeta_(sh, target.row, targetMeta);
+      updated++;
+    } else {
+      var meta = {
+        collectionCode: agg.code,
+        collectionType: agg.type,
+        genderType: agg.type,
+        sizeCategory: agg.type === 'MEN' ? agg.key.split('|')[2] : '',
+        sizeGroup: agg.type === 'MEN' ? agg.key.split('|')[2] : '',
+        sizeValue: agg.type === 'MEN' ? agg.key.split('|')[2] : '',
+        variantGroup: agg.type === 'WOMEN' ? agg.key.split('|')[2] : '',
+        buyingPrice: buying,
+        stockQty: agg.available,
+        barcode: agg.targetSku,
+        active: true,
+        archived: false,
+        consolidatedAt: new Date().toISOString(),
+        consolidatedFrom: agg.sourceSkus,
+      };
+      var row = [
+        agg.targetSku,
+        agg.label,
+        agg.category,
+        '',
+        agg.type === 'MEN' ? agg.key.split('|')[2] : agg.key.split('|')[2],
+        agg.opening,
+        agg.purchased,
+        agg.sold,
+        agg.returned,
+        agg.damaged,
+        agg.reserved,
+        agg.current,
+        agg.available,
+        agg.reorder,
+        statusForQty(agg.available, agg.reorder),
+        agg.stockValue,
+        agg.sellValue,
+        agg.potential,
+        new Date(),
+        JSON.stringify(meta)
+      ];
+      sh.appendRow(row);
+      created++;
+    }
+
+    agg.sourceRows.forEach(function(rowIndex) {
+      var source = sh.getRange(rowIndex, 1, 1, 20).getValues()[0];
+      var meta = parseStockMeta_(source[19]);
+      meta.archived = true;
+      meta.active = false;
+      meta.archiveReason = 'Consolidated into ' + agg.targetSku;
+      meta.archivedAt = new Date().toISOString();
+      meta.consolidatedInto = agg.targetSku;
+      sh.getRange(rowIndex, 15).setValue('ARCHIVED');
+      writeStockMeta_(sh, rowIndex, meta);
+      archived++;
+    });
+  });
+
+  apiLog_('INVENTORY_CONSOLIDATE', 'ALMA_LIFESTYLE', dryRun ? 'Lifestyle consolidation dry run' : 'Lifestyle consolidation applied', JSON.stringify({ groups: summaries.length, created: created, updated: updated, archived: archived }).slice(0, 1000));
+  return { ok: true, dry_run: dryRun, groups: summaries, created: created, updated: updated, archived: archived };
 }
 
 function expenseMatchesBiz_(subCatBiz, requestedBiz) {
@@ -1735,6 +2960,9 @@ function getNextInvoiceNum_() {
 
 function rowToOrder_(r) {
   var sell=Number(r[OC.SELL_PRICE-1]||0),profit=Number(r[OC.PROFIT-1]||0);
+  var rawNotes = String(r[OC.NOTES-1]||'');
+  var meta = parseOrderItemsMeta_(rawNotes);
+  var accounting = accountingForOrderStatus_(String(r[OC.STATUS-1]||''), Number(meta.estimatedProfit != null ? meta.estimatedProfit : profit));
   return {
     id:String(r[OC.ORDER_ID-1]||''),date:fmtDate_(r[OC.DATE-1]),
     customer:String(r[OC.CUSTOMER-1]||''),phone:String(r[OC.PHONE-1]||''),
@@ -1751,13 +2979,67 @@ function rowToOrder_(r) {
     tracking_id:String(r[OC.TRACKING_ID-1]||''),tracking_status:String(r[OC.TRACKING_STATUS-1]||''),
     est_delivery:fmtDate_(r[OC.EST_DELIVERY-1]),actual_delivery:fmtDate_(r[OC.ACTUAL_DELIVERY-1]),
     return_reason:String(r[OC.RETURN_REASON-1]||''),return_date:fmtDate_(r[OC.RETURN_DATE-1]),
-    return_status:String(r[OC.RETURN_STATUS-1]||''),notes:String(r[OC.NOTES-1]||''),
+    return_status:String(r[OC.RETURN_STATUS-1]||''),notes:meta.notes,
     sku:String(r[OC.SKU-1]||''),handled_by:String(r[OC.HANDLED_BY-1]||''),
     sla_status:String(r[41]||''),days_pending:Number(r[39]||0),days_in_transit:Number(r[40]||0),
     auto_flag:String(r[42]||''),invoice_num:String(r[OC.INVOICE_NUM-1]||''),
     business_id:String(r[OC.BUSINESS_ID-1]||'')||'ALMA_LIFESTYLE',
+    paid_amount:meta.paid_amount,
+    due_amount:meta.due_amount,
+    estimatedProfit:Number(meta.estimatedProfit != null ? meta.estimatedProfit : profit),
+    realizedProfit:accounting.realizedProfit,
+    reversedProfit:accounting.reversedProfit,
+    courierCost:Number(meta.courierCost || r[OC.COURIER_CHARGE-1] || 0),
+    inventoryCost:Number(meta.inventoryCost || r[OC.COGS-1] || 0),
+    items:meta.items || [],
     margin_pct:sell>0?Math.round(profit/sell*100):0,
   };
+}
+
+function parseOrderItemsMeta_(notes) {
+  var marker = 'ORDER_ITEMS_JSON:';
+  var idx = String(notes || '').indexOf(marker);
+  if (idx < 0) return { notes: String(notes || ''), paid_amount: null, due_amount: null };
+  var clean = String(notes || '').slice(0, idx).trim();
+  var raw = String(notes || '').slice(idx + marker.length).trim();
+  try {
+    var parsed = JSON.parse(raw);
+    parsed.notes = clean;
+    parsed.paid_amount = Number(parsed.paid_amount || 0);
+    parsed.due_amount = Number(parsed.due_amount || 0);
+    return parsed;
+  } catch (e) {
+    return { notes: clean, paid_amount: null, due_amount: null };
+  }
+}
+
+function accountingForOrderStatus_(status, estimatedProfit) {
+  var key = normalizeOrderStatus_(status);
+  var terminal = key === 'RETURNED' || key === 'CANCELLED' || key === 'FAILED_DELIVERY';
+  if (key === 'Delivered') return { realizedProfit: estimatedProfit, reversedProfit: 0, pendingProfit: 0 };
+  if (terminal) return { realizedProfit: 0, reversedProfit: estimatedProfit, pendingProfit: 0 };
+  return { realizedProfit: 0, reversedProfit: 0, pendingProfit: estimatedProfit };
+}
+
+function writeOrderAccountingMeta_(sh, rowIndex, status) {
+  var notes = String(sh.getRange(rowIndex, OC.NOTES).getValue() || '');
+  var meta = parseOrderItemsMeta_(notes);
+  if (!meta || meta.paid_amount == null) return;
+  var accounting = accountingForOrderStatus_(status, Number(meta.estimatedProfit || 0));
+  meta.realizedProfit = accounting.realizedProfit;
+  meta.reversedProfit = accounting.reversedProfit;
+  meta.accountingStatus = status === 'Delivered' ? 'REALIZED' : accounting.reversedProfit ? 'REVERSED' : 'ESTIMATED';
+  var marker = 'ORDER_ITEMS_JSON:';
+  sh.getRange(rowIndex, OC.NOTES).setValue((meta.notes ? meta.notes + '\n' : '') + marker + JSON.stringify(meta));
+}
+
+function updateOrderMetaFlag_(sh, rowIndex, updater) {
+  var notes = String(sh.getRange(rowIndex, OC.NOTES).getValue() || '');
+  var meta = parseOrderItemsMeta_(notes);
+  if (!meta || meta.paid_amount == null) return null;
+  updater(meta);
+  sh.getRange(rowIndex, OC.NOTES).setValue((meta.notes ? meta.notes + '\n' : '') + 'ORDER_ITEMS_JSON:' + JSON.stringify(meta));
+  return meta;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -165,7 +165,7 @@ export default function BrandingSettingsPage() {
     invoice_footer_thanks: '', invoice_footer_policy: '', invoice_footer_note: '',
     invoice_prefix: '',
     invoice_watermark_enabled: true,
-    invoice_watermark_opacity: '0.06',
+    invoice_watermark_opacity: '0.08',
   })
 
   useEffect(() => {
@@ -186,7 +186,7 @@ export default function BrandingSettingsPage() {
       invoice_footer_note: branding.invoice_footer_note || '',
       invoice_prefix: branding.invoice_prefix || '',
       invoice_watermark_enabled: branding.invoice_watermark_enabled !== false,
-      invoice_watermark_opacity: branding.invoice_watermark_opacity || '0.06',
+      invoice_watermark_opacity: branding.invoice_watermark_opacity || '0.08',
     })
   }, [branding])
 
@@ -409,9 +409,9 @@ export default function BrandingSettingsPage() {
                     value={form.invoice_watermark_opacity}
                     onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
                   >
-                    <option value="0.04">4% subtle</option>
-                    <option value="0.06">6% balanced</option>
-                    <option value="0.08">8% visible</option>
+                    <option value="0.07">7% subtle</option>
+                    <option value="0.08">8% balanced</option>
+                    <option value="0.10">10% visible</option>
                   </select>
                 </label>
               </div>

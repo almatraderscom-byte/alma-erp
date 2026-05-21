@@ -43,8 +43,7 @@ export async function buildAdminAttendanceDashboard(input: {
       where: { ...archivedBusinessFilter, attendanceDate: date },
       include: {
         user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
-        waiverRequests: true,
-        selfieVerifications: true,
+        _count: { select: { waiverRequests: true, selfieVerifications: true } },
       },
       orderBy: [{ businessId: 'asc' }, { checkInAt: 'asc' }],
     }),

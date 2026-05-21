@@ -107,8 +107,8 @@ export default function AnalyticsPage() {
           ) : catArr.length === 0 ? (
             <div className="p-5"><Empty icon="◧" title="No category data" desc="Appears once orders are placed" /></div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
+            <div className="table-scroll">
+              <table className="w-full min-w-[720px] text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-border">
                     {['Category','Orders','Revenue','Profit','Margin'].map(h => (

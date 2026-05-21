@@ -27,6 +27,11 @@ function cacheKeyForModel(model: InvoicePdfModel) {
   return [
     model.invoiceId,
     model.total,
+    model.paymentStatus,
+    model.totalPaid,
+    model.dueAmount,
+    model.paidPercentage,
+    model.payments.map(payment => `${payment.date}:${payment.amount}:${payment.method}`).join(','),
     model.branding.companyName,
     model.branding.logoUrl || '',
     model.branding.logoDataUrl ? `logo:${model.branding.logoDataUrl.length}` : '',
@@ -88,6 +93,11 @@ export function PdfPreviewModal({
   const blobUrlRef = useRef<string | null>(null)
   const generatedForRef = useRef<string | null>(null)
   const genRef = useRef(0)
+  const closeRef = useRef(onClose)
+
+  useEffect(() => {
+    closeRef.current = onClose
+  }, [onClose])
 
   const revokeBlobUrl = useCallback(() => {
     if (blobUrlRef.current) {
@@ -110,6 +120,27 @@ export function PdfPreviewModal({
     setErrorDetails(null)
     setViewerMode('object')
   }, [revokeBlobUrl])
+
+  const requestClose = useCallback(() => {
+    genRef.current += 1
+    closeRef.current()
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') requestClose()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [open, requestClose])
 
   // Step 1–4: enrich when modal opens
   useEffect(() => {
@@ -325,7 +356,13 @@ export function PdfPreviewModal({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="flex items-center justify-between gap-2 px-3 py-3 md:px-6 border-b border-border bg-surface/95 backdrop-blur shrink-0 safe-top">
+        <button
+          type="button"
+          aria-label="Close invoice preview"
+          className="absolute inset-0 cursor-default"
+          onClick={requestClose}
+        />
+        <div className="relative z-[2] flex items-center justify-between gap-2 px-3 py-3 md:px-6 border-b border-border bg-surface/95 backdrop-blur shrink-0 safe-top">
           <div className="min-w-0">
             <p className="text-sm font-bold text-cream truncate">
               {displayModel?.invoiceId || baseModel?.invoiceId || 'Invoice'}
@@ -358,11 +395,11 @@ export function PdfPreviewModal({
                 {saveToDriveLoading ? 'Saving…' : 'Drive backup'}
               </Button>
             )}
-            <Button variant="ghost" size="xs" onClick={onClose}>Close</Button>
+            <Button variant="ghost" size="xs" onClick={requestClose}>Close</Button>
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto p-3 md:p-6 flex flex-col items-center justify-start">
+        <div className="relative z-[1] flex-1 min-h-0 overflow-auto p-3 md:p-6 flex flex-col items-center justify-start">
           {loading && (
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <div className="w-10 h-10 border-2 border-gold/30 border-t-gold rounded-full animate-spin" />
@@ -386,7 +423,7 @@ export function PdfPreviewModal({
               <div className="flex gap-2 justify-center">
                 <Button variant="gold" size="sm" onClick={retry}>Retry</Button>
                 {externalUrl && <Button variant="secondary" size="sm" onClick={openExternally}>Open externally</Button>}
-                <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+                <Button variant="ghost" size="sm" onClick={requestClose}>Close</Button>
               </div>
             </div>
           )}

@@ -321,8 +321,8 @@ export default function SupplierImportPage() {
           {!rows.length ? (
             <Empty icon="⎘" title="No preview yet" desc="Parse JSON to see rows and duplicate checks against PRODUCT MASTER." />
           ) : (
-            <div className="overflow-x-auto border border-border rounded-xl">
-              <table className="w-full text-[11px] border-collapse min-w-[720px]">
+            <div className="table-scroll border border-border rounded-xl">
+              <table className="w-full text-[11px] border-collapse min-w-[820px]">
                 <thead>
                   <tr className="border-b border-border bg-white/[0.03]">
                     <th className="px-2 py-2 text-left w-10">✓</th>

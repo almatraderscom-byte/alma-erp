@@ -42,8 +42,23 @@ async function resolveRecipients(input: NotifyInput) {
   })
 }
 
-async function sendOneSignal(userIds: string[], title: string, message: string, priority: NotificationPriority, actionUrl?: string | null) {
-  const appId = process.env.ONESIGNAL_APP_ID
+function absoluteActionUrl(actionUrl?: string | null) {
+  const base = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || 'https://alma-erp-six.vercel.app'
+  const normalizedBase = base.startsWith('http') ? base : `https://${base}`
+  if (!actionUrl) return normalizedBase
+  if (/^https?:\/\//i.test(actionUrl)) return actionUrl
+  return `${normalizedBase.replace(/\/$/, '')}/${actionUrl.replace(/^\//, '')}`
+}
+
+async function sendOneSignal(
+  userIds: string[],
+  title: string,
+  message: string,
+  priority: NotificationPriority,
+  actionUrl: string | null | undefined,
+  meta: { notificationId: string; businessId?: string | null; type: NotificationType },
+) {
+  const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID
   const apiKey = process.env.ONESIGNAL_REST_API_KEY
   if (!appId || !apiKey || !userIds.length) return { configured: false, ok: false }
 
@@ -53,24 +68,38 @@ async function sendOneSignal(userIds: string[], title: string, message: string, 
   })
   const playerIds = subscriptions.map(s => s.playerId).filter(Boolean) as string[]
   if (!playerIds.length) return { configured: true, ok: false, reason: 'no_player_ids' }
+  const url = absoluteActionUrl(actionUrl)
 
-  const res = await fetch('https://onesignal.com/api/v1/notifications', {
+  const usesV2Key = apiKey.startsWith('os_v2_')
+  const res = await fetch(usesV2Key ? 'https://api.onesignal.com/notifications?c=push' : 'https://onesignal.com/api/v1/notifications', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Basic ${apiKey}`,
+      Authorization: `${usesV2Key ? 'Key' : 'Basic'} ${apiKey}`,
     },
     body: JSON.stringify({
       app_id: appId,
-      include_player_ids: playerIds,
+      [usesV2Key ? 'include_subscription_ids' : 'include_player_ids']: playerIds,
       headings: { en: title },
       contents: { en: message },
-      url: actionUrl || undefined,
+      subtitle: meta.businessId ? { en: meta.businessId.replace(/_/g, ' ') } : undefined,
+      url,
+      web_url: url,
       priority: priority === 'LOW' ? 5 : 10,
       ios_sound: priority === 'LOW' ? undefined : 'default',
       android_sound: priority === 'LOW' ? undefined : 'default',
       android_channel_id: process.env.ONESIGNAL_ANDROID_CHANNEL_ID || undefined,
-      data: { priority },
+      chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
+      chrome_web_badge: `${absoluteActionUrl('/maskable-icon.svg')}`,
+      small_icon: 'ic_stat_onesignal_default',
+      collapse_id: meta.notificationId,
+      data: {
+        priority,
+        notificationId: meta.notificationId,
+        businessId: meta.businessId || null,
+        type: meta.type,
+        actionUrl: url,
+      },
     }),
   })
   if (!res.ok) {
@@ -118,6 +147,7 @@ export async function createNotification(input: NotifyInput) {
     input.message,
     input.priority || 'NORMAL',
     input.actionUrl,
+    { notificationId: notification.id, businessId: input.businessId, type: input.type },
   )
   if (push.configured) {
     await prisma.notificationRecipient.updateMany({

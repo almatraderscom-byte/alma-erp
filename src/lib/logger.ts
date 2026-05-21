@@ -1,3 +1,5 @@
+import { captureStructuredEvent } from '@/lib/sentry/capture'
+
 type LogLevel = 'info' | 'warn' | 'error'
 
 export function logEvent(level: LogLevel, event: string, meta: Record<string, unknown> = {}) {
@@ -22,6 +24,8 @@ export function logEvent(level: LogLevel, event: string, meta: Record<string, un
       cache: 'no-store',
     }).catch(() => {})
   }
+
+  void captureStructuredEvent(level, event, meta)
 }
 
 export function errorMeta(error: unknown) {

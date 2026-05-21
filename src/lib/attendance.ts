@@ -369,7 +369,13 @@ export async function notifyAttendancePenalty(record: AttendanceRecord, userId?:
   ])
 }
 
-export function attendanceRecordDto(record: AttendanceRecord & { waiverRequests?: AttendanceWaiverRequest[]; selfieVerifications?: AttendanceSelfieVerification[] }) {
+export function attendanceRecordDto(
+  record: AttendanceRecord & {
+    waiverRequests?: AttendanceWaiverRequest[]
+    selfieVerifications?: AttendanceSelfieVerification[]
+    _count?: { waiverRequests: number; selfieVerifications: number }
+  },
+) {
   return {
     id: record.id,
     businessId: record.businessId,
@@ -395,7 +401,8 @@ export function attendanceRecordDto(record: AttendanceRecord & { waiverRequests?
     verificationRequired: record.verificationRequired,
     faceVerified: record.faceVerified,
     faceVerifiedAt: record.faceVerifiedAt?.toISOString() ?? null,
-    selfieCount: record.selfieVerifications?.length ?? 0,
+    selfieCount:
+      record._count?.selfieVerifications ?? record.selfieVerifications?.length ?? 0,
     waiverRequests: (record.waiverRequests || []).map(attendanceWaiverDto),
   }
 }

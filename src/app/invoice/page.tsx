@@ -101,7 +101,24 @@ export default function InvoicePage() {
     await Promise.race([refetchBranding(), delay(INVOICE_READY_TIMEOUT_MS)])
   }
 
-  async function openPreview(order: Order, externalUrl = '') {
+  function replaceInvoiceInRegistry(invoice: InvoiceRegistryRecord) {
+    setRegistry(current => {
+      if (!current) return current
+      const invoices = current.invoices.map(item => item.id === invoice.id ? invoice : item)
+      return {
+        ...current,
+        invoices,
+        totals: {
+          count: invoices.length,
+          amount: invoices.reduce((sum, inv) => sum + Number(inv.amount || 0), 0),
+          paid: invoices.filter(inv => inv.paymentStatus === 'PAID').length,
+          unpaid: invoices.filter(inv => inv.paymentStatus === 'UNPAID').length,
+        },
+      }
+    })
+  }
+
+  async function openPreview(order: Order, externalUrl = '', invoice: InvoiceRegistryRecord | null = null) {
     const guard = ++openGuardRef.current
     setPrepLoading(true)
     setPreview(order)
@@ -125,7 +142,7 @@ export default function InvoicePage() {
       setIsBrandReady(true)
       setIsInvoiceReady(Boolean(order?.id && order?.customer && order?.product))
 
-      const model = orderToPdfModel(order, resolved.branding, resolved.logoDataUrl, order.invoice_num || undefined)
+      const model = orderToPdfModel(order, resolved.branding, resolved.logoDataUrl, invoice?.invoiceNumber || order.invoice_num || undefined, { paymentStatus: invoice?.paymentStatus })
       setPdfModel(model)
       setIsPdfReady(true)
 
@@ -137,7 +154,7 @@ export default function InvoicePage() {
       if (guard !== openGuardRef.current) return
       setIsBrandReady(true)
       setIsInvoiceReady(Boolean(order?.id))
-      setPdfModel(orderToPdfModel(order, defaultBusinessBranding(business.id), undefined, order.invoice_num || undefined))
+      setPdfModel(orderToPdfModel(order, defaultBusinessBranding(business.id), undefined, invoice?.invoiceNumber || order.invoice_num || undefined, { paymentStatus: invoice?.paymentStatus }))
       setIsPdfReady(true)
     } finally {
       if (guard === openGuardRef.current) setPrepLoading(false)
@@ -184,18 +201,23 @@ export default function InvoicePage() {
   }
 
   async function updatePaymentStatus(invoice: InvoiceRegistryRecord, paymentStatus: string) {
-    const res = await fetch('/api/invoice', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: invoice.id, payment_status: paymentStatus }),
-    })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(j.error || 'Could not update invoice')
-      return
+    const optimistic = { ...invoice, paymentStatus: paymentStatus as InvoiceRegistryRecord['paymentStatus'] }
+    replaceInvoiceInRegistry(optimistic)
+    try {
+      const res = await fetch('/api/invoice', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: invoice.id, payment_status: paymentStatus }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'Could not update invoice')
+      if (j.invoice) replaceInvoiceInRegistry(j.invoice as InvoiceRegistryRecord)
+      toast.success('Invoice status updated')
+      await loadRegistry()
+    } catch (e) {
+      replaceInvoiceInRegistry(invoice)
+      toast.error((e as Error).message || 'Could not update invoice')
     }
-    toast.success('Invoice status updated')
-    await loadRegistry()
   }
 
   function invoiceUrl(invoice: InvoiceRegistryRecord) {
@@ -288,7 +310,7 @@ export default function InvoicePage() {
                 return (
                   <Card key={inv.id} className="p-4 border-green-400/10">
                     <div className="flex flex-col md:flex-row md:items-center gap-3">
-                      <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv)) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
+                      <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv), inv) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="font-mono text-[11px] text-green-400 font-bold">{inv.invoiceNumber}</span>
                           <span className="font-mono text-[10px] text-gold-lt">Order {inv.orderId}</span>
@@ -313,7 +335,7 @@ export default function InvoicePage() {
                         ]} />
                         <Button size="xs" variant="secondary" onClick={() => openInvoice(inv)}>Open</Button>
                         <Button size="xs" variant="secondary" onClick={() => void shareInvoice(inv)}>Share</Button>
-                        {order && <Button size="xs" variant="gold" onClick={() => openPreview(order, invoiceUrl(inv))}>Preview</Button>}
+                        {order && <Button size="xs" variant="gold" onClick={() => openPreview(order, invoiceUrl(inv), inv)}>Preview</Button>}
                         {order && <Button size="xs" variant="danger" onClick={() => void regenerateInvoice(order)} disabled={genLoading}>Regenerate</Button>}
                       </div>
                     </div>

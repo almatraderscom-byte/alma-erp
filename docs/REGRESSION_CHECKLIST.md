@@ -5,13 +5,18 @@ Run before every production deployment. **Do not deploy** if any critical item f
 ## Automated gate
 
 ```bash
-npm run type-check
-npm run build
-npm run db:migrate:deploy   # production DB only
+npm run db:migrate:check    # fails if pending migrations
+npm run regression:gate       # typecheck → build → smoke
+# Production-critical auth smoke (CI / pre-deploy):
 REGRESSION_BASE_URL=https://alma-erp-six.vercel.app \
-REGRESSION_COOKIE='next-auth.session-token=…' \
-node scripts/regression-smoke.mjs
+REGRESSION_COOKIE='__Secure-next-auth.session-token=…' \
+REQUIRE_REGRESSION_AUTH=1 \
+npm run regression:gate
 ```
+
+GitHub secrets: see **[REGRESSION_AUTH_SETUP.md](./REGRESSION_AUTH_SETUP.md)**. Run `./scripts/setup-github-regression-secrets.sh` after `gh auth login`.
+
+`.github/workflows/production-deploy-gate.yml` blocks deploy on pending migrations, failed build, missing auth secrets, or failed authenticated smoke.
 
 ## Attendance
 

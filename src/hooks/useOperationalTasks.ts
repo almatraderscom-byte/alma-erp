@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { safeFetchJson, safeFetchJsonOrThrow } from '@/lib/safe-fetch'
 
 export type OperationalTaskAssignmentDto = {
   id: string
@@ -95,13 +96,12 @@ export function useOperationalTasks(businessId: string, enabled = true) {
     }
     setLoading(true)
     try {
-      const res = await fetch(
+      const result = await safeFetchJson<{ tasks?: OperationalTaskAssignmentDto[] }>(
         `/api/operational-tasks/my?business_id=${encodeURIComponent(businessId)}`,
         { cache: 'no-store' },
       )
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(j.error || 'Failed to load tasks')
-      const list = (j.tasks || []) as OperationalTaskAssignmentDto[]
+      if (!result.ok) throw new Error(result.error.message)
+      const list = result.data.tasks || []
       if (mounted.current) {
         setTasks(list)
         writeCache(businessId, list)
@@ -125,25 +125,25 @@ export function useOperationalTasks(businessId: string, enabled = true) {
 }
 
 export async function fetchSpotlightAssignment(businessId: string) {
-  const res = await fetch(
+  const result = await safeFetchJson<{ assignment?: OperationalTaskAssignmentDto | null }>(
     `/api/operational-tasks/spotlight?business_id=${encodeURIComponent(businessId)}`,
     { cache: 'no-store' },
   )
-  const j = await res.json().catch(() => ({}))
-  if (!res.ok) return null
-  return (j.assignment || null) as OperationalTaskAssignmentDto | null
+  if (!result.ok) return null
+  return result.data.assignment || null
 }
 
 export async function patchAssignmentAction(
   assignmentId: string,
   action: 'acknowledge' | 'start' | 'complete' | 'dismiss',
 ) {
-  const res = await fetch(`/api/operational-tasks/assignments/${assignmentId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action }),
-  })
-  const j = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(j.error || 'Action failed')
-  return j.assignment as OperationalTaskAssignmentDto
+  const data = await safeFetchJsonOrThrow<{ assignment: OperationalTaskAssignmentDto }>(
+    `/api/operational-tasks/assignments/${assignmentId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    },
+  )
+  return data.assignment
 }

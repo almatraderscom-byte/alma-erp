@@ -7,6 +7,7 @@ import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
 import { safeResponseJson } from '@/lib/safe-api-response'
+import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 
 type QueueRow = {
   id: string
@@ -112,15 +113,15 @@ export default function TelegramOpsSettingsPage() {
   async function load() {
     setLoading(true)
     const [res, healthRes] = await Promise.all([
-      fetch(`/api/settings/telegram-ops?business_id=${businessId}`, { cache: 'no-store' }),
+      safeFetchJsonWithToast<ApiData>(`/api/settings/telegram-ops?business_id=${businessId}`, { cache: 'no-store', toastOnError: false }),
       fetch(`/api/settings/telegram-ops/health?business_id=${businessId}`, { cache: 'no-store' }),
     ])
     if (res.ok) {
-      const json = (await res.json()) as ApiData
+      const json = res.data
       setData(json)
       setOwnerChatIds(json.setting.ownerChatIds)
     } else {
-      toast.error('Could not load Telegram ops settings')
+      toast.error(res.error.message || 'Could not load Telegram ops settings')
     }
     const healthParsed = await safeResponseJson<Dashboard & { ok?: boolean }>(healthRes)
     if (healthParsed.ok && healthRes.ok) {
@@ -133,33 +134,33 @@ export default function TelegramOpsSettingsPage() {
 
   async function processQueueNow() {
     setProcessing(true)
-    const res = await fetch(`/api/settings/telegram-ops/health?business_id=${businessId}`, { method: 'POST' })
-    const json = await res.json().catch(() => ({}))
+    const result = await safeFetchJsonWithToast<{
+      reclaimed?: number
+      processed?: { processed?: number }
+    }>(`/api/settings/telegram-ops/health?business_id=${businessId}`, { method: 'POST' })
     setProcessing(false)
-    if (!res.ok) {
-      toast.error((json as { error?: string }).error || 'Queue processing failed')
-      return
-    }
-    const reclaimed = (json as { reclaimed?: number }).reclaimed ?? 0
-    const processed = (json as { processed?: { processed?: number } }).processed?.processed ?? 0
+    if (!result.ok) return
+    const json = result.data
+    const reclaimed = json.reclaimed ?? 0
+    const processed = json.processed?.processed ?? 0
     toast.success(`Reclaimed ${reclaimed} stuck · processed ${processed}`)
     await load()
   }
 
   async function sendTestNotification() {
     setTesting(true)
-    const res = await fetch('/api/settings/telegram-ops/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: businessId }),
-    })
-    const json = await res.json().catch(() => ({}))
+    const result = await safeFetchJsonWithToast<{ routing?: { source?: string; chatIds?: string[] }; ok?: boolean }>(
+      '/api/settings/telegram-ops/test',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId }),
+      },
+    )
     setTesting(false)
-    if (!res.ok || !(json as { ok?: boolean }).ok) {
-      toast.error((json as { error?: string }).error || 'Test send failed')
-      return
-    }
-    const routing = (json as { routing?: { source?: string; chatIds?: string[] } }).routing
+    if (!result.ok) return
+    const json = result.data
+    const routing = json.routing
     toast.success(`Test sent to ${routing?.chatIds?.length ?? 0} owner chat(s) via ${routing?.source ?? 'routing'}`)
     await load()
   }
@@ -170,49 +171,37 @@ export default function TelegramOpsSettingsPage() {
 
   async function retryAllFailed() {
     setRetryingFailed(true)
-    const res = await fetch('/api/settings/telegram-ops/retry', {
+    const result = await safeFetchJsonWithToast<{ requeued?: number }>('/api/settings/telegram-ops/retry', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ retry_all: true, business_id: businessId }),
     })
-    const parsed = await safeResponseJson<{ requeued?: number; message?: string }>(res)
     setRetryingFailed(false)
-    if (!parsed.ok || !res.ok) {
-      toast.error(String(parsed.data.message || 'Retry failed jobs failed'))
-      return
-    }
-    toast.success(`Requeued ${parsed.data.requeued ?? 0} failed job(s)`)
+    if (!result.ok) return
+    toast.success(`Requeued ${result.data.requeued ?? 0} failed job(s)`)
     await load()
   }
 
   async function retryQueue(id: string) {
-    const res = await fetch('/api/settings/telegram-ops/retry', {
+    const result = await safeFetchJsonWithToast('/api/settings/telegram-ops/retry', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     })
-    const json = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error((json as { error?: string }).error || 'Retry failed')
-      return
-    }
+    if (!result.ok) return
     toast.success('Retry queued')
     await load()
   }
 
   async function save(patch: Partial<TelegramOpsSettingDto>) {
     setSaving(true)
-    const res = await fetch('/api/settings/telegram-ops', {
+    const result = await safeFetchJsonWithToast('/api/settings/telegram-ops', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ business_id: businessId, ...patch }),
     })
-    const json = await res.json().catch(() => ({}))
     setSaving(false)
-    if (!res.ok) {
-      toast.error((json as { error?: string }).error || 'Save failed')
-      return
-    }
+    if (!result.ok) return
     toast.success('Saved')
     await load()
   }

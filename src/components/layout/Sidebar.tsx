@@ -14,6 +14,7 @@ import { UserAccountMenu } from '@/components/layout/UserAccountMenu'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 import { cn } from '@/lib/utils'
+import { safeFetchJson } from '@/lib/safe-fetch'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -57,9 +58,8 @@ export function Sidebar() {
   const loadApprovalCount = useCallback(async () => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
     try {
-      const res = await fetch('/api/approvals?summary=1')
-      const json = await res.json().catch(() => ({}))
-      if (res.ok) setApprovalCount(Number(json.totalPending || 0))
+      const result = await safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1')
+      if (result.ok) setApprovalCount(Number(result.data.totalPending || 0))
     } catch {
       setApprovalCount(0)
     }
@@ -234,9 +234,8 @@ export function MobileNav() {
   const loadApprovalCount = useCallback(async () => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
     try {
-      const res = await fetch('/api/approvals?summary=1')
-      const json = await res.json().catch(() => ({}))
-      if (res.ok) setApprovalCount(Number(json.totalPending || 0))
+      const result = await safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1')
+      if (result.ok) setApprovalCount(Number(result.data.totalPending || 0))
     } catch {
       setApprovalCount(0)
     }

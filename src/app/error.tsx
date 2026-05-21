@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect } from 'react'
+import { captureException } from '@/lib/sentry/capture'
 import { Button, Card } from '@/components/ui'
 
-export default function AppError({
+export default function Error({
   error,
   reset,
 }: {
@@ -11,21 +12,27 @@ export default function AppError({
   reset: () => void
 }) {
   useEffect(() => {
-    console.error('[app-error]', error)
+    void captureException(error, {
+      category: 'client',
+      event: 'react.route_error',
+      critical: true,
+      extra: { digest: error.digest },
+    })
   }, [error])
 
   return (
-    <div className="min-h-[100dvh] bg-black p-6 flex items-center justify-center">
-      <Card className="max-w-lg w-full p-6 border-red-500/30">
-        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-red-400">Runtime error</p>
-        <h1 className="mt-2 text-lg font-bold text-cream">Something went wrong</h1>
-        <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
-          The ERP shell stayed online. Retry the view; if it repeats, check `/api/health` and recent server logs.
-        </p>
-        <p className="mt-3 rounded-xl border border-border bg-black/30 p-3 font-mono text-[10px] text-zinc-500">
-          {error.digest || error.message}
-        </p>
-        <Button variant="gold" className="mt-4" onClick={reset}>Try again</Button>
+    <div className="flex min-h-[50vh] items-center justify-center p-6">
+      <Card className="max-w-md p-6 space-y-4 text-center border-amber-500/20">
+        <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Page error</p>
+        <p className="text-sm text-zinc-400">This section failed to load. The error was reported automatically.</p>
+        <div className="flex justify-center gap-2">
+          <Button size="sm" variant="secondary" onClick={() => reset()}>
+            Retry
+          </Button>
+          <Button size="sm" onClick={() => { window.location.href = '/' }}>
+            Home
+          </Button>
+        </div>
       </Card>
     </div>
   )

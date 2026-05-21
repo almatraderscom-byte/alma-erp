@@ -1,28 +1,59 @@
 'use client'
 
+import type React from 'react'
 import type { OrderStatus } from '@/types'
 import { GoldDivider } from '@/components/ui'
 import { CATEGORIES, COURIERS, NEW_ORDER_STATUSES, PAYMENTS, SOURCES } from './constants'
 import { NewOrderField, newOrderInputCls, newOrderSelectCls } from './field'
-import { BDT_SYMBOL, formatBDT } from '@/lib/currency'
+import { BDT_SYMBOL } from '@/lib/currency'
 import { Money } from '@/components/ui'
-import type { FormErrors, NewOrderForm } from './types'
+import type { FormErrors, NewOrderForm, NewOrderItemForm } from './types'
+import { orderItemGrossProfit, orderItemSubtotal } from './use-new-order-form'
+import { MEN_SIZES, WOMEN_VARIANT_GROUPS, parseCollectionCode } from './collection-engine'
 
 export function NewOrderFormFields({
   form,
   errors,
   touched,
   set,
+  setItem,
+  addItem,
+  removeItem,
   touch,
-  sellPriceComputed,
+  totals,
 }: {
   form: NewOrderForm
   errors: FormErrors
   touched: Partial<Record<keyof NewOrderForm, boolean>>
   set: <K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) => void
+  setItem: (index: number, key: keyof NewOrderItemForm, value: string) => void
+  addItem: () => void
+  removeItem: (index: number) => void
   touch: (key: keyof NewOrderForm) => void
-  sellPriceComputed: number
+  totals: {
+    subtotal: number
+    discount: number
+    shipping: number
+    payable: number
+    paid: number
+    due: number
+    totalQty: number
+    inventoryCost: number
+    courierCost: number
+    estimatedProfit: number
+  }
 }) {
+  function focusNext(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key !== 'Enter') return
+    const target = e.target as HTMLElement
+    if (target.tagName === 'TEXTAREA') return
+    e.preventDefault()
+    const fields = Array.from(document.querySelectorAll<HTMLElement>('[data-order-field="1"]'))
+      .filter(el => !el.hasAttribute('disabled'))
+    const index = fields.indexOf(target)
+    fields[index + 1]?.focus()
+  }
+
   return (
     <div className="px-4 py-3 space-y-4 sm:px-5 sm:py-5 sm:space-y-5">
       <div>
@@ -40,6 +71,8 @@ export function NewOrderFormFields({
               onBlur={() => touch('customer')}
               placeholder="e.g. Nusrat Jahan"
               className={newOrderInputCls(touched.customer ? errors.customer : undefined)}
+              data-order-field="1"
+              onKeyDown={focusNext}
             />
           </NewOrderField>
 
@@ -54,10 +87,12 @@ export function NewOrderFormFields({
                 onBlur={() => touch('phone')}
                 placeholder="01711000000"
                 className={newOrderInputCls(touched.phone ? errors.phone : undefined)}
+                data-order-field="1"
+                onKeyDown={focusNext}
               />
             </NewOrderField>
             <NewOrderField label="Source" required>
-              <select value={form.source} onChange={e => set('source', e.target.value)} className={newOrderSelectCls()}>
+              <select value={form.source} onChange={e => set('source', e.target.value)} className={newOrderSelectCls()} data-order-field="1" onKeyDown={focusNext}>
                 {SOURCES.map(s => (
                   <option key={s}>{s}</option>
                 ))}
@@ -73,6 +108,8 @@ export function NewOrderFormFields({
               onChange={e => set('address', e.target.value)}
               placeholder="Gulshan, Dhaka"
               className={newOrderInputCls()}
+              data-order-field="1"
+              onKeyDown={focusNext}
             />
           </NewOrderField>
         </div>
@@ -83,42 +120,194 @@ export function NewOrderFormFields({
       <div>
         <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
           <span className="w-4 h-px bg-gold-dim" />
-          Product Info
+          Items
         </p>
-        <div className="space-y-2 sm:space-y-3">
-          <NewOrderField label="Product Name" required error={touched.product ? errors.product : undefined}>
-            <input
-              type="text"
-              value={form.product}
-              onChange={e => set('product', e.target.value)}
-              onBlur={() => touch('product')}
-              placeholder="e.g. Classic White Punjabi"
-              className={newOrderInputCls(touched.product ? errors.product : undefined)}
-            />
-          </NewOrderField>
-
-          <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            <NewOrderField label="Category" required>
-              <select value={form.category} onChange={e => set('category', e.target.value)} className={newOrderSelectCls()}>
-                {CATEGORIES.map(c => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </NewOrderField>
-            <NewOrderField label="Size / Variant">
-              <input
-                type="text"
-                value={form.size}
-                onChange={e => set('size', e.target.value)}
-                placeholder="S / M / L / XL"
-                className={newOrderInputCls()}
-              />
-            </NewOrderField>
-          </div>
-
-          <NewOrderField label="SKU" hint="Leave blank if not assigned yet">
-            <input type="text" value={form.sku} onChange={e => set('sku', e.target.value)} placeholder="PUN-001" className={newOrderInputCls()} />
-          </NewOrderField>
+        <div className="space-y-3">
+          {form.items.map((item, index) => {
+            const itemError = errors[`item_${index}`]
+            const subtotal = orderItemSubtotal(item)
+            const itemProfit = orderItemGrossProfit(item)
+            const collection = parseCollectionCode(item.product_code, item.collection_type)
+            const isMenCollection = collection?.collectionType === 'MEN' || item.collection_type === 'MEN'
+            const isWomenCollection = collection?.collectionType === 'WOMEN' || item.collection_type === 'WOMEN'
+            return (
+              <div key={item.id} className="rounded-2xl border border-border bg-black/20 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">Item {index + 1}</p>
+                  {form.items.length > 1 && (
+                    <button type="button" onClick={() => removeItem(index)} className="text-[11px] font-semibold text-red-300 hover:text-red-200">
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  <NewOrderField label="Collection / SKU" required error={itemError}>
+                    <input
+                      type="text"
+                      value={item.product_code}
+                      onChange={e => setItem(index, 'product_code', e.target.value)}
+                      placeholder="133 / 133T / SKU"
+                      className={newOrderInputCls(itemError)}
+                      data-order-field="1"
+                      onKeyDown={focusNext}
+                    />
+                  </NewOrderField>
+                  {isMenCollection ? (
+                    <NewOrderField label="Size" required>
+                      <select
+                        value={item.size}
+                        onChange={e => setItem(index, 'size', e.target.value)}
+                        className={newOrderSelectCls()}
+                        data-order-field="1"
+                        onKeyDown={focusNext}
+                      >
+                        <option value="">Select size</option>
+                        {MEN_SIZES.map(size => (
+                          <option key={size} value={size}>{size}</option>
+                        ))}
+                      </select>
+                    </NewOrderField>
+                  ) : isWomenCollection ? (
+                    <NewOrderField label="Variant" required>
+                      <select
+                        value={item.variant}
+                        onChange={e => setItem(index, 'variant', e.target.value)}
+                        className={newOrderSelectCls()}
+                        data-order-field="1"
+                        onKeyDown={focusNext}
+                      >
+                        <option value="">Select variant</option>
+                        {WOMEN_VARIANT_GROUPS.map(variant => (
+                          <option key={variant} value={variant}>{variant}</option>
+                        ))}
+                      </select>
+                    </NewOrderField>
+                  ) : (
+                    <NewOrderField label="Variant">
+                      <input
+                        type="text"
+                        value={item.variant}
+                        onChange={e => setItem(index, 'variant', e.target.value)}
+                        placeholder="Color / batch"
+                        className={newOrderInputCls()}
+                        data-order-field="1"
+                        onKeyDown={focusNext}
+                      />
+                    </NewOrderField>
+                  )}
+                </div>
+                {(collection || item.collection_type) && (
+                  <div className="rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-[10px] text-zinc-500">
+                    {isMenCollection
+                      ? 'Men/father-son collection detected. Sizes 16-36 deduct KIDS stock, 38-54 deduct ADULT stock.'
+                      : isWomenCollection
+                        ? 'Women collection detected. Age bands stay on the order, while stock deducts from ORNA, TWO PIECE, or THREE PIECE.'
+                        : 'Dynamic collection detected. Variant or SKU selection resolves inventory from saved stock metadata.'}
+                  </div>
+                )}
+                <NewOrderField label="Product" required>
+                  <input
+                    type="text"
+                    value={item.product}
+                    onChange={e => setItem(index, 'product', e.target.value)}
+                    placeholder="Auto detected product"
+                    className={newOrderInputCls(itemError)}
+                    data-order-field="1"
+                    onKeyDown={focusNext}
+                  />
+                </NewOrderField>
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  <NewOrderField label="Category">
+                    <select value={item.category} onChange={e => setItem(index, 'category', e.target.value)} className={newOrderSelectCls()} data-order-field="1" onKeyDown={focusNext}>
+                      {CATEGORIES.map(c => (
+                        <option key={c}>{c}</option>
+                      ))}
+                    </select>
+                  </NewOrderField>
+                  {isMenCollection ? (
+                    <NewOrderField label="Size Group">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/30 px-3 text-xs text-zinc-500">
+                        {item.size_group || 'Auto'}
+                      </div>
+                    </NewOrderField>
+                  ) : (
+                    <NewOrderField label="Size">
+                      <input
+                        type="text"
+                        value={item.size}
+                        onChange={e => setItem(index, 'size', e.target.value)}
+                        placeholder={isWomenCollection ? 'Auto / optional' : 'S / M / L / XL'}
+                        className={newOrderInputCls()}
+                        data-order-field="1"
+                        onKeyDown={focusNext}
+                      />
+                    </NewOrderField>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
+                  <NewOrderField label="Qty" required>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      value={item.qty}
+                      onChange={e => setItem(index, 'qty', e.target.value)}
+                      className={newOrderInputCls(itemError)}
+                      data-order-field="1"
+                      onKeyDown={focusNext}
+                    />
+                  </NewOrderField>
+                  <NewOrderField label={`Seller Price (${BDT_SYMBOL})`} required>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="0.01"
+                      value={item.sell_price}
+                      onChange={e => setItem(index, 'sell_price', e.target.value)}
+                      placeholder="0"
+                      className={newOrderInputCls(itemError)}
+                      data-order-field="1"
+                      onKeyDown={focusNext}
+                    />
+                  </NewOrderField>
+                  <NewOrderField label="Subtotal">
+                    <div className="flex h-10 items-center justify-end rounded-xl border border-border bg-black/30 px-3 text-xs font-bold text-gold-lt">
+                      <Money amount={subtotal} />
+                    </div>
+                  </NewOrderField>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-zinc-600">
+                  <span>SKU: {item.sku || 'not connected'}</span>
+                  {item.available != null && <span>Available: {item.available}</span>}
+                </div>
+                {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) > 0 && (
+                  <div className="flex items-center justify-between rounded-xl border border-border bg-black/20 px-3 py-2 text-[11px]">
+                    <span className="text-zinc-500">Item profit preview</span>
+                    <span className={`font-bold ${itemProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
+                      {itemProfit >= 0 ? '+' : ''}<Money amount={itemProfit} /> {itemProfit >= 0 ? 'PROFIT' : 'LOSS'}
+                    </span>
+                  </div>
+                )}
+                {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) < Number(item.cogs || 0) && (
+                  <p className="text-[10px] font-semibold text-red-300">Warning: selling below cost</p>
+                )}
+                {item.warning && (
+                  <p className={`text-[10px] ${item.warning === 'Out of stock' ? 'text-red-300' : 'text-amber-300'}`}>
+                    {item.warning}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+          {errors.items && <p className="text-[11px] text-red-300">{errors.items}</p>}
+          <button
+            type="button"
+            onClick={addItem}
+            className="w-full rounded-xl border border-gold-dim/40 bg-gold/10 px-3 py-2 text-sm font-bold text-gold-lt transition-colors hover:bg-gold/15"
+          >
+            + Add Item
+          </button>
         </div>
       </div>
 
@@ -127,99 +316,86 @@ export function NewOrderFormFields({
       <div>
         <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold-dim mb-2 sm:mb-3 flex items-center gap-2">
           <span className="w-4 h-px bg-gold-dim" />
-          Pricing & Qty
+          Cart Totals
         </p>
         <div className="space-y-2 sm:space-y-3">
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            <NewOrderField label="Qty" required error={touched.qty ? errors.qty : undefined}>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={form.qty}
-                onChange={e => set('qty', e.target.value)}
-                onBlur={() => touch('qty')}
-                className={newOrderInputCls(touched.qty ? errors.qty : undefined)}
-              />
-            </NewOrderField>
-            <NewOrderField label={`Unit Price (${BDT_SYMBOL})`} required error={touched.unit_price ? errors.unit_price : undefined}>
+            <NewOrderField label={`Shipping (${BDT_SYMBOL})`} error={touched.shipping_fee ? errors.shipping_fee : undefined}>
               <input
                 type="number"
                 inputMode="decimal"
                 min={0}
                 step="0.01"
-                value={form.unit_price}
-                onChange={e => set('unit_price', e.target.value)}
-                onBlur={() => touch('unit_price')}
-                placeholder="0"
-                className={newOrderInputCls(touched.unit_price ? errors.unit_price : undefined)}
-              />
-            </NewOrderField>
-          </div>
-
-          <NewOrderField
-            label={`Sell Price (${BDT_SYMBOL})`}
-            required
-            error={touched.sell_price ? errors.sell_price : undefined}
-            hint={sellPriceComputed > 0 && !touched.sell_price ? `Auto: ${formatBDT(sellPriceComputed)}` : undefined}
-          >
-            <input
-              type="number"
-              inputMode="decimal"
-              min={0}
-              step="0.01"
-              value={form.sell_price}
-              onChange={e => set('sell_price', e.target.value)}
-              onBlur={() => touch('sell_price')}
-              placeholder="Auto-calculated"
-              className={newOrderInputCls(touched.sell_price ? errors.sell_price : undefined)}
-            />
-          </NewOrderField>
-
-          <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
-            <NewOrderField label={`COGS (${BDT_SYMBOL})`} hint="Cost">
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                value={form.cogs}
-                onChange={e => set('cogs', e.target.value)}
-                placeholder="0"
-                className={newOrderInputCls()}
-              />
-            </NewOrderField>
-            <NewOrderField label={`Courier (${BDT_SYMBOL})`} hint="Charge">
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                value={form.courier_charge}
-                onChange={e => set('courier_charge', e.target.value)}
-                className={newOrderInputCls()}
-              />
-            </NewOrderField>
-            <NewOrderField label={`Ship (${BDT_SYMBOL})`} hint="Collected">
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
                 value={form.shipping_fee}
                 onChange={e => set('shipping_fee', e.target.value)}
+                onBlur={() => touch('shipping_fee')}
                 placeholder="0"
-                className={newOrderInputCls()}
+                className={newOrderInputCls(touched.shipping_fee ? errors.shipping_fee : undefined)}
+                data-order-field="1"
+                onKeyDown={focusNext}
+              />
+            </NewOrderField>
+            <NewOrderField label={`Discount (${BDT_SYMBOL})`} error={touched.discount ? errors.discount : undefined}>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={form.discount}
+                onChange={e => set('discount', e.target.value)}
+                onBlur={() => touch('discount')}
+                placeholder="0"
+                className={newOrderInputCls(touched.discount ? errors.discount : undefined)}
+                data-order-field="1"
+                onKeyDown={focusNext}
               />
             </NewOrderField>
           </div>
-
-          {Number(form.sell_price) > 0 && Number(form.cogs) > 0 && (
-            <div className="flex items-center justify-between px-3 py-2 bg-black/40 border border-border rounded-xl text-xs">
-              <span className="text-zinc-500">Est. profit</span>
-              <Money
-                amount={Number(form.sell_price) - Number(form.cogs) - Number(form.courier_charge) + Number(form.shipping_fee)}
-                className="font-bold text-green-400"
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            <NewOrderField label={`Paid Now (${BDT_SYMBOL})`} error={touched.paid_amount ? errors.paid_amount : undefined}>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={form.paid_amount}
+                onChange={e => set('paid_amount', e.target.value)}
+                onBlur={() => touch('paid_amount')}
+                placeholder="0"
+                className={newOrderInputCls(touched.paid_amount ? errors.paid_amount : undefined)}
+                data-order-field="1"
+                onKeyDown={focusNext}
               />
+            </NewOrderField>
+            <NewOrderField label={`Courier Cost (${BDT_SYMBOL})`} hint="Internal">
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={form.courier_charge}
+                onChange={e => set('courier_charge', e.target.value)}
+                placeholder="0"
+                className={newOrderInputCls()}
+                data-order-field="1"
+                onKeyDown={focusNext}
+              />
+            </NewOrderField>
+          </div>
+          <div className="space-y-1 rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-xs">
+            <div className="flex justify-between text-zinc-500"><span>Subtotal</span><Money amount={totals.subtotal} /></div>
+            <div className="flex justify-between text-zinc-500"><span>Shipping</span><Money amount={totals.shipping} /></div>
+            <div className="flex justify-between text-zinc-500"><span>Discount</span><Money amount={totals.discount} /></div>
+            <div className="flex justify-between border-t border-gold-dim/20 pt-1 font-bold text-gold-lt"><span>Payable</span><Money amount={totals.payable} /></div>
+            <div className="flex justify-between text-zinc-400"><span>Due</span><Money amount={totals.due} /></div>
+            <div className="flex justify-between border-t border-border pt-1">
+              <span className="text-zinc-500">Estimated Profit</span>
+              <span className={`font-bold ${totals.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
+                {totals.estimatedProfit >= 0 ? '+' : ''}<Money amount={totals.estimatedProfit} /> {totals.estimatedProfit >= 0 ? 'PROFIT' : 'LOSS'}
+              </span>
             </div>
-          )}
+            {totals.estimatedProfit < 0 && <p className="text-[10px] font-semibold text-red-300">Profit Status: LOSS. Review seller price, discount, or courier cost.</p>}
+          </div>
         </div>
       </div>
 
@@ -233,14 +409,14 @@ export function NewOrderFormFields({
         <div className="space-y-2 sm:space-y-3">
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <NewOrderField label="Payment Method" required>
-              <select value={form.payment} onChange={e => set('payment', e.target.value)} className={newOrderSelectCls()}>
+              <select value={form.payment} onChange={e => set('payment', e.target.value)} className={newOrderSelectCls()} data-order-field="1" onKeyDown={focusNext}>
                 {PAYMENTS.map(p => (
                   <option key={p}>{p}</option>
                 ))}
               </select>
             </NewOrderField>
             <NewOrderField label="Courier" required>
-              <select value={form.courier} onChange={e => set('courier', e.target.value)} className={newOrderSelectCls()}>
+              <select value={form.courier} onChange={e => set('courier', e.target.value)} className={newOrderSelectCls()} data-order-field="1" onKeyDown={focusNext}>
                 <option value="">Not assigned</option>
                 {COURIERS.map(c => (
                   <option key={c}>{c}</option>
@@ -250,7 +426,7 @@ export function NewOrderFormFields({
           </div>
 
           <NewOrderField label="Status">
-            <select value={form.status} onChange={e => set('status', e.target.value as OrderStatus)} className={newOrderSelectCls()}>
+            <select value={form.status} onChange={e => set('status', e.target.value as OrderStatus)} className={newOrderSelectCls()} data-order-field="1" onKeyDown={focusNext}>
               {NEW_ORDER_STATUSES.map(s => (
                 <option key={s}>{s}</option>
               ))}
@@ -264,6 +440,7 @@ export function NewOrderFormFields({
               placeholder="Any special instructions…"
               rows={2}
               className={`${newOrderInputCls()} resize-none`}
+              data-order-field="1"
             />
           </NewOrderField>
         </div>

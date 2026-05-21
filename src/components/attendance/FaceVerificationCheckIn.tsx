@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
+import { safeFetchJson } from '@/lib/safe-fetch'
 import { Button, Spinner } from '@/components/ui'
 
 type Props = {
@@ -99,20 +100,26 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     setNudgeConfirm(false)
     try {
       const metadata = await attendanceMetadata()
-      const res = await fetch('/api/attendance/check-in', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          business_id: businessId,
-          metadata,
-          face_verification: {
-            image_data_url: capture.imageDataUrl,
-            thumb_data_url: capture.thumbDataUrl,
-          },
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(mapCheckInError(String(j.error || 'Check-in failed'), res.status))
+      const result = await safeFetchJson<{ record?: { employeeId?: string }; duplicate?: boolean }>(
+        '/api/attendance/check-in',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: businessId,
+            metadata,
+            face_verification: {
+              image_data_url: capture.imageDataUrl,
+              thumb_data_url: capture.thumbDataUrl,
+            },
+          }),
+          retries: 1,
+        },
+      )
+      if (!result.ok) {
+        throw new Error(mapCheckInError(result.error.message, result.status))
+      }
+      const j = result.data
 
       const id = typeof j.record?.employeeId === 'string' ? j.record.employeeId : null
       setEmployeeName(id)

@@ -1,5 +1,7 @@
 .env.local
 .env
+.env.regression.local
+.regression-cookie
 node_modules/
 .next/
 out/

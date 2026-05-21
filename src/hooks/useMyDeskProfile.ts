@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
+import { safeFetchJson } from '@/lib/safe-fetch'
 
 export type DeskProfile = {
   id: string
@@ -44,19 +45,19 @@ export function useMyDeskProfile(businessId: string) {
     if (!silent) setLoading(true)
 
     try {
-      const res = await fetch(`/api/users/me?business_id=${encodeURIComponent(businessId)}`, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        if (res.status === 401) {
+      const result = await safeFetchJson<{ user: DeskProfile }>(
+        `/api/users/me?business_id=${encodeURIComponent(businessId)}`,
+        { cache: 'no-store', credentials: 'same-origin' },
+      )
+      if (!result.ok) {
+        if (result.status === 401) {
           setError('Session expired — refresh the page')
           setProfile(null)
           return
         }
-        throw new Error(String(j.error || res.statusText || 'Could not load profile'))
+        throw new Error(result.error.message || 'Could not load profile')
       }
+      const j = result.data
       if (id !== requestId.current) return
       setProfile(j.user as DeskProfile)
       setError(null)

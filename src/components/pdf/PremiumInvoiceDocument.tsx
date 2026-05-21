@@ -10,8 +10,8 @@ import { getPdfFontFamily } from '@/lib/pdf/fonts'
 
 const MAX_FIRST_PAGE_ROWS = 12
 const MAX_CONTINUATION_ROWS = 24
-const WATERMARK_WIDTH = 360
-const WATERMARK_HEIGHT = 145
+const WATERMARK_WIDTH = 450
+const WATERMARK_HEIGHT = 180
 
 function chunkRows<T>(rows: T[], firstPageMax: number, nextPageMax: number): T[][] {
   if (rows.length <= firstPageMax) return [rows]
@@ -46,36 +46,36 @@ function buildStyles(model: InvoicePdfModel) {
     watermark: {
       position: 'absolute',
       left: (A4_WIDTH_PT - WATERMARK_WIDTH) / 2,
-      top: (A4_HEIGHT_PT - WATERMARK_HEIGHT) / 2 + 38,
+      top: (A4_HEIGHT_PT - WATERMARK_HEIGHT) / 2 + 12,
       width: WATERMARK_WIDTH,
       height: WATERMARK_HEIGHT,
       objectFit: 'contain' as const,
-      opacity: model.branding.watermarkOpacity ?? 0.06,
+      opacity: model.branding.watermarkOpacity ?? 0.08,
     },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
-      paddingBottom: 9,
+      marginBottom: 13,
+      paddingBottom: 10,
       borderBottomWidth: 1.2,
       borderBottomColor: line,
     },
     brandRow: { flexDirection: 'row', alignItems: 'center' },
     logoBox: {
-      width: 78,
-      height: 32,
-      marginRight: 9,
+      width: 88,
+      height: 36,
+      marginRight: 11,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: line,
       backgroundColor: dark ? '#070708' : '#ffffff',
     },
-    logo: { width: 72, height: 24, objectFit: 'contain' as const },
+    logo: { width: 80, height: 28, objectFit: 'contain' as const },
     logoFallback: { fontSize: scale.base + 3, fontWeight: 700, color: gold },
     brandName: { fontSize: scale.base + 5, fontWeight: 700, color: gold },
-    brandTag: { fontSize: scale.small, color: muted, marginTop: 2, maxWidth: 250 },
+    brandTag: { fontSize: scale.small, color: muted, marginTop: 3, maxWidth: 250 },
     invTitle: { fontSize: scale.base + 9, fontWeight: 700, textAlign: 'right', color: text },
     invMeta: { fontSize: scale.small, color: muted, textAlign: 'right', marginTop: 2 },
     statusPill: {
@@ -91,7 +91,7 @@ function buildStyles(model: InvoicePdfModel) {
     },
     parties: {
       flexDirection: 'row',
-      marginBottom: 11,
+      marginBottom: 12,
     },
     partyCard: {
       flex: 1,
@@ -110,7 +110,7 @@ function buildStyles(model: InvoicePdfModel) {
     },
     customerName: { fontSize: scale.base + 1.5, fontWeight: 700, lineHeight: 1.25 },
     rowText: { fontSize: scale.small, color: muted, marginTop: 2 },
-    table: { marginTop: 2, borderWidth: 1, borderColor: line },
+    table: { marginTop: 3, borderWidth: 1, borderColor: line },
     tableHead: {
       flexDirection: 'row',
       borderBottomWidth: 1,
@@ -126,7 +126,7 @@ function buildStyles(model: InvoicePdfModel) {
       paddingHorizontal: 6,
       borderBottomWidth: 0.5,
       borderBottomColor: line,
-      minHeight: scale.base + scale.rowPad * 2 + 8,
+      minHeight: scale.base + scale.rowPad * 2 + 9,
     },
     colItem: { flex: 1.9, paddingRight: 8 },
     colQty: { width: 34, textAlign: 'right' },
@@ -134,21 +134,23 @@ function buildStyles(model: InvoicePdfModel) {
     colSub: { width: 74, textAlign: 'right' },
     itemTitle: { fontSize: scale.base, fontWeight: 600, lineHeight: 1.2 },
     itemMeta: { fontSize: scale.small, color: muted, marginTop: 1, lineHeight: 1.2 },
-    bottomArea: { flexDirection: 'row', marginTop: 10 },
+    bottomArea: { flexDirection: 'row', alignItems: 'stretch', marginTop: 12 },
     paymentBox: {
       flex: 1,
-      padding: 9,
+      padding: 10,
       borderWidth: 1,
       borderColor: line,
       backgroundColor: panel,
       marginRight: 10,
+      minHeight: 118,
     },
     summary: {
       width: 214,
-      padding: 9,
+      padding: 10,
       borderWidth: 1,
       borderColor: line,
       backgroundColor: panel,
+      minHeight: 118,
     },
     sumRow: {
       flexDirection: 'row',
@@ -179,7 +181,8 @@ function buildStyles(model: InvoicePdfModel) {
     qrImg: { width: 42, height: 42, marginRight: 8 },
     footer: {
       marginTop: 'auto',
-      paddingTop: 9,
+      marginBottom: 14,
+      paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: line,
     },
