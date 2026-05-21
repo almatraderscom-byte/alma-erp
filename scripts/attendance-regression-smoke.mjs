@@ -152,6 +152,93 @@ async function testAttendanceAdminRead() {
   pass('attendance_admin_read: valid JSON')
 }
 
+function unwrapData(body) {
+  if (body?.ok === true && body.data) return body.data
+  return body
+}
+
+function assertCheckInEnvelope(parsed, res, label) {
+  if (parsed.parseError) {
+    fail(`${label}: ${parsed.reason}`, true)
+    return false
+  }
+  if (!parsed.body || (typeof parsed.body === 'object' && !Object.keys(parsed.body).length)) {
+    fail(`${label}: empty JSON object`, true)
+    return false
+  }
+  if (parsed.body.ok === false) {
+    if (!parsed.body.error?.message && !parsed.body.message) {
+      fail(`${label}: failure without message`, true)
+      return false
+    }
+    return true
+  }
+  if (res.ok && parsed.body.ok !== true) {
+    fail(`${label}: HTTP ${res.status} without ok:true envelope`, true)
+    return false
+  }
+  return true
+}
+
+async function testCheckInSuccessPayloadContract() {
+  const { res, parsed } = await fetchJson('/api/attendance/check-in', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ business_id: BUSINESS }),
+  })
+  if (!assertCheckInEnvelope(parsed, res, 'checkin_contract')) return
+  if (parsed.body.ok === false) {
+    pass('checkin_contract: structured failure always JSON')
+    return
+  }
+  const data = unwrapData(parsed.body)
+  if (!data?.record?.id || !data?.record?.checkInAt) {
+    fail('checkin_contract: success response missing record.id/checkInAt', true)
+    return
+  }
+  if (typeof data.requestId !== 'string' || !data.requestId.length) {
+    fail('checkin_contract: missing requestId in success payload', true)
+    return
+  }
+  pass('checkin_contract: success payload has record + requestId')
+}
+
+async function testCheckInHealthContract() {
+  const { res, parsed } = await fetchJson(
+    `/api/attendance/check-in/health?business_id=${encodeURIComponent(BUSINESS)}`,
+  )
+  if (parsed.parseError) {
+    fail(`checkin_health: ${parsed.reason}`, true)
+    return
+  }
+  if (!res.ok) {
+    fail(`checkin_health: HTTP ${res.status}`, true)
+    return
+  }
+  const data = unwrapData(parsed.body)
+  if (!data?.architecture?.sideEffectsNonBlocking) {
+    fail('checkin_health: missing sideEffectsNonBlocking flag', true)
+    return
+  }
+  pass('checkin_health: observability endpoint OK')
+}
+
+async function testDuplicateRowGuard() {
+  const { res, parsed } = await fetchJson(
+    `/api/attendance/check-in/health?business_id=${encodeURIComponent(BUSINESS)}`,
+  )
+  if (!res.ok || parsed.parseError) {
+    fail('duplicate_row_guard: cannot read health', true)
+    return
+  }
+  const data = unwrapData(parsed.body)
+  if (typeof data.duplicateRowRisk !== 'number') {
+    fail('duplicate_row_guard: missing duplicateRowRisk metric', true)
+    return
+  }
+  pass(`duplicate_row_guard: duplicateRowRisk=${data.duplicateRowRisk}`)
+}
+
 async function testApprovalsUnaffected() {
   const { res, parsed } = await fetchJson('/api/approvals?summary=1', { method: 'GET' })
   if (parsed.parseError) {
@@ -172,6 +259,9 @@ async function main() {
   await testAttendanceMeRead()
   await testCheckInValidation()
   await testCheckInEmptyBody()
+  await testCheckInSuccessPayloadContract()
+  await testCheckInHealthContract()
+  await testDuplicateRowGuard()
   await testAttendanceAdminRead()
   await testApprovalsUnaffected()
 

@@ -16,6 +16,12 @@ import {
   logAttendanceCheckinResponseSent,
   logAttendanceCheckinValidationFailed,
 } from '@/lib/attendance-checkin-log'
+import {
+  logAttendanceHealthSummary,
+  recordAttendanceCheckinMetric,
+} from '@/lib/attendance-checkin-observability'
+import { attendanceDateFor } from '@/lib/attendance'
+import { prisma } from '@/lib/prisma'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -122,17 +128,53 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
       return apiFailure(result.code, result.message, { status: result.status })
     }
 
+    const latencyMs = Date.now() - started
+    const attendanceDate = attendanceDateFor().toISOString().slice(0, 10)
+    const dayStart = attendanceDateFor()
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000)
+
+    let todayCheckIns = 0
+    try {
+      todayCheckIns = await prisma.attendanceRecord.count({
+        where: {
+          businessId: ctx.businessIds[0],
+          attendanceDate: { gte: dayStart, lt: dayEnd },
+        },
+      })
+    } catch {
+      /* observability only */
+    }
+
+    const metric = {
+      requestId: clientRequestId,
+      userId: ctx.userId,
+      employeeId: ctx.employeeId,
+      businessId: ctx.businessIds[0],
+      attendanceDate,
+      deviceType: logBase.deviceType,
+      outcome: result.duplicate ? ('duplicate' as const) : ('success' as const),
+      latencyMs,
+      transactionMs: result.transactionMs,
+      duplicate: result.duplicate,
+      mobile: logBase.deviceType === 'mobile',
+      penaltyAmount: result.penaltyAmount,
+      attendanceRecordId: result.record.id,
+    }
+    recordAttendanceCheckinMetric(metric)
+    logAttendanceHealthSummary({ ...metric, todayCheckIns })
+
     logAttendanceCheckinResponseSent({
       ...logBase,
       attendanceRecordId: result.record.id,
       duplicate: result.duplicate,
-      latencyMs: Date.now() - started,
+      latencyMs,
     })
     logEvent('info', 'attendance.checkin.success', {
       ...logBase,
       attendanceRecordId: result.record.id,
       duplicate: result.duplicate,
-      durationMs: Date.now() - started,
+      durationMs: latencyMs,
+      transactionMs: result.transactionMs,
     })
 
     return apiDataSuccess({

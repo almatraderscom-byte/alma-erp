@@ -63,7 +63,13 @@ export type AttendanceCheckInFacePayload = {
 }
 
 export type AttendanceCheckInResult =
-  | { ok: true; duplicate: boolean; record: ReturnType<typeof attendanceRecordDto> }
+  | {
+      ok: true
+      duplicate: boolean
+      record: ReturnType<typeof attendanceRecordDto>
+      transactionMs: number
+      penaltyAmount: number
+    }
   | { ok: false; code: string; message: string; status: number }
 
 async function findTodayRecord(businessId: string, employeeId: string, attendanceDate: Date) {
@@ -154,7 +160,13 @@ export async function commitAttendanceCheckIn(
         message: (err as Error).message,
       })
     })
-    return { ok: true, duplicate: true, record: attendanceRecordDto(existing) }
+    return {
+      ok: true,
+      duplicate: true,
+      record: attendanceRecordDto(existing),
+      transactionMs: 0,
+      penaltyAmount: Number(existing.penaltyAmount || 0),
+    }
   }
 
   const { lateMinutes, penaltyAmount } = calculateLatePenalty(now)
@@ -172,6 +184,7 @@ export async function commitAttendanceCheckIn(
 
   logAttendanceCheckinTransactionStarted(logBase)
 
+  const txStarted = Date.now()
   try {
     const record = await prisma.$transaction(
       async tx => {
@@ -215,6 +228,7 @@ export async function commitAttendanceCheckIn(
       { maxWait: 8_000, timeout: 22_000 },
     )
 
+    const transactionMs = Date.now() - txStarted
     logAttendanceCheckinTransactionCommitted({
       ...logBase,
       attendanceRecordId: record.id,
@@ -229,7 +243,13 @@ export async function commitAttendanceCheckIn(
       logBase,
     })
 
-    return { ok: true, duplicate: false, record: attendanceRecordDto(record) }
+    return {
+      ok: true,
+      duplicate: false,
+      record: attendanceRecordDto(record),
+      transactionMs,
+      penaltyAmount: Number(record.penaltyAmount || 0),
+    }
   } catch (e) {
     if (e instanceof PrismaNs.PrismaClientKnownRequestError && e.code === 'P2002') {
       const raced = await findTodayRecord(input.businessId, input.employeeId, attendanceDate)
@@ -240,7 +260,13 @@ export async function commitAttendanceCheckIn(
           reason: 'race_duplicate',
           latencyMs: Date.now() - started,
         })
-        return { ok: true, duplicate: true, record: attendanceRecordDto(raced) }
+        return {
+          ok: true,
+          duplicate: true,
+          record: attendanceRecordDto(raced),
+          transactionMs: Date.now() - txStarted,
+          penaltyAmount: Number(raced.penaltyAmount || 0),
+        }
       }
       logAttendanceCheckinTransactionFailed({
         ...logBase,
