@@ -70,6 +70,7 @@ export function TradingTelegramAdmin({
   const [mappingLoading, setMappingLoading] = useState(false)
   const [savingUser, setSavingUser] = useState(false)
   const [savingAlias, setSavingAlias] = useState(false)
+  const [removingUserId, setRemovingUserId] = useState<string | null>(null)
 
   const [newAlias, setNewAlias] = useState({ alias: '', tradingAccountId: '' })
   const [newChat, setNewChat] = useState({ chatId: '', title: '' })
@@ -352,6 +353,30 @@ export function TradingTelegramAdmin({
     }
   }
 
+  async function removeUser(u: TradingTelegramUserRow) {
+    const label = u.user?.name?.trim() || u.telegramUsername?.trim() || `ID ${u.telegramUserId}`
+    if (!window.confirm(`Unlink Telegram user ${label} from the ERP staff mapping?\n\nThis clears the link (userId + approved + default account) but preserves the row, drafts, and history. You can re-link later from this page.`)) {
+      return
+    }
+    setRemovingUserId(u.id)
+    try {
+      const res = await fetch(`/api/trading/telegram/users/${u.id}`, { method: 'DELETE' })
+      let payload: { ok?: boolean; idempotentReplay?: boolean; error?: string; data?: { ok?: boolean; idempotentReplay?: boolean } } = {}
+      try { payload = (await res.json()) as typeof payload } catch { /* tolerate empty body */ }
+      const inner = payload.data || payload
+      if (!res.ok || !inner.ok) {
+        toast.error(payload.error || 'Could not remove Telegram mapping')
+        return
+      }
+      toast.success(inner.idempotentReplay ? 'Telegram mapping was already removed' : `Telegram mapping removed for ${label}`)
+      await load()
+    } catch (err) {
+      toast.error((err as Error)?.message || 'Could not remove Telegram mapping')
+    } finally {
+      setRemovingUserId(null)
+    }
+  }
+
   async function saveUser(e: React.FormEvent) {
     e.preventDefault()
     const telegramUserId = newUser.telegramUserId.trim()
@@ -475,6 +500,8 @@ export function TradingTelegramAdmin({
       newUser={newUser}
       setNewUser={setNewUser}
       saveUser={saveUser}
+      removeUser={removeUser}
+      removingUserId={removingUserId}
       staffOptions={staffOptions}
       accountOptions={accountOptions}
       aliasByAccountId={aliasByAccountId}
@@ -534,6 +561,8 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     newUser,
     setNewUser,
     saveUser,
+    removeUser,
+    removingUserId,
     staffOptions,
     accountOptions,
     aliasByAccountId,
@@ -591,6 +620,8 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     newUser: { telegramUserId: string; userId: string; telegramUsername: string; defaultAccountAlias: string; defaultTradingAccountId: string }
     setNewUser: (v: typeof newUser) => void
     saveUser: (e: React.FormEvent) => void
+    removeUser: (u: TradingTelegramUserRow) => void
+    removingUserId: string | null
     staffOptions: ReturnType<typeof staffToSearchableOptions>
     accountOptions: ReturnType<typeof accountToSearchableOptions>
     aliasByAccountId: Map<string, string>
@@ -783,6 +814,9 @@ function TelegramAdminInner(props: Record<string, unknown>) {
           aliasByAccountId={aliasByAccountId}
           mappingLoading={mappingLoading}
           savingUser={savingUser}
+          onRemove={removeUser}
+          removingId={removingUserId}
+          canRemove={isSuperAdmin}
         />
       )}
 

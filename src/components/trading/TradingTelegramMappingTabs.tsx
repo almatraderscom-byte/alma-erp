@@ -27,6 +27,9 @@ export function TelegramUsersTab({
   aliasByAccountId,
   mappingLoading,
   savingUser,
+  onRemove,
+  removingId,
+  canRemove,
 }: {
   users: TradingTelegramUserRow[]
   newUser: NewUserForm
@@ -37,6 +40,9 @@ export function TelegramUsersTab({
   aliasByAccountId: Map<string, string>
   mappingLoading: boolean
   savingUser: boolean
+  onRemove?: (u: TradingTelegramUserRow) => void
+  removingId?: string | null
+  canRemove?: boolean
 }) {
   function onAccountChange(accountId: string) {
     setNewUser({
@@ -131,14 +137,20 @@ export function TelegramUsersTab({
         <Empty icon="👤" title="No Telegram users linked yet" desc="Add a mapping above to allow draft trades from Telegram." />
       ) : (
         <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
-          <div className="hidden gap-2 bg-black/30 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr]">
+          <div className="hidden gap-2 bg-black/30 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
             <span>Telegram</span>
             <span>ERP staff</span>
             <span>Status</span>
             <span>Default account</span>
+            <span className="sr-only">Actions</span>
           </div>
           {users.map(u => (
-            <TelegramUserRow key={u.id} u={u} />
+            <TelegramUserRow
+              key={u.id}
+              u={u}
+              onRemove={canRemove ? onRemove : undefined}
+              removing={removingId === u.id}
+            />
           ))}
         </div>
       )}
@@ -146,10 +158,19 @@ export function TelegramUsersTab({
   )
 }
 
-function TelegramUserRow({ u }: { u: TradingTelegramUserRow }) {
+function TelegramUserRow({
+  u,
+  onRemove,
+  removing,
+}: {
+  u: TradingTelegramUserRow
+  onRemove?: (u: TradingTelegramUserRow) => void
+  removing?: boolean
+}) {
   const hrId = u.user?.employeeIdGas?.trim()
+  const showRemove = Boolean(onRemove) && (Boolean(u.userId) || u.approved)
   return (
-    <div className="grid gap-1 px-4 py-3 text-xs sm:gap-2 md:grid-cols-[1fr_1.2fr_0.6fr_1fr]">
+    <div className="grid gap-1 px-4 py-3 text-xs sm:gap-2 md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
       <span className="font-bold text-cream">
         {u.telegramUsername ? `@${u.telegramUsername}` : `ID ${u.telegramUserId}`}
       </span>
@@ -160,6 +181,19 @@ function TelegramUserRow({ u }: { u: TradingTelegramUserRow }) {
       </span>
       <span className={u.approved ? 'text-green-400' : 'text-amber-300'}>{u.approved ? 'Approved' : 'Pending'}</span>
       <span className="text-zinc-500">Default alias: {u.defaultAccountAlias || '—'}</span>
+      <span className="md:justify-self-end">
+        {showRemove ? (
+          <button
+            type="button"
+            onClick={() => onRemove?.(u)}
+            disabled={removing}
+            className="rounded-lg border border-rose-600/40 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-300 hover:bg-rose-600/10 disabled:opacity-40"
+            aria-label={`Unlink Telegram user ${u.telegramUsername || u.telegramUserId}`}
+          >
+            {removing ? 'Removing…' : 'Remove'}
+          </button>
+        ) : null}
+      </span>
     </div>
   )
 }
