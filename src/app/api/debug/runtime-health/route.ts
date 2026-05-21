@@ -55,9 +55,6 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     telegramReadyToRetry,
     attendanceSelfiesPendingReview,
     orphanedApprovals,
-    benchAttendanceMs,
-    benchApprovalsMs,
-    benchTelegramQueueMs,
     pendingApprovals,
   ] = await Promise.all([
     measurePrismaPing(),
@@ -83,17 +80,26 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
       prisma.attendanceSelfieVerification.count({ where: { reviewedAt: null } }),
     ),
     safeCount(detectOrphanApprovalsCount()),
-    timeMs(() =>
-      prisma.attendanceRecord.count({
-        where: { checkInAt: { gte: failedRecentCutoff } },
-      }),
-    ),
-    timeMs(() => prisma.approvalRequest.count({ where: { status: 'PENDING' } })),
-    timeMs(() =>
-      prisma.telegramNotificationQueue.count({ where: { status: 'QUEUED' } }),
-    ),
     safeCount(prisma.approvalRequest.count({ where: { status: 'PENDING' } })),
   ])
+
+  // Phase 1 benchmarks: run SERIALLY after the parallel batch so each value
+  // reflects a single-query latency on the now-warm Prisma pool. Running
+  // these inside the parallel batch above would surface pool-queueing time,
+  // not the real query cost.
+  const benchAttendanceMs = await timeMs(() =>
+    prisma.attendanceRecord.count({
+      // Mirrors the /api/attendance/check-in/health hot query exactly; the new
+      // (businessId, checkInAt) index makes this a low-cost range scan.
+      where: { checkInAt: { gte: failedRecentCutoff } },
+    }),
+  )
+  const benchApprovalsMs = await timeMs(() =>
+    prisma.approvalRequest.count({ where: { status: 'PENDING' } }),
+  )
+  const benchTelegramQueueMs = await timeMs(() =>
+    prisma.telegramNotificationQueue.count({ where: { status: 'QUEUED' } }),
+  )
 
   const storageHealth = await measureStorageHealth(storageFailureCutoff)
 
