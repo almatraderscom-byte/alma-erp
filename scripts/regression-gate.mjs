@@ -56,4 +56,11 @@ const smoke = spawnSync('node', ['scripts/regression-smoke.mjs'], {
 })
 if (smoke.status !== 0) process.exit(smoke.status ?? 1)
 
+const attendanceSmoke = spawnSync('node', ['scripts/attendance-regression-smoke.mjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  env: smokeEnv,
+})
+if (attendanceSmoke.status !== 0) process.exit(attendanceSmoke.status ?? 1)
+
 console.log('\n✓ Regression gate passed')

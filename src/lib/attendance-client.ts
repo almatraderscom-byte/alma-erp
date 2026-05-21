@@ -135,3 +135,17 @@ export function logAttendanceClientFailure(event: string, meta: Record<string, u
     }),
   )
 }
+
+export function logAttendanceClientSuccess(event: string, meta: Record<string, unknown>) {
+  if (typeof window === 'undefined') return
+  console.info(
+    JSON.stringify({
+      level: 'info',
+      event,
+      surface: 'attendance-client',
+      timestamp: new Date().toISOString(),
+      ...deviceContext(),
+      ...meta,
+    }),
+  )
+}

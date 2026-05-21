@@ -1,56 +1,72 @@
+import { randomUUID } from 'crypto'
 import { NextRequest } from 'next/server'
 import { apiDataSuccess, apiFailure } from '@/lib/safe-api-response'
 import { withApiRoute } from '@/lib/core/safe-route-helpers'
 import { classifyAttendanceDbError } from '@/lib/core/safe-attendance'
-import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
 import { requireWalletContext } from '@/lib/core/safe-route-helpers'
-import {
-  attendanceDateFor,
-  assessAttendanceTrust,
-  calculateLatePenalty,
-  clientSessionInfo,
-  deviceKeyFor,
-  deviceInfoFromRequest,
-  hashAttendanceIp,
-  normalizeClientMetadata,
-  notifyAttendancePenalty,
-  OFFICE_END_MINUTES,
-  OFFICE_START_MINUTES,
-  postAttendancePenalty,
-  sessionInfoFromRequest,
-  attendanceRecordDto,
-} from '@/lib/attendance'
+import { normalizeClientMetadata } from '@/lib/attendance'
 import {
   buildFaceThumbDataUrl,
   MAX_THUMB_DATA_URL_CHARS,
   normalizeFaceImageForCheckIn,
 } from '@/lib/attendance-face-image'
+import { commitAttendanceCheckIn } from '@/lib/attendance-checkin'
 import {
-  clearLiveFacePhotoForTelegram,
-  notifyFaceVerifiedCheckIn,
-  stageLiveFacePhotoForTelegram,
-} from '@/lib/telegram-notification/face-checkin-notify'
-import { suppressStaleAbsentAlertsForCheckIn } from '@/lib/attendance-absent-safety'
+  logAttendanceCheckinRequested,
+  logAttendanceCheckinResponseSent,
+  logAttendanceCheckinValidationFailed,
+} from '@/lib/attendance-checkin-log'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+function deviceTypeFromRequest(req: NextRequest) {
+  const ua = (req.headers.get('user-agent') || '').toLowerCase()
+  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'mobile'
+  if (ua.includes('ipad') || ua.includes('tablet')) return 'tablet'
+  return 'desktop'
+}
+
 export const POST = withApiRoute('attendance.check_in', async (req: NextRequest) => {
   const started = Date.now()
+  const requestId = req.headers.get('x-request-id')?.trim() || randomUUID()
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     metadata?: unknown
     face_verification?: { image_data_url?: string; thumb_data_url?: string }
+    request_id?: string
   }
+  const clientRequestId = String(body.request_id || '').trim() || requestId
+
   const auth = await requireWalletContext(req, body.business_id)
-  if (!auth.ok) return auth.response
+  if (!auth.ok) {
+    logAttendanceCheckinValidationFailed({
+      requestId: clientRequestId,
+      reason: 'auth_failed',
+      latencyMs: Date.now() - started,
+      deviceType: deviceTypeFromRequest(req),
+    })
+    return auth.response
+  }
   const ctx = auth.ctx
+
+  const logBase = {
+    requestId: clientRequestId,
+    userId: ctx.userId,
+    employeeId: ctx.employeeId ?? undefined,
+    businessId: ctx.businessIds[0],
+    deviceType: deviceTypeFromRequest(req),
+  }
+
+  logAttendanceCheckinRequested(logBase)
+
   if (ctx.isSystemOwner) {
+    logAttendanceCheckinValidationFailed({ ...logBase, reason: 'system_owner', latencyMs: Date.now() - started })
     return apiFailure('forbidden', 'System owner accounts do not use employee attendance.', { status: 403 })
   }
   if (!ctx.employeeId) {
+    logAttendanceCheckinValidationFailed({ ...logBase, reason: 'missing_employee_id', latencyMs: Date.now() - started })
     return apiFailure(
       'invalid_request',
       'Your account is not linked to an HR employee ID. Ask admin to set employee ID (or Trading HR profile) in Users.',
@@ -60,10 +76,13 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
 
   const faceRaw = String(body.face_verification?.image_data_url || '').trim()
   if (!faceRaw) {
+    logAttendanceCheckinValidationFailed({ ...logBase, reason: 'missing_face', latencyMs: Date.now() - started })
     return apiFailure('invalid_request', 'Face verification photo is required. Use the front camera before starting work.', { status: 400 })
   }
+
   const parsedFace = await normalizeFaceImageForCheckIn(faceRaw)
   if (!parsedFace) {
+    logAttendanceCheckinValidationFailed({ ...logBase, reason: 'invalid_face', latencyMs: Date.now() - started })
     return apiFailure('invalid_request', 'Could not process face photo. Retake in good light with the front camera (JPEG/PNG/WebP).', { status: 400 })
   }
 
@@ -76,122 +95,57 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
     faceThumb = await buildFaceThumbDataUrl(parsedFace.buffer)
   }
 
-  const now = new Date()
-  const attendanceDate = attendanceDateFor(now)
-  const { lateMinutes, penaltyAmount } = calculateLatePenalty(now)
   const metadata = normalizeClientMetadata(body.metadata)
-  const deviceKey = deviceKeyFor(req, metadata)
-  const trust = await assessAttendanceTrust({
-    businessId: ctx.businessIds[0],
-    employeeId: ctx.employeeId,
-    deviceKey,
-    location: metadata.location,
-  })
-  const latitude = metadata.location?.latitude
-  const longitude = metadata.location?.longitude
-  const accuracy = metadata.location?.accuracy
-
-  const needsAdminSelfie = trust.suspiciousReasons.includes('ADMIN_REQUEST')
 
   try {
-    let record = await prisma.attendanceRecord.create({
-      data: {
+    const result = await commitAttendanceCheckIn(
+      {
+        requestId: clientRequestId,
+        req,
         businessId: ctx.businessIds[0],
         userId: ctx.userId,
         employeeId: ctx.employeeId,
-        attendanceDate,
-        status: penaltyAmount > 0 ? 'LATE' : 'PRESENT',
-        officeStartMinutes: OFFICE_START_MINUTES,
-        officeEndMinutes: OFFICE_END_MINUTES,
-        checkInAt: now,
-        lateMinutes,
-        penaltyAmount: new Prisma.Decimal(penaltyAmount.toFixed(2)),
-        browserFingerprint: metadata.browserFingerprint,
-        deviceKey,
-        sessionId: metadata.sessionId,
-        latitude: latitude == null ? null : new Prisma.Decimal(latitude.toFixed(7)),
-        longitude: longitude == null ? null : new Prisma.Decimal(longitude.toFixed(7)),
-        locationAccuracyM: accuracy == null ? null : Math.round(accuracy),
-        distanceFromOfficeM: trust.distanceFromOfficeM,
-        trustStatus: trust.trustStatus,
-        suspiciousReasons: trust.suspiciousReasons,
-        verificationRequired: needsAdminSelfie,
-        faceVerified: true,
-        faceVerifiedAt: now,
-        faceThumbDataUrl: faceThumb,
-        deviceInfo: deviceInfoFromRequest(req),
-        sessionInfo: clientSessionInfo(sessionInfoFromRequest(req), metadata),
-        ipHash: hashAttendanceIp(req),
+        metadata,
+        faceThumb,
+        deviceType: logBase.deviceType,
       },
-      include: { waiverRequests: true, selfieVerifications: true },
-    })
+      { buffer: parsedFace.buffer, contentType: parsedFace.contentType },
+    )
 
-    if (penaltyAmount > 0) {
-      await postAttendancePenalty(record, ctx.userId)
-      await notifyAttendancePenalty(record, ctx.userId)
-      record = await prisma.attendanceRecord.findUniqueOrThrow({
-        where: { id: record.id },
-        include: { waiverRequests: true, selfieVerifications: true },
+    if (!result.ok) {
+      logAttendanceCheckinValidationFailed({
+        ...logBase,
+        reason: result.code,
+        message: result.message,
+        latencyMs: Date.now() - started,
       })
+      return apiFailure(result.code, result.message, { status: result.status })
     }
 
-    await suppressStaleAbsentAlertsForCheckIn(record)
-
-    stageLiveFacePhotoForTelegram(record.id, parsedFace.buffer, parsedFace.contentType)
-    try {
-      await notifyFaceVerifiedCheckIn(record)
-    } catch (err) {
-      console.error('[attendance-check-in] telegram face notify', (err as Error).message)
-    } finally {
-      clearLiveFacePhotoForTelegram(record.id)
-    }
-
-    const committedAt = new Date()
+    logAttendanceCheckinResponseSent({
+      ...logBase,
+      attendanceRecordId: result.record.id,
+      duplicate: result.duplicate,
+      latencyMs: Date.now() - started,
+    })
     logEvent('info', 'attendance.checkin.success', {
-      userId: ctx.userId,
-      employeeId: ctx.employeeId,
-      businessId: ctx.businessIds[0],
-      attendanceRecordId: record.id,
-      checkInAt: record.checkInAt.toISOString(),
-      dbCommittedAt: committedAt.toISOString(),
+      ...logBase,
+      attendanceRecordId: result.record.id,
+      duplicate: result.duplicate,
       durationMs: Date.now() - started,
     })
-    logEvent('info', 'attendance.check_in.ok', {
-      userId: ctx.userId,
-      employeeId: ctx.employeeId,
-      businessId: ctx.businessIds[0],
-      attendanceRecordId: record.id,
-      durationMs: Date.now() - started,
+
+    return apiDataSuccess({
+      requestId: clientRequestId,
+      duplicate: result.duplicate,
+      record: result.record,
     })
-    return apiDataSuccess({ record: attendanceRecordDto(record) })
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      const existing = await prisma.attendanceRecord.findUnique({
-        where: {
-          businessId_employeeId_attendanceDate: {
-            businessId: ctx.businessIds[0],
-            employeeId: ctx.employeeId,
-            attendanceDate,
-          },
-        },
-        include: { waiverRequests: true, selfieVerifications: true },
-      })
-      if (existing) {
-        await suppressStaleAbsentAlertsForCheckIn(existing)
-        logEvent('info', 'attendance.checkin.success', {
-          userId: ctx.userId,
-          employeeId: ctx.employeeId,
-          businessId: ctx.businessIds[0],
-          attendanceRecordId: existing.id,
-          duplicate: true,
-          checkInAt: existing.checkInAt.toISOString(),
-        })
-      }
-      return apiDataSuccess({
-        duplicate: true,
-        record: existing ? attendanceRecordDto(existing) : null,
-      })
-    }
+    logEvent('error', 'attendance.checkin.transaction_failed', {
+      ...logBase,
+      ...errorMeta(e),
+      durationMs: Date.now() - started,
+    })
     throw e
   }
 }, { classifyError: classifyAttendanceDbError })

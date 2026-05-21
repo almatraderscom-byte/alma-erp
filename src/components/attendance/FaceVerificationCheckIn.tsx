@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
+import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { Button, Spinner } from '@/components/ui'
+
+const CHECKIN_TIMEOUT_MS = 55_000
 
 type Props = {
   businessId: string
@@ -14,15 +17,23 @@ type Props = {
   onSuccess: () => void | Promise<void>
 }
 
-type Phase = 'capture' | 'confirm' | 'success'
+type Phase = 'capture' | 'confirm' | 'success' | 'error'
+
+type CheckInPayload = {
+  record?: { id?: string; employeeId?: string; checkInAt?: string }
+  duplicate?: boolean
+  requestId?: string
+}
 
 export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const confirmAnchorRef = useRef<HTMLDivElement>(null)
+  const inFlightRef = useRef<string | null>(null)
   const [mounted, setMounted] = useState(false)
   const [phase, setPhase] = useState<Phase>('capture')
   const [processingPhoto, setProcessingPhoto] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [capture, setCapture] = useState<{ imageDataUrl: string; thumbDataUrl: string } | null>(null)
   const [nudgeConfirm, setNudgeConfirm] = useState(false)
@@ -35,11 +46,13 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     setPhase('capture')
     setProcessingPhoto(false)
     setSubmitting(false)
+    setSubmitError(null)
     setPreview(null)
     setCapture(null)
     setNudgeConfirm(false)
     setSuccessAt(null)
     setEmployeeName(null)
+    inFlightRef.current = null
   }, [])
 
   useEffect(() => {
@@ -75,6 +88,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   async function handleFile(file: File | undefined) {
     if (!file || processingPhoto || submitting) return
     setProcessingPhoto(true)
+    setSubmitError(null)
     setNudgeConfirm(false)
     try {
       const result = await captureFaceFromFile(file)
@@ -91,22 +105,43 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     }
   }
 
-  async function submitCheckIn() {
-    if (!capture || submitting) {
-      if (!capture) toast.error('Take a front-camera photo first')
+  const submitCheckIn = useCallback(async (isRetry = false) => {
+    if (!capture) {
+      toast.error('Take a front-camera photo first')
       return
     }
+    if (inFlightRef.current) {
+      logAttendanceClientFailure('attendance.checkin.client_failed', {
+        businessId,
+        reason: 'duplicate_submit_blocked',
+      })
+      return
+    }
+
+    const requestId = crypto.randomUUID()
+    inFlightRef.current = requestId
     setSubmitting(true)
+    setSubmitError(null)
     setNudgeConfirm(false)
+
+    if (isRetry) {
+      logAttendanceClientFailure('attendance.checkin.retry_triggered', { businessId, requestId })
+    }
+
+    const started = Date.now()
     try {
       const metadata = await attendanceMetadata()
-      const result = await safeFetchJson<{ record?: { employeeId?: string }; duplicate?: boolean }>(
+      const result = await safeFetchJson<CheckInPayload>(
         '/api/attendance/check-in',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Request-Id': requestId,
+          },
           body: JSON.stringify({
             business_id: businessId,
+            request_id: requestId,
             metadata,
             face_verification: {
               image_data_url: capture.imageDataUrl,
@@ -114,35 +149,84 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
             },
           }),
           retries: 1,
+          timeoutMs: CHECKIN_TIMEOUT_MS,
         },
       )
+
       if (!result.ok) {
+        logAttendanceClientFailure('attendance.checkin.client_failed', {
+          businessId,
+          requestId,
+          status: result.status,
+          code: result.error.code,
+          message: result.error.message,
+          rolledBack: result.rolledBack,
+          latencyMs: Date.now() - started,
+        })
         throw new Error(mapCheckInError(result.error.message, result.status))
       }
-      const j = result.data
 
-      const id = typeof j.record?.employeeId === 'string' ? j.record.employeeId : null
-      setEmployeeName(id)
-      setSuccessAt(new Date().toISOString())
+      const record = result.data.record
+      if (!record?.id || !record.checkInAt) {
+        logAttendanceClientFailure('attendance.checkin.client_failed', {
+          businessId,
+          requestId,
+          reason: 'missing_record_in_response',
+          latencyMs: Date.now() - started,
+        })
+        throw new Error('Server accepted check-in but did not return your attendance record. Tap Retry.')
+      }
+
+      logAttendanceClientSuccess('attendance.checkin.client_success', {
+        businessId,
+        requestId,
+        attendanceRecordId: record.id,
+        duplicate: Boolean(result.data.duplicate),
+        latencyMs: Date.now() - started,
+      })
+
+      setEmployeeName(typeof record.employeeId === 'string' ? record.employeeId : null)
+      setSuccessAt(record.checkInAt)
       setPhase('success')
 
-      if (j.duplicate) {
+      if (result.data.duplicate) {
         toast.success('You are already checked in for today')
       } else {
         toast.success('Attendance confirmed')
       }
 
-      onSuccess()
+      try {
+        await onSuccess()
+      } catch (refreshErr) {
+        logAttendanceClientFailure('attendance.checkin.client_failed', {
+          businessId,
+          requestId,
+          reason: 'refresh_after_success',
+          message: (refreshErr as Error).message,
+        })
+        toast.error('Check-in saved, but the desk could not refresh. Pull to refresh.')
+      }
+
       window.setTimeout(() => {
         resetState()
         onClose()
       }, 1_800)
     } catch (e) {
-      toast.error(mapCheckInError((e as Error).message))
+      const message = mapCheckInError((e as Error).message)
+      setSubmitError(message)
+      setPhase('error')
+      toast.error(message)
+      logAttendanceClientFailure('attendance.checkin.client_failed', {
+        businessId,
+        requestId,
+        message,
+        latencyMs: Date.now() - started,
+      })
     } finally {
+      if (inFlightRef.current === requestId) inFlightRef.current = null
       setSubmitting(false)
     }
-  }
+  }, [businessId, capture, onClose, onSuccess, resetState])
 
   const busy = processingPhoto || submitting
 
@@ -169,12 +253,14 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       <div className="mobile-sheet relative z-[10051] mx-auto flex w-full max-w-md max-h-[min(100dvh,100svh)] flex-col overflow-hidden rounded-t-[28px] border border-gold-dim/30 bg-surface shadow-2xl sm:max-h-[90dvh] sm:rounded-2xl">
         <div className="safe-top shrink-0 border-b border-border px-4 pb-3 pt-4">
           <p id="face-checkin-title" className="text-base font-black text-cream">
-            {phase === 'success' ? '🟢 Attendance confirmed' : '📸 Start work verification'}
+            {phase === 'success' ? '🟢 Attendance confirmed' : phase === 'error' ? '⚠ Check-in failed' : '📸 Start work verification'}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
             {phase === 'success'
               ? 'Your check-in was saved. This window will close automatically.'
-              : 'Use your front camera. Tap the green button below after your photo appears.'}
+              : phase === 'error'
+                ? submitError || 'Something went wrong. You can retry without retaking the photo.'
+                : 'Use your front camera. Tap the green button below after your photo appears.'}
           </p>
         </div>
 
@@ -191,6 +277,11 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   {new Date(successAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
               )}
+            </div>
+          ) : phase === 'error' ? (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-4 text-center">
+              <p className="text-sm font-bold text-red-200">{submitError}</p>
+              <p className="mt-2 text-xs text-zinc-500">Your photo is still ready — tap Retry check-in below.</p>
             </div>
           ) : processingPhoto ? (
             <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/30">
@@ -238,24 +329,53 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
             <Button variant="gold" className="h-[52px] w-full justify-center text-base font-black" disabled>
               Done
             </Button>
-          ) : phase === 'confirm' && capture ? (
+          ) : phase === 'error' && capture ? (
             <div className="grid gap-2">
-              <div ref={confirmAnchorRef}>
               <Button
                 variant="gold"
-                className={`h-[56px] w-full justify-center gap-2 text-base font-black shadow-lg shadow-gold/20 ${nudgeConfirm ? 'gold-pulse' : ''}`}
+                className="h-[56px] w-full justify-center gap-2 text-base font-black"
                 disabled={busy}
-                onClick={() => void submitCheckIn()}
+                onClick={() => void submitCheckIn(true)}
               >
                 {submitting ? (
                   <>
                     <Spinner />
-                    Confirming…
+                    Retrying…
                   </>
                 ) : (
-                  '✅ Confirm check-in'
+                  'Retry check-in'
                 )}
               </Button>
+              <Button
+                variant="ghost"
+                className="h-11 w-full justify-center text-xs"
+                disabled={submitting}
+                onClick={() => {
+                  resetState()
+                  onClose()
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          ) : phase === 'confirm' && capture ? (
+            <div className="grid gap-2">
+              <div ref={confirmAnchorRef}>
+                <Button
+                  variant="gold"
+                  className={`h-[56px] w-full justify-center gap-2 text-base font-black shadow-lg shadow-gold/20 ${nudgeConfirm ? 'gold-pulse' : ''}`}
+                  disabled={busy}
+                  onClick={() => void submitCheckIn(false)}
+                >
+                  {submitting ? (
+                    <>
+                      <Spinner />
+                      Confirming…
+                    </>
+                  ) : (
+                    '✅ Confirm check-in'
+                  )}
+                </Button>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <Button
