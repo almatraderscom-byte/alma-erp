@@ -160,6 +160,42 @@ if (
   fail('FaceVerificationCheckIn must declare useCallback before conditional return')
 } else pass('FaceVerificationCheckIn hooks order safe')
 
+// Verify the root cause of the selfie-reset bug is gone in FaceVerificationCheckIn:
+// onClose/submitting must NOT be in the combined useEffect that calls resetState
+if (/useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?resetState\(\)[\s\S]*?\},\s*\[.*onClose.*\]/.test(faceCheckin)) {
+  fail('FaceVerificationCheckIn: onClose must not be in the reset useEffect deps (causes spurious capture reset on parent re-render)')
+} else pass('FaceVerificationCheckIn no spurious onClose dep in reset effect')
+
+if (/useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?resetState\(\)[\s\S]*?\},\s*\[.*submitting.*\]/.test(faceCheckin)) {
+  fail('FaceVerificationCheckIn: submitting must not be in the reset useEffect deps')
+} else pass('FaceVerificationCheckIn no submitting dep in reset effect')
+
+const selfieModal = read('src/components/attendance/SelfieVerificationModal.tsx')
+
+if (/useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?resetState\(\)[\s\S]*?\},\s*\[.*onClose.*\]/.test(selfieModal)) {
+  fail('SelfieVerificationModal: onClose must not be in the reset useEffect deps')
+} else pass('SelfieVerificationModal no spurious onClose dep')
+
+if (/useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?resetState\(\)[\s\S]*?\},\s*\[.*submitting.*\]/.test(selfieModal)) {
+  fail('SelfieVerificationModal: submitting must not be in the reset useEffect deps')
+} else pass('SelfieVerificationModal no submitting dep in reset effect')
+
+if (!faceCheckin.includes('captureRef.current') || !selfieModal.includes('captureRef.current')) {
+  fail('Both modals must read capture from captureRef.current to survive re-renders')
+} else pass('capture read from ref in both modals')
+
+if (!faceCheckin.includes('onCloseRef.current') || !selfieModal.includes('onCloseRef.current')) {
+  fail('Both modals must use onCloseRef.current for close callbacks')
+} else pass('onClose accessed via ref in both modals')
+
+if (!faceCheckin.includes('attendance.capture.created') || !selfieModal.includes('attendance.capture.created')) {
+  fail('Both modals must log attendance.capture.created')
+} else pass('attendance.capture.created logged')
+
+if (!faceCheckin.includes('attendance.capture.persisted') || !selfieModal.includes('attendance.capture.persisted')) {
+  fail('Both modals must log attendance.capture.persisted')
+} else pass('attendance.capture.persisted logged')
+
 if (!portal.includes('faceCheckInOpen &&')) {
   fail('portal must mount FaceVerificationCheckIn only when open')
 } else pass('lazy mount face check-in modal')

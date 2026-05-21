@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { captureFaceFromFile } from '@/lib/attendance-face-client'
+import { logEvent } from '@/lib/logger'
 import { Button, Spinner } from '@/components/ui'
 
 type Props = {
@@ -16,6 +17,29 @@ type Props = {
 }
 
 type Phase = 'capture' | 'confirm' | 'success'
+
+// ─── Structured capture logging ─────────────────────────────────────────────
+
+function deviceHints() {
+  if (typeof navigator === 'undefined') return {}
+  const ua = navigator.userAgent
+  const ios = /iphone|ipad|ipod/i.test(ua)
+  const safari = ios && /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua)
+  const pwa =
+    typeof window !== 'undefined'
+    && (window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as Navigator & { standalone?: boolean }).standalone === true)
+  return { ios, safari, pwa }
+}
+
+function logCapture(
+  event: 'attendance.capture.created' | 'attendance.capture.persisted' | 'attendance.capture.cleared' | 'attendance.capture.remounted' | 'attendance.capture.retry',
+  meta: Record<string, unknown>,
+) {
+  logEvent('info', event, { ...deviceHints(), ...meta })
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export function SelfieVerificationModal({
   businessId,
@@ -34,6 +58,27 @@ export function SelfieVerificationModal({
   const [capture, setCapture] = useState<{ imageDataUrl: string } | null>(null)
   const [nudgeConfirm, setNudgeConfirm] = useState(false)
 
+  // Stable refs for callbacks that change on parent re-renders.
+  // Using refs prevents the keyboard/overflow effects from re-running and
+  // accidentally calling resetState() when the parent re-renders with a new
+  // onClose reference (e.g. after a silent attendance refresh on iOS visibilitychange).
+  const onCloseRef = useRef(onClose)
+  const onSuccessRef = useRef(onSuccess)
+  const submittingRef = useRef(submitting)
+  const captureRef = useRef(capture)
+  onCloseRef.current = onClose
+  onSuccessRef.current = onSuccess
+  submittingRef.current = submitting
+  captureRef.current = capture
+
+  // Mount ID for remount detection logging
+  const mountIdRef = useRef<string>('')
+  if (!mountIdRef.current) {
+    mountIdRef.current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `m_${Math.random().toString(36).slice(2)}_${Date.now()}`
+  }
+
   useEffect(() => setMounted(true), [])
 
   const resetState = useCallback(() => {
@@ -45,20 +90,47 @@ export function SelfieVerificationModal({
     setNudgeConfirm(false)
   }, [])
 
+  // Log remounts so we can detect unexpected parent-driven remounts in production.
+  useEffect(() => {
+    logCapture('attendance.capture.remounted', {
+      component: 'SelfieVerificationModal',
+      mountId: mountIdRef.current,
+      businessId,
+      attendanceRecordId,
+    })
+    return () => {
+      // If capture is still held on unmount and we haven't persisted, log a warning.
+      if (captureRef.current) {
+        logCapture('attendance.capture.cleared', {
+          component: 'SelfieVerificationModal',
+          mountId: mountIdRef.current,
+          reason: 'component_unmount_with_capture',
+          businessId,
+        })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Overflow lock — only depends on open.  Does NOT call resetState.
+  // State is already fresh because component is conditionally mounted.
   useEffect(() => {
     if (!open) return
-    resetState()
-    const previousOverflow = document.body.style.overflow
+    const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
+
+  // Keyboard handler — reads onClose/submitting from refs so it NEVER triggers
+  // a resetState() due to a parent re-render producing a new onClose reference.
+  useEffect(() => {
+    if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !submitting) onClose()
+      if (e.key === 'Escape' && !submittingRef.current) onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open, onClose, resetState, submitting])
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 
   useEffect(() => {
     if (!open || phase !== 'confirm' || !capture) return
@@ -84,6 +156,12 @@ export function SelfieVerificationModal({
       setPreview(result.imageDataUrl)
       setCapture({ imageDataUrl: result.imageDataUrl })
       setPhase('confirm')
+      logCapture('attendance.capture.created', {
+        component: 'SelfieVerificationModal',
+        mountId: mountIdRef.current,
+        businessId,
+        attendanceRecordId,
+      })
     } catch (e) {
       toast.error((e as Error).message)
       setPreview(null)
@@ -95,8 +173,10 @@ export function SelfieVerificationModal({
   }
 
   async function submitVerification() {
-    if (!capture || submitting) {
-      if (!capture) toast.error('Take a front-camera photo first')
+    // Read capture from ref to survive any render between capture and submit.
+    const activeCapture = captureRef.current
+    if (!activeCapture || submitting) {
+      if (!activeCapture) toast.error('Take a front-camera photo first')
       return
     }
     setSubmitting(true)
@@ -108,20 +188,37 @@ export function SelfieVerificationModal({
         body: JSON.stringify({
           business_id: businessId,
           attendance_record_id: attendanceRecordId,
-          image_data_url: capture.imageDataUrl,
+          image_data_url: activeCapture.imageDataUrl,
           content_type: 'image/jpeg',
         }),
       })
       if (!result.ok) throw new Error(result.error.message)
 
+      logCapture('attendance.capture.persisted', {
+        component: 'SelfieVerificationModal',
+        mountId: mountIdRef.current,
+        businessId,
+        attendanceRecordId,
+      })
       setPhase('success')
       toast.success('Verification submitted')
-      await onSuccess()
+      try {
+        await onSuccessRef.current()
+      } catch {
+        // refresh failing must not interfere with success display
+      }
       window.setTimeout(() => {
         resetState()
-        onClose()
+        onCloseRef.current()
       }, 1_600)
     } catch (e) {
+      logCapture('attendance.capture.retry', {
+        component: 'SelfieVerificationModal',
+        mountId: mountIdRef.current,
+        businessId,
+        attendanceRecordId,
+        error: (e as Error).message,
+      })
       toast.error((e as Error).message)
     } finally {
       setSubmitting(false)

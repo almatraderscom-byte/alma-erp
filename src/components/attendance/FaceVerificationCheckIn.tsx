@@ -6,8 +6,30 @@ import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
 import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
 import { logAttendanceMobileSubmitFailed } from '@/lib/mobile-runtime-log'
+import { logEvent } from '@/lib/logger'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { Button, Spinner } from '@/components/ui'
+
+// ─── Structured capture logging ─────────────────────────────────────────────
+
+function deviceHints() {
+  if (typeof navigator === 'undefined') return {}
+  const ua = navigator.userAgent
+  const ios = /iphone|ipad|ipod/i.test(ua)
+  const safari = ios && /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua)
+  const pwa =
+    typeof window !== 'undefined'
+    && (window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as Navigator & { standalone?: boolean }).standalone === true)
+  return { ios, safari, pwa }
+}
+
+function logCapture(
+  event: 'attendance.capture.created' | 'attendance.capture.persisted' | 'attendance.capture.cleared' | 'attendance.capture.remounted' | 'attendance.capture.retry',
+  meta: Record<string, unknown>,
+) {
+  logEvent('info', event, { ...deviceHints(), ...meta })
+}
 
 const CHECKIN_TIMEOUT_MS = 55_000
 
@@ -41,6 +63,28 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   const [successAt, setSuccessAt] = useState<string | null>(null)
   const [employeeName, setEmployeeName] = useState<string | null>(null)
 
+  // Stable refs for callbacks that change on parent re-renders.
+  // Prevents the keyboard/overflow effects from re-running (and accidentally
+  // calling resetState()) when the parent re-renders with a new onClose/onSuccess
+  // reference — which happens every time attendance refreshes after iOS
+  // visibilitychange fires on camera open/close.
+  const onCloseRef = useRef(onClose)
+  const onSuccessRef = useRef(onSuccess)
+  const submittingRef = useRef(submitting)
+  const captureRef = useRef(capture)
+  onCloseRef.current = onClose
+  onSuccessRef.current = onSuccess
+  submittingRef.current = submitting
+  captureRef.current = capture
+
+  // Mount ID so we can correlate logs across remounts.
+  const mountIdRef = useRef<string>('')
+  if (!mountIdRef.current) {
+    mountIdRef.current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `m_${Math.random().toString(36).slice(2)}_${Date.now()}`
+  }
+
   useEffect(() => setMounted(true), [])
 
   const resetState = useCallback(() => {
@@ -56,20 +100,46 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     inFlightRef.current = null
   }, [])
 
+  // Log remounts to detect unexpected parent-driven remounts in production.
+  useEffect(() => {
+    logCapture('attendance.capture.remounted', {
+      component: 'FaceVerificationCheckIn',
+      mountId: mountIdRef.current,
+      businessId,
+    })
+    return () => {
+      if (captureRef.current) {
+        logCapture('attendance.capture.cleared', {
+          component: 'FaceVerificationCheckIn',
+          mountId: mountIdRef.current,
+          reason: 'component_unmount_with_capture',
+          businessId,
+        })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Overflow lock — only depends on open.  Does NOT call resetState.
+  // State is already fresh because the component is conditionally mounted.
   useEffect(() => {
     if (!open) return
-    resetState()
-    const previousOverflow = document.body.style.overflow
+    const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
+
+  // Keyboard handler — reads onClose/submitting from refs to avoid adding them
+  // as reactive deps; that would re-run this effect (and previously resetState)
+  // on every parent render that produces a new onClose arrow function.
+  useEffect(() => {
+    if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !submitting) onClose()
+      if (e.key === 'Escape' && !submittingRef.current) onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open, onClose, resetState, submitting])
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 
   useEffect(() => {
     if (!open || phase !== 'confirm' || !capture) return
@@ -86,8 +156,10 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
 
   const submitCheckIn = useCallback(
     async (isRetry = false) => {
-      if (!open || !capture) {
-        if (!capture) toast.error('Take a front-camera photo first')
+      // Read capture from ref — survives any re-render between capture and submit.
+      const activeCapture = captureRef.current
+      if (!open || !activeCapture) {
+        if (!activeCapture) toast.error('Take a front-camera photo first')
         return
       }
       if (inFlightRef.current) {
@@ -105,6 +177,12 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       setNudgeConfirm(false)
 
       if (isRetry) {
+        logCapture('attendance.capture.retry', {
+          component: 'FaceVerificationCheckIn',
+          mountId: mountIdRef.current,
+          businessId,
+          requestId,
+        })
         logAttendanceClientFailure('attendance.checkin.retry_triggered', { businessId, requestId })
       }
 
@@ -124,11 +202,15 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               request_id: requestId,
               metadata,
               face_verification: {
-                image_data_url: capture.imageDataUrl,
-                thumb_data_url: capture.thumbDataUrl,
+                image_data_url: activeCapture.imageDataUrl,
+                thumb_data_url: activeCapture.thumbDataUrl,
               },
             }),
-            retries: 1,
+            // No automatic retry — duplicate clicks would create overlapping
+            // submits while the first is still uploading the face photo. The
+            // server uses a unique constraint to dedupe and the user gets an
+            // explicit "Retry check-in" button on error.
+            retries: 0,
             timeoutMs: CHECKIN_TIMEOUT_MS,
           },
         )
@@ -164,6 +246,14 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           duplicate: Boolean(result.data.duplicate),
           latencyMs: Date.now() - started,
         })
+        logCapture('attendance.capture.persisted', {
+          component: 'FaceVerificationCheckIn',
+          mountId: mountIdRef.current,
+          businessId,
+          requestId,
+          attendanceRecordId: record.id,
+          latencyMs: Date.now() - started,
+        })
 
         setEmployeeName(typeof record.employeeId === 'string' ? record.employeeId : null)
         setSuccessAt(record.checkInAt)
@@ -176,7 +266,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         }
 
         try {
-          await onSuccess()
+          await onSuccessRef.current()
         } catch (refreshErr) {
           logAttendanceClientFailure('attendance.checkin.client_failed', {
             businessId,
@@ -189,7 +279,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
 
         window.setTimeout(() => {
           resetState()
-          onClose()
+          onCloseRef.current()
         }, 1_800)
       } catch (e) {
         const message = mapCheckInError((e as Error).message)
@@ -209,12 +299,22 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           requestId,
           latencyMs: Date.now() - started,
         })
+        logCapture('attendance.capture.retry', {
+          component: 'FaceVerificationCheckIn',
+          mountId: mountIdRef.current,
+          businessId,
+          requestId,
+          error: message,
+        })
       } finally {
         if (inFlightRef.current === requestId) inFlightRef.current = null
         setSubmitting(false)
       }
     },
-    [businessId, capture, onClose, onSuccess, open, resetState],
+    // captureRef/onCloseRef/onSuccessRef are mutable refs — deliberately excluded;
+    // they expose the latest value without triggering useCallback recreation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [businessId, open, resetState],
   )
 
   if (!mounted || !open) return null
@@ -229,6 +329,11 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       setPreview(result.imageDataUrl)
       setCapture({ imageDataUrl: result.imageDataUrl, thumbDataUrl: result.thumbDataUrl })
       setPhase('confirm')
+      logCapture('attendance.capture.created', {
+        component: 'FaceVerificationCheckIn',
+        mountId: mountIdRef.current,
+        businessId,
+      })
     } catch (e) {
       toast.error((e as Error).message)
       setPreview(null)
@@ -256,7 +361,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         onClick={() => {
           if (!submitting) {
             resetState()
-            onClose()
+            onCloseRef.current()
           }
         }}
       />
@@ -363,7 +468,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 disabled={submitting}
                 onClick={() => {
                   resetState()
-                  onClose()
+                  onCloseRef.current()
                 }}
               >
                 Close
@@ -401,13 +506,13 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   variant="ghost"
                   className="h-11 w-full justify-center text-xs"
                   disabled={submitting}
-                  onClick={() => {
-                    resetState()
-                    onClose()
-                  }}
-                >
-                  Cancel
-                </Button>
+                onClick={() => {
+                  resetState()
+                  onCloseRef.current()
+                }}
+              >
+                Cancel
+              </Button>
               </div>
             </div>
           ) : (
@@ -433,7 +538,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 disabled={submitting}
                 onClick={() => {
                   resetState()
-                  onClose()
+                  onCloseRef.current()
                 }}
               >
                 Cancel
