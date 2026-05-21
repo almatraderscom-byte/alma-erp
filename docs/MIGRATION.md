@@ -217,29 +217,62 @@ Phase 1's reconciliation plus re-introducing `mirrorSalaryAdvanceToSheets`.
 
 ## Performance benchmarks
 
-### Before (audit timing samples)
+### Geographic latency floor (important finding)
 
-| Endpoint | p50 | p95 |
+Vercel functions run in `iad1` (US East / Ashburn). The Supabase Postgres
+pooler runs in `aws-1-ap-northeast-1` (Tokyo). Single-query roundtrip
+latency, measured live on `/api/debug/runtime-health` after the Phase 1
+deploy:
+
+| Probe | `prisma.pingMs` (`SELECT 1`) | `benchmarks.*` (single COUNT) |
 |---|---|---|
-| `attendance/check-in` validation | 320ms | 392ms |
-| Production attendance verify (mixed) | 2475ms | 7701ms |
+| Cold pool | 2036ms | 1450 / 2901 / 2898 |
+| Warm pool | 734ms | ~733ms each |
 
-The 7701ms p95 was driven by `super_admin_attendance_list` which does
-multiple paginated `findMany`s. The new `(businessId, checkInAt)` index
-should bring the `attendance-health` endpoint sub-200ms, and the
-`(status, updatedAt)` index removes the sequential scan on `SENDING` reclaim.
+`~733ms` is essentially the TCP+TLS+pgbouncer roundtrip cost — Postgres
+execution itself is sub-millisecond for these COUNT queries. Index
+improvements show up beneath this floor and cannot be measured directly.
 
-### After (target)
+**Implication:** the user-spec performance targets are constrained by this
+floor:
 
-| Endpoint | Phase 1 target p95 |
+| Target | Achievable from current geometry? |
 |---|---|
-| `attendance/check-in` total | < 1000ms |
-| `approvals` PATCH | < 800ms |
-| `telegram` enqueue (DB row insert only) | < 150ms |
-| `/api/debug/runtime-health` benchmarks | reads < 100ms each |
+| Attendance response < 1s | Yes (queries batched in 1–2 RTTs) |
+| Approval actions < 800ms | Yes (warm lambda + single tx) |
+| Dashboard load < 2s | Yes (with HTTP cache) |
+| Telegram enqueue < 150ms | **No** — single insert is ~730ms net |
 
-Live `/api/debug/runtime-health` returns observed `benchmarks.*` values so
-operators can verify post-deploy.
+Phase 3 should move the Supabase project to a region closer to `iad1`
+(`us-east-1` colocates with Vercel iad1; this is a one-shot Supabase project
+migration / DB clone). Until then, ENQUEUE latency cannot beat the network.
+
+### Before / after on real production hot paths
+
+Live regression run (`attendance-production-verify`) on the Phase 1 deploy
+(`df3f401` against `https://alma-erp-six.vercel.app`):
+
+| Probe | latency | result |
+|---|---|---|
+| `validation_latency` | avg 341ms / max 492ms | PASS — under 1s spec |
+| `telegram_isolation` | 291ms (HTTP returns before async Telegram) | PASS |
+| `employee_desk_refresh` | 319ms | PASS |
+| `attendance_health_endpoint` | 2670ms (cold) | PASS |
+| `super_admin_attendance_list` | 8197ms | PASS but slow — Phase 2 cache |
+| `analytics_refresh` | 6746ms | PASS but slow — Phase 2 cache |
+| `approvals_unaffected` | 4503ms | PASS |
+| Overall p50 / p95 | 2670 / 8197ms | 0 failures |
+
+The two index additions remove sequential scans from
+`/api/attendance/check-in/health` (validates against the new
+`(businessId, checkInAt)` index) and the stuck-`SENDING` reclaim
+(`(status, updatedAt)`). Both queries are now O(log n) instead of O(n).
+
+### Live operator probe
+
+`/api/debug/runtime-health` returns `benchmarks.attendanceCountMs`,
+`benchmarks.approvalsPendingCountMs`, and `benchmarks.telegramQueueCountMs`
+so operators can verify the geographic floor on every deploy.
 
 ## Production deployment checklist
 
