@@ -25,7 +25,13 @@ function deviceHints() {
 }
 
 function logCapture(
-  event: 'attendance.capture.created' | 'attendance.capture.persisted' | 'attendance.capture.cleared' | 'attendance.capture.remounted' | 'attendance.capture.retry',
+  event:
+    | 'attendance.capture.created'
+    | 'attendance.capture.persisted'
+    | 'attendance.capture.cleared'
+    | 'attendance.capture.remounted'
+    | 'attendance.capture.retry'
+    | 'attendance.checkin.capture_created',
   meta: Record<string, unknown>,
 ) {
   logEvent('info', event, { ...deviceHints(), ...meta })
@@ -329,6 +335,10 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       setPreview(result.imageDataUrl)
       setCapture({ imageDataUrl: result.imageDataUrl, thumbDataUrl: result.thumbDataUrl })
       setPhase('confirm')
+      logCapture('attendance.checkin.capture_created', {
+        component: 'FaceVerificationCheckIn',
+        mountId: mountIdRef.current,
+      })
       logCapture('attendance.capture.created', {
         component: 'FaceVerificationCheckIn',
         mountId: mountIdRef.current,

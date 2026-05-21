@@ -8,14 +8,22 @@ import {
   prepareVerificationSelfieAssets,
 } from '@/lib/attendance-photo-storage'
 import { logEvent } from '@/lib/logger'
+import { withApiRoute } from '@/lib/core/safe-api'
+import { attachAttendanceContext } from '@/lib/sentry/capture'
 
 const MAX_SELFIE_BYTES = 180_000
 
-export async function GET(req: NextRequest) {
+export const GET = withApiRoute('attendance.selfies.list', async (req: NextRequest) => {
   const url = new URL(req.url)
   const ctx = await getWalletContext(req, url.searchParams.get('business_id'))
   if ('error' in ctx) return ctx.error
   if (!ctx.isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  await attachAttendanceContext({
+    businessId: ctx.businessIds[0],
+    requestId: req.headers.get('x-request-id') || undefined,
+    route: 'attendance.selfies.list',
+  })
 
   const rows = await prisma.attendanceSelfieVerification.findMany({
     where: { businessId: ctx.businessIds[0] },
@@ -23,9 +31,9 @@ export async function GET(req: NextRequest) {
     take: 12,
   })
   return NextResponse.json({ selfies: rows.map(attendanceSelfieDto) })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withApiRoute('attendance.selfies.submit', async (req: NextRequest) => {
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     attendance_record_id?: string
@@ -65,7 +73,15 @@ export async function POST(req: NextRequest) {
   })
   if (!record) return NextResponse.json({ error: 'Attendance record not found.' }, { status: 404 })
 
-  const requestId = randomUUID()
+  const requestId = req.headers.get('x-request-id') || randomUUID()
+  await attachAttendanceContext({
+    businessId: record.businessId,
+    employeeId: ctx.employeeId,
+    userId: ctx.userId,
+    attendanceRecordId: record.id,
+    requestId,
+    route: 'attendance.selfies.submit',
+  })
   const attendanceDateYmd = record.attendanceDate.toISOString().slice(0, 10)
 
   const prepared = await prepareVerificationSelfieAssets({
@@ -123,4 +139,4 @@ export async function POST(req: NextRequest) {
   })
 
   return NextResponse.json({ ok: true, selfie: attendanceSelfieDto(selfie) })
-}
+})

@@ -20,6 +20,9 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/telegram/webhook') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
+  // /api/debug/* paths apply their own SUPER_ADMIN / CRON_SECRET checks
+  // inside the handler so monitoring scripts can hit them via Bearer auth.
+  if (pathname.startsWith('/api/debug/')) return true
   if (pathname === '/api/test-email') return process.env.NODE_ENV !== 'production'
   return false
 }

@@ -33,6 +33,9 @@ function base(meta: AttendanceCheckinLogMeta) {
 }
 
 export function logAttendanceCheckinRequested(meta: AttendanceCheckinLogMeta) {
+  // Dual emit: `started` matches the canonical Sentry instrumentation contract,
+  // `requested` is the legacy name used by existing dashboards.
+  logEvent('info', 'attendance.checkin.started', base(meta))
   logEvent('info', 'attendance.checkin.requested', base(meta))
 }
 
@@ -45,10 +48,14 @@ export function logAttendanceCheckinTransactionStarted(meta: AttendanceCheckinLo
 }
 
 export function logAttendanceCheckinTransactionCommitted(meta: AttendanceCheckinLogMeta) {
+  // Dual emit: `persisted` matches the canonical Sentry instrumentation contract.
+  logEvent('info', 'attendance.checkin.persisted', base(meta))
   logEvent('info', 'attendance.checkin.transaction_committed', base(meta))
 }
 
 export function logAttendanceCheckinTransactionFailed(meta: AttendanceCheckinLogMeta) {
+  // Dual emit for parity with Sentry critical-event patterns.
+  logEvent('error', 'attendance.checkin.failed', base(meta))
   logEvent('error', 'attendance.checkin.transaction_failed', base(meta))
 }
 
@@ -69,4 +76,31 @@ export function logAttendanceCheckinSideEffectFailed(meta: AttendanceCheckinLogM
       stage: 'check_in_notify',
     })
   }
+}
+
+export function logAttendanceCheckinTelegramQueued(meta: AttendanceCheckinLogMeta & {
+  queueIds?: string[]
+  rowCount?: number
+}) {
+  // Canonical Sentry contract name; complements existing `attendance.telegram.enqueued`.
+  logEvent('info', 'attendance.checkin.telegram_queued', {
+    ...base(meta),
+    queueIds: meta.queueIds,
+    rowCount: meta.rowCount,
+  })
+}
+
+export function logAttendanceCheckinTelegramSent(meta: AttendanceCheckinLogMeta & {
+  queueId?: string
+  latencyMs?: number
+}) {
+  logEvent('info', 'attendance.checkin.telegram_sent', {
+    ...base(meta),
+    queueId: meta.queueId,
+    latencyMs: meta.latencyMs,
+  })
+}
+
+export function logAttendanceCheckinCaptureCreated(meta: AttendanceCheckinLogMeta) {
+  logEvent('info', 'attendance.checkin.capture_created', base(meta))
 }

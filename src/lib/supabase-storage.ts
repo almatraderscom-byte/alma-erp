@@ -1,5 +1,29 @@
 const DEFAULT_BUCKET = 'expense-receipts'
 
+/** Hard cap on every Supabase storage HTTP call so a slow CDN never hangs a lambda. */
+const STORAGE_DOWNLOAD_TIMEOUT_MS = 9_000
+const STORAGE_SIGN_TIMEOUT_MS = 6_000
+const STORAGE_BUCKET_TIMEOUT_MS = 6_000
+
+async function fetchStorageWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  if (typeof AbortController === 'undefined') return fetch(url, init)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function describeStorageFetchError(error: unknown, operation: string, timeoutMs: number): Error {
+  const err = error instanceof Error ? error : new Error(String(error))
+  if (err.name === 'AbortError') {
+    return new Error(`Storage ${operation} timed out after ${timeoutMs}ms`)
+  }
+  return err
+}
+
 export type SupabaseUploadResult = {
   bucket: string
   objectPath: string
@@ -49,20 +73,36 @@ function inferSupabaseUrlFromDatabase() {
 
 export async function ensureBucket() {
   const cfg = storageConfig()
-  const res = await fetch(`${cfg.url}/storage/v1/bucket/${encodeURIComponent(cfg.bucket)}`, {
-    headers: storageHeaders(cfg.serviceKey),
-  })
+  let res: Response
+  try {
+    res = await fetchStorageWithTimeout(
+      `${cfg.url}/storage/v1/bucket/${encodeURIComponent(cfg.bucket)}`,
+      { headers: storageHeaders(cfg.serviceKey) },
+      STORAGE_BUCKET_TIMEOUT_MS,
+    )
+  } catch (err) {
+    throw describeStorageFetchError(err, 'bucket check', STORAGE_BUCKET_TIMEOUT_MS)
+  }
   if (res.ok) return cfg
   const bucketCheckBody = await res.text()
   if (res.status !== 404 && !isBucketNotFound(res.status, bucketCheckBody)) {
     throw new Error(`Supabase bucket check failed (${res.status})`)
   }
 
-  const create = await fetch(`${cfg.url}/storage/v1/bucket`, {
-    method: 'POST',
-    headers: { ...storageHeaders(cfg.serviceKey), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: cfg.bucket, name: cfg.bucket, public: false, file_size_limit: '10485760' }),
-  })
+  let create: Response
+  try {
+    create = await fetchStorageWithTimeout(
+      `${cfg.url}/storage/v1/bucket`,
+      {
+        method: 'POST',
+        headers: { ...storageHeaders(cfg.serviceKey), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cfg.bucket, name: cfg.bucket, public: false, file_size_limit: '10485760' }),
+      },
+      STORAGE_BUCKET_TIMEOUT_MS,
+    )
+  } catch (err) {
+    throw describeStorageFetchError(err, 'bucket create', STORAGE_BUCKET_TIMEOUT_MS)
+  }
   if (!create.ok && create.status !== 409) {
     throw new Error(`Supabase bucket create failed (${create.status}): ${(await create.text()).slice(0, 200)}`)
   }
@@ -94,10 +134,16 @@ export async function uploadStorageObject(objectPath: string, file: Blob, conten
 
 export async function downloadStorageObject(bucket: string, objectPath: string): Promise<Buffer> {
   const cfg = storageConfig()
-  const res = await fetch(
-    `${cfg.url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`,
-    { headers: storageHeaders(cfg.serviceKey), cache: 'no-store' },
-  )
+  let res: Response
+  try {
+    res = await fetchStorageWithTimeout(
+      `${cfg.url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`,
+      { headers: storageHeaders(cfg.serviceKey), cache: 'no-store' },
+      STORAGE_DOWNLOAD_TIMEOUT_MS,
+    )
+  } catch (err) {
+    throw describeStorageFetchError(err, 'download', STORAGE_DOWNLOAD_TIMEOUT_MS)
+  }
   if (!res.ok) {
     throw new Error(`Storage download failed (${res.status})`)
   }
@@ -118,11 +164,20 @@ export async function deleteStorageObject(bucket: string, objectPath: string) {
 
 export async function createSignedObjectUrl(bucket: string, objectPath: string, download = false, expiresIn = 3600) {
   const cfg = storageConfig()
-  const res = await fetch(`${cfg.url}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${objectPath}`, {
-    method: 'POST',
-    headers: { ...storageHeaders(cfg.serviceKey), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expiresIn, download }),
-  })
+  let res: Response
+  try {
+    res = await fetchStorageWithTimeout(
+      `${cfg.url}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${objectPath}`,
+      {
+        method: 'POST',
+        headers: { ...storageHeaders(cfg.serviceKey), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresIn, download }),
+      },
+      STORAGE_SIGN_TIMEOUT_MS,
+    )
+  } catch (err) {
+    throw describeStorageFetchError(err, 'sign', STORAGE_SIGN_TIMEOUT_MS)
+  }
   if (!res.ok) throw new Error(`Could not create signed receipt URL (${res.status})`)
   const data = await res.json() as { signedURL?: string; signedUrl?: string }
   const signedPath = data.signedURL || data.signedUrl

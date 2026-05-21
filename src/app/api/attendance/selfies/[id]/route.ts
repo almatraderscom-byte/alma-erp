@@ -4,6 +4,9 @@ import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceSelfieDto } from '@/lib/attendance'
 import { resolveAttendanceImageRefForDisplay } from '@/lib/attendance-photo-storage'
 import { notifyUser } from '@/lib/notifications'
+import { withApiRoute } from '@/lib/core/safe-api'
+import { logEvent } from '@/lib/logger'
+import { attachAttendanceContext } from '@/lib/sentry/capture'
 
 async function findSelfieForAdmin(businessId: string, id: string, attendanceRecordId?: string | null) {
   const byId = await prisma.attendanceSelfieVerification.findFirst({
@@ -27,15 +30,31 @@ async function findSelfieForAdmin(businessId: string, id: string, attendanceReco
   })
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export const GET = withApiRoute('attendance.selfies.detail', async (req: NextRequest, ctxParam) => {
+  const { params } = ctxParam as { params: { id: string } }
   const url = new URL(req.url)
   const ctx = await getWalletContext(req, url.searchParams.get('business_id'))
   if ('error' in ctx) return ctx.error
   if (!ctx.isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
+  const requestId = req.headers.get('x-request-id') || undefined
+  await attachAttendanceContext({
+    businessId: ctx.businessIds[0],
+    attendanceRecordId: params.id,
+    requestId,
+    route: 'attendance.selfies.detail',
+  })
+
   const attendanceRecordId = url.searchParams.get('attendance_record_id')
   const selfie = await findSelfieForAdmin(ctx.businessIds[0], params.id, attendanceRecordId)
   if (!selfie) {
+    logEvent('warn', 'attendance.review.photo_missing', {
+      requestId,
+      businessId: ctx.businessIds[0],
+      selfieId: params.id,
+      attendanceRecordId: attendanceRecordId || params.id,
+      lookup: 'detail',
+    })
     return NextResponse.json({
       ok: false,
       error: 'Verification photo not found.',
@@ -45,6 +64,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 
   const imageUrl = await resolveAttendanceImageRefForDisplay(selfie.imageDataUrl)
+  if (!imageUrl) {
+    logEvent('warn', 'attendance.review.storage_missing', {
+      requestId,
+      businessId: ctx.businessIds[0],
+      selfieId: selfie.id,
+      attendanceRecordId: selfie.attendanceRecordId,
+      storageRef: selfie.imageDataUrl?.slice(0, 120),
+    })
+  }
   return NextResponse.json({
     ok: true,
     selfie: {
@@ -53,9 +81,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       imageMissing: !imageUrl,
     },
   })
-}
+})
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextRequest, ctxParam) => {
+  const { params } = ctxParam as { params: { id: string } }
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     action?: 'APPROVE' | 'REJECT'
@@ -71,12 +100,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'action APPROVE|REJECT required' }, { status: 400 })
   }
 
+  const requestId = req.headers.get('x-request-id') || undefined
+  await attachAttendanceContext({
+    businessId: ctx.businessIds[0],
+    attendanceRecordId: body.attendance_record_id || params.id,
+    requestId,
+    route: 'attendance.selfies.review',
+  })
+
   const selfie = await findSelfieForAdmin(
     ctx.businessIds[0],
     params.id,
     body.attendance_record_id || null,
   )
   if (!selfie) {
+    logEvent('warn', 'attendance.review.photo_missing', {
+      requestId,
+      businessId: ctx.businessIds[0],
+      selfieId: params.id,
+      attendanceRecordId: body.attendance_record_id || params.id,
+      lookup: 'review',
+      action: body.action,
+    })
     return NextResponse.json({
       error: 'Verification photo not found.',
       code: 'photo_not_found',
@@ -117,6 +162,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   })
 
   const imageUrl = await resolveAttendanceImageRefForDisplay(updated.imageDataUrl)
+  if (!imageUrl) {
+    logEvent('warn', 'attendance.review.storage_missing', {
+      requestId,
+      businessId: ctx.businessIds[0],
+      selfieId: updated.id,
+      attendanceRecordId: updated.attendanceRecordId,
+      storageRef: updated.imageDataUrl?.slice(0, 120),
+      stage: 'post_review',
+    })
+  }
   return NextResponse.json({
     ok: true,
     selfie: {
@@ -125,4 +180,4 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       imageMissing: !imageUrl,
     },
   })
-}
+})

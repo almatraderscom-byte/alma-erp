@@ -28,40 +28,64 @@ export function parseFaceImageDataUrl(dataUrl: string): ParsedFaceImage | null {
   return parseFaceImageDataUrlRaw(dataUrl, MAX_FACE_IMAGE_BYTES)
 }
 
+/** Hard ceiling on a single Sharp decode/resize so a malformed image cannot hang the lambda. */
+const SHARP_DECODE_TIMEOUT_MS = 8_000
+
+async function withSharpTimeout<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race<T | 'timeout'>([
+      fn(),
+      new Promise<'timeout'>(resolve => {
+        timer = setTimeout(() => resolve('timeout'), SHARP_DECODE_TIMEOUT_MS)
+      }),
+    ])
+    if (result === 'timeout') {
+      // Swallowed at call site; we cannot cancel an in-flight Sharp pipeline, but the
+      // promise will resolve later and the result will be discarded.
+      // eslint-disable-next-line no-console
+      console.warn(`[attendance-face-image] ${label} timed out after ${SHARP_DECODE_TIMEOUT_MS}ms`)
+      return null
+    }
+    return result
+  } catch {
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /** Accept large mobile captures, then compress server-side for storage + Telegram. */
 export async function normalizeFaceImageForCheckIn(dataUrl: string): Promise<ParsedFaceImage | null> {
   const loose = parseFaceImageDataUrlRaw(dataUrl, 900_000)
   if (!loose) return null
   if (loose.sizeBytes <= MAX_FACE_IMAGE_BYTES) return loose
 
-  try {
+  const out = await withSharpTimeout('normalizeFaceImageForCheckIn', async () => {
     const sharp = (await import('sharp')).default
-    const out = await sharp(loose.buffer, { failOn: 'none' })
+    return sharp(loose.buffer, { failOn: 'none' })
       .rotate()
       .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 58, mozjpeg: true })
       .toBuffer()
-    if (!out.length || out.length > MAX_FACE_IMAGE_BYTES) return null
-    return { buffer: out, contentType: 'image/jpeg', sizeBytes: out.length }
-  } catch {
-    return null
-  }
+  })
+  if (!out || !out.length || out.length > MAX_FACE_IMAGE_BYTES) return null
+  return { buffer: out, contentType: 'image/jpeg', sizeBytes: out.length }
 }
 
 export async function buildFaceThumbDataUrl(buffer: Buffer): Promise<string | null> {
-  try {
+  const out = await withSharpTimeout('buildFaceThumbDataUrl', async () => {
     const sharp = (await import('sharp')).default
-    const out = await sharp(buffer, { failOn: 'none' })
+    return sharp(buffer, { failOn: 'none' })
       .rotate()
       .resize({ width: 160, height: 160, fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 44, mozjpeg: true })
       .toBuffer()
-    const dataUrl = `data:image/jpeg;base64,${out.toString('base64')}`
-    if (dataUrl.length > MAX_THUMB_DATA_URL_CHARS) return null
-    return dataUrl
-  } catch {
-    return null
-  }
+  })
+  if (!out) return null
+  const dataUrl = `data:image/jpeg;base64,${out.toString('base64')}`
+  if (dataUrl.length > MAX_THUMB_DATA_URL_CHARS) return null
+  return dataUrl
 }
 
 export function thumbBufferFromDataUrl(dataUrl: string | null | undefined): Buffer | null {

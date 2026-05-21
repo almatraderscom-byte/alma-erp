@@ -366,6 +366,14 @@ async function persistAttendanceCheckInTelegramRow(input: {
         rowCount: queueIds.length,
         phase: 'pre_response_enqueue',
       })
+      // Canonical Sentry event name for end-to-end check-in instrumentation.
+      logEvent('info', 'attendance.checkin.telegram_queued', {
+        ...logBase,
+        attendanceRecordId: record.id,
+        queueIds,
+        rowCount: queueIds.length,
+        phase: 'pre_response_enqueue',
+      })
     }
     return { queueIds }
   } catch (err) {

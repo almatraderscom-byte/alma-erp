@@ -8,7 +8,7 @@ export type { ApiErrorShape }
 
 export { apiSuccess, apiFailure } from '@/lib/safe-api-response'
 
-type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse>
+type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse | undefined>
 
 /** Best-effort: attach route + requestId as Sentry tags for the current scope. */
 async function tagSentryScope(routeLabel: string, requestId?: string): Promise<void> {
@@ -39,13 +39,16 @@ export function withApiRoute(
   options?: {
     classifyError?: (err: unknown) => { code: string; message: string; status: number; retryable?: boolean }
   },
-): RouteHandler {
+): (req: NextRequest, ctx?: unknown) => Promise<NextResponse> {
   return async (req: NextRequest, ctx?: unknown) => {
     const started = Date.now()
     const requestId = req.headers.get('x-request-id')?.trim() || undefined
     await tagSentryScope(routeLabel, requestId)
     try {
-      return await handler(req, ctx)
+      const out = await handler(req, ctx)
+      if (out) return out
+      // Defensive: never let a handler return undefined to the framework.
+      return apiFailure('internal_error', 'Handler returned no response', { status: 500 })
     } catch (err) {
       const custom = options?.classifyError?.(err)
       const message = (err as Error).message || String(err)

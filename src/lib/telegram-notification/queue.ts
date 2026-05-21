@@ -378,6 +378,12 @@ export async function processTelegramNotificationQueue(options: { limit?: number
           businessId: row.businessId,
           latencyMs: Date.now() - started,
         })
+        // Canonical event name for the end-to-end check-in trace.
+        logEvent('info', 'attendance.checkin.telegram_sent', {
+          queueId: row.id,
+          businessId: row.businessId,
+          latencyMs: Date.now() - started,
+        })
       }
       if (row.eventType === 'ATTENDANCE_ABSENT') {
         let employeeId: string | undefined
@@ -467,6 +473,11 @@ export async function processTelegramNotificationQueue(options: { limit?: number
   })
   if (stuck > 0) {
     logTelegram('warn', 'telegram.queue.stuck', { count: stuck })
+    logEvent('warn', 'telegram.queue.stuck', {
+      count: stuck,
+      stuckThresholdMs: STUCK_SENDING_MS,
+      batch: results.length,
+    })
   }
 
   return { processed: results.length, results, stuckSending: stuck }

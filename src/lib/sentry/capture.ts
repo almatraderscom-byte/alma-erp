@@ -18,13 +18,15 @@ export type SentryCategory =
 
 /** Events that should always alert in Sentry (paired with alert rules in docs/SENTRY.md). */
 const CRITICAL_EVENT_PATTERNS: RegExp[] = [
-  /^approval\.(tx\.|action\.failed|execute_failed|api\.failed)/,
-  /^telegram\.(cron\.|deliver\.|queue\.|owner\.routing)/,
+  /^approval\.(tx\.|action\.failed|execute_failed|api\.failed|pending\.lookup_failed)/,
+  /^telegram\.(cron\.|deliver\.|delivery\.|queue\.|owner\.routing)/,
   /\.failed$/,
   /^attendance\.api\.failed/,
   /^attendance\.telegram_event_missing/,
   /^attendance\.checkin\.transaction_failed/,
   /^attendance\.checkin\.side_effect_failed/,
+  /^attendance\.review\.(photo_missing|storage_missing)/,
+  /^portal\.attendance\.render_failed/,
   /^archive\.filter\.failed/,
   /^orders\.provider\.missing/,
   /^database_error/,
@@ -176,4 +178,64 @@ export function setSentryUser(user: {
     Sentry.setTag('user.role', user.role || 'unknown')
     if (user.businessAccess) Sentry.setTag('user.business_access', user.businessAccess)
   })
+}
+
+/**
+ * Apply attendance-specific tags to the current Sentry scope.
+ * Safe to call from React boundaries, route handlers, and side effects.
+ */
+export async function attachAttendanceContext(input: {
+  businessId?: string | null
+  employeeId?: string | null
+  userId?: string | null
+  attendanceRecordId?: string | null
+  requestId?: string | null
+  route?: string | null
+}): Promise<void> {
+  if (!isSentryEnabled()) return
+  const Sentry = await getSentry()
+  if (!Sentry) return
+  const scope = Sentry.getCurrentScope?.()
+  if (!scope) return
+  if (input.businessId) scope.setTag('business.id', String(input.businessId))
+  if (input.employeeId) scope.setTag('employee.id', String(input.employeeId))
+  if (input.attendanceRecordId) scope.setTag('attendance.recordId', String(input.attendanceRecordId))
+  if (input.requestId) scope.setTag('request.id', String(input.requestId))
+  if (input.route) scope.setTag('route', String(input.route))
+  scope.setTag('surface', 'attendance')
+}
+
+/** Apply approval-specific tags to the current Sentry scope. */
+export async function attachApprovalContext(input: {
+  approvalId?: string | null
+  module?: string | null
+  type?: string | null
+  businessId?: string | null
+  requestId?: string | null
+}): Promise<void> {
+  if (!isSentryEnabled()) return
+  const Sentry = await getSentry()
+  if (!Sentry) return
+  const scope = Sentry.getCurrentScope?.()
+  if (!scope) return
+  if (input.approvalId) scope.setTag('approval.id', String(input.approvalId))
+  if (input.module) scope.setTag('approval.module', String(input.module))
+  if (input.type) scope.setTag('approval.type', String(input.type))
+  if (input.businessId) scope.setTag('business.id', String(input.businessId))
+  if (input.requestId) scope.setTag('request.id', String(input.requestId))
+  scope.setTag('surface', 'approval')
+}
+
+/** Apply browser/device tags to the current Sentry scope (client-only). */
+export async function attachDeviceTags(tags: Record<string, string | boolean | undefined>): Promise<void> {
+  if (!isSentryEnabled()) return
+  if (typeof window === 'undefined') return
+  const Sentry = await getSentry()
+  if (!Sentry) return
+  const scope = Sentry.getCurrentScope?.()
+  if (!scope) return
+  for (const [k, v] of Object.entries(tags)) {
+    if (v == null) continue
+    scope.setTag(k, String(v))
+  }
 }

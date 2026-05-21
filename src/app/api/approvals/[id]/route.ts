@@ -125,6 +125,15 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
   try {
     const approval = await prisma.approvalRequest.findUnique({ where: { id: params.id } })
     if (!approval || approval.status !== 'PENDING') {
+      logEvent('warn', 'approval.pending.lookup_failed', {
+        approvalId: params.id,
+        actualStatus: approval?.status || 'missing',
+        module: approval?.module,
+        type: approval?.type,
+        adminId: token.sub,
+        action: body.action,
+        requestId: req.headers.get('x-request-id') || undefined,
+      })
       return stampApprovalActionResponse(
         approvalErrorResponse('Pending approval not found', 404, 'approval_not_found'),
         meta,

@@ -117,7 +117,17 @@ export async function resolveApprovalRequest(input: {
   const approval = await db.approvalRequest.findFirst({
     where: { module: input.module, type: input.type, entityId: input.entityId, status: 'PENDING' },
   })
-  if (!approval) return null
+  if (!approval) {
+    logEvent('warn', 'approval.pending.lookup_failed', {
+      module: input.module,
+      type: input.type,
+      entityId: input.entityId,
+      targetStatus: input.status,
+      actorUserId: input.actorUserId,
+      lookup: 'resolveApprovalRequest',
+    })
+    return null
+  }
   const updated = await resolveApprovalRecord({
     approval,
     status: input.status,

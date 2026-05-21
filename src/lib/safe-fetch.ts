@@ -11,7 +11,7 @@ import {
 export type FetchState = 'idle' | 'loading' | 'success' | 'failed' | 'retrying'
 
 export type SafeFetchResult<T> =
-  | { ok: true; data: T; status: number; state: 'success' }
+  | { ok: true; data: T; status: number; state: 'success'; requestId?: string }
   | {
       ok: false
       error: ApiErrorShape
@@ -19,12 +19,51 @@ export type SafeFetchResult<T> =
       state: 'failed' | 'retrying'
       parseError: boolean
       rolledBack?: boolean
+      requestId?: string
     }
 
 export type SafeFetchOptions = RequestInit & {
   timeoutMs?: number
   /** Retry once on network/5xx/parse failure (default 0). */
   retries?: number
+  /** Override the auto-generated X-Request-Id (use when caller already has one). */
+  requestId?: string
+}
+
+const RID_HEADER = 'x-request-id'
+
+/** Reads the existing X-Request-Id header from a HeadersInit, regardless of shape. */
+function readExistingRequestId(headers: HeadersInit | undefined): string | undefined {
+  if (!headers) return undefined
+  if (headers instanceof Headers) {
+    return headers.get(RID_HEADER) || headers.get('X-Request-Id') || undefined
+  }
+  if (Array.isArray(headers)) {
+    const match = headers.find(([k]) => k.toLowerCase() === RID_HEADER)
+    return match?.[1]
+  }
+  const rec = headers as Record<string, string>
+  return rec[RID_HEADER] || rec['X-Request-Id']
+}
+
+function generateRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `cli-${Math.random().toString(36).slice(2)}-${Date.now()}`
+}
+
+function withRequestIdHeaders(headers: HeadersInit | undefined, requestId: string): HeadersInit {
+  if (headers instanceof Headers) {
+    const next = new Headers(headers)
+    if (!next.has(RID_HEADER) && !next.has('X-Request-Id')) next.set('X-Request-Id', requestId)
+    return next
+  }
+  if (Array.isArray(headers)) {
+    const exists = headers.some(([k]) => k.toLowerCase() === RID_HEADER)
+    return exists ? headers : [...headers, ['X-Request-Id', requestId]]
+  }
+  const rec: Record<string, string> = { ...((headers as Record<string, string>) || {}) }
+  if (!rec[RID_HEADER] && !rec['X-Request-Id']) rec['X-Request-Id'] = requestId
+  return rec
 }
 
 /**
@@ -34,6 +73,7 @@ async function safeFetchJsonOnce<T>(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  requestId: string,
 ): Promise<SafeFetchResult<T>> {
   let res: Response
   try {
@@ -56,6 +96,7 @@ async function safeFetchJsonOnce<T>(
       state: 'failed',
       parseError: true,
       rolledBack: true,
+      requestId,
       error: {
         code: aborted ? 'timeout' : 'network_error',
         message: aborted
@@ -65,6 +106,7 @@ async function safeFetchJsonOnce<T>(
     }
   }
 
+  const responseRid = res.headers.get('x-request-id') || requestId
   const parsed = await safeResponseJson<Record<string, unknown>>(res)
   const body = parsed.data
 
@@ -76,6 +118,7 @@ async function safeFetchJsonOnce<T>(
       state: 'failed',
       parseError: true,
       rolledBack: Boolean(body.rolledBack) || parsed.status >= 500,
+      requestId: responseRid,
       error: err,
     }
   }
@@ -88,6 +131,7 @@ async function safeFetchJsonOnce<T>(
       state: 'failed',
       parseError: false,
       rolledBack: Boolean(body.rolledBack),
+      requestId: responseRid,
       error: err,
     }
   }
@@ -100,6 +144,7 @@ async function safeFetchJsonOnce<T>(
       state: 'failed',
       parseError: false,
       rolledBack: res.status >= 500,
+      requestId: responseRid,
       error: err,
     }
   }
@@ -109,6 +154,7 @@ async function safeFetchJsonOnce<T>(
     status: res.status,
     state: 'success',
     data: unwrapApiData<T>(body),
+    requestId: responseRid,
   }
 }
 
@@ -124,13 +170,16 @@ export async function safeFetchJson<T = Record<string, unknown>>(
   url: string,
   options: SafeFetchOptions = {},
 ): Promise<SafeFetchResult<T>> {
-  const { timeoutMs = 30_000, retries = 0, ...init } = options
-  let last = await safeFetchJsonOnce<T>(url, init, timeoutMs)
+  const { timeoutMs = 30_000, retries = 0, requestId: overrideRid, ...init } = options
+  const existing = readExistingRequestId(init.headers)
+  const requestId = overrideRid || existing || generateRequestId()
+  const initWithRid: RequestInit = { ...init, headers: withRequestIdHeaders(init.headers, requestId) }
+  let last = await safeFetchJsonOnce<T>(url, initWithRid, timeoutMs, requestId)
   let attempt = 0
   while (attempt < retries && shouldRetry(last)) {
     attempt += 1
     await new Promise(r => setTimeout(r, 400 * attempt))
-    last = await safeFetchJsonOnce<T>(url, init, timeoutMs)
+    last = await safeFetchJsonOnce<T>(url, initWithRid, timeoutMs, requestId)
     if (last.ok) return { ...last, state: 'success' }
     last = { ...last, state: 'retrying' as const }
   }

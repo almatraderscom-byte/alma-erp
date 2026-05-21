@@ -12,6 +12,7 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
+import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 
 type AttendanceDashboard = {
   businessId?: string
@@ -113,6 +114,14 @@ type PenaltyAnalytics = {
 }
 
 export default function AttendancePage() {
+  return (
+    <SectionErrorBoundary section="attendance" title="Attendance dashboard unavailable">
+      <AttendancePageInner />
+    </SectionErrorBoundary>
+  )
+}
+
+function AttendancePageInner() {
   const { business } = useBusiness()
   const { role } = useActor()
   const searchParams = useSearchParams()

@@ -1,5 +1,6 @@
 import type { TelegramNotificationEventType, TelegramNotificationQueue } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { logEvent } from '@/lib/logger'
 import { logTelegram } from '@/lib/telegram-notification/telegram-log'
 import { fetchTradingScreenshotFromDrive } from '@/lib/trading-drive'
 import { loadTelegramProfileAvatar } from '@/lib/telegram-profile-avatar'
@@ -208,6 +209,14 @@ async function withTelegramDeliveryTimeout<T>(
       label,
       latencyMs: Date.now() - started,
       message: (e as Error).message,
+    })
+    logEvent('warn', 'telegram.delivery.timeout', {
+      queueJobId: row.id,
+      eventType: row.eventType,
+      label,
+      latencyMs: Date.now() - started,
+      businessId: row.businessId,
+      chatId: row.chatId,
     })
     throw e
   } finally {

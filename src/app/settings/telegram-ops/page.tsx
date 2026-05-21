@@ -8,6 +8,7 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
 import { safeResponseJson } from '@/lib/safe-api-response'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 
 type QueueRow = {
   id: string
@@ -100,6 +101,14 @@ function routingLabel(source: string) {
 }
 
 export default function TelegramOpsSettingsPage() {
+  return (
+    <SectionErrorBoundary section="telegram_ops" title="Telegram ops panel unavailable">
+      <TelegramOpsSettingsPageInner />
+    </SectionErrorBoundary>
+  )
+}
+
+function TelegramOpsSettingsPageInner() {
   const [businessId, setBusinessId] = useState<BusinessId>('ALMA_TRADING')
   const [data, setData] = useState<ApiData | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)

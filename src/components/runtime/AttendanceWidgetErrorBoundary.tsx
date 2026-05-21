@@ -3,6 +3,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { logAttendanceWidgetRuntimeCrash } from '@/lib/attendance-widget-log'
+import { logEvent } from '@/lib/logger'
+import { readDeviceFlags } from '@/lib/runtime/device'
 import { Button, Card } from '@/components/ui'
 
 type Props = {
@@ -12,6 +14,7 @@ type Props = {
   userId?: string
   businessId?: string
   employeeId?: string
+  attendanceRecordId?: string
 }
 
 type State = {
@@ -46,6 +49,7 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
     const pathname = typeof window !== 'undefined' ? window.location.pathname : undefined
     const loc = parseCrashLocation(error.stack)
     const componentStack = info.componentStack?.split('\n').slice(0, 12).join(' | ')
+    const device = readDeviceFlags()
     logAttendanceWidgetRuntimeCrash(error, {
       pathname,
       component: loc.component || this.props.section || 'portal_attendance',
@@ -57,10 +61,30 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
       employeeId: this.props.employeeId,
       hydrationState: 'render',
     })
+    logEvent('error', 'portal.attendance.render_failed', {
+      pathname,
+      section: this.props.section || 'portal_attendance',
+      message: error.message?.slice(0, 200),
+      ios: device.ios,
+      safari: device.safari,
+      pwa: device.pwa,
+      android: device.android,
+      userId: this.props.userId,
+      businessId: this.props.businessId,
+      employeeId: this.props.employeeId,
+      attendanceRecordId: this.props.attendanceRecordId,
+    })
     try {
       Sentry.withScope(scope => {
         scope.setTag('boundary', this.props.section || 'portal_attendance')
         scope.setTag('surface', 'attendance_widget')
+        scope.setTag('device.ios', String(device.ios))
+        scope.setTag('device.safari', String(device.safari))
+        scope.setTag('device.pwa', String(device.pwa))
+        scope.setTag('device.android', String(device.android))
+        if (this.props.businessId) scope.setTag('business.id', this.props.businessId)
+        if (this.props.employeeId) scope.setTag('employee.id', this.props.employeeId)
+        if (this.props.attendanceRecordId) scope.setTag('attendance.recordId', this.props.attendanceRecordId)
         scope.setContext('attendanceBoundary', {
           pathname,
           component: loc.component || this.props.section || 'portal_attendance',
@@ -68,6 +92,8 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
           userId: this.props.userId,
           businessId: this.props.businessId,
           employeeId: this.props.employeeId,
+          attendanceRecordId: this.props.attendanceRecordId,
+          device,
         })
         Sentry.captureException(error)
       })

@@ -3,14 +3,24 @@ import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceRecordDto } from '@/lib/attendance'
 import { notifyUser } from '@/lib/notifications'
+import { withApiRoute } from '@/lib/core/safe-api'
+import { attachAttendanceContext } from '@/lib/sentry/capture'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export const POST = withApiRoute('attendance.verification_request', async (req: NextRequest, ctxParam) => {
+  const { params } = ctxParam as { params: { id: string } }
   const body = (await req.json().catch(() => ({}))) as { business_id?: string; note?: string }
   const ctx = await getWalletContext(req, body.business_id)
   if ('error' in ctx) return ctx.error
   if (ctx.role !== 'SUPER_ADMIN') {
     return NextResponse.json({ error: 'Only Super Admin can request attendance verification.' }, { status: 403 })
   }
+
+  await attachAttendanceContext({
+    businessId: ctx.businessIds[0],
+    attendanceRecordId: params.id,
+    requestId: req.headers.get('x-request-id') || undefined,
+    route: 'attendance.verification_request',
+  })
 
   const record = await prisma.attendanceRecord.update({
     where: { id: params.id },
@@ -34,4 +44,4 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })
 
   return NextResponse.json({ ok: true, record: attendanceRecordDto(record) })
-}
+})
