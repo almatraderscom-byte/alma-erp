@@ -409,6 +409,7 @@ model AttendanceRecord {
   @@index([businessId, employeeId, attendanceDate])
   @@index([businessId, userId, attendanceDate])
   @@index([businessId, employeeId, deviceKey])
+  @@index([businessId, checkInAt])
   @@index([penaltyLedgerEntryId])
 }
 
@@ -1374,6 +1375,7 @@ model TelegramNotificationQueue {
   @@index([status, nextAttemptAt, createdAt])
   @@index([status, attempts, nextAttemptAt])
   @@index([status, processingStartedAt])
+  @@index([status, updatedAt])
   @@index([businessId, createdAt])
   @@index([eventType, createdAt])
 }

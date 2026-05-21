@@ -29,6 +29,7 @@ const CRITICAL_EVENT_PATTERNS: RegExp[] = [
   /^portal\.attendance\.render_failed/,
   /^archive\.filter\.failed/,
   /^orders\.provider\.missing/,
+  /^payroll\.gas_sheets_push\.failed/,
   /^database_error/,
   /^prisma\./,
 ]

@@ -3,8 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { getJwt, forbidViewerWrite, validateMutationBusiness } from '@/lib/api-guards'
 import { normalizeAlmaRole } from '@/lib/roles'
-import { serverPost } from '@/lib/server-api'
 import { resolveApprovalRequest } from '@/lib/approvals'
+import { mirrorSalaryAdvanceToSheets } from '@/lib/payroll-sheets-mirror'
 
 export async function PATCH(
   req: NextRequest,
@@ -67,18 +67,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'User has no linked HR employee id — link profile first.' }, { status: 400 })
     }
 
-    const payrollPayload = await mergeActorPayload(req, {
-      emp_id: empId,
-      business_id: adv.businessId,
-      tx_type: 'advance',
-      amount: Number(adv.amount),
-      advance_reason: adv.reason,
-      requested_by: adv.user.name || adv.user.email || adv.userId,
-      approved_by: reviewerName,
-      note: body.note?.slice(0, 400) || '',
-    })
-
-    const gas = await serverPost('hr_payroll_add', payrollPayload)
+    // Phase 1: Postgres is the source of truth. Persist + resolve approval first.
     await prisma.salaryAdvanceRequest.update({
       where: { id: adv.id },
       data: {
@@ -88,7 +77,7 @@ export async function PATCH(
         reviewNote: body.note?.slice(0, 500) || null,
       },
     })
-    await resolveApprovalRequest({
+    const approval = await resolveApprovalRequest({
       module: 'PAYROLL',
       type: 'SALARY_ADVANCE',
       entityId: adv.id,
@@ -97,7 +86,30 @@ export async function PATCH(
       reason: body.note?.slice(0, 500) || 'Approved',
     })
 
-    return NextResponse.json({ ok: true, gas })
+    // Best-effort Sheets mirror — Postgres state is final regardless of mirror outcome.
+    const actorPayload = await mergeActorPayload(req, {})
+    const mirror = await mirrorSalaryAdvanceToSheets({
+      advanceId: adv.id,
+      approvalId: approval?.id || adv.id,
+      businessId: adv.businessId,
+      empId,
+      amount: Number(adv.amount),
+      reason: adv.reason,
+      requestedBy: adv.user.name || adv.user.email || adv.userId,
+      approvedBy: reviewerName,
+      note: body.note,
+      actorPayload,
+    })
+
+    return NextResponse.json({
+      ok: true,
+      gas: mirror.ok ? mirror.gas : null,
+      sheetsMirrored: mirror.ok,
+      ...(mirror.ok ? {} : {
+        warning: 'Salary advance approved in ERP. Mirror to payroll Sheets failed — re-push from admin payroll tools.',
+        sheetsError: mirror.error,
+      }),
+    })
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })
   }

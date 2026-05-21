@@ -7,6 +7,7 @@ import { getJwt } from '@/lib/api-guards'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { serverPost } from '@/lib/server-api'
+import { mirrorSalaryAdvanceToSheets } from '@/lib/payroll-sheets-mirror'
 import { dispatchApprovalsUpdated, notifyApprovalResolved, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
 import {
   approvalMatchesResolvedWalletAction,
@@ -368,23 +369,45 @@ async function processSalaryAdvance(
 
   const empId = adv.user.employeeIdGas?.trim()
   if (!empId) return NextResponse.json({ error: 'User has no linked HR employee id - link profile first.' }, { status: 400 })
-  const payrollPayload = await mergeActorPayload(req, {
-    emp_id: empId,
-    business_id: adv.businessId,
-    tx_type: 'advance',
-    amount: Number(adv.amount),
-    advance_reason: adv.reason,
-    requested_by: adv.user.name || adv.user.email || adv.userId,
-    approved_by: actorName,
-    note: note?.slice(0, 400) || '',
-  })
-  const gas = await serverPost('hr_payroll_add', payrollPayload)
+
+  // Phase 1: Postgres is the source of truth. Update the salary advance row
+  // and resolve the approval BEFORE we attempt to mirror the row into the
+  // legacy Google Sheets payroll book. A Sheets failure no longer rolls back
+  // the DB write — `mirrorSalaryAdvanceToSheets` captures the failure to
+  // Sentry so operators can re-push from the admin payroll tools.
   const updated = await prisma.salaryAdvanceRequest.update({
     where: { id: adv.id },
     data: { status: 'APPROVED', reviewedById: actorUserId, reviewedAt: new Date(), reviewNote: note?.slice(0, 500) || null },
   })
   const approval = await resolveApprovalRequestById({ id: approvalId, status: 'APPROVED', actorUserId, reason: note || 'Approved' })
-  return apiDataSuccess({ approval, moduleResult: { advance: updated, gas } })
+
+  const actorPayload = await mergeActorPayload(req, {})
+  const mirror = await mirrorSalaryAdvanceToSheets({
+    advanceId: adv.id,
+    approvalId,
+    businessId: adv.businessId,
+    empId,
+    amount: Number(adv.amount),
+    reason: adv.reason,
+    requestedBy: adv.user.name || adv.user.email || adv.userId,
+    approvedBy: actorName,
+    note,
+    actorPayload,
+  })
+
+  return apiDataSuccess({
+    approval,
+    moduleResult: {
+      advance: updated,
+      gas: mirror.ok ? mirror.gas : null,
+      sheetsMirrored: mirror.ok,
+      sheetsError: mirror.ok ? undefined : mirror.error,
+    },
+    ...(mirror.ok ? {} : {
+      warning:
+        'Salary advance approved in ERP. Mirror to payroll Sheets failed — re-push from admin payroll tools.',
+    }),
+  })
 }
 
 async function processWalletRequest(

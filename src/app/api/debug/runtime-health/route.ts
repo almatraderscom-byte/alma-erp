@@ -55,6 +55,10 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     telegramReadyToRetry,
     attendanceSelfiesPendingReview,
     orphanedApprovals,
+    benchAttendanceMs,
+    benchApprovalsMs,
+    benchTelegramQueueMs,
+    pendingApprovals,
   ] = await Promise.all([
     measurePrismaPing(),
     safeCount(prisma.telegramNotificationQueue.count({ where: { status: 'QUEUED' } })),
@@ -79,6 +83,16 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
       prisma.attendanceSelfieVerification.count({ where: { reviewedAt: null } }),
     ),
     safeCount(detectOrphanApprovalsCount()),
+    timeMs(() =>
+      prisma.attendanceRecord.count({
+        where: { checkInAt: { gte: failedRecentCutoff } },
+      }),
+    ),
+    timeMs(() => prisma.approvalRequest.count({ where: { status: 'PENDING' } })),
+    timeMs(() =>
+      prisma.telegramNotificationQueue.count({ where: { status: 'QUEUED' } }),
+    ),
+    safeCount(prisma.approvalRequest.count({ where: { status: 'PENDING' } })),
   ])
 
   const storageHealth = await measureStorageHealth(storageFailureCutoff)
@@ -135,12 +149,34 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     attendance: {
       pendingSelfieReviews: attendanceSelfiesPendingReview,
     },
+    approvals: {
+      pending: pendingApprovals,
+    },
     integrity: {
       orphanedApprovals,
       missingStorageRefsLastDay: storageHealth.missingRefsLastDay,
     },
+    benchmarks: {
+      attendanceCountMs: benchAttendanceMs,
+      approvalsPendingCountMs: benchApprovalsMs,
+      telegramQueueCountMs: benchTelegramQueueMs,
+    },
   })
 })
+
+/**
+ * Time a single Prisma read. Returns -1 on failure so the response can still
+ * surface the live values without throwing.
+ */
+async function timeMs<T>(fn: () => Promise<T>): Promise<number> {
+  const started = Date.now()
+  try {
+    await fn()
+    return Date.now() - started
+  } catch {
+    return -1
+  }
+}
 
 async function measurePrismaPing(): Promise<number> {
   const started = Date.now()
