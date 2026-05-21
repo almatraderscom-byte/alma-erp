@@ -12,7 +12,7 @@ import { needsSelfieVerification, SelfieVerificationModal } from '@/components/a
 import { PenaltyAppealModal } from '@/components/attendance/PenaltyAppealModal'
 import { PenaltyAppealStatus } from '@/components/attendance/PenaltyAppealStatus'
 import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
@@ -25,9 +25,13 @@ import { useOperationalSpotlightTrigger } from '@/components/operations/useOpera
 import { invalidateOperationalTasksCache } from '@/hooks/useOperationalTasks'
 import type { MyAttendancePayload } from '@/lib/attendance-client'
 import type { AttendanceClientError } from '@/lib/attendance-errors'
-import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
+import {
+  AttendanceSubsectionBoundary,
+  AttendanceWidgetErrorBoundary,
+} from '@/components/runtime/AttendanceWidgetErrorBoundary'
 import {
   asStringArray,
+  ATTENDANCE_PAYLOAD_VERSION,
   clearAttendancePortalCache,
   formatAttendanceTime,
   normalizeMyAttendancePayload,
@@ -150,11 +154,26 @@ export default function EmployeePortalPage() {
     void loadWallet()
   }, [loadWallet])
 
+  useEffect(() => {
+    if (systemOwner || !empId) return
+    clearAttendancePortalCache(business.id, empId)
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i)
+        if (key?.startsWith('alma_attendance_me_v') && !key.includes(`_v${ATTENDANCE_PAYLOAD_VERSION}_`)) {
+          localStorage.removeItem(key)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [business.id, empId, systemOwner])
+
   useRegisterMobileRefresh(
     useCallback(async () => {
       await refetchProfile()
       await loadWallet()
-      await refetchAttendance()
+      await refetchAttendance({ clearCache: true })
     }, [refetchProfile, loadWallet, refetchAttendance]),
     !systemOwner,
   )
@@ -224,9 +243,11 @@ export default function EmployeePortalPage() {
         {systemOwner ? (
           <SystemOwnerCard businessName={business.name} />
         ) : (
-          <SectionErrorBoundary
+          <AttendanceWidgetErrorBoundary
             section="portal_attendance"
-            title="Attendance unavailable"
+            userId={session?.user?.id}
+            businessId={business.id}
+            employeeId={empId ?? undefined}
             onRetry={() => {
               if (empId) clearAttendancePortalCache(business.id, empId)
               void refetchAttendance({ clearCache: true })
@@ -249,7 +270,7 @@ export default function EmployeePortalPage() {
                 void opsSpotlight.refetch(true)
               }}
             />
-          </SectionErrorBoundary>
+          </AttendanceWidgetErrorBoundary>
         )}
 
         <Card className="p-5 space-y-3 border-gold-dim/25 bg-[#0c0c10]">
@@ -391,8 +412,11 @@ function AttendanceCard({
   const [appealOpen, setAppealOpen] = useState(false)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
-  const desk = attendance ? normalizeMyAttendancePayload(attendance) : null
-  const today = desk?.today || null
+  const desk = useMemo(
+    () => (attendance ? normalizeMyAttendancePayload(attendance) : null),
+    [attendance],
+  )
+  const today = desk?.today ?? null
   const summary = desk?.summary ?? {
     presentDays: 0,
     lateCount: 0,
@@ -400,7 +424,9 @@ function AttendanceCard({
     waivedPenalties: 0,
     averageWorkMinutes: 0,
   }
+  const waiverList = Array.isArray(today?.waiverRequests) ? today.waiverRequests : []
   const securityReasons = asStringArray(today?.suspiciousReasons)
+  const penaltyAmount = Number(today?.penaltyAmount ?? 0)
   const selfieActionRequired = needsSelfieVerification(today)
   const selfieSubmitted = Boolean(today && today.selfieCount > 0 && !today.verificationRequired)
 
@@ -529,47 +555,54 @@ function AttendanceCard({
         </div>
       )}
 
-      {today && today.penaltyAmount > 0 && (
-        <PenaltyAppealStatus
-          penaltyAmount={today.penaltyAmount}
-          lateMinutes={today.lateMinutes}
-          waivers={today.waiverRequests || []}
-          onRequestReview={() => setAppealOpen(true)}
-          onCancelPending={id => void cancelAppeal(id)}
-          cancelling={busy === 'cancel'}
+      <AttendanceSubsectionBoundary name="Penalty appeals">
+        {penaltyAmount > 0 && today && (
+          <PenaltyAppealStatus
+            penaltyAmount={penaltyAmount}
+            lateMinutes={Number(today.lateMinutes || 0)}
+            waivers={waiverList}
+            onRequestReview={() => setAppealOpen(true)}
+            onCancelPending={id => void cancelAppeal(id)}
+            cancelling={busy === 'cancel'}
+          />
+        )}
+      </AttendanceSubsectionBoundary>
+
+      {appealOpen && (
+        <PenaltyAppealModal
+          open={appealOpen}
+          businessId={businessId}
+          target={
+            today && penaltyAmount > 0
+              ? {
+                  attendanceRecordId: today.id,
+                  penaltyAmount,
+                  lateMinutes: Number(today.lateMinutes || 0),
+                  attendanceDate: today.attendanceDate,
+                }
+              : null
+          }
+          onClose={() => setAppealOpen(false)}
+          onSubmitted={onRefresh}
         />
       )}
 
-      <PenaltyAppealModal
-        open={appealOpen}
-        businessId={businessId}
-        target={
-          today && today.penaltyAmount > 0
-            ? {
-                attendanceRecordId: today.id,
-                penaltyAmount: today.penaltyAmount,
-                lateMinutes: today.lateMinutes,
-                attendanceDate: today.attendanceDate,
-              }
-            : null
-        }
-        onClose={() => setAppealOpen(false)}
-        onSubmitted={onRefresh}
-      />
+      <AttendanceSubsectionBoundary name="Monthly summary">
+        {desk && !desk.needsEmployeeLink && (
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
+            <WalletStat label="Month present" value={`${summary.presentDays} days`} />
+            <WalletStat label="Month late" value={`${summary.lateCount} days`} tone="text-amber-300" />
+            <WalletStat label="Total penalties" value={money(summary.totalPenalties)} tone="text-red-400" />
+            <WalletStat label="Waived" value={money(summary.waivedPenalties)} tone="text-green-400" />
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
 
-      {desk && !desk.needsEmployeeLink && (
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
-          <WalletStat label="Month present" value={`${summary.presentDays} days`} />
-          <WalletStat label="Month late" value={`${summary.lateCount} days`} tone="text-amber-300" />
-          <WalletStat label="Total penalties" value={money(summary.totalPenalties)} tone="text-red-400" />
-          <WalletStat label="Waived" value={money(summary.waivedPenalties)} tone="text-green-400" />
-        </div>
-      )}
       {verifyRecord && (
         <SelfieVerificationModal
           businessId={businessId}
           attendanceRecordId={verifyRecord.id}
-          open={Boolean(verifyRecord)}
+          open
           onClose={() => setVerifyRecord(null)}
           onSuccess={async () => {
             setVerifyRecord(null)
@@ -577,15 +610,17 @@ function AttendanceCard({
           }}
         />
       )}
-      <FaceVerificationCheckIn
-        businessId={businessId}
-        open={faceCheckInOpen}
-        onClose={() => setFaceCheckInOpen(false)}
-        onSuccess={async () => {
-          await onRefresh()
-          await onCheckInSuccess?.()
-        }}
-      />
+      {faceCheckInOpen && (
+        <FaceVerificationCheckIn
+          businessId={businessId}
+          open
+          onClose={() => setFaceCheckInOpen(false)}
+          onSuccess={async () => {
+            await onRefresh()
+            await onCheckInSuccess?.()
+          }}
+        />
+      )}
     </Card>
   )
 }

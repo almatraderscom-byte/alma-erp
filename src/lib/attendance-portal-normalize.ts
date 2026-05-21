@@ -5,7 +5,7 @@ import type {
 } from '@/lib/attendance-client'
 
 /** Bump when client payload shape changes — clears stale localStorage caches. */
-export const ATTENDANCE_PAYLOAD_VERSION = 2
+export const ATTENDANCE_PAYLOAD_VERSION = 3
 
 export function attendanceCacheKey(businessId: string, employeeId: string) {
   return `alma_attendance_me_v${ATTENDANCE_PAYLOAD_VERSION}_${businessId}_${employeeId}`

@@ -149,6 +149,33 @@ if (!read('src/lib/attendance-checkin.ts').includes('queueAttendanceCheckInSideE
   fail('check-in telegram must stay non-blocking')
 } else pass('telegram enqueue non-blocking')
 
+const faceCheckin = read('src/components/attendance/FaceVerificationCheckIn.tsx')
+const widgetLog = read('src/lib/attendance-widget-log.ts')
+const widgetBoundary = read('src/components/runtime/AttendanceWidgetErrorBoundary.tsx')
+
+if (
+  !faceCheckin.includes('const submitCheckIn = useCallback')
+  || !/useCallback[\s\S]*if \(!mounted \|\| !open\) return null/.test(faceCheckin)
+) {
+  fail('FaceVerificationCheckIn must declare useCallback before conditional return')
+} else pass('FaceVerificationCheckIn hooks order safe')
+
+if (!portal.includes('faceCheckInOpen &&')) {
+  fail('portal must mount FaceVerificationCheckIn only when open')
+} else pass('lazy mount face check-in modal')
+
+if (!portal.includes('AttendanceWidgetErrorBoundary')) {
+  fail('portal must use AttendanceWidgetErrorBoundary')
+} else pass('attendance widget error boundary')
+
+if (!widgetLog.includes('attendance.widget.runtime_crash')) {
+  fail('attendance.widget.runtime_crash log missing')
+} else pass('widget runtime crash logging')
+
+if (!widgetBoundary.includes('AttendanceSubsectionBoundary')) {
+  fail('AttendanceSubsectionBoundary missing')
+} else pass('subsection isolation')
+
 if (failures.length) {
   console.error(`\nAttendance widget smoke: ${failures.length} failure(s)`)
   process.exit(1)

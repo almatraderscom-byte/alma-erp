@@ -45,8 +45,9 @@ export function PenaltyAppealStatus({
 }: Props) {
   if (penaltyAmount <= 0) return null
 
-  const active = waivers.find(w => w.status === 'PENDING') || waivers[0]
-  const canRequest = !waivers.some(w => w.status === 'PENDING')
+  const list = Array.isArray(waivers) ? waivers : []
+  const active = list.find(w => w.status === 'PENDING') || list[0]
+  const canRequest = !list.some(w => w.status === 'PENDING')
 
   return (
     <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/5 p-4 space-y-3">

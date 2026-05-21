@@ -84,6 +84,139 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     }
   }, [open, phase, capture])
 
+  const submitCheckIn = useCallback(
+    async (isRetry = false) => {
+      if (!open || !capture) {
+        if (!capture) toast.error('Take a front-camera photo first')
+        return
+      }
+      if (inFlightRef.current) {
+        logAttendanceClientFailure('attendance.checkin.client_failed', {
+          businessId,
+          reason: 'duplicate_submit_blocked',
+        })
+        return
+      }
+
+      const requestId = crypto.randomUUID()
+      inFlightRef.current = requestId
+      setSubmitting(true)
+      setSubmitError(null)
+      setNudgeConfirm(false)
+
+      if (isRetry) {
+        logAttendanceClientFailure('attendance.checkin.retry_triggered', { businessId, requestId })
+      }
+
+      const started = Date.now()
+      try {
+        const metadata = await attendanceMetadata()
+        const result = await safeFetchJson<CheckInPayload>(
+          '/api/attendance/check-in',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Request-Id': requestId,
+            },
+            body: JSON.stringify({
+              business_id: businessId,
+              request_id: requestId,
+              metadata,
+              face_verification: {
+                image_data_url: capture.imageDataUrl,
+                thumb_data_url: capture.thumbDataUrl,
+              },
+            }),
+            retries: 1,
+            timeoutMs: CHECKIN_TIMEOUT_MS,
+          },
+        )
+
+        if (!result.ok) {
+          logAttendanceClientFailure('attendance.checkin.client_failed', {
+            businessId,
+            requestId,
+            status: result.status,
+            code: result.error.code,
+            message: result.error.message,
+            rolledBack: result.rolledBack,
+            latencyMs: Date.now() - started,
+          })
+          throw new Error(mapCheckInError(result.error.message, result.status))
+        }
+
+        const record = result.data.record
+        if (!record?.id || !record.checkInAt) {
+          logAttendanceClientFailure('attendance.checkin.client_failed', {
+            businessId,
+            requestId,
+            reason: 'missing_record_in_response',
+            latencyMs: Date.now() - started,
+          })
+          throw new Error('Server accepted check-in but did not return your attendance record. Tap Retry.')
+        }
+
+        logAttendanceClientSuccess('attendance.checkin.client_success', {
+          businessId,
+          requestId,
+          attendanceRecordId: record.id,
+          duplicate: Boolean(result.data.duplicate),
+          latencyMs: Date.now() - started,
+        })
+
+        setEmployeeName(typeof record.employeeId === 'string' ? record.employeeId : null)
+        setSuccessAt(record.checkInAt)
+        setPhase('success')
+
+        if (result.data.duplicate) {
+          toast.success('You are already checked in for today')
+        } else {
+          toast.success('Attendance confirmed')
+        }
+
+        try {
+          await onSuccess()
+        } catch (refreshErr) {
+          logAttendanceClientFailure('attendance.checkin.client_failed', {
+            businessId,
+            requestId,
+            reason: 'refresh_after_success',
+            message: (refreshErr as Error).message,
+          })
+          toast.error('Check-in saved, but the desk could not refresh. Pull to refresh.')
+        }
+
+        window.setTimeout(() => {
+          resetState()
+          onClose()
+        }, 1_800)
+      } catch (e) {
+        const message = mapCheckInError((e as Error).message)
+        setSubmitError(message)
+        setPhase('error')
+        toast.error(message)
+        logAttendanceClientFailure('attendance.checkin.client_failed', {
+          businessId,
+          requestId,
+          message,
+          latencyMs: Date.now() - started,
+        })
+        logAttendanceMobileSubmitFailed({
+          businessId,
+          api: '/api/attendance/check-in',
+          message,
+          requestId,
+          latencyMs: Date.now() - started,
+        })
+      } finally {
+        if (inFlightRef.current === requestId) inFlightRef.current = null
+        setSubmitting(false)
+      }
+    },
+    [businessId, capture, onClose, onSuccess, open, resetState],
+  )
+
   if (!mounted || !open) return null
 
   async function handleFile(file: File | undefined) {
@@ -105,136 +238,6 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       setProcessingPhoto(false)
     }
   }
-
-  const submitCheckIn = useCallback(async (isRetry = false) => {
-    if (!capture) {
-      toast.error('Take a front-camera photo first')
-      return
-    }
-    if (inFlightRef.current) {
-      logAttendanceClientFailure('attendance.checkin.client_failed', {
-        businessId,
-        reason: 'duplicate_submit_blocked',
-      })
-      return
-    }
-
-    const requestId = crypto.randomUUID()
-    inFlightRef.current = requestId
-    setSubmitting(true)
-    setSubmitError(null)
-    setNudgeConfirm(false)
-
-    if (isRetry) {
-      logAttendanceClientFailure('attendance.checkin.retry_triggered', { businessId, requestId })
-    }
-
-    const started = Date.now()
-    try {
-      const metadata = await attendanceMetadata()
-      const result = await safeFetchJson<CheckInPayload>(
-        '/api/attendance/check-in',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Request-Id': requestId,
-          },
-          body: JSON.stringify({
-            business_id: businessId,
-            request_id: requestId,
-            metadata,
-            face_verification: {
-              image_data_url: capture.imageDataUrl,
-              thumb_data_url: capture.thumbDataUrl,
-            },
-          }),
-          retries: 1,
-          timeoutMs: CHECKIN_TIMEOUT_MS,
-        },
-      )
-
-      if (!result.ok) {
-        logAttendanceClientFailure('attendance.checkin.client_failed', {
-          businessId,
-          requestId,
-          status: result.status,
-          code: result.error.code,
-          message: result.error.message,
-          rolledBack: result.rolledBack,
-          latencyMs: Date.now() - started,
-        })
-        throw new Error(mapCheckInError(result.error.message, result.status))
-      }
-
-      const record = result.data.record
-      if (!record?.id || !record.checkInAt) {
-        logAttendanceClientFailure('attendance.checkin.client_failed', {
-          businessId,
-          requestId,
-          reason: 'missing_record_in_response',
-          latencyMs: Date.now() - started,
-        })
-        throw new Error('Server accepted check-in but did not return your attendance record. Tap Retry.')
-      }
-
-      logAttendanceClientSuccess('attendance.checkin.client_success', {
-        businessId,
-        requestId,
-        attendanceRecordId: record.id,
-        duplicate: Boolean(result.data.duplicate),
-        latencyMs: Date.now() - started,
-      })
-
-      setEmployeeName(typeof record.employeeId === 'string' ? record.employeeId : null)
-      setSuccessAt(record.checkInAt)
-      setPhase('success')
-
-      if (result.data.duplicate) {
-        toast.success('You are already checked in for today')
-      } else {
-        toast.success('Attendance confirmed')
-      }
-
-      try {
-        await onSuccess()
-      } catch (refreshErr) {
-        logAttendanceClientFailure('attendance.checkin.client_failed', {
-          businessId,
-          requestId,
-          reason: 'refresh_after_success',
-          message: (refreshErr as Error).message,
-        })
-        toast.error('Check-in saved, but the desk could not refresh. Pull to refresh.')
-      }
-
-      window.setTimeout(() => {
-        resetState()
-        onClose()
-      }, 1_800)
-    } catch (e) {
-      const message = mapCheckInError((e as Error).message)
-      setSubmitError(message)
-      setPhase('error')
-      toast.error(message)
-      logAttendanceClientFailure('attendance.checkin.client_failed', {
-        businessId,
-        requestId,
-        message,
-        latencyMs: Date.now() - started,
-      })
-      logAttendanceMobileSubmitFailed({
-        businessId,
-        api: '/api/attendance/check-in',
-        message,
-        requestId,
-        latencyMs: Date.now() - started,
-      })
-    } finally {
-      if (inFlightRef.current === requestId) inFlightRef.current = null
-      setSubmitting(false)
-    }
-  }, [businessId, capture, onClose, onSuccess, resetState])
 
   const busy = processingPhoto || submitting
 
