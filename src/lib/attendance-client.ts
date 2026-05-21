@@ -4,6 +4,7 @@ import {
   type AttendanceApiErrorBody,
   type AttendanceErrorCode,
 } from '@/lib/attendance-errors'
+import { normalizeMyAttendancePayload } from '@/lib/attendance-portal-normalize'
 import { readApiError, unwrapApiData } from '@/lib/safe-api-response'
 import { safeFetchJson } from '@/lib/safe-fetch'
 
@@ -101,7 +102,8 @@ export async function fetchMyAttendance(businessId: string): Promise<MyAttendanc
     throw new AttendanceClientError(mapped.code, mapped.message, result.status, mapped.retryable)
   }
 
-  return unwrapApiData<MyAttendancePayload>(result.data as Record<string, unknown>)
+  const raw = unwrapApiData<Record<string, unknown>>(result.data as Record<string, unknown>)
+  return normalizeMyAttendancePayload(raw)
 }
 
 export function attendanceErrorLabel(code: AttendanceErrorCode): string {

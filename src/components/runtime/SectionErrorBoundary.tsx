@@ -8,6 +8,7 @@ type Props = {
   children: ReactNode
   section: string
   title?: string
+  onRetry?: () => void
 }
 
 type State = { hasError: boolean; message: string }
@@ -45,7 +46,10 @@ export class SectionErrorBoundary extends Component<Props, State> {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => this.setState({ hasError: false, message: '' })}
+            onClick={() => {
+              this.props.onRetry?.()
+              this.setState({ hasError: false, message: '' })
+            }}
           >
             Retry section
           </Button>

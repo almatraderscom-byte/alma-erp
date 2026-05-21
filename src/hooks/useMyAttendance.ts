@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttendanceClientError } from '@/lib/attendance-errors'
 import { fetchMyAttendance, logAttendanceClientFailure, type MyAttendancePayload } from '@/lib/attendance-client'
+import {
+  clearAttendancePortalCache,
+  normalizeMyAttendancePayload,
+  readAttendancePortalCache,
+  writeAttendancePortalCache,
+} from '@/lib/attendance-portal-normalize'
 
 type State = {
   data: MyAttendancePayload | null
@@ -22,7 +28,7 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
   const retryTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const load = useCallback(
-    async (opts?: { silent?: boolean; force?: boolean }) => {
+    async (opts?: { silent?: boolean; force?: boolean; clearCache?: boolean }) => {
       if (!enabled) {
         setState({ data: null, loading: false, error: null, lastOkAt: null })
         return
@@ -30,6 +36,20 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
       if (!employeeId) {
         setState({ data: null, loading: false, error: null, lastOkAt: null })
         return
+      }
+
+      if (opts?.clearCache) clearAttendancePortalCache(businessId, employeeId)
+
+      if (!opts?.force && !opts?.silent) {
+        const cached = readAttendancePortalCache(businessId, employeeId)
+        if (cached) {
+          setState(prev => ({
+            data: cached,
+            loading: false,
+            error: null,
+            lastOkAt: prev.lastOkAt ?? Date.now(),
+          }))
+        }
       }
 
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -52,8 +72,9 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
       }
 
       try {
-        const payload = await fetchMyAttendance(businessId)
+        const payload = normalizeMyAttendancePayload(await fetchMyAttendance(businessId))
         if (id !== requestId.current) return
+        writeAttendancePortalCache(businessId, employeeId, payload)
         if (payload.needsEmployeeLink) {
           setState({ data: payload, loading: false, error: null, lastOkAt: Date.now() })
           return
@@ -126,6 +147,7 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
     loading: state.loading,
     error: state.error,
     lastOkAt: state.lastOkAt,
-    refetch: () => load({ silent: false, force: true }),
+    refetch: (opts?: { clearCache?: boolean }) =>
+      load({ silent: false, force: true, clearCache: opts?.clearCache }),
   }
 }

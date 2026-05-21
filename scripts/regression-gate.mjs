@@ -70,6 +70,13 @@ const mobileSmoke = spawnSync('node', ['scripts/mobile-runtime-regression-smoke.
 })
 if (mobileSmoke.status !== 0) process.exit(mobileSmoke.status ?? 1)
 
+const attendanceWidgetSmoke = spawnSync('node', ['scripts/attendance-widget-regression-smoke.mjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  env: smokeEnv,
+})
+if (attendanceWidgetSmoke.status !== 0) process.exit(attendanceWidgetSmoke.status ?? 1)
+
 const prodVerify = spawnSync('node', ['scripts/attendance-production-verify.mjs'], {
   cwd: root,
   stdio: 'inherit',

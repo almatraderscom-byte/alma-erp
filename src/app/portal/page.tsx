@@ -26,6 +26,12 @@ import { invalidateOperationalTasksCache } from '@/hooks/useOperationalTasks'
 import type { MyAttendancePayload } from '@/lib/attendance-client'
 import type { AttendanceClientError } from '@/lib/attendance-errors'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
+import {
+  asStringArray,
+  clearAttendancePortalCache,
+  formatAttendanceTime,
+  normalizeMyAttendancePayload,
+} from '@/lib/attendance-portal-normalize'
 
 type MeUser = {
   id: string
@@ -218,7 +224,14 @@ export default function EmployeePortalPage() {
         {systemOwner ? (
           <SystemOwnerCard businessName={business.name} />
         ) : (
-          <SectionErrorBoundary section="portal_attendance" title="Attendance unavailable">
+          <SectionErrorBoundary
+            section="portal_attendance"
+            title="Attendance unavailable"
+            onRetry={() => {
+              if (empId) clearAttendancePortalCache(business.id, empId)
+              void refetchAttendance({ clearCache: true })
+            }}
+          >
             <AttendanceCard
               businessId={business.id}
               empLinked={Boolean(empId)}
@@ -226,6 +239,8 @@ export default function EmployeePortalPage() {
               attendance={attendance}
               attendanceError={attendanceError}
               onRefresh={() => {
+                if (empId) clearAttendancePortalCache(business.id, empId)
+                void refetchAttendance({ clearCache: true })
                 void refreshDesk()
               }}
               onCheckInSuccess={opsSpotlight.triggerAfterCheckIn}
@@ -376,7 +391,16 @@ function AttendanceCard({
   const [appealOpen, setAppealOpen] = useState(false)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
-  const today = attendance?.today || null
+  const desk = attendance ? normalizeMyAttendancePayload(attendance) : null
+  const today = desk?.today || null
+  const summary = desk?.summary ?? {
+    presentDays: 0,
+    lateCount: 0,
+    totalPenalties: 0,
+    waivedPenalties: 0,
+    averageWorkMinutes: 0,
+  }
+  const securityReasons = asStringArray(today?.suspiciousReasons)
   const selfieActionRequired = needsSelfieVerification(today)
   const selfieSubmitted = Boolean(today && today.selfieCount > 0 && !today.verificationRequired)
 
@@ -468,8 +492,8 @@ function AttendanceCard({
         <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">Ask an admin to link your HR employee ID before using attendance.</p>
       ) : (
         <div className="mt-4 grid md:grid-cols-5 gap-2 text-[11px]">
-          <WalletStat label="Check in" value={today ? new Date(today.checkInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'} />
-          <WalletStat label="Check out" value={today?.checkOutAt ? new Date(today.checkOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'} />
+          <WalletStat label="Check in" value={formatAttendanceTime(today?.checkInAt)} />
+          <WalletStat label="Check out" value={formatAttendanceTime(today?.checkOutAt)} />
           <WalletStat label="Worked" value={minutesText(today?.totalWorkMinutes || 0)} />
           <WalletStat label="Late" value={minutesText(today?.lateMinutes || 0)} tone={today?.lateMinutes ? 'text-red-400' : 'text-green-400'} />
           <WalletStat label="Penalty" value={money(today?.penaltyAmount || 0)} tone={today?.penaltyAmount ? 'text-red-400' : 'text-green-400'} />
@@ -495,12 +519,12 @@ function AttendanceCard({
       {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
         <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200">
           <p className="font-bold">Attendance marked for review</p>
-          <p className="mt-1 text-amber-100/80">{today.suspiciousReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
+          <p className="mt-1 text-amber-100/80">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
           {selfieSubmitted && (
             <p className="mt-2 text-green-300/90">Verification submitted — waiting for admin review.</p>
           )}
           {today.faceVerified && (
-            <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${new Date(today.faceVerifiedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</p>
+            <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
           )}
         </div>
       )}
@@ -533,12 +557,12 @@ function AttendanceCard({
         onSubmitted={onRefresh}
       />
 
-      {attendance && (
+      {desk && !desk.needsEmployeeLink && (
         <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
-          <WalletStat label="Month present" value={`${attendance.summary.presentDays} days`} />
-          <WalletStat label="Month late" value={`${attendance.summary.lateCount} days`} tone="text-amber-300" />
-          <WalletStat label="Total penalties" value={money(attendance.summary.totalPenalties)} tone="text-red-400" />
-          <WalletStat label="Waived" value={money(attendance.summary.waivedPenalties)} tone="text-green-400" />
+          <WalletStat label="Month present" value={`${summary.presentDays} days`} />
+          <WalletStat label="Month late" value={`${summary.lateCount} days`} tone="text-amber-300" />
+          <WalletStat label="Total penalties" value={money(summary.totalPenalties)} tone="text-red-400" />
+          <WalletStat label="Waived" value={money(summary.waivedPenalties)} tone="text-green-400" />
         </div>
       )}
       {verifyRecord && (
