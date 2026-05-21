@@ -17,6 +17,18 @@ import { isSentryEnabled, sentryEnvironment, sentryRelease } from '@/lib/sentry/
 import { logEvent } from '@/lib/logger'
 
 const STUCK_SENDING_MS = 2 * 60_000
+const STALE_FAILED_TELEGRAM_MS = 24 * 60 * 60_000
+const STALE_PENDING_APPROVAL_MS = 30 * 24 * 60 * 60_000
+
+function detectDatabaseRegion(): string | null {
+  const url = process.env.DATABASE_URL || process.env.DIRECT_URL || ''
+  if (!url) return null
+  const match = url.match(/@(?:[^.]+\.)?pooler\.supabase\.com/) || url.match(/@([a-z0-9-]+)\./)
+  if (!match) return null
+  // pooler URLs encode region: aws-1-ap-northeast-1.pooler.supabase.com
+  const regionMatch = url.match(/aws-\d+-([a-z0-9-]+)\.pooler\.supabase\.com/)
+  return regionMatch ? regionMatch[1] : null
+}
 
 function authorizedViaCron(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET || ''
@@ -43,6 +55,8 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
   const now = new Date()
   const stuckCutoff = new Date(now.getTime() - STUCK_SENDING_MS)
   const failedRecentCutoff = new Date(now.getTime() - 60 * 60_000) // last hour
+  const staleFailedCutoff = new Date(now.getTime() - STALE_FAILED_TELEGRAM_MS)
+  const stalePendingCutoff = new Date(now.getTime() - STALE_PENDING_APPROVAL_MS)
   const storageFailureCutoff = new Date(now.getTime() - 24 * 60 * 60_000) // last 24h
 
   const [
@@ -53,9 +67,11 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     telegramFailedRecent,
     telegramFailedTotal,
     telegramReadyToRetry,
+    telegramStaleFailed24h,
     attendanceSelfiesPendingReview,
     orphanedApprovals,
     pendingApprovals,
+    stalePendingApprovals,
   ] = await Promise.all([
     measurePrismaPing(),
     safeCount(prisma.telegramNotificationQueue.count({ where: { status: 'QUEUED' } })),
@@ -77,10 +93,27 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
       }),
     ),
     safeCount(
+      prisma.telegramNotificationQueue.count({
+        // Dead-letter: rows that have been FAILED for > 24h with no retry
+        // wakeups left. Operators need to either re-push or purge.
+        where: {
+          status: 'FAILED',
+          updatedAt: { lt: staleFailedCutoff },
+        },
+      }),
+    ),
+    safeCount(
       prisma.attendanceSelfieVerification.count({ where: { reviewedAt: null } }),
     ),
     safeCount(detectOrphanApprovalsCount()),
     safeCount(prisma.approvalRequest.count({ where: { status: 'PENDING' } })),
+    safeCount(
+      prisma.approvalRequest.count({
+        // Approval requests still PENDING after > 30 days. Operator intervention
+        // needed; emits a critical Sentry event below if non-zero.
+        where: { status: 'PENDING', createdAt: { lt: stalePendingCutoff } },
+      }),
+    ),
   ])
 
   // Phase 1 benchmarks: run SERIALLY after the parallel batch so each value
@@ -115,6 +148,25 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     })
   }
 
+  if (telegramStaleFailed24h > 0) {
+    logEvent('warn', 'telegram.queue.stale_failed.observed', {
+      staleFailed: telegramStaleFailed24h,
+      thresholdMs: STALE_FAILED_TELEGRAM_MS,
+      failedTotal: telegramFailedTotal,
+    })
+  }
+
+  if (stalePendingApprovals > 0) {
+    logEvent('warn', 'approval.pending.stale_observed', {
+      stalePending: stalePendingApprovals,
+      thresholdMs: STALE_PENDING_APPROVAL_MS,
+      orphanedApprovals,
+    })
+  }
+
+  const lambdaRegion = process.env.VERCEL_REGION || null
+  const dbRegion = detectDatabaseRegion()
+
   return NextResponse.json({
     ok: true,
     generatedAt: now.toISOString(),
@@ -122,8 +174,14 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
     runtime: {
       env: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
       release: sentryRelease() || process.env.VERCEL_GIT_COMMIT_SHA || null,
-      region: process.env.VERCEL_REGION || null,
+      region: lambdaRegion,
       node: process.version,
+    },
+    geometry: {
+      lambdaRegion,
+      dbRegion,
+      regionsAligned: lambdaRegion && dbRegion ? lambdaRegion.startsWith(dbRegion.split('-').slice(0, 2).join('-')) : null,
+      networkRttFloorMs: pingMs > 0 ? pingMs : null,
     },
     sentry: {
       enabled: isSentryEnabled(),
@@ -151,12 +209,16 @@ export const GET = withApiRoute('debug.runtime_health', async (req: NextRequest)
       failedLastHour: telegramFailedRecent,
       failedTotal: telegramFailedTotal,
       pendingRetry: telegramReadyToRetry,
+      staleFailed24h: telegramStaleFailed24h,
+      staleFailedThresholdMs: STALE_FAILED_TELEGRAM_MS,
     },
     attendance: {
       pendingSelfieReviews: attendanceSelfiesPendingReview,
     },
     approvals: {
       pending: pendingApprovals,
+      stalePending30d: stalePendingApprovals,
+      stalePendingThresholdMs: STALE_PENDING_APPROVAL_MS,
     },
     integrity: {
       orphanedApprovals,

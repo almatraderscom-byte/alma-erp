@@ -125,18 +125,57 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
 
   try {
     const approval = await prisma.approvalRequest.findUnique({ where: { id: params.id } })
-    if (!approval || approval.status !== 'PENDING') {
+    if (!approval) {
       logEvent('warn', 'approval.pending.lookup_failed', {
         approvalId: params.id,
-        actualStatus: approval?.status || 'missing',
-        module: approval?.module,
-        type: approval?.type,
+        actualStatus: 'missing',
         adminId: token.sub,
         action: body.action,
         requestId: req.headers.get('x-request-id') || undefined,
       })
       return stampApprovalActionResponse(
-        approvalErrorResponse('Pending approval not found', 404, 'approval_not_found'),
+        approvalErrorResponse('Approval not found', 404, 'approval_not_found'),
+        meta,
+      )
+    }
+    if (approval.status !== 'PENDING') {
+      const requestedTerminal = body.action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
+      // Idempotent replay: same admin clicks twice, stale list still shows
+      // PENDING, double-tap on mobile, etc. Return success without re-running
+      // the module side effects so we don't double-spend wallet ledger entries
+      // or re-fire Telegram pushes.
+      if (approval.status === requestedTerminal) {
+        logEvent('info', 'approval.action.idempotent_replay', {
+          approvalId: params.id,
+          status: approval.status,
+          action: body.action,
+          module: approval.module,
+          type: approval.type,
+          adminId: token.sub,
+          requestId: req.headers.get('x-request-id') || undefined,
+        })
+        return stampApprovalActionResponse(
+          apiDataSuccess({ approval, moduleResult: null, alreadyApplied: true }),
+          meta,
+        )
+      }
+      // Mismatched terminal state — operator likely has a stale view; surface
+      // it so they refresh.
+      logEvent('warn', 'approval.pending.lookup_failed', {
+        approvalId: params.id,
+        actualStatus: approval.status,
+        module: approval.module,
+        type: approval.type,
+        adminId: token.sub,
+        action: body.action,
+        requestId: req.headers.get('x-request-id') || undefined,
+      })
+      return stampApprovalActionResponse(
+        approvalErrorResponse(
+          `Approval is already ${approval.status}; cannot ${body.action}.`,
+          409,
+          'approval_already_resolved',
+        ),
         meta,
       )
     }

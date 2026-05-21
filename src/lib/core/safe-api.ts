@@ -10,7 +10,23 @@ export { apiSuccess, apiFailure } from '@/lib/safe-api-response'
 
 type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse | undefined>
 
-/** Best-effort: attach route + requestId as Sentry tags for the current scope. */
+/**
+ * Pre-compute infra geometry once per cold start. These never change for the
+ * lifetime of the lambda, so reading process.env inside every request would
+ * be wasteful — and detecting the DB region from DATABASE_URL on every call
+ * obscures the geometry signal.
+ */
+const LAMBDA_REGION = process.env.VERCEL_REGION || null
+
+function detectDbRegionFromUrl(): string | null {
+  const url = process.env.DATABASE_URL || process.env.DIRECT_URL || ''
+  const match = url.match(/aws-\d+-([a-z0-9-]+)\.pooler\.supabase\.com/)
+  return match ? match[1] : null
+}
+
+const DB_REGION = detectDbRegionFromUrl()
+
+/** Best-effort: attach route + requestId + region geometry as Sentry tags. */
 async function tagSentryScope(routeLabel: string, requestId?: string): Promise<void> {
   if (typeof window !== 'undefined') return
   try {
@@ -18,6 +34,8 @@ async function tagSentryScope(routeLabel: string, requestId?: string): Promise<v
     const scope = Sentry.getCurrentScope()
     if (!scope) return
     scope.setTag('route', routeLabel)
+    if (LAMBDA_REGION) scope.setTag('lambda.region', LAMBDA_REGION)
+    if (DB_REGION) scope.setTag('db.region', DB_REGION)
     if (requestId) {
       scope.setTag('request.id', requestId)
       scope.setExtra('requestId', requestId)

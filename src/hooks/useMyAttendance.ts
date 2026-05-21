@@ -134,11 +134,19 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
     const onOnline = () => {
       if (enabled) void load({ silent: false, force: true })
     }
+    // iOS Safari + Chrome bfcache restore: `pageshow.persisted === true` fires
+    // when the user navigates back to a cached page. The attendance widget
+    // here can be hours stale at that point, so we force-refresh.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted && enabled) void load({ silent: false, force: true })
+    }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
+    window.addEventListener('pageshow', onPageShow)
     return () => {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
+      window.removeEventListener('pageshow', onPageShow)
     }
   }, [enabled, load])
 
