@@ -116,12 +116,12 @@ export async function deleteStorageObject(bucket: string, objectPath: string) {
   }
 }
 
-export async function createSignedObjectUrl(bucket: string, objectPath: string, download = false) {
+export async function createSignedObjectUrl(bucket: string, objectPath: string, download = false, expiresIn = 3600) {
   const cfg = storageConfig()
   const res = await fetch(`${cfg.url}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${objectPath}`, {
     method: 'POST',
     headers: { ...storageHeaders(cfg.serviceKey), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expiresIn: 300, download }),
+    body: JSON.stringify({ expiresIn, download }),
   })
   if (!res.ok) throw new Error(`Could not create signed receipt URL (${res.status})`)
   const data = await res.json() as { signedURL?: string; signedUrl?: string }

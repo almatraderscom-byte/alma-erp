@@ -1,7 +1,13 @@
+import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceSelfieDto } from '@/lib/attendance'
+import {
+  attendancePhotoStorageReady,
+  prepareVerificationSelfieAssets,
+} from '@/lib/attendance-photo-storage'
+import { logEvent } from '@/lib/logger'
 
 const MAX_SELFIE_BYTES = 180_000
 
@@ -34,13 +40,19 @@ export async function POST(req: NextRequest) {
   if (!ctx.employeeId) return NextResponse.json({ error: 'Employee ID is required.' }, { status: 400 })
 
   const imageDataUrl = String(body.image_data_url || '')
-  const contentType = String(body.content_type || 'image/jpeg').slice(0, 80)
   const estimatedBytes = Math.ceil((imageDataUrl.length * 3) / 4)
   if (!body.attendance_record_id || !imageDataUrl.startsWith('data:image/')) {
     return NextResponse.json({ error: 'Attendance record and selfie image are required.' }, { status: 400 })
   }
   if (estimatedBytes > MAX_SELFIE_BYTES) {
     return NextResponse.json({ error: 'Selfie image is too large. Please retake it.' }, { status: 413 })
+  }
+
+  if (!attendancePhotoStorageReady()) {
+    return NextResponse.json(
+      { error: 'Photo storage is not configured. Contact admin — verification was not saved.' },
+      { status: 503 },
+    )
   }
 
   const record = await prisma.attendanceRecord.findFirst({
@@ -53,6 +65,33 @@ export async function POST(req: NextRequest) {
   })
   if (!record) return NextResponse.json({ error: 'Attendance record not found.' }, { status: 404 })
 
+  const requestId = randomUUID()
+  const attendanceDateYmd = record.attendanceDate.toISOString().slice(0, 10)
+
+  const prepared = await prepareVerificationSelfieAssets({
+    businessId: record.businessId,
+    employeeId: ctx.employeeId,
+    userId: ctx.userId,
+    attendanceRecordId: record.id,
+    attendanceDateYmd,
+    imageDataUrl,
+    requestId,
+  })
+
+  if (!prepared.ok) {
+    logEvent('warn', 'attendance.selfie_verification.upload_failed', {
+      requestId,
+      employeeId: ctx.employeeId,
+      businessId: record.businessId,
+      attendanceRecordId: record.id,
+      reason: prepared.code,
+    })
+    return NextResponse.json(
+      { error: prepared.message, code: prepared.code },
+      { status: 500 },
+    )
+  }
+
   const selfie = await prisma.attendanceSelfieVerification.create({
     data: {
       attendanceRecordId: record.id,
@@ -60,9 +99,9 @@ export async function POST(req: NextRequest) {
       userId: ctx.userId,
       employeeId: ctx.employeeId,
       deviceKey: record.deviceKey,
-      imageDataUrl,
-      contentType,
-      sizeBytes: estimatedBytes,
+      imageDataUrl: prepared.storageRef,
+      contentType: prepared.contentType,
+      sizeBytes: prepared.sizeBytes,
     },
   })
 
@@ -72,6 +111,15 @@ export async function POST(req: NextRequest) {
       verificationRequired: false,
       trustStatus: record.trustStatus === 'REQUIRES_VERIFICATION' ? 'WARNING' : record.trustStatus,
     },
+  })
+
+  logEvent('info', 'attendance.selfie_verification.submitted', {
+    requestId,
+    selfieId: selfie.id,
+    employeeId: ctx.employeeId,
+    businessId: record.businessId,
+    attendanceRecordId: record.id,
+    storageRef: prepared.storageRef,
   })
 
   return NextResponse.json({ ok: true, selfie: attendanceSelfieDto(selfie) })

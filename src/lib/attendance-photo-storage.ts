@@ -1,4 +1,4 @@
-import { buildFaceThumbDataUrl } from '@/lib/attendance-face-image'
+import { buildFaceThumbDataUrl, parseFaceImageDataUrl } from '@/lib/attendance-face-image'
 import {
   logAttendancePhotoFileMissing,
   logAttendancePhotoIntegrityFailed,
@@ -59,7 +59,7 @@ export async function resolveAttendanceImageRefForDisplay(
   const storage = parseAttendanceStorageRef(imageRef)
   if (!storage) return null
   try {
-    return await createSignedObjectUrl(storage.bucket, storage.objectPath, false)
+    return await createSignedObjectUrl(storage.bucket, storage.objectPath, false, 3600)
   } catch {
     logAttendancePhotoFileMissing({
       bucket: storage.bucket,
@@ -199,6 +199,86 @@ export async function prepareCheckInFaceAssets(input: {
   }
 }
 
+/**
+ * Upload + verify a verification selfie BEFORE writing the DB row.
+ * Never stores a raw base64 data URL — always requires Supabase persistence.
+ */
+export async function prepareVerificationSelfieAssets(input: {
+  businessId: string
+  employeeId: string
+  userId: string
+  attendanceRecordId: string
+  attendanceDateYmd: string
+  imageDataUrl: string
+  requestId: string
+}): Promise<
+  | { ok: true; storageRef: string; contentType: string; sizeBytes: number }
+  | { ok: false; code: string; message: string }
+> {
+  const logBase = {
+    requestId: input.requestId,
+    businessId: input.businessId,
+    employeeId: input.employeeId,
+    userId: input.userId,
+    attendanceRecordId: input.attendanceRecordId,
+  }
+
+  const parsed = parseFaceImageDataUrl(input.imageDataUrl)
+  if (!parsed) {
+    logAttendancePhotoIntegrityFailed({ ...logBase, reason: 'invalid_data_url' })
+    return { ok: false, code: 'invalid_image', message: 'Invalid selfie image format. Retake and try again.' }
+  }
+
+  const safeId = input.attendanceRecordId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'rec'
+  const objectPath = `attendance-selfies/${input.businessId}/${input.employeeId}/${input.attendanceDateYmd}/${safeId}.jpg`
+
+  logAttendancePhotoUploadStarted({
+    ...logBase,
+    storagePath: objectPath,
+    sizeBytes: parsed.sizeBytes,
+  })
+
+  const started = Date.now()
+  let storage: SupabaseUploadResult | null = null
+  let lastError = 'upload_failed'
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      storage = await uploadWithTimeout(objectPath, parsed.buffer, parsed.contentType)
+      const exists = await verifyAttendanceStorageObject(storage)
+      if (exists) break
+      lastError = 'file_missing_after_upload'
+      logAttendancePhotoFileMissing({ ...logBase, bucket: storage.bucket, storagePath: storage.objectPath, reason: 'verify_empty' })
+      storage = null
+    } catch (e) {
+      lastError = (e as Error).message || 'upload_exception'
+      logAttendancePhotoUploadFailed({ ...logBase, storagePath: objectPath, message: lastError, reason: attempt === 1 ? 'retry' : 'exhausted' })
+      storage = null
+    }
+  }
+
+  if (!storage) {
+    return {
+      ok: false,
+      code: 'selfie_upload_failed',
+      message: 'Verification photo could not be saved. Check your connection and retry.',
+    }
+  }
+
+  logAttendancePhotoUploadSuccess({
+    ...logBase,
+    bucket: storage.bucket,
+    storagePath: storage.objectPath,
+    latencyMs: Date.now() - started,
+  })
+
+  return {
+    ok: true,
+    storageRef: encodeAttendanceStorageRef(storage),
+    contentType: parsed.contentType,
+    sizeBytes: parsed.sizeBytes,
+  }
+}
+
 export async function rollbackCheckInFaceUpload(storage: SupabaseUploadResult | null | undefined) {
   if (!storage?.objectPath) return
   try {
@@ -234,7 +314,16 @@ export async function loadAttendanceFacePhotoBuffer(meta: {
     select: { imageDataUrl: true, contentType: true },
   })
   const storage = parseAttendanceStorageRef(selfie?.imageDataUrl)
-  if (!storage) return null
+  if (!storage) {
+    // Backward-compat: older verification selfie rows stored raw base64 instead of
+    // an alma-storage: ref. Parse and return the buffer so Telegram delivery can still
+    // attach the photo.
+    if (selfie?.imageDataUrl?.startsWith('data:image/')) {
+      const parsed = parseFaceImageDataUrl(selfie.imageDataUrl)
+      if (parsed) return { buffer: parsed.buffer, contentType: parsed.contentType }
+    }
+    return null
+  }
   try {
     const buffer = await downloadStorageObject(storage.bucket, storage.objectPath)
     if (buffer.length > 0) {
