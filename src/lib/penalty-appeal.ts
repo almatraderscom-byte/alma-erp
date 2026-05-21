@@ -544,7 +544,7 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
     }
   })
 
-  scheduleTelegramNotification({
+  await scheduleTelegramNotification({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_REVIEWED',
     message: [
@@ -609,7 +609,7 @@ export async function notifyPenaltyAppealSubmitted(
     || 'https://alma-erp-six.vercel.app'
   const erpUrl = `${appBase.replace(/\/$/, '')}/attendance?review=${waiver.id}`
 
-  scheduleTelegramNotification({
+  await scheduleTelegramNotification({
     businessId: waiver.businessId,
     eventType: 'ATTENDANCE_WAIVER_SUBMITTED',
     message: formatPenaltyAppealTelegramMessage({

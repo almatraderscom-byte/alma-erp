@@ -10,7 +10,7 @@ const PRIORITY_LABEL: Record<OperationalTaskPriority, string> = {
   CRITICAL: 'Critical',
 }
 
-export function queueOperationalTaskAssigned(params: {
+export async function queueOperationalTaskAssigned(params: {
   businessId: string | null
   assignmentId: string
   userId: string
@@ -31,7 +31,7 @@ export function queueOperationalTaskAssigned(params: {
   const deadline = params.deadline
     ? ` · deadline ${params.deadline.toLocaleString('en-BD', { timeZone: 'Asia/Dhaka' })}`
     : ''
-  scheduleTelegramNotification({
+  return scheduleTelegramNotification({
     businessId: params.businessId || 'ALMA_LIFESTYLE',
     eventType: 'OPERATIONAL_TASK_ASSIGNED',
     message: `📋 Task spotlight assigned to ${params.assigneeName}: ${params.title} (${PRIORITY_LABEL[params.priority]})${deadline}. ${erpBaseUrl()}/portal`,
@@ -40,7 +40,7 @@ export function queueOperationalTaskAssigned(params: {
   })
 }
 
-export function queueOperationalTaskStatusToAdmin(params: {
+export async function queueOperationalTaskStatusToAdmin(params: {
   businessId: string | null
   assignmentId: string
   title: string
@@ -48,7 +48,7 @@ export function queueOperationalTaskStatusToAdmin(params: {
   action: 'ACKNOWLEDGED' | 'COMPLETED'
 }) {
   const label = params.action === 'COMPLETED' ? 'completed' : 'acknowledged'
-  scheduleTelegramNotification({
+  return scheduleTelegramNotification({
     businessId: params.businessId || 'ALMA_LIFESTYLE',
     eventType: 'OPERATIONAL_TASK_UPDATED',
     message: `📋 Task spotlight · ${label}: ${params.title} — ${params.assigneeName}. ${erpBaseUrl()}/operations/task-spotlight`,

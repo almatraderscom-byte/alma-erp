@@ -72,8 +72,11 @@ if (!nextCfg.includes('NEXT_PUBLIC_APP_BUILD_ID')) {
   fail('next.config must expose NEXT_PUBLIC_APP_BUILD_ID')
 } else pass('public build id env')
 
-if (!portal.includes('SectionErrorBoundary') || !portal.includes('portal_attendance')) {
-  fail('portal must wrap attendance in SectionErrorBoundary')
+if (
+  !/(SectionErrorBoundary|AttendanceWidgetErrorBoundary)/.test(portal)
+  || !portal.includes('portal_attendance')
+) {
+  fail('portal must wrap attendance in a SectionErrorBoundary or AttendanceWidgetErrorBoundary')
 } else pass('portal attendance section boundary')
 
 if (!sidebar.includes('canApprovals') || !sidebar.includes('isPathAllowedForRole')) {

@@ -10,7 +10,27 @@ export type FaceCaptureResult = {
   contentType: string
 }
 
+/** Formats Safari/iOS may surface but `canvas.toDataURL('image/jpeg')` will silently mangle. */
+const UNSUPPORTED_CAPTURE_MIME = /^image\/(heic|heif|avif)/i
+const UNSUPPORTED_CAPTURE_EXT = /\.(heic|heif|avif)$/i
+
+function rejectUnsupportedCapture(file: File): void {
+  const mime = (file.type || '').toLowerCase()
+  if (mime && UNSUPPORTED_CAPTURE_MIME.test(mime)) {
+    throw new Error(
+      'This photo format is not supported by the browser. Use the front camera button to retake (it will save as JPEG).',
+    )
+  }
+  if (file.name && UNSUPPORTED_CAPTURE_EXT.test(file.name)) {
+    throw new Error(
+      'HEIC/HEIF/AVIF photos cannot be uploaded directly. Retake using the front camera — the camera will save as JPEG.',
+    )
+  }
+}
+
 export async function captureFaceFromFile(file: File): Promise<FaceCaptureResult> {
+  rejectUnsupportedCapture(file)
+
   let imageDataUrl = await renderFaceCanvas(file, 512, 0.52)
   let attempts = 0
   while (dataUrlByteSize(imageDataUrl) > MAX_FACE_IMAGE_BYTES && attempts < 4) {
@@ -21,6 +41,9 @@ export async function captureFaceFromFile(file: File): Promise<FaceCaptureResult
   }
   if (dataUrlByteSize(imageDataUrl) > MAX_FACE_IMAGE_BYTES) {
     throw new Error('Photo is too large after compression. Move closer to the camera or use better lighting and retake.')
+  }
+  if (dataUrlByteSize(imageDataUrl) < 1024) {
+    throw new Error('The photo could not be read on this device. Retake using the front camera.')
   }
   const thumbDataUrl = await renderFaceCanvas(file, 160, 0.42)
   return { imageDataUrl, thumbDataUrl, contentType: 'image/jpeg' }
@@ -36,6 +59,13 @@ function renderFaceCanvas(file: File, maxEdge: number, quality: number): Promise
     const img = new Image()
     const url = URL.createObjectURL(file)
     img.onload = () => {
+      // Safari iOS reports 0×0 for HEIC/AVIF it cannot decode — guard here too
+      // before we silently produce an empty data URL.
+      if (!img.naturalWidth || !img.naturalHeight) {
+        URL.revokeObjectURL(url)
+        reject(new Error('Camera photo is empty. Retake using the front camera.'))
+        return
+      }
       const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
       const canvas = document.createElement('canvas')
       canvas.width = Math.max(1, Math.round(img.width * scale))
@@ -46,8 +76,12 @@ function renderFaceCanvas(file: File, maxEdge: number, quality: number): Promise
         reject(new Error('Could not process camera image on this device'))
         return
       }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', quality))
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      } catch (err) {
+        reject(new Error((err as Error)?.message || 'Could not process camera image on this device'))
+      }
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)

@@ -29,7 +29,7 @@ export async function notifyTradingScreenshotUploaded(input: ScreenshotUploadNot
   })
 
   try {
-    scheduleTelegramNotification({
+    const enqueue = await scheduleTelegramNotification({
       businessId: input.businessId,
       eventType: 'TRADING_SCREENSHOT_UPLOAD',
       message,
@@ -47,6 +47,9 @@ export async function notifyTradingScreenshotUploaded(input: ScreenshotUploadNot
         input.uploaderName,
       ),
     })
+    if (!enqueue.ok) {
+      return { ok: false, skipped: enqueue.skipped || 'ENQUEUE_FAILED' }
+    }
     return { ok: true, queued: true }
   } catch (e) {
     console.error('[telegram-screenshot] notify failed', {

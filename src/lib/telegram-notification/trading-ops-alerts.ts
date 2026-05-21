@@ -19,7 +19,7 @@ export async function queueTradingScreenshotUploadAlert(input: {
   return notifyTradingScreenshotUploaded(input)
 }
 
-export function queueTradingScreenshotFailureAlert(input: {
+export async function queueTradingScreenshotFailureAlert(input: {
   businessId: string
   accountId: string
   accountTitle: string
@@ -28,7 +28,7 @@ export function queueTradingScreenshotFailureAlert(input: {
   error: string
   screenshotId?: string
 }) {
-  scheduleTelegramNotification({
+  return scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'TRADING_SCREENSHOT_FAILURE',
     message: formatScreenshotFailureAlert({
@@ -48,7 +48,7 @@ export function queueTradingScreenshotFailureAlert(input: {
   })
 }
 
-export function queueTradingDeleteRequestAlert(input: {
+export async function queueTradingDeleteRequestAlert(input: {
   businessId: string
   accountTitle: string
   requesterUserId?: string
@@ -57,7 +57,7 @@ export function queueTradingDeleteRequestAlert(input: {
   approvalPath: string
   entityId: string
 }) {
-  scheduleTelegramNotification({
+  return scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'TRADING_DELETE_REQUEST',
     message: formatDeleteRequestAlert({

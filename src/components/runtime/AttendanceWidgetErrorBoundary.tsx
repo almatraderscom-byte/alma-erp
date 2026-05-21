@@ -1,6 +1,7 @@
 'use client'
 
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import * as Sentry from '@sentry/nextjs'
 import { logAttendanceWidgetRuntimeCrash } from '@/lib/attendance-widget-log'
 import { Button, Card } from '@/components/ui'
 
@@ -44,17 +45,35 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     const pathname = typeof window !== 'undefined' ? window.location.pathname : undefined
     const loc = parseCrashLocation(error.stack)
+    const componentStack = info.componentStack?.split('\n').slice(0, 12).join(' | ')
     logAttendanceWidgetRuntimeCrash(error, {
       pathname,
       component: loc.component || this.props.section || 'portal_attendance',
       hook: loc.hook,
       property: loc.property,
-      componentStack: info.componentStack?.split('\n').slice(0, 6).join(' | '),
+      componentStack: componentStack?.slice(0, 800),
       userId: this.props.userId,
       businessId: this.props.businessId,
       employeeId: this.props.employeeId,
       hydrationState: 'render',
     })
+    try {
+      Sentry.withScope(scope => {
+        scope.setTag('boundary', this.props.section || 'portal_attendance')
+        scope.setTag('surface', 'attendance_widget')
+        scope.setContext('attendanceBoundary', {
+          pathname,
+          component: loc.component || this.props.section || 'portal_attendance',
+          componentStack,
+          userId: this.props.userId,
+          businessId: this.props.businessId,
+          employeeId: this.props.employeeId,
+        })
+        Sentry.captureException(error)
+      })
+    } catch {
+      // Sentry init may be skipped on dev — never let it crash the boundary.
+    }
   }
 
   render() {
@@ -110,10 +129,24 @@ export class AttendanceSubsectionBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    const componentStack = info.componentStack?.split('\n').slice(0, 8).join(' | ')
     logAttendanceWidgetRuntimeCrash(error, {
       component: `attendance_subsection:${this.props.name}`,
-      componentStack: info.componentStack?.split('\n').slice(0, 4).join(' | '),
+      componentStack: componentStack?.slice(0, 600),
     })
+    try {
+      Sentry.withScope(scope => {
+        scope.setTag('boundary', `attendance_subsection:${this.props.name}`)
+        scope.setTag('surface', 'attendance_subsection')
+        scope.setContext('attendanceSubsection', {
+          name: this.props.name,
+          componentStack,
+        })
+        Sentry.captureException(error)
+      })
+    } catch {
+      // never let observability break the UI
+    }
   }
 
   render() {

@@ -3,7 +3,10 @@ import { prisma } from '@/lib/prisma'
 import { createNotification } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import type { ApprovalAuditEntry, ApprovalSource } from '@/lib/approval-types'
-import { scheduleWorkflowTransitionNotification } from '@/lib/telegram-notification/lifecycle-transition'
+import {
+  dispatchWorkflowTransitionNotification,
+  type WorkflowTransitionState,
+} from '@/lib/telegram-notification/lifecycle-transition'
 
 export type ApprovalModule = 'ALMA_TRADING' | 'INVENTORY' | 'PAYROLL' | 'ORDERS_CRM'
 
@@ -89,7 +92,7 @@ export async function createApprovalRequest(
       title: input.title || 'Approval required',
       message: input.message || `${input.module} ${input.type} requires approval.`,
     })
-    scheduleWorkflowTransitionNotification({
+    await safeDispatchWorkflowTransitionNotification({
       approval,
       transition: 'PENDING',
       actorUserId: input.requestedBy,
@@ -174,12 +177,29 @@ export async function notifyApprovalResolved(
     metadata: { approvalId: approval.id, module: approval.module, type: approval.type, status },
   })
 
-  scheduleWorkflowTransitionNotification({
+  await safeDispatchWorkflowTransitionNotification({
     approval,
     transition: status,
     actorUserId,
     reason,
   })
+}
+
+async function safeDispatchWorkflowTransitionNotification(input: {
+  approval: ApprovalRequest
+  transition: WorkflowTransitionState
+  actorUserId: string
+  reason?: string
+}) {
+  try {
+    await dispatchWorkflowTransitionNotification(input)
+  } catch (err) {
+    logEvent('error', 'approval.telegram.dispatch.failed', {
+      approvalId: input.approval.id,
+      transition: input.transition,
+      message: (err as Error).message,
+    })
+  }
 }
 
 export async function resolveApprovalRequestById(input: {

@@ -205,7 +205,9 @@ export async function assessAttendanceTrust(input: {
 }) {
   const reasons: string[] = []
   const now = new Date()
-  const since = new Date(now.getTime() - 30 * 86_400_000)
+  // 14-day lookback is sufficient for NEW_DEVICE / FREQUENT_DEVICE_CHANGES /
+  // LOCATION_CHANGED heuristics and halves the row fetch per check-in.
+  const since = new Date(now.getTime() - 14 * 86_400_000)
   const recent = await prisma.attendanceRecord.findMany({
     where: {
       businessId: input.businessId,
@@ -214,7 +216,7 @@ export async function assessAttendanceTrust(input: {
     },
     select: { deviceKey: true, latitude: true, longitude: true },
     orderBy: { attendanceDate: 'desc' },
-    take: 30,
+    take: 14,
   })
 
   if (input.deviceKey) {

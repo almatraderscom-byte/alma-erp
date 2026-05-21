@@ -502,58 +502,64 @@ function AttendanceCard({
         </div>
       </div>
 
-      {attendanceError && (
-        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
-          <p className="font-bold">{attendanceErrorLabel(attendanceError.code)}</p>
-          <p className="mt-1 text-red-100/90">{attendanceError.message}</p>
-          {attendanceError.retryable && (
-            <Button size="xs" variant="secondary" className="mt-3" onClick={onRefresh}>
-              Retry attendance
+      <AttendanceSubsectionBoundary name="Error banner">
+        {attendanceError && (
+          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+            <p className="font-bold">{attendanceErrorLabel(attendanceError.code)}</p>
+            <p className="mt-1 text-red-100/90">{attendanceError.message}</p>
+            {attendanceError.retryable && (
+              <Button size="xs" variant="secondary" className="mt-3" onClick={onRefresh}>
+                Retry attendance
+              </Button>
+            )}
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
+
+      <AttendanceSubsectionBoundary name="Daily stats">
+        {loading ? <Skeleton className="mt-4 h-28 w-full" /> : !empLinked ? (
+          <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">Ask an admin to link your HR employee ID before using attendance.</p>
+        ) : (
+          <div className="mt-4 grid md:grid-cols-5 gap-2 text-[11px]">
+            <WalletStat label="Check in" value={formatAttendanceTime(today?.checkInAt)} />
+            <WalletStat label="Check out" value={formatAttendanceTime(today?.checkOutAt)} />
+            <WalletStat label="Worked" value={minutesText(today?.totalWorkMinutes || 0)} />
+            <WalletStat label="Late" value={minutesText(today?.lateMinutes || 0)} tone={today?.lateMinutes ? 'text-red-400' : 'text-green-400'} />
+            <WalletStat label="Penalty" value={money(today?.penaltyAmount || 0)} tone={today?.penaltyAmount ? 'text-red-400' : 'text-green-400'} />
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
+
+      <AttendanceSubsectionBoundary name="Verification banner">
+        {selfieActionRequired && (
+          <div className="mt-4 rounded-2xl border-2 border-amber-400/40 bg-amber-500/15 p-4 shadow-lg shadow-amber-500/10">
+            <p className="text-sm font-black text-amber-100">Verification required</p>
+            <p className="mt-1 text-xs text-amber-100/80">
+              Admin requested a quick face photo. Your check-in is saved — complete verification now.
+            </p>
+            <Button
+              variant="gold"
+              className="mt-4 h-[52px] w-full justify-center text-base font-black touch-manipulation min-h-[52px]"
+              onClick={() => setVerifyRecord(today)}
+            >
+              📸 Verify Face Now
             </Button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {loading ? <Skeleton className="mt-4 h-28 w-full" /> : !empLinked ? (
-        <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">Ask an admin to link your HR employee ID before using attendance.</p>
-      ) : (
-        <div className="mt-4 grid md:grid-cols-5 gap-2 text-[11px]">
-          <WalletStat label="Check in" value={formatAttendanceTime(today?.checkInAt)} />
-          <WalletStat label="Check out" value={formatAttendanceTime(today?.checkOutAt)} />
-          <WalletStat label="Worked" value={minutesText(today?.totalWorkMinutes || 0)} />
-          <WalletStat label="Late" value={minutesText(today?.lateMinutes || 0)} tone={today?.lateMinutes ? 'text-red-400' : 'text-green-400'} />
-          <WalletStat label="Penalty" value={money(today?.penaltyAmount || 0)} tone={today?.penaltyAmount ? 'text-red-400' : 'text-green-400'} />
-        </div>
-      )}
-
-      {selfieActionRequired && (
-        <div className="mt-4 rounded-2xl border-2 border-amber-400/40 bg-amber-500/15 p-4 shadow-lg shadow-amber-500/10">
-          <p className="text-sm font-black text-amber-100">Verification required</p>
-          <p className="mt-1 text-xs text-amber-100/80">
-            Admin requested a quick face photo. Your check-in is saved — complete verification now.
-          </p>
-          <Button
-            variant="gold"
-            className="mt-4 h-[52px] w-full justify-center text-base font-black touch-manipulation min-h-[52px]"
-            onClick={() => setVerifyRecord(today)}
-          >
-            📸 Verify Face Now
-          </Button>
-        </div>
-      )}
-
-      {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
-        <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200">
-          <p className="font-bold">Attendance marked for review</p>
-          <p className="mt-1 text-amber-100/80">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
-          {selfieSubmitted && (
-            <p className="mt-2 text-green-300/90">Verification submitted — waiting for admin review.</p>
-          )}
-          {today.faceVerified && (
-            <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
-          )}
-        </div>
-      )}
+        {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
+          <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200">
+            <p className="font-bold">Attendance marked for review</p>
+            <p className="mt-1 text-amber-100/80">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
+            {selfieSubmitted && (
+              <p className="mt-2 text-green-300/90">Verification submitted — waiting for admin review.</p>
+            )}
+            {today.faceVerified && (
+              <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
+            )}
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
 
       <AttendanceSubsectionBoundary name="Penalty appeals">
         {penaltyAmount > 0 && today && (

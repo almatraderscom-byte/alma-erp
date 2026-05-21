@@ -76,7 +76,7 @@ export const POST = withApiRoute('operational_tasks.create', async (req: NextReq
   const nameById = new Map(users.map(u => [u.id, u.name || u.email]))
 
   for (const assignment of task.assignments) {
-    queueOperationalTaskAssigned({
+    await queueOperationalTaskAssigned({
       businessId: task.businessId,
       assignmentId: assignment.id,
       userId: assignment.userId,

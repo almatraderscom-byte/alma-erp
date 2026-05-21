@@ -38,7 +38,7 @@ export const PATCH = withApiRoute('operational_tasks.assignment', async (req: Ne
       },
     })
     if (row) {
-      queueOperationalTaskStatusToAdmin({
+      await queueOperationalTaskStatusToAdmin({
         businessId: row.task.businessId,
         assignmentId,
         title: row.task.title,

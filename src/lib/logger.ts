@@ -2,6 +2,32 @@ import { captureStructuredEvent } from '@/lib/sentry/capture'
 
 type LogLevel = 'info' | 'warn' | 'error'
 
+/** Hard timeout for the Logtail HTTP shipping fetch — never block the lambda. */
+const LOGTAIL_FETCH_TIMEOUT_MS = 1_500
+
+function postLogtail(line: string, token: string) {
+  if (typeof AbortController === 'undefined') {
+    fetch('https://in.logs.betterstack.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: line,
+      cache: 'no-store',
+    }).catch(() => {})
+    return
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), LOGTAIL_FETCH_TIMEOUT_MS)
+  fetch('https://in.logs.betterstack.com', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: line,
+    cache: 'no-store',
+    signal: controller.signal,
+  })
+    .catch(() => {})
+    .finally(() => clearTimeout(timer))
+}
+
 export function logEvent(level: LogLevel, event: string, meta: Record<string, unknown> = {}) {
   const payload = {
     level,
@@ -17,12 +43,7 @@ export function logEvent(level: LogLevel, event: string, meta: Record<string, un
 
   const logtailToken = process.env.LOGTAIL_SOURCE_TOKEN
   if (logtailToken && process.env.NODE_ENV === 'production') {
-    fetch('https://in.logs.betterstack.com', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${logtailToken}` },
-      body: line,
-      cache: 'no-store',
-    }).catch(() => {})
+    postLogtail(line, logtailToken)
   }
 
   void captureStructuredEvent(level, event, meta)

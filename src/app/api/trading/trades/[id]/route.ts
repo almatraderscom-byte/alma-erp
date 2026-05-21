@@ -139,7 +139,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       })
       logEvent('warn', 'trading.trade.delete_requested', { tradeId: trade.id, accountId: trade.tradingAccountId, actorUserId: ctx.userId, reason })
       const actor = await prisma.user.findUnique({ where: { id: ctx.userId }, select: { name: true } })
-      queueTradingDeleteRequestAlert({
+      await queueTradingDeleteRequestAlert({
         businessId: TRADING_BUSINESS_ID,
         accountTitle: trade.tradingAccount.accountTitle,
         requesterUserId: ctx.userId,

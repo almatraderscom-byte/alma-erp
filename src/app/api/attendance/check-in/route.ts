@@ -159,18 +159,6 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
     const dayStart = attendanceDateFor()
     const dayEnd = new Date(dayStart.getTime() + 86_400_000)
 
-    let todayCheckIns = 0
-    try {
-      todayCheckIns = await prisma.attendanceRecord.count({
-        where: {
-          businessId: ctx.businessIds[0],
-          attendanceDate: { gte: dayStart, lt: dayEnd },
-        },
-      })
-    } catch {
-      /* observability only */
-    }
-
     const metric = {
       requestId: clientRequestId,
       userId: ctx.userId,
@@ -187,7 +175,22 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
       attendanceRecordId: result.record.id,
     }
     recordAttendanceCheckinMetric(metric)
-    logAttendanceHealthSummary({ ...metric, todayCheckIns })
+
+    // Observability-only: count of today's check-ins runs AFTER the response
+    // to avoid holding a Prisma connection during user-visible latency.
+    void (async () => {
+      try {
+        const todayCheckIns = await prisma.attendanceRecord.count({
+          where: {
+            businessId: ctx.businessIds[0],
+            attendanceDate: { gte: dayStart, lt: dayEnd },
+          },
+        })
+        logAttendanceHealthSummary({ ...metric, todayCheckIns })
+      } catch {
+        /* observability only */
+      }
+    })()
 
     logAttendanceCheckinResponseSent({
       ...logBase,

@@ -253,6 +253,15 @@ export async function commitAttendanceCheckIn(
       latencyMs: Date.now() - started,
     })
 
+    // CRITICAL: persist Telegram queue row BEFORE returning so the row survives
+    // any post-response lambda termination on Vercel. The Telegram API delivery
+    // itself stays in the cron / void post-response path.
+    const enqueueResult = await persistAttendanceCheckInTelegramRow({
+      record,
+      faceAssets: input.faceAssets,
+      logBase,
+    })
+
     queueAttendanceCheckInSideEffects({
       record,
       faceAssets: input.faceAssets,
@@ -260,6 +269,7 @@ export async function commitAttendanceCheckIn(
       faceContentType: face.contentType,
       userId: input.userId,
       logBase,
+      preEnqueuedTelegramIds: enqueueResult.queueIds,
     })
 
     return {
@@ -310,7 +320,75 @@ export async function commitAttendanceCheckIn(
   }
 }
 
-/** Non-blocking side effects — must never affect HTTP response. */
+/**
+ * Persist the Telegram queue row for the face-verified check-in. Awaited inside
+ * the request lifecycle — the DB insert is fast and must land before the lambda
+ * can terminate. Telegram API delivery itself remains out of band.
+ */
+async function persistAttendanceCheckInTelegramRow(input: {
+  record: AttendanceRecord
+  faceAssets: PreparedCheckInFaceAssets
+  logBase: {
+    requestId: string
+    userId: string
+    employeeId: string
+    businessId: string
+    attendanceDate?: string
+    deviceType?: string
+  }
+}): Promise<{ queueIds: string[] }> {
+  const { record, faceAssets, logBase } = input
+  try {
+    const notify = await notifyFaceVerifiedCheckIn(record, {
+      facePhotoBucket: faceAssets.storage.bucket,
+      facePhotoPath: faceAssets.storage.objectPath,
+    })
+    if (!notify.ok) {
+      logAttendanceCheckinSideEffectFailed({
+        ...logBase,
+        sideEffect: 'telegram_face',
+        message: String(notify.skipped || 'notify_skipped'),
+      })
+      logEvent('warn', 'attendance.telegram_event_missing', {
+        ...logBase,
+        attendanceRecordId: record.id,
+        reason: notify.skipped || 'notify_failed',
+        phase: 'pre_response_enqueue',
+      })
+      return { queueIds: [] }
+    }
+    const queueIds = notify.queued && notify.queueIds?.length ? notify.queueIds : []
+    if (queueIds.length) {
+      logEvent('info', 'attendance.telegram.enqueued', {
+        ...logBase,
+        attendanceRecordId: record.id,
+        queueIds,
+        rowCount: queueIds.length,
+        phase: 'pre_response_enqueue',
+      })
+    }
+    return { queueIds }
+  } catch (err) {
+    logAttendanceCheckinSideEffectFailed({
+      ...logBase,
+      sideEffect: 'telegram_face',
+      message: (err as Error).message,
+    })
+    logEvent('error', 'attendance.telegram_event_missing', {
+      ...logBase,
+      attendanceRecordId: record.id,
+      message: (err as Error).message,
+      phase: 'pre_response_enqueue',
+    })
+    return { queueIds: [] }
+  }
+}
+
+/**
+ * Non-blocking post-response side effects — never affect HTTP response.
+ * Triggers immediate-best-effort Telegram delivery for the already-persisted
+ * queue rows, and fires absent-alert suppression + penalty notifications.
+ */
 export function queueAttendanceCheckInSideEffects(input: {
   record: AttendanceRecord
   faceAssets: PreparedCheckInFaceAssets
@@ -325,8 +403,9 @@ export function queueAttendanceCheckInSideEffects(input: {
     attendanceDate?: string
     deviceType?: string
   }
+  preEnqueuedTelegramIds?: string[]
 }) {
-  const { record, faceAssets, faceBuffer, faceContentType, userId, logBase } = input
+  const { record, faceBuffer, faceContentType, userId, logBase, preEnqueuedTelegramIds } = input
 
   void (async () => {
     try {
@@ -340,57 +419,28 @@ export function queueAttendanceCheckInSideEffects(input: {
     }
   })()
 
-  void (async () => {
-    stageLiveFacePhotoForTelegram(record.id, faceBuffer, faceContentType)
-    try {
-      const notify = await notifyFaceVerifiedCheckIn(record, {
-        facePhotoBucket: faceAssets.storage.bucket,
-        facePhotoPath: faceAssets.storage.objectPath,
-      })
-      if (!notify.ok) {
+  if (preEnqueuedTelegramIds?.length) {
+    void (async () => {
+      stageLiveFacePhotoForTelegram(record.id, faceBuffer, faceContentType)
+      try {
+        const { processTelegramNotificationQueue } = await import(
+          '@/lib/telegram-notification/queue'
+        )
+        await processTelegramNotificationQueue({
+          ids: preEnqueuedTelegramIds,
+          limit: preEnqueuedTelegramIds.length,
+        })
+      } catch (err) {
         logAttendanceCheckinSideEffectFailed({
           ...logBase,
-          sideEffect: 'telegram_face',
-          message: String(notify.skipped || 'notify_skipped'),
+          sideEffect: 'telegram_flush',
+          message: (err as Error).message,
         })
-        logEvent('warn', 'attendance.telegram_event_missing', {
-          ...logBase,
-          attendanceRecordId: record.id,
-          reason: notify.skipped || 'notify_failed',
-        })
-        return
+      } finally {
+        clearLiveFacePhotoForTelegram(record.id)
       }
-      if (notify.queued && notify.queueIds?.length) {
-        logEvent('info', 'attendance.telegram.enqueued', {
-          ...logBase,
-          attendanceRecordId: record.id,
-          queueIds: notify.queueIds,
-          rowCount: notify.queueIds.length,
-        })
-        const { processTelegramNotificationQueue } = await import('@/lib/telegram-notification/queue')
-        void processTelegramNotificationQueue({ ids: notify.queueIds, limit: notify.queueIds.length }).catch(err => {
-          logAttendanceCheckinSideEffectFailed({
-            ...logBase,
-            sideEffect: 'telegram_flush',
-            message: (err as Error).message,
-          })
-        })
-      }
-    } catch (err) {
-      logAttendanceCheckinSideEffectFailed({
-        ...logBase,
-        sideEffect: 'telegram_face',
-        message: (err as Error).message,
-      })
-      logEvent('warn', 'attendance.telegram_event_missing', {
-        ...logBase,
-        attendanceRecordId: record.id,
-        message: (err as Error).message,
-      })
-    } finally {
-      clearLiveFacePhotoForTelegram(record.id)
-    }
-  })()
+    })()
+  }
 
   void (async () => {
     try {

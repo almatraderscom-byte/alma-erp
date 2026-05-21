@@ -126,7 +126,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         detail: `tradeId=${trade.id}; ${reason}`,
       })
       const actor = await prisma.user.findUnique({ where: { id: ctx.userId }, select: { name: true } })
-      queueTradingDeleteRequestAlert({
+      await queueTradingDeleteRequestAlert({
         businessId: TRADING_BUSINESS_ID,
         accountTitle: trade.tradingAccount.accountTitle,
         requesterUserId: ctx.userId,

@@ -225,7 +225,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       where: { id: ctx.userId },
       select: { name: true },
     }).catch(() => null)
-    queueTradingScreenshotFailureAlert({
+    await queueTradingScreenshotFailureAlert({
       businessId: TRADING_BUSINESS_ID,
       accountId: params.id,
       accountTitle: account?.accountTitle || params.id,

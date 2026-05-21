@@ -1,7 +1,30 @@
 const TELEGRAM_API = 'https://api.telegram.org'
 
+/** Hard cap for any single Telegram API HTTP request. Prevents queue-batch hangs. */
+const TELEGRAM_FETCH_TIMEOUT_MS = 12_000
+
 export function getTelegramBotToken(): string | undefined {
   return process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined
+}
+
+async function fetchTelegramWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = TELEGRAM_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function describeTelegramFetchError(err: unknown): { message: string; code: number } {
+  const e = err as Error
+  if (e?.name === 'AbortError') return { message: 'telegram_api_timeout', code: 408 }
+  return { message: e?.message || 'telegram_api_network_error', code: 0 }
 }
 
 export type TelegramInlineButton =
@@ -63,7 +86,7 @@ export async function sendTelegramMessage(
     }
     if (options?.replyMarkup) body.reply_markup = options.replyMarkup
 
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -76,9 +99,9 @@ export async function sendTelegramMessage(
     }
     return { ok: true, messageId: data.result?.message_id }
   } catch (e) {
-    const msg = (e as Error).message
-    console.error('[telegram] sendMessage error', msg)
-    return { ok: false, errorMessage: msg }
+    const info = describeTelegramFetchError(e)
+    console.error('[telegram] sendMessage error', info.message)
+    return { ok: false, errorMessage: info.message, errorCode: info.code || undefined }
   }
 }
 
@@ -90,7 +113,7 @@ export async function sendTelegramPhoto(
   const token = getTelegramBotToken()
   if (!token) return { ok: false, errorMessage: 'TELEGRAM_BOT_TOKEN_MISSING' }
   try {
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -108,7 +131,8 @@ export async function sendTelegramPhoto(
     }
     return { ok: true, messageId: data.result?.message_id }
   } catch (e) {
-    return { ok: false, errorMessage: (e as Error).message }
+    const info = describeTelegramFetchError(e)
+    return { ok: false, errorMessage: info.message, errorCode: info.code || undefined }
   }
 }
 
@@ -129,7 +153,7 @@ export async function sendTelegramPhotoBuffer(
     const blob = new Blob([buffer], { type: mimeType || 'image/webp' })
     form.append('photo', blob, fileName || 'screenshot.webp')
 
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
       method: 'POST',
       body: form,
     })
@@ -141,7 +165,8 @@ export async function sendTelegramPhotoBuffer(
     }
     return { ok: true, messageId: data.result?.message_id }
   } catch (e) {
-    return { ok: false, errorMessage: (e as Error).message }
+    const info = describeTelegramFetchError(e)
+    return { ok: false, errorMessage: info.message, errorCode: info.code || undefined }
   }
 }
 
@@ -182,7 +207,7 @@ export async function sendTelegramMediaGroup(
       form.append(`file${index}`, blob, item.fileName || `photo-${index}.webp`)
     })
 
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMediaGroup`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/sendMediaGroup`, {
       method: 'POST',
       body: form,
     })
@@ -194,7 +219,8 @@ export async function sendTelegramMediaGroup(
     }
     return { ok: true, messageId: data.result?.message_id }
   } catch (e) {
-    return { ok: false, errorMessage: (e as Error).message }
+    const info = describeTelegramFetchError(e)
+    return { ok: false, errorMessage: info.message, errorCode: info.code || undefined }
   }
 }
 
@@ -202,7 +228,7 @@ export async function answerTelegramCallbackQuery(callbackQueryId: string, text?
   const token = getTelegramBotToken()
   if (!token) return false
   try {
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/answerCallbackQuery`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/answerCallbackQuery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -225,7 +251,7 @@ export async function editTelegramMessage(
   const token = getTelegramBotToken()
   if (!token) return false
   try {
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/editMessageText`, {
+    const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -267,7 +293,7 @@ export async function registerTelegramWebhook(webhookUrl: string, secretToken: s
   const token = getTelegramBotToken()
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN not configured')
 
-  const res = await fetch(`${TELEGRAM_API}/bot${token}/setWebhook`, {
+  const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -285,7 +311,9 @@ export async function registerTelegramWebhook(webhookUrl: string, secretToken: s
 export async function getTelegramWebhookInfo() {
   const token = getTelegramBotToken()
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN not configured')
-  const res = await fetch(`${TELEGRAM_API}/bot${token}/getWebhookInfo`)
+  const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/getWebhookInfo`, {
+    method: 'GET',
+  })
   return res.json() as Promise<{ ok: boolean; result?: Record<string, unknown> }>
 }
 

@@ -287,27 +287,38 @@ export async function deliverTelegramNotificationRow(
 ): Promise<TelegramSendResult> {
   const meta = parseQueueMetadata(row.metadataJson)
 
+  // Face-verified path has its own bespoke timeout + fallback chain.
   if (row.eventType === 'ATTENDANCE_FACE_VERIFIED_CHECK_IN') {
     return deliverFaceVerifiedPhoto(row, meta)
   }
 
-  if (row.eventType === 'ATTENDANCE_WAIVER_SUBMITTED' && meta.replyMarkup) {
-    return sendTelegramMessage(row.chatId, row.message, {
-      replyMarkup: meta.replyMarkup as import('@/lib/trading-telegram-bot').TelegramSendOptions['replyMarkup'],
+  // Every other delivery path is wrapped in a single hard timeout so one slow
+  // Telegram API call cannot hang the entire queue batch.
+  try {
+    return await withTelegramDeliveryTimeout('queue_row', row, async () => {
+      if (row.eventType === 'ATTENDANCE_WAIVER_SUBMITTED' && meta.replyMarkup) {
+        return sendTelegramMessage(row.chatId, row.message, {
+          replyMarkup: meta.replyMarkup as import(
+            '@/lib/trading-telegram-bot'
+          ).TelegramSendOptions['replyMarkup'],
+        })
+      }
+
+      if (row.eventType === 'TRADING_SCREENSHOT_UPLOAD') {
+        return deliverScreenshotPhoto(row, meta)
+      }
+
+      if (
+        PROFILE_AVATAR_EVENTS.has(row.eventType)
+        && meta.userId
+        && meta.deliveryMode !== 'text'
+      ) {
+        return deliverProfileAvatar(row, meta)
+      }
+
+      return sendTelegramMessage(row.chatId, row.message)
     })
+  } catch (e) {
+    return { ok: false, errorMessage: (e as Error).message || 'telegram_delivery_timeout' }
   }
-
-  if (row.eventType === 'TRADING_SCREENSHOT_UPLOAD') {
-    return deliverScreenshotPhoto(row, meta)
-  }
-
-  if (
-    PROFILE_AVATAR_EVENTS.has(row.eventType)
-    && meta.userId
-    && meta.deliveryMode !== 'text'
-  ) {
-    return deliverProfileAvatar(row, meta)
-  }
-
-  return sendTelegramMessage(row.chatId, row.message)
 }

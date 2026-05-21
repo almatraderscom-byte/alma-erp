@@ -276,7 +276,7 @@ export async function dispatchWorkflowTransitionNotification(input: {
       entityType: workflowKey(approval),
     })
 
-    scheduleTelegramNotification({
+    const enqueue = await scheduleTelegramNotification({
       businessId: approval.businessId,
       eventType,
       message,
@@ -294,6 +294,19 @@ export async function dispatchWorkflowTransitionNotification(input: {
         ctx.employeeName,
       ),
     })
+
+    if (!enqueue.ok) {
+      logTransition(
+        'notification.telegram.failed',
+        {
+          approvalId: approval.id,
+          transition,
+          reason: enqueue.skipped || 'ENQUEUE_FAILED',
+        },
+        'warn',
+      )
+      return { ok: false, skipped: enqueue.skipped || 'ENQUEUE_FAILED' }
+    }
 
     return { ok: true }
   } catch (e) {

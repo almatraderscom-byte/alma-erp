@@ -67,7 +67,7 @@ export async function queueAttendanceCheckInAlert(record: AttendanceRecord) {
 
   const dedupeKey = `attendance:checkin:${record.businessId}:${record.employeeId}:${ymdBd(record.checkInAt)}`
 
-  scheduleTelegramNotification({
+  await scheduleTelegramNotification({
     businessId: record.businessId,
     eventType: 'ATTENDANCE_CHECK_IN',
     message,
@@ -94,7 +94,7 @@ export async function queueAttendanceCheckInAlert(record: AttendanceRecord) {
     const reasons = record.suspiciousReasons?.length
       ? record.suspiciousReasons
       : [record.trustStatus]
-    scheduleTelegramNotification({
+    await scheduleTelegramNotification({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_SUSPICIOUS',
       message: formatSuspiciousCheckInAlert({
@@ -123,7 +123,7 @@ export async function queueAttendanceCheckOutAlert(
   const worked = record.totalWorkMinutes
 
   if (setting.alertAttendanceCheckOut) {
-    scheduleTelegramNotification({
+    await scheduleTelegramNotification({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_CHECK_OUT',
       message: formatCheckOutAlert({
@@ -146,7 +146,7 @@ export async function queueAttendanceCheckOutAlert(
     (worked > 0 && worked < setting.earlyLeaveMinutes)
 
   if (isEarly && setting.alertAttendanceEarlyLeave) {
-    scheduleTelegramNotification({
+    await scheduleTelegramNotification({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_EARLY_LEAVE',
       message: formatEarlyLeaveAlert({
@@ -209,7 +209,7 @@ export async function queueAttendanceAbsentAlert(input: {
     erpLink: attendanceDeepLink(input.businessId, input.employeeId),
   })
 
-  scheduleTelegramNotification({
+  const enqueue = await scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'ATTENDANCE_ABSENT',
     message,
@@ -224,6 +224,9 @@ export async function queueAttendanceAbsentAlert(input: {
     ),
   })
 
+  if (!enqueue.ok) {
+    return { queued: false, reason: enqueue.skipped || 'ENQUEUE_FAILED' }
+  }
   return { queued: true }
 }
 
@@ -236,7 +239,7 @@ export async function queueAttendanceNoCheckoutAlert(input: {
   lastActivityAt: Date | null
   attendanceRecordId: string
 }) {
-  scheduleTelegramNotification({
+  await scheduleTelegramNotification({
     businessId: input.businessId,
     eventType: 'ATTENDANCE_NO_CHECKOUT',
     message: formatNoCheckoutAlert({

@@ -183,20 +183,35 @@ export async function enqueueTelegramNotification(
 }
 
 /**
- * Enqueue only — never blocks on Telegram API. Background cron/worker delivers later.
+ * Persist a Telegram queue row. AWAITS the DB INSERT so it lands even if the
+ * surrounding serverless invocation terminates immediately after the response.
+ * Never throws — failures are logged. Telegram API delivery still happens in
+ * background (cron / explicit processor), so callers may safely `await` this
+ * inside request handlers without blocking on Telegram itself.
  */
-export function scheduleTelegramNotification(input: EnqueueTelegramNotificationInput) {
-  void enqueueTelegramNotification(input).catch(err => {
+export async function scheduleTelegramNotification(
+  input: EnqueueTelegramNotificationInput,
+): Promise<{ ok: boolean; ids?: string[]; skipped?: string; duplicate?: boolean }> {
+  try {
+    const result = await enqueueTelegramNotification(input)
+    return result
+  } catch (err) {
     logTelegram('error', 'telegram.enqueue.async_error', {
       eventType: input.eventType,
       message: (err as Error).message,
     })
-  })
+    logEvent('error', 'telegram.queue.enqueue_failed', {
+      eventType: input.eventType,
+      businessId: input.businessId,
+      message: (err as Error).message,
+    })
+    return { ok: false, skipped: 'ENQUEUE_EXCEPTION' }
+  }
 }
 
 /** @deprecated Use scheduleTelegramNotification — flush removed from ERP hot paths. */
-export function scheduleTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
-  scheduleTelegramNotification(input)
+export async function scheduleTelegramNotificationAndFlush(input: EnqueueTelegramNotificationInput) {
+  return scheduleTelegramNotification(input)
 }
 
 /** Explicit processor invoke (cron, admin "Process queue", tests). */

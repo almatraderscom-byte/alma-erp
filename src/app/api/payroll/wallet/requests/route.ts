@@ -101,7 +101,7 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
     where: { id: ctx.userId },
     select: { name: true },
   })
-  queuePayrollWalletRequestAlert({
+  await queuePayrollWalletRequestAlert({
     businessId: request.businessId,
     userId: ctx.userId,
     employeeId,
