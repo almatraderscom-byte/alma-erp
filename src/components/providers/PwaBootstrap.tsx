@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { APP_BUILD_ID, RUNTIME_BUILD_STORAGE_KEY } from '@/lib/runtime-build'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -24,11 +25,35 @@ function isIosSafari() {
   return /iphone|ipad|ipod/i.test(ua) && /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua)
 }
 
+async function clearStaleRuntimeCaches() {
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(regs.map(reg => reg.unregister()))
+  }
+  if ('caches' in window) {
+    const keys = await caches.keys()
+    await Promise.all(keys.map(key => caches.delete(key)))
+  }
+}
+
 export function PwaBootstrap() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstall, setShowInstall] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [staleBuild, setStaleBuild] = useState(false)
   const ios = useMemo(() => isIosSafari(), [])
+
+  const forceRefresh = useCallback(async () => {
+    try {
+      await clearStaleRuntimeCaches()
+    } catch {
+      // reload still attempts to pick up the new bundle
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(RUNTIME_BUILD_STORAGE_KEY, APP_BUILD_ID)
+    }
+    window.location.reload()
+  }, [])
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') return
@@ -121,6 +146,50 @@ export function PwaBootstrap() {
     }
   }, [ios])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const stored = localStorage.getItem(RUNTIME_BUILD_STORAGE_KEY)
+    if (!stored) {
+      localStorage.setItem(RUNTIME_BUILD_STORAGE_KEY, APP_BUILD_ID)
+    } else if (stored !== APP_BUILD_ID && APP_BUILD_ID !== 'dev' && APP_BUILD_ID !== 'local') {
+      setStaleBuild(true)
+    }
+
+    let cancelled = false
+    async function pollBuild() {
+      try {
+        const res = await fetch('/api/health', { cache: 'no-store' })
+        const json = await res.json().catch(() => ({}))
+        const remote = String(json?.frontend?.git_commit || '').trim()
+        if (!remote || cancelled) return
+        const local = localStorage.getItem(RUNTIME_BUILD_STORAGE_KEY) || APP_BUILD_ID
+        if (local && remote !== local && remote !== APP_BUILD_ID) {
+          setStaleBuild(true)
+        }
+      } catch {
+        // ignore transient health failures
+      }
+    }
+    void pollBuild()
+    const timer = window.setInterval(() => void pollBuild(), 5 * 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!staleBuild || process.env.NODE_ENV !== 'production') return
+    const onChunkError = (event: ErrorEvent) => {
+      const msg = String(event.message || '')
+      if (/chunk|loading chunk|failed to fetch dynamically imported module/i.test(msg)) {
+        void forceRefresh()
+      }
+    }
+    window.addEventListener('error', onChunkError)
+    return () => window.removeEventListener('error', onChunkError)
+  }, [staleBuild, forceRefresh])
+
   async function install() {
     if (!installEvent) return
     await installEvent.prompt()
@@ -138,6 +207,22 @@ export function PwaBootstrap() {
 
   return (
     <>
+      {staleBuild && (
+        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[225] mx-auto max-w-md rounded-2xl border border-gold-dim/45 bg-[#101014]/95 px-4 py-3 text-xs text-cream shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <p className="font-black text-gold-lt">App update required</p>
+          <p className="mt-1 text-zinc-400">
+            Your device is running an older Alma ERP build. Refresh to load the latest version and avoid page errors.
+          </p>
+          <button
+            type="button"
+            onClick={() => void forceRefresh()}
+            className="mt-2 rounded-xl border border-gold-dim/50 bg-gold/15 px-3 py-2 text-[11px] font-black text-gold-lt active:scale-[0.98]"
+          >
+            Refresh now
+          </button>
+        </div>
+      )}
+
       {offline && (
         <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[220] mx-auto max-w-md rounded-2xl border border-amber-300/30 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-amber-100 shadow-2xl shadow-black/40 backdrop-blur-xl">
           Offline mode: live ERP data will refresh when the connection returns.

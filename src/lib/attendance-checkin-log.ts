@@ -62,4 +62,11 @@ export function logAttendanceCheckinDuplicateBlocked(meta: AttendanceCheckinLogM
 
 export function logAttendanceCheckinSideEffectFailed(meta: AttendanceCheckinLogMeta & { sideEffect: string }) {
   logEvent('warn', 'attendance.checkin.side_effect_failed', { ...base(meta), sideEffect: meta.sideEffect })
+  if (meta.sideEffect === 'telegram_face') {
+    logEvent('warn', 'attendance.telegram_event_missing', {
+      ...base(meta),
+      sideEffect: meta.sideEffect,
+      stage: 'check_in_notify',
+    })
+  }
 }

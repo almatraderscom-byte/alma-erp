@@ -1,7 +1,10 @@
 'use client'
 
 import { useEffect } from 'react'
+import { usePathname } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { captureException } from '@/lib/sentry/capture'
+import { logRuntimeMobileCrash } from '@/lib/mobile-runtime-log'
 import { Button, Card } from '@/components/ui'
 
 export default function Error({
@@ -11,14 +14,28 @@ export default function Error({
   error: Error & { digest?: string }
   reset: () => void
 }) {
+  const pathname = usePathname()
+  const { data: session, status: sessionStatus } = useSession()
+  const businessId = session?.user?.businessAccess?.split(',')[0]?.trim()
+
   useEffect(() => {
+    logRuntimeMobileCrash({
+      userId: session?.user?.id,
+      businessId,
+      pathname,
+      sessionStatus,
+      message: error.message,
+      digest: error.digest,
+      hydrationState: 'route_error',
+      error,
+    })
     void captureException(error, {
       category: 'client',
       event: 'react.route_error',
       critical: true,
-      extra: { digest: error.digest },
+      extra: { digest: error.digest, pathname, businessId },
     })
-  }, [error])
+  }, [error, pathname, session?.user?.id, businessId, sessionStatus])
 
   return (
     <div className="flex min-h-[50vh] items-center justify-center p-6">
@@ -29,8 +46,8 @@ export default function Error({
           <Button size="sm" variant="secondary" onClick={() => reset()}>
             Retry
           </Button>
-          <Button size="sm" onClick={() => { window.location.href = '/' }}>
-            Home
+          <Button size="sm" onClick={() => { window.location.href = '/portal' }}>
+            My Desk
           </Button>
         </div>
       </Card>

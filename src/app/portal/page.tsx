@@ -25,6 +25,7 @@ import { useOperationalSpotlightTrigger } from '@/components/operations/useOpera
 import { invalidateOperationalTasksCache } from '@/hooks/useOperationalTasks'
 import type { MyAttendancePayload } from '@/lib/attendance-client'
 import type { AttendanceClientError } from '@/lib/attendance-errors'
+import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 
 type MeUser = {
   id: string
@@ -217,21 +218,23 @@ export default function EmployeePortalPage() {
         {systemOwner ? (
           <SystemOwnerCard businessName={business.name} />
         ) : (
-          <AttendanceCard
-            businessId={business.id}
-            empLinked={Boolean(empId)}
-            loading={attendanceLoading}
-            attendance={attendance}
-            attendanceError={attendanceError}
-            onRefresh={() => {
-              void refreshDesk()
-            }}
-            onCheckInSuccess={opsSpotlight.triggerAfterCheckIn}
-            onEndWork={() => {
-              invalidateOperationalTasksCache(business.id)
-              void opsSpotlight.refetch(true)
-            }}
-          />
+          <SectionErrorBoundary section="portal_attendance" title="Attendance unavailable">
+            <AttendanceCard
+              businessId={business.id}
+              empLinked={Boolean(empId)}
+              loading={attendanceLoading}
+              attendance={attendance}
+              attendanceError={attendanceError}
+              onRefresh={() => {
+                void refreshDesk()
+              }}
+              onCheckInSuccess={opsSpotlight.triggerAfterCheckIn}
+              onEndWork={() => {
+                invalidateOperationalTasksCache(business.id)
+                void opsSpotlight.refetch(true)
+              }}
+            />
+          </SectionErrorBoundary>
         )}
 
         <Card className="p-5 space-y-3 border-gold-dim/25 bg-[#0c0c10]">
@@ -729,7 +732,7 @@ function WalletRequestCard({
 }
 
 function RequestList({ requests }: { requests: WalletRequestDto[] }) {
-  if (!requests.length) return <p className="text-[11px] text-zinc-600">No wallet requests yet.</p>
+  if (!requests?.length) return <p className="text-[11px] text-zinc-600">No wallet requests yet.</p>
   return (
     <ul className="space-y-1.5 max-h-44 overflow-y-auto text-[11px]">
       {requests.slice(0, 20).map(r => (

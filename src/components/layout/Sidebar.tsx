@@ -7,7 +7,7 @@ import { signOut, useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { BUSINESSES, getNavForBusiness, type NavItem } from '@/lib/businesses'
-import { filterNavByRole, roleHomePath } from '@/lib/roles'
+import { filterNavByRole, isPathAllowedForRole, roleHomePath } from '@/lib/roles'
 import { BusinessSwitcher } from '@/components/layout/BusinessSwitcher'
 import { BusinessLogo } from '@/components/branding/BusinessLogo'
 import { UserAccountMenu } from '@/components/layout/UserAccountMenu'
@@ -220,6 +220,9 @@ export function MobileNav() {
       })
   }, [nav, primary])
 
+  const canApprovals = isPathAllowedForRole('/approvals', role, business.id)
+  const mobileTabCount = Math.min(6, primary.slice(0, 3).length + (canApprovals ? 1 : 0) + 2)
+
   const loadUnread = useCallback(async () => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
     try {
@@ -287,11 +290,13 @@ export function MobileNav() {
     <>
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
         <div className="mx-auto max-w-lg rounded-[26px] border border-gold-dim/20 bg-[#09090d]/92 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-2xl">
-          <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(6, primary.slice(0, 3).length + 3)}, minmax(0, 1fr))` }}>
+          <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${mobileTabCount}, minmax(0, 1fr))` }}>
             {primary.slice(0, 3).map(item => (
               <MobileTab key={item.key} icon={item.icon} label={item.label} href={item.href} active={activePath(path, item.href)} />
             ))}
-            <MobileTab icon="◆" label="Approvals" badge={approvalCount} href="/approvals" active={activePath(path, '/approvals')} />
+            {canApprovals && (
+              <MobileTab icon="◆" label="Approvals" badge={approvalCount} href="/approvals" active={activePath(path, '/approvals')} />
+            )}
             <MobileTab icon="◌" label="Alerts" badge={unread} onClick={openNotifications} />
             <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
           </div>

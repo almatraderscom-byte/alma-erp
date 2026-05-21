@@ -9,6 +9,8 @@ import { useApprovalActions } from '@/hooks/useApprovalActions'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
+import { normalizeApprovalResponse } from '@/lib/approvals-response'
+import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 
 type ApprovalRow = {
   id: string
@@ -61,6 +63,14 @@ type IntegrityReport = {
 }
 
 export default function ApprovalsPage() {
+  return (
+    <SectionErrorBoundary section="approvals" title="Approvals unavailable">
+      <ApprovalsPageInner />
+    </SectionErrorBoundary>
+  )
+}
+
+function ApprovalsPageInner() {
   const [data, setData] = useState<ApprovalResponse | null>(null)
   const [status, setStatus] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'>('PENDING')
   const [loading, setLoading] = useState(true)
@@ -81,7 +91,7 @@ export default function ApprovalsPage() {
         { cache: 'no-store', toastOnError: false },
       )
       if (result.ok) {
-        setData(result.data)
+        setData(normalizeApprovalResponse(result.data) as ApprovalResponse)
       } else if (!silent) {
         toast.error(result.error.message || 'Could not load approvals')
       }
@@ -145,6 +155,8 @@ export default function ApprovalsPage() {
     }
   }
 
+  const approvals = data?.approvals ?? []
+  const byModule = data?.byModule ?? []
   const priorityCounts = useMemo(() => Object.fromEntries((data?.byPriority || []).map(row => [row.priority, row.count])), [data])
   const orphanCount = integrity?.orphans?.length ?? 0
 
@@ -263,7 +275,7 @@ export default function ApprovalsPage() {
         <Card className="p-4">
           <p className="text-sm font-black text-cream">Pending by module</p>
           <div className="mt-4 space-y-2">
-            {loading && !data ? <Skeleton className="h-32" /> : !(data?.byModule.length) ? <Empty icon="◆" title="No pending modules" /> : data.byModule.map(row => (
+            {loading && !data ? <Skeleton className="h-32" /> : !byModule.length ? <Empty icon="◆" title="No pending modules" /> : byModule.map(row => (
               <div key={row.module} className="flex items-center justify-between rounded-2xl border border-border bg-black/20 px-3 py-2 text-sm">
                 <span className="font-bold text-zinc-300">{row.module.replace(/_/g, ' ')}</span>
                 <span className="rounded-full bg-gold/10 px-2 py-1 text-xs font-black text-gold-lt">{row.count}</span>
@@ -273,9 +285,9 @@ export default function ApprovalsPage() {
         </Card>
 
         <Card className="overflow-hidden">
-          {loading && !data ? <Skeleton className="h-96" /> : !(data?.approvals.length) ? <Empty icon="◆" title="No approval requests" /> : (
+          {loading && !data ? <Skeleton className="h-96" /> : !approvals.length ? <Empty icon="◆" title="No approval requests" /> : (
             <div className="divide-y divide-border">
-              {data.approvals.map(row => {
+              {approvals.map(row => {
                 const ui = getRowUi(row.id)
                 const rowBusy = isRowProcessing(row.id)
                 const actionDisabled = rowBusy || actionsGloballyDisabled

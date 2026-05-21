@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
 import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
+import { logAttendanceMobileSubmitFailed } from '@/lib/mobile-runtime-log'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { Button, Spinner } from '@/components/ui'
 
@@ -220,6 +221,13 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         businessId,
         requestId,
         message,
+        latencyMs: Date.now() - started,
+      })
+      logAttendanceMobileSubmitFailed({
+        businessId,
+        api: '/api/attendance/check-in',
+        message,
+        requestId,
         latencyMs: Date.now() - started,
       })
     } finally {

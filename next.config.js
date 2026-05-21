@@ -7,6 +7,11 @@ const nextConfig = {
   env: {
     /** Surfaced by /api/health + optional client reads */
     NEXT_PUBLIC_VERCEL_GIT_COMMIT: process.env.VERCEL_GIT_COMMIT_SHA || '',
+    NEXT_PUBLIC_APP_BUILD_ID:
+      process.env.VERCEL_GIT_COMMIT_SHA
+      || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT
+      || process.env.npm_package_version
+      || 'local',
   },
   async redirects() {
     return [{ source: '/digital/finance', destination: '/finance', permanent: false }]

@@ -4,8 +4,8 @@ try {
   // Keep core offline support alive even if the push CDN is unavailable.
 }
 
-const SHELL_CACHE = 'alma-erp-shell-v2'
-const ASSET_CACHE = 'alma-erp-assets-v2'
+const SHELL_CACHE = 'alma-erp-shell-v3'
+const ASSET_CACHE = 'alma-erp-assets-v3'
 const MAX_ASSET_ENTRIES = 72
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
 
