@@ -357,6 +357,13 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         businessId: row.businessId,
         latencyMs: Date.now() - started,
       })
+      if (row.eventType === 'ATTENDANCE_FACE_VERIFIED_CHECK_IN') {
+        logEvent('info', 'attendance.telegram.sent', {
+          id: row.id,
+          businessId: row.businessId,
+          latencyMs: Date.now() - started,
+        })
+      }
       if (row.eventType === 'ATTENDANCE_ABSENT') {
         let employeeId: string | undefined
         try {
@@ -399,6 +406,14 @@ export async function processTelegramNotificationQueue(options: { limit?: number
         nextAttemptAt: updated.nextAttemptAt?.toISOString(),
         error: updated.errorMessage,
       })
+      if (row.eventType === 'ATTENDANCE_FACE_VERIFIED_CHECK_IN') {
+        logEvent('warn', 'attendance.telegram.retry', {
+          id: row.id,
+          businessId: row.businessId,
+          attempts,
+          error: updated.errorMessage,
+        })
+      }
     }
     const failureEvent = failed ? 'telegram.send.failed' : 'telegram.retry'
     logTelegram(failed ? 'error' : 'warn', failureEvent, {
@@ -413,6 +428,22 @@ export async function processTelegramNotificationQueue(options: { limit?: number
       errorCode: send.errorCode,
       nextAttemptAt: updated.nextAttemptAt?.toISOString() ?? null,
     })
+    if (failed && row.eventType === 'ATTENDANCE_FACE_VERIFIED_CHECK_IN') {
+      logEvent(failed && attempts >= maxAttempts ? 'error' : 'warn', 'attendance.telegram.failed', {
+        id: row.id,
+        businessId: row.businessId,
+        attempts,
+        error: updated.errorMessage,
+        deadLetter: attempts >= maxAttempts,
+      })
+      if (attempts >= maxAttempts) {
+        logEvent('error', 'attendance.telegram.dead_letter', {
+          id: row.id,
+          businessId: row.businessId,
+          eventType: row.eventType,
+        })
+      }
+    }
     results.push({ id: updated.id, status: updated.status, errorMessage: updated.errorMessage })
   }
 

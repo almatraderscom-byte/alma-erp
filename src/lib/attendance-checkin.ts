@@ -28,13 +28,14 @@ import {
   logAttendanceCheckinTransactionStarted,
 } from '@/lib/attendance-checkin-log'
 import { moneyDecimal } from '@/lib/payroll-wallet'
+import type { PreparedCheckInFaceAssets } from '@/lib/attendance-photo-storage'
 import {
   clearLiveFacePhotoForTelegram,
   notifyFaceVerifiedCheckIn,
   stageLiveFacePhotoForTelegram,
 } from '@/lib/telegram-notification/face-checkin-notify'
 import { notifyAttendancePenalty } from '@/lib/attendance'
-import { errorMeta } from '@/lib/logger'
+import { errorMeta, logEvent } from '@/lib/logger'
 
 const RECORD_INCLUDE = {
   waiverRequests: true,
@@ -53,7 +54,7 @@ export type AttendanceCheckInInput = {
   userId: string
   employeeId: string
   metadata: AttendanceClientMetadata
-  faceThumb: string | null
+  faceAssets: PreparedCheckInFaceAssets
   deviceType?: string
 }
 
@@ -212,7 +213,7 @@ export async function commitAttendanceCheckIn(
             verificationRequired: needsAdminSelfie,
             faceVerified: true,
             faceVerifiedAt: now,
-            faceThumbDataUrl: input.faceThumb,
+            faceThumbDataUrl: input.faceAssets.thumbDataUrl,
             deviceInfo: deviceInfoFromRequest(input.req),
             sessionInfo: clientSessionInfo(sessionInfoFromRequest(input.req), input.metadata),
             ipHash: hashAttendanceIp(input.req),
@@ -220,10 +221,27 @@ export async function commitAttendanceCheckIn(
           include: RECORD_INCLUDE,
         })
 
+        await tx.attendanceSelfieVerification.create({
+          data: {
+            attendanceRecordId: row.id,
+            businessId: row.businessId,
+            userId: row.userId,
+            employeeId: row.employeeId,
+            deviceKey: row.deviceKey,
+            imageDataUrl: input.faceAssets.storageRef,
+            contentType: input.faceAssets.contentType,
+            sizeBytes: input.faceAssets.sizeBytes,
+          },
+        })
+
         if (penaltyAmount > 0) {
           row = (await applyLatePenaltyInTransaction(tx, row, input.userId)) as RecordWithIncludes
         }
-        return row
+
+        return tx.attendanceRecord.findUniqueOrThrow({
+          where: { id: row.id },
+          include: RECORD_INCLUDE,
+        })
       },
       { maxWait: 8_000, timeout: 22_000 },
     )
@@ -237,6 +255,7 @@ export async function commitAttendanceCheckIn(
 
     queueAttendanceCheckInSideEffects({
       record,
+      faceAssets: input.faceAssets,
       faceBuffer: face.buffer,
       faceContentType: face.contentType,
       userId: input.userId,
@@ -294,6 +313,7 @@ export async function commitAttendanceCheckIn(
 /** Non-blocking side effects — must never affect HTTP response. */
 export function queueAttendanceCheckInSideEffects(input: {
   record: AttendanceRecord
+  faceAssets: PreparedCheckInFaceAssets
   faceBuffer: Buffer
   faceContentType: string
   userId: string
@@ -306,7 +326,7 @@ export function queueAttendanceCheckInSideEffects(input: {
     deviceType?: string
   }
 }) {
-  const { record, faceBuffer, faceContentType, userId, logBase } = input
+  const { record, faceAssets, faceBuffer, faceContentType, userId, logBase } = input
 
   void (async () => {
     try {
@@ -323,11 +343,48 @@ export function queueAttendanceCheckInSideEffects(input: {
   void (async () => {
     stageLiveFacePhotoForTelegram(record.id, faceBuffer, faceContentType)
     try {
-      await notifyFaceVerifiedCheckIn(record)
+      const notify = await notifyFaceVerifiedCheckIn(record, {
+        facePhotoBucket: faceAssets.storage.bucket,
+        facePhotoPath: faceAssets.storage.objectPath,
+      })
+      if (!notify.ok) {
+        logAttendanceCheckinSideEffectFailed({
+          ...logBase,
+          sideEffect: 'telegram_face',
+          message: String(notify.skipped || 'notify_skipped'),
+        })
+        logEvent('warn', 'attendance.telegram_event_missing', {
+          ...logBase,
+          attendanceRecordId: record.id,
+          reason: notify.skipped || 'notify_failed',
+        })
+        return
+      }
+      if (notify.queued && notify.queueIds?.length) {
+        logEvent('info', 'attendance.telegram.enqueued', {
+          ...logBase,
+          attendanceRecordId: record.id,
+          queueIds: notify.queueIds,
+          rowCount: notify.queueIds.length,
+        })
+        const { processTelegramNotificationQueue } = await import('@/lib/telegram-notification/queue')
+        void processTelegramNotificationQueue({ ids: notify.queueIds, limit: notify.queueIds.length }).catch(err => {
+          logAttendanceCheckinSideEffectFailed({
+            ...logBase,
+            sideEffect: 'telegram_flush',
+            message: (err as Error).message,
+          })
+        })
+      }
     } catch (err) {
       logAttendanceCheckinSideEffectFailed({
         ...logBase,
         sideEffect: 'telegram_face',
+        message: (err as Error).message,
+      })
+      logEvent('warn', 'attendance.telegram_event_missing', {
+        ...logBase,
+        attendanceRecordId: record.id,
         message: (err as Error).message,
       })
     } finally {

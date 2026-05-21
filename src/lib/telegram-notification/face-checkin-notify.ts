@@ -4,9 +4,10 @@ import {
   businessLabel,
   formatFaceVerifiedCheckInAlert,
 } from '@/lib/telegram-notification/formatters'
-import { scheduleTelegramNotification } from '@/lib/telegram-notification/queue'
+import { enqueueTelegramNotification } from '@/lib/telegram-notification/queue'
 import { shouldSendLateDetail, getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { logTelegramOpsAudit } from '@/lib/telegram-ops-audit'
+import { logEvent } from '@/lib/logger'
 
 export { clearLiveFacePhotoForTelegram, stageLiveFacePhotoForTelegram } from '@/lib/telegram-notification/face-photo-staging'
 
@@ -18,11 +19,18 @@ async function loadEmployeeContext(userId: string | null, employeeId: string) {
   return { name: user?.name || employeeId, phone: user?.phone ?? null }
 }
 
+export type FaceCheckInNotifyResult =
+  | { ok: true; queued: true; queueIds: string[] }
+  | { ok: false; skipped: string }
+
 /**
- * Enqueue face-verified check-in alert (async delivery via queue worker).
- * Never throws — attendance must succeed even if Telegram fails.
+ * Persist Telegram queue row for face-verified check-in (awaited DB write).
+ * Never throws — attendance HTTP response must not depend on Telegram API success.
  */
-export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
+export async function notifyFaceVerifiedCheckIn(
+  record: AttendanceRecord,
+  photo?: { facePhotoBucket: string; facePhotoPath: string },
+): Promise<FaceCheckInNotifyResult> {
   const setting = await getTelegramOpsSetting(record.businessId)
   if (!setting.alertAttendanceCheckIn) {
     return { ok: false, skipped: 'EVENT_DISABLED' }
@@ -43,7 +51,7 @@ export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
   const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka' }).format(record.checkInAt)
 
   try {
-    scheduleTelegramNotification({
+    const enqueue = await enqueueTelegramNotification({
       businessId: record.businessId,
       eventType: 'ATTENDANCE_FACE_VERIFIED_CHECK_IN',
       message,
@@ -54,7 +62,32 @@ export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
         userId: record.userId || undefined,
         employeeName: employee.name,
         deliveryMode: 'face_photo',
+        facePhotoBucket: photo?.facePhotoBucket,
+        facePhotoPath: photo?.facePhotoPath,
       },
+    })
+
+    if (!enqueue.ok) {
+      logEvent('warn', 'attendance.telegram_event_missing', {
+        attendanceRecordId: record.id,
+        businessId: record.businessId,
+        employeeId: record.employeeId,
+        reason: enqueue.skipped || 'enqueue_failed',
+      })
+      return { ok: false, skipped: enqueue.skipped || 'ENQUEUE_FAILED' }
+    }
+
+    const queueIds = enqueue.ids || []
+    if (!queueIds.length) {
+      return { ok: false, skipped: 'NO_QUEUE_ROWS' }
+    }
+
+    logEvent('info', 'attendance.telegram.enqueued', {
+      attendanceRecordId: record.id,
+      businessId: record.businessId,
+      employeeId: record.employeeId,
+      rowCount: queueIds.length,
+      duplicate: Boolean(enqueue.duplicate),
     })
 
     void logTelegramOpsAudit({
@@ -62,11 +95,15 @@ export async function notifyFaceVerifiedCheckIn(record: AttendanceRecord) {
       eventType: 'FACE_CHECKIN_TELEGRAM',
       employeeId: record.employeeId,
       attendanceRecordId: record.id,
-      detail: 'queued_async',
+      detail: enqueue.duplicate ? 'queued_duplicate' : 'queued',
     }).catch(() => {})
 
-    return { ok: true, queued: true }
+    return { ok: true, queued: true, queueIds }
   } catch (e) {
+    logEvent('warn', 'attendance.telegram_event_missing', {
+      attendanceRecordId: record.id,
+      message: (e as Error).message,
+    })
     console.error('[telegram-face-checkin] notify failed', {
       attendanceRecordId: record.id,
       message: (e as Error).message,

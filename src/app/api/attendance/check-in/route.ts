@@ -6,10 +6,13 @@ import { classifyAttendanceDbError } from '@/lib/core/safe-attendance'
 import { requireWalletContext } from '@/lib/core/safe-route-helpers'
 import { normalizeClientMetadata } from '@/lib/attendance'
 import {
-  buildFaceThumbDataUrl,
-  MAX_THUMB_DATA_URL_CHARS,
   normalizeFaceImageForCheckIn,
 } from '@/lib/attendance-face-image'
+import {
+  attendancePhotoStorageReady,
+  prepareCheckInFaceAssets,
+  rollbackCheckInFaceUpload,
+} from '@/lib/attendance-photo-storage'
 import { commitAttendanceCheckIn } from '@/lib/attendance-checkin'
 import {
   logAttendanceCheckinRequested,
@@ -92,13 +95,35 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
     return apiFailure('invalid_request', 'Could not process face photo. Retake in good light with the front camera (JPEG/PNG/WebP).', { status: 400 })
   }
 
-  let faceThumb =
-    typeof body.face_verification?.thumb_data_url === 'string'
-    && body.face_verification.thumb_data_url.length <= MAX_THUMB_DATA_URL_CHARS
-      ? body.face_verification.thumb_data_url
-      : null
-  if (!faceThumb) {
-    faceThumb = await buildFaceThumbDataUrl(parsedFace.buffer)
+  if (!attendancePhotoStorageReady()) {
+    logAttendanceCheckinValidationFailed({ ...logBase, reason: 'storage_not_configured', latencyMs: Date.now() - started })
+    return apiFailure(
+      'storage_unavailable',
+      'Attendance photo storage is not configured. Contact admin — check-in was not saved.',
+      { status: 503 },
+    )
+  }
+
+  const attendanceDateYmd = attendanceDateFor().toISOString().slice(0, 10)
+  const prepared = await prepareCheckInFaceAssets({
+    businessId: ctx.businessIds[0],
+    employeeId: ctx.employeeId,
+    userId: ctx.userId,
+    requestId: clientRequestId,
+    attendanceDateYmd,
+    buffer: parsedFace.buffer,
+    contentType: parsedFace.contentType,
+    sizeBytes: parsedFace.sizeBytes,
+  })
+
+  if (!prepared.ok) {
+    logAttendanceCheckinValidationFailed({
+      ...logBase,
+      reason: prepared.code,
+      message: prepared.message,
+      latencyMs: Date.now() - started,
+    })
+    return apiFailure(prepared.code, prepared.message, { status: 400 })
   }
 
   const metadata = normalizeClientMetadata(body.metadata)
@@ -112,13 +137,14 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
         userId: ctx.userId,
         employeeId: ctx.employeeId,
         metadata,
-        faceThumb,
+        faceAssets: prepared.assets,
         deviceType: logBase.deviceType,
       },
       { buffer: parsedFace.buffer, contentType: parsedFace.contentType },
     )
 
     if (!result.ok) {
+      await rollbackCheckInFaceUpload(prepared.assets.storage)
       logAttendanceCheckinValidationFailed({
         ...logBase,
         reason: result.code,
@@ -183,6 +209,7 @@ export const POST = withApiRoute('attendance.check_in', async (req: NextRequest)
       record: result.record,
     })
   } catch (e) {
+    await rollbackCheckInFaceUpload(prepared.assets.storage)
     logEvent('error', 'attendance.checkin.transaction_failed', {
       ...logBase,
       ...errorMeta(e),

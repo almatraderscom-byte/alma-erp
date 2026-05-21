@@ -77,6 +77,13 @@ const attendanceWidgetSmoke = spawnSync('node', ['scripts/attendance-widget-regr
 })
 if (attendanceWidgetSmoke.status !== 0) process.exit(attendanceWidgetSmoke.status ?? 1)
 
+const photoTelegramSmoke = spawnSync('node', ['scripts/attendance-photo-telegram-smoke.mjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  env: smokeEnv,
+})
+if (photoTelegramSmoke.status !== 0) process.exit(photoTelegramSmoke.status ?? 1)
+
 const prodVerify = spawnSync('node', ['scripts/attendance-production-verify.mjs'], {
   cwd: root,
   stdio: 'inherit',

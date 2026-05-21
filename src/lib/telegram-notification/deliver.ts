@@ -11,6 +11,7 @@ import {
   type TelegramSendResult,
 } from '@/lib/trading-telegram-bot'
 import { thumbBufferFromDataUrl } from '@/lib/attendance-face-image'
+import { loadAttendanceFacePhotoBuffer } from '@/lib/attendance-photo-storage'
 import { consumeLiveFacePhoto } from '@/lib/telegram-notification/face-photo-staging'
 import { telegramScreenshotPreviewUrl } from '@/lib/telegram-notification/screenshot-preview'
 
@@ -33,6 +34,8 @@ export type QueueRowMeta = {
   shotDate?: string
   type?: string
   deliveryMode?: 'photo' | 'face_photo' | 'text' | 'profile_avatar'
+  facePhotoBucket?: string
+  facePhotoPath?: string
   replyMarkup?: {
     inline_keyboard?: Array<Array<{ text: string; callback_data?: string; url?: string }>>
   }
@@ -228,6 +231,22 @@ async function deliverFaceVerifiedPhoto(
           live.buffer,
           'face-verification.jpg',
           live.contentType,
+          row.message,
+        )
+        if (photo.ok) return photo
+      }
+
+      const stored = await loadAttendanceFacePhotoBuffer({
+        facePhotoBucket: meta.facePhotoBucket,
+        facePhotoPath: meta.facePhotoPath,
+        attendanceRecordId,
+      })
+      if (stored) {
+        const photo = await sendTelegramPhotoBuffer(
+          row.chatId,
+          stored.buffer,
+          'face-verification.jpg',
+          stored.contentType,
           row.message,
         )
         if (photo.ok) return photo

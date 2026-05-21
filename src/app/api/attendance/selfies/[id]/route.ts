@@ -2,13 +2,65 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceSelfieDto } from '@/lib/attendance'
+import { resolveAttendanceImageRefForDisplay } from '@/lib/attendance-photo-storage'
 import { notifyUser } from '@/lib/notifications'
+
+async function findSelfieForAdmin(businessId: string, id: string, attendanceRecordId?: string | null) {
+  const byId = await prisma.attendanceSelfieVerification.findFirst({
+    where: { id, businessId },
+    include: { attendanceRecord: true },
+  })
+  if (byId) return byId
+
+  if (attendanceRecordId) {
+    return prisma.attendanceSelfieVerification.findFirst({
+      where: { attendanceRecordId, businessId },
+      orderBy: { capturedAt: 'desc' },
+      include: { attendanceRecord: true },
+    })
+  }
+
+  return prisma.attendanceSelfieVerification.findFirst({
+    where: { attendanceRecordId: id, businessId },
+    orderBy: { capturedAt: 'desc' },
+    include: { attendanceRecord: true },
+  })
+}
+
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const url = new URL(req.url)
+  const ctx = await getWalletContext(req, url.searchParams.get('business_id'))
+  if ('error' in ctx) return ctx.error
+  if (!ctx.isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const attendanceRecordId = url.searchParams.get('attendance_record_id')
+  const selfie = await findSelfieForAdmin(ctx.businessIds[0], params.id, attendanceRecordId)
+  if (!selfie) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Verification photo not found.',
+      code: 'photo_not_found',
+      diagnostic: 'No selfie row for this id or attendance record. Employee may need to check in again.',
+    }, { status: 404 })
+  }
+
+  const imageUrl = await resolveAttendanceImageRefForDisplay(selfie.imageDataUrl)
+  return NextResponse.json({
+    ok: true,
+    selfie: {
+      ...attendanceSelfieDto(selfie),
+      imageUrl,
+      imageMissing: !imageUrl,
+    },
+  })
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     action?: 'APPROVE' | 'REJECT'
     note?: string
+    attendance_record_id?: string
   }
   const ctx = await getWalletContext(req, body.business_id)
   if ('error' in ctx) return ctx.error
@@ -19,11 +71,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'action APPROVE|REJECT required' }, { status: 400 })
   }
 
-  const selfie = await prisma.attendanceSelfieVerification.findFirst({
-    where: { id: params.id, businessId: ctx.businessIds[0] },
-    include: { attendanceRecord: true },
-  })
-  if (!selfie) return NextResponse.json({ error: 'Verification photo not found.' }, { status: 404 })
+  const selfie = await findSelfieForAdmin(
+    ctx.businessIds[0],
+    params.id,
+    body.attendance_record_id || null,
+  )
+  if (!selfie) {
+    return NextResponse.json({
+      error: 'Verification photo not found.',
+      code: 'photo_not_found',
+      diagnostic:
+        'No stored verification asset for this request. If check-in succeeded today, ask the employee to open My Desk and retry verification.',
+    }, { status: 404 })
+  }
 
   const now = new Date()
   const note = String(body.note || '').trim().slice(0, 500) || null
@@ -56,5 +116,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     actionUrl: '/portal',
   })
 
-  return NextResponse.json({ ok: true, selfie: attendanceSelfieDto(updated) })
+  const imageUrl = await resolveAttendanceImageRefForDisplay(updated.imageDataUrl)
+  return NextResponse.json({
+    ok: true,
+    selfie: {
+      ...attendanceSelfieDto(updated),
+      imageUrl,
+      imageMissing: !imageUrl,
+    },
+  })
 }

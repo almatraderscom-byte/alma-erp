@@ -92,6 +92,30 @@ export async function uploadStorageObject(objectPath: string, file: Blob, conten
   return { bucket: cfg.bucket, objectPath }
 }
 
+export async function downloadStorageObject(bucket: string, objectPath: string): Promise<Buffer> {
+  const cfg = storageConfig()
+  const res = await fetch(
+    `${cfg.url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`,
+    { headers: storageHeaders(cfg.serviceKey), cache: 'no-store' },
+  )
+  if (!res.ok) {
+    throw new Error(`Storage download failed (${res.status})`)
+  }
+  const array = await res.arrayBuffer()
+  return Buffer.from(array)
+}
+
+export async function deleteStorageObject(bucket: string, objectPath: string) {
+  const cfg = storageConfig()
+  const res = await fetch(
+    `${cfg.url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`,
+    { method: 'DELETE', headers: storageHeaders(cfg.serviceKey) },
+  )
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Storage delete failed (${res.status})`)
+  }
+}
+
 export async function createSignedObjectUrl(bucket: string, objectPath: string, download = false) {
   const cfg = storageConfig()
   const res = await fetch(`${cfg.url}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${objectPath}`, {

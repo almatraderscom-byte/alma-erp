@@ -74,6 +74,8 @@ type AttendanceDashboard = {
     capturedAt: string
     sizeBytes: number
     imageDataUrl: string
+    imageUrl?: string | null
+    imageMissing?: boolean
     reviewedAt: string | null
   }>
   ranking: Array<{
@@ -462,7 +464,11 @@ export default function AttendancePage() {
             {pendingSelfieReviews.map(log => (
               <div key={log.id} className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={log.imageDataUrl} alt="Verification selfie" className="h-36 w-full rounded-xl object-cover bg-black/40" />
+                <VerificationPhoto
+                  src={log.imageUrl || log.imageDataUrl}
+                  missing={log.imageMissing}
+                  employeeId={log.employeeId}
+                />
                 <div className="mt-2 flex justify-between gap-2">
                   <span className="font-mono text-zinc-400">{log.employeeId}</span>
                   <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
@@ -488,7 +494,11 @@ export default function AttendancePage() {
             {data!.selfieLogs.slice(0, 12).map(log => (
               <div key={log.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={log.imageDataUrl} alt="Attendance selfie" className="h-32 w-full rounded-xl object-cover bg-black/40" />
+                <VerificationPhoto
+                  src={log.imageUrl || log.imageDataUrl}
+                  missing={log.imageMissing}
+                  employeeId={log.employeeId}
+                />
                 <div className="mt-2 flex justify-between gap-2">
                   <span className="font-mono text-zinc-500">{log.employeeId}</span>
                   <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
@@ -532,6 +542,37 @@ export default function AttendancePage() {
         </div>
       )}
     </FinancePageChrome>
+  )
+}
+
+function VerificationPhoto({
+  src,
+  missing,
+  employeeId,
+}: {
+  src: string | null | undefined
+  missing?: boolean
+  employeeId: string
+}) {
+  const [broken, setBroken] = useState(false)
+  const showFallback =
+    missing || broken || !src || (!src.startsWith('http') && !src.startsWith('data:image/'))
+  if (showFallback) {
+    return (
+      <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border border-amber-500/25 bg-black/40 px-3 text-center text-[10px] text-amber-200">
+        <span className="font-black uppercase tracking-wide">Photo unavailable</span>
+        <span className="text-zinc-500">Storage ref missing or expired for {employeeId}. Ask employee to re-verify if needed.</span>
+      </div>
+    )
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt="Verification selfie"
+      className="h-36 w-full rounded-xl object-cover bg-black/40"
+      onError={() => setBroken(true)}
+    />
   )
 }
 

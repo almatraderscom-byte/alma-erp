@@ -1,6 +1,7 @@
 import type { BusinessId } from '@/lib/businesses'
 import { prisma } from '@/lib/prisma'
 import { attendanceDateFor, attendanceRecordDto, attendanceWaiverDto } from '@/lib/attendance'
+import { resolveAttendanceImageRefForDisplay } from '@/lib/attendance-photo-storage'
 import { loadAttendanceRoster, dedupeEmployeesByUserId } from '@/lib/attendance-business'
 import { resolveProfileImageForUser } from '@/lib/user-display'
 import { scanAttendanceIntegrity } from '@/lib/attendance-integrity'
@@ -152,15 +153,22 @@ export async function buildAdminAttendanceDashboard(input: {
       requesterProfileImageUrl: resolveProfileImageForUser(w.requester),
       lateMinutes: w.attendanceRecord.lateMinutes,
     })),
-    selfieLogs: selfieRows.map(row => ({
-      id: row.id,
-      attendanceRecordId: row.attendanceRecordId,
-      employeeId: row.employeeId,
-      capturedAt: row.capturedAt.toISOString(),
-      sizeBytes: row.sizeBytes,
-      imageDataUrl: row.imageDataUrl,
-      reviewedAt: row.reviewedAt?.toISOString() || null,
-    })),
+    selfieLogs: await Promise.all(
+      selfieRows.map(async row => {
+        const imageUrl = await resolveAttendanceImageRefForDisplay(row.imageDataUrl)
+        return {
+          id: row.id,
+          attendanceRecordId: row.attendanceRecordId,
+          employeeId: row.employeeId,
+          capturedAt: row.capturedAt.toISOString(),
+          sizeBytes: row.sizeBytes,
+          imageDataUrl: row.imageDataUrl,
+          imageUrl,
+          imageMissing: !imageUrl,
+          reviewedAt: row.reviewedAt?.toISOString() || null,
+        }
+      }),
+    ),
     ranking,
     integrity: {
       issueCount: integrity.issues.length,
