@@ -178,19 +178,16 @@ async function measureStorageHealth(refMissingSince: Date): Promise<{
   sampleError: string | null
   missingRefsLastDay: number
 }> {
-  // We don't probe a real object (avoid PII); we infer from photo logs:
-  // count of `attendance.photo.file_missing` events emitted via the queue is
-  // tracked via Logtail not Prisma, so we just inspect selfie rows with empty
-  // imageDataUrl as a cheap orphan-storage indicator.
+  // We don't probe a real object (avoid PII); we infer from rows that point
+  // at a storage ref the lambda could not later resolve. The selfie schema
+  // marks imageDataUrl as non-nullable, so the cheapest indicator is an
+  // empty string after the storage layer failed to encode a ref.
   let missingRefsLastDay = 0
   try {
     missingRefsLastDay = await prisma.attendanceSelfieVerification.count({
       where: {
         capturedAt: { gte: refMissingSince },
-        OR: [
-          { imageDataUrl: null as never },
-          { imageDataUrl: '' },
-        ],
+        imageDataUrl: '',
       },
     })
   } catch {
