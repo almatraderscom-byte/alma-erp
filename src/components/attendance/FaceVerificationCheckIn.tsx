@@ -412,6 +412,8 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   src={preview}
                   alt="Face preview"
                   className="mx-auto max-h-[min(42vh,280px)] w-full object-contain"
+                  data-attendance-photo="true"
+                  data-private="true"
                 />
               </div>
               <p className="text-center text-xs font-bold text-gold-lt">Photo ready — confirm below</p>

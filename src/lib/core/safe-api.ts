@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { apiFailure, apiSuccess, type ApiErrorShape } from '@/lib/safe-api-response'
+import { captureException } from '@/lib/sentry/capture'
 
 export type { ApiErrorShape }
 
@@ -9,8 +10,28 @@ export { apiSuccess, apiFailure } from '@/lib/safe-api-response'
 
 type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse>
 
+/** Best-effort: attach route + requestId as Sentry tags for the current scope. */
+async function tagSentryScope(routeLabel: string, requestId?: string): Promise<void> {
+  if (typeof window !== 'undefined') return
+  try {
+    const Sentry = await import('@sentry/nextjs')
+    const scope = Sentry.getCurrentScope()
+    if (!scope) return
+    scope.setTag('route', routeLabel)
+    if (requestId) {
+      scope.setTag('request.id', requestId)
+      scope.setExtra('requestId', requestId)
+    }
+  } catch {
+    /* Sentry not initialized — never block request */
+  }
+}
+
 /**
  * Wraps an API route handler — always returns JSON, never raw Prisma/HTML errors.
+ * Also: tags the active Sentry scope with the route label and incoming X-Request-Id,
+ * and captures uncaught exceptions explicitly so they always show in Sentry even
+ * when the structured logger downgrades them.
  */
 export function withApiRoute(
   routeLabel: string,
@@ -21,6 +42,8 @@ export function withApiRoute(
 ): RouteHandler {
   return async (req: NextRequest, ctx?: unknown) => {
     const started = Date.now()
+    const requestId = req.headers.get('x-request-id')?.trim() || undefined
+    await tagSentryScope(routeLabel, requestId)
     try {
       return await handler(req, ctx)
     } catch (err) {
@@ -28,9 +51,21 @@ export function withApiRoute(
       const message = (err as Error).message || String(err)
       logEvent('error', `${routeLabel}.failed`, {
         route: routeLabel,
+        requestId,
         durationMs: Date.now() - started,
         errMessage: message,
         ...errorMeta(err),
+      })
+      // Always capture uncaught route errors to Sentry — categorised + tagged.
+      void captureException(err, {
+        category: 'api',
+        event: `${routeLabel}.failed`,
+        critical: true,
+        extra: {
+          route: routeLabel,
+          requestId,
+          durationMs: Date.now() - started,
+        },
       })
       if (custom) {
         return apiFailure(custom.code, custom.message, {

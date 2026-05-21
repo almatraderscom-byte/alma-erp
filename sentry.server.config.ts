@@ -1,6 +1,12 @@
 import * as Sentry from '@sentry/nextjs'
-import { baseSentryOptions } from '@/lib/sentry/config'
+import { baseSentryOptions, isSentryEnabled } from '@/lib/sentry/config'
 
-Sentry.init({
-  ...baseSentryOptions(),
-})
+if (isSentryEnabled()) {
+  Sentry.init({
+    ...baseSentryOptions(),
+    // Server-side: requestId is set as a tag from withApiRoute scope, so we
+    // intentionally do not enable Sentry's HTTP integration body capture
+    // (that would re-introduce attendance photo bodies).
+    integrations: [],
+  })
+}
