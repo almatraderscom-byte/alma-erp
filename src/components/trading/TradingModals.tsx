@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import toast from 'react-hot-toast'
 import { Button, Card, Input, Select, Spinner } from '@/components/ui'
 import { useAddTradingBkashSummary, useAddTradingCapital, useAddTradingExpense, useCreateTradingAccount, useSubmitTradingTrade, useUpdateTradingAccount, useUploadTradingAttachment } from '@/hooks/useTrading'
@@ -70,6 +70,7 @@ export function TradingAccountModal({
 }) {
   const { mutate: create, loading: creating } = useCreateTradingAccount()
   const { mutate: update, loading: updating } = useUpdateTradingAccount()
+  const formRef = useRef<HTMLFormElement>(null)
   const [form, setForm] = useState<TradingAccountInput>({
     accountTitle: '',
     binanceUid: '',
@@ -122,8 +123,24 @@ export function TradingAccountModal({
 
   const saving = creating || updating
   return (
-    <ModalFrame open={open} onClose={onClose} title={account ? 'Edit trading account' : 'Create trading account'} desc="Independent merchant wallet with its own capital, staff, expenses, and ROI.">
-      <form onSubmit={e => void submit(e)} className="space-y-3">
+    <ModalFrame
+      open={open}
+      onClose={onClose}
+      title={account ? 'Edit trading account' : 'Create trading account'}
+      desc="Independent merchant wallet with its own capital, staff, expenses, and ROI."
+      footer={
+        <Button
+          type="button"
+          variant="gold"
+          className="w-full justify-center"
+          disabled={saving}
+          onClick={() => formRef.current?.requestSubmit()}
+        >
+          {saving ? <><Spinner /> Saving</> : 'Save account'}
+        </Button>
+      }
+    >
+      <form ref={formRef} id="trading-account-form" onSubmit={e => void submit(e)} className="space-y-3">
         <Input value={form.accountTitle} onChange={e => setForm(f => ({ ...f, accountTitle: e.target.value }))} placeholder="Account Name *" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input inputMode="decimal" type="number" min="0" step="0.01" value={form.startingCapital ?? ''} onChange={e => setForm(f => ({ ...f, startingCapital: Number(e.target.value) }))} placeholder="Initial Capital (BDT) *" />
@@ -165,7 +182,6 @@ export function TradingAccountModal({
         </div>
         <textarea value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Notes" />
         <p className="text-[11px] text-zinc-500">Wallet formula: Initial Capital + Net Profit - Expenses - Withdrawals. Account expenses also feed global finance and management reports.</p>
-        <Button type="submit" variant="gold" className="w-full justify-center" disabled={saving}>{saving ? <><Spinner /> Saving</> : 'Save account'}</Button>
       </form>
     </ModalFrame>
   )
