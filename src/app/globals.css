@@ -367,3 +367,124 @@ a,
     overscroll-behavior: none;
   }
 }
+
+/* ── Ambient background (GPU-friendly, behind all UI; z-index 0 only) ── */
+:root {
+  --ambient-gold: rgba(212, 175, 55, 0.08);
+  --ambient-amber: rgba(245, 158, 11, 0.06);
+  --ambient-cream: rgba(255, 245, 230, 0.05);
+  --ambient-base: radial-gradient(
+    ellipse 120% 80% at 50% -20%,
+    rgba(201, 168, 76, 0.12) 0%,
+    rgba(8, 8, 10, 0) 55%
+  );
+}
+
+.ambient-bg-root {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  transform: translate3d(0, 0, 0);
+  background: var(--ambient-base);
+}
+
+.ambient-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+  opacity: 0.12;
+}
+
+.ambient-blob-1 {
+  width: 560px;
+  height: 560px;
+  background: var(--ambient-gold);
+  top: -120px;
+  left: -140px;
+  animation: ambient-drift-1 28s ease-in-out infinite;
+}
+
+.ambient-blob-2 {
+  width: 480px;
+  height: 480px;
+  background: var(--ambient-amber);
+  top: 35%;
+  right: -120px;
+  animation: ambient-drift-2 32s ease-in-out infinite;
+  animation-delay: -8s;
+}
+
+.ambient-blob-3 {
+  width: 520px;
+  height: 520px;
+  background: var(--ambient-cream);
+  bottom: -160px;
+  left: 25%;
+  animation: ambient-drift-3 26s ease-in-out infinite;
+  animation-delay: -14s;
+}
+
+@keyframes ambient-drift-1 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.08;
+  }
+  50% {
+    transform: translate3d(72px, 48px, 0);
+    opacity: 0.14;
+  }
+}
+
+@keyframes ambient-drift-2 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.06;
+  }
+  50% {
+    transform: translate3d(-64px, 40px, 0);
+    opacity: 0.12;
+  }
+}
+
+@keyframes ambient-drift-3 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.05;
+  }
+  50% {
+    transform: translate3d(48px, -56px, 0);
+    opacity: 0.11;
+  }
+}
+
+@media (max-width: 640px) {
+  .ambient-blob-2,
+  .ambient-blob-3 {
+    display: none;
+  }
+
+  .ambient-blob-1 {
+    width: 420px;
+    height: 420px;
+    animation-duration: 45s;
+    opacity: 0.09;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-blob {
+    animation: none;
+    transform: translate3d(0, 0, 0);
+    opacity: 0.1;
+  }
+
+  .ambient-bg-root {
+    background: var(--ambient-base);
+  }
+}
