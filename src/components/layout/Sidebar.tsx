@@ -15,7 +15,7 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 import { cn } from '@/lib/utils'
 import { safeFetchJson } from '@/lib/safe-fetch'
-import useApprovalPendingCount from '@/hooks/useApprovalPendingCount'
+import { useApprovalCount } from '@/contexts/ApprovalCountContext'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -56,7 +56,7 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const { business } = useBusiness()
   const { role } = useActor()
-  const { count: approvalCount } = useApprovalPendingCount()
+  const { count: approvalCount } = useApprovalCount()
   const nav = filterNavByRole(getNavForBusiness(business.id), role, business.id).map(item => (
     item.href === '/approvals' ? { ...item, badge: approvalCount ? String(approvalCount) : null } : item
   ))
@@ -179,7 +179,7 @@ export function MobileNav() {
   const { role } = useActor()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [unread, setUnread] = useState(0)
-  const { count: approvalCount } = useApprovalPendingCount()
+  const { count: approvalCount } = useApprovalCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
   const dashboardHref = roleHomePath(role, business.id)

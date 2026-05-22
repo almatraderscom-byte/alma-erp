@@ -18,6 +18,7 @@ import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
+import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
 
@@ -64,22 +65,24 @@ function ErpChrome({ children }: { children: ReactNode }) {
   const mainScrollRef = useRef<HTMLElement>(null)
 
   return (
-    <NotificationShellProvider>
-      <SentryUserBridge />
-      <div className="flex h-[100dvh] w-full overflow-hidden">
-        <Sidebar />
-        <main ref={mainScrollRef} className="flex-1 overflow-y-auto min-w-0 scrollbar-hide overscroll-y-contain">
-          <MobilePullToRefresh scrollRef={mainScrollRef}>
-            {children}
-            <MobileBottomSpacer />
-          </MobilePullToRefresh>
-        </main>
-      </div>
-      <MobileNavBar />
-      <RouteTransitionLoader />
-      <RoutePrefetcher />
-      <OneSignalPushManager />
-    </NotificationShellProvider>
+    <ApprovalCountProvider>
+      <NotificationShellProvider>
+        <SentryUserBridge />
+        <div className="flex h-[100dvh] w-full overflow-hidden">
+          <Sidebar />
+          <main ref={mainScrollRef} className="flex-1 overflow-y-auto min-w-0 scrollbar-hide overscroll-y-contain">
+            <MobilePullToRefresh scrollRef={mainScrollRef}>
+              {children}
+              <MobileBottomSpacer />
+            </MobilePullToRefresh>
+          </main>
+        </div>
+        <MobileNavBar />
+        <RouteTransitionLoader />
+        <RoutePrefetcher />
+        <OneSignalPushManager />
+      </NotificationShellProvider>
+    </ApprovalCountProvider>
   )
 }
 
