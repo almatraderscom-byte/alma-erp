@@ -18,6 +18,7 @@ import {
 } from '@/lib/telegram-mapping-options'
 import { TradingTelegramMonitorTab } from '@/components/trading/TradingTelegramMonitorTab'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { PLATFORM_Z } from '@/lib/platform-z-index'
 import type {
   TradingAccountAliasRow,
   TradingTelegramChatRow,
@@ -1102,7 +1103,7 @@ function EditModal({
   onSave: () => void
 }) {
   return (
-    <MobileModalPortal open zIndex={50} onBackdropClick={onClose}>
+    <MobileModalPortal open zIndex={PLATFORM_Z.pageModal} onBackdropClick={onClose}>
       <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl">
         <div className="mobile-modal-header p-4 pb-3">
           <p className="text-sm font-black text-cream">Edit draft</p>
