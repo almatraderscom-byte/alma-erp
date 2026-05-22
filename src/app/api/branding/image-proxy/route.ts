@@ -12,7 +12,14 @@ export async function GET(req: NextRequest) {
   }
   const proxiedUrl = normalizeImageUrl(url)
   const parsed = new URL(proxiedUrl)
-  const allowedHosts = ['drive.google.com', 'lh3.googleusercontent.com', 'storage.googleapis.com', 'supabase.co', 'vercel.app']
+  const allowedHosts = [
+    'drive.google.com',
+    'googleusercontent.com',
+    'storage.googleapis.com',
+    'supabase.co',
+    'vercel.app',
+    'blob.vercel-storage.com',
+  ]
   if (!allowedHosts.some(host => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
     return NextResponse.json({ error: 'image host not allowed' }, { status: 400 })
   }

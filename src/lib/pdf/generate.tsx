@@ -19,7 +19,10 @@ async function renderBlob(model: InvoicePdfModel): Promise<Blob> {
   await ensurePdfFonts()
   pdfDebug('step 6: fonts ready', { family: pdfSafeMode() ? 'Helvetica' : 'AlmaPDF/Helvetica' })
 
-  const renderModel = pdfSafeMode() ? stripPdfAssets(model) : model
+  const renderModel =
+    pdfSafeMode() && !model.branding.logoDataUrl && !model.qrDataUrl
+      ? stripPdfAssets(model)
+      : model
 
   pdfDebug('step 7: creating PDF document')
   const instance = pdf(<PremiumInvoiceDocument model={renderModel} />)

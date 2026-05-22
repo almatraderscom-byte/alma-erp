@@ -17,6 +17,7 @@ import { defaultBusinessBranding } from '@/lib/branding-defaults'
 import { orderToPdfModel } from '@/lib/pdf/models'
 import { generateInvoicePdfBlob } from '@/lib/pdf/generate'
 import { fetchLogoDataUrl } from '@/lib/pdf/branding'
+import { shareSlugAlma } from '@/lib/pdf/format'
 import { withTimeout } from '@/lib/pdf/timeout'
 import { enqueueInvoiceReadySms } from '@/services/sms/events'
 
@@ -129,7 +130,8 @@ export async function POST(req: NextRequest) {
     }
 
     const t0 = Date.now()
-    const result = await generateAndSaveDriveInvoice(req, order, businessId, existing?.invoiceNumber, existing?.paymentStatus)
+    const prepared = await prepareInvoicePdf(req, order, businessId, existing?.invoiceNumber, existing?.paymentStatus)
+    const result = prepared.result
     const invoice = await upsertInvoiceRecord({
       order,
       businessId,
@@ -138,6 +140,15 @@ export async function POST(req: NextRequest) {
       eventType: existing || result.duplicate ? 'REGENERATED' : 'CREATED',
       note: existing || result.duplicate ? 'Invoice regenerated safely.' : 'Invoice generated.',
     })
+    if (prepared.pdfBase64 && !result.duplicate) {
+      void uploadInvoicePdfToDrive(req, {
+        orderId: order.id,
+        businessId,
+        invoiceNumber: String(result.invoice_number || invoice.invoiceNumber),
+        pdfBase64: prepared.pdfBase64,
+        invoiceRecordId: invoice.id,
+      })
+    }
     logEvent('info', 'invoice.generate_completed', {
       orderId: id,
       invoiceNumber: result?.invoice_number,
@@ -194,13 +205,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateAndSaveDriveInvoice(
+async function prepareInvoicePdf(
   req: NextRequest,
   order: Order,
   businessId: string,
   existingInvoiceNumber?: string | null,
   paymentStatus?: InvoicePaymentStatus | null,
-): Promise<InvoiceResult> {
+): Promise<{ result: InvoiceResult; pdfBase64?: string }> {
   const invoiceNumber = existingInvoiceNumber || order.invoice_num || await peekInvoiceNumber()
   const branding = await resolveInvoiceBranding(businessId)
   const logoDataUrl = await resolveInvoiceLogoDataUrl(branding, order.id)
@@ -210,24 +221,98 @@ async function generateAndSaveDriveInvoice(
     throw new Error(generated.error)
   }
   const pdfBase64 = Buffer.from(await generated.blob.arrayBuffer()).toString('base64')
-  const result = await serverPost<InvoiceResult>('save_invoice_pdf', await mergeActorPayload(req, {
-    id: order.id,
-    business_id: businessId,
-    invoice_number: invoiceNumber,
-    pdf_base64: pdfBase64,
-    allow_regenerate: true,
-    renderer: 'react-pdf',
-  }), {
-    timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
-  })
-  logEvent('info', 'invoice.react_pdf_saved', {
+  const internalShareUrl = buildInternalInvoiceShareUrl(req, order.id)
+  logEvent('info', 'invoice.react_pdf_rendered', {
     orderId: order.id,
-    invoiceNumber: result.invoice_number || invoiceNumber,
+    invoiceNumber,
     pdfBytes: generated.blob.size,
     renderMs: generated.durationMs,
     logoLoaded: Boolean(logoDataUrl),
   })
-  return result
+  return {
+    pdfBase64,
+    result: {
+      ok: true,
+      invoice_number: invoiceNumber,
+      file_url: internalShareUrl,
+      drive_url: internalShareUrl,
+      share_url: internalShareUrl,
+      file_name: `Invoice-${order.id}.pdf`,
+      duplicate: false,
+      drive_sync: 'pending',
+      renderer: 'react-pdf',
+    },
+  }
+}
+
+async function uploadInvoicePdfToDrive(
+  req: NextRequest,
+  input: {
+    orderId: string
+    businessId: string
+    invoiceNumber: string
+    pdfBase64: string
+    invoiceRecordId: string
+  },
+) {
+  const started = Date.now()
+  try {
+    const driveResult = await serverPost<InvoiceResult>('save_invoice_pdf', await mergeActorPayload(req, {
+      id: input.orderId,
+      business_id: input.businessId,
+      invoice_number: input.invoiceNumber,
+      pdf_base64: input.pdfBase64,
+      allow_regenerate: true,
+      renderer: 'react-pdf',
+    }), {
+      timeoutMs: INVOICE_SERVER_TIMEOUT_MS,
+    })
+    const url = String(driveResult.drive_url || driveResult.file_url || driveResult.share_url || '').trim()
+    if (url) {
+      await prisma.invoiceRecord.update({
+        where: { id: input.invoiceRecordId },
+        data: {
+          driveUrl: String(driveResult.drive_url || url),
+          fileUrl: String(driveResult.file_url || url),
+          shareUrl: String(driveResult.share_url || url),
+          fileName: String(driveResult.file_name || ''),
+        },
+      })
+    }
+    logEvent('info', 'invoice.react_pdf_saved', {
+      orderId: input.orderId,
+      invoiceNumber: driveResult.invoice_number || input.invoiceNumber,
+      wallMs: Date.now() - started,
+      driveUrl: url || undefined,
+    })
+  } catch (e) {
+    logEvent('warn', 'invoice.drive_upload_failed', {
+      orderId: input.orderId,
+      invoiceRecordId: input.invoiceRecordId,
+      ...errorMeta(e),
+      wallMs: Date.now() - started,
+    })
+  }
+}
+
+function buildInternalInvoiceShareUrl(req: NextRequest, orderId: string) {
+  const origin = resolveAppOrigin(req)
+  const path = `/invoice/share/${shareSlugAlma(orderId)}`
+  return origin ? `${origin}${path}` : path
+}
+
+function resolveAppOrigin(req: NextRequest) {
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  const host = forwardedHost || req.headers.get('host')
+  if (!host) {
+    return (
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXTAUTH_URL ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+    ).replace(/\/$/, '')
+  }
+  const proto = req.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https')
+  return `${proto}://${host}`.replace(/\/$/, '')
 }
 
 async function peekInvoiceNumber() {
@@ -247,9 +332,9 @@ async function resolveInvoiceBranding(businessId: string): Promise<BusinessBrand
 }
 
 async function resolveInvoiceLogoDataUrl(branding: BusinessBranding, orderId: string) {
-  if (!branding.logo_url) return undefined
+  if (!branding.logo_url?.startsWith('http')) return undefined
   try {
-    return await withTimeout(fetchLogoDataUrl(branding.logo_url), 5000, 'invoice logo preload')
+    return await withTimeout(fetchLogoDataUrl(branding.logo_url), 8000, 'invoice logo preload')
   } catch (e) {
     logEvent('warn', 'invoice.logo_fallback_for_pdf', { ...errorMeta(e), orderId, logoUrlHost: safeHost(branding.logo_url) })
     return undefined

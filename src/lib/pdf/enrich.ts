@@ -36,6 +36,10 @@ async function enrichFull(model: InvoicePdfModel): Promise<InvoicePdfModel> {
 }
 
 async function resolveLogoDataUrl(model: InvoicePdfModel): Promise<string | undefined> {
+  if (model.branding.logoDataUrl?.startsWith('data:image/')) {
+    pdfDebug('step 3: logo reused from prepared model')
+    return model.branding.logoDataUrl
+  }
   let logoDataUrl = model.branding.logoDataUrl
   if (!logoDataUrl?.startsWith('data:') && model.branding.logoUrl) {
     try {

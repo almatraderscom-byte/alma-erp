@@ -412,6 +412,8 @@ export interface GenerateInvoiceRes extends MutationOk {
   invoice?: InvoiceRegistryRecord
   /** True when invoice number already existed; `drive_url` may be a reused PDF link */
   duplicate?: boolean
+  /** React PDF rendered; Google Drive save may still be running server-side */
+  drive_sync?: 'pending' | 'complete'
 }
 export interface InvoiceRegistryRecord {
   id: string

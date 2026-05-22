@@ -1,10 +1,17 @@
-export function pdfMoney(n: number): string {
+import { BDT_SYMBOL } from '@/lib/currency'
+
+/** PDF-safe currency prefix — use BDT text when Bengali font is unavailable. */
+export type PdfCurrencyMode = 'bdt' | 'symbol'
+
+export function pdfMoney(n: number, mode: PdfCurrencyMode = 'bdt'): string {
   const value = Number(n || 0)
   const hasDecimals = Math.abs(value % 1) > 0
-  return value.toLocaleString('en-BD', {
+  const formatted = value.toLocaleString('en-BD', {
     minimumFractionDigits: hasDecimals ? 2 : 0,
     maximumFractionDigits: 2,
   })
+  const prefix = mode === 'symbol' ? BDT_SYMBOL : 'BDT '
+  return `${prefix}${formatted}`
 }
 
 export function pdfDate(s: string): string {

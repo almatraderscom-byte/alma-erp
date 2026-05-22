@@ -89,7 +89,7 @@ export function orderToPdfModel(
     }] : [],
     branding: b,
     theme: 'dark',
-    currencyLabel: '\u09F3',
+    currencyLabel: 'BDT',
   }
 }
 
@@ -138,7 +138,7 @@ export function cditInvoiceToPdfModel(
     })),
     branding: b,
     theme: 'dark',
-    currencyLabel: '\u09F3',
+    currencyLabel: 'BDT',
   }
 }
 

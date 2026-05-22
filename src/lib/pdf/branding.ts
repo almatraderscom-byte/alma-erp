@@ -5,7 +5,20 @@ import { errorMeta, logEvent } from '@/lib/logger'
 const LOGO_CACHE_TTL_MS = 10 * 60 * 1000
 const LOGO_FETCH_TIMEOUT_MS = 5000
 const MAX_LOGO_BYTES = 5_000_000
-const ALLOWED_LOGO_HOSTS = ['drive.google.com', 'lh3.googleusercontent.com', 'storage.googleapis.com', 'supabase.co', 'vercel.app']
+const ALLOWED_LOGO_HOST_SUFFIXES = [
+  'drive.google.com',
+  'googleusercontent.com',
+  'storage.googleapis.com',
+  'supabase.co',
+  'vercel.app',
+  'blob.vercel-storage.com',
+]
+
+function isAllowedLogoHost(hostname: string) {
+  return ALLOWED_LOGO_HOST_SUFFIXES.some(
+    host => hostname === host || hostname.endsWith(`.${host}`),
+  )
+}
 const logoDataUrlCache = new Map<string, { expiresAt: number; promise: Promise<string | undefined> }>()
 
 export function brandingToPdf(b: BusinessBranding, logoDataUrl?: string): InvoicePdfBranding {
@@ -84,7 +97,7 @@ async function fetchLogoDataUrlUncached(logoUrl: string): Promise<string | undef
 async function fetchLogoDirect(logoUrl: string, signal: AbortSignal) {
   const normalized = normalizeImageUrl(logoUrl)
   const parsed = new URL(normalized)
-  if (!ALLOWED_LOGO_HOSTS.some(host => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
+  if (!isAllowedLogoHost(parsed.hostname)) {
     throw new Error(`Logo host not allowed: ${parsed.hostname}`)
   }
   return fetch(normalized, { redirect: 'follow', signal, cache: 'force-cache' })

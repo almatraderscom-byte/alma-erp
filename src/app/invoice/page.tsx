@@ -83,13 +83,13 @@ export default function InvoicePage() {
 
   const liveOrFallbackBranding = useCallback(async (): Promise<{ branding: BusinessBranding; logoDataUrl?: string; source: 'live' | 'cached' | 'default' }> => {
     if (branding) {
-      const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 5000, 'logo preload').catch(() => undefined)
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(branding.logo_url), 8000, 'logo preload').catch(() => undefined)
       return { branding, logoDataUrl, source: 'live' }
     }
 
     const cached = readCachedBranding(business.id)
     if (cached) {
-      const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 5000, 'cached logo preload').catch(() => undefined)
+      const logoDataUrl = await withTimeout(fetchLogoDataUrl(cached.logo_url), 8000, 'cached logo preload').catch(() => undefined)
       return { branding: cached, logoDataUrl, source: 'cached' }
     }
 
@@ -175,7 +175,12 @@ export default function InvoicePage() {
     try {
       const r = await api.mutations.generateInvoice(preview.id, { allowRegenerate })
       if (r?.ok) {
-        toast.success(r.duplicate ? `Invoice already exists: ${r.invoice_number || ''}` : `Saved invoice: ${r.invoice_number || ''}`)
+        const msg = r.duplicate
+          ? `Invoice already exists: ${r.invoice_number || ''}`
+          : r.drive_sync === 'pending'
+            ? `Invoice ${r.invoice_number || ''} ready — Google Drive upload finishing in background`
+            : `Saved invoice: ${r.invoice_number || ''}`
+        toast.success(msg)
         await Promise.all([refetchOrders(), loadRegistry()])
       }
     } catch (e) {

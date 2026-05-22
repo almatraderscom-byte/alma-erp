@@ -4,14 +4,23 @@ import {
 } from '@react-pdf/renderer'
 import type { InvoicePdfModel } from '@/lib/pdf/types'
 import { compactScale } from '@/lib/pdf/models'
-import { pdfMoney, pdfDate } from '@/lib/pdf/format'
+import { pdfMoney, pdfDate, type PdfCurrencyMode } from '@/lib/pdf/format'
 import { A4_SIZE, A4_PADDING_PT, A4_WIDTH_PT, A4_HEIGHT_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
+import { FONT_STACK_PDF } from '@/lib/currency'
 
 const MAX_FIRST_PAGE_ROWS = 12
 const MAX_CONTINUATION_ROWS = 24
 const WATERMARK_WIDTH = 450
 const WATERMARK_HEIGHT = 180
+
+function invoiceCurrencyMode(model: InvoicePdfModel): PdfCurrencyMode {
+  return model.currencyLabel === 'symbol' || getPdfFontFamily() === FONT_STACK_PDF ? 'symbol' : 'bdt'
+}
+
+function invoiceMoney(model: InvoicePdfModel, n: number) {
+  return pdfMoney(n, invoiceCurrencyMode(model))
+}
 
 function chunkRows<T>(rows: T[], firstPageMax: number, nextPageMax: number): T[][] {
   if (rows.length <= firstPageMax) return [rows]
@@ -272,8 +281,8 @@ function ItemsTable({
             {item.meta ? <Text style={s.itemMeta}>{item.meta}</Text> : null}
           </View>
           <Text style={[s.colQty, { fontSize: scale.base }]}>{item.qty}</Text>
-          <Text style={[s.colUnit, { fontSize: scale.base }]}>{pdfMoney(item.unitPrice)}</Text>
-          <Text style={[s.colSub, { fontSize: scale.base, fontWeight: 700 }]}>{pdfMoney(item.subtotal)}</Text>
+          <Text style={[s.colUnit, { fontSize: scale.base }]}>{invoiceMoney(model, item.unitPrice)}</Text>
+          <Text style={[s.colSub, { fontSize: scale.base, fontWeight: 700 }]}>{invoiceMoney(model, item.subtotal)}</Text>
         </View>
       ))}
     </View>
@@ -290,13 +299,13 @@ function PaymentAndSummary({ model, styles: s }: { model: InvoicePdfModel; style
         {payRows.length > 0 ? payRows.map((p, i) => (
           <View key={`${p.date}-${i}`} style={s.payRow}>
             <Text style={s.payCol1}>{pdfDate(p.date)} · {p.method}</Text>
-            <Text style={s.payCol2}>{pdfMoney(p.amount)}</Text>
+            <Text style={s.payCol2}>{invoiceMoney(model, p.amount)}</Text>
             <Text style={s.payCol3}>{p.note || ''}</Text>
           </View>
         )) : <Text style={s.rowText}>No payment has been recorded yet.</Text>}
         {model.total > 0 ? (
           <>
-            <Text style={s.progressText}>Paid {model.paidPercentage}% · Due {pdfMoney(model.dueAmount)}</Text>
+            <Text style={s.progressText}>Paid {model.paidPercentage}% · Due {invoiceMoney(model, model.dueAmount)}</Text>
             <View style={s.progressBar}>
               <View style={[s.progressFill, { flex: Math.max(0.01, model.paidPercentage / 100) }]} />
               <View style={{ flex: Math.max(0.01, (100 - model.paidPercentage) / 100) }} />
@@ -311,13 +320,13 @@ function PaymentAndSummary({ model, styles: s }: { model: InvoicePdfModel; style
         ) : null}
       </View>
       <View style={s.summary}>
-        <View style={s.sumRow}><Text>Subtotal</Text><Text>{pdfMoney(model.subtotal)}</Text></View>
-        {model.discount > 0 ? <View style={s.sumRow}><Text>Discount</Text><Text>-{pdfMoney(model.discount)}</Text></View> : null}
-        {model.vat > 0 ? <View style={s.sumRow}><Text>VAT</Text><Text>{pdfMoney(model.vat)}</Text></View> : null}
-        {model.shipping > 0 ? <View style={s.sumRow}><Text>Shipping</Text><Text>{pdfMoney(model.shipping)}</Text></View> : null}
-        <View style={s.sumRow}><Text>Paid</Text><Text>{pdfMoney(model.totalPaid)}</Text></View>
-        {model.dueAmount > 0 ? <View style={s.sumRow}><Text>Due</Text><Text>{pdfMoney(model.dueAmount)}</Text></View> : null}
-        <View style={s.grandRow}><Text>Total</Text><Text>{pdfMoney(model.total)}</Text></View>
+        <View style={s.sumRow}><Text>Subtotal</Text><Text>{invoiceMoney(model, model.subtotal)}</Text></View>
+        {model.discount > 0 ? <View style={s.sumRow}><Text>Discount</Text><Text>-{invoiceMoney(model, model.discount)}</Text></View> : null}
+        {model.vat > 0 ? <View style={s.sumRow}><Text>VAT</Text><Text>{invoiceMoney(model, model.vat)}</Text></View> : null}
+        {model.shipping > 0 ? <View style={s.sumRow}><Text>Shipping</Text><Text>{invoiceMoney(model, model.shipping)}</Text></View> : null}
+        <View style={s.sumRow}><Text>Paid</Text><Text>{invoiceMoney(model, model.totalPaid)}</Text></View>
+        {model.dueAmount > 0 ? <View style={s.sumRow}><Text>Due</Text><Text>{invoiceMoney(model, model.dueAmount)}</Text></View> : null}
+        <View style={s.grandRow}><Text>Total</Text><Text>{invoiceMoney(model, model.total)}</Text></View>
       </View>
     </View>
   )
