@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -12,6 +12,7 @@ import type { TradingAccount, TradingBkashDailySummary, TradingCapitalEntry, Tra
 import { money, signedClass, statusClass } from '@/components/trading/trading-utils'
 import { optimizeTradingScreenshot } from '@/lib/trading-screenshot'
 import { invalidateQueryCache } from '@/hooks/useQuery'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 const TradeEntryModal = dynamic(
   () => import('@/components/trading/TradingModals').then(mod => mod.TradeEntryModal),
@@ -381,6 +382,7 @@ function TradeList({ rows, isSuperAdmin, onAction }: { rows: TradingTrade[]; isS
 
 function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeActionMode; trade: TradingTrade } | null; onClose: () => void; onSaved: (res: { trade: TradingTrade; summary?: TradingSummary }) => void }) {
   const mutation = useUpdateTradingTrade()
+  const tradeActionFormRef = useRef<HTMLFormElement>(null)
   const [form, setForm] = useState({ tradeType: 'BUY' as 'BUY' | 'SELL', usdtAmount: '', bdtRate: '', feeUsdt: '', tradeDate: '', notes: '', reason: '' })
 
   useEffect(() => {
@@ -429,18 +431,30 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
     onClose()
   }
 
+  const submitLabel = mutation.loading
+    ? <><Spinner /> Processing</>
+    : mode === 'edit'
+      ? 'Save edit'
+      : mode === 'request_delete'
+        ? 'Send delete request'
+        : mode === 'approve_delete'
+          ? 'Approve soft delete'
+          : 'Reject request'
+
   return (
-    <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <Card className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto border-gold-dim/30 p-5 shadow-2xl">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-black text-cream">{title}</p>
-            <p className="mt-1 text-[11px] text-zinc-500">{trade.tradeType} {Number(trade.usdtAmount).toLocaleString('en-BD')} USDT · {tradeStatus(trade)}</p>
+    <MobileModalPortal open zIndex={10000} onBackdropClick={onClose} aria-label={title}>
+      <Card className="mobile-modal-shell w-full max-w-2xl border-gold-dim/30 shadow-2xl sm:rounded-2xl">
+        <div className="mobile-modal-header p-5 pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-cream">{title}</p>
+              <p className="mt-1 text-[11px] text-zinc-500">{trade.tradeType} {Number(trade.usdtAmount).toLocaleString('en-BD')} USDT · {tradeStatus(trade)}</p>
+            </div>
+            <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
           </div>
-          <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
         </div>
         {mode === 'audit' ? (
-          <div className="space-y-3">
+          <div className="mobile-modal-body space-y-3 px-5 pb-4">
             {!history.length ? <Empty icon="◇" title="No audit history yet" /> : history.slice().reverse().map((row, idx) => (
               <div key={`${row.timestamp}-${idx}`} className="rounded-2xl border border-border bg-black/20 p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -453,7 +467,8 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
             ))}
           </div>
         ) : (
-          <form onSubmit={submit} className="space-y-3">
+          <form ref={tradeActionFormRef} id="trade-action-form" onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="mobile-modal-body space-y-3 px-5 pb-4">
             {mode === 'edit' && (
               <>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -475,13 +490,22 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
               <textarea value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder={mode === 'edit' ? 'Edit reason (required)' : mode === 'request_delete' ? 'Delete reason (required)' : 'Rejection reason (required)'} />
             )}
             {mutation.error && <p className="rounded-xl border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs text-red-200">{mutation.error}</p>}
-            <Button type="submit" variant={mode === 'request_delete' || mode === 'approve_delete' ? 'danger' : 'gold'} className="w-full justify-center" disabled={mutation.loading}>
-              {mutation.loading ? <><Spinner /> Processing</> : mode === 'edit' ? 'Save edit' : mode === 'request_delete' ? 'Send delete request' : mode === 'approve_delete' ? 'Approve soft delete' : 'Reject request'}
-            </Button>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <Button
+                type="button"
+                variant={mode === 'request_delete' || mode === 'approve_delete' ? 'danger' : 'gold'}
+                className="w-full justify-center"
+                disabled={mutation.loading}
+                onClick={() => tradeActionFormRef.current?.requestSubmit()}
+              >
+                {submitLabel}
+              </Button>
+            </div>
           </form>
         )}
       </Card>
-    </div>
+    </MobileModalPortal>
   )
 }
 

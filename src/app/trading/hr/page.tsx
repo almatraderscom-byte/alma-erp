@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { Button, Card, Empty, KpiCard, Money, Skeleton } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
@@ -15,6 +16,8 @@ export default function TradingHrPage() {
   const { mutate: submitReport, loading: submittingReport } = useSubmitTradingEmployeeReport()
   const [profileEmployee, setProfileEmployee] = useState<TradingHrEmployee | null>(null)
   const [reportEmployee, setReportEmployee] = useState<TradingHrEmployee | null>(null)
+  const profileFormRef = useRef<HTMLFormElement>(null)
+  const reportFormRef = useRef<HTMLFormElement>(null)
 
   const employees = data?.employees ?? []
   const rankings = useMemo(() => data?.rankings, [data?.rankings])
@@ -157,8 +160,19 @@ export default function TradingHrPage() {
       </div>
 
       {profileEmployee && (
-        <Modal title={`Trading profile · ${profileEmployee.user.name}`} onClose={() => setProfileEmployee(null)}>
-          <form onSubmit={onProfileSubmit} className="space-y-3 text-xs">
+        <MobileModalPortal
+          open
+          zIndex={120}
+          onBackdropClick={() => setProfileEmployee(null)}
+          aria-label={`Trading profile · ${profileEmployee.user.name}`}
+        >
+          <Card className="mobile-modal-shell w-full max-w-3xl border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header flex items-center justify-between gap-3 p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Trading profile · {profileEmployee.user.name}</p>
+              <Button type="button" size="xs" variant="ghost" onClick={() => setProfileEmployee(null)}>Close</Button>
+            </div>
+            <form ref={profileFormRef} id="trading-hr-profile-form" onSubmit={onProfileSubmit} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="mobile-modal-body space-y-3 px-5 pb-4">
             <div className="grid grid-cols-2 gap-2">
               <Field name="employeeIdGas" label="Employee ID" defaultValue={profileEmployee.profile?.employeeIdGas || profileEmployee.user.employeeIdGas || ''} />
               <Field name="roleTitle" label="Trading role" defaultValue={profileEmployee.profile?.roleTitle || ''} />
@@ -186,14 +200,37 @@ export default function TradingHrPage() {
               <Field name="milestoneBonus" label="Milestone bonus" type="number" defaultValue={String(profileEmployee.profile?.milestoneBonus || 0)} />
             </div>
             <Textarea name="notes" label="Notes" defaultValue={profileEmployee.profile?.notes || ''} />
-            <Button type="submit" variant="gold" disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save profile'}</Button>
-          </form>
-        </Modal>
+              </div>
+              <div className="mobile-modal-footer px-5 pt-3">
+                <Button
+                  type="button"
+                  variant="gold"
+                  className="w-full justify-center"
+                  disabled={savingProfile}
+                  onClick={() => profileFormRef.current?.requestSubmit()}
+                >
+                  {savingProfile ? 'Saving...' : 'Save profile'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </MobileModalPortal>
       )}
 
       {reportEmployee && (
-        <Modal title={`Daily report · ${reportEmployee.user.name}`} onClose={() => setReportEmployee(null)}>
-          <form onSubmit={onReportSubmit} className="space-y-3 text-xs">
+        <MobileModalPortal
+          open
+          zIndex={120}
+          onBackdropClick={() => setReportEmployee(null)}
+          aria-label={`Daily report · ${reportEmployee.user.name}`}
+        >
+          <Card className="mobile-modal-shell w-full max-w-3xl border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header flex items-center justify-between gap-3 p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Daily report · {reportEmployee.user.name}</p>
+              <Button type="button" size="xs" variant="ghost" onClick={() => setReportEmployee(null)}>Close</Button>
+            </div>
+            <form ref={reportFormRef} id="trading-hr-report-form" onSubmit={onReportSubmit} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="mobile-modal-body space-y-3 px-5 pb-4">
             <Field name="reportDate" label="Report date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
             <Field name="accountIds" label="Accounts worked on" defaultValue={reportEmployee.assignedAccounts.map(a => a.id).join(',')} />
             <div className="grid grid-cols-3 gap-2">
@@ -204,9 +241,21 @@ export default function TradingHrPage() {
             <Field name="screenshotProof" label="Screenshot proof URL" />
             <Textarea name="issues" label="Issues / problems" />
             <Textarea name="operationalNotes" label="Operational notes" />
-            <Button type="submit" variant="gold" disabled={submittingReport}>{submittingReport ? 'Submitting...' : 'Submit report'}</Button>
-          </form>
-        </Modal>
+              </div>
+              <div className="mobile-modal-footer px-5 pt-3">
+                <Button
+                  type="button"
+                  variant="gold"
+                  className="w-full justify-center"
+                  disabled={submittingReport}
+                  onClick={() => reportFormRef.current?.requestSubmit()}
+                >
+                  {submittingReport ? 'Submitting...' : 'Submit report'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </MobileModalPortal>
       )}
     </TradingPageShell>
   )
@@ -225,20 +274,6 @@ function RankingCard({ title, rows, metric }: { title: string; rows: TradingHrEm
         ))}
       </div>
     </Card>
-  )
-}
-
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center">
-      <Card className="max-h-[90vh] w-full max-w-3xl overflow-y-auto border-gold-dim/30 p-5">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <p className="text-sm font-bold text-cream">{title}</p>
-          <Button type="button" size="xs" variant="ghost" onClick={onClose}>Close</Button>
-        </div>
-        {children}
-      </Card>
-    </div>
   )
 }
 
