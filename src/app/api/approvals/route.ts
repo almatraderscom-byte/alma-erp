@@ -186,9 +186,14 @@ function entityLabel(snapshot: unknown, fallback: string) {
   const accountTitle = typeof data.accountTitle === 'string' ? data.accountTitle : null
   const employeeId = typeof data.employeeId === 'string' ? data.employeeId : null
   const employeeName = typeof data.employeeName === 'string' ? data.employeeName : null
+  const userName = typeof data.userName === 'string' ? data.userName : null
   const amount = typeof data.amount === 'number' ? data.amount : null
+  const amountBdt = typeof data.amountBdt === 'number' ? data.amountBdt : null
   const requestedReduction = typeof data.requestedReductionAmount === 'number' ? data.requestedReductionAmount : null
   if (accountTitle) return accountTitle
+  if (userName && employeeId && amountBdt != null) {
+    return `${userName} (${employeeId}) · ৳${amountBdt.toLocaleString('en-BD')} meal allowance`
+  }
   if (employeeName && employeeId) return `${employeeName} (${employeeId})`
   if (employeeId && requestedReduction != null) {
     return `${employeeId} · ৳${requestedReduction.toLocaleString('en-BD')} penalty appeal`
@@ -208,6 +213,6 @@ function isExecutable(module: string, type: string) {
   return (
     (module === 'ALMA_TRADING' && type === 'TRADE_DELETE') ||
     (module === 'ORDERS_CRM' && type === 'ORDER_DELETE') ||
-    (module === 'PAYROLL' && ['SALARY_ADVANCE', 'WALLET_ADVANCE', 'WALLET_WITHDRAWAL', 'PENALTY_APPEAL'].includes(type))
+    (module === 'PAYROLL' && ['SALARY_ADVANCE', 'WALLET_ADVANCE', 'WALLET_WITHDRAWAL', 'PENALTY_APPEAL', 'MEAL_ALLOWANCE'].includes(type))
   )
 }
