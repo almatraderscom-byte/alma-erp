@@ -89,6 +89,7 @@ const ALMA_NAV: NavItem[] = [
 
 const CDIT_NAV: NavItem[] = [
   { href: '/digital', icon: '⬡', label: 'Dashboard' },
+  { href: '/approvals', icon: '◆', label: 'Approvals' },
   { href: '/portal', icon: '◇', label: 'My desk' },
   { href: '/digital/clients', icon: '◎', label: 'Clients' },
   { href: '/digital/projects', icon: '◰', label: 'Projects' },

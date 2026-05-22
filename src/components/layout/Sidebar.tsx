@@ -15,6 +15,7 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 import { cn } from '@/lib/utils'
 import { safeFetchJson } from '@/lib/safe-fetch'
+import useApprovalPendingCount from '@/hooks/useApprovalPendingCount'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -30,7 +31,12 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
   return (
     <Link href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/10 border border-gold-dim/40' : 'border border-transparent hover:bg-white/[0.04] hover:border-white/[0.06]'}`}>
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gold rounded-r-full" />}
-      <span className={`text-base shrink-0 transition-colors ${active ? 'text-gold-lt' : 'text-muted group-hover:text-muted-hi'}`}>{icon}</span>
+      <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-gold-lt' : 'text-muted group-hover:text-muted-hi'}`}>
+        {icon}
+        {badge && collapsed && (
+          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-950/40" aria-hidden />
+        )}
+      </span>
       <AnimatePresence>
         {!collapsed && (
           <motion.span initial={{ opacity:0, width:0 }} animate={{ opacity:1, width:'auto' }} exit={{ opacity:0, width:0 }}
@@ -50,32 +56,10 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const { business } = useBusiness()
   const { role } = useActor()
-  const [approvalCount, setApprovalCount] = useState(0)
+  const { count: approvalCount } = useApprovalPendingCount()
   const nav = filterNavByRole(getNavForBusiness(business.id), role, business.id).map(item => (
     item.href === '/approvals' ? { ...item, badge: approvalCount ? String(approvalCount) : null } : item
   ))
-
-  const loadApprovalCount = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-    try {
-      const result = await safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1')
-      if (result.ok) setApprovalCount(Number(result.data.totalPending || 0))
-    } catch {
-      setApprovalCount(0)
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadApprovalCount()
-    window.addEventListener('alma:approvals-updated', loadApprovalCount)
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void loadApprovalCount()
-    }, 60_000)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener('alma:approvals-updated', loadApprovalCount)
-    }
-  }, [loadApprovalCount])
 
   return (
     <motion.aside
@@ -195,7 +179,7 @@ export function MobileNav() {
   const { role } = useActor()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [unread, setUnread] = useState(0)
-  const [approvalCount, setApprovalCount] = useState(0)
+  const { count: approvalCount } = useApprovalPendingCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
   const dashboardHref = roleHomePath(role, business.id)
@@ -234,35 +218,21 @@ export function MobileNav() {
     }
   }, [business.id])
 
-  const loadApprovalCount = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-    try {
-      const result = await safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1')
-      if (result.ok) setApprovalCount(Number(result.data.totalPending || 0))
-    } catch {
-      setApprovalCount(0)
-    }
-  }, [])
-
   useEffect(() => {
     void loadUnread()
-    void loadApprovalCount()
     function syncNotifications(event: Event) {
       const detail = (event as CustomEvent<{ unread?: number; criticalUnacked?: number }>).detail
       setUnread(Number(detail?.unread || detail?.criticalUnacked || 0))
     }
     window.addEventListener('alma:notifications-updated', syncNotifications)
-    window.addEventListener('alma:approvals-updated', loadApprovalCount)
     const timer = window.setInterval(() => {
       if (!document.hidden) void loadUnread()
-      if (!document.hidden) void loadApprovalCount()
-    }, 60_000)
+    }, 30_000)
     return () => {
       window.clearInterval(timer)
       window.removeEventListener('alma:notifications-updated', syncNotifications)
-      window.removeEventListener('alma:approvals-updated', loadApprovalCount)
     }
-  }, [loadUnread, loadApprovalCount])
+  }, [loadUnread])
 
   useEffect(() => {
     updateAppBadge(unread + approvalCount)
