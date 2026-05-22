@@ -6,18 +6,14 @@ import { TRADING_BUSINESS_ID } from '@/lib/trading'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-function cronSecret(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  return req.headers.get('x-cron-secret')
-    || (auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '')
-    || new URL(req.url).searchParams.get('secret')
-    || ''
+function cronAuthorized(req: NextRequest) {
+  const expectedSecret = process.env.TRADING_SCREENSHOT_CLEANUP_SECRET || process.env.CRON_SECRET
+  if (!expectedSecret) return false
+  return req.headers.get('authorization') === `Bearer ${expectedSecret}`
 }
 
 async function cleanup(req: NextRequest) {
-  const secret = cronSecret(req)
-  const expectedSecret = process.env.TRADING_SCREENSHOT_CLEANUP_SECRET || process.env.CRON_SECRET
-  if (!expectedSecret || secret !== expectedSecret) {
+  if (!cronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

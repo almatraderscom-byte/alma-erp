@@ -14,9 +14,8 @@ export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || req.nextUrl.searchParams.get('secret')
   const expected = process.env.TRADING_SCREENSHOT_COMPLIANCE_SECRET || process.env.CRON_SECRET
-  if (!expected || secret !== expected) {
+  if (!expected || req.headers.get('authorization') !== `Bearer ${expected}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

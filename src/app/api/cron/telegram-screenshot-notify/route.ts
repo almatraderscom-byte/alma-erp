@@ -5,11 +5,7 @@ import { notifyTradingScreenshotUploaded } from '@/lib/telegram-notification/scr
 function authorized(req: NextRequest) {
   const secret = process.env.CRON_SECRET
   if (!secret) return false
-  return (
-    req.headers.get('x-cron-secret') === secret
-    || req.headers.get('authorization') === `Bearer ${secret}`
-    || req.nextUrl.searchParams.get('secret') === secret
-  )
+  return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
 /** Backfill or test screenshot Telegram notify for one upload. */

@@ -6,17 +6,14 @@ import { TRADING_BUSINESS_ID, recalculateTradingAccount, refreshTradingDailySnap
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-function cronSecret(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  return req.headers.get('x-cron-secret')
-    || (auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '')
-    || new URL(req.url).searchParams.get('secret')
-    || ''
+function cronAuthorized(req: NextRequest) {
+  const expectedSecret = process.env.TRADING_BALANCE_RECONCILE_SECRET || process.env.CRON_SECRET
+  if (!expectedSecret) return false
+  return req.headers.get('authorization') === `Bearer ${expectedSecret}`
 }
 
 async function reconcile(req: NextRequest) {
-  const expectedSecret = process.env.TRADING_BALANCE_RECONCILE_SECRET || process.env.CRON_SECRET
-  if (!expectedSecret || cronSecret(req) !== expectedSecret) {
+  if (!cronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
