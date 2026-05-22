@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
       invoice: String(result.invoice_number || invoice.invoiceNumber || id),
       orderId: id,
     })
-    await Promise.all([
+    void Promise.all([
       notifyRole({
         role: 'SUPER_ADMIN',
         businessId,
@@ -193,7 +193,9 @@ export async function POST(req: NextRequest) {
         dedupeKey: `invoice-generated:${String(result.invoice_number || id)}`,
         metadata: { orderId: id, invoiceNumber: result.invoice_number, invoiceRecordId: invoice.id },
       }),
-    ])
+    ]).catch(err => {
+      logEvent('warn', 'invoice.notifications_failed', { orderId: id, ...errorMeta(err) })
+    })
     return NextResponse.json({ ...result, invoice })
   } catch (e) {
     const msg = (e as Error).message
@@ -212,8 +214,13 @@ async function prepareInvoicePdf(
   existingInvoiceNumber?: string | null,
   paymentStatus?: InvoicePaymentStatus | null,
 ): Promise<{ result: InvoiceResult; pdfBase64?: string }> {
-  const invoiceNumber = existingInvoiceNumber || order.invoice_num || await peekInvoiceNumber()
-  const branding = await resolveInvoiceBranding(businessId)
+  const prepStarted = Date.now()
+  const [invoiceNumber, branding] = await Promise.all([
+    existingInvoiceNumber || order.invoice_num
+      ? Promise.resolve(existingInvoiceNumber || order.invoice_num)
+      : peekInvoiceNumber(),
+    resolveInvoiceBranding(businessId),
+  ])
   const logoDataUrl = await resolveInvoiceLogoDataUrl(branding, order.id)
   const pdfModel = orderToPdfModel(order, branding, logoDataUrl, invoiceNumber, { paymentStatus: paymentStatus || undefined })
   const generated = await generateInvoicePdfBlob(pdfModel)
@@ -228,6 +235,7 @@ async function prepareInvoicePdf(
     pdfBytes: generated.blob.size,
     renderMs: generated.durationMs,
     logoLoaded: Boolean(logoDataUrl),
+    prepareMs: Date.now() - prepStarted,
   })
   return {
     pdfBase64,
