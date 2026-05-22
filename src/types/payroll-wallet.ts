@@ -65,6 +65,9 @@ export type PayrollWallet = {
 
 export type WalletSummaryResponse = {
   wallets: PayrollWallet[]
+  /** Ledger keys with no GAS roster row and no linked user (audit orphans). */
+  orphanLedgerEntryCount?: number
+  rosterOnly?: boolean
   totals: {
     companyLiability: number
     lifetimeEarned: number

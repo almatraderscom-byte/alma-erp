@@ -24,6 +24,8 @@ export default function PayrollPage() {
   const roll = data?.employees_roll ?? []
 
   const [walletData, setWalletData] = useState<WalletSummaryResponse | null>(null)
+  const [compWallets, setCompWallets] = useState<PayrollWallet[]>([])
+  const [orphanLedgerCount, setOrphanLedgerCount] = useState(0)
   const [walletLoading, setWalletLoading] = useState(false)
   const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
@@ -42,14 +44,30 @@ export default function PayrollPage() {
     if (!showApprovals) return
     const requestId = ++walletRequestId.current
     setWalletLoading(true)
+    const qs = fresh ? `&refresh=${Date.now()}` : ''
     try {
-      const result = await safeFetchJsonWithToast<WalletSummaryResponse>(
-        `/api/payroll/wallet/summary?business_id=${business.id}${fresh ? `&refresh=${Date.now()}` : ''}`,
-        { cache: 'no-store', toastOnError: false },
-      )
-      if (!result.ok) throw new Error(result.error.message)
+      const [fullRes, rosterRes] = await Promise.all([
+        safeFetchJsonWithToast<WalletSummaryResponse>(
+          `/api/payroll/wallet/summary?business_id=${business.id}${qs}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
+        safeFetchJsonWithToast<WalletSummaryResponse>(
+          `/api/payroll/wallet/summary?business_id=${business.id}&roster_only=true${qs}`,
+          { cache: 'no-store', toastOnError: false },
+        ),
+      ])
+      if (!fullRes.ok) throw new Error(fullRes.error.message)
       if (requestId !== walletRequestId.current) return
-      setWalletData(unwrapApiData<WalletSummaryResponse>(result.data as Record<string, unknown>))
+      const full = unwrapApiData<WalletSummaryResponse>(fullRes.data as Record<string, unknown>)
+      setWalletData(full)
+      if (rosterRes.ok) {
+        const roster = unwrapApiData<WalletSummaryResponse>(rosterRes.data as Record<string, unknown>)
+        setCompWallets(roster.wallets)
+        setOrphanLedgerCount(roster.orphanLedgerEntryCount ?? 0)
+      } else {
+        setCompWallets(full.wallets)
+        setOrphanLedgerCount(0)
+      }
     } catch (e) {
       if (requestId !== walletRequestId.current) return
       toast.error((e as Error).message || 'Could not load employee wallets')
@@ -223,7 +241,7 @@ export default function PayrollPage() {
           <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
             <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
               <option value="">Select employee</option>
-              {(walletData?.wallets ?? []).map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
+              {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
             </select>
             <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
               {['COMMISSION', 'EID_BONUS', 'PERFORMANCE_BONUS', 'OVERTIME', 'REIMBURSEMENT', 'MEAL_DEDUCTION', 'PENALTY', 'ADJUSTMENT'].map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
@@ -233,6 +251,22 @@ export default function PayrollPage() {
             <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
             <Button size="xs" variant="gold" type="submit" disabled={compBusy}>{compBusy ? 'Posting…' : 'Post'}</Button>
           </form>
+          {orphanLedgerCount > 0 && (
+            <p className="mt-3 text-[11px] text-amber-300/90 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+              {orphanLedgerCount} orphan ledger {orphanLedgerCount === 1 ? 'entry' : 'entries'} (not on roster / no linked user).{' '}
+              <button
+                type="button"
+                className="text-gold-lt underline"
+                onClick={() => {
+                  setLedgerTypeFilter('ALL')
+                  setEmployeeFilter('')
+                  document.getElementById('payroll-wallet-table')?.scrollIntoView({ behavior: 'smooth' })
+                }}
+              >
+                Review in wallet table
+              </button>
+            </p>
+          )}
         </Card>
       )}
 
@@ -308,6 +342,7 @@ export default function PayrollPage() {
         </Card>
       )}
 
+      <div id="payroll-wallet-table">
       <Card className="p-5">
         <div className="flex justify-between gap-3 items-center flex-wrap mb-4">
           <p className="text-sm font-bold text-cream">Employee profitability and liabilities</p>
@@ -355,6 +390,7 @@ export default function PayrollPage() {
           </div>
         )}
       </Card>
+      </div>
 
       {review && (
         <MobileModalPortal open zIndex={80} onBackdropClick={() => setReview(null)}>

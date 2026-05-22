@@ -8,6 +8,8 @@ import type { HREmployeesApi } from '@/types/hr'
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const businessId = url.searchParams.get('business_id')
+  const rosterOnly =
+    url.searchParams.get('roster_only') === 'true' || url.searchParams.get('rosterOnly') === 'true'
   const ctx = await getWalletContext(req, businessId)
   if ('error' in ctx) return ctx.error
 
@@ -66,8 +68,11 @@ export async function GET(req: NextRequest) {
 
   const employeeMeta = new Map<string, { name: string; email?: string; salary?: number }>()
   const knownEmployeeKeys = new Set<string>()
+  const rosterEmployeeIdsByBiz = new Map<string, Set<string>>()
+  const linkedEmployeeIds = new Set<string>()
   users.forEach(u => {
     if (u.employeeIdGas) {
+      linkedEmployeeIds.add(u.employeeIdGas)
       employeeMeta.set(u.employeeIdGas, { name: u.name, email: u.email || undefined, salary: Number(u.salaryHint || 0) })
       businessIds.forEach(biz => knownEmployeeKeys.add(`${biz}:${u.employeeIdGas}`))
     }
@@ -77,6 +82,8 @@ export async function GET(req: NextRequest) {
     await Promise.all(businessIds.map(async biz => {
       try {
         const data = await serverGet<HREmployeesApi>('hr_employees', { business_id: biz }, 0)
+        const rosterSet = new Set(data.employees.map(e => e.emp_id))
+        rosterEmployeeIdsByBiz.set(biz, rosterSet)
         data.employees.forEach(e => {
           employeeMeta.set(e.emp_id, { name: e.name, email: e.email, salary: Number(e.monthly_salary || 0) })
           knownEmployeeKeys.add(`${biz}:${e.emp_id}`)
@@ -85,6 +92,11 @@ export async function GET(req: NextRequest) {
         /* GAS roster unavailable: keep auth-linked metadata. */
       }
     }))
+  }
+
+  const isOperationalEmployee = (biz: string, employeeId: string) => {
+    const inRoster = rosterEmployeeIdsByBiz.get(biz)?.has(employeeId) ?? false
+    return inRoster || linkedEmployeeIds.has(employeeId)
   }
 
   const groups = new Map<string, Array<{ type: typeof entryGroups[number]['type']; amount: ReturnType<typeof moneyDecimal>; periodYm: string | null; date: Date }>>()
@@ -112,7 +124,19 @@ export async function GET(req: NextRequest) {
     knownEmployeeKeys.add(key)
   }
 
-  const wallets = [...knownEmployeeKeys].sort().map(key => {
+  const allKeys = [...knownEmployeeKeys].sort()
+  const operationalKeys = rosterOnly
+    ? allKeys.filter(key => {
+        const [biz, employeeId] = key.split(':')
+        return isOperationalEmployee(biz, employeeId)
+      })
+    : allKeys
+  const orphanLedgerEntryCount = allKeys.filter(key => {
+    const [biz, employeeId] = key.split(':')
+    return !isOperationalEmployee(biz, employeeId)
+  }).length
+
+  const wallets = operationalKeys.map(key => {
     const [biz, employeeId] = key.split(':')
     const rows = groups.get(key) || []
     const meta = employeeMeta.get(employeeId)
@@ -165,5 +189,7 @@ export async function GET(req: NextRequest) {
     pendingRequests,
     pendingAdvanceCount: pendingRequests.filter(r => r.type === 'ADVANCE').length,
     pendingWithdrawalCount: pendingRequests.filter(r => r.type === 'WITHDRAWAL').length,
+    orphanLedgerEntryCount,
+    rosterOnly,
   }, { headers: { 'Cache-Control': 'private, max-age=10, stale-while-revalidate=30' } })
 }
