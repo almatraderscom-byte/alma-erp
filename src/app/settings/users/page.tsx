@@ -65,8 +65,9 @@ export default function UsersSettingsPage() {
 
   const allowed = useMemo(() => can(normalized, 'userManage'), [normalized])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true
+    if (showLoading) setLoading(true)
     try {
       const res = await fetch('/api/users', { cache: 'no-store' })
       if (!res.ok) {
@@ -77,9 +78,9 @@ export default function UsersSettingsPage() {
       setUsers(j.users)
     } catch (e) {
       toast.error((e as Error).message || 'Could not load users')
-      setUsers([])
+      if (showLoading) setUsers([])
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [])
 
@@ -277,12 +278,9 @@ export default function UsersSettingsPage() {
               toast.error(j.error || 'Create failed')
               return
             }
-            toast.success('User created')
-            if (j.user) {
-              setUsers(current => [j.user!, ...current.filter(u => u.id !== j.user!.id)])
-            }
+            await load({ showLoading: false })
             setCreateOpen(false)
-            void load()
+            toast.success('User created')
           }}
         />
       )}
