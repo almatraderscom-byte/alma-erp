@@ -635,16 +635,16 @@ function OrdersPageContent() {
       )}
 
       {/* Drawers */}
+      {showNew && mdUp && (
+        <NewOrderDrawer
+          onClose={() => setShowNew(false)}
+          onCreated={() => {
+            refetch()
+            setShowNew(false)
+          }}
+        />
+      )}
       <AnimatePresence>
-        {showNew && mdUp && (
-          <NewOrderDrawer
-            onClose={() => setShowNew(false)}
-            onCreated={() => {
-              refetch()
-              setShowNew(false)
-            }}
-          />
-        )}
         {selected && !showNew && (
           <OrderDrawer
             order={selected}
