@@ -356,35 +356,41 @@ export default function PayrollPage() {
       </Card>
 
       {review && (
-        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-md rounded-3xl border border-border bg-card p-5 shadow-2xl">
-            <p className="text-sm font-bold text-cream">
-              {review.action === 'APPROVE' ? 'Approve wallet request' : 'Reject wallet request'}
-            </p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Requested amount: <span className="font-mono text-gold-lt">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
-            </p>
-            {review.action === 'APPROVE' && (
-              <label className="mt-4 block text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-                Approved amount
-                <input
-                  autoFocus
-                  inputMode="decimal"
-                  type="number"
-                  min="1"
-                  value={review.approvedAmount}
-                  onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
-                  className="mt-2 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/60"
-                />
-              </label>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>Cancel</Button>
-              <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" onClick={() => void submitReview()}>
-                {review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
-              </Button>
+        <div className="fixed inset-0 z-[80] mobile-modal-overlay bg-black/70">
+          <Card className="mobile-modal-shell w-full max-w-md sm:rounded-3xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">
+                {review.action === 'APPROVE' ? 'Approve wallet request' : 'Reject wallet request'}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Requested amount: <span className="font-mono text-gold-lt">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
+              </p>
             </div>
-          </div>
+            <div className="mobile-modal-body px-5">
+              {review.action === 'APPROVE' && (
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                  Approved amount
+                  <input
+                    autoFocus
+                    inputMode="decimal"
+                    type="number"
+                    min="1"
+                    value={review.approvedAmount}
+                    onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
+                    className="mt-2 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/60"
+                  />
+                </label>
+              )}
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <div className="flex justify-end gap-2">
+                <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>Cancel</Button>
+                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" onClick={() => void submitReview()}>
+                  {review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
+                </Button>
+              </div>
+            </div>
+          </Card>
         </div>
       )}
 

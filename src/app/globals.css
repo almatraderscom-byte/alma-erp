@@ -292,4 +292,34 @@ a,
       display: block;
     }
   }
+
+  /* Mobile modal stabilization — viewport-safe flex shell (freeze-safe utility only) */
+  .mobile-modal-overlay {
+    @apply flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4;
+  }
+
+  .mobile-modal-shell {
+    @apply mobile-sheet relative flex w-full flex-col overflow-hidden;
+    max-height: min(100dvh, 100svh);
+  }
+
+  @media (min-width: 640px) {
+    .mobile-modal-shell {
+      max-height: min(calc(100dvh - 2rem), 920px);
+    }
+  }
+
+  .mobile-modal-header {
+    @apply shrink-0;
+  }
+
+  .mobile-modal-body {
+    @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-modal-footer {
+    @apply shrink-0 border-t border-border bg-surface backdrop-blur-md;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
 }

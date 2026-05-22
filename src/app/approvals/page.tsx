@@ -382,44 +382,51 @@ function ApprovalsPageInner() {
         const selectedBusy = isRowProcessing(selected.id)
         const selectedActionDisabled = selectedBusy || actionsGloballyDisabled
         return (
-        <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <Card className={`max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto p-5 ${approvalRowLockClass(selectedUi)}`}>
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-black text-cream">{selected.type.replace(/_/g, ' ')}</p>
-                <p className="mt-1 text-xs text-zinc-500">{selected.module} · {new Date(selected.createdAt).toLocaleString()}</p>
+        <div className="fixed inset-0 z-[10000] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+          <Card className={`mobile-modal-shell w-full max-w-2xl sm:rounded-2xl ${approvalRowLockClass(selectedUi)}`}>
+            <div className="mobile-modal-header p-5 pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-cream">{selected.type.replace(/_/g, ' ')}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{selected.module} · {new Date(selected.createdAt).toLocaleString()}</p>
+                </div>
+                <Button size="xs" variant="ghost" disabled={selectedBusy} onClick={() => setSelected(null)}>Close</Button>
               </div>
-              <Button size="xs" variant="ghost" disabled={selectedBusy} onClick={() => setSelected(null)}>Close</Button>
-            </div>
-            {selectedUi.state === 'processing' && (
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
-                <Spinner />
-                {selectedUi.message || 'Processing approval…'}
-              </div>
-            )}
-            <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/20 p-3">
-              <EmployeeAvatar
-                userId={selected.requester?.id}
-                name={selected.requester?.name || selected.requestedBy}
-                imageUrl={selected.requester?.profileImageUrl}
-                size="lg"
-              />
-              <div>
-                <p className="text-sm font-bold text-cream">{selected.requester?.name || selected.requestedBy}</p>
-                <p className="text-[11px] text-zinc-500">{selected.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
-              </div>
-            </div>
-            <div className="space-y-3 text-xs">
-              <Info label="Status" value={selected.status} />
-              <Info label="Priority" value={selected.priority} />
-              <Info label="Business" value={selected.businessName || selected.businessId || 'Global'} />
-              <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
-              <Info label="Reason" value={selected.reason} />
-              {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
-                <div className="rounded-2xl border border-border bg-black/20 p-3">
-                  <PayoutSummaryBlock payout={selected.payoutSummary} />
+              {selectedUi.state === 'processing' && (
+                <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                  <Spinner />
+                  {selectedUi.message || 'Processing approval…'}
                 </div>
               )}
+            </div>
+            <div className="mobile-modal-body px-5 pb-4">
+              <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/20 p-3">
+                <EmployeeAvatar
+                  userId={selected.requester?.id}
+                  name={selected.requester?.name || selected.requestedBy}
+                  imageUrl={selected.requester?.profileImageUrl}
+                  size="lg"
+                />
+                <div>
+                  <p className="text-sm font-bold text-cream">{selected.requester?.name || selected.requestedBy}</p>
+                  <p className="text-[11px] text-zinc-500">{selected.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-3 text-xs">
+                <Info label="Status" value={selected.status} />
+                <Info label="Priority" value={selected.priority} />
+                <Info label="Business" value={selected.businessName || selected.businessId || 'Global'} />
+                <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
+                <Info label="Reason" value={selected.reason} />
+                {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
+                  <div className="rounded-2xl border border-border bg-black/20 p-3">
+                    <PayoutSummaryBlock payout={selected.payoutSummary} />
+                  </div>
+                )}
+                <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
+              </div>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex flex-wrap gap-2">
                 {selected.status === 'PENDING' && selected.executable && (
                   <Button variant="gold" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, 'APPROVE')}>
@@ -438,7 +445,6 @@ function ApprovalsPageInner() {
                 )}
                 {selected.actionUrl && <a href={selected.actionUrl} className="inline-flex rounded-xl border border-gold-dim/40 px-3 py-2 font-bold text-gold-lt">Open related record</a>}
               </div>
-              <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
             </div>
           </Card>
         </div>
@@ -449,31 +455,37 @@ function ApprovalsPageInner() {
         const rejectBusy = isRowProcessing(actionTarget.row.id)
         const rejectActionDisabled = rejectBusy || actionsGloballyDisabled
         return (
-        <div className="fixed inset-0 z-[10001] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <Card className="w-full max-w-lg p-5">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-black text-cream">Reject Approval</p>
-                <p className="mt-1 text-xs text-zinc-500">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
+        <div className="fixed inset-0 z-[10001] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+          <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-cream">Reject Approval</p>
+                  <p className="mt-1 text-xs text-zinc-500">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
+                </div>
+                <Button size="xs" variant="ghost" disabled={rejectBusy} onClick={() => setActionTarget(null)}>Close</Button>
               </div>
-              <Button size="xs" variant="ghost" disabled={rejectBusy} onClick={() => setActionTarget(null)}>Close</Button>
+              {rejectUi.state === 'processing' && (
+                <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                  <Spinner />
+                  Processing rejection…
+                </div>
+              )}
             </div>
-            {rejectUi.state === 'processing' && (
-              <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
-                <Spinner />
-                Processing rejection…
-              </div>
-            )}
-            <textarea
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              disabled={rejectActionDisabled}
-              className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
-              placeholder="Rejection reason required"
-            />
-            <Button variant="danger" className="mt-3 w-full justify-center" disabled={rejectActionDisabled} onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}>
-              {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
-            </Button>
+            <div className="mobile-modal-body px-5">
+              <textarea
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                disabled={rejectActionDisabled}
+                className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+                placeholder="Rejection reason required"
+              />
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <Button variant="danger" className="w-full justify-center" disabled={rejectActionDisabled} onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}>
+                {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
+              </Button>
+            </div>
           </Card>
         </div>
         )

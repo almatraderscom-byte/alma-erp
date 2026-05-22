@@ -328,23 +328,29 @@ function ResetPasswordModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
-      <Card className="w-full max-w-md p-6 border-gold-dim/30">
-        <div className="flex justify-between gap-3 mb-4">
-          <div>
-            <p className="text-sm font-bold text-cream">Reset password</p>
-            <p className="text-[11px] text-zinc-500 mt-1">{user.email}</p>
+    <div className="fixed inset-0 z-[140] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+      <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
+        <div className="mobile-modal-header p-6 pb-3">
+          <div className="flex justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-cream">Reset password</p>
+              <p className="text-[11px] text-zinc-500 mt-1">{user.email}</p>
+            </div>
+            <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
           </div>
-          <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
         </div>
-        <form onSubmit={submit} className="space-y-3">
-          <label className="block space-y-1 text-xs">
-            <span className="text-zinc-500">New password</span>
-            <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
-          </label>
-          <div className="flex gap-2 pt-2">
-            <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
-            <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <div className="mobile-modal-body px-6">
+            <label className="block space-y-1 text-xs">
+              <span className="text-zinc-500">New password</span>
+              <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+            </label>
+          </div>
+          <div className="mobile-modal-footer px-6 pt-3">
+            <div className="flex gap-2">
+              <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
+              <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+            </div>
           </div>
         </form>
       </Card>
@@ -383,13 +389,16 @@ function UserFormModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
-      <Card className="w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto border-gold-dim/30">
-        <div className="flex justify-between gap-3 mb-4">
-          <p className="text-sm font-bold text-cream">{title}</p>
-          <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+    <div className="fixed inset-0 z-[140] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+      <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
+        <div className="mobile-modal-header p-5 pb-3">
+          <div className="flex justify-between gap-3">
+            <p className="text-sm font-bold text-cream">{title}</p>
+            <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+          </div>
         </div>
-        <form onSubmit={wrapped} className="space-y-3 text-xs">
+        <form onSubmit={wrapped} className="flex min-h-0 flex-1 flex-col text-xs">
+          <div className="mobile-modal-body space-y-3 px-5 pb-4">
           {!initial && (
             <>
               <label className="block space-y-1">
@@ -476,9 +485,12 @@ function UserFormModal({
           {actorRole !== 'SUPER_ADMIN' && (
             <p className="text-[10px] text-amber-400/90 leading-snug">You cannot assign Super Admin.</p>
           )}
-          <div className="flex gap-2 pt-2">
-            <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
-            <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+          </div>
+          <div className="mobile-modal-footer px-5 pt-3">
+            <div className="flex gap-2">
+              <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose}>Cancel</Button>
+              <Button variant="gold" type="submit" className="flex-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+            </div>
           </div>
         </form>
       </Card>

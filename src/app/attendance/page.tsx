@@ -524,28 +524,34 @@ function AttendancePageInner() {
       </Card>
 
       {review && (
-        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/70 p-4">
-          <Card className="w-full max-w-md p-5 border-gold-dim/30 space-y-3">
-            <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
-            <p className="text-xs text-zinc-500">
-              {review.employeeId} · original penalty {money(review.originalPenalty)} · requested reduction {money(review.requestedAmount)}
-            </p>
-            {review.action === 'APPROVE' && (
+        <div className="fixed inset-0 z-[90] mobile-modal-overlay bg-black/70">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {review.employeeId} · original penalty {money(review.originalPenalty)} · requested reduction {money(review.requestedAmount)}
+              </p>
+            </div>
+            <div className="mobile-modal-body space-y-3 px-5">
+              {review.action === 'APPROVE' && (
+                <label className="block space-y-1 text-[11px]">
+                  <span className="text-zinc-500">Approved reduction (wallet credit)</span>
+                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
+                  <p className="text-zinc-600">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
+                </label>
+              )}
               <label className="block space-y-1 text-[11px]">
-                <span className="text-zinc-500">Approved reduction (wallet credit)</span>
-                <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
-                <p className="text-zinc-600">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
+                <span className="text-zinc-500">Admin note</span>
+                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
               </label>
-            )}
-            <label className="block space-y-1 text-[11px]">
-              <span className="text-zinc-500">Admin note</span>
-              <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button size="xs" variant="secondary" onClick={() => setReview(null)}>Cancel</Button>
-              <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} onClick={() => void submitReview()}>
-                {review.action === 'APPROVE' ? 'Approve' : 'Reject'}
-              </Button>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <div className="flex justify-end gap-2">
+                <Button size="xs" variant="secondary" onClick={() => setReview(null)}>Cancel</Button>
+                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} onClick={() => void submitReview()}>
+                  {review.action === 'APPROVE' ? 'Approve' : 'Reject'}
+                </Button>
+              </div>
             </div>
           </Card>
         </div>

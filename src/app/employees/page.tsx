@@ -165,16 +165,20 @@ export default function EmployeesPage() {
       </Card>
 
       {open && (
-        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
-          <Card className="w-full max-w-5xl p-5 max-h-[90vh] overflow-y-auto border-gold-dim/30">
-            <div className="flex justify-between gap-3 items-start mb-4">
-              <div>
-                <p className="text-sm font-bold text-cream">Employee profile</p>
-                <p className="text-[11px] text-zinc-500 mt-1">Create a roster profile manually or directly from an unlinked system user.</p>
+        <div className="fixed inset-0 z-[120] mobile-modal-overlay bg-black/70 backdrop-blur-sm">
+          <Card className="mobile-modal-shell w-full max-w-5xl border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <div className="flex justify-between gap-3 items-start">
+                <div>
+                  <p className="text-sm font-bold text-cream">Employee profile</p>
+                  <p className="text-[11px] text-zinc-500 mt-1">Create a roster profile manually or directly from an unlinked system user.</p>
+                </div>
+                <Button type="button" size="xs" variant="secondary" onClick={() => void loadUsers()} disabled={usersLoading}>Refresh users</Button>
               </div>
-              <Button type="button" size="xs" variant="secondary" onClick={() => void loadUsers()} disabled={usersLoading}>Refresh users</Button>
             </div>
 
+            <form id="employee-create-form" onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="mobile-modal-body px-5 pb-4">
             <div className="grid lg:grid-cols-[1.05fr_1fr] gap-4">
               <div className="rounded-2xl border border-border bg-black/20 p-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold mb-3">Create Employee From User</p>
@@ -215,7 +219,7 @@ export default function EmployeesPage() {
                 )}
               </div>
 
-            <form id="employee-create-form" onSubmit={submit} className="space-y-3 text-xs">
+            <div className="space-y-3 text-xs">
               {selectedUser && (
                 <div className="rounded-2xl border border-gold-dim/30 bg-gold/[0.05] p-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gold">Selected user</p>
@@ -274,14 +278,19 @@ export default function EmployeesPage() {
                 <span className="text-zinc-500">Notes</span>
                 <textarea name="notes" rows={3} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
               </label>
-              <div className="flex gap-2 pt-2">
+            </div>
+            </div>
+            </div>
+
+            <div className="mobile-modal-footer px-5 pt-3">
+              <div className="flex gap-2">
                 <Button type="submit" variant="gold" disabled={saving || Boolean(selectedUser?.linked && selectedUser.employeeIdGas)}>
                   {saving ? 'Saving…' : selectedUser ? 'Create Employee From User' : 'Save'}
                 </Button>
                 <Button type="button" variant="ghost" onClick={() => { setOpen(false); setSelectedUserId('') }}>Cancel</Button>
               </div>
-            </form>
             </div>
+            </form>
           </Card>
         </div>
       )}

@@ -94,23 +94,26 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end sm:items-center justify-center bg-black/75 p-4">
-      <Card className="w-full max-w-lg max-h-[92dvh] overflow-y-auto p-5 border-gold-dim/35 space-y-4">
-        <div className="flex justify-between items-start gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gold">Request review</p>
-            <h3 className="mt-1 text-lg font-bold text-cream">Penalty appeal</h3>
-            <p className="mt-1 text-xs text-zinc-500">
-              Late {target.lateMinutes}m · penalty {money(penalty)}
-              {target.attendanceDate ? ` · ${target.attendanceDate.slice(0, 10)}` : ''}
-            </p>
+    <div className="fixed inset-0 z-[95] mobile-modal-overlay bg-black/75">
+      <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/35 sm:rounded-2xl">
+        <div className="mobile-modal-header p-5 pb-3">
+          <div className="flex justify-between items-start gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gold">Request review</p>
+              <h3 className="mt-1 text-lg font-bold text-cream">Penalty appeal</h3>
+              <p className="mt-1 text-xs text-zinc-500">
+                Late {target.lateMinutes}m · penalty {money(penalty)}
+                {target.attendanceDate ? ` · ${target.attendanceDate.slice(0, 10)}` : ''}
+              </p>
+            </div>
+            <button type="button" className="text-zinc-500 hover:text-cream text-xl leading-none" onClick={onClose} aria-label="Close">
+              ×
+            </button>
           </div>
-          <button type="button" className="text-zinc-500 hover:text-cream text-xl leading-none" onClick={onClose} aria-label="Close">
-            ×
-          </button>
         </div>
 
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <div className="mobile-modal-body space-y-4 px-5 pb-4">
           <div className="grid gap-2">
             {REQUEST_TYPES.map(opt => (
               <label
@@ -179,14 +182,17 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
               {attachment ? '📎 Screenshot attached' : '📎 Add screenshot (optional)'}
             </Button>
           </div>
+          </div>
 
-          <div className="flex gap-2 justify-end pt-1">
-            <Button type="button" variant="secondary" size="sm" onClick={onClose} disabled={busy}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="gold" size="sm" disabled={busy} className="min-h-[44px] touch-manipulation">
-              {busy ? 'Submitting…' : 'Submit request'}
-            </Button>
+          <div className="mobile-modal-footer px-5 pt-3">
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="secondary" size="sm" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="gold" size="sm" disabled={busy} className="min-h-[44px] touch-manipulation">
+                {busy ? 'Submitting…' : 'Submit request'}
+              </Button>
+            </div>
           </div>
         </form>
       </Card>

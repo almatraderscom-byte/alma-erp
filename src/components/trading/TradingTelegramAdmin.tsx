@@ -1101,18 +1101,24 @@ function EditModal({
   onSave: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center">
-      <Card className="w-full max-w-md space-y-3 p-4">
-        <p className="text-sm font-black text-cream">Edit draft</p>
-        <select value={editForm.tradeType} onChange={e => setEditForm({ ...editForm, tradeType: e.target.value as 'BUY' | 'SELL' })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
-          <option value="BUY">BUY</option>
-          <option value="SELL">SELL</option>
-        </select>
-        <input placeholder="USDT" value={editForm.usdtAmount} onChange={e => setEditForm({ ...editForm, usdtAmount: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-        <input placeholder="Rate" value={editForm.bdtRate} onChange={e => setEditForm({ ...editForm, bdtRate: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-        <input placeholder="Fee USDT" value={editForm.feeUsdt} onChange={e => setEditForm({ ...editForm, feeUsdt: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-        <input placeholder="Trading account ID" value={editForm.tradingAccountId} onChange={e => setEditForm({ ...editForm, tradingAccountId: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-        <EditModalActions busy={busy} onClose={onClose} onSave={onSave} />
+    <div className="fixed inset-0 z-50 mobile-modal-overlay bg-black/70">
+      <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl">
+        <div className="mobile-modal-header p-4 pb-3">
+          <p className="text-sm font-black text-cream">Edit draft</p>
+        </div>
+        <div className="mobile-modal-body space-y-3 px-4 pb-4">
+          <select value={editForm.tradeType} onChange={e => setEditForm({ ...editForm, tradeType: e.target.value as 'BUY' | 'SELL' })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
+            <option value="BUY">BUY</option>
+            <option value="SELL">SELL</option>
+          </select>
+          <input placeholder="USDT" value={editForm.usdtAmount} onChange={e => setEditForm({ ...editForm, usdtAmount: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+          <input placeholder="Rate" value={editForm.bdtRate} onChange={e => setEditForm({ ...editForm, bdtRate: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+          <input placeholder="Fee USDT" value={editForm.feeUsdt} onChange={e => setEditForm({ ...editForm, feeUsdt: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+          <input placeholder="Trading account ID" value={editForm.tradingAccountId} onChange={e => setEditForm({ ...editForm, tradingAccountId: e.target.value })} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+        </div>
+        <div className="mobile-modal-footer px-4 pt-3">
+          <EditModalActions busy={busy} onClose={onClose} onSave={onSave} />
+        </div>
       </Card>
     </div>
   )
