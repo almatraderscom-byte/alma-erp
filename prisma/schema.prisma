@@ -393,6 +393,7 @@ model MealAllowanceRequest {
 
   @@index([businessId, status])
   @@index([userId, businessId])
+  @@index([userId, businessId, allowanceDate])
 }
 
 model AttendanceRecord {
