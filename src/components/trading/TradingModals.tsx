@@ -499,6 +499,7 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
 
 export function CapitalEntryModal({ open, account, onClose, onCreated }: { open: boolean; account: TradingAccount | null; onClose: () => void; onCreated: (res: TradingMutationResponse) => void }) {
   const { mutate, loading } = useAddTradingCapital()
+  const formRef = useRef<HTMLFormElement>(null)
   const [form, setForm] = useState<{ entryType: TradingCapitalEntryType; amount: string; notes: string }>({ entryType: 'DEPOSIT', amount: '', notes: '' })
   useEffect(() => { if (open) setForm({ entryType: 'DEPOSIT', amount: '', notes: '' }) }, [open])
   async function submit(e: React.FormEvent) {
@@ -511,8 +512,24 @@ export function CapitalEntryModal({ open, account, onClose, onCreated }: { open:
     onClose()
   }
   return (
-    <ModalFrame open={open} onClose={onClose} title="Capital entry" desc={account?.accountTitle || 'Deposit, withdraw, or adjustment'}>
-      <form onSubmit={e => void submit(e)} className="space-y-3">
+    <ModalFrame
+      open={open}
+      onClose={onClose}
+      title="Capital entry"
+      desc={account?.accountTitle || 'Deposit, withdraw, or adjustment'}
+      footer={
+        <Button
+          type="button"
+          variant="gold"
+          className="w-full justify-center"
+          disabled={loading}
+          onClick={() => formRef.current?.requestSubmit()}
+        >
+          {loading ? <><Spinner /> Posting</> : 'Post capital entry'}
+        </Button>
+      }
+    >
+      <form ref={formRef} id="capital-entry-form" onSubmit={e => void submit(e)} className="space-y-3">
         <Select value={form.entryType} onChange={v => setForm(f => ({ ...f, entryType: v as TradingCapitalEntryType }))} options={[
           { label: 'Deposit', value: 'DEPOSIT' },
           { label: 'Withdraw', value: 'WITHDRAW' },
@@ -520,7 +537,6 @@ export function CapitalEntryModal({ open, account, onClose, onCreated }: { open:
         ]} className="w-full" />
         <Input inputMode="decimal" type="number" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="Amount" />
         <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Notes" />
-        <Button type="submit" variant="gold" className="w-full justify-center" disabled={loading}>{loading ? <><Spinner /> Posting</> : 'Post capital entry'}</Button>
       </form>
     </ModalFrame>
   )
