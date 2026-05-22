@@ -204,6 +204,8 @@ export function TradeEntryModal({
 }) {
   const { mutate, loading, error: mutationError } = useSubmitTradingTrade()
   const { mutate: addBkashSummary, loading: savingBkash } = useAddTradingBkashSummary()
+  const bkashFormRef = useRef<HTMLFormElement>(null)
+  const bankFormRef = useRef<HTMLFormElement>(null)
   const [selectedAccountId, setSelectedAccountId] = useState('')
   const activeAccount = useMemo(
     () => account ?? accounts?.find(a => a.id === selectedAccountId) ?? accounts?.[0] ?? null,
@@ -331,7 +333,35 @@ export function TradeEntryModal({
   const bkashNet = n(bkashForm.totalProfitBdt) - n(bkashForm.totalLossBdt)
 
   return (
-    <ModalFrame open={open} onClose={onClose} title="Add Trade Entry" desc={activeAccount?.accountTitle || 'Choose account · Bkash summary or Bank/P2P'}>
+    <ModalFrame
+      open={open}
+      onClose={onClose}
+      title="Add Trade Entry"
+      desc={activeAccount?.accountTitle || 'Choose account · Bkash summary or Bank/P2P'}
+      footer={
+        entryMode === 'BKASH' ? (
+          <Button
+            type="button"
+            variant="gold"
+            className="w-full justify-center"
+            disabled={savingBkash}
+            onClick={() => bkashFormRef.current?.requestSubmit()}
+          >
+            {savingBkash ? <><Spinner /> Saving</> : 'Save Bkash summary'}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="gold"
+            className="w-full justify-center"
+            disabled={loading}
+            onClick={() => bankFormRef.current?.requestSubmit()}
+          >
+            {loading ? <><Spinner /> Submitting trade...</> : 'Submit trade'}
+          </Button>
+        )
+      }
+    >
       {!account && accounts && accounts.length > 1 && (
         <Select
           value={selectedAccountId}
@@ -363,7 +393,7 @@ export function TradeEntryModal({
       </div>
 
       {entryMode === 'BKASH' ? (
-      <form onSubmit={e => void submitBkash(e)} className="space-y-3">
+      <form ref={bkashFormRef} id="trade-entry-bkash-form" onSubmit={e => void submitBkash(e)} className="space-y-3">
         <div className="rounded-2xl border border-gold-dim/20 bg-gold/[0.04] p-3">
           <p className="text-xs font-bold text-cream">Bkash Quick Daily Result</p>
           <p className="mt-1 text-[11px] text-zinc-500">Use this for 200-300+ tiny merchant actions. No USDT, rate, or fee fields are required.</p>
@@ -378,10 +408,9 @@ export function TradeEntryModal({
           <p className={`mt-1 text-3xl font-black tabular-nums ${signedClass(bkashNet)}`}>{bkashNet >= 0 ? '+' : '-'}৳{Math.abs(bkashNet).toLocaleString('en-BD')}</p>
         </div>
         <textarea value={bkashForm.notes} onChange={e => setBkashForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Optional notes" />
-        <Button type="submit" variant="gold" className="w-full justify-center" disabled={savingBkash}>{savingBkash ? <><Spinner /> Saving</> : 'Save Bkash summary'}</Button>
       </form>
       ) : (
-      <form noValidate onSubmit={e => void submit(e)} className="space-y-3">
+      <form ref={bankFormRef} id="trade-entry-bank-form" noValidate onSubmit={e => void submit(e)} className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <Select value={form.tradeType} onChange={v => setForm(f => ({ ...f, tradeType: v as 'BUY' | 'SELL' }))} options={[
             { label: 'BUY', value: 'BUY' },
@@ -403,7 +432,6 @@ export function TradeEntryModal({
         </div>
         <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Notes" />
         {(submitError || mutationError) && <p className="rounded-xl border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs font-semibold text-red-200">{submitError || mutationError}</p>}
-        <Button type="submit" variant="gold" className="w-full justify-center" disabled={loading}>{loading ? <><Spinner /> Submitting trade...</> : 'Submit trade'}</Button>
       </form>
       )}
     </ModalFrame>
