@@ -106,7 +106,9 @@ export function getNavForBusiness(businessId: BusinessId): NavItem[] {
     { href: '/trading/target-control', icon: '◎', label: 'Target Control' },
     { href: '/trading/telegram', icon: '✉', label: 'Telegram' },
     { href: '/trading/hr', icon: '☷', label: 'Trading HR' },
+    { href: '/employees', icon: '☷', label: 'Employees' },
     { href: '/attendance', icon: '◷', label: 'Attendance' },
+    { href: '/payroll', icon: '⌁', label: 'Payroll' },
     { href: '/trading/analytics', icon: '◩', label: 'Analytics' },
     { href: '/trading/analytics?view=reports', icon: '▣', label: 'Reports' },
     { href: '/portal', icon: '◇', label: 'My desk' },
@@ -137,7 +139,14 @@ export function isRouteAllowed(path: string, businessId: BusinessId): boolean {
     return digitalOnly || sharedOps || path === '/'
   }
   if (businessId === 'ALMA_TRADING') {
-    return path === '/' || path.startsWith('/trading') || path.startsWith('/attendance') || path.startsWith('/portal') || path.startsWith('/settings') || path.startsWith('/audit')
+    return path === '/'
+      || path.startsWith('/trading')
+      || path.startsWith('/attendance')
+      || path.startsWith('/payroll')
+      || path.startsWith('/employees')
+      || path.startsWith('/portal')
+      || path.startsWith('/settings')
+      || path.startsWith('/audit')
   }
   return (!digitalOnly && !path.startsWith('/digital') && !path.startsWith('/trading')) || sharedOps
 }

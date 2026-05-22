@@ -750,7 +750,9 @@ function findCditRow_(sh, id) {
 }
 
 function resolveBusinessId_(raw) {
-  return raw === 'CREATIVE_DIGITAL_IT' ? 'CREATIVE_DIGITAL_IT' : 'ALMA_LIFESTYLE';
+  if (raw === 'CREATIVE_DIGITAL_IT') return 'CREATIVE_DIGITAL_IT';
+  if (raw === 'ALMA_TRADING') return 'ALMA_TRADING';
+  return 'ALMA_LIFESTYLE';
 }
 
 function orderMatchesBusiness_(o, bid) {
