@@ -441,6 +441,7 @@ export function TradeEntryModal({
 export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated }: { open: boolean; account?: TradingAccount | null; accounts?: TradingAccount[]; onClose: () => void; onCreated: (res: TradingMutationResponse) => void }) {
   const { mutate, loading } = useAddTradingExpense()
   const { mutate: upload, loading: uploading } = useUploadTradingAttachment()
+  const formRef = useRef<HTMLFormElement>(null)
   const [form, setForm] = useState({ tradingAccountId: '', expenseType: 'Mobile', amount: '', notes: '', attachmentUrl: '' })
   useEffect(() => { if (open) setForm(f => ({ ...f, tradingAccountId: account?.id || accounts?.[0]?.id || '', amount: '', notes: '', attachmentUrl: '' })) }, [account?.id, accounts, open])
 
@@ -464,8 +465,24 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
   }
 
   return (
-    <ModalFrame open={open} onClose={onClose} title={account ? 'Add account expense' : 'Expense entry'} desc="Account ledger expense. It also feeds global finance, analytics, and management reports.">
-      <form onSubmit={e => void submit(e)} className="space-y-3">
+    <ModalFrame
+      open={open}
+      onClose={onClose}
+      title={account ? 'Add account expense' : 'Expense entry'}
+      desc="Account ledger expense. It also feeds global finance, analytics, and management reports."
+      footer={
+        <Button
+          type="button"
+          variant="gold"
+          className="w-full justify-center"
+          disabled={loading || uploading}
+          onClick={() => formRef.current?.requestSubmit()}
+        >
+          {loading ? <><Spinner /> Saving</> : 'Add expense'}
+        </Button>
+      }
+    >
+      <form ref={formRef} id="expense-entry-form" onSubmit={e => void submit(e)} className="space-y-3">
         {!account && <Select value={form.tradingAccountId} onChange={v => setForm(f => ({ ...f, tradingAccountId: v }))} options={(accounts ?? []).map(a => ({ label: a.accountTitle, value: a.id }))} className="w-full" />}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select value={form.expenseType} onChange={v => setForm(f => ({ ...f, expenseType: v }))} options={EXPENSE_TYPES.map(t => ({ label: t, value: t }))} />
@@ -475,7 +492,6 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
         {uploading && <p className="text-[11px] text-zinc-500">Uploading attachment...</p>}
         {form.attachmentUrl && <p className="text-[11px] text-green-400">Attachment ready</p>}
         <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60" placeholder="Notes" />
-        <Button type="submit" variant="gold" className="w-full justify-center" disabled={loading || uploading}>{loading ? <><Spinner /> Saving</> : 'Add expense'}</Button>
       </form>
     </ModalFrame>
   )
