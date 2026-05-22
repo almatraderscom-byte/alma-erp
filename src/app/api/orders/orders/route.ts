@@ -43,12 +43,18 @@ export async function POST(req: NextRequest) {
   let body: unknown
   try {
     body = await req.json()
-    const actorPayload = await mergeActorPayload(req, body as Record<string, unknown>)
+    const payload = body as Record<string, unknown>
+    const actorPayload = await mergeActorPayload(req, payload)
     if (!actorPayload.handled_by && actorPayload.actor_user_id) {
       actorPayload.handled_by = `${String(actorPayload.actor || 'User')} (${String(actorPayload.actor_user_id)})`
     }
+    const gasStarted = Date.now()
     const result = await serverPost('create_order', actorPayload)
-    const payload = body as Record<string, unknown>
+    logEvent('info', 'order.create_gas_duration', {
+      ms: Date.now() - gasStarted,
+      itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
+      businessId: payload.business_id,
+    })
     enqueueOrderConfirmationSms({
       businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
       phone: String(payload.phone || payload.customer_phone || ''),

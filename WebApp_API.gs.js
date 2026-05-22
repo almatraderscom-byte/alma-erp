@@ -683,7 +683,8 @@ function createOrder_(body) {
     }
   }
   if (!items.length && !body.product) return { error: 'Missing required field: product' };
-  validateOrderInventory_(items);
+  var stock = items.length ? getStockRowsBySku_() : null;
+  if (items.length) validateOrderInventory_(items, stock);
 
   // ── Get sheet ─────────────────────────────────────────────────────────────
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -789,17 +790,16 @@ function createOrder_(body) {
 
   if (items.length) {
     appendOrderItems_(orderId, items);
-    applyOrderInventoryDeductions_(items);
+    applyOrderInventoryDeductions_(items, stock);
   }
 
-  // ── Fire Phase 5 CRM hook if loaded ──────────────────────────────────────
-  if (typeof onOrderCrmUpdate === 'function') {
-    try {
-      onOrderCrmUpdate(body.customer, body.phone, body.address || '', '', body.source);
-    } catch (crmErr) {
-      apiLog_('WARN', 'create_order', 'CRM hook error: ' + crmErr.message, '');
-    }
-  }
+  enqueueDeferredOrderCrmHook_({
+    customer: String(body.customer || '').trim(),
+    phone: String(body.phone || '').trim(),
+    address: String(body.address || '').trim(),
+    source: String(body.source || '').trim(),
+    order_id: orderId,
+  });
 
   // ── Compute profit for response (formula in sheet may not resolve yet) ───────
   var sellPrice   = items.length ? Math.max(0, subtotal - discount - Number(body.add_discount || 0)) : Number(body.sell_price) || (Number(body.unit_price) * Number(body.qty));
@@ -987,33 +987,36 @@ function remapOrderItemsToLifestylePools_(items) {
   return items;
 }
 
-function validateOrderInventory_(items) {
-  if (!items.length) return;
-  var stock = getStockRowsBySku_();
+function orderInventoryDemand_(items) {
   var demand = {};
   for (var i = 0; i < items.length; i++) {
     var sku = String(items[i].stock_sku || items[i].sku || '').trim().toLowerCase();
-    if (!stock[sku]) throw new Error('Inventory SKU not found: ' + items[i].sku);
+    if (!sku) continue;
     demand[sku] = (demand[sku] || 0) + Number(items[i].qty || 0);
   }
+  return demand;
+}
+
+function validateOrderInventory_(items, stock) {
+  if (!items.length) return;
+  var map = stock || getStockRowsBySku_();
+  var demand = orderInventoryDemand_(items);
   Object.keys(demand).forEach(function(sku) {
-    var available = Number(stock[sku].data[12] || 0);
+    if (!map[sku]) throw new Error('Inventory SKU not found: ' + sku);
+    var available = Number(map[sku].data[12] || 0);
     if (demand[sku] > available) {
-      throw new Error('Insufficient stock for ' + stock[sku].data[0] + ': requested ' + demand[sku] + ', available ' + available);
+      throw new Error('Insufficient stock for ' + map[sku].data[0] + ': requested ' + demand[sku] + ', available ' + available);
     }
   });
 }
 
-function applyOrderInventoryDeductions_(items) {
+function applyOrderInventoryDeductions_(items, stock) {
   if (!items.length) return;
-  var stock = getStockRowsBySku_();
-  var demand = {};
-  items.forEach(function(item) {
-    var sku = String(item.stock_sku || item.sku || '').trim().toLowerCase();
-    demand[sku] = (demand[sku] || 0) + Number(item.qty || 0);
-  });
+  var map = stock || getStockRowsBySku_();
+  var demand = orderInventoryDemand_(items);
+  var touched = {};
   Object.keys(demand).forEach(function(sku) {
-    var ref = stock[sku];
+    var ref = map[sku];
     if (!ref) throw new Error('Inventory SKU not found while deducting: ' + sku);
     var qty = demand[sku];
     var sold = Number(ref.data[7] || 0) + qty;
@@ -1021,11 +1024,75 @@ function applyOrderInventoryDeductions_(items) {
     var available = Math.max(0, Number(ref.data[12] || 0) - qty);
     var reorder = Number(ref.data[13] || 0);
     var status = available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
-    ref.sh.getRange(ref.row, 8).setValue(sold);
-    ref.sh.getRange(ref.row, 12).setValue(current);
-    ref.sh.getRange(ref.row, 13).setValue(available);
-    ref.sh.getRange(ref.row, 15).setValue(status);
+    ref.data[7] = sold;
+    ref.data[11] = current;
+    ref.data[12] = available;
+    ref.data[14] = status;
+    var rowKey = ref.sh.getSheetId() + ':' + ref.row;
+    touched[rowKey] = ref;
   });
+  Object.keys(touched).forEach(function(rowKey) {
+    var ref = touched[rowKey];
+    var slice = ref.sh.getRange(ref.row, 8, 1, 8).getValues()[0];
+    slice[0] = ref.data[7];
+    slice[4] = ref.data[11];
+    slice[5] = ref.data[12];
+    slice[7] = ref.data[14];
+    ref.sh.getRange(ref.row, 8, 1, 8).setValues([slice]);
+  });
+  SpreadsheetApp.flush();
+}
+
+var DEFERRED_CRM_QUEUE_KEY_ = 'deferred_order_crm_queue_v1';
+
+function enqueueDeferredOrderCrmHook_(payload) {
+  if (typeof onOrderCrmUpdate !== 'function') return;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty(DEFERRED_CRM_QUEUE_KEY_) || '[]';
+    var queue = JSON.parse(raw);
+    if (!Array.isArray(queue)) queue = [];
+    queue.push({
+      ts: Date.now(),
+      customer: String(payload.customer || ''),
+      phone: String(payload.phone || ''),
+      address: String(payload.address || ''),
+      source: String(payload.source || ''),
+      order_id: String(payload.order_id || ''),
+    });
+    if (queue.length > 40) queue = queue.slice(queue.length - 40);
+    props.setProperty(DEFERRED_CRM_QUEUE_KEY_, JSON.stringify(queue));
+  } catch (e) {
+    apiLog_('WARN', 'create_order', 'CRM defer enqueue failed: ' + e.message, '');
+  }
+}
+
+/** Run from time-driven trigger or editor to drain deferred CRM hooks. */
+function processDeferredOrderCrmHooks_() {
+  if (typeof onOrderCrmUpdate !== 'function') return { ok: true, processed: 0, skipped: 'crm_not_loaded' };
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty(DEFERRED_CRM_QUEUE_KEY_) || '[]';
+  var queue = [];
+  try {
+    queue = JSON.parse(raw);
+  } catch (e) {
+    props.deleteProperty(DEFERRED_CRM_QUEUE_KEY_);
+    return { ok: false, error: 'invalid_queue' };
+  }
+  if (!Array.isArray(queue) || !queue.length) return { ok: true, processed: 0 };
+  props.deleteProperty(DEFERRED_CRM_QUEUE_KEY_);
+  var processed = 0;
+  var failed = 0;
+  queue.forEach(function(entry) {
+    try {
+      onOrderCrmUpdate(entry.customer, entry.phone, entry.address || '', '', entry.source || '');
+      processed++;
+    } catch (crmErr) {
+      failed++;
+      apiLog_('WARN', 'deferred_crm', 'CRM hook error: ' + crmErr.message, entry.order_id || '');
+    }
+  });
+  return { ok: true, processed: processed, failed: failed };
 }
 
 function restoreOrderItemsOnce_(orderSheet, rowIndex, orderId, reason) {
