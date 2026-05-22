@@ -163,6 +163,10 @@ function ApprovalsPageInner() {
 
   async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '') {
     if (isRowProcessing(row.id)) return
+    if (action === 'REJECT' && actionNote.trim().length < 5) {
+      toast.error('Rejection reason must be at least 5 characters')
+      return
+    }
     const result = await executeApproval({
       approvalId: row.id,
       action,
@@ -473,17 +477,28 @@ function ApprovalsPageInner() {
                 </div>
               )}
             </div>
-            <div className="mobile-modal-body px-5">
+            <div className="mobile-modal-body px-5 space-y-2">
               <textarea
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 disabled={rejectActionDisabled}
+                minLength={5}
                 className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
-                placeholder="Rejection reason required"
+                placeholder="Rejection reason required (min. 5 characters)"
               />
+              <p className={`text-[11px] ${note.trim().length < 5 ? 'text-amber-300' : 'text-zinc-500'}`}>
+                {note.trim().length < 5
+                  ? `${5 - note.trim().length} more character(s) required`
+                  : 'Reason will be stored on the approval record.'}
+              </p>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
-              <Button variant="danger" className="w-full justify-center" disabled={rejectActionDisabled} onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}>
+              <Button
+                variant="danger"
+                className="w-full justify-center"
+                disabled={rejectActionDisabled || note.trim().length < 5}
+                onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}
+              >
                 {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
               </Button>
             </div>

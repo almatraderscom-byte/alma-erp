@@ -1,5 +1,6 @@
 import { Prisma, type ApprovalRequest, type ApprovalStatus, type NotificationPriority } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { deferAfterApprovalCommit } from '@/lib/prisma-transaction'
 import { createNotification } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import type { ApprovalAuditEntry, ApprovalSource } from '@/lib/approval-types'
@@ -137,7 +138,17 @@ export async function resolveApprovalRequest(input: {
     tx: input.tx,
   })
   if (!input.tx) {
-    await notifyApprovalResolved(updated, input.actorUserId, input.status, input.reason)
+    deferAfterApprovalCommit('approval.resolve.notify', async () => {
+      try {
+        await notifyApprovalResolved(updated, input.actorUserId, input.status, input.reason)
+      } catch (err) {
+        logEvent('error', 'approval.notify_resolved.failed', {
+          approvalId: updated.id,
+          status: input.status,
+          message: (err as Error).message,
+        })
+      }
+    })
   }
   return updated
 }
@@ -233,7 +244,17 @@ export async function resolveApprovalRequestById(input: {
     tx: input.tx,
   })
   if (!input.tx && !input.skipRequesterNotification) {
-    await notifyApprovalResolved(updated, input.actorUserId, input.status, input.reason)
+    deferAfterApprovalCommit('approval.resolve_by_id.notify', async () => {
+      try {
+        await notifyApprovalResolved(updated, input.actorUserId, input.status, input.reason)
+      } catch (err) {
+        logEvent('error', 'approval.notify_resolved.failed', {
+          approvalId: updated.id,
+          status: input.status,
+          message: (err as Error).message,
+        })
+      }
+    })
   }
   return updated
 }

@@ -10,7 +10,6 @@ import { serverPost } from '@/lib/server-api'
 import { mirrorSalaryAdvanceToSheets } from '@/lib/payroll-sheets-mirror'
 import { dispatchApprovalsUpdated, notifyApprovalResolved, resolveApprovalRequest, resolveApprovalRequestById } from '@/lib/approvals'
 import {
-  approvalMatchesResolvedWalletAction,
   reconcilePenaltyApprovalWithSource,
   reconcileWalletApprovalWithSource,
 } from '@/lib/approval-integrity'
@@ -273,34 +272,31 @@ async function processPenaltyAppeal(
   }
 
   if (waiver.status !== 'PENDING') {
-    const target =
-      waiver.status === 'REJECTED' || waiver.status === 'CANCELLED'
-        ? 'REJECTED'
-        : waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED'
-          ? 'APPROVED'
-          : null
-    if (
-      target
-      && ((action === 'REJECT' && target === 'REJECTED') || (action === 'APPROVE' && target === 'APPROVED'))
-    ) {
-      const reconciled = await reconcilePenaltyApprovalWithSource({
-        approvalId: approval.id,
-        waiverStatus: waiver.status,
-        actorUserId,
-        note,
+    const reconciled = await reconcilePenaltyApprovalWithSource({
+      approvalId: approval.id,
+      waiverStatus: waiver.status,
+      actorUserId,
+      note,
+    })
+    if (reconciled.ok) {
+      dispatchApprovalsUpdated()
+      const syncedMismatch =
+        (action === 'REJECT' && waiver.status !== 'REJECTED' && waiver.status !== 'CANCELLED')
+        || (action === 'APPROVE' && (waiver.status === 'REJECTED' || waiver.status === 'CANCELLED'))
+      return apiDataSuccess({
+        approval: reconciled.approval,
+        moduleResult: { waiver: penaltyAppealDto(waiver) },
+        reconciled: true,
+        ...(syncedMismatch
+          ? { warning: `Attendance waiver is already ${waiver.status} — approval queue synced with attendance.` }
+          : {}),
       })
-      if (reconciled.ok) {
-        dispatchApprovalsUpdated()
-        return apiDataSuccess({ ...reconciled, moduleResult: { waiver: penaltyAppealDto(waiver) } })
-      }
     }
-    return NextResponse.json(
-      {
-        error: `Penalty appeal is already ${waiver.status}. It may have been processed from Attendance. Refresh approvals.`,
-        code: 'SOURCE_ALREADY_RESOLVED',
-        sourceStatus: waiver.status,
-      },
-      { status: 409 },
+    return approvalErrorResponse(
+      reconciled.error,
+      409,
+      'SOURCE_ALREADY_RESOLVED',
+      { sourceStatus: waiver.status },
     )
   }
 
@@ -315,13 +311,16 @@ async function processPenaltyAppeal(
   })
 
   if ('error' in result) {
-    return NextResponse.json({ error: result.error }, { status: result.status })
+    return approvalErrorResponse(
+      result.error || 'Penalty appeal review failed',
+      result.status ?? 400,
+      'penalty_appeal_failed',
+    )
   }
 
   const approvalRow = await prisma.approvalRequest.findUnique({ where: { id: approval.id } })
   dispatchApprovalsUpdated()
-  return NextResponse.json({
-    ok: true,
+  return apiDataSuccess({
     approval: approvalRow,
     moduleResult: { waiver: result.waiver, alreadyReviewed: 'alreadyReviewed' in result ? result.alreadyReviewed : false },
   })
@@ -477,35 +476,28 @@ async function processWalletRequest(
   }
 
   if (request.status !== 'PENDING') {
-    if (approvalMatchesResolvedWalletAction(action, request.status)) {
-      const reconciled = await reconcileWalletApprovalWithSource({
-        approvalId,
-        wallet: request,
-        action,
-        actorUserId,
-        note,
-      })
-      if (!reconciled.ok) {
-        logEvent('warn', 'approval.reject.failed', { approvalId, reason: reconciled.error, walletStatus: request.status })
-        return NextResponse.json({ error: reconciled.error, code: 'SOURCE_ALREADY_RESOLVED' }, { status: 409 })
-      }
-      dispatchApprovalsUpdated()
-      return NextResponse.json(reconciled)
-    }
-    logEvent('warn', 'approval.lookup.failed', {
+    const reconciled = await reconcileWalletApprovalWithSource({
       approvalId,
-      entityId: requestId,
-      walletStatus: request.status,
-      action,
+      wallet: request,
+      actorUserId,
+      note,
     })
-    return NextResponse.json(
-      {
-        error: `Wallet request is already ${request.status}. It was likely processed from Payroll. Refresh approvals.`,
-        code: 'SOURCE_ALREADY_RESOLVED',
-        sourceStatus: request.status,
-      },
-      { status: 409 },
-    )
+    if (!reconciled.ok) {
+      logEvent('warn', 'approval.reject.failed', { approvalId, reason: reconciled.error, walletStatus: request.status })
+      return approvalErrorResponse(reconciled.error, 409, 'SOURCE_ALREADY_RESOLVED', { sourceStatus: request.status })
+    }
+    dispatchApprovalsUpdated()
+    const syncedMismatch =
+      (action === 'REJECT' && request.status !== 'REJECTED')
+      || (action === 'APPROVE' && request.status === 'REJECTED')
+    return apiDataSuccess({
+      approval: reconciled.approval,
+      moduleResult: reconciled.moduleResult,
+      reconciled: true,
+      ...(syncedMismatch
+        ? { warning: `Payroll already ${request.status} — approval queue synced with payroll.` }
+        : {}),
+    })
   }
 
   if (action === 'REJECT') {

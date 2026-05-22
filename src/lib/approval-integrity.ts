@@ -84,7 +84,6 @@ export function approvalMatchesResolvedWalletAction(
 export async function reconcileWalletApprovalWithSource(input: {
   approvalId: string
   wallet: WalletRequest
-  action: 'APPROVE' | 'REJECT'
   actorUserId: string
   note?: string
 }) {
@@ -97,19 +96,6 @@ export async function reconcileWalletApprovalWithSource(input: {
 
   if (!targetStatus) {
     return { ok: false as const, error: `Wallet request is ${input.wallet.status} — cannot reconcile from approvals.` }
-  }
-
-  if (input.action === 'REJECT' && targetStatus !== 'REJECTED') {
-    return {
-      ok: false as const,
-      error: `Wallet request is already ${input.wallet.status}. Refresh and use Payroll if you need to change it.`,
-    }
-  }
-  if (input.action === 'APPROVE' && targetStatus !== 'APPROVED') {
-    return {
-      ok: false as const,
-      error: `Wallet request is ${input.wallet.status}, not approved. Refresh approvals.`,
-    }
   }
 
   const reason =
@@ -325,11 +311,9 @@ export async function repairWalletApprovalOrphans(actorUserId: string, limit = 5
 
     const wallet = await prisma.walletRequest.findUnique({ where: { id: orphan.entityId } })
     if (!wallet) continue
-    const action = wallet.status === 'REJECTED' ? 'REJECT' : 'APPROVE'
     const result = await reconcileWalletApprovalWithSource({
       approvalId: orphan.approvalId,
       wallet,
-      action,
       actorUserId,
       note: 'Auto-repaired orphan approval linkage',
     })

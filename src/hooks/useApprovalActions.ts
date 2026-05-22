@@ -194,17 +194,20 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           message: committedLabel(action),
         })
 
+        const warning = typeof json.warning === 'string' ? json.warning : null
         if (json.reconciled) {
           toast.success(
-            action === 'REJECT'
-              ? 'Approval synced (already handled elsewhere)'
-              : 'Approval synced with existing decision',
+            warning
+              || (action === 'REJECT'
+                ? 'Approval synced (already handled elsewhere)'
+                : 'Approval synced with existing decision'),
             { id: toastId },
           )
         } else {
-          toast.success(action === 'APPROVE' ? 'Approval committed' : 'Rejection committed', {
-            id: toastId,
-          })
+          toast.success(
+            warning || (action === 'APPROVE' ? 'Approval committed' : 'Rejection committed'),
+            { id: toastId },
+          )
         }
 
         logClient('approval.action.committed', {
