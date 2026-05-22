@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import toast from 'react-hot-toast'
 import { Button, Card, Input, Select, Spinner } from '@/components/ui'
 import { useAddTradingBkashSummary, useAddTradingCapital, useAddTradingExpense, useCreateTradingAccount, useSubmitTradingTrade, useUpdateTradingAccount, useUploadTradingAttachment } from '@/hooks/useTrading'
@@ -8,7 +8,21 @@ import { EXPENSE_TYPES, n, signedClass } from '@/components/trading/trading-util
 import { tradingDrafts } from '@/lib/trading-drafts'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
-export function ModalFrame({ title, desc, open, onClose, children }: { title: string; desc?: string; open: boolean; onClose: () => void; children: React.ReactNode }) {
+export function ModalFrame({
+  title,
+  desc,
+  open,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string
+  desc?: string
+  open: boolean
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+}) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -29,6 +43,11 @@ export function ModalFrame({ title, desc, open, onClose, children }: { title: st
         <div className="mobile-modal-body p-4 sm:p-5">
           {children}
         </div>
+        {footer ? (
+          <div className="mobile-modal-footer px-4 pt-3 sm:px-5 sm:pt-3">
+            {footer}
+          </div>
+        ) : null}
       </Card>
     </MobileModalPortal>
   )
