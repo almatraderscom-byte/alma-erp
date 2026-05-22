@@ -1,9 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Button, Card, Select, Spinner } from '@/components/ui'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import type { CreateProductInput, CreateProductRes } from '@/lib/api'
 import { MEN_SIZE_GROUPS, WOMEN_STOCK_VARIANT_GROUPS, parseCollectionCode, smartFashionSku, type CollectionType } from '@/components/orders/new-order/collection-engine'
 
@@ -61,12 +61,7 @@ function parseVariants(text: string): string[] | undefined {
 export function AddProductModal({ open, onOpenChange, categoryOptions, saving, saveError, onSubmit }: Props) {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [localError, setLocalError] = useState<string | null>(null)
-  /** Avoid createPortal during SSR / before document exists. */
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
     console.log('[AddProductModal] open →', open)
@@ -302,25 +297,17 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
     { label: 'Other (type below)', value: '__other__' },
   ]
 
-  if (!mounted || typeof document === 'undefined') return null
-
   if (!open) return null
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-auto"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-product-modal-title"
+  return (
+    <MobileModalPortal
+      open
+      zIndex={10000}
+      onBackdropClick={() => onOpenChange(false)}
+      aria-label="Add inventory"
     >
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm border-0 cursor-default"
-        aria-label="Close dialog backdrop"
-        onClick={() => onOpenChange(false)}
-      />
-      <Card className="relative z-[10001] w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border-gold-dim/30 shadow-2xl pointer-events-auto">
-        <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between gap-3 sticky top-0 bg-card/95 backdrop-blur">
+      <Card className="mobile-modal-shell w-full rounded-t-2xl border-gold-dim/30 shadow-2xl sm:max-w-lg sm:rounded-2xl">
+        <div className="mobile-modal-header flex items-center justify-between gap-3 border-b border-border p-4 pb-3 sm:p-5 sm:pb-3">
           <div>
             <h2 id="add-product-modal-title" className="text-sm font-bold text-cream tracking-tight">
               Add inventory
@@ -332,7 +319,8 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
           </Button>
         </div>
 
-        <form onSubmit={e => void handleSubmit(e)} className="p-4 sm:p-5 space-y-3">
+        <form ref={formRef} id="add-product-form" onSubmit={e => void handleSubmit(e)} className="flex min-h-0 flex-1 flex-col">
+          <div className="mobile-modal-body space-y-3 px-4 pb-4 sm:px-5">
           <div className="grid grid-cols-2 gap-2 rounded-2xl border border-gold-dim/20 bg-gold/[0.04] p-2">
             <button
               type="button"
@@ -672,24 +660,31 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
               {localError || saveError}
             </p>
           )}
-
-          <div className="flex gap-2 pt-2">
-            <Button type="button" variant="ghost" className="flex-1" onClick={() => onOpenChange(false)} disabled={saving}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="gold" className="flex-1" disabled={saving}>
-              {saving ? (
-                <>
-                  <Spinner /> Saving…
-                </>
-              ) : (
-                'Save product'
-              )}
-            </Button>
+          </div>
+          <div className="mobile-modal-footer px-4 pt-3 sm:px-5">
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={() => onOpenChange(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="gold"
+                className="flex-1 justify-center"
+                disabled={saving}
+                onClick={() => formRef.current?.requestSubmit()}
+              >
+                {saving ? (
+                  <>
+                    <Spinner /> Saving…
+                  </>
+                ) : (
+                  'Save product'
+                )}
+              </Button>
+            </div>
           </div>
         </form>
       </Card>
-    </div>,
-    document.body,
+    </MobileModalPortal>
   )
 }
