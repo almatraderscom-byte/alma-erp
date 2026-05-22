@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { sendPayrollAlert } from '@/lib/resend'
-import { createApprovalRequest } from '@/lib/approvals'
+import { createApprovalRequest, notifyApprovalSuperAdmins } from '@/lib/approvals'
+import { errorMeta, logEvent } from '@/lib/logger'
 import { queuePayrollWalletRequestAlert } from '@/lib/telegram-notification/payroll-alerts'
 import { getPrimaryPaymentMethod, toPayoutSummary } from '@/lib/employee-payment-method'
 import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
@@ -99,17 +100,21 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
     },
   })
 
-  await createApprovalRequest({
+  const approvalTitle = `${type === 'WITHDRAWAL' ? 'Wallet withdrawal' : 'Wallet advance'} approval required`
+  const approvalMessage = `${type} request for employee ${employeeId}: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`
+
+  const approval = await createApprovalRequest({
     module: 'PAYROLL',
     type: type === 'WITHDRAWAL' ? 'WALLET_WITHDRAWAL' : 'WALLET_ADVANCE',
     businessId: request.businessId,
     entityId: request.id,
     requestedBy: ctx.userId,
     reason,
-    priority: 'HIGH',
+    priority: 'NORMAL',
+    skipNotify: true,
     actionUrl: '/payroll',
-    title: `${type === 'WITHDRAWAL' ? 'Wallet withdrawal' : 'Wallet advance'} approval required`,
-    message: `${type} request for employee ${employeeId}: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`,
+    title: approvalTitle,
+    message: approvalMessage,
     payloadSnapshot: {
       requestId: request.id,
       employeeId,
@@ -120,34 +125,41 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
     },
   })
 
-  const requester = await prisma.user.findUnique({
-    where: { id: ctx.userId },
-    select: { name: true },
-  })
-  await queuePayrollWalletRequestAlert({
-    businessId: request.businessId,
-    userId: ctx.userId,
-    employeeId,
-    employeeName: requester?.name,
-    type,
-    amount,
-    reason,
-    requestId: request.id,
-    payout: payoutSnapshot,
+  const responsePayload = { request, idempotentReplay: Boolean(existingDuplicate) }
+
+  void Promise.all([
+    prisma.user.findUnique({ where: { id: ctx.userId }, select: { name: true } }).then(requester =>
+      queuePayrollWalletRequestAlert({
+        businessId: request.businessId,
+        userId: ctx.userId,
+        employeeId,
+        employeeName: requester?.name,
+        type,
+        amount,
+        reason,
+        requestId: request.id,
+        payout: payoutSnapshot,
+      }),
+    ),
+    notifyApprovalSuperAdmins(approval, { title: approvalTitle, message: approvalMessage }),
+    sendPayrollAlert({
+      businessId: request.businessId,
+      subject: `${type.toLowerCase()} request submitted · ৳${amount.toLocaleString('en-BD')}`,
+      title: type === 'WITHDRAWAL' ? 'Withdrawal request' : 'Advance request',
+      preview: reason,
+      text: `${type} request submitted for employee ${employeeId}. Amount: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`,
+      priority: 'NORMAL',
+      actionUrl: '/payroll',
+      actionLabel: 'Review wallet request',
+      dedupeKey: `wallet-request:${request.id}`,
+      metadata: { requestId: request.id, employeeId, businessId: request.businessId, type, amount },
+    }),
+  ]).catch(err => {
+    logEvent('warn', 'wallet_request.notifications_failed', {
+      requestId: request.id,
+      ...errorMeta(err),
+    })
   })
 
-  await sendPayrollAlert({
-    businessId: request.businessId,
-    subject: `${type.toLowerCase()} request submitted · ৳${amount.toLocaleString('en-BD')}`,
-    title: type === 'WITHDRAWAL' ? 'Withdrawal request' : 'Advance request',
-    preview: reason,
-    text: `${type} request submitted for employee ${employeeId}. Amount: ৳${amount.toLocaleString('en-BD')}. Reason: ${reason}`,
-    priority: 'HIGH',
-    actionUrl: '/payroll',
-    actionLabel: 'Review wallet request',
-    dedupeKey: `wallet-request:${request.id}`,
-    metadata: { requestId: request.id, employeeId, businessId: request.businessId, type, amount },
-  })
-
-  return apiDataSuccess({ request, idempotentReplay: Boolean(existingDuplicate) })
+  return apiDataSuccess(responsePayload)
 })
