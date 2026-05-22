@@ -75,6 +75,14 @@ type AttendanceRecordDto = {
   waiverRequests: AttendanceWaiverDto[]
 }
 
+type MealEligibility = {
+  enabled: boolean
+  amountBdt: number | null
+  canRequestToday: boolean
+  pendingRequest: { status: string; amountBdt: number | string } | null
+  reason: string
+}
+
 type AttendanceWaiverDto = {
   id: string
   status: string
@@ -99,6 +107,8 @@ export default function EmployeePortalPage() {
   const { profile: me, loading: loadingMe, employeeId: empId, refetch: refetchProfile } = useMyDeskProfile(business.id)
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
+  const [mealEligibility, setMealEligibility] = useState<MealEligibility | null>(null)
+  const [mealEligibilityLoading, setMealEligibilityLoading] = useState(true)
 
   const attendanceEnabled = !systemOwner && Boolean(empId)
   const {
@@ -154,6 +164,32 @@ export default function EmployeePortalPage() {
     void loadWallet()
   }, [loadWallet])
 
+  const loadMealEligibility = useCallback(async () => {
+    if (systemOwner) {
+      setMealEligibility(null)
+      setMealEligibilityLoading(false)
+      return
+    }
+    setMealEligibilityLoading(true)
+    try {
+      const result = await safeFetchJson<MealEligibility>(
+        `/api/payroll/meal-allowance/eligibility?business_id=${encodeURIComponent(business.id)}`,
+        { cache: 'no-store' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      setMealEligibility(result.data)
+    } catch (e) {
+      setMealEligibility(null)
+      toast.error((e as Error).message || 'Could not load meal allowance status')
+    } finally {
+      setMealEligibilityLoading(false)
+    }
+  }, [business.id, systemOwner])
+
+  useEffect(() => {
+    void loadMealEligibility()
+  }, [loadMealEligibility])
+
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState === 'visible') void loadWallet()
@@ -185,16 +221,18 @@ export default function EmployeePortalPage() {
     useCallback(async () => {
       await refetchProfile()
       await loadWallet()
+      await loadMealEligibility()
       await refetchAttendance({ clearCache: true })
-    }, [refetchProfile, loadWallet, refetchAttendance]),
+    }, [refetchProfile, loadWallet, loadMealEligibility, refetchAttendance]),
     !systemOwner,
   )
 
   const refreshDesk = useCallback(async () => {
     await refetchProfile()
     await loadWallet()
+    await loadMealEligibility()
     await refetchAttendance()
-  }, [refetchProfile, loadWallet, refetchAttendance])
+  }, [refetchProfile, loadWallet, loadMealEligibility, refetchAttendance])
 
   const opsSpotlight = useOperationalSpotlightTrigger(business.id, !systemOwner)
 
@@ -334,6 +372,16 @@ export default function EmployeePortalPage() {
               void loadWallet()
               void refetchProfile()
             }}
+          />
+        )}
+
+        {!systemOwner && (
+          <MealAllowanceCard
+            businessId={business.id}
+            empLinked={Boolean(empId)}
+            loading={mealEligibilityLoading}
+            eligibility={mealEligibility}
+            onSubmitted={() => void loadMealEligibility()}
           />
         )}
 
@@ -735,6 +783,108 @@ function WalletStat({ label, value, tone = 'text-cream' }: { label: string; valu
       <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-600">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${tone}`}>{value}</p>
     </div>
+  )
+}
+
+function MealAllowanceCard({
+  businessId,
+  empLinked,
+  loading,
+  eligibility,
+  onSubmitted,
+}: {
+  businessId: string
+  empLinked: boolean
+  loading: boolean
+  eligibility: MealEligibility | null
+  onSubmitted: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  if (loading) {
+    return (
+      <Card className="p-5 border-gold-dim/20">
+        <Skeleton className="h-24 w-full" />
+      </Card>
+    )
+  }
+
+  if (!eligibility?.enabled) return null
+
+  const amount = Number(eligibility.amountBdt || 0)
+  const pending = eligibility.pendingRequest
+  const canRequest = eligibility.canRequestToday
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const r = reason.trim()
+    if (!r) {
+      toast.error('Please add a short reason')
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast('/api/payroll/meal-allowance/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, reason: r }),
+      })
+      if (!result.ok) return
+      toast.success('Meal allowance request submitted')
+      setReason('')
+      onSubmitted()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="p-5 space-y-4 border-gold-dim/20">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Meal Allowance</p>
+          {canRequest ? (
+            <p className="mt-2 text-[11px] text-zinc-400">No kitchen today? Request your meal allowance.</p>
+          ) : pending?.status === 'APPROVED' ? (
+            <p className="mt-2 text-[11px] text-zinc-400">Meal allowance approved for today</p>
+          ) : (
+            <p className="mt-2 text-[11px] text-zinc-400">Request pending approval</p>
+          )}
+        </div>
+        <span className="rounded-full border border-gold-dim/40 bg-gold/10 px-3 py-1 text-[11px] font-bold text-gold-lt">
+          {pending?.status === 'PENDING'
+            ? `PENDING ${money(pending.amountBdt ?? amount)}`
+            : pending?.status === 'APPROVED'
+              ? `APPROVED ${money(pending.amountBdt ?? amount)}`
+              : money(amount)}
+        </span>
+      </div>
+
+      {canRequest ? (
+        <form onSubmit={submit} className="space-y-3 text-[11px]">
+          <label className="block space-y-1">
+            <span className="text-zinc-500">Reason</span>
+            <textarea
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              rows={2}
+              placeholder="e.g. No food arranged today"
+              disabled={!empLinked || busy}
+              className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm resize-none disabled:opacity-40"
+            />
+          </label>
+          <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>
+            {busy ? 'Submitting…' : `Request ${money(amount)} allowance`}
+          </Button>
+        </form>
+      ) : eligibility.reason ? (
+        <p className="text-[11px] text-zinc-500">{eligibility.reason}</p>
+      ) : null}
+      {!empLinked && canRequest && (
+        <p className="text-[11px] text-amber-400">Ask an admin to link your HR employee ID before requesting meal allowance.</p>
+      )}
+    </Card>
   )
 }
 

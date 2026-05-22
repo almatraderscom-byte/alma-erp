@@ -16,6 +16,28 @@ import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
 
+type MealProfileUser = {
+  id: string
+  name: string
+  phone: string | null
+  employeeIdGas: string | null
+}
+
+type MealProfileRow = {
+  user: MealProfileUser
+  profile: { id: string; enabled: boolean; amountBdt: number | string } | null
+}
+
+type MealProfileRowState = {
+  userId: string
+  name: string
+  phone: string | null
+  employeeId: string
+  enabled: boolean
+  amountBdt: string
+  saving: boolean
+}
+
 export default function PayrollPage() {
   const { role } = useActor()
   const { business } = useBusiness()
@@ -36,6 +58,8 @@ export default function PayrollPage() {
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [compForm, setCompForm] = useState({ employeeId: '', type: 'EID_BONUS', amount: '', note: '', date: new Date().toISOString().slice(0, 10) })
   const [compBusy, setCompBusy] = useState(false)
+  const [mealRows, setMealRows] = useState<MealProfileRowState[]>([])
+  const [mealLoading, setMealLoading] = useState(false)
   const walletRequestId = useRef(0)
 
   const showApprovals = can(role, 'advanceApprove')
@@ -101,6 +125,85 @@ export default function PayrollPage() {
   useEffect(() => {
     void loadAutomation()
   }, [loadAutomation])
+
+  const loadMealProfiles = useCallback(async () => {
+    if (!showApprovals) return
+    setMealLoading(true)
+    try {
+      const result = await safeFetchJsonWithToast<{ rows?: MealProfileRow[] }>(
+        `/api/payroll/meal-allowance/profiles?business_id=${encodeURIComponent(business.id)}`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      const payload = unwrapApiData<{ rows?: MealProfileRow[] }>(result.data as Record<string, unknown>)
+      setMealRows(
+        (payload.rows ?? []).map(row => ({
+          userId: row.user.id,
+          name: row.user.name,
+          phone: row.user.phone,
+          employeeId: row.user.employeeIdGas || '',
+          enabled: row.profile?.enabled ?? false,
+          amountBdt: row.profile ? String(Number(row.profile.amountBdt) || '') : '',
+          saving: false,
+        })),
+      )
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not load meal allowance settings')
+      setMealRows([])
+    } finally {
+      setMealLoading(false)
+    }
+  }, [business.id, showApprovals])
+
+  useEffect(() => {
+    void loadMealProfiles()
+  }, [loadMealProfiles])
+
+  async function saveMealProfile(row: MealProfileRowState) {
+    if (row.saving) return
+    const amount = Number(row.amountBdt)
+    if (row.enabled && (!Number.isFinite(amount) || amount <= 0)) {
+      toast.error('Enter a valid amount (BDT) before enabling')
+      return
+    }
+    setMealRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: true } : r)))
+    try {
+      const result = await safeFetchJsonWithToast<{ profile?: { enabled: boolean; amountBdt: number | string } }>(
+        '/api/payroll/meal-allowance/profiles',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: business.id,
+            userId: row.userId,
+            employeeId: row.employeeId,
+            enabled: row.enabled,
+            amountBdt: row.enabled ? amount : 0,
+          }),
+        },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      const saved = unwrapApiData<{ profile?: { enabled: boolean; amountBdt: number | string } }>(
+        result.data as Record<string, unknown>,
+      )
+      toast.success(`Meal allowance saved for ${row.name}`)
+      setMealRows(prev =>
+        prev.map(r =>
+          r.userId === row.userId
+            ? {
+                ...r,
+                enabled: saved.profile?.enabled ?? row.enabled,
+                amountBdt: saved.profile ? String(Number(saved.profile.amountBdt) || '') : row.amountBdt,
+                saving: false,
+              }
+            : r,
+        ),
+      )
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not save meal allowance')
+      setMealRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: false } : r)))
+    }
+  }
 
   async function submitReview() {
     if (!review || reviewBusy) return
@@ -390,6 +493,84 @@ export default function PayrollPage() {
           </div>
         )}
       </Card>
+
+      {showApprovals && (
+        <Card className="p-5">
+          <p className="text-sm font-bold text-cream">Meal Allowance Settings</p>
+          <p className="mt-1 text-[11px] text-zinc-500 max-w-2xl">
+            Enable meal allowance for specific employees. On days when no food is cooked, enabled employees can request their allowance.
+          </p>
+          {mealLoading ? (
+            <Skeleton className="h-40 mt-4" />
+          ) : !mealRows.length ? (
+            <div className="mt-4">
+              <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
+            </div>
+          ) : (
+            <div className="table-scroll max-h-[420px] mt-4">
+              <table className="w-full min-w-[720px] text-left text-[11px]">
+                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                  <tr>
+                    <th className="py-2 pr-3">Employee</th>
+                    <th className="py-2 pr-3">Phone</th>
+                    <th className="py-2 pr-3 text-center">Enable</th>
+                    <th className="py-2 pr-3 text-right">Amount (BDT)</th>
+                    <th className="py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {mealRows.map(row => (
+                    <tr key={row.userId} className="border-b border-border/60">
+                      <td className="py-2 pr-3">
+                        <span className="text-cream">{row.name}</span>
+                        <span className="block text-zinc-600 font-mono">{row.employeeId || '—'}</span>
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-400">{row.phone || '—'}</td>
+                      <td className="py-2 pr-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={row.enabled}
+                          onChange={e =>
+                            setMealRows(prev =>
+                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-border accent-gold"
+                        />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          disabled={!row.enabled}
+                          value={row.amountBdt}
+                          onChange={e =>
+                            setMealRows(prev =>
+                              prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
+                            )
+                          }
+                          className="w-full max-w-[120px] ml-auto rounded-xl border border-border bg-black/30 px-3 py-2 text-right font-mono text-cream disabled:opacity-40"
+                        />
+                      </td>
+                      <td className="py-2 text-right">
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
+                          onClick={() => void saveMealProfile(row)}
+                        >
+                          {row.saving ? 'Saving…' : 'Save'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
       </div>
 
       {review && (
