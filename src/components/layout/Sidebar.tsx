@@ -46,7 +46,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
         )}
       </AnimatePresence>
       {badge && !collapsed && (
-        <span className="ml-auto text-[10px] font-bold bg-gold/15 text-gold-lt px-1.5 py-0.5 rounded-full">{badge}</span>
+        <span className="ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">{badge}</span>
       )}
     </Link>
   )
