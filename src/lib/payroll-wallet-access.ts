@@ -44,3 +44,13 @@ export async function getWalletContext(req: NextRequest, requestedBusinessId?: s
 export function forbidden(message = 'Forbidden') {
   return apiFailure('forbidden', message, { status: 403 })
 }
+
+/** Single business scope for ledger reads/writes (honors ?business_id / body.business_id). */
+export function resolveWalletScopeBusinessId(
+  businessIds: string[],
+  requested?: string | null,
+): string {
+  const req = String(requested || '').trim()
+  if (req && businessIds.includes(req)) return req
+  return businessIds[0]
+}

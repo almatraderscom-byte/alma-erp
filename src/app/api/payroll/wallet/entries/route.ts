@@ -3,7 +3,7 @@ import type { EmployeeLedgerEntryType } from '@prisma/client'
 import { WALLET_MANUAL_ENTRY_TYPES } from '@/lib/payroll-wallet'
 import { createCompensationLedgerEntry, isDebitCompensationType } from '@/lib/payroll-compensation'
 import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
-import { forbidden } from '@/lib/payroll-wallet-access'
+import { forbidden, resolveWalletScopeBusinessId } from '@/lib/payroll-wallet-access'
 
 const TYPES: EmployeeLedgerEntryType[] = WALLET_MANUAL_ENTRY_TYPES
 
@@ -39,9 +39,11 @@ export const POST = withApiRoute('payroll.wallet.entry', async (req: NextRequest
     return apiFailure('invalid_request', `${type} amount must be positive. Use type semantics for deductions.`, { status: 400 })
   }
 
+  const scopedBusinessId = resolveWalletScopeBusinessId(ctx.businessIds, body.business_id)
+
   const entry = await createCompensationLedgerEntry({
     employeeId,
-    businessId: ctx.businessIds[0],
+    businessId: scopedBusinessId,
     effectiveDate: body.date ? new Date(body.date) : new Date(),
     periodYm: body.period_ym || null,
     type,

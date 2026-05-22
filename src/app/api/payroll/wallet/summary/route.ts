@@ -17,8 +17,8 @@ export async function GET(req: NextRequest) {
   }
 
   const where = ctx.isAdmin
-    ? { businessId: { in: businessIds } }
-    : { businessId: { in: businessIds }, employeeId: ctx.employeeId }
+    ? { businessId: { in: businessIds }, isArchived: false }
+    : { businessId: { in: businessIds }, employeeId: ctx.employeeId, isArchived: false }
 
   const [entryGroups, recentEntries, pendingRequests, users] = await Promise.all([
     prisma.employeeLedgerEntry.groupBy({

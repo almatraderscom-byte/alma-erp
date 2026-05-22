@@ -155,6 +155,18 @@ export default function EmployeePortalPage() {
   }, [loadWallet])
 
   useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void loadWallet()
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [loadWallet])
+
+  useEffect(() => {
     if (systemOwner || !empId) return
     clearAttendancePortalCache(business.id, empId)
     try {
