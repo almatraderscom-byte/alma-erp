@@ -56,6 +56,7 @@ export const WALLET_CREDIT_TYPES: EmployeeLedgerEntryType[] = [
   'PERFORMANCE_BONUS',
   'OVERTIME',
   'REIMBURSEMENT',
+  'MEAL_ALLOWANCE',
   'BONUS',
 ]
 
@@ -142,6 +143,7 @@ export function computeWalletSummary(
     else if (e.type === 'PERFORMANCE_BONUS') totalPerformanceBonuses += amount
     else if (e.type === 'OVERTIME') totalOvertime += amount
     else if (e.type === 'REIMBURSEMENT') totalReimbursements += amount
+    else if (e.type === 'MEAL_ALLOWANCE') totalReimbursements += amount
     else if (e.type === 'MEAL_DEDUCTION') totalMealDeductions += Math.abs(amount)
     else if (e.type === 'BONUS') totalBonuses += amount
     else if (e.type === 'ADVANCE') totalAdvances += Math.abs(amount)
@@ -201,6 +203,23 @@ export function requestStatusFromApproval(
 
 export function entryTypeForRequest(type: WalletRequestType): EmployeeLedgerEntryType {
   return type === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'ADVANCE'
+}
+
+export function isDebitCompensationType(type: EmployeeLedgerEntryType): boolean {
+  return ['MEAL_DEDUCTION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL'].includes(type)
+}
+
+export function compensationTitle(type: EmployeeLedgerEntryType): string {
+  if (type === 'COMMISSION') return 'Commission added'
+  if (type === 'EID_BONUS') return 'Eid bonus added'
+  if (type === 'PERFORMANCE_BONUS') return 'Performance bonus added'
+  if (type === 'OVERTIME') return 'Overtime approved'
+  if (type === 'REIMBURSEMENT') return 'Reimbursement added'
+  if (type === 'MEAL_ALLOWANCE') return 'Meal allowance'
+  if (type === 'MEAL_DEDUCTION') return 'Meal deduction added'
+  if (type === 'PENALTY') return 'Penalty added'
+  if (type === 'WITHDRAWAL') return 'Payout processed'
+  return 'Wallet ledger updated'
 }
 
 export type WalletRequestDto = WalletRequest & {

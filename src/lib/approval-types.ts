@@ -14,6 +14,7 @@ export const APPROVAL_TYPES = {
   SALARY_ADVANCE: 'SALARY_ADVANCE',
   TRADE_DELETE: 'TRADE_DELETE',
   ORDER_DELETE: 'ORDER_DELETE',
+  MEAL_ALLOWANCE: 'MEAL_ALLOWANCE',
 } as const
 
 export type ApprovalSource = 'erp' | 'telegram' | 'attendance' | 'api'
