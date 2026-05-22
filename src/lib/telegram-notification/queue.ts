@@ -2,7 +2,7 @@ import type { TelegramNotificationQueue, TelegramNotificationStatus } from '@pri
 import { prisma } from '@/lib/prisma'
 import { deliverTelegramNotificationRow } from '@/lib/telegram-notification/deliver'
 import { isTelegramDeliveryRetryable } from '@/lib/telegram-notification/delivery-policy'
-import { resolveOwnerChatIdsWithMeta } from '@/lib/telegram-notification/owner-routing'
+import { envOwnerChatIdsRaw, resolveOwnerChatIdsWithMeta } from '@/lib/telegram-notification/owner-routing'
 import {
   compareTelegramQueueRows,
   lowPriorityInitialDelay,
@@ -18,8 +18,10 @@ import {
 } from '@/lib/attendance-absent-safety'
 import { logEvent } from '@/lib/logger'
 
-const MAX_BATCH = 20
+const MAX_BATCH = 30
 const MAX_ATTEMPTS = 4
+/** Re-queue FAILED rows with retryable errors after this cooldown (ms). */
+const FAILED_REQUEUE_COOLDOWN_MS = 15 * 60_000
 const RETRY_MINUTES = [1, 5, 15, 60]
 /** Serverless may die after claiming SENDING — reclaim rows older than this. */
 export const STUCK_SENDING_MS = 2 * 60_000
@@ -227,8 +229,60 @@ export async function enqueueTelegramNotificationAndFlush(input: EnqueueTelegram
   return { ...result, delivered }
 }
 
+/** Dead-letter FAILED rows with retryable errors become QUEUED again after a cooldown. */
+export async function requeueRetryableFailedNotifications(options: {
+  businessId?: string
+  limit?: number
+  cooldownMs?: number
+} = {}) {
+  const cutoff = new Date(Date.now() - (options.cooldownMs ?? FAILED_REQUEUE_COOLDOWN_MS))
+  const take = Math.min(Math.max(options.limit ?? 25, 1), 50)
+  const rows = await prisma.telegramNotificationQueue.findMany({
+    where: {
+      status: 'FAILED',
+      updatedAt: { lte: cutoff },
+      ...(options.businessId ? { businessId: options.businessId } : {}),
+      AND: [
+        { NOT: { errorMessage: { startsWith: 'false_positive_blocked:' } } },
+        { NOT: { errorMessage: { startsWith: 'SKIPPED' } } },
+      ],
+    },
+    orderBy: { updatedAt: 'asc' },
+    take,
+    select: { id: true, errorMessage: true, eventType: true, attempts: true },
+  })
+
+  let requeued = 0
+  for (const row of rows) {
+    if (!isTelegramDeliveryRetryable(row.errorMessage)) continue
+    await prisma.telegramNotificationQueue.update({
+      where: { id: row.id },
+      data: {
+        status: 'QUEUED',
+        attempts: 0,
+        nextAttemptAt: null,
+        errorMessage: null,
+        processingStartedAt: null,
+      },
+    })
+    requeued += 1
+    logTelegram('info', 'telegram.queue.requeued_failed', {
+      id: row.id,
+      eventType: row.eventType,
+      priorAttempts: row.attempts,
+    })
+  }
+  if (requeued > 0) {
+    logEvent('info', 'telegram.queue.requeued_failed', { requeued, businessId: options.businessId })
+  }
+  return requeued
+}
+
 export async function processTelegramNotificationQueue(options: { limit?: number; ids?: string[] } = {}) {
   await reclaimStuckTelegramSendingRows()
+  if (!options.ids?.length) {
+    await requeueRetryableFailedNotifications({ limit: 15 })
+  }
 
   const now = new Date()
   const take = Math.min(Math.max(options.limit ?? MAX_BATCH, 1), MAX_BATCH)
@@ -518,8 +572,10 @@ export async function retryTelegramNotification(id: string) {
     where: { id },
     data: {
       status: 'QUEUED',
+      attempts: 0,
       nextAttemptAt: null,
       errorMessage: null,
+      processingStartedAt: null,
     },
   })
   return processTelegramNotificationQueue({ ids: [id], limit: 1 })
@@ -528,7 +584,8 @@ export async function retryTelegramNotification(id: string) {
 export async function getTelegramQueueHealth(businessId?: string) {
   const cutoff = stuckSendingCutoff()
   const businessWhere = businessId ? { businessId } : {}
-  const [byStatus, stuckSending, oldestQueued, processingCount, retryWaitCount, avgLatency] = await Promise.all([
+  const scopedBusinessId = businessId || 'ALMA_LIFESTYLE'
+  const [byStatus, stuckSending, oldestQueued, processingCount, retryWaitCount, avgLatency, failedDeadLetter, ownerRouting] = await Promise.all([
     prisma.telegramNotificationQueue.groupBy({
       by: ['status'],
       where: businessWhere,
@@ -564,6 +621,14 @@ export async function getTelegramQueueHealth(businessId?: string) {
       take: 200,
       orderBy: { sentAt: 'desc' },
     }),
+    prisma.telegramNotificationQueue.count({
+      where: {
+        status: 'FAILED',
+        attempts: { gte: MAX_ATTEMPTS },
+        ...businessWhere,
+      },
+    }),
+    resolveOwnerChatIdsWithMeta(scopedBusinessId),
   ])
 
   const latencySamples = avgLatency
@@ -592,6 +657,11 @@ export async function getTelegramQueueHealth(businessId?: string) {
       : null,
     botTokenConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim()),
     cronSecretConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-    ownerChatIdsEnv: Boolean(process.env.TELEGRAM_OWNER_CHAT_IDS?.trim()),
+    ownerChatIdsEnv: Boolean(envOwnerChatIdsRaw()),
+    ownerChatIdsConfigured: ownerRouting.chatIds.length > 0,
+    ownerRoutingSource: ownerRouting.source,
+    ownerChatIdsCount: ownerRouting.chatIds.length,
+    failedDeadLetter,
+    maxAttempts: MAX_ATTEMPTS,
   }
 }

@@ -116,7 +116,10 @@ export async function GET(req: NextRequest) {
     config: {
       botTokenConfigured: telegramHealth.botTokenConfigured,
       cronSecretConfigured: telegramHealth.cronSecretConfigured,
-      ownerChatIdsConfigured: telegramHealth.ownerChatIdsEnv,
+      ownerChatIdsConfigured: telegramHealth.ownerChatIdsConfigured,
+      ownerChatIdsEnvFallback: telegramHealth.ownerChatIdsEnv,
+      ownerRoutingSource: telegramHealth.ownerRoutingSource,
+      ownerChatIdsCount: telegramHealth.ownerChatIdsCount,
       storageConfigured: Boolean(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
     },
     telegramQueue: {
@@ -125,6 +128,8 @@ export async function GET(req: NextRequest) {
       stuckSending: telegramHealth.stuckSending,
       processingCount: telegramHealth.processingCount,
       retryWaitCount: telegramHealth.retryWaitCount,
+      failedDeadLetter: telegramHealth.failedDeadLetter,
+      maxAttempts: telegramHealth.maxAttempts,
       oldestQueued: telegramHealth.oldestQueued,
       averageDeliveryLatencyMs: telegramHealth.averageDeliveryLatencyMs,
     },

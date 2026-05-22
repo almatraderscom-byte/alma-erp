@@ -14,6 +14,9 @@ type DiagnosticsData = {
     botTokenConfigured: boolean
     cronSecretConfigured: boolean
     ownerChatIdsConfigured: boolean
+    ownerChatIdsEnvFallback?: boolean
+    ownerRoutingSource?: string
+    ownerChatIdsCount?: number
     storageConfigured: boolean
   }
   telegramQueue: {
@@ -22,6 +25,8 @@ type DiagnosticsData = {
     stuckSending: number
     processingCount: number
     retryWaitCount: number
+    failedDeadLetter?: number
+    maxAttempts?: number
     oldestQueued: { id: string; eventType: string; ageMinutes: number } | null
     averageDeliveryLatencyMs: number | null
   }
@@ -174,6 +179,17 @@ export default function SystemDiagnosticsPage() {
             ⚠ TELEGRAM_BOT_TOKEN is missing — all deliveries will fail immediately.
           </p>
         )}
+        {data && !data.config.ownerChatIdsConfigured && (
+          <p className="text-[11px] text-red-400 font-bold">
+            ⚠ No owner Telegram chat IDs (DB or TELEGRAM_OWNER_CHAT_IDS env) — check-in alerts are
+            skipped at enqueue. Configure IDs in Settings → Telegram Ops.
+          </p>
+        )}
+        {data?.config.ownerRoutingSource === 'disabled' && (
+          <p className="text-[11px] text-amber-300 font-bold">
+            ⚠ Telegram ops is disabled for this business — notifications will not enqueue.
+          </p>
+        )}
       </Card>
 
       {/* Telegram queue */}
@@ -224,6 +240,13 @@ export default function SystemDiagnosticsPage() {
               <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
                 <p className="text-zinc-600">Retry wait</p>
                 <p className="font-mono font-bold text-cream">{q?.retryWaitCount ?? 0}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+                <p className="text-zinc-600">Dead letter (max attempts)</p>
+                <p className={`font-mono font-bold ${(q?.failedDeadLetter ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  {q?.failedDeadLetter ?? 0}
+                  {q?.maxAttempts != null ? ` / ${q.maxAttempts}` : ''}
+                </p>
               </div>
               <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
                 <p className="text-zinc-600">Avg delivery latency</p>

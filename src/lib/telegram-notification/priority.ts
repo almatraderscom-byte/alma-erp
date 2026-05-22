@@ -4,6 +4,9 @@ export type TelegramDeliveryPriority = 'HIGH' | 'LOW'
 
 /** High-priority alerts process first; low-priority may wait 45s before first attempt. */
 const HIGH_PRIORITY_EVENTS = new Set<TelegramNotificationEventType>([
+  'ATTENDANCE_CHECK_IN',
+  'ATTENDANCE_FACE_VERIFIED_CHECK_IN',
+  'ATTENDANCE_CHECK_OUT',
   'ATTENDANCE_WAIVER_SUBMITTED',
   'ATTENDANCE_WAIVER_REVIEWED',
   'ATTENDANCE_SUSPICIOUS',
