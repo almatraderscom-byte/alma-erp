@@ -24,11 +24,11 @@ export async function POST(req: NextRequest) {
   const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
   if (denied) return denied
 
+  const businessId = resolveBusinessId(req.nextUrl.searchParams.get('business_id'))
   const started = Date.now()
   const reclaimed = await reclaimStuckTelegramSendingRows()
-  const processed = await processTelegramNotificationQueue({ limit: 30 })
-  const queue = await getTelegramQueueHealth()
-  const businessId = resolveBusinessId(req.nextUrl.searchParams.get('business_id'))
+  const processed = await processTelegramNotificationQueue({ limit: 30, businessId })
+  const queue = await getTelegramQueueHealth(businessId)
 
   return NextResponse.json({
     ok: true,

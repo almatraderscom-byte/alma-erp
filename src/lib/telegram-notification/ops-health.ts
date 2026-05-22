@@ -10,22 +10,51 @@ const APP_URL = () =>
   || process.env.NEXTAUTH_URL
   || 'https://alma-erp-six.vercel.app'
 
+const BOT_DIAG_TIMEOUT_MS = 8_000
+
+async function fetchTelegramApiJson<T>(url: string, timeoutMs = BOT_DIAG_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: controller.signal })
+    const data = (await res.json()) as T
+    return data
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Outbound bot health — same TELEGRAM_BOT_TOKEN as queue delivery. */
 export async function fetchTelegramBotDiagnostics() {
   const token = getTelegramBotToken()
   if (!token) {
-    return { botTokenConfigured: false, botOk: false, botUsername: null as string | null, webhook: null }
+    return {
+      botTokenConfigured: false,
+      botOk: false,
+      botError: 'TELEGRAM_BOT_TOKEN is not set in environment',
+      botUsername: null as string | null,
+      webhook: null,
+      webhookHealthy: false,
+      webhookNote: 'Inbound trading webhook only — not required for outbound attendance alerts',
+    }
   }
 
   try {
-    const [meRes, webhook] = await Promise.all([
-      fetch(`https://api.telegram.org/bot${token}/getMe`, { cache: 'no-store' }),
-      getTelegramWebhookInfo(),
-    ])
-    const me = (await meRes.json()) as { ok: boolean; result?: { username?: string; id?: number; first_name?: string } }
-    const webhookResult = webhook.result as Record<string, unknown> | undefined
     const expectedUrl = `${APP_URL().replace(/\/$/, '')}/api/telegram/webhook`
+    const [me, webhook] = await Promise.all([
+      fetchTelegramApiJson<{ ok: boolean; result?: { username?: string; id?: number; first_name?: string }; description?: string }>(
+        `https://api.telegram.org/bot${token}/getMe`,
+      ),
+      getTelegramWebhookInfo().catch((e: Error) => ({ ok: false, error: e.message, result: undefined })),
+    ])
+    const webhookResult = webhook.result as Record<string, unknown> | undefined
     const webhookUrl = typeof webhookResult?.url === 'string' ? webhookResult.url : null
     const webhookHealthy = Boolean(webhook.ok && webhookUrl && webhookUrl === expectedUrl)
+    const webhookNote = webhookHealthy
+      ? 'Trading inbound webhook registered'
+      : webhookUrl
+        ? `Webhook points elsewhere (${webhookUrl})`
+        : 'No inbound webhook — outbound alerts still work'
 
     logTelegram(webhookHealthy ? 'info' : 'warn', 'telegram.webhook.health', {
       webhookHealthy,
@@ -34,9 +63,24 @@ export async function fetchTelegramBotDiagnostics() {
       pendingUpdateCount: webhookResult?.pending_update_count,
     })
 
+    if (!me.ok) {
+      return {
+        botTokenConfigured: true,
+        botOk: false,
+        botError: me.description || 'Telegram getMe returned ok:false',
+        botUsername: null,
+        webhook: webhookResult ?? null,
+        webhookHealthy,
+        webhookUrl,
+        expectedWebhookUrl: expectedUrl,
+        webhookNote,
+      }
+    }
+
     return {
       botTokenConfigured: true,
-      botOk: me.ok,
+      botOk: true,
+      botError: null as string | null,
       botId: me.result?.id ?? null,
       botUsername: me.result?.username ?? null,
       botName: me.result?.first_name ?? null,
@@ -44,15 +88,39 @@ export async function fetchTelegramBotDiagnostics() {
       webhookHealthy,
       expectedWebhookUrl: expectedUrl,
       webhookUrl,
+      webhookNote,
     }
   } catch (e) {
+    const message = (e as Error).name === 'AbortError'
+      ? `Telegram getMe timed out after ${BOT_DIAG_TIMEOUT_MS}ms`
+      : (e as Error).message
     return {
       botTokenConfigured: true,
       botOk: false,
-      error: (e as Error).message,
+      botError: message,
+      botUsername: null,
       webhook: null,
+      webhookHealthy: false,
+      webhookNote: 'Inbound trading webhook only — not required for outbound attendance alerts',
     }
   }
+}
+
+export function ownerRoutingHealthLabel(
+  routing: Awaited<ReturnType<typeof resolveOwnerChatIdsWithMeta>>,
+  opsEnabled: boolean,
+) {
+  if (!opsEnabled) return { label: 'Disabled for this business', tone: 'warn' as const }
+  if (routing.chatIds.length > 0) {
+    const sourceLabel =
+      routing.source === 'database'
+        ? 'Database'
+        : routing.source === 'env_fallback'
+          ? 'Env fallback'
+          : routing.source
+    return { label: `${sourceLabel} · ${routing.chatIds.length} recipient(s)`, tone: 'ok' as const }
+  }
+  return { label: 'No valid recipients (DB + env empty)', tone: 'bad' as const }
 }
 
 export async function getTelegramOpsDashboard(businessId: string) {
@@ -116,6 +184,8 @@ export async function getTelegramOpsDashboard(businessId: string) {
     _count: { _all: true },
   })
 
+  const ownerRoutingHealth = ownerRoutingHealthLabel(routing, setting.enabled)
+
   return {
     businessId,
     appUrl: APP_URL(),
@@ -124,6 +194,7 @@ export async function getTelegramOpsDashboard(businessId: string) {
       ownerChatIdsRaw: setting.ownerChatIds,
     },
     ownerRouting: routing,
+    ownerRoutingHealth,
     queue: {
       ...queueBase,
       businessPending: pendingCount,

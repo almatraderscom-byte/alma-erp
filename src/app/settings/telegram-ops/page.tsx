@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
+import { useBusiness } from '@/contexts/BusinessContext'
 import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
@@ -38,12 +39,15 @@ type Dashboard = {
     invalidDbTokens?: string[]
     invalidEnvTokens?: string[]
   }
+  ownerRoutingHealth?: { label: string; tone: 'ok' | 'warn' | 'bad' }
   telegram?: {
     botOk?: boolean
+    botError?: string | null
     botUsername?: string | null
     webhookHealthy?: boolean
     webhookUrl?: string | null
     expectedWebhookUrl?: string | null
+    webhookNote?: string | null
   }
   queue?: {
     byStatus?: Array<{ status: string; count: number }>
@@ -109,7 +113,12 @@ export default function TelegramOpsSettingsPage() {
 }
 
 function TelegramOpsSettingsPageInner() {
-  const [businessId, setBusinessId] = useState<BusinessId>('ALMA_TRADING')
+  const { businessId: headerBusinessId, business } = useBusiness()
+  const [businessId, setBusinessId] = useState<BusinessId>(headerBusinessId)
+
+  useEffect(() => {
+    setBusinessId(headerBusinessId)
+  }, [headerBusinessId])
   const [data, setData] = useState<ApiData | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(true)
@@ -245,6 +254,13 @@ function TelegramOpsSettingsPageInner() {
           onChange={v => setBusinessId(v as BusinessId)}
           options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
         />
+        <p className="text-[11px] text-amber-300/90 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+          Showing config for:{' '}
+          <span className="font-semibold text-cream">
+            {BUSINESS_LIST.find(b => b.id === businessId)?.name ?? businessId}
+          </span>
+          {businessId !== headerBusinessId ? ' · switch header business to align default' : ''}
+        </p>
 
         {loading || !setting ? (
           <Skeleton className="h-64 w-full rounded-2xl" />
@@ -252,20 +268,24 @@ function TelegramOpsSettingsPageInner() {
           <>
             <Card className="grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4">
               <HealthStat
-                label="Bot"
-                value={dashboard?.telegram?.botOk ? `@${dashboard.telegram.botUsername || 'ok'}` : 'Offline / misconfigured'}
+                label="Bot (outbound)"
+                value={
+                  dashboard?.telegram?.botOk
+                    ? `@${dashboard.telegram.botUsername || 'ok'}`
+                    : dashboard?.telegram?.botError || 'Offline / misconfigured'
+                }
                 tone={dashboard?.telegram?.botOk ? 'ok' : 'bad'}
               />
               <HealthStat
-                label="Webhook"
-                value={dashboard?.telegram?.webhookHealthy ? 'Healthy' : 'Check URL'}
-                tone={dashboard?.telegram?.webhookHealthy ? 'ok' : 'warn'}
-                hint={dashboard?.telegram?.expectedWebhookUrl || undefined}
+                label="Webhook (inbound)"
+                value={dashboard?.telegram?.webhookHealthy ? 'Registered' : 'Informational'}
+                tone="warn"
+                hint={dashboard?.telegram?.webhookNote || dashboard?.telegram?.expectedWebhookUrl || undefined}
               />
               <HealthStat
                 label="Owner routing"
-                value={routingLabel(routing?.source || 'none')}
-                tone={routing?.chatIds?.length ? 'ok' : 'bad'}
+                value={dashboard?.ownerRoutingHealth?.label || routingLabel(routing?.source || 'none')}
+                tone={dashboard?.ownerRoutingHealth?.tone || (routing?.chatIds?.length ? 'ok' : 'bad')}
                 hint={routing?.chatIds?.join(', ')}
               />
               <HealthStat

@@ -278,14 +278,15 @@ export async function requeueRetryableFailedNotifications(options: {
   return requeued
 }
 
-export async function processTelegramNotificationQueue(options: { limit?: number; ids?: string[] } = {}) {
+export async function processTelegramNotificationQueue(options: { limit?: number; ids?: string[]; businessId?: string } = {}) {
   await reclaimStuckTelegramSendingRows()
   if (!options.ids?.length) {
-    await requeueRetryableFailedNotifications({ limit: 15 })
+    await requeueRetryableFailedNotifications({ businessId: options.businessId, limit: 15 })
   }
 
   const now = new Date()
   const take = Math.min(Math.max(options.limit ?? MAX_BATCH, 1), MAX_BATCH)
+  const businessWhere = options.businessId ? { businessId: options.businessId } : {}
 
   const rowsRaw = options.ids?.length
     ? await prisma.telegramNotificationQueue.findMany({
@@ -297,6 +298,7 @@ export async function processTelegramNotificationQueue(options: { limit?: number
           status: { in: ['QUEUED', 'FAILED'] },
           attempts: { lt: MAX_ATTEMPTS },
           OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+          ...businessWhere,
         },
         orderBy: { createdAt: 'asc' },
         take: take * 2,
