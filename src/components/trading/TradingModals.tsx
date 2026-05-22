@@ -1,45 +1,36 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { Button, Card, Input, Select, Spinner } from '@/components/ui'
 import { useAddTradingBkashSummary, useAddTradingCapital, useAddTradingExpense, useCreateTradingAccount, useSubmitTradingTrade, useUpdateTradingAccount, useUploadTradingAttachment } from '@/hooks/useTrading'
 import type { TradingAccount, TradingAccountInput, TradingCapitalEntryType, TradingMutationResponse, TradingUser } from '@/types/trading'
 import { EXPENSE_TYPES, n, signedClass } from '@/components/trading/trading-utils'
 import { tradingDrafts } from '@/lib/trading-drafts'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 export function ModalFrame({ title, desc, open, onClose, children }: { title: string; desc?: string; open: boolean; onClose: () => void; children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKey)
-    }
+    return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
-  if (!mounted || !open) return null
-  return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4">
-      <button type="button" aria-label="Close modal" onClick={onClose} className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
-      <Card className="relative z-[10001] flex max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-full flex-col overflow-hidden rounded-b-none border-gold-dim/30 shadow-2xl sm:max-w-xl sm:rounded-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-border p-4 pb-3 sm:p-5 sm:pb-3">
+  if (!open) return null
+  return (
+    <MobileModalPortal open zIndex={10000} onBackdropClick={onClose} aria-label={title}>
+      <Card className="mobile-modal-shell relative w-full rounded-b-none border-gold-dim/30 shadow-2xl sm:max-w-xl sm:rounded-2xl">
+        <div className="mobile-modal-header flex items-start justify-between gap-3 border-b border-border p-4 pb-3 sm:p-5 sm:pb-3">
           <div>
             <p className="text-sm font-bold text-cream">{title}</p>
             {desc && <p className="mt-1 text-[11px] text-zinc-500">{desc}</p>}
           </div>
           <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-5">
+        <div className="mobile-modal-body p-4 sm:p-5">
           {children}
         </div>
       </Card>
-    </div>,
-    document.body,
+    </MobileModalPortal>
   )
 }
 

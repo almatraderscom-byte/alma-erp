@@ -11,6 +11,7 @@ import toast from 'react-hot-toast'
 import { displayBdPhone } from '@/lib/phone'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { ProfilePhotoUploader } from '@/components/profile/ProfilePhotoUploader'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 type RowUser = {
   id: string
@@ -328,7 +329,7 @@ function ResetPasswordModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[140] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+    <MobileModalPortal open zIndex={140} onBackdropClick={onClose}>
       <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
         <div className="mobile-modal-header p-6 pb-3">
           <div className="flex justify-between gap-3">
@@ -354,7 +355,7 @@ function ResetPasswordModal({
           </div>
         </form>
       </Card>
-    </div>
+    </MobileModalPortal>
   )
 }
 
@@ -389,7 +390,7 @@ function UserFormModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[140] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+    <MobileModalPortal open zIndex={140} onBackdropClick={onClose}>
       <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
         <div className="mobile-modal-header p-5 pb-3">
           <div className="flex justify-between gap-3">
@@ -494,6 +495,6 @@ function UserFormModal({
           </div>
         </form>
       </Card>
-    </div>
+    </MobileModalPortal>
   )
 }

@@ -38,6 +38,8 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  /** Lets the layout viewport shrink when the software keyboard opens (iOS 15+ / modern Safari). */
+  interactiveWidget: 'resizes-content',
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

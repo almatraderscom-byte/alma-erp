@@ -236,8 +236,8 @@ a,
 
   .mobile-sheet {
     padding-bottom: env(safe-area-inset-bottom, 0px);
-    contain: layout paint;
   }
+
 
   .table-scroll {
     scroll-snap-type: none;
@@ -295,15 +295,47 @@ a,
 
   /* Mobile modal stabilization — viewport-safe flex shell (freeze-safe utility only) */
   .mobile-modal-overlay {
-    @apply flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4;
+    @apply flex flex-col justify-end overflow-hidden p-0 sm:items-center sm:justify-center sm:p-4;
+    position: fixed;
+    top: var(--ios-vv-top, 0px);
+    left: var(--ios-vv-left, 0px);
+    width: var(--ios-vv-width, 100%);
+    height: var(--ios-vv-height, 100dvh);
+    max-height: var(--ios-vv-height, 100dvh);
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+
+  .mobile-modal-backdrop {
+    @apply absolute inset-0 bg-black/75 backdrop-blur-sm;
+    touch-action: none;
+  }
+
+  .mobile-modal-overlay-inner {
+    @apply relative z-10 flex min-h-0 w-full flex-1 flex-col items-stretch justify-end sm:items-center sm:justify-center;
+    pointer-events: none;
+  }
+
+  .mobile-modal-overlay-inner > * {
+    pointer-events: auto;
   }
 
   .mobile-modal-shell {
-    @apply mobile-sheet relative flex w-full flex-col overflow-hidden;
-    max-height: min(100dvh, 100svh);
+    @apply relative flex w-full flex-col overflow-hidden;
+    max-height: 100%;
+    min-height: 0;
+    contain: none;
   }
 
   @media (min-width: 640px) {
+    .mobile-modal-overlay {
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      max-height: 100dvh;
+    }
+
     .mobile-modal-shell {
       max-height: min(calc(100dvh - 2rem), 920px);
     }
@@ -314,12 +346,24 @@ a,
   }
 
   .mobile-modal-body {
-    @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+    @apply min-h-0 flex-1 overflow-y-auto;
+    overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
 
   .mobile-modal-footer {
     @apply shrink-0 border-t border-border bg-surface backdrop-blur-md;
     padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  html.ios-modal-open,
+  html.ios-modal-open body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  html.ios-modal-open main.flex-1 {
+    overflow: hidden !important;
+    overscroll-behavior: none;
   }
 }

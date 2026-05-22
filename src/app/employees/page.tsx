@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHREmployees } from '@/hooks/useHr'
 import { useHrSaveEmployee } from '@/hooks/useHr'
 import { Card, Button, Skeleton, Empty } from '@/components/ui'
@@ -165,7 +166,7 @@ export default function EmployeesPage() {
       </Card>
 
       {open && (
-        <div className="fixed inset-0 z-[120] mobile-modal-overlay bg-black/70 backdrop-blur-sm">
+        <MobileModalPortal open zIndex={120} onBackdropClick={() => { setOpen(false); setSelectedUserId('') }}>
           <Card className="mobile-modal-shell w-full max-w-5xl border-gold-dim/30 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex justify-between gap-3 items-start">
@@ -292,7 +293,7 @@ export default function EmployeesPage() {
             </div>
             </form>
           </Card>
-        </div>
+        </MobileModalPortal>
       )}
     </FinancePageChrome>
   )

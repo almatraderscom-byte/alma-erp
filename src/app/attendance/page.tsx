@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { Button, Card, Empty, KpiCard, Skeleton } from '@/components/ui'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
@@ -524,7 +525,7 @@ function AttendancePageInner() {
       </Card>
 
       {review && (
-        <div className="fixed inset-0 z-[90] mobile-modal-overlay bg-black/70">
+        <MobileModalPortal open zIndex={90} onBackdropClick={() => setReview(null)}>
           <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
@@ -554,7 +555,7 @@ function AttendancePageInner() {
               </div>
             </div>
           </Card>
-        </div>
+        </MobileModalPortal>
       )}
     </FinancePageChrome>
   )

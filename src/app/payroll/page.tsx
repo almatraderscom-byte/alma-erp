@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHRDashboard } from '@/hooks/useHr'
 import Link from 'next/link'
 import { Card, KpiCard, Skeleton, Empty, Button } from '@/components/ui'
@@ -356,7 +357,7 @@ export default function PayrollPage() {
       </Card>
 
       {review && (
-        <div className="fixed inset-0 z-[80] mobile-modal-overlay bg-black/70">
+        <MobileModalPortal open zIndex={80} onBackdropClick={() => setReview(null)}>
           <Card className="mobile-modal-shell w-full max-w-md sm:rounded-3xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">
@@ -391,7 +392,7 @@ export default function PayrollPage() {
               </div>
             </div>
           </Card>
-        </div>
+        </MobileModalPortal>
       )}
 
       <Card className="p-5">

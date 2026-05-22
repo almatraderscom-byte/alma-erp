@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { APP_BUILD_ID, RUNTIME_BUILD_STORAGE_KEY } from '@/lib/runtime-build'
+import { subscribeIosVisualViewport } from '@/lib/ios-modal-viewport'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -60,6 +61,8 @@ export function PwaBootstrap() {
     if (!('serviceWorker' in navigator)) return
     navigator.serviceWorker.register('/sw.js').catch(() => {})
   }, [])
+
+  useEffect(() => subscribeIosVisualViewport(() => {}), [])
 
   useEffect(() => {
     let offlineTimer: number | null = null

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
 import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
@@ -125,15 +125,6 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Overflow lock — only depends on open.  Does NOT call resetState.
-  // State is already fresh because the component is conditionally mounted.
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
-  }, [open])
 
   // Keyboard handler — reads onClose/submitting from refs to avoid adding them
   // as reactive deps; that would re-run this effect (and previously resetState)
@@ -356,27 +347,20 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
 
   const busy = processingPhoto || submitting
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[10050] flex flex-col justify-end overflow-hidden sm:justify-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="face-checkin-title"
+  return (
+    <MobileModalPortal
+      open
+      zIndex={10050}
+      backdropClassName="bg-black/80"
+      aria-label="Attendance check-in"
+      onBackdropClick={() => {
+        if (!submitting) {
+          resetState()
+          onCloseRef.current()
+        }
+      }}
     >
-      <button
-        type="button"
-        aria-label="Close check-in"
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        disabled={submitting}
-        onClick={() => {
-          if (!submitting) {
-            resetState()
-            onCloseRef.current()
-          }
-        }}
-      />
-
-      <div className="mobile-sheet relative z-[10051] mx-auto flex w-full max-w-md max-h-[min(100dvh,100svh)] flex-col overflow-hidden rounded-t-[28px] border border-gold-dim/30 bg-surface shadow-2xl sm:max-h-[90dvh] sm:rounded-2xl">
+      <div className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-md rounded-t-[28px] border border-gold-dim/30 bg-surface shadow-2xl sm:rounded-2xl">
         <div className="safe-top shrink-0 border-b border-border px-4 pb-3 pt-4">
           <p id="face-checkin-title" className="text-base font-black text-cream">
             {phase === 'success' ? '🟢 Attendance confirmed' : phase === 'error' ? '⚠ Check-in failed' : '📸 Start work verification'}
@@ -390,7 +374,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+        <div className="mobile-modal-body px-4 py-3">
           {phase === 'success' ? (
             <div className="flex flex-col items-center py-6 text-center">
               <div className="flex h-20 w-20 items-center justify-center rounded-full bg-green-500/15 text-4xl ring-2 ring-green-400/40">
@@ -452,7 +436,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           onChange={e => void handleFile(e.target.files?.[0])}
         />
 
-        <footer className="shrink-0 border-t border-border bg-surface/98 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-md">
+        <footer className="mobile-modal-footer px-4 pt-3">
           {phase === 'success' ? (
             <Button variant="gold" className="h-[52px] w-full justify-center text-base font-black" disabled>
               Done
@@ -559,8 +543,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           )}
         </footer>
       </div>
-    </div>,
-    document.body,
+    </MobileModalPortal>
   )
 }
 

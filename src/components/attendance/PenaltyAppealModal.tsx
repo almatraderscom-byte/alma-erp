@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { Button, Card } from '@/components/ui'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 export type PenaltyAppealTarget = {
   attendanceRecordId: string
@@ -94,7 +95,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
   }
 
   return (
-    <div className="fixed inset-0 z-[95] mobile-modal-overlay bg-black/75">
+    <MobileModalPortal open zIndex={95} onBackdropClick={onClose}>
       <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/35 sm:rounded-2xl">
         <div className="mobile-modal-header p-5 pb-3">
           <div className="flex justify-between items-start gap-3">
@@ -196,7 +197,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
           </div>
         </form>
       </Card>
-    </div>
+    </MobileModalPortal>
   )
 }
 

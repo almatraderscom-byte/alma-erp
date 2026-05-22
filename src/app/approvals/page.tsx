@@ -11,6 +11,7 @@ import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 import { normalizeApprovalResponse } from '@/lib/approvals-response'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 type ApprovalRow = {
   id: string
@@ -382,7 +383,7 @@ function ApprovalsPageInner() {
         const selectedBusy = isRowProcessing(selected.id)
         const selectedActionDisabled = selectedBusy || actionsGloballyDisabled
         return (
-        <div className="fixed inset-0 z-[10000] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+        <MobileModalPortal open zIndex={10000} onBackdropClick={() => setSelected(null)}>
           <Card className={`mobile-modal-shell w-full max-w-2xl sm:rounded-2xl ${approvalRowLockClass(selectedUi)}`}>
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
@@ -447,7 +448,7 @@ function ApprovalsPageInner() {
               </div>
             </div>
           </Card>
-        </div>
+        </MobileModalPortal>
         )
       })()}
       {actionTarget && (() => {
@@ -455,7 +456,7 @@ function ApprovalsPageInner() {
         const rejectBusy = isRowProcessing(actionTarget.row.id)
         const rejectActionDisabled = rejectBusy || actionsGloballyDisabled
         return (
-        <div className="fixed inset-0 z-[10001] mobile-modal-overlay bg-black/75 backdrop-blur-sm">
+        <MobileModalPortal open zIndex={10001} onBackdropClick={() => setActionTarget(null)}>
           <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
@@ -487,7 +488,7 @@ function ApprovalsPageInner() {
               </Button>
             </div>
           </Card>
-        </div>
+        </MobileModalPortal>
         )
       })()}
       </div>

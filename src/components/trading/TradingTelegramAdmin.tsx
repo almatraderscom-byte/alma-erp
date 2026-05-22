@@ -17,6 +17,7 @@ import {
   type StaffOptionSource,
 } from '@/lib/telegram-mapping-options'
 import { TradingTelegramMonitorTab } from '@/components/trading/TradingTelegramMonitorTab'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import type {
   TradingAccountAliasRow,
   TradingTelegramChatRow,
@@ -1101,7 +1102,7 @@ function EditModal({
   onSave: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 mobile-modal-overlay bg-black/70">
+    <MobileModalPortal open zIndex={50} onBackdropClick={onClose}>
       <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl">
         <div className="mobile-modal-header p-4 pb-3">
           <p className="text-sm font-black text-cream">Edit draft</p>
@@ -1120,7 +1121,7 @@ function EditModal({
           <EditModalActions busy={busy} onClose={onClose} onSave={onSave} />
         </div>
       </Card>
-    </div>
+    </MobileModalPortal>
   )
 }
 
