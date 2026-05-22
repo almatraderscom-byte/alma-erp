@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
+import { Card } from '@/components/ui'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DATE_PRESETS, type DatePreset } from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
@@ -104,46 +106,35 @@ export function DateRangeFilter({ className }: { className?: string }) {
             )}
           </div>
 
-          <AnimatePresence>
-            {sheetOpen && (
-              <>
-                <motion.div
-                  className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setSheetOpen(false)}
-                />
-                <motion.div
-                  className="fixed inset-x-0 bottom-0 z-[201] rounded-t-2xl border-t border-border bg-surface p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
-                  initial={{ y: '100%' }}
-                  animate={{ y: 0 }}
-                  exit={{ y: '100%' }}
-                  transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-                >
-                  <motion.div layout className="w-10 h-1 bg-border rounded-full mx-auto mb-4" />
-                  <p className="text-sm font-bold text-cream mb-4">Custom date range</p>
-                  <div className="space-y-3">
-                    <label className="block">
-                      <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">From</span>
-                      <input
-                        type="date"
-                        value={draftStart}
-                        onChange={e => setDraftStart(e.target.value)}
-                        className="w-full bg-card border border-border rounded-xl px-3 py-3 text-sm text-cream font-mono"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">To</span>
-                      <input
-                        type="date"
-                        value={draftEnd}
-                        onChange={e => setDraftEnd(e.target.value)}
-                        className="w-full bg-card border border-border rounded-xl px-3 py-3 text-sm text-cream font-mono"
-                      />
-                    </label>
-                  </div>
-                  <div className="flex gap-2 mt-5">
+          {sheetOpen && (
+            <MobileModalPortal open zIndex={200} onBackdropClick={() => setSheetOpen(false)} aria-label="Custom date range">
+              <Card className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-lg rounded-t-[28px] border border-border bg-surface shadow-2xl sm:rounded-2xl">
+                <div className="mobile-modal-header px-5 pb-3 pt-4">
+                  <div className="mb-4 h-1 w-10 rounded-full bg-border mx-auto" />
+                  <p className="text-sm font-bold text-cream">Custom date range</p>
+                </div>
+                <div className="mobile-modal-body space-y-3 px-5 pb-4">
+                  <label className="block">
+                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">From</span>
+                    <input
+                      type="date"
+                      value={draftStart}
+                      onChange={e => setDraftStart(e.target.value)}
+                      className="w-full bg-card border border-border rounded-xl px-3 py-3 text-sm text-cream font-mono"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">To</span>
+                    <input
+                      type="date"
+                      value={draftEnd}
+                      onChange={e => setDraftEnd(e.target.value)}
+                      className="w-full bg-card border border-border rounded-xl px-3 py-3 text-sm text-cream font-mono"
+                    />
+                  </label>
+                </div>
+                <div className="mobile-modal-footer px-5 pt-3">
+                  <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => setSheetOpen(false)}
@@ -160,10 +151,10 @@ export function DateRangeFilter({ className }: { className?: string }) {
                       Apply
                     </button>
                   </div>
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>
+                </div>
+              </Card>
+            </MobileModalPortal>
+          )}
         </>
       )}
     </motion.div>

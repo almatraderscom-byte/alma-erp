@@ -11,8 +11,9 @@ import { Card, Button, Skeleton, Empty } from '@/components/ui'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
 
@@ -45,6 +46,7 @@ export default function EmployeeDetailPage() {
   const { business } = useBusiness()
   const { label } = useDateRange()
   const [openPay, setOpenPay] = useState(false)
+  const payrollFormRef = useRef<HTMLFormElement>(null)
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
   const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
@@ -310,10 +312,13 @@ export default function EmployeeDetailPage() {
       </Card>
 
       {openPay && (
-        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
-          <Card className="w-full max-w-md p-5 border-gold-dim/30 space-y-3">
-            <p className="text-sm font-bold text-cream">Log payroll movement</p>
-            <form onSubmit={submitPay} className="space-y-3 text-xs">
+        <MobileModalPortal open zIndex={120} onBackdropClick={() => setOpenPay(false)} aria-label="Log payroll movement">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Log payroll movement</p>
+            </div>
+            <form ref={payrollFormRef} id="log-payroll-form" onSubmit={submitPay} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="mobile-modal-body space-y-3 px-5 pb-4">
               <label className="block space-y-1">
                 <span className="text-zinc-500">Type</span>
                 <select name="tx_type" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" required>
@@ -341,13 +346,18 @@ export default function EmployeeDetailPage() {
                 <span className="text-zinc-500">Note</span>
                 <textarea name="note" rows={2} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-sm text-cream" />
               </label>
-              <div className="flex gap-2">
-                <Button type="submit" variant="gold" disabled={paying}>{paying ? 'Saving…' : 'Save entry'}</Button>
-                <Button type="button" variant="ghost" onClick={() => setOpenPay(false)}>Cancel</Button>
+              </div>
+              <div className="mobile-modal-footer px-5 pt-3">
+                <div className="flex gap-2">
+                  <Button type="button" variant="gold" className="flex-1 justify-center" disabled={paying} onClick={() => payrollFormRef.current?.requestSubmit()}>
+                    {paying ? 'Saving…' : 'Save entry'}
+                  </Button>
+                  <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={() => setOpenPay(false)}>Cancel</Button>
+                </div>
               </div>
             </form>
           </Card>
-        </div>
+        </MobileModalPortal>
       )}
     </FinancePageChrome>
   )

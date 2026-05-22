@@ -1,7 +1,7 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useFinance } from '@/hooks/useERP'
 import { useAddExpense } from '@/hooks/useERP'
 import { EXPENSE_CATEGORIES } from '@/lib/expense-categories'
@@ -47,6 +47,7 @@ export default function ExpensesPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const expenseFormRef = useRef<HTMLFormElement>(null)
 
   const expenses = data?.expenses ?? []
   const total = data?.total_expenses ?? 0
@@ -232,27 +233,22 @@ export default function ExpensesPage() {
         )}
       </Card>
 
-      <AnimatePresence>
-        {open && (
-          <>
-            <motion.div
-              className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setOpen(false)}
-            />
-            <div className="fixed inset-0 z-[121] flex items-end md:items-center justify-center p-4 pointer-events-none">
-              <motion.div
-                initial={{ opacity: 0, y: 24, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 16, scale: 0.98 }}
-                transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-                className="pointer-events-auto w-full max-w-lg"
-              >
-                <Card className="p-5 border-gold-dim/30 max-h-[90dvh] overflow-y-auto scrollbar-hide">
-                  <p className="text-sm font-bold text-cream mb-4">Add expense</p>
-                  <form onSubmit={submit} className="space-y-3 text-xs">
+      {open && (
+        <MobileModalPortal
+          open
+          zIndex={120}
+          onBackdropClick={() => {
+            setOpen(false)
+            setReceipt(null)
+          }}
+          aria-label="Add expense"
+        >
+          <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Add expense</p>
+            </div>
+            <form ref={expenseFormRef} id="add-expense-form" onSubmit={submit} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="mobile-modal-body space-y-3 px-5 pb-4">
                     <label className="block space-y-1">
                       <span className="text-zinc-500">Title</span>
                       <input name="title" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
@@ -345,17 +341,19 @@ export default function ExpensesPage() {
                       <span className="text-zinc-500">Notes</span>
                       <textarea name="notes" rows={3} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
                     </label>
-                    <div className="flex gap-2 pt-2">
-                      <Button type="submit" variant="gold" disabled={saving}>{saving ? 'Saving…' : 'Save expense'}</Button>
-                      <Button type="button" variant="ghost" onClick={() => { setOpen(false); setReceipt(null) }}>Cancel</Button>
-                    </div>
-                  </form>
-                </Card>
-              </motion.div>
-            </div>
-          </>
-        )}
-      </AnimatePresence>
+              </div>
+              <div className="mobile-modal-footer px-5 pt-3">
+                <div className="flex gap-2">
+                  <Button type="button" variant="gold" className="flex-1 justify-center" disabled={saving} onClick={() => expenseFormRef.current?.requestSubmit()}>
+                    {saving ? 'Saving…' : 'Save expense'}
+                  </Button>
+                  <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={() => { setOpen(false); setReceipt(null) }}>Cancel</Button>
+                </div>
+              </div>
+            </form>
+          </Card>
+        </MobileModalPortal>
+      )}
     </FinancePageChrome>
   )
 }
