@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Button, Input, Select, Spinner } from '@/components/ui'
 import { ModalFrame } from '@/components/trading/TradingModals'
@@ -23,6 +23,7 @@ export function BkashDailySummaryModal({
   onCreated: (res: TradingMutationResponse) => void
 }) {
   const { mutate, loading } = useAddTradingBkashSummary()
+  const formRef = useRef<HTMLFormElement>(null)
   const [accountId, setAccountId] = useState('')
   const [summaryDate, setSummaryDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [totalOrders, setTotalOrders] = useState('')
@@ -91,8 +92,24 @@ export function BkashDailySummaryModal({
   }
 
   return (
-    <ModalFrame open={open} onClose={onClose} title="Daily summary" desc="Bkash quick result — profit, loss, and order count">
-      <form onSubmit={e => void submit(e)} className="space-y-3">
+    <ModalFrame
+      open={open}
+      onClose={onClose}
+      title="Daily summary"
+      desc="Bkash quick result — profit, loss, and order count"
+      footer={
+        <Button
+          type="button"
+          variant="gold"
+          className="min-h-[48px] w-full justify-center"
+          disabled={loading}
+          onClick={() => formRef.current?.requestSubmit()}
+        >
+          {loading ? <><Spinner /> Saving…</> : 'Save daily summary'}
+        </Button>
+      }
+    >
+      <form ref={formRef} id="bkash-daily-summary-form" onSubmit={e => void submit(e)} className="space-y-3">
         <Select
           value={accountId}
           onChange={setAccountId}
@@ -148,9 +165,6 @@ export function BkashDailySummaryModal({
           placeholder="Optional notes"
           className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
         />
-        <Button type="submit" variant="gold" className="min-h-[48px] w-full justify-center" disabled={loading}>
-          {loading ? <><Spinner /> Saving…</> : 'Save daily summary'}
-        </Button>
       </form>
     </ModalFrame>
   )

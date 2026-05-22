@@ -61,6 +61,7 @@ export function ScreenshotUploadModal({
   const [uploadProgress, setUploadProgress] = useState(0)
   const [debugLines, setDebugLines] = useState<Array<Record<string, unknown>>>([])
   const submitLock = useRef(false)
+  const formRef = useRef<HTMLFormElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -303,8 +304,40 @@ export function ScreenshotUploadModal({
       onClose={closeModal}
       title="Upload performance screenshot"
       desc="Binance profile / P2P proof · camera or gallery"
+      footer={
+        <div className="flex w-full flex-col gap-2">
+          {file && !busy && userError ? (
+            <Button variant="secondary" className="w-full min-h-[44px] justify-center" onClick={() => void submit()}>
+              Retry upload
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="gold"
+            className="w-full min-h-[48px] justify-center touch-manipulation"
+            disabled={busy || !file || cooldownMs > 0}
+            onClick={() => formRef.current?.requestSubmit()}
+          >
+            {busy ? (
+              <>
+                <Spinner /> {phase === 'optimizing' ? 'Preparing image…' : `Uploading… ${uploadProgress}%`}
+              </>
+            ) : (
+              'Upload screenshot'
+            )}
+          </Button>
+        </div>
+      }
     >
-      <div className="space-y-4">
+      <form
+        ref={formRef}
+        id="screenshot-upload-form"
+        onSubmit={e => {
+          e.preventDefault()
+          void submit()
+        }}
+        className="space-y-4"
+      >
         <Select
           value={accountId}
           onChange={setAccountId}
@@ -385,28 +418,7 @@ export function ScreenshotUploadModal({
             </Button>
           </div>
         )}
-
-        <Button
-          variant="gold"
-          className="w-full min-h-[48px] justify-center touch-manipulation"
-          disabled={busy || !file || cooldownMs > 0}
-          onClick={() => void submit()}
-        >
-          {busy ? (
-            <>
-              <Spinner /> {phase === 'optimizing' ? 'Preparing image…' : `Uploading… ${uploadProgress}%`}
-            </>
-          ) : (
-            'Upload screenshot'
-          )}
-        </Button>
-
-        {file && !busy && userError && (
-          <Button variant="secondary" className="w-full min-h-[44px] justify-center" onClick={() => void submit()}>
-            Retry upload
-          </Button>
-        )}
-      </div>
+      </form>
     </ModalFrame>
   )
 }
