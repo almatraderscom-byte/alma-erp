@@ -6,7 +6,6 @@ import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
-import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const notoBengali = Noto_Sans_Bengali({
@@ -53,7 +52,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>
       <body className="bg-black text-cream antialiased font-sans">
-        <AmbientBackground />
         <AppProviders session={session}>{children}</AppProviders>
         <GlobalPlatformChrome />
         <Toaster
