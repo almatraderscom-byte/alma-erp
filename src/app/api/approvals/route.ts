@@ -195,12 +195,19 @@ function entityLabel(snapshot: unknown, fallback: string) {
   }
   if (employeeId && amount) return `${employeeId} · ৳${amount.toLocaleString('en-BD')}`
   if (employeeId) return employeeId
+  const order = data.order as { orderId?: string; customer?: string; sell_price?: number } | undefined
+  if (order?.orderId) {
+    return order.customer
+      ? `${order.orderId} · ${order.customer}`
+      : order.orderId
+  }
   return fallback
 }
 
 function isExecutable(module: string, type: string) {
   return (
     (module === 'ALMA_TRADING' && type === 'TRADE_DELETE') ||
+    (module === 'ORDERS_CRM' && type === 'ORDER_DELETE') ||
     (module === 'PAYROLL' && ['SALARY_ADVANCE', 'WALLET_ADVANCE', 'WALLET_WITHDRAWAL', 'PENALTY_APPEAL'].includes(type))
   )
 }

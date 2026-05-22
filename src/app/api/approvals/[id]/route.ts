@@ -13,7 +13,9 @@ import {
   reconcilePenaltyApprovalWithSource,
   reconcileWalletApprovalWithSource,
 } from '@/lib/approval-integrity'
-import { APPROVAL_TYPES } from '@/lib/approval-types'
+import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
+import { archiveOrderAfterDeleteApproval } from '@/lib/order-delete'
+import { notifyUser } from '@/lib/notifications'
 import { canReviewPenaltyAppeals, penaltyAppealDto, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
 import {
@@ -198,6 +200,8 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       response = await processPenaltyAppeal(approval, body.action, token.sub, body.note, body.approvedAmount)
     } else if (approval.module === 'ALMA_TRADING' && approval.type === 'TRADE_DELETE') {
       response = await processTradingDelete(approval.id, approval.entityId, body.action, token.sub, role, body.note)
+    } else if (approval.module === APPROVAL_MODULES.ORDERS_CRM && approval.type === APPROVAL_TYPES.ORDER_DELETE) {
+      response = await processOrderDelete(approval, body.action, token.sub, body.note)
     } else if (approval.module === 'PAYROLL' && approval.type === 'SALARY_ADVANCE') {
       response = await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
     } else if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
@@ -324,6 +328,75 @@ async function processPenaltyAppeal(
     approval: approvalRow,
     moduleResult: { waiver: result.waiver, alreadyReviewed: 'alreadyReviewed' in result ? result.alreadyReviewed : false },
   })
+}
+
+async function processOrderDelete(
+  approval: { id: string; entityId: string; businessId: string | null; requestedBy: string; payloadSnapshot: unknown },
+  action: 'APPROVE' | 'REJECT',
+  actorUserId: string,
+  note?: string,
+) {
+  const businessId = approval.businessId || 'ALMA_LIFESTYLE'
+  const snapshot = approval.payloadSnapshot && typeof approval.payloadSnapshot === 'object'
+    ? approval.payloadSnapshot as { order?: { orderId?: string; customer?: string } }
+    : null
+  const orderId = approval.entityId
+
+  if (action === 'REJECT') {
+    const updated = await resolveApprovalRequestById({
+      id: approval.id,
+      status: 'REJECTED',
+      actorUserId,
+      reason: note || 'Rejected',
+      skipRequesterNotification: true,
+    })
+    if (!updated) {
+      return approvalErrorResponse('Approval record could not be updated.', 404, 'not_found')
+    }
+    deferAfterApprovalCommit('approval.order_delete_reject_notify', async () => {
+      await notifyUser({
+        userId: approval.requestedBy,
+        businessId,
+        type: 'ORDER_ASSIGNED',
+        priority: 'HIGH',
+        title: 'Order delete request rejected',
+        message: note?.slice(0, 240) || `Delete request for order ${orderId} was rejected.`,
+        actionUrl: '/orders',
+      })
+    })
+    dispatchApprovalsUpdated()
+    return apiDataSuccess({ approval: updated, moduleResult: { orderId, rejected: true } })
+  }
+
+  const archived = await archiveOrderAfterDeleteApproval({
+    businessId,
+    orderId,
+    actorUserId,
+    reason: note || 'Approved delete',
+  })
+  const updated = await resolveApprovalRequestById({
+    id: approval.id,
+    status: 'APPROVED',
+    actorUserId,
+    reason: note || 'Approved',
+    skipRequesterNotification: true,
+  })
+  if (!updated) {
+    return approvalErrorResponse('Approval record could not be updated.', 404, 'not_found')
+  }
+  deferAfterApprovalCommit('approval.order_delete_approve_notify', async () => {
+    await notifyUser({
+      userId: approval.requestedBy,
+      businessId,
+      type: 'ORDER_ASSIGNED',
+      priority: 'NORMAL',
+      title: 'Order delete approved',
+      message: `Order ${orderId}${snapshot?.order?.customer ? ` (${snapshot.order.customer})` : ''} was removed from the active orders list.`,
+      actionUrl: '/orders',
+    })
+  })
+  dispatchApprovalsUpdated()
+  return apiDataSuccess({ approval: updated, moduleResult: archived })
 }
 
 async function processTradingDelete(

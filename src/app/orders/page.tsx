@@ -25,6 +25,7 @@ import type { Order, OrderStatus } from '@/types'
 import { useActor } from '@/contexts/ActorContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { can } from '@/lib/roles'
+import { canEditOrder, canRequestOrderDelete } from '@/lib/order-access'
 import { shareSlugAlma } from '@/lib/pdf/format'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY']
@@ -60,18 +61,121 @@ const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVER
 // ═══════════════════════════════════════════════════════════════════════════
 
 function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose: () => void; onStatusChange: () => void }) {
-  const { role } = useActor()
+  const { role, userId } = useActor()
+  const { business } = useBusiness()
   const mayAdvance = can(role, 'ordersAdvanceStatus')
   const mayInvoice = can(role, 'ordersGenerateInvoice')
+  const mayEdit = canEditOrder(role, userId, order)
+  const mayRequestDelete = canRequestOrderDelete(role)
   const { mutate: updateStatus, loading: statusLoading } = useUpdateStatus()
   const [invLoading, setInvLoading] = useState(false)
   const [invoiceLookupLoading, setInvoiceLookupLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [confirmStatus, setConfirmStatus] = useState<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY' | null>(null)
+  const [showEdit, setShowEdit] = useState(false)
+  const [showDeleteRequest, setShowDeleteRequest] = useState(false)
+  const [editBusy, setEditBusy] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
+  const [editForm, setEditForm] = useState({
+    customer: order.customer,
+    phone: order.phone,
+    address: order.address,
+    product: order.product,
+    qty: String(order.qty ?? 1),
+    unit_price: String(order.unit_price ?? 0),
+    payment: order.payment,
+    notes: order.notes || '',
+  })
 
   useLayoutEffect(() => {
     setShareUrl('')
-  }, [order.id])
+    setShowEdit(false)
+    setShowDeleteRequest(false)
+    setDeleteReason('')
+    setEditForm({
+      customer: order.customer,
+      phone: order.phone,
+      address: order.address,
+      product: order.product,
+      qty: String(order.qty ?? 1),
+      unit_price: String(order.unit_price ?? 0),
+      payment: order.payment,
+      notes: order.notes || '',
+    })
+  }, [order.id, order.customer, order.phone, order.address, order.product, order.qty, order.unit_price, order.payment, order.notes])
+
+  async function submitOrderEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (editBusy) return
+    setEditBusy(true)
+    try {
+      const result = await safeFetchJson<{ ok?: boolean; error?: { message?: string }; failed?: Array<{ field: string; error?: string }> }>(
+        '/api/orders/orders/edit',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order_id: order.id,
+            business_id: business.id,
+            fields: {
+              customer: editForm.customer,
+              phone: editForm.phone,
+              address: editForm.address,
+              product: editForm.product,
+              qty: Number(editForm.qty),
+              unit_price: Number(editForm.unit_price),
+              payment: editForm.payment,
+              notes: editForm.notes,
+            },
+          }),
+        },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      if (result.data?.failed?.length) {
+        toast.error(`Some fields failed: ${result.data.failed.map(f => f.field).join(', ')}`)
+      } else {
+        toast.success('Order updated')
+      }
+      setShowEdit(false)
+      onStatusChange()
+    } catch (err) {
+      toast.error((err as Error).message || 'Could not update order')
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
+  async function submitDeleteRequest() {
+    if (deleteBusy) return
+    if (deleteReason.trim().length < 5) {
+      toast.error('Enter a delete reason (at least 5 characters)')
+      return
+    }
+    setDeleteBusy(true)
+    try {
+      const result = await safeFetchJson<{ ok?: boolean; duplicate?: boolean; message?: string; error?: { message?: string } }>(
+        '/api/orders/orders/delete-request',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order_id: order.id,
+            business_id: business.id,
+            reason: deleteReason.trim(),
+          }),
+        },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success(result.data?.message || 'Delete request sent for Super Admin approval')
+      setShowDeleteRequest(false)
+      setDeleteReason('')
+    } catch (err) {
+      toast.error((err as Error).message || 'Could not submit delete request')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
@@ -287,6 +391,25 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
         </div>
 
         <div className="sticky bottom-0 z-10 space-y-2 border-t border-border bg-surface/95 px-4 pt-4 pb-[max(1rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] backdrop-blur md:p-4">
+          {(mayEdit || mayRequestDelete) && (
+            <div className="grid grid-cols-2 gap-2">
+              {mayEdit && (
+                <Button variant="secondary" className="justify-center min-h-[42px]" onClick={() => setShowEdit(true)} disabled={statusLoading}>
+                  Edit order
+                </Button>
+              )}
+              {mayRequestDelete && (
+                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setShowDeleteRequest(true)} disabled={statusLoading}>
+                  Request delete
+                </Button>
+              )}
+            </div>
+          )}
+          {mayEdit && role === 'STAFF' && (
+            <p className="text-[10px] text-zinc-500 text-center">
+              You can edit your own orders while Pending, Confirmed, or Packed. Wrong totals need Super Admin delete approval.
+            </p>
+          )}
           {nextStatus && mayAdvance && (
             <Button variant="gold" className="w-full justify-center" onClick={handleStatusAdvance} disabled={statusLoading}>
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
@@ -344,6 +467,61 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
             )}
           </div>
         </div>
+        {showEdit && (
+          <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center bg-black/70 p-4">
+            <form
+              onSubmit={e => void submitOrderEdit(e)}
+              className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-3xl border border-border bg-card p-5 shadow-2xl space-y-3"
+            >
+              <p className="text-sm font-bold text-cream">Edit order {order.id}</p>
+              <p className="text-[11px] text-zinc-500">Updates sync to the orders sheet. Sell price and profit recalculate automatically.</p>
+              {(['customer', 'phone', 'address', 'product', 'qty', 'unit_price', 'payment', 'notes'] as const).map(key => (
+                <label key={key} className="block text-[11px]">
+                  <span className="font-bold uppercase tracking-wider text-zinc-500">{key.replace('_', ' ')}</span>
+                  {key === 'notes' ? (
+                    <textarea
+                      value={editForm[key]}
+                      onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
+                      className="mt-1 min-h-16 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                    />
+                  ) : (
+                    <input
+                      value={editForm[key]}
+                      onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
+                      className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                    />
+                  )}
+                </label>
+              ))}
+              <div className="flex justify-end gap-2 pt-2">
+                <Button size="xs" variant="secondary" type="button" onClick={() => setShowEdit(false)} disabled={editBusy}>Cancel</Button>
+                <Button size="xs" variant="gold" type="submit" disabled={editBusy}>{editBusy ? 'Saving…' : 'Save changes'}</Button>
+              </div>
+            </form>
+          </div>
+        )}
+        {showDeleteRequest && (
+          <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-sm rounded-3xl border border-red-400/25 bg-card p-5 shadow-2xl">
+              <p className="text-sm font-bold text-cream">Request order delete</p>
+              <p className="mt-2 text-xs text-zinc-400">
+                Super Admin must approve in Approvals. The order is hidden from lists after approval (sheet row kept for audit).
+              </p>
+              <textarea
+                value={deleteReason}
+                onChange={e => setDeleteReason(e.target.value)}
+                placeholder="Why should this order be removed? (min 5 characters)"
+                className="mt-3 min-h-24 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <Button size="xs" variant="secondary" onClick={() => setShowDeleteRequest(false)} disabled={deleteBusy}>Cancel</Button>
+                <Button size="xs" variant="danger" onClick={() => void submitDeleteRequest()} disabled={deleteBusy}>
+                  {deleteBusy ? 'Submitting…' : 'Submit for approval'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
         {confirmStatus && (
           <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center bg-black/70 p-4">
             <div className="w-full max-w-sm rounded-3xl border border-red-400/25 bg-card p-5 shadow-2xl">
