@@ -71,6 +71,7 @@ type AttendanceDashboard = {
   }>
   selfieLogs: Array<{
     id: string
+    businessId: string
     attendanceRecordId: string
     employeeId: string
     capturedAt: string
@@ -238,11 +239,15 @@ function AttendancePageInner() {
     void load()
   }
 
-  async function reviewSelfie(selfieId: string, action: 'APPROVE' | 'REJECT') {
+  async function reviewSelfie(
+    selfieId: string,
+    selfieBusinessId: string,
+    action: 'APPROVE' | 'REJECT',
+  ) {
     const result = await safeFetchJsonWithToast(`/api/attendance/selfies/${selfieId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: business.id, action }),
+      body: JSON.stringify({ business_id: selfieBusinessId, action }),
     })
     if (!result.ok) return
     toast.success(action === 'APPROVE' ? 'Verification approved' : 'Verification rejected')
@@ -479,14 +484,17 @@ function AttendancePageInner() {
                   missing={log.imageMissing}
                   employeeId={log.employeeId}
                 />
-                <div className="mt-2 flex justify-between gap-2">
+                <div className="mt-2 flex justify-between gap-2 flex-wrap">
                   <span className="font-mono text-zinc-400">{log.employeeId}</span>
                   <span className="text-zinc-500">{new Date(log.capturedAt).toLocaleString()}</span>
                 </div>
+                {data?.scopeAllBusinesses && (
+                  <p className="mt-1 text-[10px] text-amber-200/90">{log.businessId.replace(/_/g, ' ')}</p>
+                )}
                 {role === 'SUPER_ADMIN' && (
                   <div className="mt-3 flex gap-2">
-                    <Button size="xs" variant="secondary" onClick={() => void reviewSelfie(log.id, 'REJECT')}>Reject</Button>
-                    <Button size="xs" variant="gold" onClick={() => void reviewSelfie(log.id, 'APPROVE')}>Approve</Button>
+                    <Button size="xs" variant="secondary" onClick={() => void reviewSelfie(log.id, log.businessId, 'REJECT')}>Reject</Button>
+                    <Button size="xs" variant="gold" onClick={() => void reviewSelfie(log.id, log.businessId, 'APPROVE')}>Approve</Button>
                   </div>
                 )}
               </div>

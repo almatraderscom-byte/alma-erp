@@ -3,32 +3,11 @@ import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceSelfieDto } from '@/lib/attendance'
 import { resolveAttendanceImageRefForDisplay } from '@/lib/attendance-photo-storage'
+import { resolveSelfieForAdminReview } from '@/lib/attendance-selfie-review'
 import { notifyUser } from '@/lib/notifications'
 import { withApiRoute } from '@/lib/core/safe-api'
 import { logEvent } from '@/lib/logger'
 import { attachAttendanceContext } from '@/lib/sentry/capture'
-
-async function findSelfieForAdmin(businessId: string, id: string, attendanceRecordId?: string | null) {
-  const byId = await prisma.attendanceSelfieVerification.findFirst({
-    where: { id, businessId },
-    include: { attendanceRecord: true },
-  })
-  if (byId) return byId
-
-  if (attendanceRecordId) {
-    return prisma.attendanceSelfieVerification.findFirst({
-      where: { attendanceRecordId, businessId },
-      orderBy: { capturedAt: 'desc' },
-      include: { attendanceRecord: true },
-    })
-  }
-
-  return prisma.attendanceSelfieVerification.findFirst({
-    where: { attendanceRecordId: id, businessId },
-    orderBy: { capturedAt: 'desc' },
-    include: { attendanceRecord: true },
-  })
-}
 
 export const GET = withApiRoute('attendance.selfies.detail', async (req: NextRequest, ctxParam) => {
   const { params } = ctxParam as { params: { id: string } }
@@ -38,36 +17,47 @@ export const GET = withApiRoute('attendance.selfies.detail', async (req: NextReq
   if (!ctx.isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const requestId = req.headers.get('x-request-id') || undefined
+  const requestedBusinessId = url.searchParams.get('business_id')?.trim() || ctx.businessIds[0] || null
   await attachAttendanceContext({
-    businessId: ctx.businessIds[0],
+    businessId: requestedBusinessId || ctx.businessIds[0],
     attendanceRecordId: params.id,
     requestId,
     route: 'attendance.selfies.detail',
   })
 
   const attendanceRecordId = url.searchParams.get('attendance_record_id')
-  const selfie = await findSelfieForAdmin(ctx.businessIds[0], params.id, attendanceRecordId)
-  if (!selfie) {
+  const lookup = await resolveSelfieForAdminReview({
+    id: params.id,
+    businessId: requestedBusinessId,
+    attendanceRecordId,
+    isSuperAdmin: ctx.role === 'SUPER_ADMIN',
+  })
+  if (!lookup.ok) {
     logEvent('warn', 'attendance.review.photo_missing', {
       requestId,
-      businessId: ctx.businessIds[0],
+      businessId: requestedBusinessId,
       selfieId: params.id,
       attendanceRecordId: attendanceRecordId || params.id,
       lookup: 'detail',
+      code: lookup.code,
     })
-    return NextResponse.json({
-      ok: false,
-      error: 'Verification photo not found.',
-      code: 'photo_not_found',
-      diagnostic: 'No selfie row for this id or attendance record. Employee may need to check in again.',
-    }, { status: 404 })
+    return NextResponse.json(
+      {
+        ok: false,
+        error: lookup.error,
+        code: lookup.code,
+        diagnostic: lookup.diagnostic,
+      },
+      { status: lookup.status },
+    )
   }
 
+  const selfie = lookup.selfie
   const imageUrl = await resolveAttendanceImageRefForDisplay(selfie.imageDataUrl)
   if (!imageUrl) {
     logEvent('warn', 'attendance.review.storage_missing', {
       requestId,
-      businessId: ctx.businessIds[0],
+      businessId: selfie.businessId,
       selfieId: selfie.id,
       attendanceRecordId: selfie.attendanceRecordId,
       storageRef: selfie.imageDataUrl?.slice(0, 120),
@@ -101,35 +91,41 @@ export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextR
   }
 
   const requestId = req.headers.get('x-request-id') || undefined
+  const requestedBusinessId = String(body.business_id || '').trim() || null
   await attachAttendanceContext({
-    businessId: ctx.businessIds[0],
+    businessId: requestedBusinessId || ctx.businessIds[0],
     attendanceRecordId: body.attendance_record_id || params.id,
     requestId,
     route: 'attendance.selfies.review',
   })
 
-  const selfie = await findSelfieForAdmin(
-    ctx.businessIds[0],
-    params.id,
-    body.attendance_record_id || null,
-  )
-  if (!selfie) {
+  const lookup = await resolveSelfieForAdminReview({
+    id: params.id,
+    businessId: requestedBusinessId,
+    attendanceRecordId: body.attendance_record_id || null,
+    isSuperAdmin: true,
+  })
+  if (!lookup.ok) {
     logEvent('warn', 'attendance.review.photo_missing', {
       requestId,
-      businessId: ctx.businessIds[0],
+      businessId: requestedBusinessId,
       selfieId: params.id,
       attendanceRecordId: body.attendance_record_id || params.id,
       lookup: 'review',
       action: body.action,
+      code: lookup.code,
     })
-    return NextResponse.json({
-      error: 'Verification photo not found.',
-      code: 'photo_not_found',
-      diagnostic:
-        'No stored verification asset for this request. If check-in succeeded today, ask the employee to open My Desk and retry verification.',
-    }, { status: 404 })
+    return NextResponse.json(
+      {
+        error: lookup.error,
+        code: lookup.code,
+        diagnostic: lookup.diagnostic,
+      },
+      { status: lookup.status },
+    )
   }
 
+  const selfie = lookup.selfie
   const now = new Date()
   const note = String(body.note || '').trim().slice(0, 500) || null
   const updated = await prisma.attendanceSelfieVerification.update({
@@ -165,7 +161,7 @@ export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextR
   if (!imageUrl) {
     logEvent('warn', 'attendance.review.storage_missing', {
       requestId,
-      businessId: ctx.businessIds[0],
+      businessId: selfie.businessId,
       selfieId: updated.id,
       attendanceRecordId: updated.attendanceRecordId,
       storageRef: updated.imageDataUrl?.slice(0, 120),

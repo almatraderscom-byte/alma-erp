@@ -158,6 +158,7 @@ export async function buildAdminAttendanceDashboard(input: {
         const imageUrl = await resolveAttendanceImageRefForDisplay(row.imageDataUrl)
         return {
           id: row.id,
+          businessId: row.businessId,
           attendanceRecordId: row.attendanceRecordId,
           employeeId: row.employeeId,
           capturedAt: row.capturedAt.toISOString(),
