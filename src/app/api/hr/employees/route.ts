@@ -113,14 +113,19 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
       return emailMatch || phoneMatch
     })
     const suggested = matchedByExistingLink || matchedByContact
+    const linked = Boolean(user.employeeIdGas && employeeIds.has(user.employeeIdGas))
+    const orphanEmployeeId =
+      user.employeeIdGas && !employeeIds.has(user.employeeIdGas) ? user.employeeIdGas : null
     return {
       ...user,
       businesses: parseBusinessAccess(user.businessAccess),
-      linked: Boolean(user.employeeIdGas && employeeIds.has(user.employeeIdGas)),
+      linked,
+      linkState: linked ? ('linked' as const) : orphanEmployeeId ? ('orphan' as const) : ('unlinked' as const),
       linkedEmployeeId: user.employeeIdGas || null,
+      orphanEmployeeId,
       matchedEmployeeId: suggested?.emp_id || null,
       matchedEmployeeName: suggested?.name || null,
-      selectable: !user.employeeIdGas,
+      selectable: !linked,
     }
   })
 }
