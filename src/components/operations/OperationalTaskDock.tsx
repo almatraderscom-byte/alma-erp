@@ -9,7 +9,7 @@ import {
   patchAssignmentAction,
 } from '@/hooks/useOperationalTasks'
 import { PLATFORM_Z } from '@/lib/platform-z-index'
-import { opsStatusLabel, OPS_PRIORITY_BADGE } from '@/lib/operational-task-spotlight-client'
+import { OPS_PRIORITY_BADGE } from '@/lib/operational-task-spotlight-client'
 
 type Props = {
   businessId: string
@@ -18,6 +18,13 @@ type Props = {
   heroOpen: boolean
   onReopen: () => void
   onUpdated: () => void | Promise<void>
+}
+
+function dockStatusLabel(status: string): string {
+  if (status === 'IN_PROGRESS') return 'In progress'
+  if (status === 'ACKNOWLEDGED') return 'Acknowledged'
+  if (status === 'ACTIVE') return 'Pending'
+  return status.replace(/_/g, ' ')
 }
 
 export function OperationalTaskDock({
@@ -33,6 +40,7 @@ export function OperationalTaskDock({
   const t = primary.task
   const badge = OPS_PRIORITY_BADGE[t.priority] || OPS_PRIORITY_BADGE.NORMAL
   const extra = tasks.length > 1 ? tasks.length - 1 : 0
+  const statusLabel = dockStatusLabel(primary.status)
 
   async function quickComplete() {
     try {
@@ -63,7 +71,7 @@ export function OperationalTaskDock({
               </p>
               <p className="mt-1 truncate text-sm font-black text-cream">{t.title}</p>
               <p className="mt-1 text-[10px] text-zinc-500">
-                {opsStatusLabel(primary.status)}
+                {statusLabel}
                 {extra > 0 ? ` · +${extra} more` : ''}
               </p>
             </div>
@@ -72,8 +80,13 @@ export function OperationalTaskDock({
             </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="xs" variant="gold" className="min-h-[36px] flex-1" onClick={onReopen}>
-              Open briefing
+            <Button
+              size="xs"
+              variant="gold"
+              className="min-h-[36px] flex-1 justify-center truncate"
+              onClick={onReopen}
+            >
+              <span className="truncate">{t.title}</span>
             </Button>
             <Button size="xs" variant="secondary" className="min-h-[36px]" onClick={() => void quickComplete()}>
               Complete

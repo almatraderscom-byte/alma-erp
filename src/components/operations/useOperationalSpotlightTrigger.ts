@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import {
   invalidateOperationalTasksCache,
   useOperationalTasks,
@@ -12,7 +13,14 @@ import {
 } from '@/lib/operational-task-spotlight-client'
 import { safeFetchJson } from '@/lib/safe-fetch'
 
+const PORTAL_POLL_MS = 60_000
+
 type SpotlightTaskMeta = OperationalTaskAssignmentDto['task'] & { showOnCheckIn?: boolean }
+
+type TriggerOptions = {
+  /** When true, portal mount/focus/poll may auto-open unseen spotlights */
+  hasCheckedInToday?: boolean
+}
 
 async function fetchOpenTasks(businessId: string): Promise<OperationalTaskAssignmentDto[]> {
   const result = await safeFetchJson<{ tasks?: OperationalTaskAssignmentDto[] }>(
@@ -34,7 +42,7 @@ function wasSpotlightShownToday(lastSpotlightAt: string | null): boolean {
   )
 }
 
-function isCheckInSpotlightEligible(assignment: OperationalTaskAssignmentDto): boolean {
+function isUnseenSpotlightEligible(assignment: OperationalTaskAssignmentDto): boolean {
   if (!isOpsHeroEligible(assignment.status)) return false
   const task = assignment.task as SpotlightTaskMeta
   if (task.showOnCheckIn === false) return false
@@ -42,10 +50,10 @@ function isCheckInSpotlightEligible(assignment: OperationalTaskAssignmentDto): b
   return true
 }
 
-function pickCheckInSpotlightTask(
+function pickUnseenSpotlightTask(
   list: OperationalTaskAssignmentDto[],
 ): OperationalTaskAssignmentDto | null {
-  const eligible = list.filter(isCheckInSpotlightEligible)
+  const eligible = list.filter(isUnseenSpotlightEligible)
   return pickPrimaryOpsTask(eligible)
 }
 
@@ -57,14 +65,27 @@ async function markSpotlightShownApi(assignmentId: string) {
   })
 }
 
-export function useOperationalSpotlightTrigger(businessId: string, enabled = true) {
+export function useOperationalSpotlightTrigger(
+  businessId: string,
+  enabled = true,
+  options: TriggerOptions = {},
+) {
+  const pathname = usePathname()
+  const onPortal = pathname === '/portal'
+  const { hasCheckedInToday = false } = options
+
   const { tasks, loading, refetch } = useOperationalTasks(businessId, enabled)
   const [spotlight, setSpotlight] = useState<OperationalTaskAssignmentDto | null>(null)
   const [heroOpen, setHeroOpen] = useState(false)
   const spotlightIdRef = useRef<string | null>(null)
+  const heroOpenRef = useRef(false)
 
   const openTasks = tasks.filter(t => isOpsHeroEligible(t.status))
   const primaryTask = pickPrimaryOpsTask(tasks)
+
+  useEffect(() => {
+    heroOpenRef.current = heroOpen
+  }, [heroOpen])
 
   useEffect(() => {
     spotlightIdRef.current = spotlight?.id ?? null
@@ -82,6 +103,28 @@ export function useOperationalSpotlightTrigger(businessId: string, enabled = tru
     setSpotlight(primary)
   }, [enabled, loading, tasks, heroOpen])
 
+  const openSpotlightForTask = useCallback((primary: OperationalTaskAssignmentDto) => {
+    setSpotlight(primary)
+    setHeroOpen(true)
+  }, [])
+
+  const tryOpenUnseenSpotlight = useCallback(
+    async (opts?: { requireCheckedIn?: boolean }) => {
+      if (!enabled || heroOpenRef.current) return false
+      if (opts?.requireCheckedIn && !hasCheckedInToday) return false
+
+      invalidateOperationalTasksCache(businessId)
+      const list = await fetchOpenTasks(businessId)
+      const primary = pickUnseenSpotlightTask(list)
+      if (!primary) return false
+
+      openSpotlightForTask(primary)
+      void refetch(true)
+      return true
+    },
+    [businessId, enabled, hasCheckedInToday, openSpotlightForTask, refetch],
+  )
+
   const minimizeHero = useCallback(async () => {
     const id = spotlightIdRef.current
     setHeroOpen(false)
@@ -95,10 +138,9 @@ export function useOperationalSpotlightTrigger(businessId: string, enabled = tru
     (assignment?: OperationalTaskAssignmentDto) => {
       const target = assignment ?? pickPrimaryOpsTask(tasks)
       if (!target) return
-      setSpotlight(target)
-      setHeroOpen(true)
+      openSpotlightForTask(target)
     },
-    [tasks],
+    [openSpotlightForTask, tasks],
   )
 
   const triggerAfterCheckIn = useCallback(async () => {
@@ -106,14 +148,13 @@ export function useOperationalSpotlightTrigger(businessId: string, enabled = tru
     invalidateOperationalTasksCache(businessId)
     await refetch(true)
     const list = await fetchOpenTasks(businessId)
-    const primary = pickCheckInSpotlightTask(list)
+    const primary = pickUnseenSpotlightTask(list)
     if (!primary) {
       setHeroOpen(false)
       return
     }
-    setSpotlight(primary)
-    setHeroOpen(true)
-  }, [businessId, enabled, refetch])
+    openSpotlightForTask(primary)
+  }, [businessId, enabled, openSpotlightForTask, refetch])
 
   const handleUpdated = useCallback(async () => {
     invalidateOperationalTasksCache(businessId)
@@ -128,6 +169,34 @@ export function useOperationalSpotlightTrigger(businessId: string, enabled = tru
     setSpotlight(primary)
     setHeroOpen(false)
   }, [businessId, refetch])
+
+  useEffect(() => {
+    if (!enabled || !onPortal || loading) return
+    void tryOpenUnseenSpotlight({ requireCheckedIn: true })
+  }, [enabled, onPortal, loading, hasCheckedInToday, tryOpenUnseenSpotlight])
+
+  useEffect(() => {
+    if (!enabled || !onPortal) return
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible' || heroOpenRef.current) return
+      void tryOpenUnseenSpotlight({ requireCheckedIn: true })
+    }
+
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [enabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
+
+  useEffect(() => {
+    if (!enabled || !onPortal) return
+
+    const timer = window.setInterval(() => {
+      if (heroOpenRef.current || document.visibilityState !== 'visible') return
+      void tryOpenUnseenSpotlight({ requireCheckedIn: true })
+    }, PORTAL_POLL_MS)
+
+    return () => window.clearInterval(timer)
+  }, [enabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
 
   return {
     tasks: openTasks,

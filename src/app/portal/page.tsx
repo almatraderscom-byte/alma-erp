@@ -234,7 +234,10 @@ export default function EmployeePortalPage() {
     await refetchAttendance()
   }, [refetchProfile, loadWallet, loadMealEligibility, refetchAttendance])
 
-  const opsSpotlight = useOperationalSpotlightTrigger(business.id, !systemOwner)
+  const hasCheckedInToday = Boolean(attendance?.today?.checkInAt)
+  const opsSpotlight = useOperationalSpotlightTrigger(business.id, !systemOwner, {
+    hasCheckedInToday,
+  })
 
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
