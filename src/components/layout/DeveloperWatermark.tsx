@@ -7,19 +7,36 @@ import { cn } from '@/lib/utils'
 
 const PUBLIC_PREFIXES = ['/login', '/forgot-password', '/reset-password', '/invoice/share']
 const FULL_TEXT = 'Developed by Maruf'
+const PREFIX = 'Developed by '
 const TYPING_MS = 80
-const SESSION_KEY = 'alma-developer-watermark-typed'
+const ERASE_MS = 50
+const HOLD_MS = 3_000
+const PAUSE_MS = 1_000
+
+type Phase = 'typing' | 'hold' | 'erasing' | 'pause'
 
 function useCompactBottom(): boolean {
   const pathname = usePathname() ?? ''
   return PUBLIC_PREFIXES.some(prefix => pathname.startsWith(prefix))
 }
 
-function StaticWatermarkText() {
+function WatermarkDisplay({ text, showCursor }: { text: string; showCursor: boolean }) {
+  const marufStart = PREFIX.length
+  if (text.length <= marufStart) {
+    return (
+      <>
+        {text}
+        {showCursor ? <span className="animate-pulse">|</span> : null}
+      </>
+    )
+  }
   return (
     <>
-      Developed by{' '}
-      <span className="font-semibold tracking-[0.08em] text-gold/60 md:text-gold/65">Maruf</span>
+      {PREFIX}
+      <span className="font-semibold tracking-[0.08em] text-gold/60 md:text-gold/65">
+        {text.slice(marufStart)}
+      </span>
+      {showCursor ? <span className="animate-pulse">|</span> : null}
     </>
   )
 }
@@ -31,32 +48,82 @@ function StaticWatermarkText() {
 export function DeveloperWatermark() {
   const compactBottom = useCompactBottom()
   const [displayed, setDisplayed] = useState('')
-  const [typingComplete, setTypingComplete] = useState(false)
+  const [showCursor, setShowCursor] = useState(true)
   const [clientReady, setClientReady] = useState(false)
 
   useEffect(() => {
     setClientReady(true)
-    if (typeof window === 'undefined') return
+  }, [])
 
-    if (sessionStorage.getItem(SESSION_KEY) === '1') {
-      setDisplayed(FULL_TEXT)
-      setTypingComplete(true)
-      return
+  useEffect(() => {
+    if (!clientReady) return
+
+    let cancelled = false
+    let phase: Phase = 'typing'
+    let index = 0
+    let timer: number
+
+    const schedule = (ms: number, fn: () => void) => {
+      timer = window.setTimeout(() => {
+        if (!cancelled) fn()
+      }, ms)
     }
 
-    let i = 0
-    const interval = window.setInterval(() => {
-      i += 1
-      setDisplayed(FULL_TEXT.slice(0, i))
-      if (i >= FULL_TEXT.length) {
-        window.clearInterval(interval)
-        sessionStorage.setItem(SESSION_KEY, '1')
-        setTypingComplete(true)
-      }
-    }, TYPING_MS)
+    const run = () => {
+      if (cancelled) return
 
-    return () => window.clearInterval(interval)
-  }, [])
+      switch (phase) {
+        case 'typing': {
+          setShowCursor(true)
+          if (index < FULL_TEXT.length) {
+            index += 1
+            setDisplayed(FULL_TEXT.slice(0, index))
+            schedule(TYPING_MS, run)
+          } else {
+            phase = 'hold'
+            setShowCursor(false)
+            schedule(HOLD_MS, run)
+          }
+          break
+        }
+        case 'hold': {
+          phase = 'erasing'
+          setShowCursor(true)
+          run()
+          break
+        }
+        case 'erasing': {
+          setShowCursor(true)
+          if (index > 0) {
+            index -= 1
+            setDisplayed(FULL_TEXT.slice(0, index))
+            schedule(ERASE_MS, run)
+          } else {
+            phase = 'pause'
+            setDisplayed('')
+            setShowCursor(false)
+            schedule(PAUSE_MS, run)
+          }
+          break
+        }
+        case 'pause': {
+          phase = 'typing'
+          schedule(TYPING_MS, run)
+          break
+        }
+      }
+    }
+
+    index = 0
+    setDisplayed('')
+    setShowCursor(true)
+    schedule(TYPING_MS, run)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [clientReady])
 
   const watermarkClass = cn(
     'developer-watermark pointer-events-none fixed right-3 select-none',
@@ -79,14 +146,7 @@ export function DeveloperWatermark() {
       className={watermarkClass}
       aria-hidden="true"
     >
-      {typingComplete ? (
-        <StaticWatermarkText />
-      ) : (
-        <>
-          {displayed}
-          <span className="animate-pulse">|</span>
-        </>
-      )}
+      <WatermarkDisplay text={displayed} showCursor={showCursor} />
     </p>
   )
 }
