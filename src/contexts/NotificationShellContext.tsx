@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Button, Input, Select } from '@/components/ui'
+import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { cn } from '@/lib/utils'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
@@ -103,7 +104,17 @@ export function useNotificationShell() {
   return ctx
 }
 
+const NOTIFICATION_POLL_OPEN_MS = 45_000
+const NOTIFICATION_POLL_CLOSED_MS = 60_000
+const NOTIFICATION_BACKOFF_MS = [5_000, 10_000, 20_000, 60_000]
+
+function dispatchAuthFailure() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event('alma:auth-failure'))
+}
+
 export function NotificationShellProvider({ children }: { children: ReactNode }) {
+  const { status: sessionStatus } = useSession()
   const { businessId } = useBusiness()
   const [open, setOpen] = useState(false)
   const [rows, setRows] = useState<NotificationRow[]>([])
@@ -116,20 +127,37 @@ export function NotificationShellProvider({ children }: { children: ReactNode })
   const [pushEnabled, setPushEnabled] = useState(false)
   const knownIds = useRef(new Set<string>())
   const seededKnownIds = useRef(false)
+  const pausedRef = useRef(false)
+  const backoffIndexRef = useRef(0)
 
   const critical = useMemo(
     () => rows.find(n => n.priority === 'CRITICAL' && !n.recipient?.acknowledgedAt),
     [rows],
   )
 
-  const load = useCallback(async (summary = !open) => {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-    const params = new URLSearchParams({ business_id: businessId, status, priority })
-    if (summary) params.set('summary', '1')
-    if (deferredQ.trim() && !summary) params.set('q', deferredQ.trim())
-    const res = await fetch(`/api/notifications?${params.toString()}`, summary ? undefined : { cache: 'no-store' })
+  const load = useCallback(async (summary = !open): Promise<'ok' | 'paused' | 'retry'> => {
+    if (sessionStatus !== 'authenticated') return 'retry'
+    if (pausedRef.current) return 'paused'
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'retry'
+    let res: Response
+    try {
+      const params = new URLSearchParams({ business_id: businessId, status, priority })
+      if (summary) params.set('summary', '1')
+      if (deferredQ.trim() && !summary) params.set('q', deferredQ.trim())
+      res = await fetch(`/api/notifications?${params.toString()}`, summary ? undefined : { cache: 'no-store' })
+    } catch {
+      return 'retry'
+    }
     const json = await res.json().catch(() => ({}))
-    if (!res.ok) return
+    if (res.status === 401) {
+      pausedRef.current = true
+      dispatchAuthFailure()
+      return 'paused'
+    }
+    if (!res.ok) {
+      if (res.status >= 500) return 'retry'
+      return 'retry'
+    }
     const next = (json.notifications ?? []) as NotificationRow[]
     const fresh = seededKnownIds.current ? next.filter(n => !knownIds.current.has(n.id)) : []
     next.forEach(n => knownIds.current.add(n.id))
@@ -147,7 +175,8 @@ export function NotificationShellProvider({ children }: { children: ReactNode })
         detail: { unread: json.unread ?? 0, criticalUnacked: json.criticalUnacked ?? 0 },
       }),
     )
-  }, [businessId, deferredQ, open, priority, status])
+    return 'ok'
+  }, [businessId, deferredQ, open, priority, sessionStatus, status])
 
   const openPanel = useCallback(() => {
     setOpen(true)
@@ -155,12 +184,46 @@ export function NotificationShellProvider({ children }: { children: ReactNode })
   }, [load])
 
   useEffect(() => {
+    pausedRef.current = false
+    backoffIndexRef.current = 0
+
+    if (sessionStatus !== 'authenticated') return
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const schedule = (delayMs: number) => {
+      if (cancelled) return
+      timer = window.setTimeout(() => {
+        void (async () => {
+          if (cancelled || pausedRef.current) return
+          if (document.hidden) {
+            schedule(open ? NOTIFICATION_POLL_OPEN_MS : NOTIFICATION_POLL_CLOSED_MS)
+            return
+          }
+          const outcome = await load(!open)
+          if (cancelled || pausedRef.current) return
+          if (outcome === 'paused') return
+          let nextDelay = open ? NOTIFICATION_POLL_OPEN_MS : NOTIFICATION_POLL_CLOSED_MS
+          if (outcome === 'retry') {
+            nextDelay = NOTIFICATION_BACKOFF_MS[Math.min(backoffIndexRef.current, NOTIFICATION_BACKOFF_MS.length - 1)]
+            backoffIndexRef.current = Math.min(backoffIndexRef.current + 1, NOTIFICATION_BACKOFF_MS.length - 1)
+          } else if (outcome === 'ok') {
+            backoffIndexRef.current = 0
+          }
+          schedule(nextDelay)
+        })()
+      }, delayMs)
+    }
+
     void load()
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load(!open)
-    }, open ? 45_000 : 60_000)
-    return () => window.clearInterval(timer)
-  }, [load, open])
+    schedule(open ? NOTIFICATION_POLL_OPEN_MS : NOTIFICATION_POLL_CLOSED_MS)
+
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [load, open, sessionStatus])
 
   useRegisterMobileRefresh(
     useCallback(async () => {

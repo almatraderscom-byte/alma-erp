@@ -1,9 +1,10 @@
 'use client'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
 import type { Session } from 'next-auth'
-import { SessionProvider, useSession } from 'next-auth/react'
+import { SessionProvider, signOut, useSession } from 'next-auth/react'
 import { usePathname, useRouter } from 'next/navigation'
+import { Button } from '@/components/ui'
 import { BusinessProvider } from '@/contexts/BusinessContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { ActorProvider } from '@/contexts/ActorContext'
@@ -95,28 +96,121 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
   )
 }
 
+const AUTH_LOADING_TIMEOUT_MS = 10_000
+const AUTH_REDIRECT_TIMEOUT_MS = 5_000
+const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
+
+async function forceRelogin() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('alma:force-relogin'))
+    try {
+      sessionStorage.removeItem(AUTH_RETRY_STORAGE_KEY)
+    } catch {
+      /* ignore */
+    }
+  }
+  await signOut({ redirect: false })
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login'
+  }
+}
+
 function AuthGate({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { data: session, status } = useSession()
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
 
   const isPublic =
     pathname.startsWith('/login')
     || pathname.startsWith('/forgot-password')
     || pathname.startsWith('/reset-password')
 
+  useEffect(() => {
+    if (status === 'authenticated') {
+      try {
+        sessionStorage.removeItem(AUTH_RETRY_STORAGE_KEY)
+      } catch {
+        /* ignore */
+      }
+      setLoadingTimedOut(false)
+      setRetryCount(0)
+    }
+  }, [status])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      setRetryCount(Number(sessionStorage.getItem(AUTH_RETRY_STORAGE_KEY) || 0))
+    } catch {
+      setRetryCount(0)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status !== 'loading') {
+      setLoadingTimedOut(false)
+      return
+    }
+    const timer = window.setTimeout(() => setLoadingTimedOut(true), AUTH_LOADING_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [status])
+
+  useEffect(() => {
+    if (status !== 'unauthenticated' || typeof window === 'undefined') return
+    router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`)
+    const timer = window.setTimeout(() => {
+      window.location.href = `/login?callbackUrl=${encodeURIComponent(pathname)}`
+    }, AUTH_REDIRECT_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [status, pathname, router])
+
   if (isPublic) {
     return <>{children}</>
   }
 
   if (status === 'loading') {
+    if (loadingTimedOut) {
+      const showForceRelogin = retryCount >= 3
+      return (
+        <div className="fixed inset-0 z-[240] flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-black px-6 text-center">
+          <p className="text-sm font-semibold text-cream">Session check timed out</p>
+          <p className="max-w-sm text-[11px] text-zinc-500">
+            The app could not verify your sign-in. Check your connection and try again.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {!showForceRelogin && (
+              <Button
+                variant="gold"
+                size="sm"
+                onClick={() => {
+                  const next = retryCount + 1
+                  try {
+                    sessionStorage.setItem(AUTH_RETRY_STORAGE_KEY, String(next))
+                  } catch {
+                    /* ignore */
+                  }
+                  setRetryCount(next)
+                  window.location.reload()
+                }}
+              >
+                Retry
+              </Button>
+            )}
+            {showForceRelogin && (
+              <Button variant="gold" size="sm" onClick={() => void forceRelogin()}>
+                Force re-login
+              </Button>
+            )}
+          </div>
+        </div>
+      )
+    }
     return <LoadingOverlay label="Authenticating" />
   }
 
   if (status === 'unauthenticated') {
-    if (typeof window !== 'undefined') {
-      router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`)
-    }
     return <LoadingOverlay label="Redirecting to login" />
   }
 

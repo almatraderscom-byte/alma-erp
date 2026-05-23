@@ -25,16 +25,27 @@ export type DeskProfile = {
   }
 }
 
+function dispatchAuthFailure() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event('alma:auth-failure'))
+}
+
 export function useMyDeskProfile(businessId: string) {
   const { data: session, status: sessionStatus, update: updateSession } = useSession()
+  const sessionUserId = session?.user?.id
+  const sessionEmployeeId = session?.user?.employeeIdGas
   const [profile, setProfile] = useState<DeskProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const requestId = useRef(0)
+  const sessionUserRef = useRef(session?.user)
+  const hasUpdatedSessionRef = useRef(false)
+
+  sessionUserRef.current = session?.user
 
   const load = useCallback(async (silent = false) => {
     if (sessionStatus === 'loading') return
-    if (!session?.user?.id) {
+    if (!sessionUserId) {
       setProfile(null)
       setLoading(false)
       setError('Not signed in')
@@ -51,6 +62,7 @@ export function useMyDeskProfile(businessId: string) {
       )
       if (!result.ok) {
         if (result.status === 401) {
+          dispatchAuthFailure()
           setError('Session expired — refresh the page')
           setProfile(null)
           return
@@ -62,11 +74,18 @@ export function useMyDeskProfile(businessId: string) {
       setProfile(j.user as DeskProfile)
       setError(null)
 
+      const sessionUser = sessionUserRef.current
       const resolvedEmp = String((j.user as DeskProfile)?.employeeIdGas || '').trim()
-      const sessionEmp = String(session.user.employeeIdGas || '').trim()
-      if (resolvedEmp && resolvedEmp !== sessionEmp) {
+      const sessionEmp = String(sessionEmployeeId || '').trim()
+      if (
+        sessionUser
+        && resolvedEmp
+        && resolvedEmp !== sessionEmp
+        && !hasUpdatedSessionRef.current
+      ) {
+        hasUpdatedSessionRef.current = true
         await updateSession({
-          user: { ...session.user, employeeIdGas: resolvedEmp },
+          user: { ...sessionUser, employeeIdGas: resolvedEmp },
         })
       }
     } catch (e) {
@@ -76,9 +95,10 @@ export function useMyDeskProfile(businessId: string) {
     } finally {
       if (id === requestId.current) setLoading(false)
     }
-  }, [businessId, session, sessionStatus, updateSession])
+  }, [businessId, sessionUserId, sessionEmployeeId, sessionStatus, updateSession])
 
   useEffect(() => {
+    hasUpdatedSessionRef.current = false
     void load()
   }, [load])
 
@@ -95,7 +115,7 @@ export function useMyDeskProfile(businessId: string) {
     profile,
     loading: loading || sessionStatus === 'loading',
     error,
-    employeeId: profile?.employeeIdGas?.trim() || session?.user?.employeeIdGas?.trim() || null,
+    employeeId: profile?.employeeIdGas?.trim() || sessionEmployeeId?.trim() || null,
     refetch: () => load(false),
   }
 }

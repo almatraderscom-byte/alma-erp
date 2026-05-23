@@ -5,7 +5,7 @@ import useApprovalPendingCount from '@/hooks/useApprovalPendingCount'
 
 type ApprovalCountValue = {
   count: number
-  refresh: () => Promise<void>
+  refresh: () => Promise<'ok' | 'paused' | 'retry'>
 }
 
 const ApprovalCountContext = createContext<ApprovalCountValue | null>(null)

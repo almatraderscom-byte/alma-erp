@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { signOut, useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
@@ -173,7 +173,7 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
 
 export function MobileNav() {
   const path = usePathname()
-  const { data: session } = useSession()
+  const { data: session, status: sessionStatus } = useSession()
   const { profileImageUrl } = useMyProfileImage()
   const { business, businessId, allowedBusinessIds, setBusinessId } = useBusiness()
   const { role } = useActor()
@@ -207,32 +207,82 @@ export function MobileNav() {
   const canApprovals = isPathAllowedForRole('/approvals', role, business.id)
   const mobileTabCount = Math.min(6, primary.slice(0, 3).length + (canApprovals ? 1 : 0) + 2)
 
-  const loadUnread = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+  const unreadPausedRef = useRef(false)
+  const unreadBackoffRef = useRef(0)
+
+  const loadUnread = useCallback(async (): Promise<'ok' | 'paused' | 'retry'> => {
+    if (sessionStatus !== 'authenticated') return 'retry'
+    if (unreadPausedRef.current) return 'paused'
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'retry'
     try {
       const res = await fetch(`/api/notifications?business_id=${business.id}&summary=1`, { cache: 'no-store' })
       const json = await res.json().catch(() => ({}))
-      if (res.ok) setUnread(Number(json.unread || json.criticalUnacked || 0))
+      if (res.status === 401) {
+        unreadPausedRef.current = true
+        window.dispatchEvent(new Event('alma:auth-failure'))
+        return 'paused'
+      }
+      if (!res.ok) {
+        if (res.status >= 500) return 'retry'
+        return 'retry'
+      }
+      setUnread(Number(json.unread || json.criticalUnacked || 0))
+      return 'ok'
     } catch {
-      setUnread(0)
+      return 'retry'
     }
-  }, [business.id])
+  }, [business.id, sessionStatus])
 
   useEffect(() => {
-    void loadUnread()
+    unreadPausedRef.current = false
+    unreadBackoffRef.current = 0
+
+    if (sessionStatus !== 'authenticated') return
+
+    let cancelled = false
+    let timer: number | undefined
+    const UNREAD_POLL_MS = 30_000
+    const UNREAD_BACKOFF_MS = [5_000, 10_000, 20_000, 60_000]
+
+    const schedule = (delayMs: number) => {
+      if (cancelled) return
+      timer = window.setTimeout(() => {
+        void (async () => {
+          if (cancelled || unreadPausedRef.current) return
+          if (document.hidden) {
+            schedule(UNREAD_POLL_MS)
+            return
+          }
+          const outcome = await loadUnread()
+          if (cancelled || unreadPausedRef.current) return
+          if (outcome === 'paused') return
+          let nextDelay = UNREAD_POLL_MS
+          if (outcome === 'retry') {
+            nextDelay = UNREAD_BACKOFF_MS[Math.min(unreadBackoffRef.current, UNREAD_BACKOFF_MS.length - 1)]
+            unreadBackoffRef.current = Math.min(unreadBackoffRef.current + 1, UNREAD_BACKOFF_MS.length - 1)
+          } else if (outcome === 'ok') {
+            unreadBackoffRef.current = 0
+          }
+          schedule(nextDelay)
+        })()
+      }, delayMs)
+    }
+
     function syncNotifications(event: Event) {
       const detail = (event as CustomEvent<{ unread?: number; criticalUnacked?: number }>).detail
       setUnread(Number(detail?.unread || detail?.criticalUnacked || 0))
     }
+
+    void loadUnread()
+    schedule(UNREAD_POLL_MS)
     window.addEventListener('alma:notifications-updated', syncNotifications)
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void loadUnread()
-    }, 30_000)
+
     return () => {
-      window.clearInterval(timer)
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
       window.removeEventListener('alma:notifications-updated', syncNotifications)
     }
-  }, [loadUnread])
+  }, [loadUnread, sessionStatus])
 
   useEffect(() => {
     updateAppBadge(unread + approvalCount)

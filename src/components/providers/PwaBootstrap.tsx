@@ -26,7 +26,7 @@ function isIosSafari() {
   return /iphone|ipad|ipod/i.test(ua) && /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua)
 }
 
-async function clearStaleRuntimeCaches() {
+export async function clearStaleRuntimeCaches() {
   if ('serviceWorker' in navigator) {
     const regs = await navigator.serviceWorker.getRegistrations()
     await Promise.all(regs.map(reg => reg.unregister()))
@@ -60,6 +60,18 @@ export function PwaBootstrap() {
     if (process.env.NODE_ENV !== 'production') return
     if (!('serviceWorker' in navigator)) return
     navigator.serviceWorker.register('/sw.js').catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    function onAuthCacheClear() {
+      void clearStaleRuntimeCaches()
+    }
+    window.addEventListener('alma:auth-failure', onAuthCacheClear)
+    window.addEventListener('alma:force-relogin', onAuthCacheClear)
+    return () => {
+      window.removeEventListener('alma:auth-failure', onAuthCacheClear)
+      window.removeEventListener('alma:force-relogin', onAuthCacheClear)
+    }
   }, [])
 
   useEffect(() => subscribeIosVisualViewport(() => {}), [])
