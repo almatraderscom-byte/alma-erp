@@ -324,6 +324,7 @@ export default function PayrollPage() {
       subtitle="Salary burden · advances · settlement health"
       actions={<div className="flex gap-2 flex-wrap justify-end"><Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run accrual</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportPdf()}>PDF</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => exportCsv()}>CSV</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportXlsx()}>Excel</Button><Link href="/employees"><Button size="xs" variant="secondary">Employees</Button></Link></div>}
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KpiCard label="Monthly salary budget" value={loading ? '—' : Number(k?.total_monthly_salary ?? 0)} loading={loading} />
         <KpiCard label="Company liability" value={walletLoading ? '—' : Number(walletData?.totals.companyLiability ?? 0)} color="text-green-400" loading={walletLoading} />
@@ -459,7 +460,7 @@ export default function PayrollPage() {
         {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
           <Empty icon="◈" title="No wallet ledger yet" desc="Run accrual or approve requests to create wallet entries." />
         ) : (
-          <div className="table-scroll max-h-[480px]">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
             <table className="w-full min-w-[1080px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
@@ -507,7 +508,7 @@ export default function PayrollPage() {
               <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
             </div>
           ) : (
-            <div className="table-scroll max-h-[420px] mt-4">
+            <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px] mt-4">
               <table className="w-full min-w-[720px] text-left text-[11px]">
                 <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                   <tr>
@@ -617,7 +618,7 @@ export default function PayrollPage() {
         {loading ? <Skeleton className="h-40" /> : roll.length === 0 ? (
           <Empty icon="⌁" title="No active payroll" desc="Add employees then log advances or salary payouts" />
         ) : (
-          <div className="table-scroll max-h-[480px]">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
             <table className="w-full min-w-[980px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
@@ -662,6 +663,7 @@ export default function PayrollPage() {
           </div>
         )}
       </Card>
+      </div>
     </FinancePageChrome>
   )
 }

@@ -53,6 +53,7 @@ export default function TradingAccountsPage() {
       subtitle={`${accounts.length} account${accounts.length === 1 ? '' : 's'} · independent wallets and merchant progress`}
       actions={isAdmin ? <Button variant="gold" onClick={openCreate}>+ Create account</Button> : undefined}
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <div className="flex flex-col gap-2 sm:flex-row">
         <div className="flex-1">
           <SearchInput value={search} onChange={setSearch} placeholder="Search title, UID, staff..." />
@@ -60,13 +61,13 @@ export default function TradingAccountsPage() {
         <Select value={status} onChange={setStatus} options={TRADING_STATUS_OPTIONS.map(o => ({ label: o.label, value: o.value }))} />
       </div>
 
-      <Card className="hidden overflow-hidden md:block">
+      <Card className="hidden min-w-0 md:block">
         {loading ? (
           <div className="p-4"><Skeleton className="h-40" /></div>
         ) : accounts.length === 0 ? (
           <Empty icon="◧" title="No trading accounts" desc="Create the first Binance merchant account profile." />
         ) : (
-          <div className="max-h-[72vh] overflow-auto">
+          <div className="max-h-[72vh] overflow-x-auto overflow-y-auto min-w-0 max-w-full">
             <table className="w-full min-w-[980px] border-collapse text-xs">
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b border-border">
@@ -142,6 +143,7 @@ export default function TradingAccountsPage() {
         onClose={() => setModalOpen(false)}
         onSaved={refetch}
       />
+      </div>
     </TradingPageShell>
   )
 }

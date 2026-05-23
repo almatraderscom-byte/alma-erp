@@ -69,11 +69,14 @@ function ErpChrome({ children }: { children: ReactNode }) {
     <ApprovalCountProvider>
       <NotificationShellProvider>
         <SentryUserBridge />
-        <div className="flex h-[100dvh] w-full overflow-hidden">
+        <div className="flex h-[100dvh] w-full min-w-0 overflow-hidden">
           <Sidebar />
-          <main ref={mainScrollRef} className="flex-1 overflow-y-auto min-w-0 scrollbar-hide overscroll-y-contain">
+          <main
+            ref={mainScrollRef}
+            className="flex-1 min-w-0 overflow-x-auto overflow-y-auto scrollbar-hide overscroll-y-contain"
+          >
             <MobilePullToRefresh scrollRef={mainScrollRef}>
-              {children}
+              <div className="min-w-0 max-w-full">{children}</div>
               <MobileBottomSpacer />
             </MobilePullToRefresh>
           </main>

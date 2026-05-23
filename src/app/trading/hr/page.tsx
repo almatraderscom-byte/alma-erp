@@ -73,6 +73,7 @@ export default function TradingHrPage() {
       title="Trading HR"
       subtitle="Employee profiles, payroll wallets, activity reports, and staff performance intelligence"
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <KpiCard label="Employees" value={data?.kpis.totalEmployees ?? 0} loading={loading} />
         <KpiCard label="Active staff" value={data?.kpis.activeEmployees ?? 0} loading={loading} />
@@ -85,13 +86,13 @@ export default function TradingHrPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card className="overflow-hidden">
+        <Card className="min-w-0">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <p className="text-sm font-bold text-cream">Trading Employee Profiles</p>
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">Business scoped</span>
           </div>
           {loading ? <div className="p-4"><Skeleton className="h-56" /></div> : !employees.length ? <Empty icon="☷" title="No trading employees yet" /> : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto min-w-0 max-w-full">
               <div className="min-w-[1120px] divide-y divide-border">
                 <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">
                   <span>Employee</span><span>Shift</span><span>Accounts</span><span>Trades</span><span>Net P/L</span><span>Wallet</span><span>Consistency</span><span>Actions</span>
@@ -157,6 +158,7 @@ export default function TradingHrPage() {
         <RankingCard title="Lowest Loss Ratio" rows={rankings?.lowestLossRatio ?? []} metric={e => `Loss ৳${e.metrics.totalLosses.toLocaleString('en-BD')}`} />
         <RankingCard title="Merchant Growth" rows={rankings?.bestMerchantGrowth ?? []} metric={e => `${e.metrics.merchantGrowthSuccess.toFixed(0)}%`} />
         <RankingCard title="Most Active" rows={rankings?.mostActive ?? []} metric={e => `${e.metrics.activityConsistency.toFixed(0)}%`} />
+      </div>
       </div>
 
       {profileEmployee && (

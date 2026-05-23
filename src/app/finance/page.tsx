@@ -28,6 +28,7 @@ export default function FinanceHubPage() {
         </div>
       )}
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Revenue (range)" value={rLd ? '—' : fmt(pl?.revenue ?? 0)} loading={rLd} />
         <KpiCard label="Expenses" value={rLd ? '—' : fmt(pl?.expenses ?? k?.total_expenses ?? 0)} loading={rLd} />
@@ -71,6 +72,7 @@ export default function FinanceHubPage() {
             </div>
           )}
         </Card>
+      </div>
       </div>
     </FinancePageChrome>
   )

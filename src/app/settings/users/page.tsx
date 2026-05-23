@@ -123,7 +123,8 @@ export default function UsersSettingsPage() {
         subtitle="Accounts · roles · business scope · HR linkage"
         actions={<Button size="xs" variant="gold" onClick={() => setCreateOpen(true)}>+ Add user</Button>}
       >
-        <Card className="overflow-hidden">
+        <div className="min-w-0 max-w-full">
+        <Card className="min-w-0">
           <div className="p-4 border-b border-border flex justify-between items-center gap-3 flex-wrap">
             <p className="text-xs text-zinc-500">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
             <Button size="xs" variant="secondary" type="button" onClick={() => void load()}>Refresh</Button>
@@ -133,7 +134,7 @@ export default function UsersSettingsPage() {
           ) : users.length === 0 ? (
             <Empty icon="◎" title="No users" desc="Seed the database or create the first employee login." />
           ) : (
-            <div className="table-scroll max-h-[72vh]">
+            <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[72vh]">
               <table className="w-full min-w-[980px] text-left text-[11px]">
                 <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                   <tr>
@@ -183,6 +184,7 @@ export default function UsersSettingsPage() {
             </div>
           )}
         </Card>
+        </div>
       </FinancePageChrome>
 
       {permUser && (

@@ -157,6 +157,7 @@ export default function ExpensesPage() {
         </div>
       )}
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Total expenses (range)" value={loading ? '—' : total} loading={loading} />
         <KpiCard label="Ledger cash readout" value={loading ? '—' : Number(data?.cash_balance ?? 0)} loading={loading} />
@@ -188,7 +189,7 @@ export default function ExpensesPage() {
         </Card>
       </div>
 
-      <Card className="p-5 overflow-hidden">
+      <Card className="min-w-0 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <p className="text-sm font-bold text-cream">Ledger lines</p>
@@ -198,7 +199,7 @@ export default function ExpensesPage() {
         {loading ? <Skeleton className="h-48" /> : expenses.length === 0 ? (
           <Empty icon="◫" title="No rows" />
         ) : (
-          <div className="table-scroll max-h-[480px]">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
             <table className="w-full min-w-[760px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border">
                 <tr className="text-zinc-500">
@@ -354,6 +355,7 @@ export default function ExpensesPage() {
           </Card>
         </MobileModalPortal>
       )}
+      </div>
     </FinancePageChrome>
   )
 }

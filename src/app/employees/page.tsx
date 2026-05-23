@@ -216,14 +216,15 @@ export default function EmployeesPage() {
       subtitle="HR registry · salaries · status"
       actions={<Button size="xs" variant="gold" onClick={() => setOpen(true)}>+ Add employee</Button>}
     >
-      <Card className="overflow-hidden">
+      <div className="min-w-0 max-w-full">
+      <Card className="min-w-0">
         <div className="p-4 border-b border-border flex justify-between items-center">
           <p className="text-xs text-zinc-500">{data?.total ?? 0} profiles · current business slice</p>
         </div>
         {loading ? <Skeleton className="h-64 m-4" /> : !rosterEmployees.length ? (
           <Empty icon="◎" title="No employees yet" desc="Create your roster to unlock payroll tooling" />
         ) : (
-          <div className="table-scroll max-h-[70vh]">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[70vh]">
             <table className="w-full min-w-[860px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                 <tr>
@@ -492,6 +493,7 @@ export default function EmployeesPage() {
           </Card>
         </MobileModalPortal>
       )}
+      </div>
     </FinancePageChrome>
   )
 }

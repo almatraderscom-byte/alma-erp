@@ -48,7 +48,8 @@ export default function DigitalProjectsPage() {
       <div className="flex flex-wrap gap-2">
         <div className="flex-1 min-w-48"><SearchInput value={search} onChange={setSearch} placeholder="Search projects…" /></div>
         <Select value={status} onChange={setStatus} options={[{ label: 'All status', value: '' }, ...STATUSES.map(s => ({ label: s, value: s }))]} />
-      </div>
+      </div    >
+      <div className="min-w-0 max-w-full space-y-5">
       {showForm && (
         <Card className="p-5 space-y-3">
           <p className="text-sm font-bold text-cream">New Project</p>
@@ -66,11 +67,12 @@ export default function DigitalProjectsPage() {
           <Button variant="gold" onClick={handleCreate} disabled={saving}>{saving ? 'Saving…' : 'Create Project'}</Button>
         </Card>
       )}
-      <Card className="overflow-hidden">
+      <Card className="min-w-0">
         {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : projects.length === 0 ? (
           <div className="p-8"><Empty icon="◰" title="No projects" desc="Start tracking client work here" /></div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="overflow-x-auto min-w-0 max-w-full">
+          <div className="min-w-[640px] divide-y divide-border">
             {projects.map(p => (
               <div key={p.id} className="px-5 py-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -95,8 +97,10 @@ export default function DigitalProjectsPage() {
               </div>
             ))}
           </div>
+          </div>
         )}
       </Card>
+      </div>
     </CditPageShell>
   )
 }

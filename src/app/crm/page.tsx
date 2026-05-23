@@ -35,7 +35,7 @@ export default function CrmPage() {
         subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}
       />
 
-      <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
+      <div className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -70,8 +70,8 @@ export default function CrmPage() {
         </div>
 
         {/* Table — desktop */}
-        <Card className="hidden md:block overflow-hidden">
-          <div className="table-scroll">
+        <Card className="hidden min-w-0 md:block">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
           <table className="w-full min-w-[1080px] text-xs border-collapse">
             <thead>
               <tr className="border-b border-border">

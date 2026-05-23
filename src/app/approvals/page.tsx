@@ -212,7 +212,7 @@ function ApprovalsPageInner() {
         }
       />
 
-      <div className="space-y-5 px-4 md:px-6">
+      <div className="min-w-0 max-w-full space-y-5 px-3 sm:px-6">
       <ApprovalProcessingBanner
         count={processingOps.length}
         message={
@@ -289,9 +289,10 @@ function ApprovalsPageInner() {
           </div>
         </Card>
 
-        <Card className="overflow-hidden">
+        <Card className="min-w-0">
           {loading && !data ? <Skeleton className="h-96" /> : !approvals.length ? <Empty icon="◆" title="No approval requests" /> : (
-            <div className="divide-y divide-border">
+            <div className="overflow-x-auto min-w-0 max-w-full">
+            <div className="min-w-[720px] divide-y divide-border">
               {approvals.map(row => {
                 const ui = getRowUi(row.id)
                 const rowBusy = isRowProcessing(row.id)
@@ -377,6 +378,7 @@ function ApprovalsPageInner() {
                   </div>
                 </div>
               )})}
+            </div>
             </div>
           )}
         </Card>

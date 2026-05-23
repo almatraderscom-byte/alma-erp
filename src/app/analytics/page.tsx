@@ -56,7 +56,7 @@ export default function AnalyticsPage() {
     <>
       <PageHeader title="Analytics" subtitle="Revenue · expenses · payroll context — synced to filters" />
 
-      <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-6">
+      <div className="min-w-0 max-w-full space-y-6 px-3 py-4 pb-24 sm:px-6 md:pb-6">
         <DateRangeFilter />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -107,7 +107,7 @@ export default function AnalyticsPage() {
           ) : catArr.length === 0 ? (
             <div className="p-5"><Empty icon="◧" title="No category data" desc="Appears once orders are placed" /></div>
           ) : (
-            <div className="table-scroll">
+            <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
               <table className="w-full min-w-[720px] text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-border">

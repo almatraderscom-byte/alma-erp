@@ -282,6 +282,7 @@ function AttendancePageInner() {
         </div>
       }
     >
+      <div className="min-w-0 max-w-full space-y-5">
       {showIntegrity && data?.integrity && (
         <Card className="p-4 border-amber-500/25 bg-amber-500/5">
           <p className="text-sm font-black text-cream">Attendance Integrity Monitor</p>
@@ -380,7 +381,7 @@ function AttendancePageInner() {
           {loading ? <Skeleton className="h-40" /> : !(data?.records ?? []).length ? (
             <Empty icon="◇" title="No check-ins yet" desc="Employees will appear here after tapping Start Work." />
           ) : (
-            <div className="table-scroll max-h-[420px]">
+            <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px]">
               <table className="w-full min-w-[760px] text-left text-[11px]">
                 <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
                   <tr>
@@ -565,6 +566,7 @@ function AttendancePageInner() {
           </Card>
         </MobileModalPortal>
       )}
+      </div>
     </FinancePageChrome>
   )
 }

@@ -48,6 +48,7 @@ export default function DigitalClientsPage() {
       subtitle={`${clients.length} clients`}
       actions={<Button variant="gold" onClick={() => setShowForm(s => !s)}>+ Add Client</Button>}
     >
+      <div className="min-w-0 max-w-full space-y-5">
       <SearchInput value={search} onChange={setSearch} placeholder="Search clients…" />
 
       {showForm && (
@@ -89,13 +90,13 @@ export default function DigitalClientsPage() {
         </Card>
       )}
 
-      <Card className="overflow-hidden">
+      <Card className="min-w-0">
         {loading ? (
           <div className="p-4"><Skeleton className="h-32" /></div>
         ) : clients.length === 0 ? (
           <div className="p-8"><Empty icon="◎" title="No clients yet" desc="Add your first agency client" /></div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="overflow-x-auto min-w-0 max-w-full divide-y divide-border">
             {clients.map(c => (
               <Link key={c.id} href={`/digital/clients/${c.id}`} className="block px-5 py-4 hover:bg-white/[0.02]">
                 <div className="flex items-start justify-between gap-2">
@@ -112,6 +113,7 @@ export default function DigitalClientsPage() {
           </div>
         )}
       </Card>
+      </div>
     </CditPageShell>
   )
 }

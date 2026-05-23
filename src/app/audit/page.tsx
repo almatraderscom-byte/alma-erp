@@ -45,14 +45,14 @@ export default function AuditLogPage() {
         subtitle="Recent mutations from Apps Script with Supabase fallback."
         actions={<Button variant="ghost" size="xs" onClick={() => void load()} disabled={loading}>Refresh</Button>}
       />
-      <div className="p-4 md:p-6 pb-24 md:pb-6">
+      <div className="min-w-0 max-w-full px-3 py-4 pb-24 sm:px-6 md:pb-6">
         <Card className="overflow-hidden">
           {loading ? (
             <div className="p-4 space-y-2"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
           ) : rows.length === 0 ? (
             <div className="p-10"><Empty icon="◇" title="No entries" desc="Perform writes while Session is set — rows appear after GAS records them." /></div>
           ) : (
-            <div className="table-scroll max-h-[min(70vh,560px)]">
+            <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[min(70vh,560px)]">
               <table className="w-full min-w-[960px] text-left text-[10px]">
                 <thead className="sticky top-0 bg-card border-b border-border z-[1]">
                   <tr className="text-zinc-500 uppercase tracking-wider">
