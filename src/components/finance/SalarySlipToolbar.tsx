@@ -1,7 +1,6 @@
 'use client'
 import { useCallback, useState } from 'react'
-import { pdf } from '@react-pdf/renderer'
-import { SalarySlipDocument, type SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
+import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import { Button } from '@/components/ui'
 import { printPdfBlob } from '@/lib/pdf/print'
 import { pdfMoney } from '@/lib/pdf/format'
@@ -14,6 +13,10 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
     async (fn: (blob: Blob, fileBase: string) => void | Promise<void>) => {
       setBusy(true)
       try {
+        const [{ pdf }, { SalarySlipDocument }] = await Promise.all([
+          import('@react-pdf/renderer'),
+          import('@/components/pdf/SalarySlipDocument'),
+        ])
         const blob = await pdf(<SalarySlipDocument model={model} />).toBlob()
         const safe = `${model.employee.name || 'salary-slip'}`.replace(/[^\w\s-]/g, '').trim().slice(0, 40)
         await fn(blob, safe)

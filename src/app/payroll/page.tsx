@@ -9,8 +9,6 @@ import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
 import { useBusiness } from '@/contexts/BusinessContext'
 import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
-import { pdf } from '@react-pdf/renderer'
-import { BusinessPayrollSummaryDocument } from '@/components/pdf/PayrollWalletDocuments'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
@@ -256,6 +254,10 @@ export default function PayrollPage() {
   async function exportPdf() {
     const wallets = walletData?.wallets ?? []
     if (!wallets.length) return
+    const [{ pdf }, { BusinessPayrollSummaryDocument }] = await Promise.all([
+      import('@react-pdf/renderer'),
+      import('@/components/pdf/PayrollWalletDocuments'),
+    ])
     const blob = await pdf(
       <BusinessPayrollSummaryDocument
         wallets={wallets}

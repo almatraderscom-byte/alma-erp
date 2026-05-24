@@ -7,8 +7,6 @@ import { useFinance } from '@/hooks/useERP'
 import { useAddExpense } from '@/hooks/useERP'
 import { EXPENSE_CATEGORIES } from '@/lib/expense-categories'
 import { Card, Button, KpiCard, Skeleton, Empty } from '@/components/ui'
-import { pdf } from '@react-pdf/renderer'
-import { ExpenseLedgerDocument } from '@/components/pdf/ExpenseLedgerDocument'
 import { expensesToCsv, expensesToWorkbook, downloadBlob } from '@/lib/export-expenses'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
@@ -130,6 +128,10 @@ export default function ExpensesPage() {
   }
 
   async function exportPdf() {
+    const [{ pdf }, { ExpenseLedgerDocument }] = await Promise.all([
+      import('@react-pdf/renderer'),
+      import('@/components/pdf/ExpenseLedgerDocument'),
+    ])
     const blob = await pdf(
       <ExpenseLedgerDocument title="Expense ledger" businessLabel={business.name} rangeLabel={label} rows={expenses} total={total} />,
     ).toBlob()
