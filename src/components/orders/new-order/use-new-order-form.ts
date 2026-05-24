@@ -15,6 +15,14 @@ import {
   normalizeWomenVariant,
   sizeGroupForSize,
 } from './collection-engine'
+import {
+  calculateNewOrderTotals,
+  orderItemGrossProfit,
+  orderItemInventoryCost,
+  orderItemSubtotal,
+} from './calculate-totals'
+
+export { orderItemGrossProfit, orderItemInventoryCost, orderItemSubtotal } from './calculate-totals'
 
 type ProductOption = {
   id: string
@@ -24,18 +32,6 @@ type ProductOption = {
   default_price: number
   default_cogs: number
   active: boolean
-}
-
-export function orderItemSubtotal(item: NewOrderItemForm) {
-  return Math.max(0, Number(item.qty || 0)) * Math.max(0, Number(item.sell_price || 0))
-}
-
-export function orderItemInventoryCost(item: NewOrderItemForm) {
-  return Math.max(0, Number(item.qty || 0)) * Math.max(0, Number(item.cogs || 0))
-}
-
-export function orderItemGrossProfit(item: NewOrderItemForm) {
-  return orderItemSubtotal(item) - orderItemInventoryCost(item)
 }
 
 export function useNewOrderForm(onSuccess?: () => void) {
@@ -49,7 +45,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
   const touchedRef = useRef(touched)
   touchedRef.current = touched
 
-  function set<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) {
+  const set = useCallback(<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) => {
     setForm(prev => {
       const next = { ...prev, [key]: value }
       if (touchedRef.current[key]) {
@@ -58,7 +54,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
       }
       return next
     })
-  }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -167,33 +163,31 @@ export function useNewOrderForm(onSuccess?: () => void) {
     }
   }
 
-  function setItem(index: number, key: keyof NewOrderItemForm, value: string) {
-    setForm(prev => {
-      const items = prev.items.map((item, i) => {
+  const setItem = useCallback((index: number, key: keyof NewOrderItemForm, value: string) => {
+    setForm(prev => ({
+      ...prev,
+      items: prev.items.map((item, i) => {
         if (i !== index) return item
         const next = { ...item, [key]: value }
         if (key === 'product_code') return enrichItemFromCode(next, value)
         if (key === 'size' || key === 'variant') return resolveItem(next)
         return next
-      })
-      const next = { ...prev, items }
-      setErrors(validateNewOrderForm(next))
-      return next
-    })
-  }
+      }),
+    }))
+  }, [productByCode, stockBySku, stockItems])
 
-  function addItem() {
+  const addItem = useCallback(() => {
     setForm(prev => ({ ...prev, items: [...prev.items, newOrderItem(prev.items.length)] }))
-  }
+  }, [])
 
-  function removeItem(index: number) {
+  const removeItem = useCallback((index: number) => {
     setForm(prev => {
       if (prev.items.length <= 1) return prev
       const next = { ...prev, items: prev.items.filter((_, i) => i !== index) }
       setErrors(validateNewOrderForm(next))
       return next
     })
-  }
+  }, [])
 
   function touch(key: keyof NewOrderForm) {
     setTouched(prev => {
@@ -221,14 +215,15 @@ export function useNewOrderForm(onSuccess?: () => void) {
         return
       }
 
-      const subtotal = form.items.reduce((sum, item) => sum + orderItemSubtotal(item), 0)
-      const discount = Number(form.discount || 0)
-      const shipping = Number(form.shipping_fee || 0)
-      const payable = Math.max(0, subtotal - discount + shipping)
-      const paidAmount = Math.min(payable, Math.max(0, Number(form.paid_amount || 0)))
-      const totalQty = form.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-      const totalCogs = form.items.reduce((sum, item) => sum + Number(item.cogs || 0) * Number(item.qty || 0), 0)
-      const estimatedProfit = Math.max(0, subtotal - discount) - totalCogs - Number(form.courier_charge || 0)
+      const totalsSnapshot = calculateNewOrderTotals(form)
+      const subtotal = totalsSnapshot.subtotal
+      const discount = totalsSnapshot.discount
+      const shipping = totalsSnapshot.shipping
+      const payable = totalsSnapshot.payable
+      const paidAmount = totalsSnapshot.paid
+      const totalQty = totalsSnapshot.totalQty
+      const totalCogs = totalsSnapshot.inventoryCost
+      const estimatedProfit = totalsSnapshot.estimatedProfit
       const firstItem = form.items[0]
       const productLabel = form.items.length === 1
         ? firstItem.product.trim()
@@ -301,28 +296,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
     [form, onSuccess]
   )
 
-  const totals = useMemo(() => {
-    const subtotal = form.items.reduce((sum, item) => sum + orderItemSubtotal(item), 0)
-    const discount = Math.max(0, Number(form.discount || 0))
-    const shipping = Math.max(0, Number(form.shipping_fee || 0))
-    const payable = Math.max(0, subtotal - discount + shipping)
-    const paid = Math.min(payable, Math.max(0, Number(form.paid_amount || 0)))
-    const inventoryCost = form.items.reduce((sum, item) => sum + orderItemInventoryCost(item), 0)
-    const courierCost = Math.max(0, Number(form.courier_charge || 0))
-    const estimatedProfit = Math.max(0, subtotal - discount) - inventoryCost - courierCost
-    return {
-      subtotal,
-      discount,
-      shipping,
-      payable,
-      paid,
-      due: Math.max(0, payable - paid),
-      totalQty: form.items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
-      inventoryCost,
-      courierCost,
-      estimatedProfit,
-    }
-  }, [form.courier_charge, form.discount, form.items, form.paid_amount, form.shipping_fee])
+  const totals = useMemo(() => calculateNewOrderTotals(form), [form])
 
   return {
     form,

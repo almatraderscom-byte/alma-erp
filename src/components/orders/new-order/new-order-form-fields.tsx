@@ -40,6 +40,7 @@ export function NewOrderFormFields({
     totalQty: number
     inventoryCost: number
     courierCost: number
+    shippingMargin: number
     estimatedProfit: number
   }
 }) {
@@ -384,17 +385,30 @@ export function NewOrderFormFields({
           </div>
           <div className="space-y-1 rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-xs">
             <div className="flex justify-between text-zinc-500"><span>Subtotal</span><Money amount={totals.subtotal} /></div>
-            <div className="flex justify-between text-zinc-500"><span>Shipping</span><Money amount={totals.shipping} /></div>
             <div className="flex justify-between text-zinc-500"><span>Discount</span><Money amount={totals.discount} /></div>
+            <div className="flex justify-between text-zinc-500"><span>Shipping (customer)</span><Money amount={totals.shipping} /></div>
             <div className="flex justify-between border-t border-gold-dim/20 pt-1 font-bold text-gold-lt"><span>Payable</span><Money amount={totals.payable} /></div>
             <div className="flex justify-between text-zinc-400"><span>Due</span><Money amount={totals.due} /></div>
+            <div className="flex justify-between text-zinc-600"><span>Courier cost (you pay)</span><Money amount={totals.courierCost} /></div>
+            {totals.shippingMargin !== 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Shipping margin</span>
+                <span className={totals.shippingMargin >= 0 ? 'text-green-400' : 'text-red-300'}>
+                  {totals.shippingMargin >= 0 ? '+' : ''}<Money amount={totals.shippingMargin} />
+                </span>
+              </div>
+            )}
             <div className="flex justify-between border-t border-border pt-1">
               <span className="text-zinc-500">Estimated Profit</span>
               <span className={`font-bold ${totals.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
                 {totals.estimatedProfit >= 0 ? '+' : ''}<Money amount={totals.estimatedProfit} /> {totals.estimatedProfit >= 0 ? 'PROFIT' : 'LOSS'}
               </span>
             </div>
-            {totals.estimatedProfit < 0 && <p className="text-[10px] font-semibold text-red-300">Profit Status: LOSS. Review seller price, discount, or courier cost.</p>}
+            {totals.estimatedProfit < 0 && (
+              <p className="text-[10px] font-semibold text-red-300">
+                Profit Status: LOSS. Review seller price, discount, shipping vs courier cost.
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -19,11 +19,12 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
       open
       zIndex={120}
       onBackdropClick={onClose}
+      backdropClassName="md:backdrop-blur-none"
       className="md:items-stretch md:justify-end md:p-0"
       aria-label="Create Order"
     >
       <Card className="mobile-modal-shell w-full max-w-lg border-border shadow-2xl md:h-[100dvh] md:max-h-[100dvh] md:rounded-none md:rounded-l-2xl md:border-l md:border-y-0">
-        <div className="mobile-modal-header bg-surface/95 backdrop-blur border-b border-border">
+        <div className="mobile-modal-header border-b border-border bg-surface/95 backdrop-blur md:backdrop-blur-none">
           <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4">
             <div>
               <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold mb-0.5">New Order</p>
@@ -46,7 +47,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
           onSubmit={e => void handleSubmit(e)}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <div className="mobile-modal-body scrollbar-gold">
+          <div className="mobile-modal-body scrollbar-gold touch-pan-y [overflow-anchor:none]">
             <NewOrderFormFields
               form={form}
               errors={errors}
@@ -60,7 +61,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             />
           </div>
 
-          <div className="mobile-modal-footer border-t border-border bg-surface/95 backdrop-blur px-4 pt-3 sm:px-5 sm:pt-4 space-y-2">
+          <div className="mobile-modal-footer border-t border-border bg-surface/95 px-4 pt-3 backdrop-blur sm:px-5 sm:pt-4 md:backdrop-blur-none space-y-2">
             {totals.payable > 0 && (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
                 <span className="text-zinc-500 truncate max-w-[100px]">{form.items[0]?.product || 'Items'}</span>
