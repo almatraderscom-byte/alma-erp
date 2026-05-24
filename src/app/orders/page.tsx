@@ -9,15 +9,18 @@ import { useOrdersData } from '@/contexts/OrdersDataContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import {
+  ALL_RETURNS_FILTER,
   applyOrderFilters,
   filterOrdersByDateRange,
+  isTerminalReturnOrderStatus,
+  normalizeOrderStatusKey,
   sortOrders,
   summarizeOrders,
   statusCountsForPills,
 } from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
 import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText } from '@/components/ui'
-import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
+import { fmt, COURIER_STEPS, STATUS_COLORS, orderStatusLabel } from '@/lib/utils'
 import {
   calculateOrderProfit,
   orderProfitInputsFromOrder,
@@ -33,7 +36,15 @@ import { can } from '@/lib/roles'
 import { canEditOrder, canRequestOrderDelete } from '@/lib/order-access'
 import { shareSlugAlma } from '@/lib/pdf/format'
 
-const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','RETURNED_PAID','RETURNED_UNPAID','CANCELLED']
+const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED_PAID','RETURNED_UNPAID','RETURNED','CANCELLED']
+
+function orderRowAccentClass(status: string, selected: boolean) {
+  const key = status.trim().toUpperCase().replace(/\s+/g, '_')
+  const base = selected ? 'bg-gold/5' : 'hover:bg-white/[0.015]'
+  if (key === 'RETURNED_PAID') return `${base} border-l-2 border-l-amber-400/80 bg-amber-400/[0.04]`
+  if (key === 'RETURNED_UNPAID' || key === 'RETURNED') return `${base} border-l-2 border-l-red-500/80 bg-red-500/[0.05]`
+  return `${base}`
+}
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
 const ORDER_ROW_HEIGHT = 64
 const ORDER_WINDOW_SIZE = 70
@@ -812,6 +823,17 @@ function OrdersPageContent() {
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
             All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
           </button>
+          <button
+            onClick={() => setStatus(status === ALL_RETURNS_FILTER ? '' : ALL_RETURNS_FILTER)}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+              status === ALL_RETURNS_FILTER
+                ? 'text-amber-300 bg-amber-400/10 border-amber-400/35'
+                : 'border-border text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            All Returns <span className="opacity-70">{statusCounts[ALL_RETURNS_FILTER] ?? 0}</span>
+          </button>
           {STATUSES.map(s => {
             const c = STATUS_COLORS[s]
             const active = status === s
@@ -819,7 +841,7 @@ function OrdersPageContent() {
               <button key={s} onClick={() => setStatus(status === s ? '' : s)}
                 className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
-                {s} <span className="opacity-70">{statusCounts[s] ?? 0}</span>
+                {orderStatusLabel(s)} <span className="opacity-70">{statusCounts[s] ?? 0}</span>
               </button>
             )
           })}
@@ -873,7 +895,7 @@ function OrdersPageContent() {
                     )}
                     {visibleOrders.map(o => (
                       <tr key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)}
-                        className={`border-b border-border/50 cursor-pointer transition-colors ${o.id === selected?.id ? 'bg-gold/5' : 'hover:bg-white/[0.015]'}`}>
+                        className={`border-b border-border/50 cursor-pointer transition-colors ${orderRowAccentClass(o.status, o.id === selected?.id)}`}>
                         <td className="px-3 py-3.5 font-mono text-[11px] text-gold font-bold whitespace-nowrap">{o.id}</td>
                         <td className="px-3 py-3.5 text-zinc-500 whitespace-nowrap">{o.date}</td>
                         <td className="px-3 py-3.5">
@@ -917,7 +939,15 @@ function OrdersPageContent() {
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
             : mobileOrders.map(o => (
                 <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full text-left">
-                  <Card className={`p-4 transition-colors ${o.id === selected?.id ? 'border-gold-dim/50' : ''}`}>
+                  <Card className={`p-4 transition-colors border-l-2 ${
+                    o.id === selected?.id ? 'border-gold-dim/50' : ''
+                  } ${
+                    isTerminalReturnOrderStatus(o.status)
+                      ? normalizeOrderStatusKey(o.status) === 'RETURNED_PAID'
+                        ? 'border-l-amber-400/80 bg-amber-400/[0.04]'
+                        : 'border-l-red-500/80 bg-red-500/[0.05]'
+                      : 'border-l-transparent'
+                  }`}>
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
                         <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>

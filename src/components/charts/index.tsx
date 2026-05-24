@@ -135,6 +135,26 @@ const STATUS_COLORS: Record<string, string> = {
   Shipped: '#3498DB', Delivered: '#2ECC71', Returned: '#E74C3C', Cancelled: '#6B6B72',
 }
 
+export function ReturnLossTrendChart({ data }: { data: Array<{ date: string; return_loss: number }> }) {
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+        <XAxis
+          dataKey="date"
+          tick={{ fill: T.muted, fontSize: 9 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={v => String(v).slice(5)}
+        />
+        <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={v => formatBDTk(Number(v))} width={44} />
+        <Tooltip content={<Tip />} />
+        <Line type="monotone" dataKey="return_loss" name="Return loss" stroke={T.red} strokeWidth={2} dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 export function StatusPieChart({ data }: { data: Array<{ name: string; value: number }> }) {
   const colored = data.map((d, i) => ({
     ...d,

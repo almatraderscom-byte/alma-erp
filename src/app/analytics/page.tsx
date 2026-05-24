@@ -1,15 +1,25 @@
 'use client'
+import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useAnalyticsMerged } from '@/hooks/useERP'
+import { useOrdersData } from '@/contexts/OrdersDataContext'
+import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
+import {
+  aggregateDashboardMetrics,
+  buildReturnLossTrend,
+  buildReturnsByTypePie,
+  filterOrdersByDateRange,
+} from '@/lib/order-analytics'
 import { PageHeader, Card, KpiCard, GoldDivider, Skeleton, Empty , Money, BdtText} from '@/components/ui'
 import { formatBDTk } from '@/lib/currency'
-import { fmt, pct } from '@/lib/utils'
+import { fmt, fmtNum, pct } from '@/lib/utils'
 
 const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
 const RevenueChart = dynamic(() => import('@/components/charts').then(m => m.RevenueChart), { ssr: false, loading: chartFallback })
 const ExpenseBarChart = dynamic(() => import('@/components/charts').then(m => m.ExpenseBarChart), { ssr: false, loading: chartFallback })
 const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
+const ReturnLossTrendChart = dynamic(() => import('@/components/charts').then(m => m.ReturnLossTrendChart), { ssr: false, loading: chartFallback })
 
 const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020']
 
@@ -37,8 +47,27 @@ function expenseBar(byCat: Record<string, number>) {
 }
 
 export default function AnalyticsPage() {
-  const { data, loading } = useAnalyticsMerged()
+  const { data, loading: apiLoading } = useAnalyticsMerged()
+  const { orders: allOrders, loading: ordersLoading, enabled } = useOrdersData()
+  const { range } = useDateRange()
+  const loading = apiLoading || ordersLoading
 
+  const orderMetrics = useMemo(() => {
+    if (!enabled) return null
+    const inRange = filterOrdersByDateRange(allOrders, range)
+    return aggregateDashboardMetrics(inRange)
+  }, [allOrders, range, enabled])
+
+  const returnLossTrend = useMemo(
+    () => (orderMetrics ? buildReturnLossTrend(filterOrdersByDateRange(allOrders, range)) : []),
+    [allOrders, range, orderMetrics, enabled],
+  )
+  const returnsPie = useMemo(
+    () => (enabled ? buildReturnsByTypePie(filterOrdersByDateRange(allOrders, range)) : []),
+    [allOrders, range, enabled],
+  )
+
+  const returnKpis = orderMetrics?.kpis
   const kpis         = data?.kpis        ?? { total_revenue:0, total_profit:0, gross_margin:0, avg_order_value:0, total_orders:0, delivery_rate:0, return_rate:0, sla_breaches:0, pending_action:0, delivered_count:0, total_cogs:0 }
   const byCategory   = data?.by_category ?? {}
   const bySource     = data?.by_source   ?? {}
@@ -66,10 +95,62 @@ export default function AnalyticsPage() {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Total Revenue"   value={loading ? '—' : fmt(kpis.total_revenue)}   color="text-gold-lt"   loading={loading} />
-          <KpiCard label="Net Profit"      value={loading ? '—' : fmt(kpis.total_profit)}    color="text-green-400" loading={loading} />
+          <KpiCard
+            label="Net Profit (MTD)"
+            value={loading ? '—' : fmt(returnKpis?.net_business_profit ?? kpis.total_profit)}
+            color={(returnKpis?.net_business_profit ?? kpis.total_profit) < 0 ? 'text-red-400' : 'text-green-400'}
+            loading={loading}
+          />
           <KpiCard label="Gross Margin"    value={loading ? '—' : pct(kpis.gross_margin)}    color="text-gold"      loading={loading} />
           <KpiCard label="Avg Order Value" value={loading ? '—' : fmt(kpis.avg_order_value)} loading={loading} />
         </div>
+
+        {returnKpis && (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <KpiCard label="Return Loss" value={loading ? '—' : fmt(returnKpis.total_returns_loss ?? 0)} color="text-red-400" loading={loading} />
+            <KpiCard label="Return Rate" value={loading ? '—' : pct(returnKpis.return_rate)} sub={`${returnKpis.return_rate_paid ?? 0}% paid · ${returnKpis.return_rate_refused ?? 0}% refused`} loading={loading} />
+            <KpiCard label="Refused Returns" value={loading ? '—' : fmtNum(returnKpis.returned_unpaid_count ?? 0)} color="text-red-300" loading={loading} />
+          </div>
+        )}
+
+        {/* Return charts */}
+        {enabled && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-5">
+              <p className="text-sm font-bold text-cream mb-1">Returns by Type</p>
+              <p className="text-[10px] text-zinc-500 mb-4">Delivered vs paid vs refused</p>
+              {loading ? (
+                <Skeleton className="h-48 w-full rounded-xl" />
+              ) : returnsPie.length === 0 ? (
+                <Empty icon="◫" title="No returns in period" desc="Pie chart appears when return orders exist" />
+              ) : (
+                <>
+                  <DonutChart data={returnsPie} />
+                  <div className="space-y-2 mt-3">
+                    {returnsPie.map(c => (
+                      <div key={c.name} className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: c.color }} />
+                        <span className="text-[11px] text-zinc-400 flex-1">{c.name}</span>
+                        <span className="text-[11px] font-bold text-cream">{c.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </Card>
+            <Card className="p-5">
+              <p className="text-sm font-bold text-cream mb-1">Return Loss Trend</p>
+              <p className="text-[10px] text-zinc-500 mb-4">Daily courier loss from returns</p>
+              {loading ? (
+                <Skeleton className="h-48 w-full rounded-xl" />
+              ) : returnLossTrend.length === 0 ? (
+                <Empty icon="◈" title="No return loss yet" desc="Trend builds as returns are recorded" />
+              ) : (
+                <ReturnLossTrendChart data={returnLossTrend} />
+              )}
+            </Card>
+          </div>
+        )}
 
         {/* Revenue trend + Expense breakdown */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

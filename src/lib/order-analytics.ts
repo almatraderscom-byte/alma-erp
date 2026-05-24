@@ -31,7 +31,7 @@ function isRevenueStatus(status: string) {
   return statusKey(status) === 'DELIVERED'
 }
 
-function normalizeOrderStatusKey(status: string) {
+export function normalizeOrderStatusKey(status: string) {
   const key = statusKey(status)
   if (key === 'FAILED_DELIVERY') return 'RETURNED_UNPAID'
   return key
@@ -40,6 +40,13 @@ function normalizeOrderStatusKey(status: string) {
 function isTerminalReturnStatus(key: string) {
   return key === 'RETURNED' || key === 'RETURNED_PAID' || key === 'RETURNED_UNPAID'
 }
+
+export function isTerminalReturnOrderStatus(status: string) {
+  return isTerminalReturnStatus(normalizeOrderStatusKey(status))
+}
+
+/** Filter token for orders list — all paid, refused, and legacy returns. */
+export const ALL_RETURNS_FILTER = '__ALL_RETURNS__'
 
 function isReversedStatus(status: string) {
   const key = normalizeOrderStatusKey(status)
@@ -152,7 +159,13 @@ export interface OrderFilters {
 export function applyOrderFilters(orders: Order[], filters: OrderFilters): Order[] {
   const search = (filters.search ?? '').trim().toLowerCase()
   return orders.filter(o => {
-    if (filters.status && statusKey(o.status) !== statusKey(filters.status)) return false
+    if (filters.status) {
+      if (filters.status === ALL_RETURNS_FILTER) {
+        if (!isTerminalReturnOrderStatus(o.status)) return false
+      } else if (statusKey(o.status) !== statusKey(filters.status)) {
+        return false
+      }
+    }
     if (filters.source && o.source !== filters.source) return false
     if (filters.payment && o.payment !== filters.payment) return false
     if (search) {
@@ -427,9 +440,53 @@ export function statusCountsForPills(
 ): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const s of statuses) counts[s] = 0
+  counts[ALL_RETURNS_FILTER] = 0
   for (const o of orders) {
-    const key = displayStatus(o.status)
-    counts[key] = (counts[key] ?? 0) + 1
+    const key = normalizeOrderStatusKey(o.status)
+    for (const s of statuses) {
+      if (normalizeOrderStatusKey(s) === key) {
+        counts[s] = (counts[s] ?? 0) + 1
+      }
+    }
+    if (isTerminalReturnOrderStatus(o.status)) {
+      counts[ALL_RETURNS_FILTER] = (counts[ALL_RETURNS_FILTER] ?? 0) + 1
+    }
   }
   return counts
+}
+
+/** Daily return loss (BDT) for trend charts — negative return_net_profit summed per day. */
+export function buildReturnLossTrend(orders: Order[]): Array<{ date: string; return_loss: number; returns: number }> {
+  const daily: Record<string, { date: string; return_loss: number; returns: number }> = {}
+  for (const o of orders) {
+    if (!isTerminalReturnOrderStatus(o.status)) continue
+    const d = o.date?.slice(0, 10)
+    if (!d) continue
+    const acct = orderAccounting(o)
+    const net = Number(o.return_net_profit ?? acct.returnNetProfit)
+    const loss = net < 0 ? Math.abs(net) : 0
+    if (!daily[d]) daily[d] = { date: d, return_loss: 0, returns: 0 }
+    daily[d].return_loss += loss
+    daily[d].returns += 1
+  }
+  return Object.values(daily).sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/** Pie slices: delivered vs paid return vs refused return (legacy RETURNED → refused). */
+export function buildReturnsByTypePie(orders: Order[]) {
+  let delivered = 0
+  let paid = 0
+  let refused = 0
+  for (const o of orders) {
+    const key = normalizeOrderStatusKey(o.status)
+    if (key === 'DELIVERED') delivered++
+    else if (key === 'RETURNED_PAID') paid++
+    else if (key === 'RETURNED_UNPAID' || key === 'RETURNED') refused++
+  }
+  const slices = [
+    { name: 'Delivered', value: delivered, color: '#2ECC71' },
+    { name: 'Returned (paid)', value: paid, color: '#F5A623' },
+    { name: 'Returned (refused)', value: refused, color: '#E74C3C' },
+  ].filter(s => s.value > 0)
+  return slices
 }

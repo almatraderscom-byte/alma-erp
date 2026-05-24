@@ -1,10 +1,12 @@
 'use client'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCustomers } from '@/hooks/useERP'
-import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty, Money, BdtText } from '@/components/ui'
+import { useOrdersData } from '@/contexts/OrdersDataContext'
+import { buildCustomerReturnInsights } from '@/lib/customer-order-insights'
+import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty, Money, BdtText, StatusBadge } from '@/components/ui'
 import { fmt, pct } from '@/lib/utils'
-import type { Customer, CustomerSegment } from '@/types'
+import type { Customer, CustomerSegment, OrderStatus } from '@/types'
 
 const SEGMENTS: CustomerSegment[] = ['VIP','REGULAR','NEW','RISKY','BLACKLIST','COLD']
 
@@ -15,7 +17,24 @@ export default function CrmPage() {
   const [selected, setSelected] = useState<Customer | null>(null)
 
   const { data, loading } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: search || undefined })
+  const { orders: allOrders, enabled: ordersEnabled } = useOrdersData()
   const customers = data?.customers ?? []
+
+  const returnInsightsByPhone = useMemo(() => {
+    if (!ordersEnabled || !allOrders.length) return new Map<string, ReturnType<typeof buildCustomerReturnInsights>>()
+    const map = new Map<string, ReturnType<typeof buildCustomerReturnInsights>>()
+    for (const c of customers) {
+      const digits = c.phone.replace(/\D/g, '').slice(-11)
+      if (!digits || map.has(digits)) continue
+      map.set(digits, buildCustomerReturnInsights(allOrders, c.phone))
+    }
+    return map
+  }, [allOrders, customers, ordersEnabled])
+
+  function insightsForCustomer(c: Customer) {
+    const digits = c.phone.replace(/\D/g, '').slice(-11)
+    return returnInsightsByPhone.get(digits) ?? buildCustomerReturnInsights(allOrders, c.phone)
+  }
   const summary = {
     total:         customers.length,
     total_revenue: customers.reduce((a, c) => a + (c.total_spent ?? 0), 0),
@@ -106,7 +125,26 @@ export default function CrmPage() {
                       </td>
                       <td className="px-3 py-3.5 font-bold text-cream tabular-nums"><Money amount={c.total_spent} /></td>
                       <td className="px-3 py-3.5 w-28"><ClvBar score={c.clv_score} /></td>
-                      <td className="px-3 py-3.5"><RiskBadge level={c.risk_level} /></td>
+                      <td className="px-3 py-3.5">
+                        <div className="flex flex-col items-start gap-1">
+                          <RiskBadge level={c.risk_level} />
+                          {ordersEnabled && (() => {
+                            const ins = insightsForCustomer(c)
+                            if (ins.returnCount === 0) return null
+                            return (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
+                                ins.computedRisk === 'HIGH'
+                                  ? 'text-red-400 border-red-400/30 bg-red-400/10'
+                                  : ins.computedRisk === 'MEDIUM'
+                                    ? 'text-amber-400 border-amber-400/30 bg-amber-400/10'
+                                    : 'text-zinc-400 border-border bg-card'
+                              }`}>
+                                {ins.returnRatePct}% returns
+                              </span>
+                            )
+                          })()}
+                        </div>
+                      </td>
                       <td className="px-3 py-3.5"><SegmentBadge segment={c.segment} /></td>
                       <td className="px-3 py-3.5 text-zinc-500">{c.last_order || '—'}</td>
                       <td className="px-3 py-3.5">
@@ -176,6 +214,21 @@ export default function CrmPage() {
                 <div className="flex gap-2 flex-wrap">
                   <SegmentBadge segment={selected.segment} />
                   <RiskBadge level={selected.risk_level} />
+                  {ordersEnabled && (() => {
+                    const ins = insightsForCustomer(selected)
+                    const escalated = ins.computedRisk === 'HIGH' || (ins.computedRisk === 'MEDIUM' && selected.risk_level === 'LOW')
+                    if (!escalated && ins.returnCount === 0) return null
+                    return (
+                      <span className={`text-[10px] px-2 py-1 rounded-full font-bold border ${
+                        ins.computedRisk === 'HIGH'
+                          ? 'bg-red-400/10 text-red-400 border-red-400/30'
+                          : 'bg-amber-400/10 text-amber-300 border-amber-400/30'
+                      }`}>
+                        Return risk: {ins.computedRisk}
+                        {ins.returnsLast30Days > 0 ? ` · ${ins.returnsLast30Days} in 30d` : ''}
+                      </span>
+                    )
+                  })()}
                   {selected.wa_optin === 'Yes' && <span className="text-[10px] bg-green-400/10 text-green-400 border border-green-400/20 px-2 py-1 rounded-full font-bold">WA Opt-in</span>}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -191,11 +244,49 @@ export default function CrmPage() {
                     <div className="flex items-center justify-between text-xs mb-1"><span className="text-zinc-500">Risk Score</span><span className={`font-bold ${selected.risk_score > 60 ? 'text-red-400' : selected.risk_score > 30 ? 'text-amber-400' : 'text-green-400'}`}>{selected.risk_score}/100</span></div>
                     <Progress value={selected.risk_score} color={selected.risk_score > 60 ? 'bg-red-400' : selected.risk_score > 30 ? 'bg-amber-400' : 'bg-green-400'} />
                     <StatRow label="COD Fail Rate" value={pct(selected.cod_fail_pct * 100)} valueClass={selected.cod_fail_pct > 0.5 ? 'text-red-400' : 'text-green-400'} />
-                    <StatRow label="Return Rate" value={pct(selected.return_rate * 100)} valueClass={selected.return_rate > 0.3 ? 'text-red-400' : 'text-green-400'} />
+                    <StatRow
+                      label="Return Rate (sheet)"
+                      value={pct(selected.return_rate * 100)}
+                      valueClass={selected.return_rate > 0.3 ? 'text-red-400' : 'text-green-400'}
+                    />
+                    {ordersEnabled && (() => {
+                      const ins = insightsForCustomer(selected)
+                      return (
+                        <>
+                          <StatRow label="Return Rate (orders)" value={`${ins.returnRatePct}%`} valueClass={ins.returnRatePct > 30 ? 'text-red-400' : 'text-cream'} />
+                          <StatRow label="Return Loss (orders)" value={fmt(ins.totalReturnLoss)} valueClass={ins.totalReturnLoss > 0 ? 'text-red-400' : 'text-green-400'} />
+                        </>
+                      )
+                    })()}
                     <StatRow label="CLV Score" value={`${selected.clv_score}/100`} valueClass="text-gold" />
                     <StatRow label="Days Inactive" value={selected.days_inactive} valueClass={selected.days_inactive > 90 ? 'text-amber-400' : 'text-cream'} />
                   </div>
                 </div>
+                {ordersEnabled && (() => {
+                  const ins = insightsForCustomer(selected)
+                  if (!ins.recentOrders.length) return null
+                  return (
+                    <div>
+                      <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Recent Orders</p>
+                      <div className="bg-card rounded-xl p-4 space-y-2">
+                        {ins.recentOrders.map(o => (
+                          <div key={o.id} className="flex items-center justify-between gap-2 text-xs border-b border-border/40 pb-2 last:border-0 last:pb-0">
+                            <div className="min-w-0">
+                              <p className="font-mono text-[10px] text-gold">{o.id}</p>
+                              <p className="text-zinc-500">{o.date}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <StatusBadge status={o.status as OrderStatus} />
+                              {o.isReturn && o.returnLoss > 0 && (
+                                <p className="text-[10px] text-red-400 mt-0.5">−<Money amount={o.returnLoss} /></p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
                 <div>
                   <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Profile</p>
                   <div className="bg-card rounded-xl p-4">

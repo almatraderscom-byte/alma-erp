@@ -114,24 +114,43 @@ function LifestyleDashboard() {
         {/* Primary KPIs */}
         <motion.div {...fade(0)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Revenue" value={loading ? '—' : fmt(kpis.total_revenue)} sub={rangeLabel} color="text-gold-lt" loading={loading} />
-          <KpiCard label="Net Profit" value={loading ? '—' : fmt(kpis.total_profit)} sub="After all costs" color="text-green-400" loading={loading} />
+          <KpiCard
+            label="Net Profit (MTD)"
+            value={loading ? '—' : fmt(kpis.net_business_profit ?? kpis.total_profit)}
+            sub="After return losses"
+            color={(kpis.net_business_profit ?? kpis.total_profit) < 0 ? 'text-red-400' : 'text-green-400'}
+            loading={loading}
+          />
           <KpiCard label="Orders" value={loading ? '—' : fmtNum(kpis.total_orders)} sub="In period" loading={loading} />
           <KpiCard label="Delivered" value={loading ? '—' : fmtNum(kpis.delivered_count)} sub={pct(kpis.delivery_rate) + ' rate'} color="text-blue-400" loading={loading} />
         </motion.div>
 
-        {/* Secondary KPIs */}
+        {/* Return KPIs */}
         <motion.div {...fade(1)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard label="Pending" value={loading ? '—' : fmtNum(kpis.pending_count)} sub="Awaiting action" color="text-amber-400" loading={loading} />
-          <KpiCard label="Returns" value={loading ? '—' : fmtNum(kpis.returned_count)} sub={pct(kpis.return_rate) + ' rate'} color={kpis.return_rate > 15 ? 'text-red-400' : 'text-cream'} loading={loading} />
-          <KpiCard label="Cancelled" value={loading ? '—' : fmtNum(kpis.cancelled_count)} sub="Excluded from revenue" color="text-zinc-400" loading={loading} />
-          <KpiCard label="Failed Delivery" value={loading ? '—' : fmtNum(kpis.failed_delivery_count)} sub="Courier failures" color="text-orange-400" loading={loading} />
+          <KpiCard
+            label="Return Loss (MTD)"
+            value={loading ? '—' : fmt(kpis.total_returns_loss ?? 0)}
+            sub={`${kpis.returned_paid_count ?? 0} paid · ${kpis.returned_unpaid_count ?? 0} refused`}
+            color="text-red-400"
+            loading={loading}
+          />
+          <KpiCard
+            label="Return Rate"
+            value={loading ? '—' : pct(kpis.return_rate)}
+            sub={`${kpis.return_rate_paid ?? 0}% paid · ${kpis.return_rate_refused ?? 0}% refused`}
+            color={kpis.return_rate > 20 ? 'text-red-400' : kpis.return_rate > 10 ? 'text-amber-400' : 'text-zinc-400'}
+            loading={loading}
+          />
+          <KpiCard label="Refused Returns" value={loading ? '—' : fmtNum(kpis.returned_unpaid_count ?? kpis.failed_delivery_count ?? 0)} sub={rangeLabel} color="text-red-400" loading={loading} />
+          <KpiCard label="All Returns" value={loading ? '—' : fmtNum(kpis.returned_count)} sub={`${kpis.returned_paid_count ?? 0} paid delivery`} color="text-amber-400" loading={loading} />
         </motion.div>
 
+        {/* Operations KPIs */}
         <motion.div {...fade(1.5)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard label="Pending" value={loading ? '—' : fmtNum(kpis.pending_count)} sub="Awaiting action" color="text-amber-400" loading={loading} />
+          <KpiCard label="Cancelled" value={loading ? '—' : fmtNum(kpis.cancelled_count)} sub="Excluded from revenue" color="text-zinc-400" loading={loading} />
           <KpiCard label="Realized Profit" value={loading ? '—' : fmt(kpis.total_realized_profit ?? kpis.total_profit)} sub="Delivered only" color="text-green-400" loading={loading} />
-          <KpiCard label="Pending Profit" value={loading ? '—' : fmt(kpis.pending_profit ?? 0)} sub="Open orders" color="text-amber-400" loading={loading} />
-          <KpiCard label="Reversed Profit" value={loading ? '—' : fmt(kpis.reversed_profit ?? 0)} sub="Returned/cancelled/failed" color="text-red-300" loading={loading} />
-          <KpiCard label="Loss Orders" value={loading ? '—' : fmtNum(kpis.loss_orders ?? 0)} sub="Estimated below zero" color="text-red-400" loading={loading} />
+          <KpiCard label="Reversed / Loss" value={loading ? '—' : fmt(kpis.reversed_profit ?? 0)} sub={`${kpis.loss_orders ?? 0} loss orders`} color="text-red-300" loading={loading} />
         </motion.div>
 
         {/* Charts row 1: daily + monthly */}
