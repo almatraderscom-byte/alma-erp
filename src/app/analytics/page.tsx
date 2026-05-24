@@ -1,10 +1,15 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { useAnalyticsMerged } from '@/hooks/useERP'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { PageHeader, Card, KpiCard, GoldDivider, Skeleton, Empty , Money, BdtText} from '@/components/ui'
-import { RevenueChart, ExpenseBarChart, DonutChart } from '@/components/charts'
 import { formatBDTk } from '@/lib/currency'
 import { fmt, pct } from '@/lib/utils'
+
+const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
+const RevenueChart = dynamic(() => import('@/components/charts').then(m => m.RevenueChart), { ssr: false, loading: chartFallback })
+const ExpenseBarChart = dynamic(() => import('@/components/charts').then(m => m.ExpenseBarChart), { ssr: false, loading: chartFallback })
+const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
 
 const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020']
 

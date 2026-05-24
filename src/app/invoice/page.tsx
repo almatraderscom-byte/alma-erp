@@ -1,4 +1,5 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, Select } from '@/components/ui'
@@ -7,7 +8,10 @@ import toast from 'react-hot-toast'
 import type { Order } from '@/types'
 import { useBranding } from '@/contexts/BrandingContext'
 import { useBusiness } from '@/contexts/BusinessContext'
-import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
+const PdfPreviewModal = dynamic(
+  () => import('@/components/pdf/PdfPreviewModal').then(m => m.PdfPreviewModal),
+  { ssr: false },
+)
 import { orderToPdfModel } from '@/lib/pdf/models'
 import { shareSlugAlma } from '@/lib/pdf/format'
 import type { InvoicePdfModel } from '@/lib/pdf/types'

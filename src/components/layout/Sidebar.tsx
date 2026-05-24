@@ -29,7 +29,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
     ? path === href
     : path.startsWith(href)
   return (
-    <Link href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/10 border border-gold-dim/40' : 'border border-transparent hover:bg-white/[0.04] hover:border-white/[0.06]'}`}>
+    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/10 border border-gold-dim/40' : 'border border-transparent hover:bg-white/[0.04] hover:border-white/[0.06]'}`}>
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gold rounded-r-full" />}
       <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-gold-lt' : 'text-muted group-hover:text-muted-hi'}`}>
         {icon}
@@ -143,7 +143,7 @@ function MobileTab({
       )}
     </>
   )
-  if (href) return <Link href={href} className={cls}>{content}</Link>
+  if (href) return <Link prefetch href={href} className={cls}>{content}</Link>
   return <button type="button" onClick={onClick} className={cls}>{content}</button>
 }
 
@@ -152,6 +152,7 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
   const active = activePath(path, item.href)
   return (
     <Link
+      prefetch
       href={item.href}
       onClick={onClose}
       className={cn(

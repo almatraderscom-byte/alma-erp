@@ -19,7 +19,7 @@ npm run dev
 
 Copy `.env.example` to `.env.local` and fill in:
 
-- `DATABASE_URL` (Supabase Postgres)
+- `DATABASE_URL` (Supabase Postgres — **pooler** `:6543` with `?pgbouncer=true&connection_limit=10` on Vercel; direct `:5432` for local `db push` only — see [docs/SUPABASE_POSTGRES_SETUP.md](./docs/SUPABASE_POSTGRES_SETUP.md))
 - `NEXTAUTH_SECRET`
 - `NEXT_PUBLIC_API_URL` (Google Apps Script Web App)
 - `API_SECRET`

@@ -22,18 +22,20 @@ Use **URI** mode (PostgreSQL). It looks like:
 
 Set this as **`DATABASE_URL`** in **both** `.env.local` (Next.js) and `.env` (Prisma CLI / `db push` / `db seed`).
 
-### Option B — Transaction pooler (serverless / many short connections)
+### Option B — Transaction pooler (**required for Vercel / serverless**)
 
-Supabase recommends the **pooler** for many serverless instances. Typical format (from the dashboard):
+Use the **pooler** (`pooler.supabase.com:6543`) as **`DATABASE_URL` in production**. Alma ERP on Vercel opens many short-lived Prisma clients per invocation; the direct host (`db.*.supabase.co:5432`) exhausts connection limits under load.
 
-`postgresql://postgres.[PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true`
+Example (Tokyo — align region with Vercel):
 
-For **migrations / `db push`**, Supabase often suggests a **direct** connection. You can:
+`postgresql://postgres.[PROJECT-REF]:[YOUR-PASSWORD]@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10`
 
-- Temporarily set `DATABASE_URL` to the **direct** URI for `npx prisma db push`, then switch to the pooler for production, or  
-- Add a `directUrl` in `schema.prisma` and a `DIRECT_URL` env var (see [Prisma + PgBouncer](https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/databases-connections/pgbouncer)).
+- `pgbouncer=true` — required for Prisma + Supabase pooler (transaction mode).
+- `connection_limit=10` — caps connections per serverless instance (tune if needed).
 
-The stock Alma schema uses **`url = env("DATABASE_URL")` only** — use a **direct** URL for local and first-time `db push` unless you add `directUrl`.
+For **migrations / `db push`**, use a **direct** URI temporarily, or add `directUrl` in `schema.prisma` + `DIRECT_URL` (see [Prisma + PgBouncer](https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/databases-connections/pgbouncer)).
+
+The stock Alma schema uses **`url = env("DATABASE_URL")` only** — point production `DATABASE_URL` at the pooler; use direct only for CLI schema work unless you add `directUrl`.
 
 ## 3. Configure env files (this repo)
 

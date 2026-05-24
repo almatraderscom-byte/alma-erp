@@ -1,12 +1,12 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useFinance } from '@/hooks/useERP'
 import { useAddExpense } from '@/hooks/useERP'
 import { EXPENSE_CATEGORIES } from '@/lib/expense-categories'
 import { Card, Button, KpiCard, Skeleton, Empty } from '@/components/ui'
-import { DonutChart } from '@/components/charts'
 import { pdf } from '@react-pdf/renderer'
 import { ExpenseLedgerDocument } from '@/components/pdf/ExpenseLedgerDocument'
 import { expensesToCsv, expensesToWorkbook, downloadBlob } from '@/lib/export-expenses'
@@ -15,6 +15,9 @@ import { useActor } from '@/contexts/ActorContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { can } from '@/lib/roles'
 import toast from 'react-hot-toast'
+
+const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
+const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
 
 const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020','#2a1a08']
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024

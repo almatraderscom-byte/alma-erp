@@ -1,4 +1,5 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { useState, useMemo } from 'react'
 import { CditPageShell } from '@/components/digital/CditPageShell'
 import { PaymentStatusBadge } from '@/components/digital/PaymentProgress'
@@ -8,7 +9,10 @@ import { useActor } from '@/contexts/ActorContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { can } from '@/lib/roles'
-import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
+const PdfPreviewModal = dynamic(
+  () => import('@/components/pdf/PdfPreviewModal').then(m => m.PdfPreviewModal),
+  { ssr: false },
+)
 import { cditInvoiceToPdfModel } from '@/lib/pdf/models'
 import { shareSlugCdit } from '@/lib/pdf/format'
 import { api } from '@/lib/api'

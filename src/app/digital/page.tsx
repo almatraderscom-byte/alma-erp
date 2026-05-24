@@ -1,11 +1,17 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { motion } from 'framer-motion'
 import { CditPageShell } from '@/components/digital/CditPageShell'
 import { PaymentStatusBadge } from '@/components/digital/PaymentProgress'
 import { useCditDashboard } from '@/hooks/useDigital'
 import { Card, KpiCard, Skeleton, Empty, Money, BdtText } from '@/components/ui'
-import { StatusPieChart } from '@/components/charts'
 import { fmt, fmtNum } from '@/lib/utils'
+
+const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
+const StatusPieChart = dynamic(
+  () => import('@/components/charts').then(m => m.StatusPieChart),
+  { ssr: false, loading: chartFallback },
+)
 
 const fade = (i: number) => ({
   initial: { opacity: 0, y: 12 },

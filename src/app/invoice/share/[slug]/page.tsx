@@ -1,7 +1,12 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { PdfPreviewModal } from '@/components/pdf/PdfPreviewModal'
+
+const PdfPreviewModal = dynamic(
+  () => import('@/components/pdf/PdfPreviewModal').then(m => m.PdfPreviewModal),
+  { ssr: false },
+)
 import { orderToPdfModel, cditInvoiceToPdfModel } from '@/lib/pdf/models'
 import type { InvoicePdfModel } from '@/lib/pdf/types'
 import type { Order } from '@/types'

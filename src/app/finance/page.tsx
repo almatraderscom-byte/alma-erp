@@ -1,4 +1,5 @@
 'use client'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
@@ -6,8 +7,13 @@ import { useFinancialReport } from '@/hooks/useDigital'
 import { useHRDashboard } from '@/hooks/useHr'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { Card, KpiCard, Skeleton, Empty, Money, Button } from '@/components/ui'
-import { MonthlyRevenueChart } from '@/components/charts'
 import { fmt, pct } from '@/lib/utils'
+
+const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
+const MonthlyRevenueChart = dynamic(
+  () => import('@/components/charts').then(m => m.MonthlyRevenueChart),
+  { ssr: false, loading: chartFallback },
+)
 
 export default function FinanceHubPage() {
   const { business } = useBusiness()
