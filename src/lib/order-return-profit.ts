@@ -3,6 +3,8 @@
  * GAS mirrors these formulas in WebApp_API.gs.js — keep in sync.
  */
 
+import { roundMoney } from '@/lib/money'
+
 export interface OrderProfitInputs {
   subtotal: number
   discount: number
@@ -32,54 +34,58 @@ export interface OrderAccountingSnapshot extends OrderProfitResult {
   returnNetProfit: number
 }
 
-function money(n: number): number {
-  const v = Number(n)
-  if (!Number.isFinite(v)) return 0
-  return Math.round(v)
-}
-
 function baseInputs(inputs: OrderProfitInputs) {
   return {
-    subtotal: Math.max(0, money(inputs.subtotal)),
-    discount: Math.max(0, money(inputs.discount)),
-    inventoryCost: Math.max(0, money(inputs.inventoryCost)),
-    shippingFee: Math.max(0, money(inputs.shippingFee)),
-    courierCharge: Math.max(0, money(inputs.courierCharge)),
+    subtotal: Math.max(0, roundMoney(inputs.subtotal)),
+    discount: Math.max(0, roundMoney(inputs.discount)),
+    inventoryCost: Math.max(0, roundMoney(inputs.inventoryCost)),
+    shippingFee: Math.max(0, roundMoney(inputs.shippingFee)),
+    courierCharge: Math.max(0, roundMoney(inputs.courierCharge)),
+  }
+}
+
+function roundProfitResult(result: OrderProfitResult): OrderProfitResult {
+  return {
+    ...result,
+    merchandiseProfit: roundMoney(result.merchandiseProfit),
+    shippingMargin: roundMoney(result.shippingMargin),
+    netProfit: roundMoney(result.netProfit),
   }
 }
 
 export function calculateDeliveredProfit(inputs: OrderProfitInputs): OrderProfitResult {
   const i = baseInputs(inputs)
-  const merchandiseProfit = i.subtotal - i.discount - i.inventoryCost
-  const shippingMargin = i.shippingFee - i.courierCharge
-  return {
+  const merchandiseProfit = roundMoney(i.subtotal - i.discount - i.inventoryCost)
+  const shippingMargin = roundMoney(i.shippingFee - i.courierCharge)
+  return roundProfitResult({
     merchandiseProfit,
     shippingMargin,
-    netProfit: merchandiseProfit + shippingMargin,
+    netProfit: roundMoney(merchandiseProfit + shippingMargin),
     scenario: 'delivered',
-  }
+  })
 }
 
 export function calculateReturnedPaidProfit(inputs: OrderProfitInputs): OrderProfitResult {
   const i = baseInputs(inputs)
-  const roundTripCourier = 2 * i.courierCharge
-  return {
+  const roundTripCourier = roundMoney(2 * i.courierCharge)
+  const net = roundMoney(i.shippingFee - roundTripCourier)
+  return roundProfitResult({
     merchandiseProfit: 0,
-    shippingMargin: i.shippingFee - roundTripCourier,
-    netProfit: i.shippingFee - roundTripCourier,
+    shippingMargin: net,
+    netProfit: net,
     scenario: 'returned_paid',
-  }
+  })
 }
 
 export function calculateReturnedUnpaidProfit(inputs: OrderProfitInputs): OrderProfitResult {
   const i = baseInputs(inputs)
-  const roundTripCourier = 2 * i.courierCharge
-  return {
+  const roundTripCourier = roundMoney(2 * i.courierCharge)
+  return roundProfitResult({
     merchandiseProfit: 0,
-    shippingMargin: -roundTripCourier,
-    netProfit: -roundTripCourier,
+    shippingMargin: roundMoney(-roundTripCourier),
+    netProfit: roundMoney(-roundTripCourier),
     scenario: 'returned_unpaid',
-  }
+  })
 }
 
 export function calculateCancelledProfit(): OrderProfitResult {
@@ -107,50 +113,63 @@ export function calculateOrderProfit(status: string, inputs: OrderProfitInputs):
   return { ...estimated, scenario: 'in_progress' }
 }
 
+function roundAccounting(snapshot: OrderAccountingSnapshot): OrderAccountingSnapshot {
+  return {
+    ...snapshot,
+    merchandiseProfit: roundMoney(snapshot.merchandiseProfit),
+    shippingMargin: roundMoney(snapshot.shippingMargin),
+    netProfit: roundMoney(snapshot.netProfit),
+    realizedProfit: roundMoney(snapshot.realizedProfit),
+    reversedProfit: roundMoney(snapshot.reversedProfit),
+    pendingProfit: roundMoney(snapshot.pendingProfit),
+    returnNetProfit: roundMoney(snapshot.returnNetProfit),
+  }
+}
+
 export function calculateOrderAccounting(status: string, inputs: OrderProfitInputs): OrderAccountingSnapshot {
   const result = calculateOrderProfit(status, inputs)
   const key = normalizeStatusKey(status)
 
   if (key === 'DELIVERED') {
-    return {
+    return roundAccounting({
       ...result,
       realizedProfit: result.netProfit,
       reversedProfit: 0,
       pendingProfit: 0,
       returnNetProfit: 0,
-    }
+    })
   }
 
   if (key === 'RETURNED_PAID' || key === 'RETURNED_UNPAID' || key === 'RETURNED') {
-    const loss = result.netProfit < 0 ? Math.abs(result.netProfit) : 0
-    return {
+    const loss = result.netProfit < 0 ? roundMoney(Math.abs(result.netProfit)) : 0
+    return roundAccounting({
       ...result,
       realizedProfit: 0,
       reversedProfit: loss,
       pendingProfit: 0,
       returnNetProfit: result.netProfit,
-    }
+    })
   }
 
   if (key === 'CANCELLED' || key === 'CANCELED') {
-    return {
+    return roundAccounting({
       ...result,
       realizedProfit: 0,
       reversedProfit: 0,
       pendingProfit: 0,
       returnNetProfit: 0,
-    }
+    })
   }
 
   const pending = calculateDeliveredProfit(inputs).netProfit
-  return {
+  return roundAccounting({
     ...result,
     netProfit: pending,
     realizedProfit: 0,
     reversedProfit: 0,
     pendingProfit: pending,
     returnNetProfit: 0,
-  }
+  })
 }
 
 /** Build profit inputs from a persisted order row (sheet / API). */
@@ -169,11 +188,11 @@ export function orderProfitInputsFromOrder(order: {
   const unitPrice = Math.max(0, Number(order.unit_price || 0))
   const subtotal = qty > 0 && unitPrice > 0 ? unitPrice * qty : Math.max(0, Number(order.sell_price || 0))
   return {
-    subtotal,
-    discount: Math.max(0, Number(order.discount || 0)) + Math.max(0, Number(order.add_discount || 0)),
-    inventoryCost: Math.max(0, Number(order.inventoryCost ?? order.cogs ?? 0)),
-    shippingFee: Math.max(0, Number(order.shipping_fee || 0)),
-    courierCharge: Math.max(0, Number(order.courier_charge || 0)),
+    subtotal: roundMoney(subtotal),
+    discount: roundMoney(Math.max(0, Number(order.discount || 0)) + Math.max(0, Number(order.add_discount || 0))),
+    inventoryCost: roundMoney(Math.max(0, Number(order.inventoryCost ?? order.cogs ?? 0))),
+    shippingFee: roundMoney(Math.max(0, Number(order.shipping_fee || 0))),
+    courierCharge: roundMoney(Math.max(0, Number(order.courier_charge || 0))),
   }
 }
 
@@ -183,5 +202,5 @@ export function projectedReturnLossBdt(
 ): number {
   const result =
     status === 'RETURNED_PAID' ? calculateReturnedPaidProfit(inputs) : calculateReturnedUnpaidProfit(inputs)
-  return result.netProfit < 0 ? Math.abs(result.netProfit) : 0
+  return result.netProfit < 0 ? roundMoney(Math.abs(result.netProfit)) : 0
 }

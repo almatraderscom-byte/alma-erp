@@ -776,7 +776,7 @@ function createOrder_(body) {
 
   // PROFIT — col W: seller price after discounts - inventory cost - courier/other/advance costs.
   sh.getRange(newRow, OC.PROFIT).setFormula(
-    '=IF(C' + newRow + '="","",IFERROR(R' + newRow + '-T' + newRow + '-U' + newRow + '-V' + newRow + '-P' + newRow + ',0))'
+    '=IF(C' + newRow + '="","",IFERROR(ROUND(R' + newRow + '-T' + newRow + '-U' + newRow + '-V' + newRow + '-P' + newRow + ',0),0))'
   );
 
   // ── Flush and read back the generated Order ID ────────────────────────────
@@ -3247,35 +3247,46 @@ function orderProfitInputsFromRowValues_(r, meta) {
   };
 }
 
-function calculateDeliveredProfit_(inputs) {
-  var merchandiseProfit = inputs.subtotal - inputs.discount - inputs.inventoryCost;
-  var shippingMargin = inputs.shippingFee - inputs.courierCharge;
+function roundProfitResult_(result) {
   return {
+    merchandiseProfit: roundOrderMoney_(result.merchandiseProfit),
+    shippingMargin: roundOrderMoney_(result.shippingMargin),
+    netProfit: roundOrderMoney_(result.netProfit),
+    scenario: result.scenario,
+  };
+}
+
+function calculateDeliveredProfit_(inputs) {
+  var merchandiseProfit = roundOrderMoney_(inputs.subtotal - inputs.discount - inputs.inventoryCost);
+  var shippingMargin = roundOrderMoney_(inputs.shippingFee - inputs.courierCharge);
+  return roundProfitResult_({
     merchandiseProfit: merchandiseProfit,
     shippingMargin: shippingMargin,
-    netProfit: merchandiseProfit + shippingMargin,
+    netProfit: roundOrderMoney_(merchandiseProfit + shippingMargin),
     scenario: 'delivered',
-  };
+  });
 }
 
 function calculateReturnedPaidProfit_(inputs) {
-  var roundTrip = 2 * inputs.courierCharge;
-  return {
+  var roundTrip = roundOrderMoney_(2 * inputs.courierCharge);
+  var net = roundOrderMoney_(inputs.shippingFee - roundTrip);
+  return roundProfitResult_({
     merchandiseProfit: 0,
-    shippingMargin: inputs.shippingFee - roundTrip,
-    netProfit: inputs.shippingFee - roundTrip,
+    shippingMargin: net,
+    netProfit: net,
     scenario: 'returned_paid',
-  };
+  });
 }
 
 function calculateReturnedUnpaidProfit_(inputs) {
-  var roundTrip = 2 * inputs.courierCharge;
-  return {
+  var roundTrip = roundOrderMoney_(2 * inputs.courierCharge);
+  var net = roundOrderMoney_(-roundTrip);
+  return roundProfitResult_({
     merchandiseProfit: 0,
-    shippingMargin: -roundTrip,
-    netProfit: -roundTrip,
+    shippingMargin: net,
+    netProfit: net,
     scenario: 'returned_unpaid',
-  };
+  });
 }
 
 function calculateOrderProfit_(status, inputs) {
@@ -3289,11 +3300,24 @@ function calculateOrderProfit_(status, inputs) {
   return est;
 }
 
+function roundOrderAccounting_(acct) {
+  return {
+    realizedProfit: roundOrderMoney_(acct.realizedProfit),
+    reversedProfit: roundOrderMoney_(acct.reversedProfit),
+    pendingProfit: roundOrderMoney_(acct.pendingProfit),
+    returnNetProfit: roundOrderMoney_(acct.returnNetProfit),
+    netProfit: roundOrderMoney_(acct.netProfit),
+    merchandiseProfit: roundOrderMoney_(acct.merchandiseProfit),
+    shippingMargin: roundOrderMoney_(acct.shippingMargin),
+    returnType: acct.returnType || '',
+  };
+}
+
 function calculateOrderAccounting_(status, inputs) {
   var result = calculateOrderProfit_(status, inputs);
   var key = normalizeOrderStatus_(status);
   if (key === 'Delivered') {
-    return {
+    return roundOrderAccounting_({
       realizedProfit: result.netProfit,
       reversedProfit: 0,
       pendingProfit: 0,
@@ -3302,11 +3326,11 @@ function calculateOrderAccounting_(status, inputs) {
       merchandiseProfit: result.merchandiseProfit,
       shippingMargin: result.shippingMargin,
       returnType: '',
-    };
+    });
   }
   if (isTerminalReturnStatus_(key) || key === 'RETURNED') {
-    var loss = result.netProfit < 0 ? Math.abs(result.netProfit) : 0;
-    return {
+    var loss = result.netProfit < 0 ? roundOrderMoney_(Math.abs(result.netProfit)) : 0;
+    return roundOrderAccounting_({
       realizedProfit: 0,
       reversedProfit: loss,
       pendingProfit: 0,
@@ -3315,10 +3339,10 @@ function calculateOrderAccounting_(status, inputs) {
       merchandiseProfit: result.merchandiseProfit,
       shippingMargin: result.shippingMargin,
       returnType: key === 'RETURNED' ? 'RETURNED_UNPAID' : key,
-    };
+    });
   }
   if (key === 'CANCELLED') {
-    return {
+    return roundOrderAccounting_({
       realizedProfit: 0,
       reversedProfit: 0,
       pendingProfit: 0,
@@ -3327,10 +3351,10 @@ function calculateOrderAccounting_(status, inputs) {
       merchandiseProfit: 0,
       shippingMargin: 0,
       returnType: '',
-    };
+    });
   }
   var pending = calculateDeliveredProfit_(inputs).netProfit;
-  return {
+  return roundOrderAccounting_({
     realizedProfit: 0,
     reversedProfit: 0,
     pendingProfit: pending,
@@ -3339,7 +3363,7 @@ function calculateOrderAccounting_(status, inputs) {
     merchandiseProfit: result.merchandiseProfit,
     shippingMargin: result.shippingMargin,
     returnType: '',
-  };
+  });
 }
 
 function accountingForOrderStatus_(status, inputs) {

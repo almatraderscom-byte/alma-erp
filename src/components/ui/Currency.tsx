@@ -6,6 +6,7 @@ import {
   fmtNum,
   splitBDT,
 } from '@/lib/currency'
+import { roundMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 
 type MoneyProps = {
@@ -14,12 +15,13 @@ type MoneyProps = {
   decimals?: number
 }
 
-/** Renders ৳ with Noto/Hind for the symbol; en-IN grouped digits. */
-export function Money({ amount, className, decimals }: MoneyProps) {
+/** Renders ৳ with Noto/Hind for the symbol; whole taka only (no paisa). */
+export function Money({ amount, className, decimals = 0 }: MoneyProps) {
+  const whole = roundMoney(amount)
   return (
     <span className={cn(MONEY_CLASS, className)}>
       <span className="currency-symbol">{BDT_SYMBOL}</span>
-      <span className="currency-amount">{fmtNum(amount, decimals)}</span>
+      <span className="currency-amount">{fmtNum(whole, decimals)}</span>
     </span>
   )
 }
