@@ -37,7 +37,6 @@
     "@react-pdf/renderer": "^4.5.1",
     "@sentry/nextjs": "^8.55.2",
     "bcryptjs": "^3.0.3",
-    "clsx": "2.1.1",
     "date-fns": "3.6.0",
     "framer-motion": "11.2.9",
     "next": "14.2.3",
@@ -49,8 +48,7 @@
     "recharts": "2.12.7",
     "resend": "^6.12.3",
     "sharp": "^0.34.5",
-    "xlsx": "^0.18.5",
-    "zustand": "4.5.2"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
