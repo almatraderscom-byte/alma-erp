@@ -8,7 +8,8 @@ const TERMINAL_STATUSES = new Set<OrderStatus>([
   'Cancelled',
   'CANCELLED',
   'RETURNED',
-  'FAILED_DELIVERY',
+  'RETURNED_PAID',
+  'RETURNED_UNPAID',
 ])
 
 /** Staff may correct their own order only while it is still early in fulfillment. */

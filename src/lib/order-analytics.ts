@@ -23,13 +23,24 @@ function isRevenueStatus(status: string) {
   return statusKey(status) === 'DELIVERED'
 }
 
+function normalizeOrderStatusKey(status: string) {
+  const key = statusKey(status)
+  if (key === 'FAILED_DELIVERY') return 'RETURNED_UNPAID'
+  return key
+}
+
+function isTerminalReturnStatus(key: string) {
+  return key === 'RETURNED' || key === 'RETURNED_PAID' || key === 'RETURNED_UNPAID'
+}
+
 function isReversedStatus(status: string) {
-  return ['CANCELLED', 'RETURNED', 'FAILED_DELIVERY'].includes(statusKey(status))
+  const key = normalizeOrderStatusKey(status)
+  return key === 'CANCELLED' || isTerminalReturnStatus(key)
 }
 
 function displayStatus(status: string) {
-  const key = statusKey(status)
-  if (key === 'CANCELLED' || key === 'RETURNED' || key === 'FAILED_DELIVERY') return key
+  const key = normalizeOrderStatusKey(status)
+  if (key === 'CANCELLED' || isTerminalReturnStatus(key)) return key
   return status
 }
 
@@ -246,7 +257,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   const slaBreaches: DashboardMetrics['sla_breaches'] = []
 
   for (const o of orders) {
-    const status = statusKey(o.status)
+    const status = normalizeOrderStatusKey(o.status)
     const revenueActive = isRevenueStatus(o.status)
     const reversed = isReversedStatus(o.status)
     const estimated = Number(o.estimatedProfit ?? o.profit ?? 0)
@@ -262,9 +273,9 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     if (estimated < 0) lossOrders++
 
     if (status === 'DELIVERED') delivered++
-    if (status === 'RETURNED') returned++
+    if (isTerminalReturnStatus(status)) returned++
     if (status === 'CANCELLED') cancelled++
-    if (status === 'FAILED_DELIVERY') failedDelivery++
+    if (status === 'RETURNED_UNPAID') failedDelivery++
     if (status === 'PENDING') pending++
 
     if (revenueActive && String(o.payment).toUpperCase() === 'COD') codAmount += o.sell_price

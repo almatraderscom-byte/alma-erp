@@ -1,7 +1,7 @@
 export type OrderStatus =
   | 'Pending' | 'Confirmed' | 'Packed'
   | 'Shipped' | 'Delivered' | 'Returned' | 'Cancelled'
-  | 'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY'
+  | 'CANCELLED' | 'RETURNED' | 'RETURNED_PAID' | 'RETURNED_UNPAID'
 
 export type CustomerSegment = 'VIP' | 'REGULAR' | 'NEW' | 'RISKY' | 'BLACKLIST' | 'COLD'
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'

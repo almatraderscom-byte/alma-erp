@@ -19,8 +19,19 @@ export const STATUS_COLORS: Record<OrderStatus, { text: string; bg: string; bord
   Returned:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
   Cancelled: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
   RETURNED:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
+  RETURNED_PAID: { text:'text-amber-300', bg:'bg-amber-400/10', border:'border-amber-400/35', dot:'bg-amber-400' },
+  RETURNED_UNPAID: { text:'text-red-400', bg:'bg-red-500/15', border:'border-red-400/40', dot:'bg-red-500' },
   CANCELLED: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
-  FAILED_DELIVERY: { text:'text-orange-400', bg:'bg-orange-400/10', border:'border-orange-400/30', dot:'bg-orange-400' },
+}
+
+/** Human-readable order status for badges and lists. */
+export function orderStatusLabel(status: OrderStatus | string): string {
+  const key = String(status).trim().toUpperCase().replace(/\s+/g, '_')
+  if (key === 'RETURNED_PAID') return 'Returned (paid)'
+  if (key === 'RETURNED_UNPAID' || key === 'FAILED_DELIVERY') return 'Returned (refused)'
+  if (key === 'RETURNED') return 'Returned'
+  if (key === 'CANCELLED' || key === 'CANCELED') return 'Cancelled'
+  return String(status)
 }
 
 export const SEG_COLORS: Record<CustomerSegment, { text: string; bg: string; border: string }> = {
@@ -53,6 +64,7 @@ export const COURIER_STEPS: Partial<Record<OrderStatus, Array<{ label: string; d
   Delivered: [{ label:'Placed',    done:true,  active:false }, { label:'Confirmed', done:true,  active:false }, { label:'Packed', done:true,  active:false }, { label:'Shipped', done:true,  active:false }, { label:'Delivered', done:true,  active:false }],
   Returned:  [{ label:'Placed',    done:true,  active:false }, { label:'Shipped',   done:true,  active:false }, { label:'Returned', done:true, active:false }],
   RETURNED:  [{ label:'Placed',    done:true,  active:false }, { label:'Shipped',   done:true,  active:false }, { label:'Returned', done:true, active:false }],
+  RETURNED_PAID: [{ label:'Placed', done:true, active:false }, { label:'Shipped', done:true, active:false }, { label:'Returned (paid)', done:true, active:false }],
+  RETURNED_UNPAID: [{ label:'Placed', done:true, active:false }, { label:'Shipped', done:true, active:false }, { label:'Returned (refused)', done:true, active:false }],
   CANCELLED: [{ label:'Placed',    done:true,  active:false }, { label:'Cancelled', done:true, active:false }],
-  FAILED_DELIVERY: [{ label:'Placed', done:true, active:false }, { label:'Shipped', done:true, active:false }, { label:'Failed delivery', done:true, active:false }],
 }

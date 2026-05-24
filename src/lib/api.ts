@@ -891,8 +891,8 @@ export const api = {
       apiPost('/api/orders/orders', { ...normalizeCreateOrderPayload(order), business_id: _businessId }),
 
     /** Change order status → POST /api/orders/orders/status */
-    updateStatus: (id: string, status: OrderStatus): Promise<UpdateStatusRes> =>
-      apiPost('/api/orders/orders/status', { id, status }),
+    updateStatus: (id: string, status: OrderStatus, reason?: string): Promise<UpdateStatusRes> =>
+      apiPost('/api/orders/orders/status', { id, status, ...(reason?.trim() ? { reason: reason.trim() } : {}) }),
 
     /** Write tracking ID → POST /api/orders/orders/tracking */
     updateTracking: (id: string, tracking_id: string, courier?: string): Promise<UpdateTrackingRes> =>

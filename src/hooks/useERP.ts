@@ -200,7 +200,7 @@ export function useNextInvoiceNumber() {
  */
 export function useUpdateStatus() {
   return useMutation(
-    (id: string, status: OrderStatus) => api.mutations.updateStatus(id, status)
+    (id: string, status: OrderStatus, reason?: string) => api.mutations.updateStatus(id, status, reason)
   )
 }
 

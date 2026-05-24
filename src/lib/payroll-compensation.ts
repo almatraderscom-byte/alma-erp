@@ -160,13 +160,13 @@ function compensationTitle(type: EmployeeLedgerEntryType) {
 export async function handleOrderCommissionStatus(order: OrderLike, status: string, actorUserId?: string | null) {
   const orderId = String(order.id || '').trim()
   const businessId = String(order.business_id || 'ALMA_LIFESTYLE').trim()
-  const statusKey = status.trim().toLowerCase()
+  const statusKey = status.trim().toUpperCase().replace(/\s+/g, '_')
   if (!orderId) return { ok: false, skipped: 'missing_order_id' }
 
-  if (statusKey === 'delivered') {
+  if (statusKey === 'DELIVERED') {
     return createDeliveredOrderCommission(order, businessId, orderId, actorUserId)
   }
-  if (['returned', 'cancelled', 'canceled', 'failed delivery', 'failed_delivery'].includes(statusKey)) {
+  if (['RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID', 'CANCELLED', 'CANCELED'].includes(statusKey)) {
     return reverseDeliveredOrderCommission(businessId, orderId, actorUserId)
   }
   return { ok: true, skipped: 'status_not_commissionable' }

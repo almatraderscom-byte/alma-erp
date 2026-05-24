@@ -8,7 +8,7 @@ import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
 
 export { Money, BdtText } from '@/components/ui/Currency'
 export { SearchableSelect, type SearchableSelectOption } from '@/components/ui/SearchableSelect'
-import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS } from '@/lib/utils'
+import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS, orderStatusLabel } from '@/lib/utils'
 import { PageActionBar } from '@/components/layout/PageActionBar'
 import { AlertsActionButton } from '@/components/notifications/AlertsActionButton'
 import { usePathname } from 'next/navigation'
@@ -101,7 +101,7 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
 // ── Status Badge ──────────────────────────────────────────────────────────
 export function StatusBadge({ status }: { status: OrderStatus }) {
   const c = STATUS_COLORS[status] ?? STATUS_COLORS.Cancelled
-  const label = status === 'FAILED_DELIVERY' ? 'FAILED DELIVERY' : status
+  const label = orderStatusLabel(status)
   return (
     <span className={cn('inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border', c.text, c.bg, c.border)}>
       <span className={cn('w-1.5 h-1.5 rounded-full', c.dot)} />

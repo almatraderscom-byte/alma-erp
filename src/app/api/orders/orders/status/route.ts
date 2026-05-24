@@ -8,8 +8,11 @@ import { handleOrderCommissionStatus, resolveOrderHandlerUser } from '@/lib/payr
 import type { Order } from '@/types'
 import { enqueueCourierUpdateSms } from '@/services/sms/events'
 
-const VALID_STATUSES = new Set(['Pending', 'Confirmed', 'Packed', 'Shipped', 'Delivered', 'CANCELLED', 'RETURNED', 'FAILED_DELIVERY'])
-const DESTRUCTIVE_STATUSES = new Set(['CANCELLED', 'RETURNED', 'FAILED_DELIVERY'])
+const VALID_STATUSES = new Set([
+  'Pending', 'Confirmed', 'Packed', 'Shipped', 'Delivered',
+  'CANCELLED', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID',
+])
+const DESTRUCTIVE_STATUSES = new Set(['CANCELLED', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID'])
 
 export async function POST(req: NextRequest) {
   try {
@@ -101,8 +104,10 @@ export async function POST(req: NextRequest) {
 function normalizeRequestedStatus(status: string) {
   const key = status.trim().toUpperCase().replace(/\s+/g, '_')
   if (key === 'CANCELLED' || key === 'CANCELED') return 'CANCELLED'
+  if (key === 'FAILED_DELIVERY') return 'RETURNED_UNPAID'
   if (key === 'RETURNED') return 'RETURNED'
-  if (key === 'FAILED_DELIVERY') return 'FAILED_DELIVERY'
+  if (key === 'RETURNED_PAID') return 'RETURNED_PAID'
+  if (key === 'RETURNED_UNPAID') return 'RETURNED_UNPAID'
   if (key === 'PENDING') return 'Pending'
   if (key === 'CONFIRMED') return 'Confirmed'
   if (key === 'PACKED') return 'Packed'
@@ -112,12 +117,16 @@ function normalizeRequestedStatus(status: string) {
 }
 
 function isTerminal(status: string) {
-  return ['CANCELLED', 'RETURNED', 'FAILED_DELIVERY', 'Cancelled', 'Returned'].includes(status)
+  return [
+    'CANCELLED', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID',
+    'Cancelled', 'Returned',
+  ].includes(status)
 }
 
 function statusTitle(status: string) {
   if (status === 'CANCELLED') return 'Order cancelled'
   if (status === 'RETURNED') return 'Order returned'
-  if (status === 'FAILED_DELIVERY') return 'Failed delivery recorded'
+  if (status === 'RETURNED_PAID') return 'Order returned (paid delivery)'
+  if (status === 'RETURNED_UNPAID') return 'Order returned (refused)'
   return 'Order status updated'
 }

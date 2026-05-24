@@ -28,7 +28,7 @@ import { can } from '@/lib/roles'
 import { canEditOrder, canRequestOrderDelete } from '@/lib/order-access'
 import { shareSlugAlma } from '@/lib/pdf/format'
 
-const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY']
+const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','RETURNED_PAID','RETURNED_UNPAID','CANCELLED']
 const STATUS_NEXT: Partial<Record<OrderStatus, OrderStatus>> = { Pending:'Confirmed', Confirmed:'Packed', Packed:'Shipped', Shipped:'Delivered' }
 const ORDER_ROW_HEIGHT = 64
 const ORDER_WINDOW_SIZE = 70
@@ -37,22 +37,24 @@ const NewOrderDrawer = dynamic(
   () => import('@/components/orders/new-order/new-order-drawer').then(mod => mod.NewOrderDrawer),
   { ssr: false, loading: () => null },
 )
-const TERMINAL_STATUSES = new Set<OrderStatus>(['Delivered', 'RETURNED', 'CANCELLED', 'FAILED_DELIVERY', 'Returned', 'Cancelled'])
-const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY', { title: string; body: string; label: string }> = {
+const TERMINAL_STATUSES = new Set<OrderStatus>([
+  'Delivered', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID', 'CANCELLED', 'Returned', 'Cancelled',
+])
+const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED_PAID' | 'RETURNED_UNPAID', { title: string; body: string; label: string }> = {
   CANCELLED: {
     title: 'Cancel order?',
     body: 'This excludes the order from revenue and prevents commission generation.',
     label: 'Cancel Order',
   },
-  RETURNED: {
-    title: 'Mark order returned?',
-    body: 'This reverses any delivered-order commission once and marks the sale as returned.',
-    label: 'Mark Returned',
+  RETURNED_PAID: {
+    title: 'Mark returned (paid delivery)?',
+    body: 'Customer refused the product but paid delivery. This will mark inventory for restock and reverse profit accounting.',
+    label: 'Confirm returned (paid)',
   },
-  FAILED_DELIVERY: {
-    title: 'Mark failed delivery?',
-    body: 'This marks courier failure, excludes the order from revenue, and prevents commission.',
-    label: 'Mark Failed Delivery',
+  RETURNED_UNPAID: {
+    title: 'Mark returned (refused)?',
+    body: 'Customer refused everything. This will mark inventory for restock and reverse profit accounting.',
+    label: 'Confirm returned (refused)',
   },
 }
 
@@ -71,7 +73,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   const [invLoading, setInvLoading] = useState(false)
   const [invoiceLookupLoading, setInvoiceLookupLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
-  const [confirmStatus, setConfirmStatus] = useState<'CANCELLED' | 'RETURNED' | 'FAILED_DELIVERY' | null>(null)
+  const [confirmStatus, setConfirmStatus] = useState<'CANCELLED' | 'RETURNED_PAID' | 'RETURNED_UNPAID' | null>(null)
+  const [returnReason, setReturnReason] = useState('')
   const [showEdit, setShowEdit] = useState(false)
   const [showDeleteRequest, setShowDeleteRequest] = useState(false)
   const [editBusy, setEditBusy] = useState(false)
@@ -93,6 +96,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     setShowEdit(false)
     setShowDeleteRequest(false)
     setDeleteReason('')
+    setReturnReason('')
+    setConfirmStatus(null)
     setEditForm({
       customer: order.customer,
       phone: order.phone,
@@ -180,8 +185,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
   const canCancel = mayAdvance && !TERMINAL_STATUSES.has(order.status)
-  const canReturn = mayAdvance && !['RETURNED', 'Returned', 'CANCELLED', 'Cancelled'].includes(order.status) && ['Delivered', 'Shipped'].includes(order.status)
-  const canFailDelivery = mayAdvance && !TERMINAL_STATUSES.has(order.status) && ['Shipped', 'Packed'].includes(order.status)
+  const isReturnTerminal = ['RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID', 'Returned'].includes(order.status)
+  const canReturn = mayAdvance && !isReturnTerminal && !['CANCELLED', 'Cancelled'].includes(order.status) && ['Delivered', 'Shipped'].includes(order.status)
   const internalInvoiceUrl = `/invoice/share/${shareSlugAlma(order.id)}`
 
   async function handleStatusAdvance() {
@@ -194,10 +199,12 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   async function handleDestructiveStatus() {
     if (!confirmStatus) return
     const target = confirmStatus
-    const r = await updateStatus(order.id, target)
+    const reason = returnReason.trim()
+    const r = await updateStatus(order.id, target, reason || undefined)
     if (r?.ok) {
       toast.success(`${order.id} → ${target.replace(/_/g, ' ')}`)
       setConfirmStatus(null)
+      setReturnReason('')
       onStatusChange()
     } else {
       toast.error('Status update failed')
@@ -415,22 +422,22 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               {statusLoading ? 'Updating…' : `Mark as ${nextStatus} →`}
             </Button>
           )}
-          {mayAdvance && (canCancel || canReturn || canFailDelivery) && (
+          {mayAdvance && (canCancel || canReturn) && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {canCancel && (
-                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('CANCELLED')} disabled={statusLoading}>
+                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => { setReturnReason(''); setConfirmStatus('CANCELLED') }} disabled={statusLoading}>
                   Cancel Order
                 </Button>
               )}
               {canReturn && (
-                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('RETURNED')} disabled={statusLoading}>
-                  Mark Returned
-                </Button>
-              )}
-              {canFailDelivery && (
-                <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => setConfirmStatus('FAILED_DELIVERY')} disabled={statusLoading}>
-                  Mark Failed Delivery
-                </Button>
+                <>
+                  <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => { setReturnReason(''); setConfirmStatus('RETURNED_PAID') }} disabled={statusLoading}>
+                    Returned (paid delivery)
+                  </Button>
+                  <Button variant="danger" className="justify-center min-h-[42px]" onClick={() => { setReturnReason(''); setConfirmStatus('RETURNED_UNPAID') }} disabled={statusLoading}>
+                    Returned (refused)
+                  </Button>
+                </>
               )}
             </div>
           )}
@@ -525,18 +532,33 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
         {confirmStatus && (
           <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center bg-black/70 p-4">
             <div className="w-full max-w-sm rounded-3xl border border-red-400/25 bg-card p-5 shadow-2xl">
-              <p className="text-sm font-bold text-cream">{DESTRUCTIVE_STATUS_META[confirmStatus].title}</p>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-400">{DESTRUCTIVE_STATUS_META[confirmStatus].body}</p>
+              <p className="text-sm font-bold text-cream">
+                {confirmStatus === 'CANCELLED' ? DESTRUCTIVE_STATUS_META.CANCELLED.title : DESTRUCTIVE_STATUS_META[confirmStatus].title}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                {confirmStatus === 'CANCELLED' ? DESTRUCTIVE_STATUS_META.CANCELLED.body : DESTRUCTIVE_STATUS_META[confirmStatus].body}
+              </p>
               <div className="mt-4 rounded-xl border border-border bg-black/25 p-3 text-[11px]">
                 <p className="text-zinc-500">Order</p>
                 <p className="font-mono text-gold-lt">{order.id}</p>
                 <p className="mt-2 text-zinc-500">Current status</p>
                 <p className="text-cream">{order.status}</p>
               </div>
+              {confirmStatus !== 'CANCELLED' && (
+                <label className="mt-4 block text-[11px]">
+                  <span className="font-bold uppercase tracking-wider text-zinc-500">Return reason (optional)</span>
+                  <textarea
+                    value={returnReason}
+                    onChange={e => setReturnReason(e.target.value)}
+                    placeholder="Why did the customer return or refuse?"
+                    className="mt-1 min-h-20 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                  />
+                </label>
+              )}
               <div className="mt-5 flex justify-end gap-2">
-                <Button size="xs" variant="secondary" onClick={() => setConfirmStatus(null)} disabled={statusLoading}>Keep order</Button>
-                <Button size="xs" variant="danger" onClick={handleDestructiveStatus} disabled={statusLoading}>
-                  {statusLoading ? 'Updating…' : DESTRUCTIVE_STATUS_META[confirmStatus].label}
+                <Button size="xs" variant="secondary" onClick={() => { setConfirmStatus(null); setReturnReason('') }} disabled={statusLoading}>Keep order</Button>
+                <Button size="xs" variant="danger" onClick={() => void handleDestructiveStatus()} disabled={statusLoading}>
+                  {statusLoading ? 'Updating…' : (confirmStatus === 'CANCELLED' ? DESTRUCTIVE_STATUS_META.CANCELLED.label : DESTRUCTIVE_STATUS_META[confirmStatus].label)}
                 </Button>
               </div>
             </div>

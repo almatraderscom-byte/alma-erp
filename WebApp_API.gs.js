@@ -1181,7 +1181,7 @@ function updateStatus_(body) {
   if (!body.status) return { error: 'status required' };
 
   var requestedStatus = normalizeOrderStatus_(body.status);
-  var valid = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','CANCELLED','FAILED_DELIVERY'];
+  var valid = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED','RETURNED_PAID','RETURNED_UNPAID','CANCELLED'];
   if (valid.indexOf(requestedStatus) === -1) return { error: 'Invalid status: ' + body.status };
 
   var found = findOrderRow_(body.id);
@@ -1210,7 +1210,7 @@ function updateStatus_(body) {
   }
 
   writeOrderAccountingMeta_(found.sh, found.rowIndex, requestedStatus);
-  if (requestedStatus === 'CANCELLED' || requestedStatus === 'FAILED_DELIVERY') {
+  if (requestedStatus === 'CANCELLED') {
     restoreOrderItemsOnce_(found.sh, found.rowIndex, body.id, requestedStatus);
   }
 
@@ -1223,14 +1223,20 @@ function normalizeOrderStatus_(status) {
   var s = String(status || '').trim();
   var key = s.toUpperCase().replace(/\s+/g, '_');
   if (key === 'CANCELLED' || key === 'CANCELED') return 'CANCELLED';
+  if (key === 'FAILED_DELIVERY') return 'RETURNED_UNPAID';
+  if (key === 'RETURNED_PAID') return 'RETURNED_PAID';
+  if (key === 'RETURNED_UNPAID') return 'RETURNED_UNPAID';
   if (key === 'RETURNED') return 'RETURNED';
-  if (key === 'FAILED_DELIVERY') return 'FAILED_DELIVERY';
   if (key === 'PENDING') return 'Pending';
   if (key === 'CONFIRMED') return 'Confirmed';
   if (key === 'PACKED') return 'Packed';
   if (key === 'SHIPPED') return 'Shipped';
   if (key === 'DELIVERED') return 'Delivered';
   return s;
+}
+
+function isTerminalReturnStatus_(key) {
+  return key === 'RETURNED' || key === 'RETURNED_PAID' || key === 'RETURNED_UNPAID';
 }
 
 function applyTerminalOrderState_(sh, rowIndex, status, reason) {
@@ -1240,9 +1246,15 @@ function applyTerminalOrderState_(sh, rowIndex, status, reason) {
     sh.getRange(rowIndex, OC.RETURN_DATE).setValue(now).setNumberFormat('DD-MMM-YYYY');
     sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Returned');
     if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
-  } else if (status === 'FAILED_DELIVERY') {
-    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Failed Delivery');
-    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Failed Delivery');
+  } else if (status === 'RETURNED_PAID') {
+    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Returned (paid delivery)');
+    sh.getRange(rowIndex, OC.RETURN_DATE).setValue(now).setNumberFormat('DD-MMM-YYYY');
+    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Returned (paid)');
+    if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
+  } else if (status === 'RETURNED_UNPAID') {
+    sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Returned (refused)');
+    sh.getRange(rowIndex, OC.RETURN_DATE).setValue(now).setNumberFormat('DD-MMM-YYYY');
+    sh.getRange(rowIndex, OC.RETURN_STATUS).setValue('Returned (refused)');
     if (reason) sh.getRange(rowIndex, OC.RETURN_REASON).setValue(String(reason).slice(0, 500));
   } else if (status === 'CANCELLED') {
     sh.getRange(rowIndex, OC.TRACKING_STATUS).setValue('Cancelled');
@@ -1557,7 +1569,7 @@ function getDashboard_(p) {
   orders.forEach(function(o) {
     var statusKey = normalizeOrderStatus_(o.status);
     var revenueActive = statusKey === 'Delivered';
-    var terminalReverse = statusKey === 'CANCELLED' || statusKey === 'RETURNED' || statusKey === 'FAILED_DELIVERY';
+    var terminalReverse = statusKey === 'CANCELLED' || isTerminalReturnStatus_(statusKey);
     var estimated = Number(o.estimatedProfit != null ? o.estimatedProfit : o.profit || 0);
     if (revenueActive) {
       totalRev  += o.sell_price;
@@ -1570,9 +1582,9 @@ function getDashboard_(p) {
     }
     if (estimated < 0) lossOrders++;
     if (statusKey==='Delivered') delivered++;
-    if (statusKey==='RETURNED')  returned++;
+    if (isTerminalReturnStatus_(statusKey)) returned++;
     if (statusKey==='CANCELLED') cancelled++;
-    if (statusKey==='FAILED_DELIVERY') failedDelivery++;
+    if (statusKey==='RETURNED_UNPAID') failedDelivery++;
     byStatus[statusKey]   = (byStatus[statusKey]||0)+1;
     byPayment[o.payment] = (byPayment[o.payment]||0)+1;
     if (!bySource[o.source]) bySource[o.source]={orders:0,revenue:0};
@@ -1704,7 +1716,7 @@ function getOrders_(p) {
     summary:{total:total,
              total_revenue:slice.reduce(function(a,o){return normalizeOrderStatus_(o.status)==='Delivered' ? a+o.sell_price : a;},0),
              total_profit: slice.reduce(function(a,o){return a+Number(o.realizedProfit || 0);},0),
-             pending_profit:slice.reduce(function(a,o){var s=normalizeOrderStatus_(o.status); return (s!=='Delivered' && s!=='RETURNED' && s!=='CANCELLED' && s!=='FAILED_DELIVERY') ? a+Number(o.estimatedProfit || o.profit || 0) : a;},0),
+             pending_profit:slice.reduce(function(a,o){var s=normalizeOrderStatus_(o.status); return (s!=='Delivered' && s!=='CANCELLED' && !isTerminalReturnStatus_(s)) ? a+Number(o.estimatedProfit || o.profit || 0) : a;},0),
              reversed_profit:slice.reduce(function(a,o){return a+Number(o.reversedProfit || 0);},0),
              by_status:byStatus}
   };
@@ -3034,7 +3046,7 @@ function rowToOrder_(r) {
     id:String(r[OC.ORDER_ID-1]||''),date:fmtDate_(r[OC.DATE-1]),
     customer:String(r[OC.CUSTOMER-1]||''),phone:String(r[OC.PHONE-1]||''),
     address:String(r[OC.ADDRESS-1]||''),payment:String(r[OC.PAYMENT-1]||''),
-    source:String(r[OC.SOURCE-1]||''),status:String(r[OC.STATUS-1]||''),
+    source:String(r[OC.SOURCE-1]||''),status:normalizeOrderStatus_(String(r[OC.STATUS-1]||'')),
     product:String(r[OC.PRODUCT-1]||''),category:String(r[OC.CATEGORY-1]||''),
     size:String(r[OC.SIZE-1]||''),qty:Number(r[OC.QTY-1]||0),
     unit_price:Number(r[OC.UNIT_PRICE-1]||0),discount:Number(r[OC.DISCOUNT-1]||0),
@@ -3082,7 +3094,7 @@ function parseOrderItemsMeta_(notes) {
 
 function accountingForOrderStatus_(status, estimatedProfit) {
   var key = normalizeOrderStatus_(status);
-  var terminal = key === 'RETURNED' || key === 'CANCELLED' || key === 'FAILED_DELIVERY';
+  var terminal = key === 'CANCELLED' || isTerminalReturnStatus_(key);
   if (key === 'Delivered') return { realizedProfit: estimatedProfit, reversedProfit: 0, pendingProfit: 0 };
   if (terminal) return { realizedProfit: 0, reversedProfit: estimatedProfit, pendingProfit: 0 };
   return { realizedProfit: 0, reversedProfit: 0, pendingProfit: estimatedProfit };
