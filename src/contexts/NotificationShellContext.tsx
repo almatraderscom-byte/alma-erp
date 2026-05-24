@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Button, Input, Select } from '@/components/ui'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { cn } from '@/lib/utils'
@@ -178,10 +179,42 @@ export function NotificationShellProvider({ children }: { children: ReactNode })
     return 'ok'
   }, [businessId, deferredQ, open, priority, sessionStatus, status])
 
+  const skipHistoryBackRef = useRef(false)
+
+  const closePanel = useCallback(() => {
+    setOpen(false)
+  }, [])
+
   const openPanel = useCallback(() => {
     setOpen(true)
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!open) return
+    window.history.pushState({ almaNotificationPanel: true }, '')
+    const onPopState = () => {
+      skipHistoryBackRef.current = true
+      setOpen(false)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+      if (!skipHistoryBackRef.current) {
+        window.history.back()
+      }
+      skipHistoryBackRef.current = false
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePanel()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [closePanel, open])
 
   useEffect(() => {
     pausedRef.current = false
@@ -277,144 +310,135 @@ export function NotificationShellProvider({ children }: { children: ReactNode })
     <NotificationShellContext.Provider value={shellValue}>
       {children}
 
-      <AnimatePresence>
-        {open && (
-          <>
-            <motion.button
-              type="button"
-              aria-label="Close notifications"
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-              style={{ zIndex: PLATFORM_Z.notificationPanel - 10 }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setOpen(false)}
-            />
-            <motion.aside
-              initial={{ x: 420, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 420, opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="fixed right-0 top-0 h-[100dvh] w-full max-w-md border-l border-gold-dim/30 bg-[#08080b] shadow-2xl shadow-black"
-              style={{ zIndex: PLATFORM_Z.notificationPanel }}
-            >
-              <div className="border-b border-border p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-base font-bold text-cream">Notification Center</p>
-                    <p className="text-[11px] text-zinc-500">
-                      {unread} unread · {criticalUnacked} critical need acknowledgment
-                    </p>
+      <MobileModalPortal
+        open={open}
+        zIndex={PLATFORM_Z.notificationPanel}
+        onBackdropClick={closePanel}
+        aria-label="Notification Center"
+        className="items-stretch justify-end p-0 md:items-stretch md:justify-end md:p-0"
+        backdropClassName="bg-black/60 backdrop-blur-sm"
+      >
+        <aside className="mobile-modal-shell flex h-[var(--ios-vv-height,100dvh)] max-h-[var(--ios-vv-height,100dvh)] w-full max-w-md flex-col border-l border-gold-dim/30 bg-[#08080b] shadow-2xl shadow-black md:ml-auto md:rounded-none md:rounded-l-2xl">
+          <header className="mobile-modal-header sticky top-0 z-20 shrink-0 border-b border-border bg-[#08080b]/95 backdrop-blur-md px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))]">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 pr-1">
+                <p className="text-base font-bold text-cream">Notification Center</p>
+                <p className="text-[11px] text-zinc-500">
+                  {unread} unread · {criticalUnacked} critical need acknowledgment
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePanel}
+                aria-label="Close notification center"
+                className="flex h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl border border-gold-dim/50 bg-gold/15 text-xl font-bold leading-none text-gold-lt shadow-lg shadow-black/30 active:scale-[0.96]"
+              >
+                ×
+              </button>
+            </div>
+            {!pushEnabled && process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID && (
+              <div className="mt-3">
+                <Button size="xs" variant="gold" onClick={() => void enablePush()}>
+                  Enable push
+                </Button>
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <Input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder="Search alerts"
+                className="col-span-3 py-2 text-xs"
+              />
+              <Select
+                value={status}
+                onChange={setStatus}
+                options={[
+                  { label: 'All', value: 'all' },
+                  { label: 'Unread', value: 'unread' },
+                  { label: 'Needs ack', value: 'needs_ack' },
+                  { label: 'Acknowledged', value: 'ack' },
+                ]}
+                className="col-span-2 text-xs"
+              />
+              <Select
+                value={priority}
+                onChange={setPriority}
+                options={[
+                  { label: 'Any priority', value: 'all' },
+                  { label: 'Low', value: 'LOW' },
+                  { label: 'Normal', value: 'NORMAL' },
+                  { label: 'High', value: 'HIGH' },
+                  { label: 'Critical', value: 'CRITICAL' },
+                ]}
+                className="text-xs"
+              />
+            </div>
+          </header>
+          <div className="mobile-modal-body min-h-0 flex-1 space-y-2 p-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
+            {!rows.length ? (
+              <p className="p-6 text-center text-xs text-zinc-600">No notifications found.</p>
+            ) : (
+              rows.map(n => (
+                <div
+                  key={n.id}
+                  className={cn(
+                    'rounded-2xl border p-3',
+                    priorityClass[n.priority],
+                    !n.recipient?.readAt && 'ring-1 ring-gold-dim/40',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-cream">
+                        {n.pinned ? 'Pinned · ' : ''}
+                        {n.title}
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-zinc-400">{n.message}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-current px-2 py-0.5 text-[9px] font-black">
+                      {n.priority}
+                    </span>
                   </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    {!pushEnabled && process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID && (
-                      <Button size="xs" variant="gold" onClick={() => void enablePush()}>
-                        Enable push
-                      </Button>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
+                    <span>{new Date(n.createdAt).toLocaleString()}</span>
+                    <span>{n.businessId || 'All businesses'}</span>
+                    <span>{n.recipient?.deliveryStatus || 'DELIVERED'}</span>
+                    {n.recipient?.pushStatus && <span>Push {n.recipient.pushStatus}</span>}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {n.actionUrl && (
+                      <a
+                        href={n.actionUrl}
+                        className="shrink-0 rounded-xl border border-border px-2.5 py-1.5 text-[11px] font-semibold text-gold-lt"
+                      >
+                        Open
+                      </a>
                     )}
-                    <Button size="xs" variant="secondary" onClick={() => setOpen(false)}>
-                      Close
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => void act(n.id, n.recipient?.readAt ? 'unread' : 'read')}
+                    >
+                      {n.recipient?.readAt ? 'Unread' : 'Read'}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant={n.recipient?.acknowledgedAt ? 'secondary' : 'gold'}
+                      onClick={() => void act(n.id, 'ack')}
+                    >
+                      {n.recipient?.acknowledgedAt ? 'Acknowledged' : 'Acknowledge'}
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={() => void act(n.id, n.pinned ? 'unpin' : 'pin')}>
+                      {n.pinned ? 'Unpin' : 'Pin'}
                     </Button>
                   </div>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Input
-                    value={q}
-                    onChange={e => setQ(e.target.value)}
-                    placeholder="Search alerts"
-                    className="col-span-3 py-2 text-xs"
-                  />
-                  <Select
-                    value={status}
-                    onChange={setStatus}
-                    options={[
-                      { label: 'All', value: 'all' },
-                      { label: 'Unread', value: 'unread' },
-                      { label: 'Needs ack', value: 'needs_ack' },
-                      { label: 'Acknowledged', value: 'ack' },
-                    ]}
-                    className="col-span-2 text-xs"
-                  />
-                  <Select
-                    value={priority}
-                    onChange={setPriority}
-                    options={[
-                      { label: 'Any priority', value: 'all' },
-                      { label: 'Low', value: 'LOW' },
-                      { label: 'Normal', value: 'NORMAL' },
-                      { label: 'High', value: 'HIGH' },
-                      { label: 'Critical', value: 'CRITICAL' },
-                    ]}
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-              <div className="h-[calc(100dvh-150px)] overflow-y-auto p-3 space-y-2">
-                {!rows.length ? (
-                  <p className="p-6 text-center text-xs text-zinc-600">No notifications found.</p>
-                ) : (
-                  rows.map(n => (
-                    <div
-                      key={n.id}
-                      className={cn(
-                        'rounded-2xl border p-3',
-                        priorityClass[n.priority],
-                        !n.recipient?.readAt && 'ring-1 ring-gold-dim/40',
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-cream">
-                            {n.pinned ? 'Pinned · ' : ''}
-                            {n.title}
-                          </p>
-                          <p className="mt-1 text-xs leading-relaxed text-zinc-400">{n.message}</p>
-                        </div>
-                        <span className="shrink-0 rounded-full border border-current px-2 py-0.5 text-[9px] font-black">
-                          {n.priority}
-                        </span>
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
-                        <span>{new Date(n.createdAt).toLocaleString()}</span>
-                        <span>{n.businessId || 'All businesses'}</span>
-                        <span>{n.recipient?.deliveryStatus || 'DELIVERED'}</span>
-                        {n.recipient?.pushStatus && <span>Push {n.recipient.pushStatus}</span>}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {n.actionUrl && (
-                          <a
-                            href={n.actionUrl}
-                            className="shrink-0 rounded-xl border border-border px-2.5 py-1.5 text-[11px] font-semibold text-gold-lt"
-                          >
-                            Open
-                          </a>
-                        )}
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => void act(n.id, n.recipient?.readAt ? 'unread' : 'read')}
-                        >
-                          {n.recipient?.readAt ? 'Unread' : 'Read'}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant={n.recipient?.acknowledgedAt ? 'secondary' : 'gold'}
-                          onClick={() => void act(n.id, 'ack')}
-                        >
-                          {n.recipient?.acknowledgedAt ? 'Acknowledged' : 'Acknowledge'}
-                        </Button>
-                        <Button size="xs" variant="ghost" onClick={() => void act(n.id, n.pinned ? 'unpin' : 'pin')}>
-                          {n.pinned ? 'Unpin' : 'Pin'}
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+              ))
+            )}
+          </div>
+        </aside>
+      </MobileModalPortal>
 
       <AnimatePresence>
         {critical && (
