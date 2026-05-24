@@ -218,6 +218,12 @@ function auditAppend_(body, result) {
       entityType = 'employee';
       entityId = String(result.emp_id || body.emp_id || '');
       summary = 'Employee saved ' + String(body.name || entityId);
+    } else if (route === 'hr_patch_employee_salary') {
+      entityType = 'employee';
+      entityId = String(result.emp_id || body.emp_id || '');
+      var prevSal = result.prev_salary != null ? Number(result.prev_salary) : Number(body.prev_salary || 0);
+      var newSal = result.new_salary != null ? Number(result.new_salary) : Number(body.monthly_salary || 0);
+      summary = 'Salary ৳' + prevSal + ' → ৳' + newSal + ' · ' + entityId;
     } else if (route === 'hr_payroll_add') {
       entityType = 'payroll';
       entityId = String(result.tx_id || '');
@@ -267,6 +273,13 @@ function auditAppend_(body, result) {
       if (route === 'inventory_edit') {
         detail.changed_fields = Object.keys(body.data || {});
       }
+    } else if (route === 'hr_patch_employee_salary') {
+      detail.emp_id = String(body.emp_id || '');
+      detail.prev_salary = result && result.prev_salary != null ? Number(result.prev_salary) : null;
+      detail.new_salary = result && result.new_salary != null ? Number(result.new_salary) : Number(body.monthly_salary || 0);
+      detail.effective_date = String(body.effective_date || '').slice(0, 32);
+      detail.reason = String(body.reason || '').slice(0, 500);
+      detail.actor_user_id = String(body.actor_user_id || '');
     }
     var sh = ensureAuditSheet_();
     var ts = new Date();
@@ -319,6 +332,7 @@ function dispatchRoutePost_(body) {
     case 'update_field':        return updateField_(body);
     case 'add_expense':         return addExpense_(body);
     case 'hr_employee_save':    return hrUpsertEmployee_(body);
+    case 'hr_patch_employee_salary': return hrPatchEmployeeSalary_(body);
     case 'hr_payroll_add':      return hrPayrollAppend_(body);
     case 'generate_invoice':    return triggerInvoice_(body);
     case 'save_invoice_pdf':    return triggerSaveInvoicePdf_(body);
@@ -2981,6 +2995,40 @@ function hrUpsertEmployee_(body) {
   sh.getRange(rowIndex > 0 ? rowIndex : sh.getLastRow(), 8).setNumberFormat('yyyy-mm-dd');
   SpreadsheetApp.flush();
   return { ok: true, emp_id: id };
+}
+
+function hrPatchEmployeeSalary_(body) {
+  var empId = String(body.emp_id || '').trim();
+  if (!empId) return { error: 'emp_id required' };
+  var newSalary = Math.round(Number(body.monthly_salary));
+  if (!isFinite(newSalary) || newSalary <= 0) return { error: 'monthly_salary must be positive' };
+  var biz = resolveBusinessId_(body.business_id || '');
+  var sh = hrEnsureEmployees_();
+  var last = sh.getLastRow();
+  if (last < 2) return { ok: false, error: 'emp_id_not_found' };
+  var rows = sh.getRange(2, 1, last - 1, sh.getLastColumn()).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]) !== empId) continue;
+    if (biz && String(rows[i][1]) !== String(biz)) {
+      return { ok: false, error: 'business_mismatch' };
+    }
+    var prevSalary = Math.round(Number(rows[i][8] || 0));
+    sh.getRange(i + 2, 9).setValue(newSalary);
+    SpreadsheetApp.flush();
+    apiLog_(
+      'EMPLOYEE_SALARY_UPDATE',
+      empId,
+      '৳' + prevSalary + ' → ৳' + newSalary,
+      JSON.stringify({ business_id: biz, prev_salary: prevSalary, new_salary: newSalary }).slice(0, 300),
+    );
+    return {
+      ok: true,
+      emp_id: empId,
+      prev_salary: prevSalary,
+      new_salary: newSalary,
+    };
+  }
+  return { ok: false, error: 'emp_id_not_found' };
 }
 
 function hrPayrollList_(p) {

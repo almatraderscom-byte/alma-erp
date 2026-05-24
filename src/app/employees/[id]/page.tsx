@@ -12,10 +12,13 @@ import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
+import { normalizeAlmaRole } from '@/lib/roles'
+import { formatMoneyBDT, roundMoney } from '@/lib/money'
 
 type EmployeeAttendanceResponse = {
   records: Array<{
@@ -39,14 +42,21 @@ type EmployeeAttendanceResponse = {
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>()
   const decoded = decodeURIComponent(id || '')
-  const { data: list, loading: listLoading } = useHREmployees()
+  const { data: list, loading: listLoading, refetch: refetchEmployees } = useHREmployees()
+  const { data: session } = useSession()
+  const actorRole = normalizeAlmaRole(session?.user?.role)
+  const canEditSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'ADMIN' || actorRole === 'HR'
   const { data: txs, loading, refetch } = useHRPayrollForEmployee(decoded || null)
   const { mutate: postPay, loading: paying } = useHrAddPayroll()
   const { branding } = useBranding()
   const { business } = useBusiness()
   const { label } = useDateRange()
   const [openPay, setOpenPay] = useState(false)
+  const [openSalary, setOpenSalary] = useState(false)
+  const [savingSalary, setSavingSalary] = useState(false)
   const payrollFormRef = useRef<HTMLFormElement>(null)
+  const salaryFormRef = useRef<HTMLFormElement>(null)
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
   const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
@@ -137,6 +147,55 @@ export default function EmployeeDetailPage() {
       refetch()
       void loadWallet()
       e.currentTarget.reset()
+    }
+  }
+
+  async function submitSalary(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!employee) return
+    const fd = new FormData(e.currentTarget)
+    const newSalary = roundMoney(Number(fd.get('new_salary') || 0))
+    const effectiveDate = String(fd.get('effective_date') || todayIso)
+    const reason = String(fd.get('reason') || '').trim()
+
+    if (!newSalary || newSalary <= 0) {
+      toast.error('Enter a valid salary amount')
+      return
+    }
+    if (newSalary > 1_000_000) {
+      toast.error('Salary cannot exceed ৳1,000,000')
+      return
+    }
+    if (newSalary === roundMoney(employee.monthly_salary)) {
+      toast.error('New salary must differ from current salary')
+      return
+    }
+
+    setSavingSalary(true)
+    try {
+      const res = await fetch(`/api/hr/employees/${encodeURIComponent(employee.emp_id)}/salary`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: newSalary,
+          businessId: business.id,
+          effectiveDate,
+          reason: reason || undefined,
+        }),
+      })
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; new_salary?: number }
+      if (!res.ok || !j.ok) {
+        toast.error(j.error || 'Failed to update salary')
+        return
+      }
+      toast.success(`Salary updated to ${formatMoneyBDT(Number(j.new_salary ?? newSalary))}`)
+      setOpenSalary(false)
+      refetchEmployees()
+      e.currentTarget.reset()
+    } catch (err) {
+      toast.error((err as Error).message || 'Failed to update salary')
+    } finally {
+      setSavingSalary(false)
     }
   }
 
@@ -236,6 +295,22 @@ export default function EmployeeDetailPage() {
       </Card>
 
       <Card className="p-5 mb-4 border-gold-dim/25">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div>
+            <p className="text-sm font-bold text-cream">Salary settings</p>
+            <p className="text-[11px] text-zinc-500 mt-1">Monthly base used for payroll accrual (GAS roster)</p>
+          </div>
+          {canEditSalary ? (
+            <Button size="xs" variant="ghost" onClick={() => setOpenSalary(true)}>Edit salary</Button>
+          ) : null}
+        </div>
+        <p className="font-mono text-2xl font-bold text-gold-lt">
+          {formatMoneyBDT(employee.monthly_salary)}
+        </p>
+        <p className="text-[10px] text-zinc-600 mt-2">Past accruals are not recalculated when salary changes.</p>
+      </Card>
+
+      <Card className="p-5 mb-4 border-gold-dim/25">
         <p className="text-sm font-bold text-cream mb-3">Postgres wallet ledger</p>
         {walletLoading ? <Skeleton className="h-44" /> : !wallet ? (
           <p className="text-xs text-zinc-500">No wallet data available for this employee/business.</p>
@@ -310,6 +385,72 @@ export default function EmployeeDetailPage() {
           </div>
         )}
       </Card>
+
+      {openSalary && employee && (
+        <MobileModalPortal open zIndex={120} onBackdropClick={() => !savingSalary && setOpenSalary(false)} aria-label="Update employee salary">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Update salary for {employee.name}</p>
+            </div>
+            <form ref={salaryFormRef} id="edit-salary-form" onSubmit={submitSalary} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="mobile-modal-body space-y-3 px-5 pb-4">
+                <label className="block space-y-1">
+                  <span className="text-zinc-500">Current salary</span>
+                  <input
+                    readOnly
+                    value={formatMoneyBDT(employee.monthly_salary)}
+                    className="w-full rounded-xl bg-black/30 border border-border px-3 py-2 font-mono text-sm text-zinc-400"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-zinc-500">New monthly salary (৳)</span>
+                  <input
+                    name="new_salary"
+                    type="number"
+                    min={1}
+                    max={1_000_000}
+                    step={1}
+                    required
+                    defaultValue={employee.monthly_salary}
+                    className="w-full rounded-xl bg-card border border-border px-3 py-2 font-mono text-sm text-cream"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-zinc-500">Effective from</span>
+                  <input
+                    name="effective_date"
+                    type="date"
+                    defaultValue={todayIso}
+                    required
+                    className="w-full rounded-xl bg-card border border-border px-3 py-2 font-mono text-sm"
+                  />
+                </label>
+                <p className="text-[10px] text-zinc-500">
+                  New monthly accrual will start from the effective date you choose (stored in audit for now).
+                </p>
+                <label className="block space-y-1">
+                  <span className="text-zinc-500">Reason (optional)</span>
+                  <textarea
+                    name="reason"
+                    rows={2}
+                    maxLength={500}
+                    placeholder="e.g. annual increment, role change"
+                    className="w-full rounded-xl bg-card border border-border px-3 py-2 text-sm text-cream"
+                  />
+                </label>
+              </div>
+              <div className="mobile-modal-footer px-5 pt-3">
+                <div className="flex gap-2">
+                  <Button type="button" variant="gold" className="flex-1 justify-center" disabled={savingSalary} onClick={() => salaryFormRef.current?.requestSubmit()}>
+                    {savingSalary ? 'Saving…' : 'Save'}
+                  </Button>
+                  <Button type="button" variant="ghost" className="flex-1 justify-center" disabled={savingSalary} onClick={() => setOpenSalary(false)}>Cancel</Button>
+                </div>
+              </div>
+            </form>
+          </Card>
+        </MobileModalPortal>
+      )}
 
       {openPay && (
         <MobileModalPortal open zIndex={120} onBackdropClick={() => setOpenPay(false)} aria-label="Log payroll movement">
