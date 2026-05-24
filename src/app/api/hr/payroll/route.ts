@@ -5,6 +5,7 @@ import { serverGet, serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { createCompensationLedgerEntry, isDebitCompensationType } from '@/lib/payroll-compensation'
+import { logEvent } from '@/lib/logger'
 
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
@@ -53,6 +54,18 @@ async function mirrorLegacyPayrollToWallet(
   const employeeId = String(body.emp_id || '').trim()
   const amount = Number(body.amount || 0)
   if (!employeeId || !Number.isFinite(amount) || amount === 0) return { ok: false, skipped: 'missing_employee_or_amount' }
+
+  const txKey = String(body.tx_type || '').trim().toLowerCase()
+  if (txKey === 'salary_payment' && String(body.source || '') !== 'wallet_request') {
+    logEvent('warn', 'payroll.salary_payment_manual_use', {
+      employeeId,
+      amount,
+      businessId: ctx.businessIds[0],
+      userId: ctx.userId,
+      legacyTxId: String(result.tx_id || ''),
+      note: String(body.note || '').slice(0, 200),
+    })
+  }
 
   try {
     const entry = await createCompensationLedgerEntry({

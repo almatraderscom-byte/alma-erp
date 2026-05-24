@@ -36,6 +36,18 @@ type MealProfileRowState = {
   saving: boolean
 }
 
+const PAYROLL_COMPENSATION_TYPES = [
+  { value: 'SALARY_ACCRUAL', label: '💰 Salary credit (manual)', kind: 'credit' as const },
+  { value: 'COMMISSION', label: 'Commission earned', kind: 'credit' as const },
+  { value: 'EID_BONUS', label: 'Eid bonus', kind: 'credit' as const },
+  { value: 'PERFORMANCE_BONUS', label: 'Performance bonus', kind: 'credit' as const },
+  { value: 'OVERTIME', label: 'Overtime payment', kind: 'credit' as const },
+  { value: 'REIMBURSEMENT', label: 'Reimbursement', kind: 'credit' as const },
+  { value: 'MEAL_DEDUCTION', label: 'Meal deduction (debit)', kind: 'debit' as const },
+  { value: 'PENALTY', label: 'Penalty (debit)', kind: 'debit' as const },
+  { value: 'ADJUSTMENT', label: 'Manual adjustment', kind: 'adjust' as const },
+] as const
+
 export default function PayrollPage() {
   const { role } = useActor()
   const { business } = useBusiness()
@@ -341,7 +353,7 @@ export default function PayrollPage() {
           <div className="flex justify-between gap-3 items-start flex-wrap mb-4">
             <div>
               <p className="text-sm font-bold text-cream">Compensation tools</p>
-              <p className="text-[11px] text-zinc-500 mt-1">Post Eid bonus, performance bonus, overtime, reimbursement, meal deduction, penalty, or manual commission into the unified wallet ledger.</p>
+              <p className="text-[11px] text-zinc-500 mt-1">Post salary credit, bonuses, commission, overtime, reimbursements, deductions, penalties, or adjustments into the unified wallet ledger.</p>
             </div>
           </div>
           <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
@@ -350,7 +362,11 @@ export default function PayrollPage() {
               {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
             </select>
             <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
-              {['COMMISSION', 'EID_BONUS', 'PERFORMANCE_BONUS', 'OVERTIME', 'REIMBURSEMENT', 'MEAL_DEDUCTION', 'PENALTY', 'ADJUSTMENT'].map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              {PAYROLL_COMPENSATION_TYPES.map(t => (
+                <option key={t.value} value={t.value}>
+                  {t.label}{t.kind === 'credit' ? ' · credit' : t.kind === 'debit' ? ' · debit' : ''}
+                </option>
+              ))}
             </select>
             <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min="1" step="1" placeholder="Amount" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
             <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />

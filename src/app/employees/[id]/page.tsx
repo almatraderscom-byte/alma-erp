@@ -20,6 +20,53 @@ import { unwrapApiData } from '@/lib/safe-api-response'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { formatMoneyBDT, roundMoney } from '@/lib/money'
 
+type LegacyPayTxType = 'deposit' | 'advance' | 'salary_payment' | 'adjustment'
+
+type PayrollPayPayload = {
+  emp_id: string
+  tx_type: string
+  amount: number
+  date: string
+  period_ym: string
+  note: string
+}
+
+const LEGACY_PAY_TX_OPTIONS: { value: LegacyPayTxType; label: string }[] = [
+  { value: 'deposit', label: '💰 Credit salary (add to wallet)' },
+  { value: 'advance', label: '💸 Advance to employee (debit)' },
+  { value: 'salary_payment', label: '⚠️ Mark salary as paid out (debit - usually via approval)' },
+  { value: 'adjustment', label: '⚙️ Adjustment (correction)' },
+]
+
+function isDebitPayrollTx(txType: string) {
+  return txType === 'advance' || txType === 'salary_payment'
+}
+
+function payrollTxHelper(txType: string): { text: string; className: string } {
+  if (txType === 'deposit') {
+    return {
+      text: '✓ This will INCREASE the employee\'s wallet balance.',
+      className: 'text-green-400 font-bold',
+    }
+  }
+  if (txType === 'advance') {
+    return {
+      text: '⚠ This will DECREASE balance (employee received cash early).',
+      className: 'text-amber-400 font-bold',
+    }
+  }
+  if (txType === 'salary_payment') {
+    return {
+      text: '⚠ Caution: Use only if you paid salary outside the wallet. Normal flow is employee withdrawal request → approval.',
+      className: 'text-amber-400 font-bold',
+    }
+  }
+  return {
+    text: 'Manual correction — can be positive or negative depending on amount sign in ledger mirror.',
+    className: 'text-zinc-400 font-bold',
+  }
+}
+
 type EmployeeAttendanceResponse = {
   records: Array<{
     id: string
@@ -52,6 +99,8 @@ export default function EmployeeDetailPage() {
   const { business } = useBusiness()
   const { label } = useDateRange()
   const [openPay, setOpenPay] = useState(false)
+  const [payTxType, setPayTxType] = useState<LegacyPayTxType>('deposit')
+  const [payConfirm, setPayConfirm] = useState<PayrollPayPayload | null>(null)
   const [openSalary, setOpenSalary] = useState(false)
   const [savingSalary, setSavingSalary] = useState(false)
   const payrollFormRef = useRef<HTMLFormElement>(null)
@@ -124,13 +173,26 @@ export default function EmployeeDetailPage() {
     return () => { signal.cancelled = true }
   }, [loadAttendance])
 
+  async function executePay(payload: PayrollPayPayload, form?: HTMLFormElement | null) {
+    const res = await postPay(payload)
+    if (res?.ok) {
+      toast.success('Payroll logged')
+      setOpenPay(false)
+      setPayConfirm(null)
+      setPayTxType('deposit')
+      refetch()
+      void loadWallet()
+      form?.reset()
+    }
+  }
+
   async function submitPay(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!employee) return
     const fd = new FormData(e.currentTarget)
-    const payload = {
+    const payload: PayrollPayPayload = {
       emp_id: employee.emp_id,
-      tx_type: String(fd.get('tx_type') || ''),
+      tx_type: String(fd.get('tx_type') || payTxType),
       amount: Number(fd.get('amount') || 0),
       date: String(fd.get('date') || ''),
       period_ym: String(fd.get('period_ym') || ''),
@@ -140,14 +202,11 @@ export default function EmployeeDetailPage() {
       toast.error('Transaction type & amount required')
       return
     }
-    const res = await postPay(payload)
-    if (res?.ok) {
-      toast.success('Payroll logged')
-      setOpenPay(false)
-      refetch()
-      void loadWallet()
-      e.currentTarget.reset()
+    if (isDebitPayrollTx(payload.tx_type)) {
+      setPayConfirm(payload)
+      return
     }
+    await executePay(payload, e.currentTarget)
   }
 
   async function submitSalary(e: React.FormEvent<HTMLFormElement>) {
@@ -244,7 +303,17 @@ export default function EmployeeDetailPage() {
       </Card>
 
       <div className="flex justify-end mb-3">
-        <Button size="xs" variant="gold" onClick={() => setOpenPay(true)}>+ Payroll entry</Button>
+        <Button
+          size="xs"
+          variant="gold"
+          onClick={() => {
+            setPayTxType('deposit')
+            setPayConfirm(null)
+            setOpenPay(true)
+          }}
+        >
+          + Payroll entry
+        </Button>
       </div>
 
       <Card className="p-5 mb-4 border-gold-dim/25">
@@ -452,8 +521,52 @@ export default function EmployeeDetailPage() {
         </MobileModalPortal>
       )}
 
+      {payConfirm && employee && (
+        <MobileModalPortal open zIndex={130} onBackdropClick={() => setPayConfirm(null)} aria-label="Confirm wallet debit">
+          <Card className="mobile-modal-shell w-full max-w-md border-amber-500/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-amber-300">Confirm wallet debit</p>
+              <p className="mt-2 text-xs text-zinc-400 leading-relaxed">
+                This will <span className="font-bold text-red-400">DECREASE</span> {employee.name}&apos;s wallet balance by{' '}
+                <span className="font-mono text-gold-lt">৳ {payConfirm.amount.toLocaleString('en-BD')}</span>.
+              </p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Current balance:{' '}
+                <span className="font-mono text-cream">
+                  ৳ {Number(wallet?.summary.currentBalance ?? 0).toLocaleString('en-BD')}
+                </span>
+                <br />
+                After this entry:{' '}
+                <span className="font-mono text-amber-300">
+                  ৳ {(Number(wallet?.summary.currentBalance ?? 0) - payConfirm.amount).toLocaleString('en-BD')}
+                </span>
+              </p>
+              <p className="mt-3 text-[11px] font-bold text-amber-400/90">
+                Salary credits should usually use &quot;Credit salary (add to wallet)&quot;.
+              </p>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3 pb-5">
+              <div className="flex gap-2">
+                <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={() => setPayConfirm(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  className="flex-1 justify-center"
+                  disabled={paying}
+                  onClick={() => void executePay(payConfirm, payrollFormRef.current)}
+                >
+                  {paying ? 'Posting…' : 'Yes, deduct from wallet'}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </MobileModalPortal>
+      )}
+
       {openPay && (
-        <MobileModalPortal open zIndex={120} onBackdropClick={() => setOpenPay(false)} aria-label="Log payroll movement">
+        <MobileModalPortal open zIndex={120} onBackdropClick={() => { setOpenPay(false); setPayConfirm(null) }} aria-label="Log payroll movement">
           <Card className="mobile-modal-shell w-full max-w-md border-gold-dim/30 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">Log payroll movement</p>
@@ -462,12 +575,20 @@ export default function EmployeeDetailPage() {
               <div className="mobile-modal-body space-y-3 px-5 pb-4">
               <label className="block space-y-1">
                 <span className="text-zinc-500">Type</span>
-                <select name="tx_type" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" required>
-                  <option value="advance">advance</option>
-                  <option value="deposit">deposit</option>
-                  <option value="salary_payment">salary_payment</option>
-                  <option value="adjustment">adjustment</option>
+                <select
+                  name="tx_type"
+                  value={payTxType}
+                  onChange={e => setPayTxType(e.target.value as LegacyPayTxType)}
+                  className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm"
+                  required
+                >
+                  {LEGACY_PAY_TX_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
+                <p className={`text-[11px] mt-1.5 leading-snug ${payrollTxHelper(payTxType).className}`}>
+                  {payrollTxHelper(payTxType).text}
+                </p>
               </label>
               <label className="block space-y-1">
                 <span className="text-zinc-500">Amount (৳)</span>
