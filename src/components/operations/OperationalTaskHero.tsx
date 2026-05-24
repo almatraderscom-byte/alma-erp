@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence } from 'framer-motion'
@@ -245,13 +246,14 @@ export function OperationalTaskHero({
               {hasBanner ? (
                 <>
                   <div className="relative h-[55dvh] min-h-[240px] shrink-0 sm:h-[min(48vh,400px)]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <Image
                       src={t.bannerImageUrl!}
                       alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
-                      loading="eager"
-                      decoding="async"
+                      fill
+                      priority
+                      quality={80}
+                      sizes="(max-width: 480px) 100vw, 480px"
+                      className="object-cover"
                     />
                     <div
                       className="absolute inset-0 bg-gradient-to-b from-transparent via-black/50 to-black"

@@ -2,6 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: { serverComponentsExternalPackages: ['@react-pdf/renderer'] },
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: '**.supabase.co' },
+      { protocol: 'https', hostname: '**.googleusercontent.com' },
+      { protocol: 'https', hostname: 'drive.google.com' },
+    ],
+  },
   poweredByHeader: false,
   compress: true,
   env: {
