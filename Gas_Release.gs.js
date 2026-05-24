@@ -2,4 +2,4 @@
  * Alma ERP — deploy stamp surfaced via GET route=api_health
  * Updated automatically by scripts/gas-deploy.sh before clasp push (single deploy = consistent).
  */
-var GAS_RELEASE_STAMP = '2026-05-18T19:12Z';
+var GAS_RELEASE_STAMP = '2026-05-24T12:16Z';

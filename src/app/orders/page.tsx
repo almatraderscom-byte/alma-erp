@@ -18,6 +18,11 @@ import {
 import { useMdUp } from '@/hooks/useMdUp'
 import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText } from '@/components/ui'
 import { fmt, COURIER_STEPS, STATUS_COLORS } from '@/lib/utils'
+import {
+  calculateOrderProfit,
+  orderProfitInputsFromOrder,
+  projectedReturnLossBdt,
+} from '@/lib/order-return-profit'
 import { api, APIError } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { safeFetchJson } from '@/lib/safe-fetch'
@@ -48,14 +53,18 @@ const DESTRUCTIVE_STATUS_META: Record<'CANCELLED' | 'RETURNED_PAID' | 'RETURNED_
   },
   RETURNED_PAID: {
     title: 'Mark returned (paid delivery)?',
-    body: 'Customer refused the product but paid delivery. This will mark inventory for restock and reverse profit accounting.',
+    body: 'Customer refused the product but paid delivery. Inventory will be marked for restock.',
     label: 'Confirm returned (paid)',
   },
   RETURNED_UNPAID: {
     title: 'Mark returned (refused)?',
-    body: 'Customer refused everything. This will mark inventory for restock and reverse profit accounting.',
+    body: 'Customer refused everything. Inventory will be marked for restock.',
     label: 'Confirm returned (refused)',
   },
+}
+
+function orderStatusKey(status: string) {
+  return status.trim().toUpperCase().replace(/\s+/g, '_')
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -182,6 +191,85 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     }
   }
 
+  const profitInputs = useMemo(
+    () => orderProfitInputsFromOrder(order),
+    [order.qty, order.unit_price, order.discount, order.add_discount, order.sell_price, order.cogs, order.shipping_fee, order.courier_charge, order.inventoryCost],
+  )
+
+  const profitDisplay = useMemo(() => {
+    const key = orderStatusKey(order.status)
+    const calc = calculateOrderProfit(order.status, profitInputs)
+    const roundTrip = 2 * profitInputs.courierCharge
+
+    if (key === 'DELIVERED') {
+      const amount = Number(order.net_profit ?? order.realizedProfit ?? calc.netProfit)
+      const margin = order.sell_price > 0 ? Math.round(amount / order.sell_price * 100) : 0
+      return {
+        label: 'Profit',
+        amount,
+        detail: `Margin ${margin}% (incl. shipping)`,
+        amountClass: 'text-green-400',
+        marginLabel: 'Margin',
+        marginValue: `${margin}%`,
+      }
+    }
+    if (key === 'RETURNED_PAID') {
+      const net = Number(order.return_net_profit ?? calc.netProfit)
+      const loss = net < 0 ? Math.abs(net) : 0
+      return {
+        label: 'Return loss',
+        amount: -loss,
+        detail: `Customer paid ৳${profitInputs.shippingFee}, courier round-trip ৳${roundTrip}`,
+        amountClass: 'text-amber-400',
+        marginLabel: 'Net',
+        marginValue: fmt(net),
+      }
+    }
+    if (key === 'RETURNED_UNPAID' || key === 'RETURNED') {
+      const net = Number(order.return_net_profit ?? calc.netProfit)
+      return {
+        label: 'Return loss',
+        amount: net,
+        detail: 'Refused: full courier loss',
+        amountClass: 'text-red-400',
+        marginLabel: 'Net',
+        marginValue: fmt(net),
+      }
+    }
+    if (key === 'CANCELLED' || key === 'CANCELED') {
+      return {
+        label: 'Profit',
+        amount: 0,
+        detail: 'No financial impact',
+        amountClass: 'text-zinc-500',
+        marginLabel: 'Margin',
+        marginValue: '—',
+      }
+    }
+    const est = Number(order.estimatedProfit ?? calc.netProfit)
+    return {
+      label: 'Est. profit',
+      amount: est,
+      detail: 'Estimated',
+      amountClass: 'text-gold',
+      marginLabel: 'Margin',
+      marginValue: order.sell_price > 0 ? `${Math.round(est / order.sell_price * 100)}%` : '—',
+    }
+  }, [order, profitInputs])
+
+  const returnLossPreview = useMemo(() => {
+    if (!confirmStatus || confirmStatus === 'CANCELLED') return null
+    const loss = projectedReturnLossBdt(confirmStatus, profitInputs)
+    const roundTrip = 2 * profitInputs.courierCharge
+    if (confirmStatus === 'RETURNED_UNPAID') {
+      return `This will record a loss of ৳${roundTrip} (round-trip courier).`
+    }
+    if (loss === 0) {
+      return 'Shipping collected covers courier round-trip — minimal or no loss.'
+    }
+    return `This will record a loss of ৳${loss} (customer paid ৳${profitInputs.shippingFee} shipping; courier round-trip ৳${roundTrip}).`
+  }, [confirmStatus, profitInputs])
+
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
   const canCancel = mayAdvance && !TERMINAL_STATUSES.has(order.status)
@@ -304,12 +392,13 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <Money amount={order.sell_price ?? 0} className="text-base font-bold text-gold" />
             </div>
             <div className="bg-card rounded-xl p-3 text-center">
-              <p className="text-[10px] text-zinc-500 mb-1">Profit</p>
-              <Money amount={order.profit ?? 0} className="text-base font-bold text-green-400" />
+              <p className="text-[10px] text-zinc-500 mb-1">{profitDisplay.label}</p>
+              <Money amount={profitDisplay.amount} className={`text-base font-bold ${profitDisplay.amountClass}`} />
+              <p className="text-[9px] text-zinc-500 mt-1 leading-tight">{profitDisplay.detail}</p>
             </div>
             <div className="bg-card rounded-xl p-3 text-center">
-              <p className="text-[10px] text-zinc-500 mb-1">Margin</p>
-              <p className="text-base font-bold text-cream">{order.margin_pct}%</p>
+              <p className="text-[10px] text-zinc-500 mb-1">{profitDisplay.marginLabel}</p>
+              <p className={`text-base font-bold ${profitDisplay.amountClass}`}>{profitDisplay.marginValue}</p>
             </div>
           </div>
 
@@ -538,6 +627,11 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <p className="mt-2 text-xs leading-relaxed text-zinc-400">
                 {confirmStatus === 'CANCELLED' ? DESTRUCTIVE_STATUS_META.CANCELLED.body : DESTRUCTIVE_STATUS_META[confirmStatus].body}
               </p>
+              {returnLossPreview && (
+                <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200">
+                  {returnLossPreview}
+                </p>
+              )}
               <div className="mt-4 rounded-xl border border-border bg-black/25 p-3 text-[11px]">
                 <p className="text-zinc-500">Order</p>
                 <p className="font-mono text-gold-lt">{order.id}</p>

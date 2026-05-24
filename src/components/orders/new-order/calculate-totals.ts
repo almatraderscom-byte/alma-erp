@@ -1,4 +1,5 @@
 import type { NewOrderForm, NewOrderItemForm } from './types'
+import { calculateDeliveredProfit } from '@/lib/order-return-profit'
 
 export function orderItemSubtotal(item: NewOrderItemForm) {
   return Math.max(0, Number(item.qty || 0)) * Math.max(0, Number(item.sell_price || 0))
@@ -48,9 +49,16 @@ export function calculateNewOrderTotals(form: NewOrderForm): NewOrderTotals {
   const payable = Math.max(0, subtotal - discount + shipping)
   const paidClamped = Math.min(payable, Math.max(0, paid))
   const inventoryCost = form.items.reduce((sum, item) => sum + orderItemInventoryCost(item), 0)
-  const merchandiseProfit = subtotal - discount - inventoryCost
-  const shippingMargin = shipping - courierCost
-  const estimatedProfit = merchandiseProfit + shippingMargin
+  const delivered = calculateDeliveredProfit({
+    subtotal,
+    discount,
+    inventoryCost,
+    shippingFee: shipping,
+    courierCharge: courierCost,
+  })
+  const merchandiseProfit = delivered.merchandiseProfit
+  const shippingMargin = delivered.shippingMargin
+  const estimatedProfit = delivered.netProfit
 
   return {
     subtotal,

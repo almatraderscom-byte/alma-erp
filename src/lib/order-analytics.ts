@@ -13,7 +13,15 @@ import {
   subDays,
   subMonths,
 } from 'date-fns'
+import {
+  calculateOrderAccounting,
+  orderProfitInputsFromOrder,
+} from '@/lib/order-return-profit'
 import type { Order, OrderStatus } from '@/types'
+
+function orderAccounting(o: Order) {
+  return calculateOrderAccounting(o.status, orderProfitInputsFromOrder(o))
+}
 
 function statusKey(status: string) {
   return status.trim().toUpperCase().replace(/\s+/g, '_')
@@ -209,6 +217,12 @@ export interface DashboardKpisExtended {
   pending_profit: number
   reversed_profit: number
   loss_orders: number
+  total_returns_loss: number
+  net_business_profit: number
+  returned_paid_count: number
+  returned_unpaid_count: number
+  return_rate_paid: number
+  return_rate_refused: number
 }
 
 export interface DashboardMetrics {
@@ -232,6 +246,8 @@ const EMPTY_KPIS: DashboardKpisExtended = {
   gross_margin: 0, avg_order_value: 0, delivered_count: 0, pending_count: 0,
   returned_count: 0, cancelled_count: 0, failed_delivery_count: 0, delivery_rate: 0, return_rate: 0, sla_breaches: 0,
   pending_action: 0, cod_amount: 0, total_realized_profit: 0, pending_profit: 0, reversed_profit: 0, loss_orders: 0,
+  total_returns_loss: 0, net_business_profit: 0, returned_paid_count: 0, returned_unpaid_count: 0,
+  return_rate_paid: 0, return_rate_refused: 0,
 }
 
 /** Aggregate dashboard KPIs, breakdowns, and chart series from a filtered order set. */
@@ -247,6 +263,8 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
 
   let totalRev = 0, totalPro = 0, totalCOGS = 0, pendingProfit = 0, reversedProfit = 0, lossOrders = 0
   let delivered = 0, returned = 0, cancelled = 0, failedDelivery = 0, pending = 0, codAmount = 0
+  let deliveredProfit = 0, returnsLoss = 0, returnNetTotal = 0
+  let returnedPaid = 0, returnedUnpaid = 0
   const byStatus: Record<string, number> = {}
   const bySource: Record<string, { orders: number; revenue: number }> = {}
   const byPayment: Record<string, number> = {}
@@ -260,20 +278,34 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     const status = normalizeOrderStatusKey(o.status)
     const revenueActive = isRevenueStatus(o.status)
     const reversed = isReversedStatus(o.status)
-    const estimated = Number(o.estimatedProfit ?? o.profit ?? 0)
+    const acct = orderAccounting(o)
+    const estimated = Number(o.estimatedProfit ?? acct.pendingProfit ?? o.profit ?? 0)
     if (revenueActive) {
+      const realized = Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
       totalRev += o.sell_price
-      totalPro += Number(o.realizedProfit ?? estimated)
+      totalPro += realized
+      deliveredProfit += realized
       totalCOGS += o.cogs
+    } else if (isTerminalReturnStatus(status)) {
+      const returnNet = Number(o.return_net_profit ?? acct.returnNetProfit)
+      returnNetTotal += returnNet
+      if (returnNet < 0) {
+        returnsLoss += Math.abs(returnNet)
+        reversedProfit += Math.abs(returnNet)
+        lossOrders++
+      }
     } else if (reversed) {
-      reversedProfit += Number(o.reversedProfit ?? estimated)
+      // CANCELLED — no courier loss
     } else {
-      pendingProfit += estimated
+      pendingProfit += Number(acct.pendingProfit ?? estimated)
     }
-    if (estimated < 0) lossOrders++
 
     if (status === 'DELIVERED') delivered++
-    if (isTerminalReturnStatus(status)) returned++
+    if (isTerminalReturnStatus(status)) {
+      returned++
+      if (status === 'RETURNED_PAID') returnedPaid++
+      if (status === 'RETURNED_UNPAID' || status === 'RETURNED') returnedUnpaid++
+    }
     if (status === 'CANCELLED') cancelled++
     if (status === 'RETURNED_UNPAID') failedDelivery++
     if (status === 'PENDING') pending++
@@ -292,7 +324,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     byCat[o.category].orders++
     if (revenueActive) {
       byCat[o.category].revenue += o.sell_price
-      byCat[o.category].profit += Number(o.realizedProfit ?? estimated)
+      byCat[o.category].profit += Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
     }
 
     const prodKey = o.product || 'Unknown'
@@ -315,7 +347,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
       if (!daily[d]) daily[d] = { date: d, revenue: 0, profit: 0, orders: 0 }
       if (revenueActive) {
         daily[d].revenue += o.sell_price
-        daily[d].profit += Number(o.realizedProfit ?? estimated)
+        daily[d].profit += Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
       }
       daily[d].orders++
 
@@ -326,7 +358,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
         if (!monthly[key]) monthly[key] = { month: mon, revenue: 0, profit: 0, orders: 0, cogs: 0 }
         if (revenueActive) {
           monthly[key].revenue += o.sell_price
-          monthly[key].profit += Number(o.realizedProfit ?? estimated)
+          monthly[key].profit += Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
           monthly[key].cogs += o.cogs
         }
         monthly[key].orders++
@@ -357,6 +389,12 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
       pending_profit: pendingProfit,
       reversed_profit: reversedProfit,
       loss_orders: lossOrders,
+      total_returns_loss: returnsLoss,
+      net_business_profit: deliveredProfit + returnNetTotal,
+      returned_paid_count: returnedPaid,
+      returned_unpaid_count: returnedUnpaid,
+      return_rate_paid: n > 0 ? Math.round(returnedPaid / n * 100) : 0,
+      return_rate_refused: n > 0 ? Math.round(returnedUnpaid / n * 100) : 0,
       total_cogs: totalCOGS,
       gross_margin: totalRev > 0 ? Math.round(totalPro / totalRev * 100) : 0,
       avg_order_value: n > 0 ? Math.round(totalRev / n) : 0,

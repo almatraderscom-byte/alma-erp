@@ -20,6 +20,8 @@ export interface Order {
   paid_amount?: number; due_amount?: number
   estimatedProfit?: number; realizedProfit?: number; reversedProfit?: number
   courierCost?: number; inventoryCost?: number
+  net_profit?: number; return_net_profit?: number; shipping_margin?: number; merchandise_profit?: number
+  returnType?: string
   items?: OrderItem[]
 }
 
@@ -71,6 +73,12 @@ export interface DashboardKpis {
   delivery_rate: number; return_rate: number; sla_breaches: number; pending_action: number
   returned_count?: number; cancelled_count?: number; failed_delivery_count?: number
   total_realized_profit?: number; pending_profit?: number; reversed_profit?: number; loss_orders?: number
+  total_returns_loss?: number
+  net_business_profit?: number
+  returned_paid_count?: number
+  returned_unpaid_count?: number
+  return_rate_paid?: number
+  return_rate_refused?: number
 }
 
 export interface DashboardData {

@@ -1547,7 +1547,9 @@ function getDashboard_(p) {
     kpis: { total_orders:0,total_revenue:0,total_profit:0,total_cogs:0,gross_margin:0,
             avg_order_value:0,delivered_count:0,delivery_rate:0,return_rate:0,
             sla_breaches:0,pending_action:0,returned_count:0,cancelled_count:0,failed_delivery_count:0,
-            total_realized_profit:0,pending_profit:0,reversed_profit:0,loss_orders:0 },
+            total_realized_profit:0,pending_profit:0,reversed_profit:0,loss_orders:0,
+            total_returns_loss:0,net_business_profit:0,returned_paid_count:0,returned_unpaid_count:0,
+            return_rate_paid:0,return_rate_refused:0 },
     by_status:{},by_source:{},by_payment:{},by_category:{},
     profit_by_seller:{},profit_by_collection:{},
     sla_breaches:[],recent_orders:[],generated_at:new Date().toISOString()
@@ -1563,7 +1565,8 @@ function getDashboard_(p) {
   if (!orders.length) return emptyResult;
 
   var totalRev=0,totalPro=0,totalCOGS=0,delivered=0,returned=0,cancelled=0,failedDelivery=0;
-  var pendingProfit=0,reversedProfit=0,lossOrders=0;
+  var pendingProfit=0,reversedProfit=0,lossOrders=0,deliveredProfit=0,returnsLoss=0,returnNetTotal=0;
+  var returnedPaid=0,returnedUnpaid=0;
   var byStatus={},bySource={},byPayment={},byCat={},bySeller={},byCollection={},slaBreaches=[],monthly={};
 
   orders.forEach(function(o) {
@@ -1572,17 +1575,30 @@ function getDashboard_(p) {
     var terminalReverse = statusKey === 'CANCELLED' || isTerminalReturnStatus_(statusKey);
     var estimated = Number(o.estimatedProfit != null ? o.estimatedProfit : o.profit || 0);
     if (revenueActive) {
+      var realized = Number(o.realizedProfit != null ? o.realizedProfit : o.net_profit != null ? o.net_profit : estimated);
       totalRev  += o.sell_price;
-      totalPro  += Number(o.realizedProfit != null ? o.realizedProfit : estimated);
+      totalPro  += realized;
+      deliveredProfit += realized;
       totalCOGS += o.cogs;
+    } else if (isTerminalReturnStatus_(statusKey)) {
+      var returnNet = Number(o.return_net_profit != null ? o.return_net_profit : 0);
+      returnNetTotal += returnNet;
+      if (returnNet < 0) {
+        returnsLoss += Math.abs(returnNet);
+        reversedProfit += Math.abs(returnNet);
+        lossOrders++;
+      }
     } else if (terminalReverse) {
-      reversedProfit += Number(o.reversedProfit != null ? o.reversedProfit : estimated);
+      // CANCELLED — no courier loss
     } else {
       pendingProfit += estimated;
     }
-    if (estimated < 0) lossOrders++;
     if (statusKey==='Delivered') delivered++;
-    if (isTerminalReturnStatus_(statusKey)) returned++;
+    if (isTerminalReturnStatus_(statusKey)) {
+      returned++;
+      if (statusKey === 'RETURNED_PAID') returnedPaid++;
+      if (statusKey === 'RETURNED_UNPAID' || statusKey === 'RETURNED') returnedUnpaid++;
+    }
     if (statusKey==='CANCELLED') cancelled++;
     if (statusKey==='RETURNED_UNPAID') failedDelivery++;
     byStatus[statusKey]   = (byStatus[statusKey]||0)+1;
@@ -1646,6 +1662,12 @@ function getDashboard_(p) {
       pending_profit:pendingProfit,
       reversed_profit:reversedProfit,
       loss_orders:lossOrders,
+      total_returns_loss:returnsLoss,
+      net_business_profit:deliveredProfit + returnNetTotal,
+      returned_paid_count:returnedPaid,
+      returned_unpaid_count:returnedUnpaid,
+      return_rate_paid:n>0 ? Math.round(returnedPaid/n*100):0,
+      return_rate_refused:n>0 ? Math.round(returnedUnpaid/n*100):0,
       gross_margin:   totalRev>0 ? Math.round(totalPro/totalRev*100):0,
       avg_order_value:n>0 ? Math.round(totalRev/n):0,
       delivered_count:delivered,
@@ -3041,7 +3063,9 @@ function rowToOrder_(r) {
   var sell=Number(r[OC.SELL_PRICE-1]||0),profit=Number(r[OC.PROFIT-1]||0);
   var rawNotes = String(r[OC.NOTES-1]||'');
   var meta = parseOrderItemsMeta_(rawNotes);
-  var accounting = accountingForOrderStatus_(String(r[OC.STATUS-1]||''), Number(meta.estimatedProfit != null ? meta.estimatedProfit : profit));
+  var profitInputs = orderProfitInputsFromRowValues_(r, meta);
+  var accounting = calculateOrderAccounting_(String(r[OC.STATUS-1]||''), profitInputs);
+  var netProfit = meta && meta.netProfit != null ? Number(meta.netProfit) : accounting.netProfit;
   return {
     id:String(r[OC.ORDER_ID-1]||''),date:fmtDate_(r[OC.DATE-1]),
     customer:String(r[OC.CUSTOMER-1]||''),phone:String(r[OC.PHONE-1]||''),
@@ -3065,13 +3089,18 @@ function rowToOrder_(r) {
     business_id:String(r[OC.BUSINESS_ID-1]||'')||'ALMA_LIFESTYLE',
     paid_amount:meta.paid_amount,
     due_amount:meta.due_amount,
-    estimatedProfit:Number(meta.estimatedProfit != null ? meta.estimatedProfit : profit),
+    estimatedProfit:Number(meta.estimatedProfit != null ? meta.estimatedProfit : calculateDeliveredProfit_(profitInputs).netProfit),
     realizedProfit:accounting.realizedProfit,
     reversedProfit:accounting.reversedProfit,
+    net_profit:netProfit,
+    return_net_profit:Number(meta && meta.returnNetProfit != null ? meta.returnNetProfit : accounting.returnNetProfit),
+    shipping_margin:Number(meta && meta.shippingMargin != null ? meta.shippingMargin : accounting.shippingMargin),
+    merchandise_profit:Number(meta && meta.merchandiseProfit != null ? meta.merchandiseProfit : accounting.merchandiseProfit),
+    returnType:String(meta && meta.returnType || accounting.returnType || ''),
     courierCost:Number(meta.courierCost || r[OC.COURIER_CHARGE-1] || 0),
     inventoryCost:Number(meta.inventoryCost || r[OC.COGS-1] || 0),
     items:meta.items || [],
-    margin_pct:sell>0?Math.round(profit/sell*100):0,
+    margin_pct:sell>0?Math.round(netProfit/sell*100):0,
   };
 }
 
@@ -3092,22 +3121,141 @@ function parseOrderItemsMeta_(notes) {
   }
 }
 
-function accountingForOrderStatus_(status, estimatedProfit) {
+/** Mirror of src/lib/order-return-profit.ts — keep formulas in sync. */
+function roundOrderMoney_(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return 0;
+  return Math.round(v);
+}
+
+function orderProfitInputsFromRowValues_(r, meta) {
+  var qty = Number(r[OC.QTY - 1] || 0);
+  var unitPrice = Number(r[OC.UNIT_PRICE - 1] || 0);
+  var subtotal = qty > 0 && unitPrice > 0 ? unitPrice * qty : Number(r[OC.SELL_PRICE - 1] || 0);
+  return {
+    subtotal: Math.max(0, roundOrderMoney_(subtotal)),
+    discount: Math.max(0, roundOrderMoney_(Number(r[OC.DISCOUNT - 1] || 0) + Number(r[OC.ADD_DISCOUNT - 1] || 0))),
+    inventoryCost: Math.max(0, roundOrderMoney_(meta && meta.inventoryCost != null ? meta.inventoryCost : r[OC.COGS - 1] || 0)),
+    shippingFee: Math.max(0, roundOrderMoney_(r[OC.SHIP_COLLECTED - 1] || 0)),
+    courierCharge: Math.max(0, roundOrderMoney_(r[OC.COURIER_CHARGE - 1] || 0)),
+  };
+}
+
+function calculateDeliveredProfit_(inputs) {
+  var merchandiseProfit = inputs.subtotal - inputs.discount - inputs.inventoryCost;
+  var shippingMargin = inputs.shippingFee - inputs.courierCharge;
+  return {
+    merchandiseProfit: merchandiseProfit,
+    shippingMargin: shippingMargin,
+    netProfit: merchandiseProfit + shippingMargin,
+    scenario: 'delivered',
+  };
+}
+
+function calculateReturnedPaidProfit_(inputs) {
+  var roundTrip = 2 * inputs.courierCharge;
+  return {
+    merchandiseProfit: 0,
+    shippingMargin: inputs.shippingFee - roundTrip,
+    netProfit: inputs.shippingFee - roundTrip,
+    scenario: 'returned_paid',
+  };
+}
+
+function calculateReturnedUnpaidProfit_(inputs) {
+  var roundTrip = 2 * inputs.courierCharge;
+  return {
+    merchandiseProfit: 0,
+    shippingMargin: -roundTrip,
+    netProfit: -roundTrip,
+    scenario: 'returned_unpaid',
+  };
+}
+
+function calculateOrderProfit_(status, inputs) {
   var key = normalizeOrderStatus_(status);
-  var terminal = key === 'CANCELLED' || isTerminalReturnStatus_(key);
-  if (key === 'Delivered') return { realizedProfit: estimatedProfit, reversedProfit: 0, pendingProfit: 0 };
-  if (terminal) return { realizedProfit: 0, reversedProfit: estimatedProfit, pendingProfit: 0 };
-  return { realizedProfit: 0, reversedProfit: 0, pendingProfit: estimatedProfit };
+  if (key === 'Delivered') return calculateDeliveredProfit_(inputs);
+  if (key === 'RETURNED_PAID') return calculateReturnedPaidProfit_(inputs);
+  if (key === 'RETURNED_UNPAID' || key === 'RETURNED') return calculateReturnedUnpaidProfit_(inputs);
+  if (key === 'CANCELLED') return { merchandiseProfit: 0, shippingMargin: 0, netProfit: 0, scenario: 'cancelled' };
+  var est = calculateDeliveredProfit_(inputs);
+  est.scenario = 'in_progress';
+  return est;
+}
+
+function calculateOrderAccounting_(status, inputs) {
+  var result = calculateOrderProfit_(status, inputs);
+  var key = normalizeOrderStatus_(status);
+  if (key === 'Delivered') {
+    return {
+      realizedProfit: result.netProfit,
+      reversedProfit: 0,
+      pendingProfit: 0,
+      returnNetProfit: 0,
+      netProfit: result.netProfit,
+      merchandiseProfit: result.merchandiseProfit,
+      shippingMargin: result.shippingMargin,
+      returnType: '',
+    };
+  }
+  if (isTerminalReturnStatus_(key) || key === 'RETURNED') {
+    var loss = result.netProfit < 0 ? Math.abs(result.netProfit) : 0;
+    return {
+      realizedProfit: 0,
+      reversedProfit: loss,
+      pendingProfit: 0,
+      returnNetProfit: result.netProfit,
+      netProfit: result.netProfit,
+      merchandiseProfit: result.merchandiseProfit,
+      shippingMargin: result.shippingMargin,
+      returnType: key === 'RETURNED' ? 'RETURNED_UNPAID' : key,
+    };
+  }
+  if (key === 'CANCELLED') {
+    return {
+      realizedProfit: 0,
+      reversedProfit: 0,
+      pendingProfit: 0,
+      returnNetProfit: 0,
+      netProfit: 0,
+      merchandiseProfit: 0,
+      shippingMargin: 0,
+      returnType: '',
+    };
+  }
+  var pending = calculateDeliveredProfit_(inputs).netProfit;
+  return {
+    realizedProfit: 0,
+    reversedProfit: 0,
+    pendingProfit: pending,
+    returnNetProfit: 0,
+    netProfit: pending,
+    merchandiseProfit: result.merchandiseProfit,
+    shippingMargin: result.shippingMargin,
+    returnType: '',
+  };
+}
+
+function accountingForOrderStatus_(status, inputs) {
+  return calculateOrderAccounting_(status, inputs);
 }
 
 function writeOrderAccountingMeta_(sh, rowIndex, status) {
   var notes = String(sh.getRange(rowIndex, OC.NOTES).getValue() || '');
   var meta = parseOrderItemsMeta_(notes);
   if (!meta || meta.paid_amount == null) return;
-  var accounting = accountingForOrderStatus_(status, Number(meta.estimatedProfit || 0));
+  var rowValues = sh.getRange(rowIndex, 1, 1, TOTAL_COLS).getValues()[0];
+  var profitInputs = orderProfitInputsFromRowValues_(rowValues, meta);
+  var accounting = calculateOrderAccounting_(status, profitInputs);
   meta.realizedProfit = accounting.realizedProfit;
   meta.reversedProfit = accounting.reversedProfit;
-  meta.accountingStatus = status === 'Delivered' ? 'REALIZED' : accounting.reversedProfit ? 'REVERSED' : 'ESTIMATED';
+  meta.returnNetProfit = accounting.returnNetProfit;
+  meta.netProfit = accounting.netProfit;
+  meta.merchandiseProfit = accounting.merchandiseProfit;
+  meta.shippingMargin = accounting.shippingMargin;
+  meta.returnType = accounting.returnType || '';
+  meta.estimatedProfit = calculateDeliveredProfit_(profitInputs).netProfit;
+  meta.accountingStatus = status === 'Delivered' ? 'REALIZED' : accounting.returnNetProfit !== 0 ? 'RETURN' : accounting.reversedProfit ? 'REVERSED' : 'ESTIMATED';
   var marker = 'ORDER_ITEMS_JSON:';
   sh.getRange(rowIndex, OC.NOTES).setValue((meta.notes ? meta.notes + '\n' : '') + marker + JSON.stringify(meta));
 }
