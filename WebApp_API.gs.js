@@ -1010,6 +1010,43 @@ function validateOrderInventory_(items, stock) {
   });
 }
 
+/** Deduct stock for order items; skips missing SKUs with a warning (revert / edge cases). */
+function applyOrderInventoryDeductionsLenient_(items, stock, warnings) {
+  if (!items.length) return;
+  var map = stock || getStockRowsBySku_();
+  var demand = orderInventoryDemand_(items);
+  var touched = {};
+  Object.keys(demand).forEach(function(sku) {
+    var ref = map[sku];
+    if (!ref) {
+      if (warnings) warnings.push('SKU not found: ' + sku);
+      return;
+    }
+    var qty = demand[sku];
+    var sold = Number(ref.data[7] || 0) + qty;
+    var current = Math.max(0, Number(ref.data[11] || 0) - qty);
+    var available = Math.max(0, Number(ref.data[12] || 0) - qty);
+    var reorder = Number(ref.data[13] || 0);
+    var status = available <= 0 ? '❌ OUT OF STOCK' : available <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
+    ref.data[7] = sold;
+    ref.data[11] = current;
+    ref.data[12] = available;
+    ref.data[14] = status;
+    var rowKey = ref.sh.getSheetId() + ':' + ref.row;
+    touched[rowKey] = ref;
+  });
+  Object.keys(touched).forEach(function(rowKey) {
+    var ref = touched[rowKey];
+    var slice = ref.sh.getRange(ref.row, 8, 1, 8).getValues()[0];
+    slice[0] = ref.data[7];
+    slice[4] = ref.data[11];
+    slice[5] = ref.data[12];
+    slice[7] = ref.data[14];
+    ref.sh.getRange(ref.row, 8, 1, 8).setValues([slice]);
+  });
+  SpreadsheetApp.flush();
+}
+
 function applyOrderInventoryDeductions_(items, stock) {
   if (!items.length) return;
   var map = stock || getStockRowsBySku_();
@@ -1095,19 +1132,53 @@ function processDeferredOrderCrmHooks_() {
   return { ok: true, processed: processed, failed: failed };
 }
 
+function isInventoryRestoreTerminal_(status) {
+  var key = normalizeOrderStatus_(status);
+  return key === 'CANCELLED' || key === 'RETURNED' || key === 'RETURNED_PAID' || key === 'RETURNED_UNPAID';
+}
+
+function appendInventoryAudit_(orderId, action, reason, detail) {
+  try {
+    var sh = ensureAuditSheet_();
+    var ts = new Date();
+    var iso = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'");
+    sh.appendRow([
+      iso,
+      'inventory_' + action,
+      'system',
+      '',
+      'ALMA_LIFESTYLE',
+      'order',
+      String(orderId),
+      'Inventory ' + action + ' for order ' + orderId + ' due to ' + reason,
+      JSON.stringify(detail || {}).slice(0, 12000),
+      'OK',
+    ]);
+    SpreadsheetApp.flush();
+  } catch (e) {
+    apiLog_('WARN', 'audit', 'inventory audit append failed: ' + e.message, String(orderId));
+  }
+}
+
 function restoreOrderItemsOnce_(orderSheet, rowIndex, orderId, reason) {
   var meta = parseOrderItemsMeta_(String(orderSheet.getRange(rowIndex, OC.NOTES).getValue() || ''));
-  if (!meta || !meta.items || !meta.items.length || meta.stockRestored) return { ok: true, skipped: 'already_restored_or_no_items' };
+  if (!meta || !meta.items || !meta.items.length) {
+    return { ok: true, skipped: 'no_items' };
+  }
+  if (meta.stockRestored === true) {
+    return { ok: true, skipped: 'already_restored', reason: 'already_restored' };
+  }
   var stock = getStockRowsBySku_();
-  var demand = {};
-  meta.items.forEach(function(item) {
-    var sku = String(item.stock_sku || item.sku || '').trim().toLowerCase();
-    if (!sku) return;
-    demand[sku] = (demand[sku] || 0) + Number(item.qty || 0);
-  });
+  var demand = orderInventoryDemand_(meta.items);
+  var restoredSkus = [];
+  var missingSkus = [];
   Object.keys(demand).forEach(function(sku) {
     var ref = stock[sku];
-    if (!ref) return;
+    if (!ref) {
+      missingSkus.push(sku);
+      apiLog_('WARN', 'INVENTORY_RESTORE', String(orderId), 'SKU not found for restock: ' + sku, reason);
+      return;
+    }
     var qty = demand[sku];
     var sold = Math.max(0, Number(ref.data[7] || 0) - qty);
     var current = Number(ref.data[11] || 0) + qty;
@@ -1118,14 +1189,38 @@ function restoreOrderItemsOnce_(orderSheet, rowIndex, orderId, reason) {
     ref.sh.getRange(ref.row, 12).setValue(current);
     ref.sh.getRange(ref.row, 13).setValue(available);
     ref.sh.getRange(ref.row, 15).setValue(status);
+    restoredSkus.push(sku);
   });
   updateOrderMetaFlag_(orderSheet, rowIndex, function(next) {
     next.stockRestored = true;
     next.stockRestoredAt = new Date().toISOString();
     next.stockRestoreReason = reason;
+    delete next.stockRedeductedAt;
+    delete next.stockRedeductReason;
   });
-  apiLog_('INVENTORY_RESTORE', String(orderId), 'Order item stock restored for ' + reason, JSON.stringify({ skus: Object.keys(demand) }).slice(0, 1000));
-  return { ok: true, restored: true };
+  appendInventoryAudit_(orderId, 'restored', reason, { skus: restoredSkus, missing: missingSkus, qty_by_sku: demand });
+  apiLog_('INVENTORY_RESTORE', String(orderId), 'Order item stock restored for ' + reason, JSON.stringify({ skus: restoredSkus, missing: missingSkus }).slice(0, 1000));
+  return { ok: true, restored: true, skus: restoredSkus, missing: missingSkus };
+}
+
+function reapplyOrderInventoryDeductionsOnce_(orderSheet, rowIndex, orderId, reason) {
+  var meta = parseOrderItemsMeta_(String(orderSheet.getRange(rowIndex, OC.NOTES).getValue() || ''));
+  if (!meta || !meta.items || !meta.items.length || meta.stockRestored !== true) {
+    return { ok: true, skipped: 'not_restored_or_no_items' };
+  }
+  var warnings = [];
+  var stock = getStockRowsBySku_();
+  applyOrderInventoryDeductionsLenient_(meta.items, stock, warnings);
+  updateOrderMetaFlag_(orderSheet, rowIndex, function(next) {
+    next.stockRestored = false;
+    next.stockRedeductedAt = new Date().toISOString();
+    next.stockRedeductReason = reason;
+    delete next.stockRestoredAt;
+    delete next.stockRestoreReason;
+  });
+  appendInventoryAudit_(orderId, 'rededucted', reason, { warnings: warnings, items: meta.items.length });
+  apiLog_('INVENTORY_REDEDUCT', String(orderId), 'Stock re-deducted after status revert: ' + reason, JSON.stringify({ warnings: warnings }).slice(0, 1000));
+  return { ok: true, rededucted: true, warnings: warnings };
 }
 
 function ensureOrderItemsSheet_() {
@@ -1188,8 +1283,16 @@ function updateStatus_(body) {
   if (!found) return { error: 'Order not found: ' + body.id };
 
   var oldStatus = found.data[OC.STATUS - 1];
+  var oldStatusKey = normalizeOrderStatus_(oldStatus);
   body.previous_status = body.previous_status || oldStatus;
   body.status = requestedStatus;
+
+  var notesBefore = String(found.sh.getRange(found.rowIndex, OC.NOTES).getValue() || '');
+  var metaBefore = parseOrderItemsMeta_(notesBefore);
+  if (isInventoryRestoreTerminal_(oldStatus) && !isInventoryRestoreTerminal_(requestedStatus) && metaBefore && metaBefore.stockRestored === true) {
+    reapplyOrderInventoryDeductionsOnce_(found.sh, found.rowIndex, body.id, oldStatusKey + '→' + requestedStatus);
+  }
+
   found.sh.getRange(found.rowIndex, OC.STATUS).setValue(requestedStatus);
   applyTerminalOrderState_(found.sh, found.rowIndex, requestedStatus, body.reason || '');
 
@@ -1210,7 +1313,7 @@ function updateStatus_(body) {
   }
 
   writeOrderAccountingMeta_(found.sh, found.rowIndex, requestedStatus);
-  if (requestedStatus === 'CANCELLED') {
+  if (isInventoryRestoreTerminal_(requestedStatus)) {
     restoreOrderItemsOnce_(found.sh, found.rowIndex, body.id, requestedStatus);
   }
 
@@ -3099,6 +3202,9 @@ function rowToOrder_(r) {
     returnType:String(meta && meta.returnType || accounting.returnType || ''),
     courierCost:Number(meta.courierCost || r[OC.COURIER_CHARGE-1] || 0),
     inventoryCost:Number(meta.inventoryCost || r[OC.COGS-1] || 0),
+    stockRestored:meta.stockRestored === true,
+    stockRestoredAt:String(meta.stockRestoredAt || ''),
+    stockRestoreReason:String(meta.stockRestoreReason || ''),
     items:meta.items || [],
     margin_pct:sell>0?Math.round(netProfit/sell*100):0,
   };

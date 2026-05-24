@@ -22,6 +22,7 @@ export interface Order {
   courierCost?: number; inventoryCost?: number
   net_profit?: number; return_net_profit?: number; shipping_margin?: number; merchandise_profit?: number
   returnType?: string
+  stockRestored?: boolean; stockRestoredAt?: string; stockRestoreReason?: string
   items?: OrderItem[]
 }
 

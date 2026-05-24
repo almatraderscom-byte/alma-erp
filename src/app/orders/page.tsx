@@ -270,10 +270,27 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
     return `This will record a loss of ৳${loss} (customer paid ৳${profitInputs.shippingFee} shipping; courier round-trip ৳${roundTrip}).`
   }, [confirmStatus, profitInputs])
 
+  const isReturnTerminal = ['RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID', 'Returned'].includes(order.status)
+
+  const restockStatusLabel = useMemo(() => {
+    if (!isReturnTerminal) return null
+    if (order.stockRestored) {
+      const at = order.stockRestoredAt
+      let when = ''
+      if (at) {
+        const d = new Date(at)
+        if (!Number.isNaN(d.getTime())) {
+          when = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+        }
+      }
+      return when ? `✓ Inventory restored on ${when}` : '✓ Inventory restored'
+    }
+    return '⚠ Inventory not restored'
+  }, [isReturnTerminal, order.stockRestored, order.stockRestoredAt])
+
   const steps = COURIER_STEPS[order.status] ?? COURIER_STEPS.Pending!
   const nextStatus = STATUS_NEXT[order.status]
   const canCancel = mayAdvance && !TERMINAL_STATUSES.has(order.status)
-  const isReturnTerminal = ['RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID', 'Returned'].includes(order.status)
   const canReturn = mayAdvance && !isReturnTerminal && !['CANCELLED', 'Cancelled'].includes(order.status) && ['Delivered', 'Shipped'].includes(order.status)
   const internalInvoiceUrl = `/invoice/share/${shareSlugAlma(order.id)}`
 
@@ -401,6 +418,18 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <p className={`text-base font-bold ${profitDisplay.amountClass}`}>{profitDisplay.marginValue}</p>
             </div>
           </div>
+
+          {restockStatusLabel && (
+            <div
+              className={`rounded-xl border px-4 py-2.5 text-xs ${
+                order.stockRestored
+                  ? 'border-green-400/20 bg-green-400/5 text-green-300'
+                  : 'border-amber-400/20 bg-amber-400/5 text-amber-300'
+              }`}
+            >
+              {restockStatusLabel}
+            </div>
+          )}
 
           <div>
             <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Customer</p>
@@ -630,6 +659,11 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               {returnLossPreview && (
                 <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200">
                   {returnLossPreview}
+                </p>
+              )}
+              {confirmStatus && confirmStatus !== 'CANCELLED' && (
+                <p className="mt-2 text-xs text-zinc-400">
+                  Items will be returned to inventory automatically.
                 </p>
               )}
               <div className="mt-4 rounded-xl border border-border bg-black/25 p-3 text-[11px]">
