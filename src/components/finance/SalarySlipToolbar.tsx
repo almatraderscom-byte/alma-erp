@@ -33,8 +33,22 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
     [model],
   )
 
+  const { breakdown } = model
+  const statusBadge = breakdown.isPaid
+    ? (
+      <span className="inline-flex items-center gap-1 rounded-lg border border-green-400/35 bg-green-400/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-green-300">
+        <span aria-hidden>🟢</span> PAID
+      </span>
+    )
+    : (
+      <span className="inline-flex items-center gap-1 rounded-lg border border-red-400/35 bg-red-400/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-300">
+        <span aria-hidden>🔴</span> UNPAID
+      </span>
+    )
+
   return (
-    <div className="flex flex-wrap gap-2 justify-end">
+    <div className="flex flex-wrap items-center gap-2 justify-end">
+      {statusBadge}
       <Button
         variant="secondary"
         disabled={busy}
@@ -74,11 +88,10 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
         variant="secondary"
         disabled={busy}
         onClick={() => {
-          const { breakdown } = model
           const lines = [
             `Hello ${model.employee.name},`,
             '',
-            `Your salary slip for ${model.periodLabel}:`,
+            `Your salary slip for ${model.periodLabel}: [${breakdown.isPaid ? 'PAID' : 'UNPAID'}]`,
             `Basic Salary: ${pdfMoney(breakdown.basicSalary)}`,
             `Penalty: ${pdfMoney(breakdown.penalty)}`,
             `Net Pay: ${pdfMoney(breakdown.netPay)}`,
