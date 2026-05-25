@@ -69,8 +69,13 @@ self.addEventListener('fetch', event => {
     fetch(req)
       .then(res => res)
       .catch(async () => {
-        if (req.mode === 'navigate') return caches.match('/offline.html')
-        return Response.error()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        try {
+          return await fetch(req)
+        } catch {
+          if (req.mode === 'navigate') return caches.match('/offline.html')
+          return Response.error()
+        }
       }),
   )
 })

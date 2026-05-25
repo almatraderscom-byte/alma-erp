@@ -41,6 +41,7 @@ export function PwaBootstrap() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstall, setShowInstall] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [serverSlow, setServerSlow] = useState(false)
   const [staleBuild, setStaleBuild] = useState(false)
   const ios = useMemo(() => isIosSafari(), [])
 
@@ -63,14 +64,12 @@ export function PwaBootstrap() {
   }, [])
 
   useEffect(() => {
-    function onAuthCacheClear() {
+    function onForceRelogin() {
       void clearStaleRuntimeCaches()
     }
-    window.addEventListener('alma:auth-failure', onAuthCacheClear)
-    window.addEventListener('alma:force-relogin', onAuthCacheClear)
+    window.addEventListener('alma:force-relogin', onForceRelogin)
     return () => {
-      window.removeEventListener('alma:auth-failure', onAuthCacheClear)
-      window.removeEventListener('alma:force-relogin', onAuthCacheClear)
+      window.removeEventListener('alma:force-relogin', onForceRelogin)
     }
   }, [])
 
@@ -89,12 +88,13 @@ export function PwaBootstrap() {
       criticalFailures = 0
       clearOfflineTimer()
       setOffline(false)
+      setServerSlow(false)
     }
     const scheduleOffline = () => {
       if (offlineTimer || offline) return
       offlineTimer = window.setTimeout(() => {
         offlineTimer = null
-        if (navigator.onLine === false || criticalFailures >= CRITICAL_FAILURE_THRESHOLD) {
+        if (navigator.onLine === false) {
           setOffline(true)
         }
       }, OFFLINE_CONFIRM_DELAY_MS)
@@ -116,7 +116,9 @@ export function PwaBootstrap() {
       }
       if (!detail?.critical) return
       criticalFailures += 1
-      if (criticalFailures >= CRITICAL_FAILURE_THRESHOLD) scheduleOffline()
+      if (criticalFailures >= CRITICAL_FAILURE_THRESHOLD) {
+        setServerSlow(true)
+      }
     }
 
     if (navigator.onLine === false) scheduleOffline()
@@ -240,7 +242,13 @@ export function PwaBootstrap() {
 
       {offline && (
         <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[220] mx-auto max-w-md rounded-2xl border border-amber-300/30 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-amber-100 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          Offline mode: live ERP data will refresh when the connection returns.
+          You&apos;re offline. Reconnect to continue.
+        </div>
+      )}
+
+      {serverSlow && !offline && (
+        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[219] mx-auto max-w-md rounded-2xl border border-sky-400/25 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-sky-100 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          Server is slow to respond. Some data may be outdated.
         </div>
       )}
 
