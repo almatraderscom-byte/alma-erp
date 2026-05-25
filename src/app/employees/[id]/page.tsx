@@ -21,7 +21,9 @@ import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
 import { normalizeAlmaRole } from '@/lib/roles'
+import { isWalletAdmin } from '@/lib/payroll-wallet'
 import { formatMoneyBDT, roundMoney } from '@/lib/money'
+import type { HRAddPayrollResponse } from '@/types/hr'
 
 type LegacyPayTxType = 'deposit' | 'advance' | 'salary_payment' | 'adjustment'
 
@@ -96,6 +98,7 @@ export default function EmployeeDetailPage() {
   const { data: session } = useSession()
   const actorRole = normalizeAlmaRole(session?.user?.role)
   const canEditSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'ADMIN' || actorRole === 'HR'
+  const canWriteWallet = isWalletAdmin(actorRole)
   const { data: txs, loading, refetch } = useHRPayrollForEmployee(decoded || null)
   const { mutate: postPay, loading: paying } = useHrAddPayroll()
   const { branding } = useBranding()
@@ -177,15 +180,23 @@ export default function EmployeeDetailPage() {
   }, [loadAttendance])
 
   async function executePay(payload: PayrollPayPayload, form?: HTMLFormElement | null) {
-    const res = await postPay(payload)
+    const res = (await postPay(payload)) as HRAddPayrollResponse | null
     if (res?.ok) {
-      toast.success('Payroll logged')
+      if (res.wallet?.ok === false || res.wallet?.skipped) {
+        toast.error(
+          `Saved to legacy roll but wallet NOT updated: ${res.wallet.skipped || 'unknown'}. Contact admin.`,
+        )
+      } else {
+        toast.success('Payroll logged + wallet updated')
+      }
       setOpenPay(false)
       setPayConfirm(null)
       setPayTxType('deposit')
       refetch()
       void loadWallet()
       form?.reset()
+    } else {
+      toast.error(`Failed: ${res?.error || 'unknown error'}`)
     }
   }
 
@@ -340,19 +351,21 @@ export default function EmployeeDetailPage() {
         </div>
       </Card>
 
-      <div className="flex justify-end mb-3">
-        <Button
-          size="xs"
-          variant="gold"
-          onClick={() => {
-            setPayTxType('deposit')
-            setPayConfirm(null)
-            setOpenPay(true)
-          }}
-        >
-          + Payroll entry
-        </Button>
-      </div>
+      {canWriteWallet ? (
+        <div className="flex justify-end mb-3">
+          <Button
+            size="xs"
+            variant="gold"
+            onClick={() => {
+              setPayTxType('deposit')
+              setPayConfirm(null)
+              setOpenPay(true)
+            }}
+          >
+            + Payroll entry
+          </Button>
+        </div>
+      ) : null}
 
       <Card className="p-5 mb-4 border-gold-dim/25">
         <p className="text-sm font-bold text-cream mb-3">Attendance summary</p>

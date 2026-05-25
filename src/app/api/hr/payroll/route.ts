@@ -3,9 +3,18 @@ import type { EmployeeLedgerEntryType } from '@prisma/client'
 import { Prisma } from '@prisma/client'
 import { serverGet, serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
-import { getWalletContext } from '@/lib/payroll-wallet-access'
+import { getWalletContext, resolveWalletScopeBusinessId } from '@/lib/payroll-wallet-access'
 import { createCompensationLedgerEntry, isDebitCompensationType } from '@/lib/payroll-compensation'
 import { logEvent } from '@/lib/logger'
+
+type MirrorWalletResult = {
+  ok: boolean
+  skipped?: string
+  entryId?: string
+  employeeId?: string
+  businessId?: string
+  type?: string
+}
 
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
@@ -37,30 +46,85 @@ function walletTypeFromLegacy(txType: unknown): EmployeeLedgerEntryType | null {
   return null
 }
 
+function logMirrorSkip(
+  reason: string,
+  body: Record<string, unknown>,
+  extra: {
+    result?: Record<string, unknown>
+    userId?: string
+    role?: string
+    businessId?: string
+    employeeId?: string
+    amount?: number
+  } = {},
+): MirrorWalletResult {
+  logEvent('warn', 'payroll.legacy_mirror_skipped', {
+    reason,
+    employeeId: extra.employeeId ?? (String(body.emp_id || '').trim() || undefined),
+    tx_type: body.tx_type,
+    amount: extra.amount ?? Number(body.amount || 0),
+    userId: extra.userId,
+    role: extra.role,
+    businessId: extra.businessId ?? (String(body.business_id || '').trim() || undefined),
+    legacyTxId: extra.result ? String(extra.result.tx_id || '') : undefined,
+  })
+  const ok = reason === 'legacy_type_not_wallet_mirrored' || reason === 'wallet_entry_already_mirrored'
+  return { ok, skipped: reason }
+}
+
 async function mirrorLegacyPayrollToWallet(
   req: NextRequest,
   body: Record<string, unknown>,
   result: Record<string, unknown>,
-) {
-  if (!result?.ok) return { ok: false, skipped: 'legacy_write_failed' }
-  const type = walletTypeFromLegacy(body.tx_type)
-  if (!type) return { ok: true, skipped: 'legacy_type_not_wallet_mirrored' }
-
-  const businessId = String(body.business_id || 'ALMA_LIFESTYLE')
-  const ctx = await getWalletContext(req, businessId)
-  if ('error' in ctx) return { ok: false, skipped: 'wallet_context_denied' }
-  if (!ctx.isAdmin) return { ok: false, skipped: 'not_wallet_admin' }
-
+): Promise<MirrorWalletResult> {
+  const requestedBusinessId = String(body.business_id || 'ALMA_LIFESTYLE').trim()
   const employeeId = String(body.emp_id || '').trim()
   const amount = Number(body.amount || 0)
-  if (!employeeId || !Number.isFinite(amount) || amount === 0) return { ok: false, skipped: 'missing_employee_or_amount' }
+
+  if (!result?.ok) {
+    return logMirrorSkip('legacy_write_failed', body, { result, employeeId, amount, businessId: requestedBusinessId })
+  }
+
+  const type = walletTypeFromLegacy(body.tx_type)
+  if (!type) {
+    return logMirrorSkip('legacy_type_not_wallet_mirrored', body, { result, employeeId, amount, businessId: requestedBusinessId })
+  }
+
+  const ctx = await getWalletContext(req, requestedBusinessId)
+  if ('error' in ctx) {
+    return logMirrorSkip('wallet_context_denied', body, { result, employeeId, amount, businessId: requestedBusinessId })
+  }
+
+  if (!ctx.isAdmin) {
+    return logMirrorSkip('not_wallet_admin', body, {
+      result,
+      employeeId,
+      amount,
+      businessId: requestedBusinessId,
+      userId: ctx.userId,
+      role: ctx.role,
+    })
+  }
+
+  if (!employeeId || !Number.isFinite(amount) || amount === 0) {
+    return logMirrorSkip('missing_employee_or_amount', body, {
+      result,
+      employeeId,
+      amount,
+      businessId: requestedBusinessId,
+      userId: ctx.userId,
+      role: ctx.role,
+    })
+  }
+
+  const scopedBusinessId = resolveWalletScopeBusinessId(ctx.businessIds, requestedBusinessId)
 
   const txKey = String(body.tx_type || '').trim().toLowerCase()
   if (txKey === 'salary_payment' && String(body.source || '') !== 'wallet_request') {
     logEvent('warn', 'payroll.salary_payment_manual_use', {
       employeeId,
       amount,
-      businessId: ctx.businessIds[0],
+      businessId: scopedBusinessId,
       userId: ctx.userId,
       legacyTxId: String(result.tx_id || ''),
       note: String(body.note || '').slice(0, 200),
@@ -70,7 +134,7 @@ async function mirrorLegacyPayrollToWallet(
   try {
     const entry = await createCompensationLedgerEntry({
       employeeId,
-      businessId: ctx.businessIds[0],
+      businessId: scopedBusinessId,
       effectiveDate: body.date ? new Date(String(body.date)) : new Date(),
       periodYm: body.period_ym ? String(body.period_ym) : null,
       type,
@@ -79,12 +143,19 @@ async function mirrorLegacyPayrollToWallet(
       createdById: ctx.userId,
       approvedById: ctx.userId,
       source: 'legacy_hr_payroll',
-      sourceRef: `legacy_hr_payroll:${ctx.businessIds[0]}:${String(result.tx_id || crypto.randomUUID())}`,
+      sourceRef: `legacy_hr_payroll:${scopedBusinessId}:${String(result.tx_id || crypto.randomUUID())}`,
     })
-    return { ok: true, entryId: entry.id, employeeId, businessId: ctx.businessIds[0], type }
+    return { ok: true, entryId: entry.id, employeeId, businessId: scopedBusinessId, type }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return { ok: true, skipped: 'wallet_entry_already_mirrored' }
+      return logMirrorSkip('wallet_entry_already_mirrored', body, {
+        result,
+        employeeId,
+        amount,
+        businessId: scopedBusinessId,
+        userId: ctx.userId,
+        role: ctx.role,
+      })
     }
     throw e
   }

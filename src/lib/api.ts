@@ -24,6 +24,7 @@ import type {
   HREmployeesApi,
   HRPayrollListApi,
   HRDashboardApi,
+  HRAddPayrollResponse,
 } from '@/types/hr'
 import type {
   TradingAccount,
@@ -651,7 +652,7 @@ export const api = {
       apiGet('/api/hr/dashboard', bizParams(p as Record<string, string>)),
     saveEmployee: (body: Record<string, unknown>): Promise<{ ok: boolean; emp_id?: string; error?: string }> =>
       apiPost('/api/hr/employees', { ...body, business_id: body.business_id || _businessId }),
-    addPayroll: (body: Record<string, unknown>): Promise<{ ok: boolean; tx_id?: string; error?: string }> =>
+    addPayroll: (body: Record<string, unknown>): Promise<HRAddPayrollResponse> =>
       apiPost('/api/hr/payroll', { ...body, business_id: body.business_id || _businessId }),
   },
 

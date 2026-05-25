@@ -36,6 +36,22 @@ export interface HRPayrollListApi {
   total: number
 }
 
+export type HRAddPayrollWalletMirror = {
+  ok: boolean
+  skipped?: string
+  entryId?: string
+  employeeId?: string
+  businessId?: string
+  type?: string
+}
+
+export interface HRAddPayrollResponse {
+  ok: boolean
+  tx_id?: string
+  error?: string
+  wallet?: HRAddPayrollWalletMirror
+}
+
 export interface HRDashboardKpis {
   total_monthly_salary: number
   monthly_payroll_budget?: number
