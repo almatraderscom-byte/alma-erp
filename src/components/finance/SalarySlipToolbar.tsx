@@ -74,11 +74,16 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
         variant="secondary"
         disabled={busy}
         onClick={() => {
+          const { breakdown } = model
           const lines = [
-            `Salary slip — ${model.companyName}`,
-            `${model.employee.name} (${model.employee.emp_id})`,
-            `Period ${model.periodLabel}`,
-            `Net pay ${pdfMoney(model.breakdown.netPay)}`,
+            `Hello ${model.employee.name},`,
+            '',
+            `Your salary slip for ${model.periodLabel}:`,
+            `Basic Salary: ${pdfMoney(breakdown.basicSalary)}`,
+            `Penalty: ${pdfMoney(breakdown.penalty)}`,
+            `Net Pay: ${pdfMoney(breakdown.netPay)}`,
+            '',
+            `- ${model.companyName}`,
           ]
           window.open(`https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`, '_blank')
         }}
