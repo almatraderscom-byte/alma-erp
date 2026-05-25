@@ -50,6 +50,13 @@ function absoluteActionUrl(actionUrl?: string | null) {
   return `${normalizedBase.replace(/\/$/, '')}/${actionUrl.replace(/^\//, '')}`
 }
 
+function oneSignalResponseHasErrors(errors: unknown) {
+  if (!errors) return false
+  if (Array.isArray(errors)) return errors.length > 0
+  if (typeof errors === 'object') return Object.keys(errors).length > 0
+  return true
+}
+
 async function sendOneSignal(
   userIds: string[],
   title: string,
@@ -83,7 +90,6 @@ async function sendOneSignal(
       headings: { en: title },
       contents: { en: message },
       subtitle: meta.businessId ? { en: meta.businessId.replace(/_/g, ' ') } : undefined,
-      url,
       web_url: url,
       priority: priority === 'LOW' ? 5 : 10,
       ios_sound: priority === 'LOW' ? undefined : 'default',
@@ -102,10 +108,29 @@ async function sendOneSignal(
       },
     }),
   })
+  const raw = await res.text()
   if (!res.ok) {
-    logEvent('warn', 'onesignal_send_failed', { status: res.status, body: (await res.text()).slice(0, 300) })
+    logEvent('warn', 'onesignal_send_failed', { status: res.status, body: raw.slice(0, 300) })
     return { configured: true, ok: false, status: res.status }
   }
+
+  let responseBody: { id?: string; errors?: unknown; recipients?: unknown } = {}
+  try {
+    responseBody = JSON.parse(raw) as typeof responseBody
+  } catch {
+    logEvent('warn', 'onesignal_send_failed', { status: res.status, body: raw.slice(0, 300), parseError: true })
+    return { configured: true, ok: false, status: res.status }
+  }
+
+  if (oneSignalResponseHasErrors(responseBody.errors)) {
+    logEvent('warn', 'onesignal_send_partial_failure', {
+      errors: responseBody.errors,
+      recipients: responseBody.recipients,
+      notificationId: responseBody.id,
+    })
+    return { configured: true, ok: Boolean(responseBody.id), partialFailure: true }
+  }
+
   return { configured: true, ok: true }
 }
 
