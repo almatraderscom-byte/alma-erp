@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
 import { PayoutSummaryBlock } from '@/components/approvals/PayoutSummaryBlock'
+import { SalaryCorrectionCard } from '@/components/approvals/SalaryCorrectionCard'
 import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
@@ -325,8 +326,21 @@ function ApprovalsPageInner() {
                     </div>
                   </div>
                   <div>
-                    <p className="font-bold text-zinc-300">{row.entityLabel || row.entityId}</p>
-                    <p className="mt-1 line-clamp-2 text-zinc-500">{row.reason}</p>
+                    {row.type === 'SALARY_CORRECTION' ? (
+                      <SalaryCorrectionCard
+                        compact
+                        payloadSnapshot={row.payloadSnapshot}
+                        reason={row.reason}
+                        requesterName={row.requester?.name}
+                        createdAt={row.createdAt}
+                        businessName={row.businessName}
+                      />
+                    ) : (
+                      <>
+                        <p className="font-bold text-zinc-300">{row.entityLabel || row.entityId}</p>
+                        <p className="mt-1 line-clamp-2 text-zinc-500">{row.reason}</p>
+                      </>
+                    )}
                     {(row.type === 'WALLET_ADVANCE' || row.type === 'WALLET_WITHDRAWAL' || row.type === 'SALARY_ADVANCE') && (
                       <PayoutSummaryBlock payout={row.payoutSummary} />
                     )}
@@ -423,14 +437,27 @@ function ApprovalsPageInner() {
                 <Info label="Status" value={selected.status} />
                 <Info label="Priority" value={selected.priority} />
                 <Info label="Business" value={selected.businessName || selected.businessId || 'Global'} />
-                <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
-                <Info label="Reason" value={selected.reason} />
-                {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
-                  <div className="rounded-2xl border border-border bg-black/20 p-3">
-                    <PayoutSummaryBlock payout={selected.payoutSummary} />
-                  </div>
+                {selected.type === 'SALARY_CORRECTION' ? (
+                  <SalaryCorrectionCard
+                    payloadSnapshot={selected.payloadSnapshot}
+                    reason={selected.reason}
+                    requesterName={selected.requester?.name}
+                    createdAt={selected.createdAt}
+                    businessName={selected.businessName}
+                    priority={selected.priority}
+                  />
+                ) : (
+                  <>
+                    <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
+                    <Info label="Reason" value={selected.reason} />
+                    {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
+                      <div className="rounded-2xl border border-border bg-black/20 p-3">
+                        <PayoutSummaryBlock payout={selected.payoutSummary} />
+                      </div>
+                    )}
+                    <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
+                  </>
                 )}
-                <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
               </div>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">

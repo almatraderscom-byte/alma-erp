@@ -26,6 +26,7 @@ import type {
   HRDashboardApi,
   HRAddPayrollResponse,
 } from '@/types/hr'
+import type { SalaryCorrectionPayload } from '@/types/salary-correction'
 import type {
   TradingAccount,
   TradingAccountDetailResponse,
@@ -654,6 +655,23 @@ export const api = {
       apiPost('/api/hr/employees', { ...body, business_id: body.business_id || _businessId }),
     addPayroll: (body: Record<string, unknown>): Promise<HRAddPayrollResponse> =>
       apiPost('/api/hr/payroll', { ...body, business_id: body.business_id || _businessId }),
+    requestSalaryCorrection: (body: {
+      accrual_entry_id: string
+      employee_id: string
+      business_id: string
+      period_ym: string
+      proposed_amount: number
+      reason: string
+      reversals?: Array<{
+        ledger_entry_id: string
+        amount: number
+        reason: string
+      }>
+    }): Promise<{
+      ok: boolean
+      request: SalaryCorrectionPayload
+      approval: { id: string; status: string; priority: string }
+    }> => apiPost('/api/payroll/salary-corrections', { ...body, business_id: body.business_id || _businessId }),
   },
 
   audit: {

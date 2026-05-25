@@ -23,6 +23,8 @@ import { unwrapApiData } from '@/lib/safe-api-response'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { isWalletAdmin } from '@/lib/payroll-wallet'
 import { formatMoneyBDT, roundMoney } from '@/lib/money'
+import { api, APIError } from '@/lib/api'
+import { parseSalaryCorrectionPayload } from '@/types/salary-correction'
 import type { HRAddPayrollResponse } from '@/types/hr'
 
 type LegacyPayTxType = 'deposit' | 'advance' | 'salary_payment' | 'adjustment'
@@ -88,6 +90,22 @@ function payrollTxHelper(txType: string): { text: string; className: string } {
   }
 }
 
+type CorrectionReversalDraft = {
+  key: string
+  ledgerEntryId: string
+  amount: string
+  reason: string
+}
+
+type PendingSalaryCorrectionRow = {
+  id: string
+  type: string
+  createdAt: string
+  reason: string
+  requester?: { name: string } | null
+  payloadSnapshot: unknown
+}
+
 type EmployeeAttendanceResponse = {
   records: Array<{
     id: string
@@ -133,6 +151,14 @@ export default function EmployeeDetailPage() {
   const [slipPeriodYm, setSlipPeriodYm] = useState(() => slipPeriodOptions.current)
   const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
   const [attendanceLoading, setAttendanceLoading] = useState(true)
+  const [openCorrection, setOpenCorrection] = useState(false)
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false)
+  const [correctionAccrualId, setCorrectionAccrualId] = useState('')
+  const [correctionProposed, setCorrectionProposed] = useState('')
+  const [correctionReason, setCorrectionReason] = useState('')
+  const [correctionReversals, setCorrectionReversals] = useState<CorrectionReversalDraft[]>([])
+  const [pendingCorrections, setPendingCorrections] = useState<PendingSalaryCorrectionRow[]>([])
+  const [pendingCorrectionsLoading, setPendingCorrectionsLoading] = useState(false)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
   const transactions = txs?.transactions ?? []
@@ -140,6 +166,32 @@ export default function EmployeeDetailPage() {
     () => buildSalarySlipBreakdown(wallet?.entries ?? [], slipPeriodYm),
     [wallet?.entries, slipPeriodYm],
   )
+
+  const salaryAccrualEntries = useMemo(
+    () => (wallet?.entries ?? []).filter(e => e.type === 'SALARY_ACCRUAL' && e.id),
+    [wallet?.entries],
+  )
+
+  const reversalCandidateEntries = useMemo(
+    () =>
+      (wallet?.entries ?? []).filter(
+        e => e.id && (e.type === 'WITHDRAWAL' || e.type === 'ADJUSTMENT'),
+      ),
+    [wallet?.entries],
+  )
+
+  const selectedAccrual = useMemo(
+    () => salaryAccrualEntries.find(e => e.id === correctionAccrualId) ?? null,
+    [salaryAccrualEntries, correctionAccrualId],
+  )
+
+  const correctionDelta = useMemo(() => {
+    if (!selectedAccrual) return null
+    const current = roundMoney(Number(selectedAccrual.amount || 0))
+    const proposed = roundMoney(Number(correctionProposed || 0))
+    if (!proposed) return null
+    return proposed - current
+  }, [selectedAccrual, correctionProposed])
 
   const slipModel: SalarySlipModel | null = employee
     ? {
@@ -194,6 +246,137 @@ export default function EmployeeDetailPage() {
     void loadAttendance(signal)
     return () => { signal.cancelled = true }
   }, [loadAttendance])
+
+  const loadPendingCorrections = useCallback(async (signal?: { cancelled: boolean }) => {
+    if (!canWriteWallet || !decoded) return
+    setPendingCorrectionsLoading(true)
+    try {
+      const result = await safeFetchJson<{ approvals: PendingSalaryCorrectionRow[] }>(
+        `/api/approvals?status=PENDING&module=PAYROLL&limit=80`,
+        { cache: 'no-store' },
+      )
+      if (!signal?.cancelled && result.ok) {
+        const data = unwrapApiData<{ approvals: PendingSalaryCorrectionRow[] }>(
+          result.data as Record<string, unknown>,
+        )
+        setPendingCorrections(
+          (data.approvals || []).filter(row => {
+            if (row.type !== 'SALARY_CORRECTION') return false
+            const payload = parseSalaryCorrectionPayload(row.payloadSnapshot)
+            return payload?.employeeId === decoded
+          }),
+        )
+      }
+    } finally {
+      if (!signal?.cancelled) setPendingCorrectionsLoading(false)
+    }
+  }, [canWriteWallet, decoded])
+
+  useEffect(() => {
+    const signal = { cancelled: false }
+    void loadPendingCorrections(signal)
+    return () => { signal.cancelled = true }
+  }, [loadPendingCorrections])
+
+  useEffect(() => {
+    const onUpdated = () => { void loadPendingCorrections() }
+    window.addEventListener('alma:approvals-updated', onUpdated)
+    return () => window.removeEventListener('alma:approvals-updated', onUpdated)
+  }, [loadPendingCorrections])
+
+  function resetCorrectionForm() {
+    setCorrectionAccrualId('')
+    setCorrectionProposed('')
+    setCorrectionReason('')
+    setCorrectionReversals([])
+  }
+
+  function openCorrectionModal() {
+    resetCorrectionForm()
+    setOpenCorrection(true)
+  }
+
+  function addCorrectionReversal() {
+    setCorrectionReversals(prev => [
+      ...prev,
+      { key: `rev-${Date.now()}-${prev.length}`, ledgerEntryId: '', amount: '', reason: '' },
+    ])
+  }
+
+  function updateCorrectionReversal(key: string, patch: Partial<CorrectionReversalDraft>) {
+    setCorrectionReversals(prev => prev.map(row => (row.key === key ? { ...row, ...patch } : row)))
+  }
+
+  function removeCorrectionReversal(key: string) {
+    setCorrectionReversals(prev => prev.filter(row => row.key !== key))
+  }
+
+  async function submitSalaryCorrection() {
+    if (!employee || !selectedAccrual?.id) {
+      toast.error('Select a salary accrual to correct')
+      return
+    }
+    const periodYm = String(selectedAccrual.periodYm || '').trim()
+    if (!periodYm) {
+      toast.error('Selected accrual is missing a period')
+      return
+    }
+    const currentAmount = roundMoney(Number(selectedAccrual.amount || 0))
+    const proposedAmount = roundMoney(Number(correctionProposed))
+    const reason = correctionReason.trim()
+
+    if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
+      toast.error('Proposed amount must be greater than zero')
+      return
+    }
+    if (proposedAmount === currentAmount) {
+      toast.error('Proposed amount must differ from the current accrual')
+      return
+    }
+    if (reason.length < 5) {
+      toast.error('Reason must be at least 5 characters')
+      return
+    }
+
+    const reversals = correctionReversals
+      .filter(row => row.ledgerEntryId.trim())
+      .map(row => {
+        const amount = roundMoney(Number(row.amount))
+        const revReason = row.reason.trim()
+        if (!Number.isFinite(amount) || amount === 0) {
+          throw new Error('Each reversal needs a non-zero amount')
+        }
+        if (!revReason) throw new Error('Each reversal needs a reason')
+        return {
+          ledger_entry_id: row.ledgerEntryId.trim(),
+          amount,
+          reason: revReason,
+        }
+      })
+
+    setCorrectionSubmitting(true)
+    try {
+      await api.hr.requestSalaryCorrection({
+        accrual_entry_id: selectedAccrual.id,
+        employee_id: employee.emp_id,
+        business_id: business.id,
+        period_ym: periodYm,
+        proposed_amount: proposedAmount,
+        reason,
+        reversals: reversals.length ? reversals : undefined,
+      })
+      toast.success('Salary correction requested. Awaiting super admin approval.')
+      setOpenCorrection(false)
+      resetCorrectionForm()
+      void loadPendingCorrections()
+      window.dispatchEvent(new Event('alma:approvals-updated'))
+    } catch (e) {
+      const message = e instanceof APIError ? e.message : (e as Error).message
+      toast.error(message || 'Failed to request salary correction')
+    } finally {
+      setCorrectionSubmitting(false)
+    }
+  }
 
   async function executePay(payload: PayrollPayPayload, form?: HTMLFormElement | null) {
     const res = (await postPay(payload)) as HRAddPayrollResponse | null
@@ -488,6 +671,49 @@ export default function EmployeeDetailPage() {
           </div>
         )}
       </Card>
+
+      {canWriteWallet ? (
+        <Card className="p-5 mb-4 border-gold-dim/25">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+            <div>
+              <p className="text-sm font-bold text-cream">Salary corrections</p>
+              <p className="text-[11px] text-zinc-500 mt-1">Request approval to update an existing salary accrual</p>
+            </div>
+            <Button size="xs" variant="gold" onClick={openCorrectionModal}>
+              + Request correction
+            </Button>
+          </div>
+
+          {pendingCorrectionsLoading ? (
+            <Skeleton className="h-16" />
+          ) : pendingCorrections.length > 0 ? (
+            <div className="space-y-2">
+              {pendingCorrections.map(row => {
+                const payload = parseSalaryCorrectionPayload(row.payloadSnapshot)
+                if (!payload) return null
+                const periodLabel = formatSalarySlipPeriodLabel(payload.periodYm)
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-[11px]"
+                  >
+                    <p className="font-bold text-amber-200">
+                      Pending: {formatMoneyBDT(payload.currentAmount)} → {formatMoneyBDT(payload.proposedAmount)} ({periodLabel})
+                    </p>
+                    <p className="mt-1 text-zinc-500">
+                      Requested by {row.requester?.name || 'Admin'} on {new Date(row.createdAt).toLocaleDateString()}
+                    </p>
+                    <p className="mt-1 text-zinc-400 line-clamp-2">Reason: {row.reason || payload.requestedReason}</p>
+                    {payload.reversals?.length ? (
+                      <p className="mt-1 text-zinc-500">Reversals: {payload.reversals.length} entries</p>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
       </div>
 
       <Card className="p-5">
@@ -625,6 +851,169 @@ export default function EmployeeDetailPage() {
                   onClick={() => void executePay(payConfirm, payrollFormRef.current)}
                 >
                   {paying ? 'Posting…' : 'Yes, deduct from wallet'}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </MobileModalPortal>
+      )}
+
+      {openCorrection && employee && (
+        <MobileModalPortal
+          open
+          zIndex={125}
+          onBackdropClick={() => !correctionSubmitting && setOpenCorrection(false)}
+          aria-label="Request salary correction"
+        >
+          <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">Request salary correction for {employee.name}</p>
+            </div>
+            <div className="mobile-modal-body space-y-4 px-5 pb-4 text-xs max-h-[70vh] overflow-y-auto">
+              <section className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Step 1 · Target accrual</p>
+                {!salaryAccrualEntries.length ? (
+                  <p className="text-zinc-500">No SALARY_ACCRUAL entries in this wallet yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {salaryAccrualEntries.map(entry => {
+                      const amount = roundMoney(Number(entry.amount || 0))
+                      const period = entry.periodYm
+                        ? formatSalarySlipPeriodLabel(entry.periodYm)
+                        : String(entry.date).slice(0, 10)
+                      const selected = correctionAccrualId === entry.id
+                      return (
+                        <label
+                          key={entry.id}
+                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${selected ? 'border-gold-dim/60 bg-gold/5' : 'border-border bg-black/20'}`}
+                        >
+                          <input
+                            type="radio"
+                            name="correction_accrual"
+                            className="mt-1"
+                            checked={selected}
+                            onChange={() => setCorrectionAccrualId(entry.id || '')}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-cream">{period}</p>
+                            <p className="font-mono text-gold-lt mt-0.5">{formatMoneyBDT(amount)}</p>
+                            <p className="text-zinc-500 mt-1 line-clamp-2">{entry.note || '—'}</p>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Step 2 · New amount</p>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={correctionProposed}
+                  onChange={e => setCorrectionProposed(e.target.value)}
+                  disabled={!selectedAccrual}
+                  placeholder={selectedAccrual ? `Current ${formatMoneyBDT(Number(selectedAccrual.amount || 0))}` : 'Select accrual first'}
+                  className="w-full rounded-xl bg-card border border-border px-3 py-2 font-mono text-sm text-cream disabled:opacity-50"
+                />
+                {correctionDelta != null ? (
+                  <p className={`font-mono font-bold ${correctionDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    Change: {correctionDelta >= 0 ? '+' : '-'}
+                    {formatMoneyBDT(Math.abs(correctionDelta))}
+                  </p>
+                ) : null}
+              </section>
+
+              <section className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Step 3 · Reverse other entries (optional)</p>
+                  <Button type="button" size="xs" variant="ghost" disabled={!selectedAccrual} onClick={addCorrectionReversal}>
+                    + Add reversal
+                  </Button>
+                </div>
+                {!correctionReversals.length ? (
+                  <p className="text-zinc-500">Use this to cancel a wrong withdrawal or adjustment when approving.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {correctionReversals.map(row => (
+                      <div key={row.key} className="rounded-xl border border-border bg-black/20 p-3 space-y-2">
+                        <div className="flex justify-between items-center gap-2">
+                          <span className="text-zinc-500">Reversal</span>
+                          <button
+                            type="button"
+                            className="text-red-400 text-[10px] font-bold"
+                            onClick={() => removeCorrectionReversal(row.key)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <select
+                          value={row.ledgerEntryId}
+                          onChange={e => updateCorrectionReversal(row.key, { ledgerEntryId: e.target.value })}
+                          className="w-full rounded-lg bg-card border border-border px-2 py-1.5 text-cream text-[11px]"
+                        >
+                          <option value="">Select ledger entry…</option>
+                          {reversalCandidateEntries.map(entry => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.type.replace(/_/g, ' ')} · {formatMoneyBDT(Math.abs(Number(entry.amount || 0)))} · {String(entry.note || entry.id).slice(0, 40)}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          step={1}
+                          value={row.amount}
+                          onChange={e => updateCorrectionReversal(row.key, { amount: e.target.value })}
+                          placeholder="Amount (+ credit back, − debit)"
+                          className="w-full rounded-lg bg-card border border-border px-2 py-1.5 font-mono text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={row.reason}
+                          onChange={e => updateCorrectionReversal(row.key, { reason: e.target.value })}
+                          placeholder="Why reverse this entry"
+                          className="w-full rounded-lg bg-card border border-border px-2 py-1.5 text-sm text-cream"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Step 4 · Reason (required)</p>
+                <textarea
+                  value={correctionReason}
+                  onChange={e => setCorrectionReason(e.target.value)}
+                  rows={3}
+                  minLength={5}
+                  maxLength={800}
+                  placeholder="Explain why this accrual amount should change"
+                  className="w-full rounded-xl bg-card border border-border px-3 py-2 text-sm text-cream"
+                />
+              </section>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="gold"
+                  className="flex-1 justify-center"
+                  disabled={correctionSubmitting || !salaryAccrualEntries.length}
+                  onClick={() => void submitSalaryCorrection()}
+                >
+                  {correctionSubmitting ? 'Submitting…' : 'Submit for approval'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="flex-1 justify-center"
+                  disabled={correctionSubmitting}
+                  onClick={() => setOpenCorrection(false)}
+                >
+                  Cancel
                 </Button>
               </div>
             </div>

@@ -17,6 +17,9 @@ import type {
   SalaryCorrectionPayload,
   SalaryCorrectionReversal,
 } from '@/types/salary-correction'
+import { parseSalaryCorrectionPayload } from '@/types/salary-correction'
+
+export { parseSalaryCorrectionPayload } from '@/types/salary-correction'
 
 export const SALARY_CORRECTION_REVERSAL_SOURCE = 'salary_correction_reversal'
 
@@ -93,22 +96,6 @@ async function validateReversalTargets(
   if (rows.length !== ids.length) {
     throw new SalaryCorrectionError('One or more reversal ledger entries were not found for this employee.', 404, 'reversal_not_found')
   }
-}
-
-export function parseSalaryCorrectionPayload(snapshot: unknown): SalaryCorrectionPayload | null {
-  if (!snapshot || typeof snapshot !== 'object') return null
-  const data = snapshot as Partial<SalaryCorrectionPayload>
-  if (
-    !data.accrualEntryId
-    || !data.employeeId
-    || !data.businessId
-    || !data.periodYm
-    || data.currentAmount == null
-    || data.proposedAmount == null
-  ) {
-    return null
-  }
-  return data as SalaryCorrectionPayload
 }
 
 export async function createSalaryCorrectionRequest(input: CreateSalaryCorrectionInput) {
