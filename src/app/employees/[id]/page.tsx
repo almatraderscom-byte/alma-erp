@@ -47,6 +47,22 @@ function isDebitPayrollTx(txType: string) {
   return txType === 'advance' || txType === 'salary_payment'
 }
 
+function payrollWalletSkipMessage(wallet: HRAddPayrollResponse['wallet']): string {
+  const skipMessages: Record<string, string> = {
+    period_type_already_exists:
+      `${wallet?.existingType || 'Entry'} for ${wallet?.existingPeriodYm || 'this period'} already exists. Use Adjustment to modify, or update the existing row.`,
+    wallet_entry_already_mirrored: 'This entry was already mirrored (retry detected).',
+    not_wallet_admin: 'You do not have permission to update the wallet ledger.',
+    wallet_context_denied: 'Wallet access denied for this business.',
+    missing_employee_or_amount: 'Invalid employee ID or amount.',
+    legacy_write_failed: 'Legacy roll save failed before wallet mirror.',
+    legacy_type_not_wallet_mirrored: 'This tx_type is not mirrored to wallet.',
+    p2002_unknown_constraint: 'Wallet mirror blocked by a unique constraint.',
+  }
+  const reason = wallet?.skipped || 'unknown'
+  return wallet?.hint || skipMessages[reason] || `Wallet not updated: ${reason}`
+}
+
 function payrollTxHelper(txType: string): { text: string; className: string } {
   if (txType === 'deposit') {
     return {
@@ -183,9 +199,7 @@ export default function EmployeeDetailPage() {
     const res = (await postPay(payload)) as HRAddPayrollResponse | null
     if (res?.ok) {
       if (res.wallet?.ok === false || res.wallet?.skipped) {
-        toast.error(
-          `Saved to legacy roll but wallet NOT updated: ${res.wallet.skipped || 'unknown'}. Contact admin.`,
-        )
+        toast.error(`Legacy roll saved but ${payrollWalletSkipMessage(res.wallet)}`)
       } else {
         toast.success('Payroll logged + wallet updated')
       }

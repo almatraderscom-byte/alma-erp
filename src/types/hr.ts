@@ -43,6 +43,9 @@ export type HRAddPayrollWalletMirror = {
   employeeId?: string
   businessId?: string
   type?: string
+  existingPeriodYm?: string
+  existingType?: string
+  hint?: string
 }
 
 export interface HRAddPayrollResponse {

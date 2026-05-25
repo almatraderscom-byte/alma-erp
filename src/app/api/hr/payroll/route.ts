@@ -5,6 +5,7 @@ import { serverGet, serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { getWalletContext, resolveWalletScopeBusinessId } from '@/lib/payroll-wallet-access'
 import { createCompensationLedgerEntry, isDebitCompensationType } from '@/lib/payroll-compensation'
+import { periodFromDate } from '@/lib/payroll-wallet'
 import { logEvent } from '@/lib/logger'
 
 type MirrorWalletResult = {
@@ -14,6 +15,22 @@ type MirrorWalletResult = {
   employeeId?: string
   businessId?: string
   type?: string
+  existingPeriodYm?: string
+  existingType?: string
+  hint?: string
+}
+
+type MirrorSkipExtra = {
+  result?: Record<string, unknown>
+  userId?: string
+  role?: string
+  businessId?: string
+  employeeId?: string
+  amount?: number
+  existingPeriodYm?: string
+  existingType?: string
+  hint?: string
+  target?: string[]
 }
 
 export async function GET(req: NextRequest) {
@@ -49,14 +66,7 @@ function walletTypeFromLegacy(txType: unknown): EmployeeLedgerEntryType | null {
 function logMirrorSkip(
   reason: string,
   body: Record<string, unknown>,
-  extra: {
-    result?: Record<string, unknown>
-    userId?: string
-    role?: string
-    businessId?: string
-    employeeId?: string
-    amount?: number
-  } = {},
+  extra: MirrorSkipExtra = {},
 ): MirrorWalletResult {
   logEvent('warn', 'payroll.legacy_mirror_skipped', {
     reason,
@@ -67,9 +77,32 @@ function logMirrorSkip(
     role: extra.role,
     businessId: extra.businessId ?? (String(body.business_id || '').trim() || undefined),
     legacyTxId: extra.result ? String(extra.result.tx_id || '') : undefined,
+    existingPeriodYm: extra.existingPeriodYm,
+    existingType: extra.existingType,
+    hint: extra.hint,
+    constraintTarget: extra.target,
   })
   const ok = reason === 'legacy_type_not_wallet_mirrored' || reason === 'wallet_entry_already_mirrored'
-  return { ok, skipped: reason }
+  return {
+    ok,
+    skipped: reason,
+    type: extra.existingType,
+    existingPeriodYm: extra.existingPeriodYm,
+    existingType: extra.existingType,
+    hint: extra.hint,
+    employeeId: extra.employeeId,
+    businessId: extra.businessId,
+  }
+}
+
+function mirrorPeriodYm(
+  type: EmployeeLedgerEntryType,
+  body: Record<string, unknown>,
+  effectiveDate: Date,
+): string | null {
+  const raw = body.period_ym ? String(body.period_ym).trim() : ''
+  if (type === 'SALARY_ACCRUAL') return raw || periodFromDate(effectiveDate)
+  return raw || null
 }
 
 async function mirrorLegacyPayrollToWallet(
@@ -131,12 +164,15 @@ async function mirrorLegacyPayrollToWallet(
     })
   }
 
+  const effectiveDate = body.date ? new Date(String(body.date)) : new Date()
+  const periodYm = mirrorPeriodYm(type, body, effectiveDate)
+
   try {
     const entry = await createCompensationLedgerEntry({
       employeeId,
       businessId: scopedBusinessId,
-      effectiveDate: body.date ? new Date(String(body.date)) : new Date(),
-      periodYm: body.period_ym ? String(body.period_ym) : null,
+      effectiveDate,
+      periodYm,
       type,
       amount: isDebitCompensationType(type) ? Math.abs(amount) : amount,
       note: String(body.note || '').trim() || `Mirrored from legacy payroll ${String(result.tx_id || '')}`,
@@ -148,14 +184,34 @@ async function mirrorLegacyPayrollToWallet(
     return { ok: true, entryId: entry.id, employeeId, businessId: scopedBusinessId, type }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return logMirrorSkip('wallet_entry_already_mirrored', body, {
+      const target = e.meta?.target as string[] | undefined
+      const skipMeta = {
         result,
         employeeId,
         amount,
         businessId: scopedBusinessId,
         userId: ctx.userId,
         role: ctx.role,
-      })
+        target,
+      }
+
+      const isPeriodTypeConflict = Array.isArray(target)
+        && target.includes('periodYm')
+        && target.includes('type')
+      const isSourceRefConflict = Array.isArray(target) && target.includes('sourceRef')
+
+      if (isPeriodTypeConflict) {
+        return logMirrorSkip('period_type_already_exists', body, {
+          ...skipMeta,
+          existingPeriodYm: periodYm || undefined,
+          existingType: type,
+          hint: 'Use Adjustment instead, or update the existing accrual row',
+        })
+      }
+      if (isSourceRefConflict) {
+        return logMirrorSkip('wallet_entry_already_mirrored', body, skipMeta)
+      }
+      return logMirrorSkip('p2002_unknown_constraint', body, { ...skipMeta, hint: 'Unique constraint violation' })
     }
     throw e
   }
