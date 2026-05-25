@@ -38,6 +38,7 @@ import {
   requestStatusFromApproval,
 } from '@/lib/payroll-wallet'
 import { processMealAllowanceApproval } from '@/lib/meal-allowance'
+import { processSalaryCorrectionApproval } from '@/lib/salary-correction'
 
 type RouteContext = { params: { id: string } }
 
@@ -200,11 +201,29 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     if (isPenaltyAppeal) {
       response = await processPenaltyAppeal(approval, body.action, token.sub, body.note, body.approvedAmount)
     } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.SALARY_CORRECTION) {
-      response = approvalErrorResponse(
-        'Salary correction processing not yet implemented (Phase 2)',
-        501,
-        'not_implemented',
+      const result = await processSalaryCorrectionApproval(
+        {
+          id: approval.id,
+          entityId: approval.entityId,
+          businessId: approval.businessId,
+          status: approval.status,
+          payloadSnapshot: approval.payloadSnapshot,
+        },
+        body.action,
+        token.sub,
+        body.note,
       )
+      if ('error' in result) {
+        response = approvalErrorResponse(result.error, result.status, result.code)
+      } else {
+        dispatchApprovalsUpdated()
+        response = apiDataSuccess({
+          approval: result.approval,
+          moduleResult: result.result,
+          ...(result.rejected ? { rejected: true } : {}),
+          ...(result.alreadyApplied ? { alreadyApplied: true } : {}),
+        })
+      }
     } else if (approval.module === 'ALMA_TRADING' && approval.type === 'TRADE_DELETE') {
       response = await processTradingDelete(approval.id, approval.entityId, body.action, token.sub, role, body.note)
     } else if (approval.module === APPROVAL_MODULES.ORDERS_CRM && approval.type === APPROVAL_TYPES.ORDER_DELETE) {
