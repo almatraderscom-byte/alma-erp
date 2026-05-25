@@ -199,6 +199,12 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     let response: NextResponse
     if (isPenaltyAppeal) {
       response = await processPenaltyAppeal(approval, body.action, token.sub, body.note, body.approvedAmount)
+    } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.SALARY_CORRECTION) {
+      response = approvalErrorResponse(
+        'Salary correction processing not yet implemented (Phase 2)',
+        501,
+        'not_implemented',
+      )
     } else if (approval.module === 'ALMA_TRADING' && approval.type === 'TRADE_DELETE') {
       response = await processTradingDelete(approval.id, approval.entityId, body.action, token.sub, role, body.note)
     } else if (approval.module === APPROVAL_MODULES.ORDERS_CRM && approval.type === APPROVAL_TYPES.ORDER_DELETE) {

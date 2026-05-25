@@ -18,6 +18,8 @@ import { apiFailure, apiDataSuccess } from '@/lib/safe-api-response'
 import { withApiRoute } from '@/lib/core/safe-route-helpers'
 import { logEvent } from '@/lib/logger'
 import { resolvePayoutSummariesForUsers } from '@/lib/employee-payment-method'
+import { APPROVAL_TYPES } from '@/lib/approval-types'
+import type { SalaryCorrectionPayload } from '@/types/salary-correction'
 
 export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const token = await getJwt(req)
@@ -155,7 +157,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
         }
       })(),
       businessName: row.businessId && BUSINESSES[row.businessId as BusinessId] ? BUSINESSES[row.businessId as BusinessId].name : 'Global',
-      entityLabel: entityLabel(row.payloadSnapshot, row.entityId),
+      entityLabel: entityLabel(row.payloadSnapshot, row.entityId, row.type),
       executable: isExecutable(row.module, row.type),
       linkageStatus,
       sourceStatus: walletStatus ?? penaltyStatus,
@@ -180,9 +182,18 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   )
 })
 
-function entityLabel(snapshot: unknown, fallback: string) {
+function entityLabel(snapshot: unknown, fallback: string, type?: string) {
   if (!snapshot || typeof snapshot !== 'object') return fallback
   const data = snapshot as Record<string, unknown>
+  if (type === APPROVAL_TYPES.SALARY_CORRECTION) {
+    const payload = data as Partial<SalaryCorrectionPayload>
+    const empName = payload.requestedByName || payload.employeeId || fallback
+    const current = Number(payload.currentAmount ?? 0)
+    const proposed = Number(payload.proposedAmount ?? 0)
+    const delta = proposed - current
+    const sign = delta >= 0 ? '+' : ''
+    return `${empName} · ${sign}৳${Math.abs(delta).toLocaleString('en-BD')} salary correction`
+  }
   const accountTitle = typeof data.accountTitle === 'string' ? data.accountTitle : null
   const employeeId = typeof data.employeeId === 'string' ? data.employeeId : null
   const employeeName = typeof data.employeeName === 'string' ? data.employeeName : null
@@ -213,6 +224,13 @@ function isExecutable(module: string, type: string) {
   return (
     (module === 'ALMA_TRADING' && type === 'TRADE_DELETE') ||
     (module === 'ORDERS_CRM' && type === 'ORDER_DELETE') ||
-    (module === 'PAYROLL' && ['SALARY_ADVANCE', 'WALLET_ADVANCE', 'WALLET_WITHDRAWAL', 'PENALTY_APPEAL', 'MEAL_ALLOWANCE'].includes(type))
+    (module === 'PAYROLL' && [
+      'SALARY_ADVANCE',
+      'WALLET_ADVANCE',
+      'WALLET_WITHDRAWAL',
+      'PENALTY_APPEAL',
+      'MEAL_ALLOWANCE',
+      APPROVAL_TYPES.SALARY_CORRECTION,
+    ].includes(type))
   )
 }
