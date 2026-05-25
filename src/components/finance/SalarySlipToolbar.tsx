@@ -4,6 +4,7 @@ import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import { Button } from '@/components/ui'
 import { printPdfBlob } from '@/lib/pdf/print'
 import { pdfMoney } from '@/lib/pdf/format'
+import { fetchLogoDataUrl } from '@/lib/pdf/branding'
 import toast from 'react-hot-toast'
 
 export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
@@ -17,7 +18,10 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
           import('@react-pdf/renderer'),
           import('@/components/pdf/SalarySlipDocument'),
         ])
-        const blob = await pdf(<SalarySlipDocument model={model} />).toBlob()
+        const logoDataUrl = await fetchLogoDataUrl(model.logoUrl ?? undefined)
+        const blob = await pdf(
+          <SalarySlipDocument model={model} branding={{ logoDataUrl }} />,
+        ).toBlob()
         const safe = `${model.employee.name || 'salary-slip'}`.replace(/[^\w\s-]/g, '').trim().slice(0, 40)
         await fn(blob, safe)
       } catch {

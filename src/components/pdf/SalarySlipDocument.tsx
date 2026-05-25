@@ -6,6 +6,7 @@ import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
 import type { SalarySlipBreakdown } from '@/lib/salary-slip'
 import type { HREmployee } from '@/types/hr'
+import type { InvoicePdfBranding } from '@/lib/pdf/types'
 
 const BG = '#0a0a0c'
 const TEXT = '#f2f0ea'
@@ -27,6 +28,9 @@ const styles = StyleSheet.create({
     backgroundColor: BG,
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: LINE },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', maxWidth: '55%' },
+  headerBrand: { flexShrink: 1 },
+  headerLogo: { width: 60, height: 60, marginRight: 12, objectFit: 'contain' as const },
   h1: { fontSize: 17, fontWeight: 700, color: GOLD, marginTop: 4 },
   h2: { fontSize: 11, marginTop: 12, marginBottom: 6, fontWeight: 700, color: GOLD },
   muted: { color: MUTED, marginTop: 2 },
@@ -94,18 +98,27 @@ function BreakdownSection({
   )
 }
 
-export function SalarySlipDocument({ model }: { model: SalarySlipModel }) {
+export type SalarySlipPdfBranding = Pick<InvoicePdfBranding, 'logoDataUrl'>
+
+export function SalarySlipDocument({
+  model,
+  branding,
+}: {
+  model: SalarySlipModel
+  branding?: SalarySlipPdfBranding
+}) {
   const { employee: e, breakdown } = model
+  const logoDataUrl = branding?.logoDataUrl
   return (
     <Document title={`Salary slip — ${e.name}`}>
       <Page size={A4_SIZE} style={styles.page}>
         <View style={styles.headerRow}>
-          <View>
-            {model.logoUrl ? (
-              <Image src={model.logoUrl} style={{ width: 110, maxHeight: 40, marginBottom: 4, objectFit: 'contain' }} />
-            ) : null}
-            <Text style={styles.h1}>{model.companyName}</Text>
-            {model.tagline ? <Text style={styles.muted}>{model.tagline}</Text> : null}
+          <View style={styles.headerLeft}>
+            {logoDataUrl ? <Image src={logoDataUrl} style={styles.headerLogo} /> : null}
+            <View style={styles.headerBrand}>
+              <Text style={styles.h1}>{model.companyName}</Text>
+              {model.tagline ? <Text style={styles.muted}>{model.tagline}</Text> : null}
+            </View>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={{ fontWeight: 700, fontSize: 12, letterSpacing: 1, color: TEXT }}>SALARY SLIP</Text>
