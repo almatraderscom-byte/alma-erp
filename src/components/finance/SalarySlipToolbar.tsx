@@ -74,7 +74,7 @@ export function SalarySlipToolbar({ model }: { model: SalarySlipModel }) {
             `Salary slip — ${model.companyName}`,
             `${model.employee.name} (${model.employee.emp_id})`,
             `Period ${model.periodLabel}`,
-            `Due/Balance ${pdfMoney(model.roll.current_due)}`,
+            `Net pay ${pdfMoney(model.breakdown.netPay)}`,
           ]
           window.open(`https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`, '_blank')
         }}

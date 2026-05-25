@@ -3,10 +3,13 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { useHREmployees, useHRPayrollForEmployee, useHrAddPayroll } from '@/hooks/useHr'
-import { computePayrollRoll } from '@/lib/hr-payroll-roll'
+import {
+  buildSalarySlipBreakdown,
+  formatSalarySlipPeriodLabel,
+  salarySlipPeriodOptions,
+} from '@/lib/salary-slip'
 import { useBranding } from '@/contexts/BrandingContext'
 import { useBusiness } from '@/contexts/BusinessContext'
-import { useDateRange } from '@/contexts/DateRangeContext'
 import { Card, Button, Skeleton, Empty } from '@/components/ui'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
@@ -97,7 +100,6 @@ export default function EmployeeDetailPage() {
   const { mutate: postPay, loading: paying } = useHrAddPayroll()
   const { branding } = useBranding()
   const { business } = useBusiness()
-  const { label } = useDateRange()
   const [openPay, setOpenPay] = useState(false)
   const [payTxType, setPayTxType] = useState<LegacyPayTxType>('deposit')
   const [payConfirm, setPayConfirm] = useState<PayrollPayPayload | null>(null)
@@ -108,28 +110,29 @@ export default function EmployeeDetailPage() {
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
+  const slipPeriodOptions = useMemo(() => salarySlipPeriodOptions(), [])
+  const [slipPeriodYm, setSlipPeriodYm] = useState(() => slipPeriodOptions.current)
   const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
   const [attendanceLoading, setAttendanceLoading] = useState(true)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
   const transactions = txs?.transactions ?? []
-  const roll = useMemo(
-    () => (employee ? computePayrollRoll(employee, transactions) : null),
-    [employee, transactions],
+  const slipBreakdown = useMemo(
+    () => buildSalarySlipBreakdown(wallet?.entries ?? [], slipPeriodYm),
+    [wallet?.entries, slipPeriodYm],
   )
 
-  const slipModel: SalarySlipModel | null =
-    employee && roll
-      ? {
-          companyName: branding?.company_name ?? business.name,
-          tagline: branding?.tagline ?? business.tagline,
-          logoUrl: branding?.logo_url || null,
-          employee,
-          periodLabel: label,
-          roll,
-          generatedAt: new Date().toISOString().slice(0, 10),
-        }
-      : null
+  const slipModel: SalarySlipModel | null = employee
+    ? {
+        companyName: branding?.company_name ?? business.name,
+        tagline: branding?.tagline ?? business.tagline,
+        logoUrl: branding?.logo_url || null,
+        employee,
+        periodLabel: formatSalarySlipPeriodLabel(slipPeriodYm),
+        breakdown: slipBreakdown,
+        generatedAt: new Date().toISOString().slice(0, 10),
+      }
+    : null
 
   const loadWallet = useCallback(async (signal?: { cancelled: boolean }) => {
       setWalletLoading(true)
@@ -297,6 +300,41 @@ export default function EmployeeDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 pt-3 justify-between items-center border-t border-border">
+          <div className="flex flex-wrap items-center gap-2">
+            {slipModel ? (
+              <>
+                <label className="text-[10px] text-zinc-500 flex items-center gap-1.5">
+                  Slip period
+                  <select
+                    value={slipPeriodYm}
+                    onChange={e => setSlipPeriodYm(e.target.value)}
+                    className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] text-cream"
+                  >
+                    <option value={slipPeriodOptions.current}>
+                      This month ({formatSalarySlipPeriodLabel(slipPeriodOptions.current)})
+                    </option>
+                    <option value={slipPeriodOptions.last}>
+                      Last month ({formatSalarySlipPeriodLabel(slipPeriodOptions.last)})
+                    </option>
+                  </select>
+                </label>
+                <input
+                  type="month"
+                  value={slipPeriodYm}
+                  onChange={e => setSlipPeriodYm(e.target.value || slipPeriodOptions.current)}
+                  className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] font-mono text-cream"
+                  aria-label="Custom slip period"
+                />
+                <button
+                  type="button"
+                  className="text-[10px] text-gold-lt underline"
+                  onClick={() => document.getElementById('postgres-wallet-ledger')?.scrollIntoView({ behavior: 'smooth' })}
+                >
+                  View detailed ledger
+                </button>
+              </>
+            ) : null}
+          </div>
           {slipModel ? <SalarySlipToolbar model={slipModel} /> : null}
           <Link href="/employees" className="text-[11px] text-zinc-500 hover:text-cream underline">← Roster</Link>
         </div>
@@ -379,6 +417,7 @@ export default function EmployeeDetailPage() {
         <p className="text-[10px] text-zinc-600 mt-2">Past accruals are not recalculated when salary changes.</p>
       </Card>
 
+      <div id="postgres-wallet-ledger">
       <Card className="p-5 mb-4 border-gold-dim/25">
         <p className="text-sm font-bold text-cream mb-3">Postgres wallet ledger</p>
         {walletLoading ? <Skeleton className="h-44" /> : !wallet ? (
@@ -422,6 +461,7 @@ export default function EmployeeDetailPage() {
           </div>
         )}
       </Card>
+      </div>
 
       <Card className="p-5">
         <p className="text-sm font-bold text-cream mb-3">Legacy GAS payroll history</p>

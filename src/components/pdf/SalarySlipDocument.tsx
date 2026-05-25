@@ -4,7 +4,8 @@ import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/render
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
-import type { HREmployee, PayrollRollComputed } from '@/types/hr'
+import type { SalarySlipBreakdown } from '@/lib/salary-slip'
+import type { HREmployee } from '@/types/hr'
 
 const BG = '#0a0a0c'
 const TEXT = '#f2f0ea'
@@ -13,6 +14,7 @@ const GOLD = '#c9a84c'
 const LINE = 'rgba(201,168,76,0.22)'
 const ROW_BG = 'rgba(255,255,255,0.03)'
 const HEAD_BG = 'rgba(201,168,76,0.12)'
+const NET_BG = 'rgba(201,168,76,0.08)'
 
 const styles = StyleSheet.create({
   page: {
@@ -35,6 +37,7 @@ const styles = StyleSheet.create({
   th: { backgroundColor: HEAD_BG, fontWeight: 700 },
   signRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 28 },
   signBox: { width: '38%', borderTopWidth: 1, borderTopColor: LINE, paddingTop: 8 },
+  emptyRow: { padding: 8, color: MUTED, fontSize: 8 },
 })
 
 export type SalarySlipModel = {
@@ -43,7 +46,7 @@ export type SalarySlipModel = {
   logoUrl?: string | null
   employee: HREmployee
   periodLabel: string
-  roll: PayrollRollComputed
+  breakdown: SalarySlipBreakdown
   generatedAt: string
 }
 
@@ -51,8 +54,48 @@ function fmtMoney(n: number) {
   return pdfMoney(n)
 }
 
+function BreakdownSection({
+  title,
+  lines,
+  total,
+  totalLabel,
+}: {
+  title: string
+  lines: SalarySlipBreakdown['earnings']
+  total: number
+  totalLabel: string
+}) {
+  return (
+    <>
+      <Text style={styles.h2}>{title}</Text>
+      <View style={styles.table}>
+        <View style={[styles.row, styles.th]}>
+          <Text style={styles.cellL}>Item</Text>
+          <Text style={styles.cellR}>Amount</Text>
+        </View>
+        {lines.length === 0 ? (
+          <View style={[styles.row, { borderBottomWidth: 0 }]}>
+            <Text style={styles.emptyRow}>No entries for this period.</Text>
+          </View>
+        ) : (
+          lines.map(line => (
+            <View key={line.label} style={styles.row}>
+              <Text style={styles.cellL}>{line.label}</Text>
+              <Text style={styles.cellR}>{fmtMoney(line.amount)}</Text>
+            </View>
+          ))
+        )}
+        <View style={[styles.row, { borderBottomWidth: 0, backgroundColor: NET_BG }]}>
+          <Text style={[styles.cellL, { fontWeight: 700 }]}>{totalLabel}</Text>
+          <Text style={[styles.cellR, { fontWeight: 700, color: GOLD }]}>{fmtMoney(total)}</Text>
+        </View>
+      </View>
+    </>
+  )
+}
+
 export function SalarySlipDocument({ model }: { model: SalarySlipModel }) {
-  const { employee: e } = model
+  const { employee: e, breakdown } = model
   return (
     <Document title={`Salary slip — ${e.name}`}>
       <Page size={A4_SIZE} style={styles.page}>
@@ -78,59 +121,50 @@ export function SalarySlipDocument({ model }: { model: SalarySlipModel }) {
             <Text style={styles.cellR}>Value</Text>
           </View>
           <View style={styles.row}>
-            <Text style={styles.cellL}>Legal name · ID</Text>
-            <Text style={styles.cellR}>{`${e.name} (${e.emp_id})`}</Text>
+            <Text style={styles.cellL}>Name</Text>
+            <Text style={styles.cellR}>{e.name}</Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.cellL}>Employee ID</Text>
+            <Text style={styles.cellR}>{e.emp_id}</Text>
           </View>
           <View style={styles.row}>
             <Text style={styles.cellL}>Role</Text>
             <Text style={styles.cellR}>{e.role || '—'}</Text>
           </View>
-          <View style={styles.row}>
+          <View style={[styles.row, { borderBottomWidth: 0 }]}>
             <Text style={styles.cellL}>Contact</Text>
             <Text style={styles.cellR}>{e.phone || '—'}</Text>
           </View>
-          <View style={[styles.row, { borderBottomWidth: 0 }]}>
-            <Text style={styles.cellL}>Joined</Text>
-            <Text style={styles.cellR}>{e.joining_date || '—'}</Text>
-          </View>
         </View>
 
-        <Text style={styles.h2}>Salary breakdown</Text>
+        <BreakdownSection
+          title="Earnings"
+          lines={breakdown.earnings}
+          total={breakdown.totalEarnings}
+          totalLabel="Total earnings"
+        />
+
+        <BreakdownSection
+          title="Deductions"
+          lines={breakdown.deductions}
+          total={breakdown.totalDeductions}
+          totalLabel="Total deductions"
+        />
+
+        <Text style={styles.h2}>Net pay</Text>
         <View style={styles.table}>
-          <View style={[styles.row, styles.th]}>
-            <Text style={styles.cellL}>Item</Text>
-            <Text style={styles.cellR}>Amount</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.cellL}>Monthly salary (basis)</Text>
-            <Text style={styles.cellR}>{fmtMoney(e.monthly_salary)}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.cellL}>Paid to date</Text>
-            <Text style={styles.cellR}>{fmtMoney(model.roll.salary_paid)}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.cellL}>Advance outstanding</Text>
-            <Text style={styles.cellR}>{fmtMoney(Math.max(0, model.roll.advance_balance))}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.cellL}>Adjustments (+/−)</Text>
-            <Text style={styles.cellR}>{fmtMoney(model.roll.adjustments)}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.cellL}>Advance deposits (recovery)</Text>
-            <Text style={styles.cellR}>{fmtMoney(model.roll.deposits)}</Text>
-          </View>
-          <View style={[styles.row, { borderBottomWidth: 0, backgroundColor: 'rgba(201,168,76,0.08)' }]}>
-            <Text style={[styles.cellL, { fontWeight: 700 }]}>Balance / due</Text>
-            <Text style={[styles.cellR, { fontWeight: 700, color: GOLD }]}>
-              {fmtMoney(model.roll.current_due)}
+          <View style={[styles.row, { borderBottomWidth: 0, backgroundColor: NET_BG }]}>
+            <Text style={[styles.cellL, { fontWeight: 700, fontSize: 11 }]}>Net pay (earnings − deductions)</Text>
+            <Text style={[styles.cellR, { fontWeight: 700, fontSize: 11, color: GOLD }]}>
+              {fmtMoney(breakdown.netPay)}
             </Text>
           </View>
         </View>
 
         <Text style={{ marginTop: 10, fontSize: 8, color: MUTED, lineHeight: 1.4 }}>
-          Alma ERP ledger statement. Amounts derive from recorded payroll transactions.
+          Alma ERP ledger statement for {model.periodLabel}. Amounts are grouped from wallet entries recorded in this
+          period only.
         </Text>
 
         <View style={styles.signRow}>
