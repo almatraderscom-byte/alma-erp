@@ -36,6 +36,7 @@ import {
   formatAttendanceTime,
   normalizeMyAttendancePayload,
 } from '@/lib/attendance-portal-normalize'
+import { MySalarySlipCard } from '@/components/portal/MySalarySlipCard'
 
 type MeUser = {
   id: string
@@ -366,6 +367,17 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && <WalletOverviewCard loading={walletLoading} wallet={wallet} />}
+
+        {!systemOwner && (
+          <MySalarySlipCard
+            empLinked={Boolean(empId)}
+            employeeId={empId}
+            profile={me}
+            sessionRole={role}
+            wallet={wallet}
+            walletLoading={walletLoading}
+          />
+        )}
 
         {!systemOwner && (
           <WalletRequestCard
