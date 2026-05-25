@@ -10,6 +10,7 @@ import type { StockItem } from '@/types'
 import {
   buyingPriceForStock,
   detectCollectionFromStock,
+  getCollectionVariantOptions,
   inferStockCollection,
   matchCollectionStock,
   normalizeWomenVariant,
@@ -109,14 +110,20 @@ export function useNewOrderForm(onSuccess?: () => void) {
     const key = code.trim().toLowerCase()
     const collection = detectCollectionFromStock(stockItems, code)
     if (collection) {
-      const stock = matchCollectionStock(stockItems, collection, { size: raw.size, variant: raw.variant })
+      let variant = raw.variant
+      if ((collection.collectionType === 'CUSTOM' || collection.collectionType === 'SINGLE') && !variant) {
+        const options = getCollectionVariantOptions(stockItems, collection)
+        if (options.length === 1) variant = options[0].value
+      }
+      const stock = matchCollectionStock(stockItems, collection, { size: raw.size, variant })
       return {
         ...raw,
         product_code: code,
         collection_code: collection.collectionCode,
         collection_type: collection.collectionType,
         size_group: collection.collectionType === 'MEN' ? sizeGroupForSize(raw.size) || '' : '',
-        variant_group: collection.collectionType === 'WOMEN' ? normalizeWomenVariant(raw.variant) || '' : '',
+        variant: variant || raw.variant,
+        variant_group: collection.collectionType === 'WOMEN' ? normalizeWomenVariant(variant || raw.variant) || '' : '',
         sku: stock?.sku || '',
         product: stock?.product || `${collection.collectionCode} Collection`,
         category: stock?.category || (collection.collectionType === 'WOMEN' ? 'Women' : collection.collectionType === 'MEN' ? 'Panjabi' : collection.collectionType === 'SINGLE' ? 'Single Product' : 'Custom Collection'),

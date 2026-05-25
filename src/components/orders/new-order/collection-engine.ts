@@ -103,6 +103,38 @@ export function normalizeWomenVariant(value: string | undefined): WomenVariantGr
   return undefined
 }
 
+export type CollectionVariantOption = {
+  value: string
+  label: string
+  available: number
+  sku: string
+}
+
+export function getCollectionVariantOptions(
+  stockItems: StockItem[],
+  collection: { collectionCode: string; collectionType: string },
+): CollectionVariantOption[] {
+  const code = collection.collectionCode
+  const type = collection.collectionType
+  const seen = new Map<string, CollectionVariantOption>()
+
+  for (const stock of stockItems) {
+    const meta = inferStockCollection(stock)
+    if (meta.collectionCode !== code || meta.collectionType !== type) continue
+    if (stock.active === false || stock.archived) continue
+    const value = String(stock.variantGroup || stock.size || '').trim()
+    if (!value) continue
+    const key = value.toUpperCase()
+    const available = Number(stock.available ?? 0)
+    const existing = seen.get(key)
+    if (!existing || available > existing.available) {
+      seen.set(key, { value, label: value, available, sku: stock.sku || '' })
+    }
+  }
+
+  return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+}
+
 export function matchCollectionStock(
   stockItems: StockItem[],
   collection: CollectionInfo,
@@ -120,6 +152,20 @@ export function matchCollectionStock(
       || activeMatches.find(({ stock }) => String(stock.size).trim() === String(selected.size || '').trim())?.stock
       || matches.find(({ meta }) => meta.sizeGroup === group)?.stock
       || matches.find(({ stock }) => String(stock.size).trim() === String(selected.size || '').trim())?.stock
+  }
+
+  if (collection.collectionType === 'CUSTOM' || collection.collectionType === 'SINGLE') {
+    const target = String(selected.variant || selected.size || '').trim().toUpperCase()
+    if (!target) return undefined
+    return activeMatches.find(({ meta, stock }) =>
+      String(meta.variantGroup || '').trim().toUpperCase() === target
+      || String(stock.size || '').trim().toUpperCase() === target
+      || String(stock.variantGroup || '').trim().toUpperCase() === target,
+    )?.stock
+      || matches.find(({ meta, stock }) =>
+        String(meta.variantGroup || '').trim().toUpperCase() === target
+        || String(stock.variantGroup || stock.size || '').trim().toUpperCase() === target,
+      )?.stock
   }
 
   const variant = normalizeWomenVariant(selected.variant) || String(selected.variant || '').trim()

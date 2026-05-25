@@ -1,7 +1,8 @@
 'use client'
 
+import { useEffect } from 'react'
 import type React from 'react'
-import type { OrderStatus } from '@/types'
+import type { OrderStatus, StockItem } from '@/types'
 import { GoldDivider } from '@/components/ui'
 import { CATEGORIES, COURIERS, NEW_ORDER_STATUSES, PAYMENTS, SOURCES } from './constants'
 import { NewOrderField, newOrderInputCls, newOrderSelectCls } from './field'
@@ -9,7 +10,51 @@ import { BDT_SYMBOL } from '@/lib/currency'
 import { Money } from '@/components/ui'
 import type { FormErrors, NewOrderForm, NewOrderItemForm } from './types'
 import { orderItemGrossProfit, orderItemSubtotal } from './use-new-order-form'
-import { MEN_SIZES, WOMEN_VARIANT_GROUPS, parseCollectionCode } from './collection-engine'
+import {
+  MEN_SIZES,
+  WOMEN_VARIANT_GROUPS,
+  detectCollectionFromStock,
+  getCollectionVariantOptions,
+  parseCollectionCode,
+  type CollectionInfo,
+  type CollectionType,
+} from './collection-engine'
+
+function itemCollectionInfo(item: NewOrderItemForm, stockItems: StockItem[]): CollectionInfo | null {
+  if (item.collection_code && item.collection_type) {
+    const code = item.collection_code
+    return {
+      collectionCode: code,
+      collectionType: item.collection_type as CollectionType,
+      baseCode: code.endsWith('T') ? code.slice(0, -1) : code,
+    }
+  }
+  return detectCollectionFromStock(stockItems, item.product_code)
+    || parseCollectionCode(item.product_code, item.collection_type as CollectionType | undefined)
+}
+
+function CustomVariantAutoSelect({
+  index,
+  item,
+  collection,
+  stockItems,
+  setItem,
+}: {
+  index: number
+  item: NewOrderItemForm
+  collection: CollectionInfo
+  stockItems: StockItem[]
+  setItem: (index: number, key: keyof NewOrderItemForm, value: string) => void
+}) {
+  const customVariants = getCollectionVariantOptions(stockItems, collection)
+  useEffect(() => {
+    if (customVariants.length === 1 && !item.variant) {
+      setItem(index, 'variant', customVariants[0].value)
+    }
+  }, [customVariants, index, item.variant, setItem])
+
+  return null
+}
 
 export function NewOrderFormFields({
   form,
@@ -21,6 +66,7 @@ export function NewOrderFormFields({
   removeItem,
   touch,
   totals,
+  stockItems = [],
 }: {
   form: NewOrderForm
   errors: FormErrors
@@ -43,6 +89,7 @@ export function NewOrderFormFields({
     shippingMargin: number
     estimatedProfit: number
   }
+  stockItems?: StockItem[]
 }) {
   function focusNext(e: React.KeyboardEvent<HTMLElement>) {
     if (e.key !== 'Enter') return
@@ -128,11 +175,25 @@ export function NewOrderFormFields({
             const itemError = errors[`item_${index}`]
             const subtotal = orderItemSubtotal(item)
             const itemProfit = orderItemGrossProfit(item)
-            const collection = parseCollectionCode(item.product_code, item.collection_type)
+            const collection = itemCollectionInfo(item, stockItems)
             const isMenCollection = collection?.collectionType === 'MEN' || item.collection_type === 'MEN'
             const isWomenCollection = collection?.collectionType === 'WOMEN' || item.collection_type === 'WOMEN'
+            const isCustomCollection = collection?.collectionType === 'CUSTOM' || collection?.collectionType === 'SINGLE'
+              || item.collection_type === 'CUSTOM' || item.collection_type === 'SINGLE'
+            const customVariants = collection && isCustomCollection
+              ? getCollectionVariantOptions(stockItems, collection)
+              : []
             return (
               <div key={item.id} className="rounded-2xl border border-border bg-black/20 p-3 space-y-2">
+                {collection && isCustomCollection && (
+                  <CustomVariantAutoSelect
+                    index={index}
+                    item={item}
+                    collection={collection}
+                    stockItems={stockItems}
+                    setItem={setItem}
+                  />
+                )}
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">Item {index + 1}</p>
                   {form.items.length > 1 && (
@@ -183,6 +244,23 @@ export function NewOrderFormFields({
                         ))}
                       </select>
                     </NewOrderField>
+                  ) : isCustomCollection ? (
+                    <NewOrderField label="Variant / Size" required>
+                      <select
+                        value={item.variant}
+                        onChange={e => setItem(index, 'variant', e.target.value)}
+                        className={newOrderSelectCls()}
+                        data-order-field="1"
+                        onKeyDown={focusNext}
+                      >
+                        <option value="">Select variant/size</option>
+                        {customVariants.map(opt => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label} (Available: {opt.available})
+                          </option>
+                        ))}
+                      </select>
+                    </NewOrderField>
                   ) : (
                     <NewOrderField label="Variant">
                       <input
@@ -203,7 +281,9 @@ export function NewOrderFormFields({
                       ? 'Men/father-son collection detected. Sizes 16-36 deduct KIDS stock, 38-54 deduct ADULT stock.'
                       : isWomenCollection
                         ? 'Women collection detected. Age bands stay on the order, while stock deducts from ORNA, TWO PIECE, or THREE PIECE.'
-                        : 'Dynamic collection detected. Variant or SKU selection resolves inventory from saved stock metadata.'}
+                        : isCustomCollection
+                          ? 'Custom collection detected. Choose a variant/size from stock pools below.'
+                          : 'Dynamic collection detected. Variant or SKU selection resolves inventory from saved stock metadata.'}
                   </div>
                 )}
                 <NewOrderField label="Product" required>
@@ -229,6 +309,12 @@ export function NewOrderFormFields({
                     <NewOrderField label="Size Group">
                       <div className="flex h-10 items-center rounded-xl border border-border bg-black/30 px-3 text-xs text-zinc-500">
                         {item.size_group || 'Auto'}
+                      </div>
+                    </NewOrderField>
+                  ) : isCustomCollection ? (
+                    <NewOrderField label="Stock pool">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/30 px-3 text-xs text-zinc-500 truncate">
+                        {item.variant || 'Select variant/size'}
                       </div>
                     </NewOrderField>
                   ) : (

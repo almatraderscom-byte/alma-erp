@@ -935,7 +935,8 @@ function rowIsArchived_(row) {
 function resolveLifestyleCollectionStock_(item, stockMap) {
   var type = String(item.collection_type || '').trim().toUpperCase();
   var code = String(item.collection_code || item.product_code || '').trim().toUpperCase().replace(/\s+/g, '');
-  if (!code || (type !== 'MEN' && type !== 'WOMEN')) return null;
+  if (!code) return null;
+  if (type !== 'MEN' && type !== 'WOMEN' && type !== 'CUSTOM' && type !== 'SINGLE') return null;
 
   var matches = [];
   Object.keys(stockMap).forEach(function(key) {
@@ -965,6 +966,18 @@ function resolveLifestyleCollectionStock_(item, stockMap) {
       return String(m.item.size || '').trim() === String(item.size || '').trim();
     }, false) || pick(function(m) {
       return String(m.meta.sizeGroup || m.meta.sizeCategory || m.item.size || '').toUpperCase() === group;
+    }, true);
+  }
+
+  if (type === 'CUSTOM' || type === 'SINGLE') {
+    var customTarget = String(item.variant_group || item.variant || item.size || '').trim().toUpperCase();
+    if (!customTarget) return null;
+    return pick(function(m) {
+      return String(m.meta.variantGroup || '').trim().toUpperCase() === customTarget
+        || String(m.item.size || '').trim().toUpperCase() === customTarget
+        || String(m.item.sku || '').toUpperCase() === smartFashionSku_(code, '', item.variant || item.size || '');
+    }, false) || pick(function(m) {
+      return String(m.meta.variantGroup || '').trim().toUpperCase() === customTarget;
     }, true);
   }
 
