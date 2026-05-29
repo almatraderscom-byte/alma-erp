@@ -371,6 +371,12 @@ function dispatchRoutePost_(body) {
     case 'trading_cleanup_install_trigger': return installTradingScreenshotCleanupTrigger();
     case 'backup_upload': return backupUpload_(body);
     case 'backup_retention_cleanup': return backupRetentionCleanup_(body);
+    case 'admin_drain_crm_queue':
+      if (!isSuperAdminActor_(body)) return { ok: false, error: 'forbidden' };
+      return adminDrainCrmQueue_();
+    case 'admin_backfill_crm':
+      if (!isSuperAdminActor_(body)) return { ok: false, error: 'forbidden' };
+      return backfillCrmFromOrders_(body);
     default:
       return { error: 'Unknown POST route: "' + body.route + '"' };
   }
@@ -807,13 +813,7 @@ function createOrder_(body) {
     applyOrderInventoryDeductions_(items, stock);
   }
 
-  enqueueDeferredOrderCrmHook_({
-    customer: String(body.customer || '').trim(),
-    phone: String(body.phone || '').trim(),
-    address: String(body.address || '').trim(),
-    source: String(body.source || '').trim(),
-    order_id: orderId,
-  });
+  syncOrderCrmHook_(body, orderId);
 
   // ── Compute profit for response (formula in sheet may not resolve yet) ───────
   var sellPrice   = items.length ? Math.max(0, subtotal - discount - Number(body.add_discount || 0)) : Number(body.sell_price) || (Number(body.unit_price) * Number(body.qty));
@@ -1108,6 +1108,125 @@ function applyOrderInventoryDeductions_(items, stock) {
 }
 
 var DEFERRED_CRM_QUEUE_KEY_ = 'deferred_order_crm_queue_v1';
+var CRM_CUSTOMERS_DATA_START = 6;
+
+function isSuperAdminActor_(body) {
+  return String((body && body.actor_role) || '').toUpperCase() === 'SUPER_ADMIN';
+}
+
+function crmDedupeKey_(phone, name) {
+  var digits = String(phone || '').replace(/\D/g, '');
+  if (digits) return 'p:' + digits.slice(-11);
+  var normalizedName = String(name || '').trim().toLowerCase();
+  return normalizedName ? 'n:' + normalizedName : '';
+}
+
+function loadExistingCrmProfileKeys_() {
+  var keys = {};
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.CUSTOMERS);
+  if (!sh) return keys;
+  var lastRow = sh.getLastRow();
+  if (lastRow < CRM_CUSTOMERS_DATA_START) return keys;
+  var rows = sh.getRange(CRM_CUSTOMERS_DATA_START, 2, lastRow - CRM_CUSTOMERS_DATA_START + 1, 2).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var key = crmDedupeKey_(rows[i][1], rows[i][0]);
+    if (key) keys[key] = true;
+  }
+  return keys;
+}
+
+function syncOrderCrmHook_(body, orderId) {
+  var customer = String(body.customer || '').trim();
+  var phone = String(body.phone || '').trim();
+  var address = String(body.address || '').trim();
+  var source = String(body.source || '').trim();
+  try {
+    if (typeof onOrderCrmUpdate === 'function') {
+      onOrderCrmUpdate(customer, phone, address, '', source);
+    } else {
+      enqueueDeferredOrderCrmHook_({
+        customer: customer,
+        phone: phone,
+        address: address,
+        source: source,
+        order_id: orderId,
+      });
+    }
+  } catch (e) {
+    apiLog_('WARN', orderId, 'CRM_HOOK_ERROR: ' + e.message, customer);
+  }
+}
+
+function adminDrainCrmQueue_() {
+  return processDeferredOrderCrmHooks_();
+}
+
+function backfillCrmFromOrders_(payload) {
+  payload = payload || {};
+  if (typeof ensureCustomerProfile_ !== 'function') {
+    return { ok: false, error: 'phase5_not_loaded' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ordersSheet = ss.getSheetByName(SHEETS.ORDERS);
+  if (!ordersSheet) return { ok: false, error: 'no_orders_sheet' };
+
+  var lastRow = ordersSheet.getLastRow();
+  if (lastRow < ORDERS_DATA_START) return { ok: true, processed: 0, created: 0, skipped: 0 };
+
+  var businessId = resolveBusinessId_(payload.business_id || '');
+  var rows = ordersSheet.getRange(
+    ORDERS_DATA_START,
+    1,
+    lastRow - ORDERS_DATA_START + 1,
+    TOTAL_COLS
+  ).getValues();
+
+  var existingKeys = loadExistingCrmProfileKeys_();
+  var orderSeen = {};
+  var processed = 0;
+  var created = 0;
+  var skipped = 0;
+  var errors = 0;
+
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var name = String(row[OC.CUSTOMER - 1] || '').trim();
+    var phone = String(row[OC.PHONE - 1] || '').trim();
+    var address = String(row[OC.ADDRESS - 1] || '').trim();
+    var source = String(row[OC.SOURCE - 1] || '').trim() || 'backfill';
+
+    if (!name && !phone) continue;
+
+    if (businessId) {
+      var rowBiz = resolveBusinessId_(String(row[OC.BUSINESS_ID - 1] || ''));
+      if (rowBiz && rowBiz !== businessId) continue;
+    }
+
+    var key = crmDedupeKey_(phone, name);
+    if (!key) continue;
+    if (orderSeen[key]) {
+      skipped++;
+      continue;
+    }
+    orderSeen[key] = true;
+
+    var hadProfile = !!existingKeys[key];
+    try {
+      ensureCustomerProfile_(name, phone, address, '', source);
+      processed++;
+      if (!hadProfile) {
+        created++;
+        existingKeys[key] = true;
+      }
+    } catch (e) {
+      errors++;
+      apiLog_('WARN', 'backfill_crm', 'BACKFILL_ROW_ERROR row ' + (ORDERS_DATA_START + i) + ': ' + e.message, name);
+    }
+  }
+
+  return { ok: true, processed: processed, created: created, skipped: skipped, errors: errors };
+}
 
 function enqueueDeferredOrderCrmHook_(payload) {
   if (typeof onOrderCrmUpdate !== 'function') return;

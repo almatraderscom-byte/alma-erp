@@ -1,9 +1,14 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useSession } from 'next-auth/react'
+import toast from 'react-hot-toast'
 import { useCustomers } from '@/hooks/useERP'
 import { useOrdersData } from '@/contexts/OrdersDataContext'
+import { useBusiness } from '@/contexts/BusinessContext'
 import { buildCustomerReturnInsights } from '@/lib/customer-order-insights'
+import { invalidateQueryCache } from '@/hooks/useQuery'
+import { normalizeAlmaRole } from '@/lib/roles'
 import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, Button, SearchInput, Select, StatRow, GoldDivider, Progress, Skeleton, Empty, Money, BdtText, StatusBadge } from '@/components/ui'
 import { fmt, pct } from '@/lib/utils'
 import type { Customer, CustomerSegment, OrderStatus } from '@/types'
@@ -15,8 +20,14 @@ export default function CrmPage() {
   const [segment, setSegment] = useState('')
   const [risk, setRisk]     = useState('')
   const [selected, setSelected] = useState<Customer | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
-  const { data, loading } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: search || undefined })
+  const { data: session } = useSession()
+  const { businessId } = useBusiness()
+  const role = normalizeAlmaRole(session?.user?.role)
+  const canSyncFromOrders = role === 'SUPER_ADMIN'
+
+  const { data, loading, refetch } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: search || undefined })
   const { orders: allOrders, enabled: ordersEnabled } = useOrdersData()
   const customers = data?.customers ?? []
 
@@ -47,11 +58,47 @@ export default function CrmPage() {
       : 0,
   }
 
+  async function syncFromOrders() {
+    if (!canSyncFromOrders || syncing) return
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/customers/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(String(json.error || 'Could not sync customers from orders'))
+        return
+      }
+      const processed = Number(json.processed ?? 0)
+      const created = Number(json.created ?? 0)
+      toast.success(`Synced from orders: ${processed} processed, ${created} new profiles`)
+      invalidateQueryCache('customers:')
+      refetch()
+    } catch (e) {
+      toast.error((e as Error).message || 'Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="CRM"
         subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}
+        actions={canSyncFromOrders ? (
+          <Button
+            size="xs"
+            variant="secondary"
+            disabled={syncing}
+            onClick={() => void syncFromOrders()}
+          >
+            {syncing ? 'Syncing…' : 'Sync from orders'}
+          </Button>
+        ) : undefined}
       />
 
       <div className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
