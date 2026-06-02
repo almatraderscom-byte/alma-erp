@@ -22,6 +22,7 @@ import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
+import { isAuthPath } from '@/lib/auth-paths'
 
 const NotificationShellProvider = dynamic(
   () => import('@/contexts/NotificationShellContext').then(mod => mod.NotificationShellProvider),
@@ -125,10 +126,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [loadingTimedOut, setLoadingTimedOut] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
 
-  const isPublic =
-    pathname.startsWith('/login')
-    || pathname.startsWith('/forgot-password')
-    || pathname.startsWith('/reset-password')
+  const isPublic = isAuthPath(pathname)
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -161,13 +159,15 @@ function AuthGate({ children }: { children: ReactNode }) {
   }, [status])
 
   useEffect(() => {
-    if (status !== 'unauthenticated' || typeof window === 'undefined') return
-    router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`)
+    if (isPublic || status !== 'unauthenticated' || typeof window === 'undefined') return
+    const returnTo = `${pathname}${window.location.search}`
+    const loginUrl = `/login?callbackUrl=${encodeURIComponent(returnTo)}`
+    router.replace(loginUrl)
     const timer = window.setTimeout(() => {
-      window.location.href = `/login?callbackUrl=${encodeURIComponent(pathname)}`
+      window.location.href = loginUrl
     }, AUTH_REDIRECT_TIMEOUT_MS)
     return () => window.clearTimeout(timer)
-  }, [status, pathname, router])
+  }, [isPublic, status, pathname, router])
 
   if (isPublic) {
     return <>{children}</>

@@ -2,7 +2,8 @@
 import { signIn } from 'next-auth/react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
+import { safeAuthCallbackUrl } from '@/lib/auth-paths'
 import { motion } from 'framer-motion'
 import { Button, Card, Input } from '@/components/ui'
 import toast from 'react-hot-toast'
@@ -10,10 +11,16 @@ import toast from 'react-hot-toast'
 function LoginForm() {
   const router = useRouter()
   const params = useSearchParams()
-  const callbackUrl = params.get('callbackUrl') || '/'
+  const callbackUrl = safeAuthCallbackUrl(params.get('callbackUrl'))
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const raw = params.get('callbackUrl')
+    if (!raw || safeAuthCallbackUrl(raw) === raw) return
+    router.replace('/login')
+  }, [params, router])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,7 +38,6 @@ function LoginForm() {
         return
       }
       router.replace(callbackUrl)
-      router.refresh()
     } catch {
       toast.error('Login failed')
     } finally {

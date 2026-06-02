@@ -5,6 +5,7 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isPathAllowedForRole, normalizeAlmaRole, roleHomePath } from '@/lib/roles'
 import type { BusinessId } from '@/lib/businesses'
 import { businessAllowed, parseBusinessAccess } from '@/lib/business-access'
+import { isAuthPath } from '@/lib/auth-paths'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
 
@@ -122,7 +123,10 @@ export async function middleware(req: NextRequest) {
     }
     const url = req.nextUrl.clone()
     url.pathname = '/login'
-    url.searchParams.set('callbackUrl', pathname + req.nextUrl.search)
+    url.search = ''
+    if (!isAuthPath(pathname)) {
+      url.searchParams.set('callbackUrl', pathname + req.nextUrl.search)
+    }
     return NextResponse.redirect(url)
   }
 
