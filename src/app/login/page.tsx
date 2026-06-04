@@ -1,5 +1,5 @@
 'use client'
-import { signIn } from 'next-auth/react'
+import { getSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useEffect, Suspense } from 'react'
@@ -37,10 +37,27 @@ function LoginForm() {
         setLoading(false)
         return
       }
-      router.replace(callbackUrl)
+      if (!res?.ok) {
+        toast.error('Login failed')
+        setLoading(false)
+        return
+      }
+
+      let session = await getSession()
+      for (let i = 0; i < 10 && !session?.user; i++) {
+        await new Promise(r => setTimeout(r, 200))
+        session = await getSession()
+      }
+
+      if (session?.user) {
+        window.location.href = callbackUrl
+        return
+      }
+
+      toast.error('Login successful but session not ready. Please refresh.')
+      setLoading(false)
     } catch {
       toast.error('Login failed')
-    } finally {
       setLoading(false)
     }
   }

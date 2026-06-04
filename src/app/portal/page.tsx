@@ -238,6 +238,7 @@ export default function EmployeePortalPage() {
   const hasCheckedInToday = Boolean(attendance?.today?.checkInAt)
   const opsSpotlight = useOperationalSpotlightTrigger(business.id, !systemOwner, {
     hasCheckedInToday,
+    employeeIdGas: empId,
   })
 
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
@@ -266,6 +267,7 @@ export default function EmployeePortalPage() {
     <FinancePageChrome
       title="My desk"
       subtitle="Wallet balance · withdrawal requests · payroll history"
+      hideDateFilter
       actions={(
         <div className="flex gap-2 flex-wrap justify-end">
           <Link href={ordersHref}>
@@ -276,7 +278,7 @@ export default function EmployeePortalPage() {
       )}
     >
       {profileIdentity && (
-        <div className="mb-4">
+        <div className="mb-4 min-h-[208px]">
           {loadingMe && !me ? (
             <Skeleton className="h-52 w-full rounded-2xl" />
           ) : (
@@ -366,7 +368,11 @@ export default function EmployeePortalPage() {
           </Card>
         )}
 
-        {!systemOwner && <WalletOverviewCard loading={walletLoading} wallet={wallet} />}
+        {!systemOwner && (
+          <div className="min-h-[180px]">
+            <WalletOverviewCard loading={walletLoading} wallet={wallet} />
+          </div>
+        )}
 
         {!systemOwner && (
           <MySalarySlipCard
@@ -391,13 +397,15 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && (
-          <MealAllowanceCard
-            businessId={business.id}
-            empLinked={Boolean(empId)}
-            loading={mealEligibilityLoading}
-            eligibility={mealEligibility}
-            onSubmitted={() => void loadMealEligibility()}
-          />
+          <div className="min-h-[120px]">
+            <MealAllowanceCard
+              businessId={business.id}
+              empLinked={Boolean(empId)}
+              loading={mealEligibilityLoading}
+              eligibility={mealEligibility}
+              onSubmitted={() => void loadMealEligibility()}
+            />
+          </div>
         )}
 
         {!systemOwner && <Card className="p-5 md:col-span-2">

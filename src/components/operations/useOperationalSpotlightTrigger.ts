@@ -20,6 +20,8 @@ type SpotlightTaskMeta = OperationalTaskAssignmentDto['task'] & { showOnCheckIn?
 type TriggerOptions = {
   /** When true, portal mount/focus/poll may auto-open unseen spotlights */
   hasCheckedInToday?: boolean
+  /** HR employee id — auto spotlight/dock disabled when unset */
+  employeeIdGas?: string | null
 }
 
 async function fetchOpenTasks(businessId: string): Promise<OperationalTaskAssignmentDto[]> {
@@ -72,9 +74,11 @@ export function useOperationalSpotlightTrigger(
 ) {
   const pathname = usePathname()
   const onPortal = pathname === '/portal'
-  const { hasCheckedInToday = false } = options
+  const { hasCheckedInToday = false, employeeIdGas = null } = options
+  const empLinked = Boolean(String(employeeIdGas || '').trim())
+  const spotlightEnabled = enabled && empLinked
 
-  const { tasks, loading, refetch } = useOperationalTasks(businessId, enabled)
+  const { tasks, loading, refetch } = useOperationalTasks(businessId, spotlightEnabled)
   const [spotlight, setSpotlight] = useState<OperationalTaskAssignmentDto | null>(null)
   const [heroOpen, setHeroOpen] = useState(false)
   const spotlightIdRef = useRef<string | null>(null)
@@ -92,7 +96,7 @@ export function useOperationalSpotlightTrigger(
   }, [spotlight?.id])
 
   useEffect(() => {
-    if (!enabled || loading) return
+    if (!spotlightEnabled || loading) return
     const primary = pickPrimaryOpsTask(tasks)
     if (!primary) {
       setSpotlight(null)
@@ -101,7 +105,13 @@ export function useOperationalSpotlightTrigger(
       return
     }
     setSpotlight(primary)
-  }, [enabled, loading, tasks, heroOpen])
+  }, [spotlightEnabled, loading, tasks, heroOpen])
+
+  useEffect(() => {
+    if (empLinked) return
+    setSpotlight(null)
+    setHeroOpen(false)
+  }, [empLinked])
 
   const openSpotlightForTask = useCallback((primary: OperationalTaskAssignmentDto) => {
     setSpotlight(primary)
@@ -110,7 +120,7 @@ export function useOperationalSpotlightTrigger(
 
   const tryOpenUnseenSpotlight = useCallback(
     async (opts?: { requireCheckedIn?: boolean }) => {
-      if (!enabled || heroOpenRef.current) return false
+      if (!spotlightEnabled || heroOpenRef.current) return false
       if (opts?.requireCheckedIn && !hasCheckedInToday) return false
 
       invalidateOperationalTasksCache(businessId)
@@ -122,7 +132,7 @@ export function useOperationalSpotlightTrigger(
       void refetch(true)
       return true
     },
-    [businessId, enabled, hasCheckedInToday, openSpotlightForTask, refetch],
+    [businessId, spotlightEnabled, hasCheckedInToday, openSpotlightForTask, refetch],
   )
 
   const minimizeHero = useCallback(async () => {
@@ -144,7 +154,7 @@ export function useOperationalSpotlightTrigger(
   )
 
   const triggerAfterCheckIn = useCallback(async () => {
-    if (!enabled) return
+    if (!spotlightEnabled) return
     invalidateOperationalTasksCache(businessId)
     await refetch(true)
     const list = await fetchOpenTasks(businessId)
@@ -154,7 +164,7 @@ export function useOperationalSpotlightTrigger(
       return
     }
     openSpotlightForTask(primary)
-  }, [businessId, enabled, openSpotlightForTask, refetch])
+  }, [businessId, spotlightEnabled, openSpotlightForTask, refetch])
 
   const handleUpdated = useCallback(async () => {
     invalidateOperationalTasksCache(businessId)
@@ -171,12 +181,12 @@ export function useOperationalSpotlightTrigger(
   }, [businessId, refetch])
 
   useEffect(() => {
-    if (!enabled || !onPortal || loading) return
+    if (!spotlightEnabled || !onPortal || loading) return
     void tryOpenUnseenSpotlight({ requireCheckedIn: true })
-  }, [enabled, onPortal, loading, hasCheckedInToday, tryOpenUnseenSpotlight])
+  }, [spotlightEnabled, onPortal, loading, hasCheckedInToday, tryOpenUnseenSpotlight])
 
   useEffect(() => {
-    if (!enabled || !onPortal) return
+    if (!spotlightEnabled || !onPortal) return
 
     const onVisibility = () => {
       if (document.visibilityState !== 'visible' || heroOpenRef.current) return
@@ -185,10 +195,10 @@ export function useOperationalSpotlightTrigger(
 
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [enabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
+  }, [spotlightEnabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
 
   useEffect(() => {
-    if (!enabled || !onPortal) return
+    if (!spotlightEnabled || !onPortal) return
 
     const timer = window.setInterval(() => {
       if (heroOpenRef.current || document.visibilityState !== 'visible') return
@@ -196,7 +206,7 @@ export function useOperationalSpotlightTrigger(
     }, PORTAL_POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [enabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
+  }, [spotlightEnabled, onPortal, hasCheckedInToday, tryOpenUnseenSpotlight])
 
   return {
     tasks: openTasks,
