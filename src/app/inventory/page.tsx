@@ -107,7 +107,14 @@ export default function InventoryPage() {
   const inventoryTotals = useMemo(() => {
     const stockValue = activeInventoryItems.reduce((sum, item) => sum + item.stock_value, 0)
     const sellValue = activeInventoryItems.reduce((sum, item) => sum + item.sell_value, 0)
-    return { stockValue, sellValue, potentialProfit: sellValue - stockValue }
+    const potentialProfit = activeInventoryItems.reduce((sum, item) => {
+      const sellingPrice = Number((item as StockItem & { selling_price?: number }).selling_price) || 0
+      const rowProfit =
+        item.potential_profit ||
+        sellingPrice * (item.available || 0) - item.stock_value
+      return sum + (Number.isFinite(rowProfit) ? rowProfit : 0)
+    }, 0)
+    return { stockValue, sellValue, potentialProfit }
   }, [activeInventoryItems])
   const totalValue = inventoryTotals.stockValue
   const totalSellVal = inventoryTotals.sellValue

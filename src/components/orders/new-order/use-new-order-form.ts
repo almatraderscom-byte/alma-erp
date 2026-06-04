@@ -40,11 +40,13 @@ export function useNewOrderForm(onSuccess?: () => void) {
   const [errors, setErrors] = useState<FormErrors>({})
   const [touched, setTouched] = useState<Partial<Record<keyof NewOrderForm, boolean>>>({})
   const [loading, setLoading] = useState(false)
+  const [catalogLoading, setCatalogLoading] = useState(true)
   const [products, setProducts] = useState<ProductOption[]>([])
   const [stockItems, setStockItems] = useState<StockItem[]>([])
 
   const touchedRef = useRef(touched)
   touchedRef.current = touched
+  const stockResolvedRef = useRef(false)
 
   const set = useCallback(<K extends keyof NewOrderForm>(key: K, value: NewOrderForm[K]) => {
     setForm(prev => {
@@ -60,6 +62,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
   useEffect(() => {
     let alive = true
     async function loadCatalog() {
+      setCatalogLoading(true)
       try {
         const [productRes, stockRes] = await Promise.all([api.products.list(), api.stock.list()])
         if (!alive) return
@@ -67,6 +70,8 @@ export function useNewOrderForm(onSuccess?: () => void) {
         setStockItems(stockRes.items || [])
       } catch (e) {
         console.warn('[CreateOrder catalog]', (e as Error).message)
+      } finally {
+        if (alive) setCatalogLoading(false)
       }
     }
     void loadCatalog()
@@ -106,7 +111,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
     return map
   }, [products, stockItems])
 
-  function enrichItemFromCode(raw: NewOrderItemForm, code: string): NewOrderItemForm {
+  const enrichItemFromCode = useCallback((raw: NewOrderItemForm, code: string): NewOrderItemForm => {
     const key = code.trim().toLowerCase()
     const collection = detectCollectionFromStock(stockItems, code)
     if (collection) {
@@ -148,9 +153,9 @@ export function useNewOrderForm(onSuccess?: () => void) {
       available: stock?.available,
       warning: stock?.available != null && stock.available <= 0 ? 'Out of stock' : '',
     }
-  }
+  }, [productByCode, stockBySku, stockItems])
 
-  function resolveItem(raw: NewOrderItemForm): NewOrderItemForm {
+  const resolveItem = useCallback((raw: NewOrderItemForm): NewOrderItemForm => {
     const collection = detectCollectionFromStock(stockItems, raw.product_code)
     if (!collection) return raw
     const stock = matchCollectionStock(stockItems, collection, { size: raw.size, variant: raw.variant })
@@ -168,7 +173,19 @@ export function useNewOrderForm(onSuccess?: () => void) {
       available: stock?.available,
       warning: stock ? (stock.available <= 0 ? 'Out of stock' : '') : 'Unavailable size/variant for this collection',
     }
-  }
+  }, [stockItems])
+
+  useEffect(() => {
+    if (!stockItems.length || stockResolvedRef.current) return
+    stockResolvedRef.current = true
+    setForm(prev => ({
+      ...prev,
+      items: prev.items.map(item => {
+        if (!item.product_code?.trim()) return item
+        return resolveItem(enrichItemFromCode(item, item.product_code))
+      }),
+    }))
+  }, [stockItems.length, enrichItemFromCode, resolveItem])
 
   const setItem = useCallback((index: number, key: keyof NewOrderItemForm, value: string) => {
     setForm(prev => ({
@@ -181,7 +198,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
         return next
       }),
     }))
-  }, [productByCode, stockBySku, stockItems])
+  }, [enrichItemFromCode, resolveItem])
 
   const addItem = useCallback(() => {
     setForm(prev => ({ ...prev, items: [...prev.items, newOrderItem(prev.items.length)] }))
@@ -209,6 +226,11 @@ export function useNewOrderForm(onSuccess?: () => void) {
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault()
+      if (catalogLoading) {
+        toast.error('Inventory data is still loading. Please wait a moment.')
+        return
+      }
+
       const allTouched = Object.fromEntries(Object.keys(EMPTY_NEW_ORDER_FORM).map(k => [k, true])) as Partial<
         Record<keyof NewOrderForm, boolean>
       >
@@ -300,7 +322,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
         setLoading(false)
       }
     },
-    [form, onSuccess]
+    [catalogLoading, form, onSuccess]
   )
 
   const totals = useMemo(() => calculateNewOrderTotals(form), [form])
@@ -311,6 +333,7 @@ export function useNewOrderForm(onSuccess?: () => void) {
     touched,
     setTouched,
     loading,
+    catalogLoading,
     set,
     setItem,
     addItem,

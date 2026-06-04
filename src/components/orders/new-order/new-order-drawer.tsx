@@ -9,7 +9,7 @@ import { useNewOrderForm } from './use-new-order-form'
 
 export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const formRef = useRef<HTMLFormElement>(null)
-  const { form, errors, touched, loading, set, setItem, addItem, removeItem, touch, handleSubmit, totals, stockItems } = useNewOrderForm(() => {
+  const { form, errors, touched, loading, catalogLoading, set, setItem, addItem, removeItem, touch, handleSubmit, totals, stockItems } = useNewOrderForm(() => {
     onCreated()
     onClose()
   })
@@ -59,6 +59,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
               touch={touch}
               totals={totals}
               stockItems={stockItems}
+              catalogLoading={catalogLoading}
             />
           </div>
 

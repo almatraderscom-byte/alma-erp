@@ -67,6 +67,7 @@ export function NewOrderFormFields({
   touch,
   totals,
   stockItems = [],
+  catalogLoading = false,
 }: {
   form: NewOrderForm
   errors: FormErrors
@@ -90,6 +91,7 @@ export function NewOrderFormFields({
     estimatedProfit: number
   }
   stockItems?: StockItem[]
+  catalogLoading?: boolean
 }) {
   function focusNext(e: React.KeyboardEvent<HTMLElement>) {
     if (e.key !== 'Enter') return
@@ -170,6 +172,9 @@ export function NewOrderFormFields({
           <span className="w-4 h-px bg-gold-dim" />
           Items
         </p>
+        {catalogLoading && (
+          <p className="mb-2 text-[11px] text-amber-300/90">Loading inventory data…</p>
+        )}
         <div className="space-y-3">
           {form.items.map((item, index) => {
             const itemError = errors[`item_${index}`]
@@ -208,7 +213,8 @@ export function NewOrderFormFields({
                       type="text"
                       value={item.product_code}
                       onChange={e => setItem(index, 'product_code', e.target.value)}
-                      placeholder="133 / 133T / SKU"
+                      placeholder={catalogLoading ? 'Loading inventory…' : '133 / 133T / SKU'}
+                      disabled={catalogLoading}
                       className={newOrderInputCls(itemError)}
                       data-order-field="1"
                       onKeyDown={focusNext}
@@ -219,6 +225,7 @@ export function NewOrderFormFields({
                       <select
                         value={item.size}
                         onChange={e => setItem(index, 'size', e.target.value)}
+                        disabled={catalogLoading}
                         className={newOrderSelectCls()}
                         data-order-field="1"
                         onKeyDown={focusNext}
@@ -234,6 +241,7 @@ export function NewOrderFormFields({
                       <select
                         value={item.variant}
                         onChange={e => setItem(index, 'variant', e.target.value)}
+                        disabled={catalogLoading}
                         className={newOrderSelectCls()}
                         data-order-field="1"
                         onKeyDown={focusNext}
@@ -249,6 +257,7 @@ export function NewOrderFormFields({
                       <select
                         value={item.variant}
                         onChange={e => setItem(index, 'variant', e.target.value)}
+                        disabled={catalogLoading}
                         className={newOrderSelectCls()}
                         data-order-field="1"
                         onKeyDown={focusNext}

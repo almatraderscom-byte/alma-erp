@@ -23,7 +23,7 @@ export default function NewOrderPage() {
     if (mdUp) router.replace('/orders?new=1')
   }, [allowRender, mdUp, router])
 
-  const { form, errors, touched, loading, set, setItem, addItem, removeItem, touch, handleSubmit, totals, stockItems } = useNewOrderForm(() => {
+  const { form, errors, touched, loading, catalogLoading, set, setItem, addItem, removeItem, touch, handleSubmit, totals, stockItems } = useNewOrderForm(() => {
     router.push('/orders')
   })
 
@@ -70,6 +70,7 @@ export default function NewOrderPage() {
             touch={touch}
             totals={totals}
             stockItems={stockItems}
+            catalogLoading={catalogLoading}
           />
         </div>
       </form>
