@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AttendanceClientError } from '@/lib/attendance-errors'
 import { fetchMyAttendance, logAttendanceClientFailure, type MyAttendancePayload } from '@/lib/attendance-client'
 import {
@@ -17,6 +17,13 @@ type State = {
   lastOkAt: number | null
 }
 
+const DISABLED_ATTENDANCE_STATE: State = {
+  data: null,
+  loading: false,
+  error: null,
+  lastOkAt: null,
+}
+
 export function useMyAttendance(businessId: string, employeeId: string | null, enabled: boolean) {
   const [state, setState] = useState<State>({
     data: null,
@@ -26,17 +33,25 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
   })
   const requestId = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout>>()
+  const disabledStateAppliedRef = useRef(false)
 
   const load = useCallback(
     async (opts?: { silent?: boolean; force?: boolean; clearCache?: boolean }) => {
       if (!enabled) {
-        setState({ data: null, loading: false, error: null, lastOkAt: null })
+        if (!disabledStateAppliedRef.current) {
+          setState(DISABLED_ATTENDANCE_STATE)
+          disabledStateAppliedRef.current = true
+        }
         return
       }
       if (!employeeId) {
-        setState({ data: null, loading: false, error: null, lastOkAt: null })
+        if (!disabledStateAppliedRef.current) {
+          setState(DISABLED_ATTENDANCE_STATE)
+          disabledStateAppliedRef.current = true
+        }
         return
       }
+      disabledStateAppliedRef.current = false
 
       if (opts?.clearCache) clearAttendancePortalCache(businessId, employeeId)
 
@@ -68,7 +83,7 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
 
       const id = ++requestId.current
       if (!opts?.silent) {
-        setState(prev => ({ ...prev, loading: true, error: null }))
+        setState(prev => (prev.loading ? prev : { ...prev, loading: true, error: null }))
       }
 
       try {
@@ -134,9 +149,6 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
     const onOnline = () => {
       if (enabled) void load({ silent: false, force: true })
     }
-    // iOS Safari + Chrome bfcache restore: `pageshow.persisted === true` fires
-    // when the user navigates back to a cached page. The attendance widget
-    // here can be hours stale at that point, so we force-refresh.
     const onPageShow = (event: PageTransitionEvent) => {
       if (event.persisted && enabled) void load({ silent: false, force: true })
     }
@@ -150,12 +162,20 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
     }
   }, [enabled, load])
 
-  return {
-    attendance: state.data,
-    loading: state.loading,
-    error: state.error,
-    lastOkAt: state.lastOkAt,
-    refetch: (opts?: { clearCache?: boolean }) =>
+  const refetch = useCallback(
+    (opts?: { clearCache?: boolean }) =>
       load({ silent: false, force: true, clearCache: opts?.clearCache }),
-  }
+    [load],
+  )
+
+  return useMemo(
+    () => ({
+      attendance: state.data,
+      loading: state.loading,
+      error: state.error,
+      lastOkAt: state.lastOkAt,
+      refetch,
+    }),
+    [state.data, state.loading, state.error, state.lastOkAt, refetch],
+  )
 }

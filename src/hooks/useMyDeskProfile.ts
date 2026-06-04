@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { safeFetchJson } from '@/lib/safe-fetch'
 
@@ -40,8 +40,13 @@ export function useMyDeskProfile(businessId: string) {
   const requestId = useRef(0)
   const sessionUserRef = useRef(session?.user)
   const hasUpdatedSessionRef = useRef(false)
+  const updateSessionRef = useRef(updateSession)
 
   sessionUserRef.current = session?.user
+
+  useEffect(() => {
+    updateSessionRef.current = updateSession
+  }, [updateSession])
 
   const load = useCallback(async (silent = false) => {
     if (sessionStatus === 'loading') return
@@ -53,7 +58,7 @@ export function useMyDeskProfile(businessId: string) {
     }
 
     const id = ++requestId.current
-    if (!silent) setLoading(true)
+    if (!silent) setLoading(prev => (prev ? prev : true))
 
     try {
       const result = await safeFetchJson<{ user: DeskProfile }>(
@@ -84,7 +89,7 @@ export function useMyDeskProfile(businessId: string) {
         && !hasUpdatedSessionRef.current
       ) {
         hasUpdatedSessionRef.current = true
-        await updateSession({
+        await updateSessionRef.current({
           user: { ...sessionUser, employeeIdGas: resolvedEmp },
         })
       }
@@ -95,7 +100,7 @@ export function useMyDeskProfile(businessId: string) {
     } finally {
       if (id === requestId.current) setLoading(false)
     }
-  }, [businessId, sessionUserId, sessionEmployeeId, sessionStatus, updateSession])
+  }, [businessId, sessionUserId, sessionEmployeeId, sessionStatus])
 
   useEffect(() => {
     hasUpdatedSessionRef.current = false
@@ -111,11 +116,18 @@ export function useMyDeskProfile(businessId: string) {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [load])
 
-  return {
-    profile,
-    loading: loading || sessionStatus === 'loading',
-    error,
-    employeeId: profile?.employeeIdGas?.trim() || sessionEmployeeId?.trim() || null,
-    refetch: () => load(false),
-  }
+  const refetch = useCallback(() => load(false), [load])
+
+  const employeeId = profile?.employeeIdGas?.trim() || sessionEmployeeId?.trim() || null
+
+  return useMemo(
+    () => ({
+      profile,
+      loading: loading || sessionStatus === 'loading',
+      error,
+      employeeId,
+      refetch,
+    }),
+    [profile, loading, sessionStatus, error, employeeId, refetch],
+  )
 }

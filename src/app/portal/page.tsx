@@ -119,20 +119,22 @@ export default function EmployeePortalPage() {
     refetch: refetchAttendance,
   } = useMyAttendance(business.id, empId, attendanceEnabled)
 
-  const profileIdentity = me ?? (session?.user?.id
-    ? {
-        id: session.user.id,
-        email: session.user.email || '',
-        name: session.user.name || 'Account',
-        phone: null,
-        role: role,
-        businessAccess: '',
-        employeeIdGas: null,
-        joiningDate: null,
-        salaryHint: null,
-        profileImageUrl: null,
-      }
-    : null)
+  const profileIdentity = useMemo((): MeUser | null => {
+    if (me) return me
+    if (!session?.user?.id) return null
+    return {
+      id: session.user.id,
+      email: session.user.email || '',
+      name: session.user.name || 'Account',
+      phone: null,
+      role,
+      businessAccess: '',
+      employeeIdGas: null,
+      joiningDate: null,
+      salaryHint: null,
+      profileImageUrl: null,
+    }
+  }, [me, role, session?.user?.email, session?.user?.id, session?.user?.name])
 
   const loadWallet = useCallback(async () => {
     if (systemOwner) {
@@ -240,27 +242,58 @@ export default function EmployeePortalPage() {
     hasCheckedInToday,
     employeeIdGas: empId,
   })
+  const {
+    triggerAfterCheckIn: triggerOpsAfterCheckIn,
+    refetch: refetchOpsTasks,
+    minimizeHero: minimizeOpsHero,
+    handleUpdated: handleOpsUpdated,
+    openHero: openOpsHero,
+    spotlight: opsSpotlightAssignment,
+    heroOpen: opsHeroOpen,
+    openTasks: opsOpenTasks,
+    primaryTask: opsPrimaryTask,
+  } = opsSpotlight
+
+  const handleProfileUpdated = useCallback(() => {
+    void refetchProfile()
+  }, [refetchProfile])
+
+  const handleAttendanceRetry = useCallback(() => {
+    if (empId) clearAttendancePortalCache(business.id, empId)
+    void refetchAttendance({ clearCache: true })
+  }, [business.id, empId, refetchAttendance])
+
+  const handleAttendanceRefresh = useCallback(() => {
+    if (empId) clearAttendancePortalCache(business.id, empId)
+    void refetchAttendance({ clearCache: true })
+    void refreshDesk()
+  }, [business.id, empId, refetchAttendance, refreshDesk])
+
+  const handleAttendanceEndWork = useCallback(() => {
+    invalidateOperationalTasksCache(business.id)
+    void refetchOpsTasks(true)
+  }, [business.id, refetchOpsTasks])
 
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
     <>
-      {!systemOwner && (
+      {!systemOwner && empId && (
         <>
           <OperationalTaskHero
             businessId={business.id}
-            assignment={opsSpotlight.spotlight}
-            open={opsSpotlight.heroOpen}
-            onMinimize={opsSpotlight.minimizeHero}
-            onUpdated={opsSpotlight.handleUpdated}
+            assignment={opsSpotlightAssignment}
+            open={opsHeroOpen}
+            onMinimize={minimizeOpsHero}
+            onUpdated={handleOpsUpdated}
           />
           <OperationalTaskDock
             businessId={business.id}
-            tasks={opsSpotlight.openTasks}
-            primary={opsSpotlight.primaryTask}
-            heroOpen={opsSpotlight.heroOpen}
-            onReopen={() => opsSpotlight.openHero()}
-            onUpdated={opsSpotlight.handleUpdated}
+            tasks={opsOpenTasks}
+            primary={opsPrimaryTask}
+            heroOpen={opsHeroOpen}
+            onReopen={openOpsHero}
+            onUpdated={handleOpsUpdated}
           />
         </>
       )}
@@ -287,9 +320,7 @@ export default function EmployeePortalPage() {
               name={profileIdentity.name}
               email={profileIdentity.email}
               imageUrl={me?.profileImageUrl ?? profileIdentity.profileImageUrl}
-              onUpdated={() => {
-                void refetchProfile()
-              }}
+              onUpdated={handleProfileUpdated}
             />
           )}
         </div>
@@ -304,10 +335,7 @@ export default function EmployeePortalPage() {
             userId={session?.user?.id}
             businessId={business.id}
             employeeId={empId ?? undefined}
-            onRetry={() => {
-              if (empId) clearAttendancePortalCache(business.id, empId)
-              void refetchAttendance({ clearCache: true })
-            }}
+            onRetry={handleAttendanceRetry}
           >
             <AttendanceCard
               businessId={business.id}
@@ -315,16 +343,9 @@ export default function EmployeePortalPage() {
               loading={attendanceLoading}
               attendance={attendance}
               attendanceError={attendanceError}
-              onRefresh={() => {
-                if (empId) clearAttendancePortalCache(business.id, empId)
-                void refetchAttendance({ clearCache: true })
-                void refreshDesk()
-              }}
-              onCheckInSuccess={opsSpotlight.triggerAfterCheckIn}
-              onEndWork={() => {
-                invalidateOperationalTasksCache(business.id)
-                void opsSpotlight.refetch(true)
-              }}
+              onRefresh={handleAttendanceRefresh}
+              onCheckInSuccess={triggerOpsAfterCheckIn}
+              onEndWork={handleAttendanceEndWork}
             />
           </AttendanceWidgetErrorBoundary>
         )}
