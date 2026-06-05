@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
 import type { Session } from 'next-auth'
-import { SessionProvider, signOut, useSession } from 'next-auth/react'
+import { SessionProvider, getSession, signOut, useSession } from 'next-auth/react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui'
 import { BusinessProvider } from '@/contexts/BusinessContext'
@@ -169,6 +169,25 @@ function AuthGate({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer)
   }, [isPublic, status, pathname, router])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    let debounce: number | null = null
+    const onAuthFailure = () => {
+      if (debounce) return
+      debounce = window.setTimeout(() => {
+        debounce = null
+        void getSession().then(session => {
+          if (!session?.user) void forceRelogin()
+        })
+      }, 1500)
+    }
+    window.addEventListener('alma:auth-failure', onAuthFailure)
+    return () => {
+      if (debounce) window.clearTimeout(debounce)
+      window.removeEventListener('alma:auth-failure', onAuthFailure)
+    }
+  }, [])
+
   if (isPublic) {
     return <>{children}</>
   }
@@ -235,6 +254,19 @@ function AuthGate({ children }: { children: ReactNode }) {
   )
 }
 
+function SessionBridge({ children, session }: { children: ReactNode; session: Session | null }) {
+  return (
+    <SessionProvider
+      session={session}
+      refetchOnWindowFocus={false}
+      refetchInterval={0}
+    >
+      <PwaBootstrap />
+      <AuthGate>{children}</AuthGate>
+    </SessionProvider>
+  )
+}
+
 export function AppProviders({
   children,
   session,
@@ -242,10 +274,5 @@ export function AppProviders({
   children: ReactNode
   session: Session | null
 }) {
-  return (
-    <SessionProvider session={session}>
-      <PwaBootstrap />
-      <AuthGate>{children}</AuthGate>
-    </SessionProvider>
-  )
+  return <SessionBridge session={session}>{children}</SessionBridge>
 }

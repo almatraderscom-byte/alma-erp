@@ -52,7 +52,6 @@ export function BusinessProvider({
   const pathname = usePathname()
   const [businessId, setBusinessIdState] = useState<BusinessId>(DEFAULT_BUSINESS_ID)
   const [hydrated, setHydrated] = useState(false)
-  const [showHydrationOverlay, setShowHydrationOverlay] = useState(false)
 
   const allowedBusinessIds = useMemo(
     () => parseBusinessAccess(allowedBusinessAccess ?? undefined),
@@ -76,15 +75,6 @@ export function BusinessProvider({
     } catch { /* ignore */ }
     setHydrated(true)
   }, [allowedBusinessIds, pathname])
-
-  useEffect(() => {
-    if (hydrated) {
-      setShowHydrationOverlay(false)
-      return
-    }
-    const timer = window.setTimeout(() => setShowHydrationOverlay(true), 300)
-    return () => window.clearTimeout(timer)
-  }, [hydrated])
 
   const setBusinessId = useCallback(
     (id: BusinessId) => {
@@ -118,10 +108,7 @@ export function BusinessProvider({
   )
 
   if (!hydrated) {
-    if (showHydrationOverlay) {
-      return <LoadingOverlay label="Loading workspace" />
-    }
-    return null
+    return <LoadingOverlay label="Loading workspace" />
   }
 
   return (

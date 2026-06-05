@@ -6,6 +6,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { safeAuthCallbackUrl } from '@/lib/auth-paths'
 import { motion } from 'framer-motion'
 import { Button, Card, Input } from '@/components/ui'
+import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import toast from 'react-hot-toast'
 
 function LoginForm() {
@@ -21,6 +22,17 @@ function LoginForm() {
     if (!raw || safeAuthCallbackUrl(raw) === raw) return
     router.replace('/login')
   }, [params, router])
+
+  useEffect(() => {
+    let alive = true
+    void getSession().then(session => {
+      if (!alive || !session?.user) return
+      window.location.href = callbackUrl
+    })
+    return () => {
+      alive = false
+    }
+  }, [callbackUrl])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -43,9 +55,10 @@ function LoginForm() {
         return
       }
 
+      await new Promise(r => setTimeout(r, 350))
       let session = await getSession()
-      for (let i = 0; i < 10 && !session?.user; i++) {
-        await new Promise(r => setTimeout(r, 200))
+      for (let i = 0; i < 4 && !session?.user; i++) {
+        await new Promise(r => setTimeout(r, 400))
         session = await getSession()
       }
 
@@ -118,7 +131,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-[100dvh] bg-black" />}>
+    <Suspense fallback={<LoadingOverlay label="Loading login" />}>
       <LoginForm />
     </Suspense>
   )

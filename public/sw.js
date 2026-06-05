@@ -4,8 +4,8 @@ try {
   // Keep core offline support alive even if the push CDN is unavailable.
 }
 
-const SHELL_CACHE = 'alma-erp-shell-v3'
-const ASSET_CACHE = 'alma-erp-assets-v3'
+const SHELL_CACHE = 'alma-erp-shell-v4'
+const ASSET_CACHE = 'alma-erp-assets-v4'
 const MAX_ASSET_ENTRIES = 72
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
 
@@ -48,8 +48,8 @@ self.addEventListener('fetch', event => {
 
   if (isStaticAsset(url)) {
     event.respondWith(
-      caches.match(req).then(cached => {
-        const fresh = fetch(req).then(res => {
+      fetch(req)
+        .then(res => {
           if (res.ok) {
             const clone = res.clone()
             caches.open(ASSET_CACHE)
@@ -58,9 +58,8 @@ self.addEventListener('fetch', event => {
               .catch(() => {})
           }
           return res
-        }).catch(() => cached)
-        return cached || fresh
-      }),
+        })
+        .catch(() => caches.match(req).then(cached => cached || Response.error())),
     )
     return
   }

@@ -6,6 +6,7 @@ import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import { APP_BUILD_ID, RUNTIME_BUILD_STORAGE_KEY } from '@/lib/runtime-build'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const notoBengali = Noto_Sans_Bengali({
@@ -42,14 +43,36 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 }
 
+const SERVER_SESSION_TIMEOUT_MS = 2_500
+
+async function loadServerSession() {
+  try {
+    return await Promise.race([
+      getServerSession(authOptions),
+      new Promise<null>(resolve => {
+        setTimeout(() => resolve(null), SERVER_SESSION_TIMEOUT_MS)
+      }),
+    ])
+  } catch {
+    return null
+  }
+}
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await getServerSession(authOptions)
+  const session = await loadServerSession()
   return (
     <html lang="en" className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        {APP_BUILD_ID !== 'dev' && APP_BUILD_ID !== 'local' && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){try{var k=${JSON.stringify(RUNTIME_BUILD_STORAGE_KEY)};var b=${JSON.stringify(APP_BUILD_ID)};var s=localStorage.getItem(k);if(s&&s!==b){localStorage.setItem(k,b);if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister()}))}).then(function(){if('caches' in window)return caches.keys().then(function(keys){return Promise.all(keys.map(function(n){return caches.delete(n)}))})}).finally(function(){location.reload()})}}else if(!s){localStorage.setItem(k,b)}}catch(e){}})();`,
+            }}
+          />
+        )}
       </head>
       <body className="bg-black text-cream antialiased font-sans">
         <AppProviders session={session}>{children}</AppProviders>

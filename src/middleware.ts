@@ -4,7 +4,7 @@ import { getToken } from 'next-auth/jwt'
 import { rateLimit } from '@/lib/rate-limit'
 import { isPathAllowedForRole, normalizeAlmaRole, roleHomePath } from '@/lib/roles'
 import type { BusinessId } from '@/lib/businesses'
-import { businessAllowed, parseBusinessAccess } from '@/lib/business-access'
+import { businessAllowed } from '@/lib/business-access'
 import { isAuthPath } from '@/lib/auth-paths'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
@@ -91,25 +91,18 @@ export async function middleware(req: NextRequest) {
 
   const token = await getToken({ req, secret })
 
+  // Auth pages are always served. Client-side session handles post-login redirect.
+  // Edge redirect here caused ping-pong when JWT existed but /api/auth/session failed.
   if (AUTH_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))) {
-    if (token?.sub) {
-      const role = normalizeAlmaRole(token.role as string)
-      const allowed = parseBusinessAccess(token.businessAccess as string | undefined)
-      const businessId: BusinessId = allowed.includes('ALMA_TRADING')
-        ? 'ALMA_TRADING'
-        : allowed.includes('CREATIVE_DIGITAL_IT')
-          ? 'CREATIVE_DIGITAL_IT'
-          : allowed[0] ?? 'ALMA_LIFESTYLE'
-      const url = req.nextUrl.clone()
-      url.pathname = roleHomePath(role, businessId)
-      url.search = ''
-      return NextResponse.redirect(url)
-    }
     return NextResponse.next()
   }
 
   if (pathname.startsWith('/api/')) {
-    const limited = rateLimit(req, pathname.startsWith('/api/auth') ? 'auth' : 'api', pathname.startsWith('/api/auth') ? 20 : 180)
+    const isAuthApi = pathname.startsWith('/api/auth')
+    const isSessionProbe = pathname === '/api/auth/session'
+    const limit = isSessionProbe ? 120 : isAuthApi ? 40 : 180
+    const bucket = isSessionProbe ? 'auth-session' : isAuthApi ? 'auth' : 'api'
+    const limited = rateLimit(req, bucket, limit)
     if (limited) return limited
   }
 
