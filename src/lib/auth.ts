@@ -85,7 +85,7 @@ export const authOptions: NextAuthOptions = {
     signIn: '/login',
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id
         token.email = user.email
@@ -94,6 +94,17 @@ export const authOptions: NextAuthOptions = {
         token.businessAccess = normalizeBusinessAccessForRole((user as { businessAccess?: string }).businessAccess, user.role as string)
         token.employeeIdGas = (user as { employeeIdGas?: string | null }).employeeIdGas ?? ''
         token.phone = (user as { phone?: string | null }).phone ?? ''
+      } else if (trigger === 'update' && session?.user) {
+        const patch = session.user as {
+          employeeIdGas?: string | null
+          name?: string | null
+          phone?: string | null
+        }
+        if (patch.employeeIdGas !== undefined) {
+          token.employeeIdGas = String(patch.employeeIdGas || '').trim()
+        }
+        if (patch.name !== undefined && patch.name) token.name = patch.name
+        if (patch.phone !== undefined) token.phone = patch.phone ?? ''
       }
       return token
     },

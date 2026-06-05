@@ -39,17 +39,30 @@ export function useMyDeskProfile(businessId: string) {
   const [error, setError] = useState<string | null>(null)
   const requestId = useRef(0)
   const sessionUserRef = useRef(session?.user)
-  const hasUpdatedSessionRef = useRef(false)
+  const sessionStatusRef = useRef(sessionStatus)
+  const sessionEmployeeIdRef = useRef(sessionEmployeeId)
+  const syncScopeRef = useRef('')
+  const sessionSyncAttemptedRef = useRef(false)
+  const sessionUpdateInFlightRef = useRef(false)
   const updateSessionRef = useRef(updateSession)
 
   sessionUserRef.current = session?.user
+  sessionStatusRef.current = sessionStatus
+  sessionEmployeeIdRef.current = sessionEmployeeId
 
   useEffect(() => {
     updateSessionRef.current = updateSession
   }, [updateSession])
 
+  useEffect(() => {
+    const scope = `${businessId}:${sessionUserId || ''}`
+    if (syncScopeRef.current === scope) return
+    syncScopeRef.current = scope
+    sessionSyncAttemptedRef.current = false
+  }, [businessId, sessionUserId])
+
   const load = useCallback(async (silent = false) => {
-    if (sessionStatus === 'loading') return
+    if (sessionStatusRef.current === 'loading') return
     if (!sessionUserId) {
       setProfile(null)
       setLoading(false)
@@ -81,17 +94,26 @@ export function useMyDeskProfile(businessId: string) {
 
       const sessionUser = sessionUserRef.current
       const resolvedEmp = String((j.user as DeskProfile)?.employeeIdGas || '').trim()
-      const sessionEmp = String(sessionEmployeeId || '').trim()
+      const sessionEmp = String(sessionEmployeeIdRef.current || '').trim()
       if (
         sessionUser
         && resolvedEmp
         && resolvedEmp !== sessionEmp
-        && !hasUpdatedSessionRef.current
+        && !sessionSyncAttemptedRef.current
+        && !sessionUpdateInFlightRef.current
       ) {
-        hasUpdatedSessionRef.current = true
-        await updateSessionRef.current({
-          user: { ...sessionUser, employeeIdGas: resolvedEmp },
-        })
+        sessionSyncAttemptedRef.current = true
+        sessionUpdateInFlightRef.current = true
+        try {
+          await updateSessionRef.current({
+            user: { ...sessionUser, employeeIdGas: resolvedEmp },
+          })
+          sessionEmployeeIdRef.current = resolvedEmp
+        } catch {
+          sessionSyncAttemptedRef.current = false
+        } finally {
+          sessionUpdateInFlightRef.current = false
+        }
       }
     } catch (e) {
       if (id !== requestId.current) return
@@ -100,10 +122,9 @@ export function useMyDeskProfile(businessId: string) {
     } finally {
       if (id === requestId.current) setLoading(false)
     }
-  }, [businessId, sessionUserId, sessionEmployeeId, sessionStatus])
+  }, [businessId, sessionUserId])
 
   useEffect(() => {
-    hasUpdatedSessionRef.current = false
     void load()
   }, [load])
 
@@ -118,12 +139,16 @@ export function useMyDeskProfile(businessId: string) {
 
   const refetch = useCallback(() => load(false), [load])
 
-  const employeeId = profile?.employeeIdGas?.trim() || sessionEmployeeId?.trim() || null
+  const employeeId =
+    profile?.employeeIdGas?.trim()
+    || sessionEmployeeIdRef.current?.trim()
+    || sessionEmployeeId?.trim()
+    || null
 
   return useMemo(
     () => ({
       profile,
-      loading: loading || sessionStatus === 'loading',
+      loading: loading || (sessionStatus === 'loading' && profile === null),
       error,
       employeeId,
       refetch,

@@ -83,6 +83,7 @@ export function useOperationalSpotlightTrigger(
   const [heroOpen, setHeroOpen] = useState(false)
   const spotlightIdRef = useRef<string | null>(null)
   const heroOpenRef = useRef(false)
+  const portalAutoOpenDoneRef = useRef(false)
 
   const openTasks = tasks.filter(t => isOpsHeroEligible(t.status))
   const primaryTask = pickPrimaryOpsTask(tasks)
@@ -100,12 +101,16 @@ export function useOperationalSpotlightTrigger(
     const primary = pickPrimaryOpsTask(tasks)
     if (!primary) {
       setSpotlight(null)
-      if (!heroOpen) return
+      if (!heroOpenRef.current) return
       setHeroOpen(false)
       return
     }
-    setSpotlight(primary)
-  }, [spotlightEnabled, loading, tasks, heroOpen])
+    setSpotlight(prev => (prev?.id === primary.id ? prev : primary))
+  }, [spotlightEnabled, loading, tasks])
+
+  useEffect(() => {
+    portalAutoOpenDoneRef.current = false
+  }, [businessId, employeeIdGas])
 
   useEffect(() => {
     if (empLinked) return
@@ -181,7 +186,8 @@ export function useOperationalSpotlightTrigger(
   }, [businessId, refetch])
 
   useEffect(() => {
-    if (!spotlightEnabled || !onPortal || loading) return
+    if (!spotlightEnabled || !onPortal || loading || portalAutoOpenDoneRef.current) return
+    portalAutoOpenDoneRef.current = true
     void tryOpenUnseenSpotlight({ requireCheckedIn: true })
   }, [spotlightEnabled, onPortal, loading, hasCheckedInToday, tryOpenUnseenSpotlight])
 
