@@ -90,11 +90,18 @@ export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
     result.order_id || result.invoice_num || result.invoice_number || '',
   ).trim()
 
-  enqueueOrderConfirmationSms({
+  const smsResult = await enqueueOrderConfirmationSms({
     businessId: 'ALMA_LIFESTYLE',
-    phone: String(gasPayload.phone || ''),
+    phone: input.customer_phone,
     invoice: erpOrderId || input.website_order_id,
     orderId: erpOrderId || input.website_order_id,
+  })
+  logEvent('info', 'website_order.sms_enqueue', {
+    websiteOrderId: input.website_order_id,
+    smsOk: smsResult?.ok,
+    smsSkipped: smsResult && 'skipped' in smsResult ? smsResult.skipped : undefined,
+    smsReason: smsResult && 'reason' in smsResult ? smsResult.reason : undefined,
+    smsDuplicate: smsResult && 'duplicate' in smsResult ? smsResult.duplicate : undefined,
   })
 
   void Promise.all([

@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
       businessId: payload.business_id,
     })
-    enqueueOrderConfirmationSms({
+    await enqueueOrderConfirmationSms({
       businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
       phone: String(payload.phone || payload.customer_phone || ''),
       invoice: String((result as { invoice_num?: string; invoice_number?: string; order_id?: string }).invoice_num || (result as { invoice_number?: string }).invoice_number || (result as { order_id?: string }).order_id || ''),
