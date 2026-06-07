@@ -6,6 +6,7 @@ import { useOrdersData } from '@/contexts/OrdersDataContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { aggregateDashboardMetrics } from '@/lib/order-analytics'
+import { formatGroupSizeLine } from '@/lib/product-size-breakdown'
 import { Card, KpiCard, Skeleton, StatusBadge, PageHeader, Empty, Money, BdtText } from '@/components/ui'
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 import { fmt, fmtNum, pct } from '@/lib/utils'
@@ -310,12 +311,13 @@ function LifestyleDashboard() {
                         {p.orders} orders
                         {p.pieces > 0 ? ` · ${fmtNum(p.pieces)} pcs` : ''}
                       </p>
-                      {p.top_size ? (
+                      {p.group_details.length > 0 ? (
+                        <p className="text-[10px] text-emerald-400/90 mt-0.5 leading-relaxed">
+                          {p.group_details.slice(0, 2).map(formatGroupSizeLine).join(' | ')}
+                        </p>
+                      ) : p.top_size ? (
                         <p className="text-[10px] text-emerald-400/90 mt-0.5 truncate">
                           Top: {p.top_size.label} · {fmtNum(p.top_size.pieces)} pcs
-                          {p.size_breakdown.length > 1
-                            ? ` (${p.size_breakdown.slice(1, 3).map(s => `${s.label} ${fmtNum(s.pieces)}`).join(' · ')})`
-                            : ''}
                         </p>
                       ) : null}
                     </div>

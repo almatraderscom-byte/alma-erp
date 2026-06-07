@@ -18,8 +18,10 @@ import {
   orderProfitInputsFromOrder,
 } from '@/lib/order-return-profit'
 import {
+  buildGroupSizeDetails,
   buildSizeBreakdown,
   expandOrderProductLines,
+  type ProductGroupSizeDetail,
   type ProductSizeSlice,
 } from '@/lib/product-size-breakdown'
 import type { Order, OrderStatus } from '@/types'
@@ -32,6 +34,7 @@ export interface TopProductMetrics {
   pieces: number
   top_size: ProductSizeSlice | null
   size_breakdown: ProductSizeSlice[]
+  group_details: ProductGroupSizeDetail[]
 }
 
 function orderAccounting(o: Order) {
@@ -303,6 +306,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     profit: number
     pieces: number
     sizeSlices: Record<string, number>
+    specificSizeSlices: Record<string, Record<string, number>>
   }> = {}
   const daily: Record<string, { date: string; revenue: number; profit: number; orders: number }> = {}
   const monthly: Record<string, { month: string; revenue: number; profit: number; orders: number; cogs: number }> = {}
@@ -367,7 +371,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
     for (const line of lines) {
       const prodKey = line.code || 'Unknown'
       if (!byProduct[prodKey]) {
-        byProduct[prodKey] = { orders: 0, revenue: 0, profit: 0, pieces: 0, sizeSlices: {} }
+        byProduct[prodKey] = { orders: 0, revenue: 0, profit: 0, pieces: 0, sizeSlices: {}, specificSizeSlices: {} }
       }
       if (!codesInOrder.has(prodKey)) {
         codesInOrder.add(prodKey)
@@ -379,7 +383,14 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
       }
       if (status !== 'CANCELLED') {
         byProduct[prodKey].pieces += line.qty
-        byProduct[prodKey].sizeSlices[line.label] = (byProduct[prodKey].sizeSlices[line.label] ?? 0) + line.qty
+        byProduct[prodKey].sizeSlices[line.groupLabel] = (byProduct[prodKey].sizeSlices[line.groupLabel] ?? 0) + line.qty
+        if (line.specificSize) {
+          if (!byProduct[prodKey].specificSizeSlices[line.groupLabel]) {
+            byProduct[prodKey].specificSizeSlices[line.groupLabel] = {}
+          }
+          const bucket = byProduct[prodKey].specificSizeSlices[line.groupLabel]
+          bucket[line.specificSize] = (bucket[line.specificSize] ?? 0) + line.qty
+        }
       }
     }
 
@@ -418,6 +429,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   const top_products: TopProductMetrics[] = Object.entries(byProduct)
     .map(([product, v]) => {
       const size_breakdown = buildSizeBreakdown(v.sizeSlices)
+      const group_details = buildGroupSizeDetails(v.sizeSlices, v.specificSizeSlices)
       return {
         product,
         orders: v.orders,
@@ -426,6 +438,7 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
         pieces: v.pieces,
         top_size: size_breakdown[0] ?? null,
         size_breakdown,
+        group_details,
       }
     })
     .sort((a, b) => b.revenue - a.revenue)

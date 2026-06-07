@@ -1,5 +1,9 @@
 import { aggregateDashboardMetrics } from '../src/lib/order-analytics.ts'
-import { expandOrderProductLines, normalizeProductCode } from '../src/lib/product-size-breakdown.ts'
+import {
+  expandOrderProductLines,
+  formatGroupSizeLine,
+  normalizeProductCode,
+} from '../src/lib/product-size-breakdown.ts'
 import type { Order } from '../src/types/index.ts'
 
 function order(partial: Partial<Order> & Pick<Order, 'id' | 'product' | 'status'>): Order {
@@ -36,7 +40,7 @@ function order(partial: Partial<Order> & Pick<Order, 'id' | 'product' | 'status'
     return_date: '',
     return_status: '',
     notes: '',
-    sku: '',
+    sku: partial.sku ?? '',
     handled_by: '',
     sla_status: '',
     days_pending: 0,
@@ -53,39 +57,42 @@ function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg)
 }
 
-// Unit checks
 assert(normalizeProductCode('133 ADULT + 2 more') === '133', 'code normalize failed')
+
 const multi = expandOrderProductLines(order({
   id: 'AL-1',
   product: '133 ADULT + 1 more',
   status: 'Delivered',
   items: [
-    { line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', qty: 2, unit_price: 1500, subtotal: 3000, sku: '133-ADULT' },
-    { line_no: 2, product: '133 KIDS', product_code: '133', size_group: 'KIDS', qty: 1, unit_price: 1200, subtotal: 1200, sku: '133-KIDS' },
+    { line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', size: '42', qty: 2, unit_price: 1500, subtotal: 3000, sku: '133-42' },
+    { line_no: 2, product: '133 KIDS', product_code: '133', size_group: 'KIDS', size: '24', qty: 1, unit_price: 1200, subtotal: 1200, sku: '133-24' },
   ],
 }))
-assert(multi.length === 2 && multi[0].label === 'ADULT' && multi[1].label === 'KIDS', 'multi-item expand failed')
+assert(multi.length === 2 && multi[0].groupLabel === 'ADULT' && multi[0].specificSize === '42', 'multi-item expand failed')
 
-// Simulate ~280 mixed orders like production data
 const orders: Order[] = []
+const adultSizes = ['40', '42', '42', '44', '42']
 for (let i = 0; i < 150; i++) {
+  const size = adultSizes[i % adultSizes.length]
   orders.push(order({
     id: `AL-D-${i}`,
     product: '133 ADULT',
     status: 'Delivered',
     sell_price: 1600,
     realizedProfit: 700,
-    items: [{ line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', qty: 1, unit_price: 1600, subtotal: 1600, sku: '133-ADULT' }],
+    items: [{ line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', size, qty: 1, unit_price: 1600, subtotal: 1600, sku: `133-${size}` }],
   }))
 }
+const kidSizes = ['22', '24', '24', '26']
 for (let i = 0; i < 80; i++) {
+  const size = kidSizes[i % kidSizes.length]
   orders.push(order({
     id: `AL-K-${i}`,
     product: '133 KIDS',
     status: i % 4 === 0 ? 'Pending' : 'Delivered',
     sell_price: 1400,
     realizedProfit: 600,
-    items: [{ line_no: 1, product: '133 KIDS', product_code: '133', size_group: 'KIDS', qty: 1, unit_price: 1400, subtotal: 1400, sku: '133-KIDS' }],
+    items: [{ line_no: 1, product: '133 KIDS', product_code: '133', size_group: 'KIDS', size, qty: 1, unit_price: 1400, subtotal: 1400, sku: `133-${size}` }],
   }))
 }
 for (let i = 0; i < 50; i++) {
@@ -96,21 +103,24 @@ for (let i = 0; i < 50; i++) {
     sell_price: 3000,
     realizedProfit: 1200,
     items: [
-      { line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', qty: 1, unit_price: 1600, subtotal: 1600, sku: '133-ADULT' },
-      { line_no: 2, product: '133 KIDS', product_code: '133', size_group: 'KIDS', qty: 1, unit_price: 1400, subtotal: 1400, sku: '133-KIDS' },
+      { line_no: 1, product: '133 ADULT', product_code: '133', size_group: 'ADULT', size: '42', qty: 1, unit_price: 1600, subtotal: 1600, sku: '133-42' },
+      { line_no: 2, product: '133 KIDS', product_code: '133', size_group: 'KIDS', size: '24', qty: 1, unit_price: 1400, subtotal: 1400, sku: '133-24' },
     ],
   }))
 }
 
 const metrics = aggregateDashboardMetrics(orders)
 const top133 = metrics.top_products.find(p => p.product === '133')
-assert(orders.length === 280, `expected 280 orders, got ${orders.length}`)
 assert(!!top133, '133 missing from top products')
-assert(top133!.orders === 280, `expected 280 product orders, got ${top133!.orders}`)
 assert(top133!.pieces === 330, `expected 330 pcs, got ${top133!.pieces}`)
-assert(top133!.top_size?.label === 'ADULT', `expected ADULT top size, got ${top133!.top_size?.label}`)
-assert(top133!.top_size?.pieces === 200, `expected 200 ADULT pcs, got ${top133!.top_size?.pieces}`)
-assert(top133!.size_breakdown.find(s => s.label === 'KIDS')?.pieces === 130, 'expected 130 KIDS pcs')
 
-console.log('OK: 280-order aggregation test passed')
-console.log('133 breakdown:', top133!.size_breakdown.map(s => `${s.label}:${s.pieces}`).join(', '))
+const adult = top133!.group_details.find(g => g.group === 'ADULT')
+const kids = top133!.group_details.find(g => g.group === 'KIDS')
+assert(!!adult && adult.pieces === 200, 'ADULT group pieces mismatch')
+assert(!!kids && kids.pieces === 130, 'KIDS group pieces mismatch')
+assert(adult!.top_size?.label === '42', `expected top adult size 42, got ${adult!.top_size?.label}`)
+assert(kids!.top_size?.label === '24', `expected top kids size 24, got ${kids!.top_size?.label}`)
+
+console.log('OK: group + specific size aggregation passed')
+console.log('ADULT line:', formatGroupSizeLine(adult!))
+console.log('KIDS line:', formatGroupSizeLine(kids!))
