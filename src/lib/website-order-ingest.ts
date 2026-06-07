@@ -143,5 +143,5 @@ export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
     phone: gasPayload.phone,
   })
 
-  return { ok: true as const, erpOrderId, result }
+  return { ok: true as const, erpOrderId, result, sms: smsResult }
 }

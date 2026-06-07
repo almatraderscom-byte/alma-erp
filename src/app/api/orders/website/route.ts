@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       website_order_id: payload.website_order_id,
       erp_order_id: result.erpOrderId,
+      sms: result.sms,
     })
   } catch (e) {
     logEvent('error', 'website_order.ingest_failed', {

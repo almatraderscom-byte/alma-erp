@@ -16,15 +16,69 @@ export async function smsEnabledForBusiness(businessId?: string | null) {
   const id = businessId || 'GLOBAL'
   const setting = await prisma.smsSetting.findUnique({ where: { businessId: id } })
   if (setting) return setting.enabled
+  if (id !== 'GLOBAL') {
+    const global = await prisma.smsSetting.findUnique({ where: { businessId: 'GLOBAL' } })
+    if (global) return global.enabled
+  }
   return process.env.SMS_ENABLED === 'true'
 }
 
+async function recordSmsSkip(input: QueueSmsInput, reason: string, detail: string) {
+  try {
+    const phone =
+      normalizeSmsPhone(input.phone) ||
+      String(input.phone || '')
+        .replace(/\D/g, '')
+        .slice(0, 20) ||
+      'unknown'
+    await prisma.smsLog.create({
+      data: {
+        businessId: input.businessId || null,
+        phone,
+        message: input.message.slice(0, 918),
+        type: input.type,
+        provider: PROVIDER,
+        status: 'FAILED',
+        errorCode: reason,
+        errorMessage: detail,
+        metadataJson: input.metadata ? JSON.stringify(input.metadata).slice(0, 8000) : null,
+      },
+    })
+  } catch (err) {
+    console.error('[sms] recordSmsSkip failed', err)
+  }
+}
+
 export async function queueSms(input: QueueSmsInput) {
-  if (!ACTIVE_SMS_TYPES.has(input.type)) return { ok: false, skipped: true, reason: 'SMS_TYPE_DISABLED' }
+  if (!ACTIVE_SMS_TYPES.has(input.type)) {
+    return { ok: false, skipped: true, reason: 'SMS_TYPE_DISABLED' }
+  }
+  if (!smsProviderConfigured()) {
+    await recordSmsSkip(
+      input,
+      'CONFIG',
+      'SMS_API_KEY is not configured on the server.',
+    )
+    return { ok: false, skipped: true, reason: 'SMS_NOT_CONFIGURED' }
+  }
   const phone = normalizeSmsPhone(input.phone)
-  if (!phone) return { ok: false, skipped: true, reason: 'INVALID_PHONE' }
+  if (!phone) {
+    await recordSmsSkip(
+      input,
+      'INVALID_PHONE',
+      `Invalid Bangladesh mobile number: ${String(input.phone || '').trim() || '(empty)'}`,
+    )
+    return { ok: false, skipped: true, reason: 'INVALID_PHONE' }
+  }
   const enabled = await smsEnabledForBusiness(input.businessId)
-  if (!enabled) return { ok: false, skipped: true, reason: 'SMS_DISABLED' }
+  if (!enabled) {
+    await recordSmsSkip(
+      input,
+      'SMS_DISABLED',
+      `SMS is disabled for business ${input.businessId || 'GLOBAL'}. Enable it in Settings → SMS.`,
+    )
+    return { ok: false, skipped: true, reason: 'SMS_DISABLED' }
+  }
 
   const cooldownSince = new Date(Date.now() - (input.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000)
   const duplicate = await prisma.smsLog.findFirst({

@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const [logs, stats, setting] = await Promise.all([
     prisma.smsLog.findMany({
       where: {
-        businessId,
+        OR: [{ businessId }, { businessId: null }],
         ...(status && status !== 'ALL' ? { status } : {}),
       },
       orderBy: { createdAt: 'desc' },
