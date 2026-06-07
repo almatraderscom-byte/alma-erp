@@ -2,6 +2,9 @@ import { prisma } from '@/lib/prisma'
 import { normalizeSmsPhone } from '@/lib/sms/phone'
 import { fetchSmsReport, sendSmsViaProvider, smsProviderConfigured } from '@/lib/sms/provider'
 import type { QueueSmsInput, SmsStatus, SmsType } from '@/lib/sms/types'
+import { isSmsTypeActive, smsEnabledForBusiness } from '@/lib/sms/settings'
+
+export { smsEnabledForBusiness } from '@/lib/sms/settings'
 
 const PROVIDER = 'sms.net.bd'
 const MAX_ATTEMPTS = 2
@@ -9,19 +12,6 @@ const DEFAULT_COOLDOWN_MINUTES = 60
 const MAX_BATCH = 10
 
 const PERMANENT_ERROR_CODES = new Set(['400', '403', '405', '410', '412', '413', '414', '415', '416', '417', '420', '421'])
-const ACTIVE_SMS_TYPES = new Set<SmsType>(['ORDER_CONFIRMATION', 'TRADING_DAILY_SUMMARY', 'SALARY_RECEIVED', 'TEST'])
-
-export async function smsEnabledForBusiness(businessId?: string | null) {
-  if (!smsProviderConfigured()) return false
-  const id = businessId || 'GLOBAL'
-  const setting = await prisma.smsSetting.findUnique({ where: { businessId: id } })
-  if (setting) return setting.enabled
-  if (id !== 'GLOBAL') {
-    const global = await prisma.smsSetting.findUnique({ where: { businessId: 'GLOBAL' } })
-    if (global) return global.enabled
-  }
-  return process.env.SMS_ENABLED === 'true'
-}
 
 async function recordSmsSkip(input: QueueSmsInput, reason: string, detail: string) {
   try {
@@ -50,9 +40,6 @@ async function recordSmsSkip(input: QueueSmsInput, reason: string, detail: strin
 }
 
 export async function queueSms(input: QueueSmsInput) {
-  if (!ACTIVE_SMS_TYPES.has(input.type)) {
-    return { ok: false, skipped: true, reason: 'SMS_TYPE_DISABLED' }
-  }
   if (!smsProviderConfigured()) {
     await recordSmsSkip(
       input,
@@ -78,6 +65,15 @@ export async function queueSms(input: QueueSmsInput) {
       `SMS is disabled for business ${input.businessId || 'GLOBAL'}. Enable it in Settings → SMS.`,
     )
     return { ok: false, skipped: true, reason: 'SMS_DISABLED' }
+  }
+  const typeActive = await isSmsTypeActive(input.businessId, input.type)
+  if (!typeActive) {
+    await recordSmsSkip(
+      input,
+      'TYPE_DISABLED',
+      `SMS type ${input.type} is turned off in Settings → SMS for this business.`,
+    )
+    return { ok: false, skipped: true, reason: 'TYPE_DISABLED' }
   }
 
   const cooldownSince = new Date(Date.now() - (input.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000)
@@ -126,7 +122,6 @@ export async function processSmsQueue(options: { limit?: number } = {}) {
   const rows = await prisma.smsLog.findMany({
     where: {
       provider: PROVIDER,
-      type: { in: Array.from(ACTIVE_SMS_TYPES) },
       status: { in: ['QUEUED', 'PENDING'] },
       attempts: { lt: MAX_ATTEMPTS },
       OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
@@ -137,6 +132,20 @@ export async function processSmsQueue(options: { limit?: number } = {}) {
 
   const results = []
   for (const row of rows) {
+    const typeActive = await isSmsTypeActive(row.businessId, row.type as SmsType)
+    if (!typeActive) {
+      await prisma.smsLog.update({
+        where: { id: row.id },
+        data: {
+          status: 'FAILED',
+          errorCode: 'TYPE_DISABLED',
+          errorMessage: `SMS type ${row.type} is turned off in Settings → SMS.`,
+          nextAttemptAt: null,
+        },
+      })
+      continue
+    }
+
     const claimed = await prisma.smsLog.updateMany({
       where: { id: row.id, status: row.status },
       data: { status: 'SENDING', attempts: { increment: 1 }, updatedAt: new Date() },
@@ -208,12 +217,9 @@ export async function refreshSmsDeliveryReports(limit = 20) {
 export async function retrySmsLog(id: string) {
   const row = await prisma.smsLog.findUnique({ where: { id } })
   if (!row) return { ok: false, error: 'SMS log not found.' }
-  if (!ACTIVE_SMS_TYPES.has(row.type as SmsType)) {
-    await prisma.smsLog.update({
-      where: { id },
-      data: { status: 'FAILED', errorCode: 'SMS_TYPE_DISABLED', errorMessage: 'This SMS type is disabled for the current business stage.', nextAttemptAt: null },
-    })
-    return { ok: false, error: 'This SMS type is disabled.' }
+  const typeActive = await isSmsTypeActive(row.businessId, row.type as SmsType)
+  if (!typeActive) {
+    return { ok: false, error: 'This SMS type is turned off in Settings → SMS.' }
   }
   await prisma.smsLog.update({
     where: { id },
@@ -244,9 +250,8 @@ export async function smsStats() {
   }
 }
 
-export async function isSmsTypeEnabled(businessId: string | null | undefined, _type: SmsType) {
-  if (!ACTIVE_SMS_TYPES.has(_type)) return false
-  return smsEnabledForBusiness(businessId)
+export async function isSmsTypeEnabled(businessId: string | null | undefined, type: SmsType) {
+  return isSmsTypeActive(businessId, type)
 }
 
 function nextRetryAt(attempts: number) {

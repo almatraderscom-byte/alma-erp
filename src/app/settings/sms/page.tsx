@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
+import type { SmsType } from '@/lib/sms/types'
+import type { SmsTypeCatalogItem } from '@/lib/sms/settings'
 import { Button, Card, Input, KpiCard, PageHeader, Select, Skeleton } from '@/components/ui'
 
 type SmsLogRow = {
@@ -17,10 +19,18 @@ type SmsLogRow = {
   createdAt: string
 }
 
+type SmsSettingState = {
+  businessId: BusinessId
+  enabled: boolean
+  senderId: string
+  enabledTypes: SmsType[]
+}
+
 type SmsData = {
   logs: SmsLogRow[]
   stats: { total: number; delivered: number; failed: number; queued: number; successPct: number }
-  setting: { businessId: BusinessId; enabled: boolean; senderId: string }
+  catalog: SmsTypeCatalogItem[]
+  setting: SmsSettingState
 }
 
 export default function SmsSettingsPage() {
@@ -29,8 +39,10 @@ export default function SmsSettingsPage() {
   const [data, setData] = useState<SmsData | null>(null)
   const [balance, setBalance] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
-  const [phone, setPhone] = useState('')
-  const [message, setMessage] = useState('ALMA SMS test')
+  const [savingTypes, setSavingTypes] = useState(false)
+  const [testPhone, setTestPhone] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [enabledTypes, setEnabledTypes] = useState<SmsType[]>([])
 
   const balanceText = useMemo(() => {
     if (!balance) return '—'
@@ -45,7 +57,11 @@ export default function SmsSettingsPage() {
       fetch(`/api/sms/logs?${qs}`, { cache: 'no-store' }),
       fetch('/api/sms/balance', { cache: 'no-store' }),
     ])
-    if (logsRes.ok) setData(await logsRes.json())
+    if (logsRes.ok) {
+      const json = await logsRes.json() as SmsData
+      setData(json)
+      setEnabledTypes(json.setting.enabledTypes)
+    }
     if (balanceRes.ok) setBalance(await balanceRes.json())
     setLoading(false)
   }
@@ -54,30 +70,64 @@ export default function SmsSettingsPage() {
     void load()
   }, [businessId, status])
 
-  async function saveEnabled(enabled: boolean) {
+  async function patchSetting(patch: {
+    enabled?: boolean
+    senderId?: string
+    enabled_types?: SmsType[]
+  }) {
     const res = await fetch('/api/sms/logs', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: businessId, enabled }),
+      body: JSON.stringify({ business_id: businessId, ...patch }),
     })
     const json = await res.json().catch(() => ({}))
     if (!res.ok) {
-      toast.error(json.error || 'Could not update SMS setting')
-      return
+      toast.error(json.error || 'Could not save SMS settings')
+      return false
     }
-    toast.success(enabled ? 'SMS enabled' : 'SMS disabled')
+    if (Array.isArray(json.enabledTypes)) setEnabledTypes(json.enabledTypes)
     await load()
+    return true
   }
 
-  async function sendTest() {
+  async function saveEnabled(enabled: boolean) {
+    const ok = await patchSetting({ enabled })
+    if (!ok) return
+    toast.success(enabled ? 'SMS enabled for this business' : 'SMS disabled')
+  }
+
+  async function saveTypes() {
+    setSavingTypes(true)
+    const ok = await patchSetting({ enabled_types: enabledTypes })
+    setSavingTypes(false)
+    if (!ok) return
+    toast.success('SMS types saved')
+  }
+
+  function toggleType(type: SmsType, checked: boolean) {
+    setEnabledTypes(prev => {
+      const set = new Set(prev)
+      if (checked) set.add(type)
+      else set.delete(type)
+      return [...set]
+    })
+  }
+
+  async function sendTestSms() {
+    if (!testPhone.trim()) {
+      toast.error('Test phone number দিন')
+      return
+    }
+    setTesting(true)
     const res = await fetch('/api/sms/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: businessId, phone, message }),
+      body: JSON.stringify({ business_id: businessId, phone: testPhone.trim() }),
     })
     const json = await res.json().catch(() => ({}))
+    setTesting(false)
     if (!res.ok) {
-      toast.error(json.error || json.reason || 'Could not send test SMS')
+      toast.error(json.error || 'Test SMS failed')
       return
     }
     toast.success('Test SMS queued')
@@ -106,11 +156,13 @@ export default function SmsSettingsPage() {
     await load()
   }
 
+  const catalog = data?.catalog ?? []
+
   return (
     <>
       <PageHeader
         title="SMS"
-        subtitle="SMS.NET.BD transactional SMS, balance, delivery logs, and retry controls."
+        subtitle="কোন জায়গায় SMS যাবে তা এখান থেকে নিজে চালু/বন্ধ করুন — কোডিং লাগবে না।"
         actions={<Button size="xs" variant="secondary" onClick={() => void load()}>Refresh</Button>}
       />
       <div className="p-4 md:p-6 space-y-4">
@@ -122,27 +174,72 @@ export default function SmsSettingsPage() {
           <KpiCard label="Success" value={loading ? '—' : `${data?.stats.successPct ?? 0}%`} loading={loading} />
         </div>
 
-        <div className="grid lg:grid-cols-[380px_1fr] gap-4">
-          <Card className="p-5 space-y-4">
-            <div className="space-y-2">
-              <p className="text-sm font-bold text-cream">SMS control</p>
-              <Select value={businessId} onChange={v => setBusinessId(v as BusinessId)} options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))} />
-              <div className="flex gap-2">
-                <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(true)}>Enable</Button>
-                <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(false)}>Disable</Button>
+        <div className="grid lg:grid-cols-[420px_1fr] gap-4">
+          <div className="space-y-4">
+            <Card className="p-5 space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm font-bold text-cream">Business & master switch</p>
+                <Select value={businessId} onChange={v => setBusinessId(v as BusinessId)} options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))} />
+                <div className="flex gap-2">
+                  <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(true)}>Enable SMS</Button>
+                  <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(false)}>Disable SMS</Button>
+                </div>
+                <p className="rounded-xl border border-border bg-black/20 p-3 text-[11px] text-zinc-400">
+                  Balance: <span className="font-mono text-gold-lt">{balanceText}</span>
+                </p>
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Recharge-এর পর <span className="text-zinc-300">Enable SMS</span> চাপুন। Master switch বন্ধ থাকলে নিচের কোনো type চালু থাকলেও SMS যাবে না।
+                </p>
               </div>
-              <p className="rounded-xl border border-border bg-black/20 p-3 text-[11px] text-zinc-400">
-                Balance: <span className="font-mono text-gold-lt">{balanceText}</span>
-              </p>
-            </div>
+            </Card>
 
-            <div className="space-y-2">
+            <Card className="p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-bold text-cream">কোন SMS চালু থাকবে</p>
+                <Button size="xs" variant="gold" disabled={savingTypes} onClick={() => void saveTypes()}>
+                  {savingTypes ? 'Saving…' : 'Save types'}
+                </Button>
+              </div>
+              {loading ? (
+                <Skeleton className="h-48" />
+              ) : (
+                catalog.map(item => (
+                  <label
+                    key={item.type}
+                    className="flex items-start gap-3 rounded-xl border border-border px-3 py-3 text-sm text-zinc-300"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 shrink-0"
+                      checked={enabledTypes.includes(item.type)}
+                      onChange={e => toggleType(item.type, e.target.checked)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-cream">{item.labelBn}</span>
+                      <span className="block text-[11px] text-zinc-500">{item.label} · {item.type}</span>
+                      <span className="mt-1 block text-[11px] text-zinc-400 leading-relaxed">{item.description}</span>
+                      <span className="mt-1 block text-[10px] text-zinc-600">কে পাবে: {item.audience}</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </Card>
+
+            <Card className="p-5 space-y-3">
               <p className="text-sm font-bold text-cream">Test SMS</p>
-              <Input value={phone} onChange={e => setPhone(e.target.value)} placeholder="01XXXXXXXXX or 8801XXXXXXXXX" />
-              <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4} className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream" />
-              <Button variant="gold" onClick={() => void sendTest()} disabled={!phone.trim() || !message.trim()}>Send test SMS</Button>
-            </div>
-          </Card>
+              <p className="text-[11px] text-zinc-500">
+                উপরে <span className="text-zinc-300">Test SMS</span> type চালু রাখুন, তারপর নম্বর দিয়ে test পাঠান।
+              </p>
+              <Input
+                placeholder="01XXXXXXXXX"
+                value={testPhone}
+                onChange={e => setTestPhone(e.target.value)}
+              />
+              <Button size="sm" variant="secondary" disabled={testing} onClick={() => void sendTestSms()}>
+                {testing ? 'Sending…' : 'Send test SMS'}
+              </Button>
+            </Card>
+          </div>
 
           <Card className="p-5">
             <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -170,11 +267,21 @@ export default function SmsSettingsPage() {
                         <td className="py-2 pr-3 font-mono text-zinc-500">{new Date(row.createdAt).toLocaleString()}</td>
                         <td className="py-2 pr-3 font-mono">{row.phone}</td>
                         <td className="py-2 pr-3">{row.type}</td>
-                        <td className="py-2 pr-3">{row.status}<span className="block text-red-400">{row.errorCode || ''}</span></td>
+                        <td className="py-2 pr-3">
+                          {row.status}
+                          <span className="block text-red-400">{row.errorCode || ''}</span>
+                          {row.errorMessage && (
+                            <span className="block text-[10px] text-zinc-500 max-w-xs truncate" title={row.errorMessage}>
+                              {row.errorMessage}
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2 pr-3 text-zinc-400 max-w-sm truncate" title={row.message}>{row.message}</td>
                         <td className="py-2 pr-3">
                           <div className="flex gap-1">
-                            {row.status === 'FAILED' && <Button size="xs" variant="secondary" onClick={() => void retry(row.id)}>Retry</Button>}
+                            {row.status === 'FAILED' && row.errorCode !== 'CANCELLED' && (
+                              <Button size="xs" variant="secondary" onClick={() => void retry(row.id)}>Retry</Button>
+                            )}
                             {row.requestId && <Button size="xs" variant="ghost" onClick={() => void report(row.id)}>Report</Button>}
                           </div>
                         </td>

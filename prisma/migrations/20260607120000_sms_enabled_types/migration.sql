@@ -1,0 +1,1 @@
+ALTER TABLE "SmsSetting" ADD COLUMN IF NOT EXISTS "enabledTypesJson" TEXT;

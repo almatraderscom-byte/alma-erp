@@ -802,13 +802,14 @@ model SmsLog {
 }
 
 model SmsSetting {
-  id         String   @id @default(cuid())
-  businessId String   @unique
-  enabled    Boolean  @default(false)
-  senderId   String?
-  updatedById String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id               String   @id @default(cuid())
+  businessId       String   @unique
+  enabled          Boolean  @default(false)
+  senderId         String?
+  enabledTypesJson String?  @db.Text
+  updatedById      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([enabled])
 }
