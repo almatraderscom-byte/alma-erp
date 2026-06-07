@@ -306,7 +306,18 @@ function LifestyleDashboard() {
                     <span className="text-[11px] font-bold text-gold w-5">{i + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-cream truncate">{p.product}</p>
-                      <p className="text-[10px] text-zinc-500">{p.orders} orders</p>
+                      <p className="text-[10px] text-zinc-500">
+                        {p.orders} orders
+                        {p.pieces > 0 ? ` · ${fmtNum(p.pieces)} pcs` : ''}
+                      </p>
+                      {p.top_size ? (
+                        <p className="text-[10px] text-emerald-400/90 mt-0.5 truncate">
+                          Top: {p.top_size.label} · {fmtNum(p.top_size.pieces)} pcs
+                          {p.size_breakdown.length > 1
+                            ? ` (${p.size_breakdown.slice(1, 3).map(s => `${s.label} ${fmtNum(s.pieces)}`).join(' · ')})`
+                            : ''}
+                        </p>
+                      ) : null}
                     </div>
                     <span className="text-xs font-bold text-gold tabular-nums"><Money amount={p.revenue} /></span>
                     <span className="text-xs font-bold text-green-400 tabular-nums"><Money amount={p.profit} /></span>

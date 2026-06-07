@@ -17,7 +17,22 @@ import {
   calculateOrderAccounting,
   orderProfitInputsFromOrder,
 } from '@/lib/order-return-profit'
+import {
+  buildSizeBreakdown,
+  expandOrderProductLines,
+  type ProductSizeSlice,
+} from '@/lib/product-size-breakdown'
 import type { Order, OrderStatus } from '@/types'
+
+export interface TopProductMetrics {
+  product: string
+  orders: number
+  revenue: number
+  profit: number
+  pieces: number
+  top_size: ProductSizeSlice | null
+  size_breakdown: ProductSizeSlice[]
+}
 
 function orderAccounting(o: Order) {
   return calculateOrderAccounting(o.status, orderProfitInputsFromOrder(o))
@@ -244,7 +259,7 @@ export interface DashboardMetrics {
   by_source: Record<string, { orders: number; revenue: number }>
   by_payment: Record<string, number>
   by_category: Record<string, { orders: number; revenue: number; profit: number }>
-  top_products: Array<{ product: string; orders: number; revenue: number; profit: number }>
+  top_products: TopProductMetrics[]
   daily_trend: Array<{ date: string; revenue: number; profit: number; orders: number }>
   monthly_trend: Array<{ month: string; revenue: number; profit: number; orders: number; cogs: number }>
   sla_breaches: Array<{
@@ -282,7 +297,13 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   const bySource: Record<string, { orders: number; revenue: number }> = {}
   const byPayment: Record<string, number> = {}
   const byCat: Record<string, { orders: number; revenue: number; profit: number }> = {}
-  const byProduct: Record<string, { orders: number; revenue: number; profit: number }> = {}
+  const byProduct: Record<string, {
+    orders: number
+    revenue: number
+    profit: number
+    pieces: number
+    sizeSlices: Record<string, number>
+  }> = {}
   const daily: Record<string, { date: string; revenue: number; profit: number; orders: number }> = {}
   const monthly: Record<string, { month: string; revenue: number; profit: number; orders: number; cogs: number }> = {}
   const slaBreaches: DashboardMetrics['sla_breaches'] = []
@@ -340,12 +361,26 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
       byCat[o.category].profit += Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
     }
 
-    const prodKey = o.product || 'Unknown'
-    if (!byProduct[prodKey]) byProduct[prodKey] = { orders: 0, revenue: 0, profit: 0 }
-    byProduct[prodKey].orders++
-    if (revenueActive) {
-      byProduct[prodKey].revenue += o.sell_price
-      byProduct[prodKey].profit += Number(o.realizedProfit ?? estimated)
+    const lines = expandOrderProductLines(o)
+    const realized = Number(o.realizedProfit ?? o.net_profit ?? acct.realizedProfit)
+    const codesInOrder = new Set<string>()
+    for (const line of lines) {
+      const prodKey = line.code || 'Unknown'
+      if (!byProduct[prodKey]) {
+        byProduct[prodKey] = { orders: 0, revenue: 0, profit: 0, pieces: 0, sizeSlices: {} }
+      }
+      if (!codesInOrder.has(prodKey)) {
+        codesInOrder.add(prodKey)
+        byProduct[prodKey].orders++
+      }
+      if (revenueActive) {
+        byProduct[prodKey].revenue += o.sell_price * line.revenueShare
+        byProduct[prodKey].profit += realized * line.revenueShare
+      }
+      if (status !== 'CANCELLED') {
+        byProduct[prodKey].pieces += line.qty
+        byProduct[prodKey].sizeSlices[line.label] = (byProduct[prodKey].sizeSlices[line.label] ?? 0) + line.qty
+      }
     }
 
     if (o.sla_status?.includes('BREACH')) {
@@ -380,8 +415,19 @@ export function aggregateDashboardMetrics(orders: Order[]): DashboardMetrics {
   }
 
   const n = orders.length
-  const top_products = Object.entries(byProduct)
-    .map(([product, v]) => ({ product, ...v }))
+  const top_products: TopProductMetrics[] = Object.entries(byProduct)
+    .map(([product, v]) => {
+      const size_breakdown = buildSizeBreakdown(v.sizeSlices)
+      return {
+        product,
+        orders: v.orders,
+        revenue: Math.round(v.revenue),
+        profit: Math.round(v.profit),
+        pieces: v.pieces,
+        top_size: size_breakdown[0] ?? null,
+        size_breakdown,
+      }
+    })
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 8)
 
