@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import type { SmsType } from '@/lib/sms/types'
-import type { SmsTypeCatalogItem } from '@/lib/sms/settings'
+import { DEFAULT_SMS_ENABLED_TYPES, SMS_TYPE_CATALOG } from '@/lib/sms/catalog'
 import { Button, Card, Input, KpiCard, PageHeader, Select, Skeleton } from '@/components/ui'
 
 type SmsLogRow = {
@@ -29,7 +29,6 @@ type SmsSettingState = {
 type SmsData = {
   logs: SmsLogRow[]
   stats: { total: number; delivered: number; failed: number; queued: number; successPct: number }
-  catalog: SmsTypeCatalogItem[]
   setting: SmsSettingState
 }
 
@@ -42,7 +41,7 @@ export default function SmsSettingsPage() {
   const [savingTypes, setSavingTypes] = useState(false)
   const [testPhone, setTestPhone] = useState('')
   const [testing, setTesting] = useState(false)
-  const [enabledTypes, setEnabledTypes] = useState<SmsType[]>([])
+  const [enabledTypes, setEnabledTypes] = useState<SmsType[]>([...DEFAULT_SMS_ENABLED_TYPES])
 
   const balanceText = useMemo(() => {
     if (!balance) return '—'
@@ -60,7 +59,10 @@ export default function SmsSettingsPage() {
     if (logsRes.ok) {
       const json = await logsRes.json() as SmsData
       setData(json)
-      setEnabledTypes(json.setting.enabledTypes)
+      setEnabledTypes(json.setting?.enabledTypes?.length ? json.setting.enabledTypes : [...DEFAULT_SMS_ENABLED_TYPES])
+    } else {
+      const err = await logsRes.json().catch(() => ({})) as { error?: string }
+      toast.error(err.error || 'SMS settings load failed')
     }
     if (balanceRes.ok) setBalance(await balanceRes.json())
     setLoading(false)
@@ -156,7 +158,7 @@ export default function SmsSettingsPage() {
     await load()
   }
 
-  const catalog = data?.catalog ?? []
+  const catalog = SMS_TYPE_CATALOG
 
   return (
     <>
