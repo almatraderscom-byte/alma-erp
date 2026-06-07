@@ -4,13 +4,12 @@ import { fetchSmsReport, sendSmsViaProvider, smsProviderConfigured } from '@/lib
 import type { QueueSmsInput, SmsStatus, SmsType } from '@/lib/sms/types'
 
 const PROVIDER = 'sms.net.bd'
-const MAX_ATTEMPTS = 1
+const MAX_ATTEMPTS = 2
 const DEFAULT_COOLDOWN_MINUTES = 60
 const MAX_BATCH = 10
 
 const PERMANENT_ERROR_CODES = new Set(['400', '403', '405', '410', '412', '413', '414', '415', '416', '417', '420', '421'])
-/** Only Alma Lifestyle order confirm + monthly salary wallet credit. */
-const ACTIVE_SMS_TYPES = new Set<SmsType>(['ORDER_CONFIRMATION', 'SALARY_RECEIVED'])
+const ACTIVE_SMS_TYPES = new Set<SmsType>(['ORDER_CONFIRMATION', 'TRADING_DAILY_SUMMARY', 'SALARY_RECEIVED', 'TEST'])
 
 export async function smsEnabledForBusiness(businessId?: string | null) {
   if (!smsProviderConfigured()) return false
@@ -18,70 +17,6 @@ export async function smsEnabledForBusiness(businessId?: string | null) {
   const setting = await prisma.smsSetting.findUnique({ where: { businessId: id } })
   if (setting) return setting.enabled
   return process.env.SMS_ENABLED === 'true'
-}
-
-export async function getQueueValidAfter(businessId?: string | null): Promise<Date | null> {
-  const id = businessId || 'GLOBAL'
-  const setting = await prisma.smsSetting.findUnique({
-    where: { businessId: id },
-    select: { queueValidAfter: true, enabled: true },
-  })
-  if (setting?.queueValidAfter) return setting.queueValidAfter
-  const raw = String(process.env.SMS_QUEUE_VALID_AFTER || '').trim()
-  if (raw) {
-    const parsed = new Date(raw)
-    if (!Number.isNaN(parsed.getTime())) return parsed
-  }
-  return null
-}
-
-function isLogEligibleForSend(row: { businessId: string | null; type: string; createdAt: Date }, validAfter: Date | null) {
-  if (!ACTIVE_SMS_TYPES.has(row.type as SmsType)) return false
-  if (!validAfter) return true
-  return row.createdAt >= validAfter
-}
-
-/** Cancel pending SMS older than the recharge cutoff so they never send after top-up. */
-export async function cancelStaleSmsQueue(businessId: string, validAfter: Date) {
-  return prisma.smsLog.updateMany({
-    where: {
-      businessId,
-      status: { in: ['QUEUED', 'PENDING', 'SENDING'] },
-      createdAt: { lt: validAfter },
-    },
-    data: {
-      status: 'FAILED',
-      errorCode: 'CANCELLED',
-      errorMessage: 'Skipped — SMS re-enabled after recharge; only new messages send from this point.',
-      nextAttemptAt: null,
-    },
-  })
-}
-
-export async function markSmsEnabledForBusiness(
-  businessId: string,
-  enabled: boolean,
-  updatedById?: string | null,
-) {
-  const now = new Date()
-  const setting = await prisma.smsSetting.upsert({
-    where: { businessId },
-    create: {
-      businessId,
-      enabled,
-      queueValidAfter: enabled ? now : null,
-      updatedById: updatedById || null,
-    },
-    update: {
-      enabled,
-      updatedById: updatedById || null,
-      ...(enabled ? { queueValidAfter: now } : {}),
-    },
-  })
-  if (enabled) {
-    await cancelStaleSmsQueue(businessId, now)
-  }
-  return setting
 }
 
 export async function queueSms(input: QueueSmsInput) {
@@ -119,7 +54,7 @@ export async function queueSms(input: QueueSmsInput) {
   return { ok: true, id: log.id }
 }
 
-/** Queue SMS and send immediately — use from API routes that can await before responding. */
+/** Queue SMS and send immediately — await from API routes before responding. */
 export async function flushQueuedSms(input: QueueSmsInput) {
   const result = await queueSms(input)
   if (result.ok && !result.duplicate) {
@@ -143,27 +78,11 @@ export async function processSmsQueue(options: { limit?: number } = {}) {
       OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
     },
     orderBy: { createdAt: 'asc' },
-    take: Math.min(Math.max(options.limit || MAX_BATCH, 1), MAX_BATCH) * 3,
+    take: Math.min(Math.max(options.limit || MAX_BATCH, 1), MAX_BATCH),
   })
 
   const results = []
   for (const row of rows) {
-    if (results.length >= Math.min(Math.max(options.limit || MAX_BATCH, 1), MAX_BATCH)) break
-
-    const validAfter = await getQueueValidAfter(row.businessId)
-    if (!isLogEligibleForSend(row, validAfter)) {
-      await prisma.smsLog.update({
-        where: { id: row.id },
-        data: {
-          status: 'FAILED',
-          errorCode: 'CANCELLED',
-          errorMessage: 'Skipped — created before SMS recharge cutoff.',
-          nextAttemptAt: null,
-        },
-      })
-      continue
-    }
-
     const claimed = await prisma.smsLog.updateMany({
       where: { id: row.id, status: row.status },
       data: { status: 'SENDING', attempts: { increment: 1 }, updatedAt: new Date() },
@@ -236,11 +155,11 @@ export async function retrySmsLog(id: string) {
   const row = await prisma.smsLog.findUnique({ where: { id } })
   if (!row) return { ok: false, error: 'SMS log not found.' }
   if (!ACTIVE_SMS_TYPES.has(row.type as SmsType)) {
+    await prisma.smsLog.update({
+      where: { id },
+      data: { status: 'FAILED', errorCode: 'SMS_TYPE_DISABLED', errorMessage: 'This SMS type is disabled for the current business stage.', nextAttemptAt: null },
+    })
     return { ok: false, error: 'This SMS type is disabled.' }
-  }
-  const validAfter = await getQueueValidAfter(row.businessId)
-  if (!isLogEligibleForSend(row, validAfter)) {
-    return { ok: false, error: 'This SMS is from before the recharge cutoff and cannot be resent.' }
   }
   await prisma.smsLog.update({
     where: { id },
