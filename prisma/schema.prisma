@@ -1617,3 +1617,31 @@ model BusinessArchiveAuditLog {
   @@index([businessId, createdAt])
   @@index([batchId, createdAt])
 }
+
+/// Hermes agent API audit trail — every write via /api/agent/* logs here.
+/// Columns: actionType, resourceId, payload (jsonb), actor, ipAddress, createdAt
+model AgentAuditLog {
+  id         String   @id @default(cuid())
+  actionType String
+  resourceId String?
+  payload    Json?
+  actor      String   @default("agent_via_sir")
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actionType, createdAt])
+  @@index([createdAt])
+  @@index([resourceId])
+}
+
+/// Agent-readable settings cache with version bump on PATCH.
+model AgentSettings {
+  id              String   @id @default("global")
+  settingsVersion Int      @default(1)
+  businessHours   Json?
+  holidays        Json?
+  lateThresholdMinutes Int @default(15)
+  finePolicy      Json?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}

@@ -1,0 +1,11 @@
+{
+  "remoteName": "origin",
+  "projects": [
+    {
+      "id": "prj_FHO3TuVxkwnGqTCF4vCH2SFJbHq1",
+      "name": "alma-erp",
+      "directory": ".",
+      "orgId": "team_iq0WiA8foX0t7IkFS065L1XP"
+    }
+  ]
+}

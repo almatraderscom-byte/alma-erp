@@ -1,0 +1,63 @@
+name: Production Backup
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Backup kind
+        required: true
+        default: manual
+        type: choice
+        options:
+          - daily
+          - weekly
+          - monthly
+          - manual
+  schedule:
+    - cron: '30 20 * * *'
+    - cron: '45 20 * * 0'
+    - cron: '0 21 1 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Resolve backup kind
+        id: kind
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "kind=${{ inputs.kind }}" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%d)" = "01" ]; then
+            echo "kind=monthly" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%u)" = "7" ]; then
+            echo "kind=weekly" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=daily" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run backup
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_GAS_URL: ${{ secrets.BACKUP_GAS_URL }}
+          BACKUP_API_SECRET: ${{ secrets.BACKUP_API_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          BACKUP_ALERT_EMAILS: ${{ secrets.BACKUP_ALERT_EMAILS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        run: npm run backup:prod -- --kind=${{ steps.kind.outputs.kind }} --cleanup-on-fail

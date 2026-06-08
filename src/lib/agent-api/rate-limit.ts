@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const MAX_TOKENS = 10
+const MAX_TOKENS = 30
 const REFILL_MS = 1000
 
 type Bucket = { tokens: number; lastRefill: number }

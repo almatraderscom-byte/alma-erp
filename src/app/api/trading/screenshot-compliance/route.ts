@@ -8,8 +8,6 @@ import {
   screenshotUploadedToday,
   tradingBdDayBounds,
 } from '@/lib/trading-compliance'
-import { queueSmsAndFlush } from '@/lib/sms/queue'
-
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
@@ -59,16 +57,6 @@ export async function GET(req: NextRequest) {
       notified += 1
     }
 
-    if (account.assignedUser?.phone) {
-      queueSmsAndFlush({
-        businessId: TRADING_BUSINESS_ID,
-        phone: account.assignedUser.phone,
-        type: 'TRADING_DAILY_SUMMARY',
-        message: `Alma Trading: upload today's screenshot for ${account.accountTitle} now.`,
-        metadata: { accountId: account.id, kind: 'screenshot_reminder' },
-        cooldownMinutes: 180,
-      })
-    }
   }
 
   await notifyRole({

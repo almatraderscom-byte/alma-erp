@@ -1,0 +1,91 @@
+name: Recovery Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-validation
+  cancel-in-progress: false
+
+jobs:
+  recovery-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: recovery
+          POSTGRES_PASSWORD: recovery
+          POSTGRES_DB: alma_recovery
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Verify restore tooling
+        run: |
+          pg_dump --version
+          pg_restore --version
+          psql --version
+          pg_isready -h localhost -p 5432 -U recovery
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Safety preflight
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          RECOVERY_DATABASE_URL: postgresql://recovery:recovery@localhost:5432/alma_recovery
+        run: |
+          test -n "$BACKUP_DATABASE_URL"
+          test "$BACKUP_DATABASE_URL" != "$RECOVERY_DATABASE_URL"
+          case "$RECOVERY_DATABASE_URL" in
+            *localhost*|*127.0.0.1*) echo "Recovery DB is isolated local service" ;;
+            *) echo "Recovery DB must be local for this workflow" && exit 1 ;;
+          esac
+
+      - name: Run isolated recovery validation
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          RECOVERY_DATABASE_URL: postgresql://recovery:recovery@localhost:5432/alma_recovery
+          NEXTAUTH_SECRET: recovery-validation-only
+          API_SECRET: recovery-validation-only
+          NEXT_PUBLIC_API_URL: https://example.invalid
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          BACKUP_ALERT_EMAILS: ${{ secrets.BACKUP_ALERT_EMAILS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        run: npm run backup:recovery-validate -- --out=backups/recovery-validation
+
+      - name: Final isolated DB cleanup
+        if: always()
+        env:
+          PGPASSWORD: recovery
+        run: |
+          psql "postgresql://recovery:recovery@localhost:5432/alma_recovery" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;" || true
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-validation-report
+          path: |
+            backups/recovery-validation/**/*.json
+            backups/recovery-validation/**/*.manifest.json
+          if-no-files-found: warn
