@@ -1,0 +1,209 @@
+import { serverGet } from '@/lib/server-api'
+import { getPeriodRangeDhaka, isoToYmd } from '@/lib/agent-api/period'
+import type {
+  AgentOrder,
+  AgentOrderDetail,
+  AgentOrdersSummary,
+  OrderStatusSchema,
+  SummaryPeriod,
+} from '@/lib/agent-api/orders.schema'
+import type { Order, OrderItem } from '@/types'
+import type { z } from 'zod'
+
+const DEFAULT_BUSINESS_ID = 'ALMA_LIFESTYLE'
+
+type AgentStatus = z.infer<typeof OrderStatusSchema>
+
+type GasOrdersResponse = {
+  orders?: Order[]
+  summary?: { total?: number }
+}
+
+type GasOrderResponse = {
+  order?: Order
+  error?: string
+}
+
+const ALMA_TO_AGENT: Record<string, AgentStatus> = {
+  Pending: 'pending',
+  Confirmed: 'confirmed',
+  Packed: 'processing',
+  Shipped: 'shipped',
+  Delivered: 'delivered',
+  CANCELLED: 'cancelled',
+  RETURNED: 'refunded',
+  RETURNED_PAID: 'refunded',
+  RETURNED_UNPAID: 'refunded',
+}
+
+const AGENT_TO_ALMA: Partial<Record<AgentStatus, string>> = {
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  processing: 'Packed',
+  shipped: 'Shipped',
+  delivered: 'Delivered',
+  cancelled: 'CANCELLED',
+  refunded: 'RETURNED',
+}
+
+function mapStatus(almaStatus: string): AgentStatus {
+  return ALMA_TO_AGENT[almaStatus] ?? 'pending'
+}
+
+function orderDateToIso(dateStr: string): string {
+  const ymd = dateStr.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return new Date().toISOString()
+  return new Date(`${ymd}T00:00:00+06:00`).toISOString()
+}
+
+function extractCity(address: string): string | null {
+  const trimmed = address.trim()
+  if (!trimmed) return null
+  const parts = trimmed.split(',').map(p => p.trim()).filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : trimmed
+}
+
+function itemCount(order: Order): number {
+  if (order.items?.length) {
+    return order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
+  }
+  return Number(order.qty || 0)
+}
+
+function mapLineItems(items: OrderItem[] | undefined) {
+  if (!items?.length) return undefined
+  return items.map(item => ({
+    sku: item.sku || item.product_code || undefined,
+    name: item.product || 'Item',
+    quantity: Math.max(1, Number(item.qty || 1)),
+    unitPrice: Number(item.unit_price || item.sell_price || 0),
+    lineTotal: Number(item.subtotal || item.qty * (item.unit_price || 0)),
+  }))
+}
+
+export function mapOrderToAgent(order: Order): AgentOrder {
+  return {
+    id: String(order.id),
+    orderNumber: order.invoice_num ? String(order.invoice_num) : undefined,
+    customerName: order.customer || null,
+    customerPhone: order.phone || null,
+    totalAmount: Number(order.sell_price || 0),
+    currency: 'BDT',
+    status: mapStatus(String(order.status || 'Pending')),
+    placedAt: orderDateToIso(order.date),
+    itemCount: itemCount(order),
+    paymentMethod: order.payment || null,
+    shippingCity: extractCity(order.address || ''),
+  }
+}
+
+export function mapOrderDetail(order: Order): AgentOrderDetail {
+  const base = mapOrderToAgent(order)
+  const lineItems = mapLineItems(order.items)
+  const notes = order.notes?.trim() || null
+  return { ...base, lineItems, notes }
+}
+
+export interface ListAgentOrdersInput {
+  status?: string
+  limit?: number
+  startDate?: string
+  endDate?: string
+  fromIso?: string | null
+  toIso?: string | null
+}
+
+export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
+  orders: AgentOrder[]
+  meta: { count: number; limit: number; from: string | null; to: string | null }
+}> {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 100)
+  const params: Record<string, string> = {
+    business_id: DEFAULT_BUSINESS_ID,
+    limit: String(Math.min(limit + 200, 500)),
+  }
+
+  if (input.startDate) params.startDate = input.startDate
+  if (input.endDate) params.endDate = input.endDate
+
+  const almaStatus =
+    input.status && input.status !== 'all'
+      ? AGENT_TO_ALMA[input.status.toLowerCase() as AgentStatus]
+      : undefined
+  if (almaStatus) params.status = almaStatus
+
+  const data = await serverGet<GasOrdersResponse>('orders', params, 0)
+  let orders = (data.orders ?? []).map(mapOrderToAgent)
+
+  if (input.fromIso || input.toIso) {
+    const fromYmd = input.fromIso ? isoToYmd(input.fromIso) : null
+    const toYmd = input.toIso ? isoToYmd(input.toIso) : null
+    orders = orders.filter(o => {
+      const ymd = isoToYmd(o.placedAt)
+      if (fromYmd && ymd < fromYmd) return false
+      if (toYmd && ymd > toYmd) return false
+      return true
+    })
+  }
+
+  if (input.status && input.status !== 'all' && !almaStatus) {
+    const want = input.status.toLowerCase()
+    orders = orders.filter(o => o.status === want)
+  }
+
+  const total = orders.length
+  const slice = orders.slice(0, limit)
+
+  return {
+    orders: slice,
+    meta: {
+      count: total,
+      limit,
+      from: input.fromIso ?? null,
+      to: input.toIso ?? null,
+    },
+  }
+}
+
+export async function getAgentOrderDetail(id: string): Promise<AgentOrderDetail | null> {
+  const data = await serverGet<GasOrderResponse>('order', { id }, 0)
+  if (data.error || !data.order) return null
+  return mapOrderDetail(data.order)
+}
+
+export function buildOrdersSummary(
+  orders: AgentOrder[],
+  period: SummaryPeriod,
+): AgentOrdersSummary {
+  const byStatus: Record<string, number> = {}
+  let totalRevenue = 0
+
+  for (const o of orders) {
+    byStatus[o.status] = (byStatus[o.status] ?? 0) + 1
+    totalRevenue += o.totalAmount
+  }
+
+  const totalOrders = orders.length
+
+  return {
+    period,
+    totalOrders,
+    totalRevenue: Math.round(totalRevenue),
+    currency: 'BDT',
+    avgOrderValue: totalOrders > 0 ? Math.round((totalRevenue / totalOrders) * 100) / 100 : 0,
+    byStatus,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+export async function getAgentOrdersSummary(period: SummaryPeriod): Promise<AgentOrdersSummary> {
+  const range = getPeriodRangeDhaka(period)
+  const { orders } = await listAgentOrders({
+    startDate: range.startDate,
+    endDate: range.endDate,
+    limit: 500,
+    fromIso: range.from.toISOString(),
+    toIso: range.to.toISOString(),
+  })
+  return buildOrdersSummary(orders, period)
+}
