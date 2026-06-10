@@ -20,12 +20,25 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - কখনো অনুমান থেকে তথ্য উপস্থাপন করবেন না।
 - অনিশ্চিত হলে স্বীকার করুন এবং পরিষ্কার করতে জিজ্ঞেস করুন।`
 
-export function buildSystemPrompt(): Anthropic.Messages.TextBlockParam[] {
-  return [
-    {
-      type: 'text',
-      text: SYSTEM_CORE,
-      cache_control: { type: 'ephemeral' },
-    },
+export function buildSystemPrompt(
+  projectInstructions?: string | null,
+): Anthropic.Messages.TextBlockParam[] {
+  const blocks: Anthropic.Messages.TextBlockParam[] = [
+    { type: 'text', text: SYSTEM_CORE },
   ]
+
+  if (projectInstructions?.trim()) {
+    blocks.push({
+      type: 'text',
+      text: `\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`,
+    })
+  }
+
+  // cache_control on the last block for prompt caching.
+  blocks[blocks.length - 1] = {
+    ...blocks[blocks.length - 1],
+    cache_control: { type: 'ephemeral' },
+  }
+
+  return blocks
 }
