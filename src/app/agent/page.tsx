@@ -4,21 +4,18 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import AgentChat from '@/agent/components/AgentChat'
 
 export const metadata = { title: 'Agent' }
 
 export default async function AgentPage() {
-  // (a) Kill switch
   if (!isAgentEnabled()) notFound()
 
-  // (b) Require valid ALMA session
   const session = await getServerSession(authOptions)
   if (!session?.user) redirect('/login')
 
-  // (c) Owner-only gate — SUPER_ADMIN only
   if (!isSystemOwner(session)) notFound()
 
-  // DB ping — cheap SELECT to verify agent tables are reachable
   let dbOk = false
   try {
     await (prisma as any).agentProject.findFirst({ select: { id: true } })
@@ -28,16 +25,19 @@ export default async function AgentPage() {
   }
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'var(--font-inter, sans-serif)' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1.5rem' }}>
-        Agent — Phase 0
-      </h1>
-
-      <ul style={{ listStyle: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        <li>✅ Feature flag ON</li>
-        <li>✅ Auth OK — {session.user.name ?? session.user.email}</li>
-        <li>{dbOk ? '✅' : '❌'} Database {dbOk ? 'OK' : 'ERROR — agent tables not reachable'}</li>
-      </ul>
+    <div style={{ padding: '1.5rem', fontFamily: 'var(--font-inter, sans-serif)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>ALMA Agent</h1>
+        <span style={{ fontSize: '0.75rem', color: dbOk ? '#16a34a' : '#dc2626' }}>
+          {dbOk ? '● DB OK' : '● DB ERROR'}
+        </span>
+      </div>
+      {!dbOk && (
+        <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '0.85rem', color: '#b91c1c' }}>
+          Agent tables not reachable — run <code>prisma migrate deploy</code> first.
+        </div>
+      )}
+      <AgentChat userName={session.user.name ?? session.user.email ?? 'Owner'} />
     </div>
   )
 }

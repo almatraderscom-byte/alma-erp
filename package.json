@@ -33,6 +33,7 @@
     "gas:health-check": "bash scripts/health-check.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.104.1",
     "@prisma/client": "5.22.0",
     "@react-pdf/renderer": "^4.5.1",
     "@sentry/nextjs": "^8.55.2",
