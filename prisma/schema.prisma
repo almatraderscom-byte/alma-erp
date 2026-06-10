@@ -1691,6 +1691,7 @@ model AgentMessage {
   tokensIn       Int?
   tokensOut      Int?
   costUsd        Decimal?          @db.Decimal(10, 6)
+  usage          Json?
   createdAt      DateTime          @default(now())
   artifacts      AgentArtifact[]
   toolCalls      AgentToolCall[]

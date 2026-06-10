@@ -1,2 +1,2 @@
-// Agent core logic — Phase 1+ will populate this module.
-export {}
+export { runAgentTurn } from '@/agent/lib/core'
+export type { AgentEvent } from '@/agent/lib/core'
