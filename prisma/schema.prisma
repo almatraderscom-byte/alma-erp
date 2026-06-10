@@ -1645,3 +1645,106 @@ model AgentSettings {
   updatedAt       DateTime @updatedAt
   createdAt       DateTime @default(now())
 }
+
+// ─── AGENT MODULE (Phase 0+) ────────────────────────────────────────────────
+// These tables are owned exclusively by the agent module (src/agent/).
+// ERP code must never import from src/agent/ or query these tables directly.
+
+/// Top-level workspace for grouping agent conversations (e.g. ALMA Lifestyle, Trading, Personal).
+model AgentProject {
+  id                 String              @id @default(uuid())
+  name               String
+  description        String?
+  systemInstructions String?             @db.Text
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  conversations      AgentConversation[]
+
+  @@map("agent_projects")
+}
+
+/// A single conversation thread, optionally scoped to a project.
+model AgentConversation {
+  id        String          @id @default(uuid())
+  projectId String?
+  project   AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title     String?
+  model     String?
+  archived  Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  messages  AgentMessage[]
+  artifacts AgentArtifact[]
+
+  @@index([projectId])
+  @@index([updatedAt(sort: Desc)])
+  @@map("agent_conversations")
+}
+
+/// Individual turn in a conversation. content stores full Anthropic content blocks.
+model AgentMessage {
+  id             String            @id @default(uuid())
+  conversationId String
+  conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        Json
+  tokensIn       Int?
+  tokensOut      Int?
+  costUsd        Decimal?          @db.Decimal(10, 6)
+  createdAt      DateTime          @default(now())
+  artifacts      AgentArtifact[]
+  toolCalls      AgentToolCall[]
+
+  @@index([conversationId, createdAt])
+  @@map("agent_messages")
+}
+
+/// Rich output produced by the agent (code, markdown, HTML, images).
+model AgentArtifact {
+  id             String            @id @default(uuid())
+  conversationId String
+  conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String?
+  message        AgentMessage?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  type           String?
+  title          String?
+  content        String?           @db.Text
+  version        Int               @default(1)
+  createdAt      DateTime          @default(now())
+
+  @@index([conversationId])
+  @@index([messageId])
+  @@map("agent_artifacts")
+}
+
+/// Owner's memory store. pgvector embedding column added in Phase 3.
+model AgentMemory {
+  id        String   @id @default(uuid())
+  scope     String
+  key       String?
+  content   String   @db.Text
+  pinned    Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scope])
+  @@map("agent_memory")
+}
+
+/// Execution record for every tool the agent invokes.
+model AgentToolCall {
+  id         String        @id @default(uuid())
+  messageId  String?
+  message    AgentMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  toolName   String
+  input      Json?
+  output     Json?
+  status     String?
+  durationMs Int?
+  error      String?
+  createdAt  DateTime      @default(now())
+
+  @@index([messageId])
+  @@map("agent_tool_calls")
+}
