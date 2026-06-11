@@ -1,7 +1,7 @@
 {
   "name": "alma-agent-worker",
   "version": "1.0.0",
-  "description": "ALMA ERP Agent VPS worker — BullMQ job processor for long-running agent tasks.",
+  "description": "ALMA ERP Agent VPS worker — BullMQ jobs, Telegram bridge, ntfy alerts, Twilio calls.",
   "type": "module",
   "main": "src/index.mjs",
   "scripts": {
@@ -15,7 +15,11 @@
     "@google/genai": "^1.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "bullmq": "^5.0.0",
+    "dotenv": "^16.4.0",
+    "form-data": "^4.0.0",
     "ioredis": "^5.4.0",
-    "dotenv": "^16.4.0"
+    "node-fetch": "^3.3.2",
+    "telegraf": "^4.16.3",
+    "twilio": "^5.3.0"
   }
 }

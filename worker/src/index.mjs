@@ -1,17 +1,19 @@
 /**
- * ALMA Agent Worker — BullMQ job processor.
- * Runs on the VPS (not on Vercel). Processes long-running agent tasks.
+ * ALMA Agent Worker — BullMQ job processor + Telegram bridge.
+ * Runs on the VPS (not on Vercel).
  *
  * Architecture:
  * - Polls GET /api/assistant/internal/pending-jobs every 30s for new approved actions
  * - Adds them to local BullMQ queues for durable processing with retry
  * - Reports results back via POST /api/assistant/internal/job-result
+ * - Runs Telegraf long-polling for the assistant Telegram bot
  */
 
 import 'dotenv/config'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
+import { createTelegramBot } from './telegram/index.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -198,16 +200,43 @@ imageGenWorker.on('failed', (job, err) => {
   }
 })
 
+// ── Telegram bot ───────────────────────────────────────────────────────────
+
+let telegramBot = null
+
+if (process.env.ASSISTANT_BOT_TOKEN) {
+  try {
+    telegramBot = createTelegramBot()
+    telegramBot.launch({ dropPendingUpdates: true })
+      .then(() => console.log('[telegram] Bot started (long-polling)'))
+      .catch((err) => console.error('[telegram] Bot launch failed:', err.message))
+    console.log('[telegram] Bot initializing...')
+  } catch (err) {
+    console.error('[telegram] Failed to create bot:', err.message)
+  }
+} else {
+  console.warn('[worker] ASSISTANT_BOT_TOKEN not set — Telegram bot disabled')
+}
+
 // ── Start polling ──────────────────────────────────────────────────────────
 
 await pollPendingJobs()
-setInterval(pollPendingJobs, 30_000)
+const pollInterval = setInterval(pollPendingJobs, 30_000)
 
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
 process.on('SIGTERM', async () => {
   console.log('[worker] SIGTERM — draining...')
-  clearInterval(pollPendingJobs)
+  clearInterval(pollInterval)
+  if (telegramBot) telegramBot.stop('SIGTERM')
+  await Promise.all([imageGenWorker.close(), longTaskWorker.close()])
+  process.exit(0)
+})
+
+process.on('SIGINT', async () => {
+  console.log('[worker] SIGINT — shutting down...')
+  clearInterval(pollInterval)
+  if (telegramBot) telegramBot.stop('SIGINT')
   await Promise.all([imageGenWorker.close(), longTaskWorker.close()])
   process.exit(0)
 })

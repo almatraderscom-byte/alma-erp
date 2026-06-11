@@ -1768,3 +1768,30 @@ model AgentPendingAction {
   @@index([conversationId])
   @@map("agent_pending_actions")
 }
+
+model AgentNotification {
+  id         String   @id @default(uuid())
+  tier       Int
+  category   String?
+  title      String   @db.Text
+  message    String   @db.Text
+  channels   Json
+  statuses   Json
+  createdAt  DateTime @default(now())
+
+  @@index([tier])
+  @@index([createdAt])
+  @@map("agent_notifications")
+}
+
+model AgentStaff {
+  id             String   @id @default(uuid())
+  name           String
+  role           String
+  telegramChatId String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("agent_staff")
+}

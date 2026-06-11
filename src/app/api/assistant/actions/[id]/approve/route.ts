@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
@@ -8,6 +9,17 @@ import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
+function verifyInternalToken(provided: string): boolean {
+  const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  if (!expected || !provided) return false
+  try {
+    const a = Buffer.from(expected, 'utf8')
+    const b = Buffer.from(provided, 'utf8')
+    if (a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+  } catch { return false }
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -15,9 +27,13 @@ export async function POST(
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const authHeader = req.headers.get('authorization') ?? ''
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  if (!verifyInternalToken(bearerToken)) {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   const actionId = params.id
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

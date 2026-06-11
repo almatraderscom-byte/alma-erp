@@ -1,12 +1,13 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled, requireAnthropicApiKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 120
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
@@ -17,6 +18,17 @@ function isAgentDbError(err: unknown): boolean {
     || /P2021|P2010/.test(msg)
 }
 
+function verifyInternalToken(provided: string): boolean {
+  const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  if (!expected || !provided) return false
+  try {
+    const a = Buffer.from(expected, 'utf8')
+    const b = Buffer.from(provided, 'utf8')
+    if (a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+  } catch { return false }
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -24,9 +36,16 @@ export async function POST(req: NextRequest) {
   const keyMissing = requireAnthropicApiKey()
   if (keyMissing) return keyMissing
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  // Accept either NextAuth session (web UI) or internal token (worker / Telegram bridge)
+  const authHeader = req.headers.get('authorization') ?? ''
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  const isInternalCall = verifyInternalToken(bearerToken)
+
+  if (!isInternalCall) {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   let body: { conversationId?: string; message?: string; files?: FileRef[] }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
@@ -85,6 +104,26 @@ export async function POST(req: NextRequest) {
       error: 'server_error',
       message: err instanceof Error ? err.message : String(err),
     }, { status: 500 })
+  }
+
+  // Non-streaming mode for internal callers (Telegram bridge, worker).
+  const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'
+  if (!streamMode) {
+    let finalText = ''
+    let errorMsg = ''
+    const pendingCards: Array<{ pendingActionId: string; summary: string }> = []
+    try {
+      for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions })) {
+        if (event.type === 'text_delta') finalText += event.delta
+        else if (event.type === 'confirm_card') pendingCards.push({ pendingActionId: event.pendingActionId, summary: event.summary })
+        else if (event.type === 'error') { errorMsg = event.message; break }
+        else if (event.type === 'done') break
+      }
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : String(err)
+    }
+    if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
+    return Response.json({ conversationId, text: finalText, pendingCards })
   }
 
   const encoder = new TextEncoder()
