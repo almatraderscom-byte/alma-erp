@@ -1,5 +1,27 @@
 import type Anthropic from '@anthropic-ai/sdk'
 
+// Salah accountability block — injected per-turn when there are pending/missed waqts.
+// This is NOT a reminder: it's an accountability checkpoint the agent MUST raise
+// before answering any business question.
+export const SALAH_ACCOUNTABILITY_RULE = `
+## নামাজ জবাবদিহিতা (প্রতি টার্নে চেক করুন)
+প্রতিটি বার্তার জবাব দেওয়ার আগে get_salah_status টুল দিয়ে আজকের নামাজের অবস্থা চেক করুন।
+যদি কোনো ওয়াক্ত "pending" (সময় শুরু হয়েছে কিন্তু নিশ্চিতকরণ নেই) বা "missed" থাকে:
+- প্রথমে সেটি উল্লেখ করুন: "Sir, [ওয়াক্ত]-এর নামাজের জবাব দেননি এখনো — পড়েছেন কি?"
+- mark_salah টুল দিয়ে স্ট্যাটাস আপডেট না হওয়া পর্যন্ত প্রতি টার্নে একবার জিজ্ঞেস করুন।
+- ব্যবসার উত্তর দিন — জবাবদিহিতা প্রথমে আসে, উত্তর বাতিল করে না।
+ব্যতিক্রম: নামাজের স্ট্যাটাস আপডেট করার নির্দেশনাই যদি বার্তায় থাকে।
+
+## ব্যক্তিগত অর্থ (Finance Intent Rule)
+log_expense বা log_ledger_entry তখনই কল করুন যখন বার্তায় স্পষ্ট মানি সিগন্যাল থাকে:
+  - মুদ্রা শব্দ: tk/taka/টাকা/BDT/AED/দিরহাম
+  - অথবা মানি ক্রিয়া: দিসি/দিলাম/নিলাম/ধার/পাওনা/খরচ/ফেরত/দেনা
+বিপরীতমুখী: "১০০%", "১ম ছবি", "৫-৬ ঘণ্টা", "২/৩ দিন", "৯/১০টা আম" — এগুলো কখনো পরিমাণ নয়।
+
+## স্টাফ-মুখী বার্তা (Privacy)
+স্টাফ Telegram-এ পাঠানো বার্তায় কখনো: ফাইন্যান্স ডেটা, নামাজের রেকর্ড, বা ব্যক্তিগত মেমরি অন্তর্ভুক্ত করবেন না।
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -39,6 +61,10 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - মালিক Approve করলে কাজটি সম্পাদিত হবে; Reject করলে বাতিল।
 - Approve/Reject-এর আগে কাজটি বিস্তারিত বর্ণনা করুন এবং মালিকের সিদ্ধান্তের জন্য অপেক্ষা করুন।`
 
+export interface SalahContext {
+  pendingWaqts: Array<{ waqt: string; isOverdue: boolean; isMissed: boolean }>
+}
+
 export interface PinnedMemory {
   id: string
   content: string
@@ -56,9 +82,10 @@ export function buildSystemPrompt(
   projectInstructions?: string | null,
   pinnedMemories?: PinnedMemory[],
   relevantMemories?: RelevantMemory[],
+  salahContext?: SalahContext,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)
@@ -70,6 +97,17 @@ export function buildSystemPrompt(
     blocks.push({
       type: 'text',
       text: `\n## স্থায়ী গুরুত্বপূর্ণ তথ্য (Pinned)\n${pinned}`,
+    })
+  }
+
+  // Salah accountability context (injected per-turn if there are pending/missed waqts)
+  if (salahContext?.pendingWaqts?.length) {
+    const waqtList = salahContext.pendingWaqts
+      .map(w => `${w.waqt}${w.isMissed ? ' (MISSED — window closed)' : w.isOverdue ? ' (overdue)' : ''}`)
+      .join(', ')
+    blocks.push({
+      type: 'text',
+      text: `\n## ⚠️ নামাজ জবাবদিহিতা (এই টার্নে raise করুন)\nপেন্ডিং/মিস্ড ওয়াক্ত: ${waqtList}`,
     })
   }
 

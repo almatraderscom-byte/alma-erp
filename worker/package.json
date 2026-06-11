@@ -6,7 +6,9 @@
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "check-fb": "node scripts/check-fb-token.mjs"
+    "check-fb": "node scripts/check-fb-token.mjs",
+    "trigger": "node scripts/trigger.mjs",
+    "migrate-hermes": "node scripts/migrate-hermes-finance.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -14,11 +16,15 @@
   "dependencies": {
     "@google/genai": "^1.0.0",
     "@supabase/supabase-js": "^2.45.0",
+    "adhan": "^4.4.3",
     "bullmq": "^5.0.0",
     "dotenv": "^16.4.0",
     "ioredis": "^5.4.0",
     "node-fetch": "^3.3.2",
     "telegraf": "^4.16.3",
     "twilio": "^5.3.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
   }
 }

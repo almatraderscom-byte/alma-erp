@@ -16,10 +16,22 @@
 import { Telegraf } from 'telegraf'
 import { transcribeVoiceNote, sendVoiceMessage } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
+import { setDispatcherBot } from './dispatcher.mjs'
+import { handleSalahCallback } from '../salah/scheduler.mjs'
+import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
+
+import { createClient } from '@supabase/supabase-js'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 const OWNER_ID  = String(process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
+
+function createSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL ?? '',
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  )
+}
 
 // Per-owner conversation state (in-memory — resets on worker restart, which is fine)
 const ownerState = {
@@ -245,18 +257,31 @@ export function createTelegramBot() {
 
   const bot = new Telegraf(token)
 
-  // Unknown user guard
+  // Access guard: owner + linked staff (callback_query only for staff — no text access)
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id
     if (!chatId) return
     if (isOwner(chatId)) return next()
 
-    // Unknown: reject politely and reveal their chat ID for Phase 6 onboarding
+    // Check if this is a linked staff member (for task Done callbacks only)
+    const cbData = ctx.callbackQuery?.data ?? ''
+    if (cbData.startsWith('task_done:')) {
+      const supabase = createSupabase()
+      const { data: staff } = await supabase
+        .from('agent_staff')
+        .select('id, name')
+        .eq('telegram_chat_id', String(chatId))
+        .eq('active', true)
+        .limit(1)
+
+      if (staff?.length > 0) return next()
+    }
+
+    // Unknown: reject politely and reveal their chat ID for onboarding
     await ctx.reply(
       `অনুমতি নেই।\n\nআপনার Chat ID: \`${chatId}\`\n\nStaff onboarding এর জন্য Owner-কে জানান।`,
       { parse_mode: 'Markdown' },
     )
-    // Log unknown chat for staff collection
     console.log(`[telegram] unknown chat_id=${chatId} username=${ctx.from?.username ?? 'n/a'}`)
   })
 
@@ -287,6 +312,22 @@ export function createTelegramBot() {
   bot.command('staff', async (ctx) => {
     const args = ctx.message.text.replace(/^\/staff\s*/, '').trim()
     await handleStaffLink(ctx, args)
+  })
+
+  // ── Phase 6 finance commands ──────────────────────────────────────────────
+
+  bot.command('pawna', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    const supabase = createSupabase()
+    await handlePawnaCommand(ctx, supabase)
+  })
+
+  bot.command('details', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    const args = ctx.message.text.replace(/^\/details\s*/, '').trim()
+    if (!args) { await ctx.reply('ব্যবহার: /details <নাম>'); return }
+    const supabase = createSupabase()
+    await handleDetailsCommand(ctx, args, supabase)
   })
 
   // ── Text messages ─────────────────────────────────────────────────────────
@@ -323,12 +364,75 @@ export function createTelegramBot() {
     if (data.startsWith('approve:') || data.startsWith('reject:')) {
       const [action, actionId] = data.split(':')
       await handleActionCallback(ctx, action, actionId)
+
     } else if (data.startsWith('switch:')) {
       const convId = data.slice(7)
       ownerState.conversationId = convId
       await ctx.answerCbQuery('চ্যাট পরিবর্তন হয়েছে ✅')
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
       await ctx.reply('✅ চ্যাট পরিবর্তন হয়েছে।')
+
+    } else if (data.startsWith('salah_done:') || data.startsWith('salah_later:')) {
+      // salah_done:<waqt>:<status> or salah_later:<waqt>
+      const parts  = data.split(':')
+      const action = parts[0]
+      const waqt   = parts[1]
+      const status = parts[2]
+      await handleSalahCallback(ctx, action, waqt, status)
+
+    } else if (data.startsWith('task_done:')) {
+      // task_done:<taskId>:<staffId>  — sent to staff member
+      const [, taskId, staffId] = data.split(':')
+      const chatId = ctx.chat?.id
+      try {
+        const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+          body: JSON.stringify({ taskId, staffId, action: 'done' }),
+        })
+        const result = await res.json()
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+        await ctx.answerCbQuery('✅ Done!')
+        await ctx.reply('✅ কাজ সম্পন্ন হিসেবে চিহ্নিত হয়েছে। জাযাকাল্লাহ খাইর!')
+
+        // Notify owner
+        if (OWNER_ID && result.staffName) {
+          await ctx.telegram.sendMessage(
+            OWNER_ID,
+            `✅ *${result.staffName}* একটি কাজ সম্পন্ন করেছে।`,
+            { parse_mode: 'Markdown' },
+          ).catch(() => {})
+        }
+      } catch (err) {
+        await ctx.answerCbQuery('সমস্যা হয়েছে')
+        console.error('[telegram] task_done callback error:', err.message)
+      }
+
+    } else if (data.startsWith('details:')) {
+      // details:<name>:<page>  — owner's paginated finance details
+      if (isOwner(ctx.chat?.id)) {
+        const [, name, pageStr] = data.split(':')
+        const supabase = createSupabase()
+        await ctx.answerCbQuery()
+        await handleDetailsCommand(ctx, name, supabase, parseInt(pageStr || '0', 10))
+      }
+
+    } else if (data.startsWith('msg_draft:') || data.startsWith('staff_feedback:')) {
+      // Messenger alert callbacks — owner-only
+      if (isOwner(ctx.chat?.id)) {
+        const [action, convId, pageId] = data.split(':')
+        await ctx.answerCbQuery()
+        if (action === 'msg_draft') {
+          await ctx.reply(
+            'নতুন draft চাইছেন — agent-কে জিজ্ঞেস করুন: "Conversation ' + convId + '-এর জন্য draft দাও"',
+          )
+        } else {
+          await ctx.reply(
+            'স্টাফকে feedback পাঠানোর জন্য বলুন: "এই কনভার্সেশনে staff-কে feedback দাও"',
+          )
+        }
+      }
+
     } else {
       await ctx.answerCbQuery()
     }

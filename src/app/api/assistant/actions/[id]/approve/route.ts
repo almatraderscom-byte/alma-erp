@@ -128,5 +128,105 @@ export async function POST(
     })
   }
 
+  // ── Phase 6 action types ───────────────────────────────────────────────────
+
+  if (action.type === 'dispatch_staff_tasks') {
+    // Mark proposed tasks as 'approved'; worker picks up and dispatches via Telegram
+    const { date, taskIds } = payload as { date: string; taskIds: string[] }
+    await db.agentStaffTask.updateMany({
+      where: { id: { in: taskIds ?? [] }, status: 'proposed' },
+      data:  { status: 'approved' },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'approved', resolvedAt: new Date() },
+    })
+    return Response.json({ success: true, queued: true, date, taskCount: (taskIds ?? []).length,
+      message: 'Tasks approved. Worker will dispatch to staff via Telegram.' })
+  }
+
+  if (action.type === 'add_staff_task_now') {
+    const { staffId, title, type, detail, date } = payload as {
+      staffId: string; title: string; type: string; detail?: string; date: string
+    }
+    const task = await db.agentStaffTask.create({
+      data: { staffId, title, detail: detail ?? null, type, status: 'approved', proposedFor: new Date(date), source: 'owner' },
+      select: { id: true, title: true },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'executed', resolvedAt: new Date(), result: { taskId: task.id } },
+    })
+    return Response.json({ success: true, taskId: task.id, queued: true,
+      message: `Task "${title}" added and queued for dispatch to staff.` })
+  }
+
+  if (action.type === 'update_setting') {
+    const { key, value } = payload as { key: string; value: string }
+    await db.agentKvSetting.upsert({
+      where:  { key },
+      update: { value },
+      create: { key, value },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'executed', resolvedAt: new Date() },
+    })
+    return Response.json({ success: true, key, value })
+  }
+
+  if (action.type === 'salah_override') {
+    const { waqt, date, skip, overrideTime, delayUntil, reason } = payload as {
+      waqt: string; date: string; skip: boolean;
+      overrideTime?: string; delayUntil?: string; reason?: string;
+    }
+    await db.agentSalahOverride.create({
+      data: {
+        date:         date ? new Date(date) : null,
+        waqt,
+        skip:         skip ?? false,
+        overrideTime: overrideTime ? new Date(overrideTime) : null,
+        delayUntil:   delayUntil   ? new Date(delayUntil)   : null,
+        reason:       reason ?? null,
+      },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'executed', resolvedAt: new Date() },
+    })
+    return Response.json({ success: true, waqt, date, skip })
+  }
+
+  if (action.type === 'log_expense') {
+    const { amount, currency, category, note, occurredAt } = payload as {
+      amount: number; currency: string; category?: string; note: string; occurredAt: string
+    }
+    const expense = await db.agentFinanceExpense.create({
+      data: { amount, currency, category: category ?? null, note, occurredAt: new Date(occurredAt) },
+      select: { id: true, amount: true, currency: true },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'executed', resolvedAt: new Date(), result: { expenseId: expense.id } },
+    })
+    return Response.json({ success: true, expenseId: expense.id })
+  }
+
+  if (action.type === 'log_ledger_entry') {
+    const { personName, direction, amount, currency, note, occurredAt } = payload as {
+      personName: string; direction: string; amount: number; currency: string;
+      note?: string; occurredAt: string
+    }
+    const entry = await db.agentFinanceLedger.create({
+      data: { personName, direction, amount, currency, note: note ?? null, occurredAt: new Date(occurredAt) },
+      select: { id: true, personName: true, direction: true, amount: true },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'executed', resolvedAt: new Date(), result: { ledgerId: entry.id } },
+    })
+    return Response.json({ success: true, ledgerId: entry.id })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }

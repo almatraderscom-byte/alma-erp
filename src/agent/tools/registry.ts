@@ -3,6 +3,10 @@ import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
+import { STAFF_TOOLS } from './staff-tools'
+import { SETTINGS_TOOLS } from './settings-tools'
+import { SALAH_TOOLS } from './salah-tools'
+import { FINANCE_TOOLS } from './finance-tools'
 
 export interface ToolResult {
   success: boolean
@@ -253,6 +257,18 @@ export const TOOLS: AgentTool[] = [
   delete_memory,
   ...ERP_TOOLS,
   ...CONFIRM_TOOLS,
+  ...STAFF_TOOLS,
+  ...SETTINGS_TOOLS,
+  ...SALAH_TOOLS,
+  ...FINANCE_TOOLS,
+]
+
+// Staff-facing registry: excludes finance, salah, and personal-scope tools.
+// Used by any agent call initiated from a staff Telegram channel.
+export const STAFF_SAFE_TOOLS: AgentTool[] = [
+  get_current_datetime,
+  list_agent_projects,
+  ...ERP_TOOLS,
 ]
 
 export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({

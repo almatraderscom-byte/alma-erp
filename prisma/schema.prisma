@@ -1785,13 +1785,145 @@ model AgentNotification {
 }
 
 model AgentStaff {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   name           String
   role           String
   telegramChatId String?
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  tasks          AgentStaffTask[]
 
   @@map("agent_staff")
+}
+
+// ─── PHASE 6: Staff Tasks ───────────────────────────────────────────────────
+
+model AgentStaffTask {
+  id               String    @id @default(uuid())
+  staffId          String
+  staff            AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  title            String
+  detail           String?   @db.Text
+  type             String    @default("misc")
+  productRef       String?
+  status           String    @default("proposed")
+  proposedFor      DateTime  @db.Date
+  completedAt      DateTime?
+  carriedFromTaskId String?
+  carriedFrom      AgentStaffTask?  @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
+  carriedTasks     AgentStaffTask[] @relation("CarryForward")
+  source           String    @default("agent")
+  createdAt        DateTime  @default(now())
+  marketingHistory AgentProductMarketingHistory[]
+
+  @@index([staffId])
+  @@index([proposedFor, status])
+  @@index([status])
+  @@map("staff_tasks")
+}
+
+model AgentProductMarketingHistory {
+  id             String    @id @default(uuid())
+  productRef     String
+  business       String
+  lastPromotedAt DateTime  @default(now())
+  contentType    String?
+  taskId         String?
+  task           AgentStaffTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  notes          String?   @db.Text
+  createdAt      DateTime  @default(now())
+
+  @@index([productRef, lastPromotedAt(sort: Desc)])
+  @@index([business, lastPromotedAt(sort: Desc)])
+  @@map("product_marketing_history")
+}
+
+// ─── PHASE 6: Salah ─────────────────────────────────────────────────────────
+
+model AgentSalahRecord {
+  id            String    @id @default(uuid())
+  date          DateTime  @db.Date
+  waqt          String
+  windowStart   DateTime
+  windowEnd     DateTime
+  status        String    @default("pending")
+  confirmedAt   DateTime?
+  remindersSent Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  @@unique([date, waqt])
+  @@index([date(sort: Desc)])
+  @@index([status])
+  @@map("salah_records")
+}
+
+model AgentSalahOverride {
+  id           String    @id @default(uuid())
+  date         DateTime? @db.Date
+  waqt         String?
+  overrideTime DateTime?
+  delayUntil   DateTime?
+  skip         Boolean   @default(false)
+  reason       String?   @db.Text
+  createdAt    DateTime  @default(now())
+
+  @@index([date, waqt])
+  @@map("salah_overrides")
+}
+
+model AgentKvSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("agent_kv_settings")
+}
+
+// ─── PHASE 6: Finance ────────────────────────────────────────────────────────
+
+model AgentFinanceExpense {
+  id         String   @id @default(uuid())
+  amount     Int
+  currency   String   @default("BDT")
+  category   String?
+  note       String?  @db.Text
+  occurredAt DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([currency])
+  @@map("finance_expenses")
+}
+
+model AgentFinanceLedger {
+  id         String   @id @default(uuid())
+  personName String
+  direction  String
+  amount     Int
+  currency   String   @default("BDT")
+  note       String?  @db.Text
+  occurredAt DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([personName, occurredAt(sort: Desc)])
+  @@index([direction])
+  @@map("finance_ledger")
+}
+
+// ─── PHASE 6: Messenger Alerts ───────────────────────────────────────────────
+
+model AgentMessengerAlert {
+  id             String    @id @default(uuid())
+  pageId         String
+  conversationId String
+  alertType      String
+  detectedAt     DateTime  @default(now())
+  resolved       Boolean   @default(false)
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([pageId, detectedAt(sort: Desc)])
+  @@index([resolved, detectedAt(sort: Desc)])
+  @@map("messenger_alerts")
 }
