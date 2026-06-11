@@ -13,6 +13,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { synthesizeSpeech, mp3ToTelephonyWav } from '../tts.mjs'
+import { logCost, calcTwilioCostUsd } from '../cost-log.mjs'
 
 const CALL_TEXT_LIMIT = 200
 
@@ -93,6 +94,15 @@ export async function makeTwilioCall(text) {
     if (!res.ok) {
       return { ok: false, error: `Twilio API ${res.status}: ${data?.message ?? JSON.stringify(data)}` }
     }
+
+    void logCost({
+      provider: 'twilio',
+      kind: 'call',
+      units: { callSid: data.sid, estimated_seconds: 60 },
+      costUsd: calcTwilioCostUsd(60),
+      jobId: data.sid,
+      dedupKey: `twilio:${data.sid}`,
+    })
 
     return { ok: true, callSid: data.sid }
   } catch (err) {

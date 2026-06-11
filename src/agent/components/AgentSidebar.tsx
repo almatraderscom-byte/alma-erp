@@ -129,7 +129,12 @@ export default function AgentSidebar({
     <div className="flex h-full flex-col bg-surface">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <span className="text-sm font-bold text-gold">ALMA Agent</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-gold">ALMA Agent</span>
+          <a href="/agent/costs" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="খরচ ড্যাশবোর্ড">
+            $
+          </a>
+        </div>
         {isMobile && (
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-cream">✕</button>
         )}

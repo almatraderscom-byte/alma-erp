@@ -63,13 +63,30 @@ export async function runDailySummary({ supabase, bot }) {
   if (aedTotal > 0) expensesParts.push(`AED ${aedTotal.toFixed(2)}`)
   const expenseLine = `💸 খরচ: ${expensesParts.length ? expensesParts.join(' + ') : 'শূন্য'}`
 
+  // ── AI cost (Phase 8) ─────────────────────────────────────────────────────
+
+  let aiCostLine = '🤖 আজকের AI খরচ: $0.00'
+  try {
+    const spendRes = await fetch(`${APP_URL}/api/assistant/internal/cost-spend?period=today`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    })
+    if (spendRes.ok) {
+      const spend = await spendRes.json()
+      const usd = typeof spend.todayUsd === 'number' ? spend.todayUsd : 0
+      aiCostLine = `🤖 আজকের AI খরচ: $${usd.toFixed(2)}`
+    }
+  } catch {
+    /* non-fatal */
+  }
+
   // ── Summary message ───────────────────────────────────────────────────────
 
   const summary =
     `📊 *দৈনিক সারসংক্ষেপ — ${today}*\n\n` +
     `${salahLine}\n` +
     `${taskLine}\n` +
-    `${expenseLine}\n\n` +
+    `${expenseLine}\n` +
+    `${aiCostLine}\n\n` +
     (salahCounts.missed > 0
       ? `⚠️ আজ ${salahCounts.missed}টি নামাজ মিস হয়েছে — কাযা পড়ুন, Sir।`
       : `জাযাকাল্লাহ খাইর। ভালো রাত কাটান।`)

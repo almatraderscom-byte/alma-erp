@@ -1,4 +1,7 @@
+import { createHash } from 'crypto'
 import OpenAI from 'openai'
+import { calcEmbeddingCostUsd, estimateTokens } from '@/agent/lib/pricing'
+import { logCost } from '@/agent/lib/cost-events'
 
 const globalForOpenAI = globalThis as unknown as { openaiEmbeddings: OpenAI | undefined }
 
@@ -22,9 +25,19 @@ export async function embed(text: string): Promise<EmbedResult> {
   }
   try {
     const client = getClient()
+    const inputText = text.slice(0, 8000)
     const res = await client.embeddings.create({
       model: 'text-embedding-3-small',
-      input: text.slice(0, 8000), // safe limit
+      input: inputText,
+    })
+    const tokens = res.usage?.total_tokens ?? estimateTokens(inputText)
+    const costUsd = calcEmbeddingCostUsd(tokens)
+    void logCost({
+      provider: 'openai',
+      kind: 'embedding',
+      units: { tokens, model: 'text-embedding-3-small' },
+      costUsd,
+      dedupKey: `embed:${createHash('sha256').update(inputText).digest('hex').slice(0, 16)}`,
     })
     return { success: true, data: res.data[0].embedding }
   } catch (err) {

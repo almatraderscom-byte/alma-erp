@@ -1938,3 +1938,41 @@ model AgentHeartbeat {
 
   @@map("agent_heartbeats")
 }
+
+// ─── PHASE 8: Cost dashboard ─────────────────────────────────────────────────
+
+model AgentCostEvent {
+  id             String   @id @default(uuid())
+  provider       String
+  kind           String
+  units          Json     @default("{}")
+  costUsd        Decimal  @map("cost_usd") @db.Decimal(10, 6)
+  conversationId String?  @map("conversation_id")
+  jobId          String?  @map("job_id")
+  dedupKey       String?  @unique @map("dedup_key")
+  occurredAt     DateTime @default(now()) @map("occurred_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([provider, occurredAt(sort: Desc)])
+  @@index([conversationId])
+  @@map("agent_cost_events")
+}
+
+model AgentSubscription {
+  id            String   @id @default(uuid())
+  name          String
+  amount        Decimal  @db.Decimal(10, 2)
+  currency      String   @default("USD")
+  billingCycle  String   @map("billing_cycle")
+  nextRenewalAt DateTime @map("next_renewal_at") @db.Date
+  category      String?
+  notes         String?  @db.Text
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([nextRenewalAt])
+  @@index([active])
+  @@map("agent_subscriptions")
+}

@@ -1,4 +1,6 @@
 import { type NextRequest } from 'next/server'
+import { calcWhisperCostUsd, estimateAudioDurationSeconds } from '@/agent/lib/pricing'
+import { logCost } from '@/agent/lib/cost-events'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
@@ -46,6 +48,15 @@ export async function POST(req: NextRequest) {
       model: 'whisper-1',
       response_format: 'json',
       prompt: 'Bangla and Banglish speech.',
+    })
+
+    const durationSec = estimateAudioDurationSeconds(audioFile.size)
+    void logCost({
+      provider: 'openai',
+      kind: 'transcribe',
+      units: { duration_seconds: durationSec, bytes: audioFile.size, model: 'whisper-1' },
+      costUsd: calcWhisperCostUsd(durationSec),
+      dedupKey: `whisper:web:${audioFile.size}:${transcription.text.slice(0, 16)}`,
     })
 
     return Response.json({ text: transcription.text })

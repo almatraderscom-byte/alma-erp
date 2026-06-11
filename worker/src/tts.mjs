@@ -4,6 +4,7 @@
  */
 
 import { createSign } from 'crypto'
+import { logCost, calcTtsCostUsd } from './cost-log.mjs'
 
 const SENTENCE_ENDS = ['।', '?', '!', '.']
 
@@ -126,6 +127,14 @@ export async function synthesizeSpeech(text, maxChars = 600) {
   for (const chunk of chunks) {
     buffers.push(await synthesizeChunk(chunk, accessToken))
   }
+
+  void logCost({
+    provider: 'google_tts',
+    kind: 'tts',
+    units: { characters: cleaned.length, voice: 'bn-IN-Chirp3-HD-Charon' },
+    costUsd: calcTtsCostUsd(cleaned.length),
+    dedupKey: `tts:worker:${cleaned.length}:${cleaned.slice(0, 24)}`,
+  })
 
   return Buffer.concat(buffers)
 }

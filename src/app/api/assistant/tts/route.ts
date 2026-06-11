@@ -1,5 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { calcTtsCostUsd } from '@/agent/lib/pricing'
+import { logCost } from '@/agent/lib/cost-events'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 
@@ -135,6 +137,15 @@ export async function POST(req: NextRequest) {
 
     const data = await ttsRes.json() as { audioContent: string }
     const audioBuffer = Buffer.from(data.audioContent, 'base64')
+
+    const charCount = text.length
+    void logCost({
+      provider: 'google_tts',
+      kind: 'tts',
+      units: { characters: charCount, voice: 'bn-IN-Chirp3-HD-Charon' },
+      costUsd: calcTtsCostUsd(charCount),
+      dedupKey: `tts:web:${charCount}:${text.slice(0, 24)}`,
+    })
 
     return new Response(audioBuffer, {
       status: 200,

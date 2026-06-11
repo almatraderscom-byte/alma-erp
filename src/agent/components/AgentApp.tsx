@@ -384,6 +384,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <span className="flex-1 truncate text-sm font-semibold text-cream">
             {activeConvId ? 'কথোপকথন' : 'নতুন কথোপকথন'}
           </span>
+          <a
+            href="/agent/costs"
+            className="rounded-lg border border-border px-2.5 py-1 text-[10px] text-muted hover:text-gold-lt"
+          >
+            খরচ
+          </a>
           {artifacts.length > 0 && (
             <button
               onClick={() => setArtifactsOpen((v) => !v)}

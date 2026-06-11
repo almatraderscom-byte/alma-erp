@@ -179,6 +179,17 @@ async function processImageGen(job) {
     conversationId,
   })
 
+  const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
+  void logCost({
+    provider: 'gemini',
+    kind: 'image',
+    units: { quality, model: modelName, pendingActionId },
+    costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro'),
+    conversationId: conversationId ?? undefined,
+    jobId: pendingActionId,
+    dedupKey: `image:${pendingActionId}`,
+  })
+
   console.log(`[worker] image-gen ${pendingActionId} — done → ${storagePath}`)
 }
 

@@ -32,6 +32,9 @@ const lazy = {
   adsMonitor:         () => import('../ads/monitor.mjs'),
   salahScheduler:     () => import('../salah/scheduler.mjs'),
   dailySummary:       () => import('./daily-summary.mjs'),
+  subscriptionRenewal: () => import('./subscription-renewal.mjs'),
+  budgetCheck:        () => import('./budget-check.mjs'),
+  costReconcile:      () => import('./cost-reconcile.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -46,6 +49,9 @@ export const SCHEDULER_REGISTRY = [
   { name: 'night-report',           cronUtc: '0 15 * * *',   description: 'Night staff report (21:00 Dhaka)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
+  { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
+  { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
+  { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
 ]
 
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
@@ -131,6 +137,21 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'daily-summary': {
           const { runDailySummary } = await lazy.dailySummary()
           await runDailySummary(context)
+          break
+        }
+        case 'subscription-renewal': {
+          const { runSubscriptionRenewalCheck } = await lazy.subscriptionRenewal()
+          await runSubscriptionRenewalCheck(context)
+          break
+        }
+        case 'budget-check': {
+          const { runBudgetCheck } = await lazy.budgetCheck()
+          await runBudgetCheck()
+          break
+        }
+        case 'cost-reconcile': {
+          const { runCostReconciliation } = await lazy.costReconcile()
+          await runCostReconciliation()
           break
         }
         default:

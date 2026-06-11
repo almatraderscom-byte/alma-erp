@@ -183,6 +183,30 @@ export async function POST(
     return Response.json({ success: true, key, value })
   }
 
+  if (action.type === 'add_subscription') {
+    const { name, amount, currency, billingCycle, nextRenewalAt, category, notes } = payload as {
+      name: string; amount: number; currency?: string; billingCycle?: string
+      nextRenewalAt: string; category?: string; notes?: string
+    }
+    const sub = await db.agentSubscription.create({
+      data: {
+        name: String(name),
+        amount: Number(amount),
+        currency: currency ?? 'USD',
+        billingCycle: billingCycle === 'yearly' ? 'yearly' : 'monthly',
+        nextRenewalAt: new Date(nextRenewalAt),
+        category: category ?? null,
+        notes: notes ?? null,
+        active: true,
+      },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { subscriptionId: sub.id } },
+    })
+    return Response.json({ success: true, subscriptionId: sub.id, name: sub.name })
+  }
+
   if (action.type === 'salah_override') {
     const { waqt, date, skip, overrideTime, delayUntil, reason } = payload as {
       waqt: string; date: string; skip: boolean;

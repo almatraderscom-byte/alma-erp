@@ -22,6 +22,7 @@ const FORBIDDEN = new Set([
   // Staff management (owner-only)
   'propose_staff_tasks', 'approve_and_dispatch_tasks', 'add_staff_task_now',
   'update_setting',
+  'add_subscription', 'list_subscriptions',
 ])
 
 const namesMatch = registry.match(/export const STAFF_SAFE_TOOL_NAMES\s*=\s*STAFF_SAFE_TOOLS\.map\(\(t\)\s*=>\s*t\.name\)/)

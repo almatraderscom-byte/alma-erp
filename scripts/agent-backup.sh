@@ -33,6 +33,7 @@ TABLES=(
   agent_projects agent_artifacts agent_memory agent_notifications
   agent_kv_settings agent_staff agent_staff_tasks agent_salah_records
   agent_finance_expenses agent_finance_ledger agent_heartbeats
+  agent_cost_events agent_subscriptions
   messenger_alerts
 )
 

@@ -8,6 +8,7 @@ import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { logCost } from '@/agent/lib/cost-events'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -397,6 +398,22 @@ export async function* runAgentTurn(
     }
 
     await prisma.agentConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+
+    void logCost({
+      provider: 'anthropic',
+      kind: 'chat',
+      units: {
+        input_tokens: totalInputTokens,
+        output_tokens: totalOutputTokens,
+        cache_creation_input_tokens: totalCacheCreationTokens,
+        cache_read_input_tokens: totalCacheReadTokens,
+        model: AGENT_MODEL,
+      },
+      costUsd,
+      conversationId,
+      jobId: savedMsg.id,
+      dedupKey: `chat:msg:${savedMsg.id}`,
+    })
 
     yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
   } catch (err) {

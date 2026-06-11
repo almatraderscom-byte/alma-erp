@@ -1,6 +1,8 @@
 // Internal transcription endpoint — used by the VPS worker to transcribe Telegram voice notes.
 // Authenticated with AGENT_INTERNAL_TOKEN; accepts multipart/form-data with an "audio" file.
 import { type NextRequest } from 'next/server'
+import { calcWhisperCostUsd, estimateAudioDurationSeconds } from '@/agent/lib/pricing'
+import { logCost } from '@/agent/lib/cost-events'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import OpenAI from 'openai'
@@ -88,6 +90,16 @@ export async function POST(req: NextRequest) {
       model: 'whisper-1',
       response_format: 'json',
       prompt: 'Bangla and Banglish speech.',
+    })
+
+    const durationSec = estimateAudioDurationSeconds(audioFile.size)
+    const costUsd = calcWhisperCostUsd(durationSec)
+    void logCost({
+      provider: 'openai',
+      kind: 'transcribe',
+      units: { duration_seconds: durationSec, bytes: audioFile.size, model: 'whisper-1' },
+      costUsd,
+      dedupKey: `whisper:${audioFile.size}:${transcription.text.slice(0, 20)}`,
     })
 
     return Response.json({ text: transcription.text })
