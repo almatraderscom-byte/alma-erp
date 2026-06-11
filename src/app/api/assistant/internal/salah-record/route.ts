@@ -31,12 +31,16 @@ export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get('date')
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
 
-  const records = await db.agentSalahRecord.findMany({
-    where:   { date: new Date(date) },
-    orderBy: { windowStart: 'asc' },
-  })
-
-  return NextResponse.json({ date, records })
+  try {
+    const records = await db.agentSalahRecord.findMany({
+      where:   { date: new Date(date) },
+      orderBy: { windowStart: 'asc' },
+    })
+    return NextResponse.json({ date, records })
+  } catch (err) {
+    console.error('[salah-record GET]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -55,17 +59,21 @@ export async function POST(req: NextRequest) {
   const windowEndDt    = windowEnd   ? new Date(windowEnd)   : new Date()
   const recordStatus   = status || 'pending'
 
-  const record = await db.agentSalahRecord.upsert({
-    where:  { date_waqt: { date: dateObj, waqt } },
-    update: {
-      ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
-      ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
-    },
-    create: {
-      date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
-      status: recordStatus,
-    },
-  })
-
-  return NextResponse.json({ ok: true, record })
+  try {
+    const record = await db.agentSalahRecord.upsert({
+      where:  { date_waqt: { date: dateObj, waqt } },
+      update: {
+        ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
+        ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
+      },
+      create: {
+        date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
+        status: recordStatus,
+      },
+    })
+    return NextResponse.json({ ok: true, record })
+  } catch (err) {
+    console.error('[salah-record POST]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
