@@ -41,7 +41,12 @@ for t in "${TABLES[@]}"; do
   TABLE_ARGS+=" -t ${t}"
 done
 
-if ! pg_dump "$DATABASE_URL" $TABLE_ARGS | gzip -9 > "$OUT"; then
+PG_DUMP="${PG_DUMP:-pg_dump}"
+if [ -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+  PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+fi
+
+if ! "$PG_DUMP" "$DATABASE_URL" $TABLE_ARGS | gzip -9 > "$OUT"; then
   notify_tier1 "pg_dump failed for agent/finance tables"
   rm -f "$OUT"
   exit 1
