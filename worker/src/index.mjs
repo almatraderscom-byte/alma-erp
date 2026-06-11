@@ -152,10 +152,8 @@ async function processImageGen(job) {
 
   if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
 
-  const { data: { publicUrl } } = supabase.storage.from('agent-files').getPublicUrl(storagePath)
-
+  // Private bucket — job-result route signs storagePath for the chat message.
   await callJobResult(pendingActionId, 'success', {
-    imageUrl: publicUrl,
     storagePath,
     conversationId,
   })

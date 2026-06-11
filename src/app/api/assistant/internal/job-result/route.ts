@@ -3,7 +3,10 @@
 import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { prisma } from '@/lib/prisma'
+
+const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
 export const runtime = 'nodejs'
 
@@ -67,10 +70,21 @@ export async function POST(req: NextRequest) {
     const convId = String(payload.conversationId)
     let messageText: string
 
-    if (status === 'success' && data?.imageUrl) {
-      messageText = `✅ Image generated successfully.\n![Generated image](${data.imageUrl})`
-    } else if (status === 'success' && data?.storagePath) {
-      messageText = `✅ Image saved to storage: ${data.storagePath}`
+    if (status === 'success' && (data?.storagePath || data?.imageUrl)) {
+      const storagePath = typeof data?.storagePath === 'string' ? data.storagePath.trim() : ''
+      try {
+        const imageUrl = storagePath
+          ? await agentStorageSignedUrl(storagePath, IMAGE_SIGNED_URL_TTL_SEC)
+          : String(data?.imageUrl ?? '')
+        if (!imageUrl) throw new Error('No image path in job result')
+        messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+      } catch (signErr) {
+        const detail = signErr instanceof Error ? signErr.message : String(signErr)
+        console.error('[job-result] signed URL failed', { storagePath, detail })
+        messageText = storagePath
+          ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
+          : `✅ Image generated but preview unavailable.`
+      }
     } else if (status === 'failed') {
       messageText = `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${error ?? 'Unknown error'}`
     } else {

@@ -63,6 +63,23 @@ export async function agentStorageUpload(
   return { bucket: AGENT_BUCKET, objectPath }
 }
 
+/** Signed URL for private agent-files objects (default 1 hour). */
+export async function agentStorageSignedUrl(objectPath: string, expiresIn = 3600): Promise<string> {
+  const { url, serviceKey } = getStorageBase()
+  const res = await fetch(`${url}/storage/v1/object/sign/${AGENT_BUCKET}/${objectPath}`, {
+    method: 'POST',
+    headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn }),
+  })
+  if (!res.ok) {
+    throw new Error(`Agent signed URL failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
+  const data = await res.json() as { signedURL?: string; signedUrl?: string }
+  const signedPath = data.signedURL || data.signedUrl
+  if (!signedPath) throw new Error('Supabase did not return a signed URL')
+  return `${url}/storage/v1${signedPath}`
+}
+
 export async function agentStorageDownload(objectPath: string): Promise<Buffer> {
   const { url, serviceKey } = getStorageBase()
   const controller = new AbortController()
