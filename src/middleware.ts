@@ -6,6 +6,7 @@ import { isPathAllowedForRole, normalizeAlmaRole, roleHomePath } from '@/lib/rol
 import type { BusinessId } from '@/lib/businesses'
 import { businessAllowed } from '@/lib/business-access'
 import { isAuthPath } from '@/lib/auth-paths'
+import { isAssistantWorkerRequest } from '@/lib/agent-internal-auth'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
 
@@ -112,6 +113,11 @@ export async function middleware(req: NextRequest) {
   }
 
   if (isPublicApiOrShare(pathname)) {
+    return NextResponse.next()
+  }
+
+  // VPS Telegram bridge: Bearer AGENT_INTERNAL_TOKEN (validated here; route re-checks).
+  if (pathname.startsWith('/api/') && isAssistantWorkerRequest(pathname, req.headers.get('authorization'))) {
     return NextResponse.next()
   }
 
