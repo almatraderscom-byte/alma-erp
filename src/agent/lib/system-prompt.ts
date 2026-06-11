@@ -95,6 +95,7 @@ export function buildSystemPrompt(
   pinnedMemories?: PinnedMemory[],
   relevantMemories?: RelevantMemory[],
   salahContext?: SalahContext,
+  prayerTimeOnlyTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
     { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE },
