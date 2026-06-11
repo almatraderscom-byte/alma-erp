@@ -46,13 +46,19 @@ export async function transcribeVoiceNote(bot, fileId) {
   return data.text ?? ''
 }
 
+/** Telegraf instance or ctx.telegram API object */
+function telegramApi(botOrApi) {
+  return botOrApi?.telegram ?? botOrApi
+}
+
 /**
  * Synthesizes text to speech and sends it as a Telegram voice note.
- * @param {import('telegraf').Telegraf} bot
+ * @param {import('telegraf').Telegraf|import('telegraf').Telegram} botOrApi
  * @param {string|number} chatId
  * @param {string} text
  */
-export async function sendVoiceMessage(bot, chatId, text) {
+export async function sendVoiceMessage(botOrApi, chatId, text) {
+  const api = telegramApi(botOrApi)
   const mp3Buffer = await synthesizeSpeech(text, 600)
-  await bot.telegram.sendVoice(chatId, { source: mp3Buffer }, { caption: text.slice(0, 200) })
+  await api.sendVoice(chatId, { source: mp3Buffer }, { caption: text.slice(0, 200) })
 }
