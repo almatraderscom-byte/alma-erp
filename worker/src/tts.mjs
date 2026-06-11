@@ -5,6 +5,8 @@
 
 import { createSign } from 'crypto'
 
+const SENTENCE_ENDS = ['।', '?', '!', '.']
+
 function stripMarkdown(text) {
   return text
     .replace(/#{1,6}\s+/g, '')
@@ -18,6 +20,44 @@ function stripMarkdown(text) {
     .replace(/^\d+\.\s+/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/**
+ * Split text into TTS-safe chunks (max 200 chars) at sentence boundaries.
+ * @param {string} text
+ * @param {number} [maxChars=200]
+ * @returns {string[]}
+ */
+export function splitTextForTts(text, maxChars = 200) {
+  const cleaned = stripMarkdown(text)
+  if (!cleaned) return []
+  if (cleaned.length <= maxChars) return [cleaned]
+
+  const chunks = []
+  let remaining = cleaned
+
+  while (remaining.length > maxChars) {
+    const slice = remaining.slice(0, maxChars)
+    let splitAt = -1
+
+    for (const delim of SENTENCE_ENDS) {
+      const idx = slice.lastIndexOf(delim)
+      if (idx > splitAt) splitAt = idx
+    }
+
+    if (splitAt <= 0) {
+      splitAt = maxChars
+    } else {
+      splitAt += 1
+    }
+
+    const chunk = remaining.slice(0, splitAt).trim()
+    if (chunk) chunks.push(chunk)
+    remaining = remaining.slice(splitAt).trim()
+  }
+
+  if (remaining) chunks.push(remaining)
+  return chunks
 }
 
 function getCredentials() {
@@ -52,23 +92,12 @@ async function getAccessToken(creds) {
   return data.access_token
 }
 
-/**
- * @param {string} text  Raw text (markdown will be stripped)
- * @param {number} [maxChars=600]
- * @returns {Promise<Buffer>}  MP3 audio buffer
- */
-export async function synthesizeSpeech(text, maxChars = 600) {
-  const creds = getCredentials()
-  if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not set or invalid JSON')
-
-  const cleaned = stripMarkdown(text).slice(0, maxChars)
-  const accessToken = await getAccessToken(creds)
-
+async function synthesizeChunk(text, accessToken) {
   const res = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({
-      input: { text: cleaned },
+      input: { text },
       voice: { languageCode: 'bn-IN', name: 'bn-IN-Chirp3-HD-Charon' },
       audioConfig: { audioEncoding: 'MP3', speakingRate: 1.0 },
     }),
@@ -76,6 +105,29 @@ export async function synthesizeSpeech(text, maxChars = 600) {
   if (!res.ok) throw new Error(`Google TTS error ${res.status}: ${await res.text()}`)
   const data = await res.json()
   return Buffer.from(data.audioContent, 'base64')
+}
+
+/**
+ * @param {string} text  Raw text (markdown will be stripped)
+ * @param {number} [maxChars=600]  Total character budget across all chunks
+ * @returns {Promise<Buffer>}  MP3 audio buffer
+ */
+export async function synthesizeSpeech(text, maxChars = 600) {
+  const creds = getCredentials()
+  if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not set or invalid JSON')
+
+  const cleaned = stripMarkdown(text).slice(0, maxChars)
+  const chunks = splitTextForTts(cleaned, 200)
+  if (chunks.length === 0) throw new Error('No text to synthesize')
+
+  const accessToken = await getAccessToken(creds)
+  const buffers = []
+
+  for (const chunk of chunks) {
+    buffers.push(await synthesizeChunk(chunk, accessToken))
+  }
+
+  return Buffer.concat(buffers)
 }
 
 /**

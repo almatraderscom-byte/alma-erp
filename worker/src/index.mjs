@@ -13,11 +13,10 @@ import 'dotenv/config'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
-import { createTelegramBot } from './telegram/index.mjs'
+import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
-import { setDispatcherBot } from './telegram/dispatcher.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -254,21 +253,15 @@ imageGenWorker.on('failed', (job, err) => {
   }
 })
 
-// ── Telegram bot ───────────────────────────────────────────────────────────
+// ── Telegram bot (singleton — one getUpdates poller per process) ───────────
 
 let telegramBot = null
 
 if (process.env.ASSISTANT_BOT_TOKEN) {
   try {
-    telegramBot = createTelegramBot()
-    telegramBot.launch({ dropPendingUpdates: true })
-      .then(() => console.log('[telegram] Bot started (long-polling)'))
-      .catch((err) => console.error('[telegram] Bot launch failed:', err.message))
-    console.log('[telegram] Bot initializing...')
-    // Register bot with dispatcher module for scheduler-initiated messages
-    setDispatcherBot(telegramBot, process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
+    telegramBot = await launchTelegramBot()
   } catch (err) {
-    console.error('[telegram] Failed to create bot:', err.message)
+    console.error('[telegram] Failed to start bot:', err.message)
   }
 } else {
   console.warn('[worker] ASSISTANT_BOT_TOKEN not set — Telegram bot disabled')
@@ -300,26 +293,21 @@ const pollInterval = setInterval(pollPendingJobs, 30_000)
 
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
-process.on('SIGTERM', async () => {
-  console.log('[worker] SIGTERM — draining...')
-  clearInterval(pollInterval)
-  if (telegramBot) telegramBot.stop('SIGTERM')
-  await Promise.all([
-    imageGenWorker.close(),
-    longTaskWorker.close(),
-    staffDispatchWorker.close(),
-  ])
-  process.exit(0)
-})
+let shuttingDown = false
 
-process.on('SIGINT', async () => {
-  console.log('[worker] SIGINT — shutting down...')
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[worker] ${signal} — draining...`)
   clearInterval(pollInterval)
-  if (telegramBot) telegramBot.stop('SIGINT')
+  await stopTelegramBot(signal)
   await Promise.all([
     imageGenWorker.close(),
     longTaskWorker.close(),
     staffDispatchWorker.close(),
   ])
   process.exit(0)
-})
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'))
+process.once('SIGINT', () => shutdown('SIGINT'))
