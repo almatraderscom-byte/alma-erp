@@ -78,7 +78,7 @@ export async function getCostDashboardData() {
                       SUM(e.cost_usd)::text AS total,
                       c.title
                FROM agent_cost_events e
-               LEFT JOIN agent_conversations c ON c.id = e.conversation_id
+               LEFT JOIN agent_conversations c ON c.id::text = e.conversation_id
                WHERE e.conversation_id IS NOT NULL
                  AND e.occurred_at >= ${monthB.start} AND e.occurred_at < ${monthB.end}
                GROUP BY e.conversation_id, c.title
