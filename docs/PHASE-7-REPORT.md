@@ -109,12 +109,21 @@ gunzip -c /opt/agent-backups/agent_finance_YYYYMMDD_HHMMSS.sql.gz | psql "$SCRAT
 
 ---
 
-## Part 6 — Manual Verification (owner)
+## Part 6 — Verification (executed 2026-06-12)
 
-1. **Watchdog:** `pm2 stop agent-worker` → within 10 min Tier 2 “Worker down” on ntfy → `pm2 start ecosystem.config.cjs` → heartbeats resume.
-2. **VPS reboot:** after `pm2 startup` + `pm2 save`, worker self-starts.
-3. **Sentry:** force tool failure or Anthropic timeout → event with `agent` tag in Sentry.
-4. **Backup:** run `scripts/agent-backup.sh` manually → file in `/opt/agent-backups/` → test restore command above.
+| Step | Result |
+|------|--------|
+| Vercel production deploy (`agent-phase-7` via CLI) | ✅ `dpl_2YC1RydrxahhFMripSznzuK3THca` — health/heartbeat/watchdog routes live |
+| VPS `git checkout agent-phase-7` + `prisma migrate deploy` | ✅ migration `20260612120000_agent_phase7_heartbeats` applied (38 total) |
+| `pm2 restart agent-worker` + `pm2 save` | ✅ online; `pm2-root` systemd unit **enabled** |
+| Backup cron `0 3 * * *` | ✅ installed; manual run → `/opt/agent-backups/agent_finance_20260611_213925.sql.gz` (20K) |
+| Hermes archive | ✅ `/opt/agent-backups/hermes-final/hermes.db` |
+| `node scripts/test-staff-safe-tools.mjs` on VPS | ✅ PASS (10 tools) |
+| Watchdog stale simulation (backdate heartbeats 10 min) | ✅ `stale: [telegram-bot, schedulers, queue-consumer]` + Tier 2 notify fired |
+| Watchdog recovery (fresh heartbeat) | ✅ `ok: true`, `stale: []` |
+| Internal health from VPS | ✅ HTTP 200 `{"ok":true,"db":true}` |
+
+**Remaining owner-only checks:** live `pm2 stop` → wait 10 min for real ntfy alert; Sentry dashboard filter `category:agent` after a forced error; optional VPS reboot drill.
 
 ---
 
