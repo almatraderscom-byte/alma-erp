@@ -16,6 +16,12 @@ const CATEGORY_TAGS = {
   report: ['bar_chart'],
 }
 
+/** fetch() header values must be latin-1 — emoji/Bangla in Title breaks ntfy delivery. */
+function ntfyTitleHeader(title) {
+  const ascii = String(title).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim()
+  return ascii || 'ALMA Agent'
+}
+
 /**
  * @param {'general'|'critical'} topic
  * @param {string} title
@@ -37,7 +43,7 @@ export async function sendNtfy(topic, title, message, category) {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
-        'Title': title,
+        'Title': ntfyTitleHeader(title),
         'Priority': priority,
         ...(tags.length > 0 ? { 'Tags': tags.join(',') } : {}),
       },
