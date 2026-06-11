@@ -23,6 +23,9 @@ const FORBIDDEN = new Set([
   'prepare_staff_task_proposal', 'propose_staff_tasks', 'approve_and_dispatch_tasks', 'add_staff_task_now',
   'update_setting',
   'add_subscription', 'list_subscriptions',
+  // Phase 10 owner-only
+  'ask_user', 'pause_campaign', 'update_campaign_budget',
+  'get_staff_location', 'get_staff_location_history',
 ])
 
 const namesMatch = registry.match(/export const STAFF_SAFE_TOOL_NAMES\s*=\s*STAFF_SAFE_TOOLS\.map\(\(t\)\s*=>\s*t\.name\)/)

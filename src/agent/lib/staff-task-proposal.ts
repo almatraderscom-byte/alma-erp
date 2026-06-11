@@ -210,6 +210,82 @@ function formatSummary(
   return msg
 }
 
+type PatternFlags = {
+  staleProductTasks: ProposedTaskInput[]
+  lateTypeFlags: string[]
+  messengerAlertLine: string | null
+}
+
+async function detectPatterns(
+  dateYmd: string,
+  staffList: Array<{ id: string; name: string; role: string }>,
+  inv: { items: Array<{ sku: string; name: string; currentStock: number }> },
+  historyRows: Array<{ productRef: string; business: string; lastPromotedAt: Date }>,
+): Promise<PatternFlags> {
+  const staleProductTasks: ProposedTaskInput[] = []
+  const lateTypeFlags: string[] = []
+  let messengerAlertLine: string | null = null
+
+  const cutoff30 = new Date(`${addDaysYmd(dateYmd, -30)}T00:00:00+06:00`)
+  const recentPromo = new Map<string, Date>()
+  for (const h of historyRows) {
+    const k = `${h.business}:${h.productRef}`
+    const prev = recentPromo.get(k)
+    if (!prev || h.lastPromotedAt > prev) recentPromo.set(k, h.lastPromotedAt)
+  }
+
+  const contentStaff = staffList.find((s) => isContentStaff(s))
+  for (const item of inv.items) {
+    if (item.currentStock <= 0) continue
+    const key = `ALMA Lifestyle:${item.sku}`
+    const lastAt = recentPromo.get(key)
+    if (lastAt && lastAt >= cutoff30) continue
+    if (!contentStaff) continue
+    const days = lastAt
+      ? Math.floor((Date.now() - lastAt.getTime()) / 86400000)
+      : 999
+    staleProductTasks.push({
+      staffId: contentStaff.id,
+      staffName: contentStaff.name,
+      title: `${item.name} — ৩০+ দিন মার্কেটিং হয়নি, কন্টেন্ট তৈরি করুন`,
+      detail: `স্টক: ${item.currentStock}। ${days >= 999 ? 'কখনো প্রমোট হয়নি' : `${days} দিন প্রমোশন হয়নি`}`,
+      type: 'product_content',
+      productRef: item.sku,
+      source: 'pattern',
+    })
+  }
+
+  const from14 = new Date(`${addDaysYmd(dateYmd, -14)}T00:00:00+06:00`)
+  const lateTasks = await db.agentStaffTask.findMany({
+    where: {
+      proposedFor: { gte: from14 },
+      status: { in: ['carried', 'sent'] },
+    },
+    select: { type: true },
+  })
+  const typeCounts: Record<string, number> = {}
+  for (const t of lateTasks) {
+    const ty = t.type || 'misc'
+    typeCounts[ty] = (typeCounts[ty] ?? 0) + 1
+  }
+  for (const [ty, count] of Object.entries(typeCounts)) {
+    if (count >= 3) {
+      const label = ty === 'stock_check' ? 'stock check' : ty.replace(/_/g, ' ')
+      lateTypeFlags.push(`⚠️ ${label} ${count} বার late/carried (১৪ দিন)`)
+    }
+  }
+
+  const alertCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
+  const staleAlerts = await db.agentMessengerAlert.count({
+    where: { resolved: false, detectedAt: { lt: alertCutoff } },
+  })
+  if (staleAlerts > 0) {
+    messengerAlertLine = `📨 ${staleAlerts}টি Messenger alert ২৪+ ঘণ্টা unresolved — owner action দরকার`
+  }
+
+  return { staleProductTasks: staleProductTasks.slice(0, 3), lateTypeFlags, messengerAlertLine }
+}
+
 export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const staffList = await db.agentStaff.findMany({
     where: { active: true },
@@ -296,12 +372,25 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const picks = pickRotation(products)
   const pendingOrders = pendingRes.meta.count
 
+  const patterns = await detectPatterns(dateYmd, staffList, inv, historyRows)
+
   const allTasks: ProposedTaskInput[] = []
   for (const staff of staffList) {
     allTasks.push(...buildTasksForStaff(staff, picks, carryRows, pendingOrders))
   }
+  for (const pt of patterns.staleProductTasks) {
+    if (!allTasks.some((t) => t.productRef === pt.productRef && t.type === pt.type)) {
+      allTasks.push(pt)
+    }
+  }
 
-  const summaryBangla = formatSummary(dateYmd, staffList, allTasks, picks, carryRows.length, pendingOrders)
+  let summaryBangla = formatSummary(dateYmd, staffList, allTasks, picks, carryRows.length, pendingOrders)
+  if (patterns.lateTypeFlags.length > 0) {
+    summaryBangla += `\n\n*প্যাটার্ন সতর্কতা:*\n${patterns.lateTypeFlags.join('\n')}`
+  }
+  if (patterns.messengerAlertLine) {
+    summaryBangla += `\n\n${patterns.messengerAlertLine}`
+  }
 
   const fbRecent = Array.isArray(fbPosts)
     ? fbPosts.slice(0, 3).map((p: { message?: string; created_time?: string }) => ({

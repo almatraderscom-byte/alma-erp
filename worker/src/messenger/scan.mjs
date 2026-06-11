@@ -10,6 +10,7 @@
  */
 
 import { notify } from '../notify/index.mjs'
+import { recordReplyStats } from './reply-stats.mjs'
 
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle',   envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
@@ -130,6 +131,19 @@ export async function runMessengerScan({ supabase, bot }) {
 
       for (const conv of convData.data ?? []) {
         const messages = conv.messages?.data ?? []
+
+        // Reply-time tracking (no message content stored)
+        try {
+          await recordReplyStats({
+            supabase,
+            pageId: page.id,
+            conversationId: conv.id,
+            messages,
+          })
+        } catch (err) {
+          console.warn(`[messenger] reply-stats error conv ${conv.id}:`, err.message)
+        }
+
         const alerts   = detectAlerts(messages, page.id)
 
         for (const alert of alerts) {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
+import AgentAskCard, { type AskCard } from './AgentAskCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
@@ -19,6 +20,8 @@ export interface ChatMessage {
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
   // Pending action confirm card (image gen, FB post, etc.)
   pendingAction?: PendingAction
+  // Clarifying question card (ask_user)
+  askCard?: AskCard
   // Usage stats (final)
   tokensIn?: number
   tokensOut?: number
@@ -268,6 +271,21 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       action={msg.pendingAction}
                       onResolved={(status) => {
                         if (status === 'approved') onActionApproved?.()
+                      }}
+                    />
+                  )}
+
+                  {/* Ask card — tap sends option as next message */}
+                  {msg.askCard && onQuickSend && (
+                    <AgentAskCard
+                      card={msg.askCard}
+                      onSelect={(opt) => {
+                        void fetch(`/api/assistant/ask-cards/${msg.askCard!.id}/answer`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ option: opt }),
+                        }).catch(() => {})
+                        onQuickSend(opt)
                       }}
                     />
                   )}

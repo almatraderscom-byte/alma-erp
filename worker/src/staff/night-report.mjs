@@ -6,6 +6,7 @@
  */
 
 import { notify } from '../notify/index.mjs'
+import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 
 export async function runNightReport({ supabase, bot }) {
   console.log('[night-report] starting...')
@@ -92,11 +93,46 @@ export async function runNightReport({ supabase, bot }) {
     if (data.today_sales_summary) salesSummary = `\n\n📊 ${data.today_sales_summary}`
   } catch { /* non-fatal */ }
 
+  // Reply-time stats (Phase 10)
+  let replySummary = ''
+  try {
+    const replyStats = await aggregateReplyStats(supabase, today)
+    if (replyStats.length > 0) {
+      replySummary = '\n\n💬 *Messenger reply time:*\n' +
+        replyStats.map((s) => `• ${s.name} গড় reply: ${s.avgMinutes} মিনিট (${s.count}টি)`).join('\n')
+    }
+  } catch { /* non-fatal */ }
+
+  // GPS gaps — field tasks done without location today
+  let gpsGapLine = ''
+  try {
+    const { data: doneTasks } = await supabase
+      .from('staff_tasks')
+      .select('id, staff_id, type')
+      .eq('proposed_for', today)
+      .eq('status', 'done')
+      .in('type', ['stock_check', 'order_followup'])
+
+    const { data: locRows } = await supabase
+      .from('staff_locations')
+      .select('staff_id')
+      .gte('recorded_at', today + 'T00:00:00+06:00')
+      .neq('metadata', 'stopped')
+
+    const staffWithLoc = new Set((locRows ?? []).map((r) => r.staff_id))
+    const gaps = (doneTasks ?? []).filter((t) => !staffWithLoc.has(t.staff_id)).length
+    if (gaps > 0) {
+      gpsGapLine = `\n\n📍 ফিল্ড টাস্ক Done কিন্তু লোকেশন নেই: ${gaps}টি`
+    }
+  } catch { /* non-fatal */ }
+
   const reportText =
     `📋 *রাতের রিপোর্ট — ${today}*\n\n` +
     reportLines.join('\n\n') +
     salahSummary +
     salesSummary +
+    replySummary +
+    gpsGapLine +
     (tasksToCarry.length > 0 ? `\n\n↩ ${tasksToCarry.length}টি কাজ আগামীকালের জন্য নিয়ে যাওয়া হয়েছে।` : '')
 
   await notify({

@@ -126,10 +126,12 @@ export async function POST(req: NextRequest) {
     let finalText = ''
     let errorMsg = ''
     const pendingCards: Array<{ pendingActionId: string; summary: string }> = []
+    const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     try {
       for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions })) {
         if (event.type === 'text_delta') finalText += event.delta
         else if (event.type === 'confirm_card') pendingCards.push({ pendingActionId: event.pendingActionId, summary: event.summary })
+        else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
         else if (event.type === 'done') break
       }
@@ -137,7 +139,7 @@ export async function POST(req: NextRequest) {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
-    return Response.json({ conversationId, text: finalText, pendingCards })
+    return Response.json({ conversationId, text: finalText, pendingCards, askCards })
   }
 
   const encoder = new TextEncoder()

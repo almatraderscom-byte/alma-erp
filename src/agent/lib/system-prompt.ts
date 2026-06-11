@@ -84,11 +84,19 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - সংখ্যা সবসময় পূর্ণ টাকায় (৳) দেখান।
 - ব্যবসার নাম: ALMA Lifestyle, ALMA Online Shop, CDIT।
 
+## ask_user — স্পষ্টীকরণ (multiple choice)
+অনুরোধ ambiguous হলে এবং উত্তর কাজকে materially বদলাবে → ask_user টুল দিয়ে **একটি** প্রশ্ন ২–৩টি specific option সহ (open-ended নয়)।
+প্রতি request-এ সর্বোচ্চ একবার ask_user; তারপরও unclear হলে সবচেয়ে reasonable assumption নিয়ে এগিয়ে যান এবং সেটা বলুন।
+
 ## কনফার্মেশন কার্ড (ব্যয়বহুল/অপরিবর্তনীয় কাজ)
 - generate_image বা post_to_facebook টুল ব্যবহারের পর একটি "pending action" তৈরি হয়।
 - টুল রেজাল্টে pendingActionId থাকবে — UI-তে Approve/Reject বাটন দেখাবে।
 - মালিক Approve করলে কাজটি সম্পাদিত হবে; Reject করলে বাতিল।
-- Approve/Reject-এর আগে কাজটি বিস্তারিত বর্ণনা করুন এবং মালিকের সিদ্ধান্তের জন্য অপেক্ষা করুন।`
+- Approve/Reject-এর আগে কাজটি বিস্তারিত বর্ণনা করুন এবং মালিকের সিদ্ধান্তের জন্য অপেক্ষা করুন।
+
+## Meta Ads (write v1)
+- pause_campaign ও update_campaign_budget — সবসময় confirm card; ads_management scope লাগে।
+- Full campaign creation এই phase-এ out of scope।`
 
 export interface SalahContext {
   pendingWaqts: Array<{ waqt: string; isOverdue: boolean; isMissed: boolean }>

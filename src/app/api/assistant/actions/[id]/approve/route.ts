@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
+import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -277,6 +278,40 @@ export async function POST(
       queued: true,
       message: 'Urgent alert approved. Worker will dispatch notify shortly.',
     })
+  }
+
+  if (action.type === 'pause_campaign') {
+    const { campaignId } = payload as { campaignId: string }
+    const result = await pauseCampaign(String(campaignId))
+    if (!result.success) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { campaignId, paused: true } },
+    })
+    return Response.json({ success: true, campaignId, message: 'Campaign paused.' })
+  }
+
+  if (action.type === 'update_campaign_budget') {
+    const { campaignId, dailyBudget } = payload as { campaignId: string; dailyBudget: number }
+    const result = await updateCampaignBudget(String(campaignId), Number(dailyBudget))
+    if (!result.success) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { campaignId, dailyBudget } },
+    })
+    return Response.json({ success: true, campaignId, dailyBudget, message: 'Budget updated.' })
   }
 
   if (action.type === 'log_ledger_entry') {

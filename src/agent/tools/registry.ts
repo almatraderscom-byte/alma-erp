@@ -9,6 +9,9 @@ import { SALAH_TOOLS } from './salah-tools'
 import { FINANCE_TOOLS } from './finance-tools'
 import { COST_TOOLS } from './cost-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
+import { ASK_TOOLS } from './ask-tools'
+import { ADS_TOOLS } from './ads-tools'
+import { LOCATION_TOOLS } from './location-tools'
 
 export interface ToolResult {
   success: boolean
@@ -265,6 +268,9 @@ export const TOOLS: AgentTool[] = [
   ...FINANCE_TOOLS,
   ...COST_TOOLS,
   ...REMINDER_TOOLS,
+  ...ASK_TOOLS,
+  ...ADS_TOOLS,
+  ...LOCATION_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

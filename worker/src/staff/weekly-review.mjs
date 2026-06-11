@@ -8,6 +8,7 @@
  */
 
 import { notify } from '../notify/index.mjs'
+import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -75,6 +76,47 @@ export async function runWeeklyReview({ supabase }) {
       return `• ${name}: ${s.done}/${s.total} (${pct}%)`
     }).join('\n')
 
+  // ── Reply-time trend vs prior week ─────────────────────────────────────────
+
+  let replySection = ''
+  try {
+    const thisWeekStats = {}
+    for (let i = 0; i < 7; i++) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const ds = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+      const dayStats = await aggregateReplyStats(supabase, ds)
+      for (const s of dayStats) {
+        if (!thisWeekStats[s.name]) thisWeekStats[s.name] = []
+        thisWeekStats[s.name].push(s.avgMinutes)
+      }
+    }
+    const lastWeekStats = {}
+    for (let i = 7; i < 14; i++) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const ds = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+      const dayStats = await aggregateReplyStats(supabase, ds)
+      for (const s of dayStats) {
+        if (!lastWeekStats[s.name]) lastWeekStats[s.name] = []
+        lastWeekStats[s.name].push(s.avgMinutes)
+      }
+    }
+    const lines = Object.keys(thisWeekStats).map((name) => {
+      const tw = thisWeekStats[name]
+      const lw = lastWeekStats[name] ?? []
+      const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null
+      const thisAvg = avg(tw)
+      const lastAvg = avg(lw)
+      if (thisAvg == null) return null
+      const trend = lastAvg != null
+        ? (thisAvg < lastAvg ? '↓ ভালো' : thisAvg > lastAvg ? '↑ খারাপ' : '→ একই')
+        : ''
+      return `• ${name}: গড় ${thisAvg} মিনিট${lastAvg != null ? ` (গত সপ্তাহ ${lastAvg}) ${trend}` : ''}`
+    }).filter(Boolean)
+    if (lines.length) replySection = `\n\n💬 *Messenger reply (৭ দিন):*\n${lines.join('\n')}`
+  } catch { /* non-fatal */ }
+
   // ── Growth ideas based on rotation data ──────────────────────────────────
 
   const { data: slowProducts } = await supabase
@@ -97,6 +139,7 @@ export async function runWeeklyReview({ supabase }) {
     `📊 *সাপ্তাহিক রিভিউ — ${today}*\n\n` +
     salahSection + '\n\n' +
     `👥 *স্টাফ কমপ্লিশন (৭ দিন):*\n${staffSection || 'কোনো ডেটা নেই'}` +
+    replySection +
     growthIdeas
 
   await notify({

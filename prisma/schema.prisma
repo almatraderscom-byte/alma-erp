@@ -1815,6 +1815,8 @@ model AgentStaff {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   tasks          AgentStaffTask[]
+  replyStats     AgentStaffReplyStat[]
+  locations      AgentStaffLocation[]
 
   @@map("agent_staff")
 }
@@ -1997,4 +1999,52 @@ model AgentSubscription {
   @@index([nextRenewalAt])
   @@index([active])
   @@map("agent_subscriptions")
+}
+
+// ─── PHASE 10: ask_user, reply stats, staff GPS ─────────────────────────────
+
+model AgentAskCard {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  question       String   @db.Text
+  options        String   @db.Text
+  status         String   @default("pending")
+  selectedOption String?  @map("selected_option")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId, status])
+  @@map("agent_ask_cards")
+}
+
+model AgentStaffReplyStat {
+  id             String    @id @default(uuid())
+  staffId        String?   @map("staff_id")
+  staff          AgentStaff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  pageId         String    @map("page_id")
+  conversationId String    @map("conversation_id")
+  customerMsgAt  DateTime  @map("customer_msg_at")
+  firstReplyAt   DateTime  @map("first_reply_at")
+  replyMinutes   Int       @map("reply_minutes")
+  date           DateTime  @db.Date
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([staffId, date])
+  @@index([date])
+  @@map("staff_reply_stats")
+}
+
+model AgentStaffLocation {
+  id         String   @id @default(uuid())
+  staffId    String   @map("staff_id")
+  staff      AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  lat        Float
+  lng        Float
+  accuracy   Float?
+  recordedAt DateTime @map("recorded_at")
+  source     String
+  metadata   String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([staffId, recordedAt(sort: Desc)])
+  @@map("staff_locations")
 }

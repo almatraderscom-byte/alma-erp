@@ -21,6 +21,7 @@ export type AgentEvent =
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number }
+  | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
   | { type: 'error'; message: string }
 
@@ -370,6 +371,14 @@ export async function* runAgentTurn(
               pendingActionId: d.pendingActionId,
               summary: typeof d.summary === 'string' ? d.summary : '',
               costEstimate: typeof d.costEstimate === 'number' ? d.costEstimate : undefined,
+            }
+          }
+          if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
+            yield {
+              type: 'ask_card',
+              askCardId: d.askCardId,
+              question: typeof d.question === 'string' ? d.question : '',
+              options: d.options as string[],
             }
           }
         }

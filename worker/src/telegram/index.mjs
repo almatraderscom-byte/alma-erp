@@ -20,6 +20,19 @@ import { setDispatcherBot } from './dispatcher.mjs'
 import { handleSalahCallback } from '../salah/scheduler.mjs'
 import { handleReminderCallback } from '../reminders/callbacks.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
+import {
+  handleStaffLocation,
+  handleLiveLocationStopped,
+  promptTaskDoneLocation,
+  resolveStaffByChatId,
+  STAFF_ONBOARDING_BANGLA,
+} from './location.mjs'
+import {
+  handleTodayCommand,
+  handleKhorochCommand,
+  handleAskCommand,
+  sendAskCardTelegram,
+} from './quick-commands.mjs'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
 
@@ -194,6 +207,11 @@ async function handleOwnerText(ctx, text) {
         },
       )
     }
+
+    // ask_user clarifying cards
+    for (const ask of result.askCards ?? []) {
+      await sendAskCardTelegram(ctx, ask)
+    }
   } catch (err) {
     clearInterval(typingInterval)
     captureWorkerError(err, 'worker.telegram.agent_call')
@@ -303,18 +321,20 @@ export function createTelegramBot() {
     if (!chatId) return
     if (isOwner(chatId)) return next()
 
-    // Check if this is a linked staff member (for task Done callbacks only)
     const cbData = ctx.callbackQuery?.data ?? ''
-    if (cbData.startsWith('task_done:')) {
-      const supabase = createSupabase()
-      const { data: staff } = await supabase
-        .from('agent_staff')
-        .select('id, name')
-        .eq('telegram_chat_id', String(chatId))
-        .eq('active', true)
-        .limit(1)
 
-      if (staff?.length > 0) return next()
+    // Linked staff: task Done, location skip, ask_pick (staff should not get ask_pick — owner only)
+    if (cbData.startsWith('task_done:') || cbData.startsWith('loc_skip:')) {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, chatId)
+      if (staff) return next()
+    }
+
+    // Staff location messages (not owner)
+    if (ctx.message?.location && !isOwner(chatId)) {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, chatId)
+      if (staff) return next()
     }
 
     // Unknown: reject politely and reveal their chat ID for onboarding
@@ -344,6 +364,10 @@ export function createTelegramBot() {
       '/new — নতুন চ্যাট শুরু\n' +
       '/chats — পুরানো চ্যাট দেখুন\n' +
       '/staff link <নাম> <chat_id> — স্টাফ লিঙ্ক করুন\n' +
+      '/today — আজকের স্ন্যাপশট\n' +
+      '/khoroch — খরচ সারাংশ\n' +
+      '/ask <প্রশ্ন> — agent-কে জিজ্ঞেস করুন\n' +
+      '/staff_onboard — স্টাফ GPS অনবোর্ডিং মেসেজ\n' +
       '/help — এই সাহায্য',
       { parse_mode: 'Markdown' },
     )
@@ -370,10 +394,69 @@ export function createTelegramBot() {
     await handleDetailsCommand(ctx, args, supabase)
   })
 
+  bot.command('today', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    const supabase = createSupabase()
+    await handleTodayCommand(ctx, supabase)
+  })
+
+  bot.command('khoroch', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    const supabase = createSupabase()
+    await handleKhorochCommand(ctx, supabase)
+  })
+
+  bot.command('ask', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    await handleAskCommand(ctx, ctx.message.text, sendToAgent, ownerState)
+  })
+
+  bot.command('staff_onboard', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) return
+    await ctx.reply(STAFF_ONBOARDING_BANGLA, { parse_mode: 'Markdown' })
+  })
+
   // ── Text messages ─────────────────────────────────────────────────────────
 
   bot.on('text', async (ctx) => {
+    const chatId = ctx.chat?.id
+    if (!isOwner(chatId)) {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, chatId)
+      if (staff && ctx.message.text === 'লোকেশন skip') {
+        await ctx.reply('ঠিক আছে — লোকেশন ছাড়াই চলবে।')
+        return
+      }
+      return
+    }
     await handleOwnerText(ctx, ctx.message.text)
+  })
+
+  // ── Staff location (live + one-time) ─────────────────────────────────────
+
+  bot.on('location', async (ctx) => {
+    const chatId = ctx.chat?.id
+    if (isOwner(chatId)) return
+    const supabase = createSupabase()
+    const staff = await resolveStaffByChatId(supabase, chatId)
+    if (!staff) return
+    await handleStaffLocation(ctx, supabase, ctx.message.location, 'live')
+  })
+
+  bot.on('edited_message', async (ctx) => {
+    const em = ctx.editedMessage
+    if (!em?.location) return
+    const chatId = ctx.chat?.id
+    if (isOwner(chatId)) return
+    const supabase = createSupabase()
+    const staff = await resolveStaffByChatId(supabase, chatId)
+    if (!staff) return
+    const loc = em.location
+    if (loc.live_period === 0) {
+      await handleLiveLocationStopped(ctx, supabase, staff.name)
+    } else {
+      await handleStaffLocation(ctx, supabase, loc, 'live')
+    }
   })
 
   // ── Voice notes ───────────────────────────────────────────────────────────
@@ -424,9 +507,7 @@ export function createTelegramBot() {
       await handleReminderCallback(ctx, data)
 
     } else if (data.startsWith('task_done:')) {
-      // task_done:<taskId>:<staffId>  — sent to staff member
       const [, taskId, staffId] = data.split(':')
-      const chatId = ctx.chat?.id
       try {
         const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
           method: 'POST',
@@ -438,7 +519,6 @@ export function createTelegramBot() {
         await ctx.answerCbQuery('✅ Done!')
         await ctx.reply('✅ কাজ সম্পন্ন হিসেবে চিহ্নিত হয়েছে। জাযাকাল্লাহ খাইর!')
 
-        // Notify owner
         if (OWNER_ID && result.staffName) {
           await ctx.telegram.sendMessage(
             OWNER_ID,
@@ -446,10 +526,49 @@ export function createTelegramBot() {
             { parse_mode: 'Markdown' },
           ).catch(() => {})
         }
+
+        await promptTaskDoneLocation(ctx, staffId, result.staffName)
       } catch (err) {
         await ctx.answerCbQuery('সমস্যা হয়েছে')
         console.error('[telegram] task_done callback error:', err.message)
       }
+
+    } else if (data.startsWith('ask_pick:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const [, askCardId, optIdxStr] = data.split(':')
+      const optIdx = parseInt(optIdxStr, 10)
+      try {
+        const cardRes = await fetch(`${APP_URL}/api/assistant/internal/ask-card?id=${askCardId}`, {
+          headers: { Authorization: `Bearer ${INT_TOKEN}` },
+        })
+        const card = await cardRes.json()
+        const options = JSON.parse(card.options ?? '[]')
+        const option = options[optIdx]
+        if (!option) {
+          await ctx.answerCbQuery('অপশন পাওয়া যায়নি')
+          return
+        }
+        await fetch(`${APP_URL}/api/assistant/ask-cards/${askCardId}/answer`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${INT_TOKEN}`,
+          },
+          body: JSON.stringify({ option }),
+        })
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+        await ctx.answerCbQuery(`✅ ${option}`)
+        await handleOwnerText(ctx, option)
+      } catch (err) {
+        await ctx.answerCbQuery(`সমস্যা: ${err.message}`)
+      }
+
+    } else if (data.startsWith('loc_skip:')) {
+      await ctx.answerCbQuery('লোকেশন skip')
+      await ctx.reply('ঠিক আছে — লোকেশন ছাড়াই চলবে।')
 
     } else if (data.startsWith('details:')) {
       // details:<name>:<page>  — owner's paginated finance details

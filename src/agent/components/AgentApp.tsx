@@ -239,6 +239,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   }
                 : m
             ))
+          } else if (evt.type === 'ask_card') {
+            setMessages((prev) => prev.map((m) =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    askCard: {
+                      id: evt.askCardId as string,
+                      question: evt.question as string,
+                      options: evt.options as string[],
+                    },
+                  }
+                : m
+            ))
           } else if (evt.type === 'done') {
             setMessages((prev) => prev.map((m) =>
               m.id === assistantMsgId
