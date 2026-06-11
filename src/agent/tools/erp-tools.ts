@@ -8,15 +8,177 @@ import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listLowStock, listProducts } from '@/lib/agent-api/services/products.service'
 import { listCustomers } from '@/lib/agent-api/services/customers.service'
 import { listEmployees } from '@/lib/agent-api/services/employees.service'
+import { getAttendanceHistory } from '@/lib/agent-api/services/attendance.service'
+import { listFines } from '@/lib/agent-api/services/fines.service'
+import { buildAdminAttendanceDashboard } from '@/lib/attendance-admin-dashboard'
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd } from '@/lib/agent-api/dhaka-date'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
+import type { BusinessId } from '@/lib/businesses'
 import type { AgentTool } from './registry'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function ymdToIso(ymd: string): string {
   return new Date(`${ymd}T00:00:00+06:00`).toISOString()
+}
+
+function resolveBusinessId(slug?: string): BusinessId {
+  const raw = String(slug ?? DEFAULT_AGENT_BUSINESS_ID).trim().toUpperCase()
+  if (raw === 'CDIT' || raw === 'CREATIVE_DIGITAL_IT') return 'CREATIVE_DIGITAL_IT'
+  if (raw === 'ALMA_TRADING') return 'ALMA_TRADING'
+  return 'ALMA_LIFESTYLE'
+}
+
+type AttendancePeriod = 'today' | 'yesterday' | 'week' | 'month'
+
+function resolveAttendanceRange(input: {
+  date?: string
+  period?: string
+}): { mode: 'day' | 'range'; startYmd: string; endYmd: string; period: AttendancePeriod | 'date' } {
+  const today = todayYmdDhaka()
+  if (input.date) {
+    const ymd = String(input.date).slice(0, 10)
+    return { mode: 'day', startYmd: ymd, endYmd: ymd, period: 'date' }
+  }
+  const period = (input.period ?? 'today') as AttendancePeriod
+  switch (period) {
+    case 'yesterday':
+      return { mode: 'day', startYmd: daysAgoYmd(1), endYmd: daysAgoYmd(1), period }
+    case 'week':
+      return { mode: 'range', startYmd: daysAgoYmd(6), endYmd: today, period }
+    case 'month':
+      return { mode: 'range', startYmd: `${today.slice(0, 8)}01`, endYmd: today, period }
+    default:
+      return { mode: 'day', startYmd: today, endYmd: today, period: 'today' }
+  }
+}
+
+async function fetchDayAttendance(businessId: BusinessId, ymd: string) {
+  const date = dhakaMidnightUtc(ymd)
+  const dash = await buildAdminAttendanceDashboard({
+    businessIds: [businessId],
+    date,
+    monthStart: dhakaMidnightUtc(`${ymd.slice(0, 8)}01`),
+    monthEnd: dhakaMidnightUtc(daysAgoYmd(-32, date)),
+    scopeAllBusinesses: false,
+  })
+
+  const ops = await prisma.telegramOpsSetting.findUnique({ where: { businessId } })
+  const grace = ops?.gracePeriodMinutes ?? 15
+
+  const employees = dash.records.map((r) => ({
+    employeeId: r.employeeId,
+    name: r.employeeName,
+    checkIn: r.checkInAt,
+    checkOut: r.checkOutAt ?? null,
+    hoursWorked: r.totalWorkMinutes > 0
+      ? Math.round((r.totalWorkMinutes / 60) * 10) / 10
+      : null,
+    lateMinutes: r.lateMinutes,
+    penaltyAmount: roundMoney(r.penaltyAmount),
+    status: r.lateMinutes > grace ? 'late' : 'present',
+  }))
+
+  const present = employees.filter((e) => e.status === 'present')
+  const late = employees.filter((e) => e.status === 'late')
+  const absent = dash.absentEmployees.map((e) => ({
+    employeeId: e.employeeId,
+    name: e.name,
+  }))
+
+  const { fines } = await listFines({ limit: 100 })
+  const dayFines = fines.filter((f) => f.createdAt.slice(0, 10) === ymd)
+
+  return {
+    date: ymd,
+    businessId,
+    counts: {
+      present: present.length,
+      late: late.length,
+      absent: absent.length,
+      notYetCheckedIn: 0,
+      totalEmployees: dash.kpis.employeeCount,
+      penaltyTotal: roundMoney(dash.kpis.todayPenaltyTotal),
+    },
+    present,
+    late,
+    absent,
+    penalties: dayFines.map((f) => ({
+      employeeId: f.employeeId,
+      name: f.employeeName,
+      amount: roundMoney(f.amount),
+      reason: f.reason,
+      status: f.status,
+    })),
+    meta: {
+      officeStartMinutes: ops?.officeStartMinutes ?? 540,
+      gracePeriodMinutes: grace,
+    },
+  }
+}
+
+async function fetchRangeAttendance(
+  businessId: BusinessId,
+  startYmd: string,
+  endYmd: string,
+  period: AttendancePeriod,
+) {
+  const { employees } = await listEmployees({ active: true, limit: 100 })
+  const start = dhakaMidnightUtc(startYmd)
+  const end = dhakaMidnightUtc(endYmd)
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1)
+
+  const histories = await Promise.all(
+    employees.map(async (emp) => {
+      const hist = await getAttendanceHistory(emp.id, days)
+      const inRange = hist.days.filter((d) => d.date >= startYmd && d.date <= endYmd)
+      const presentDays = inRange.filter((d) => d.status === 'present' || d.status === 'late').length
+      const lateDays = inRange.filter((d) => d.status === 'late').length
+      const workingDays = days
+      const absentDays = Math.max(0, workingDays - presentDays)
+      return {
+        employeeId: emp.id,
+        name: emp.name,
+        presentDays,
+        absentDays,
+        lateDays,
+        attendanceRatePct: workingDays > 0
+          ? Math.round((presentDays / workingDays) * 1000) / 10
+          : 0,
+        days: inRange,
+      }
+    }),
+  )
+
+  const { fines } = await listFines({ limit: 200 })
+  const rangeFines = fines.filter((f) => {
+    const d = f.createdAt.slice(0, 10)
+    return d >= startYmd && d <= endYmd
+  })
+
+  return {
+    period,
+    startDate: startYmd,
+    endDate: endYmd,
+    businessId,
+    counts: {
+      present: histories.reduce((sum, h) => sum + h.presentDays, 0),
+      absent: histories.reduce((sum, h) => sum + h.absentDays, 0),
+      late: histories.reduce((sum, h) => sum + h.lateDays, 0),
+      employees: employees.length,
+      penaltyTotal: roundMoney(rangeFines.reduce((sum, f) => sum + f.amount, 0)),
+    },
+    employees: histories,
+    penalties: rangeFines.map((f) => ({
+      employeeId: f.employeeId,
+      name: f.employeeName,
+      amount: roundMoney(f.amount),
+      reason: f.reason,
+      date: f.createdAt.slice(0, 10),
+      status: f.status,
+    })),
+  }
 }
 
 // ── get_sales_summary ──────────────────────────────────────────────────────
@@ -301,6 +463,50 @@ const get_employee_overview: AgentTool = {
   },
 }
 
+// ── get_attendance ─────────────────────────────────────────────────────────
+
+const get_attendance: AgentTool = {
+  name: 'get_attendance',
+  description:
+    'Returns attendance data: present/absent/late counts, per-employee check-in/check-out times, and penalties. ' +
+    'period: "today" (default) | "yesterday" | "week" | "month". ' +
+    'date: optional YYYY-MM-DD override (Asia/Dhaka). ' +
+    'businessSlug: "ALMA_LIFESTYLE" | "ALMA_TRADING" | "CDIT". ' +
+    'Single-day queries return today\'s roster snapshot; week/month return per-employee day rows and aggregate counts.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'Specific date YYYY-MM-DD (overrides period)' },
+      businessSlug: { type: 'string', description: 'Business slug (default: ALMA_LIFESTYLE)' },
+      period: {
+        type: 'string',
+        enum: ['today', 'yesterday', 'week', 'month'],
+        description: 'Relative period when date is omitted',
+      },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const businessId = resolveBusinessId(
+        input.businessSlug ? String(input.businessSlug) : undefined,
+      )
+      const range = resolveAttendanceRange({
+        date: input.date ? String(input.date) : undefined,
+        period: input.period ? String(input.period) : undefined,
+      })
+
+      const data = range.mode === 'day'
+        ? await fetchDayAttendance(businessId, range.startYmd)
+        : await fetchRangeAttendance(businessId, range.startYmd, range.endYmd, range.period as AttendancePeriod)
+
+      return { success: true, data }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── get_dashboard_snapshot ─────────────────────────────────────────────────
 
 const get_dashboard_snapshot: AgentTool = {
@@ -371,5 +577,6 @@ export const ERP_TOOLS: AgentTool[] = [
   get_product,
   get_customer_summary,
   get_employee_overview,
+  get_attendance,
   get_dashboard_snapshot,
 ]
