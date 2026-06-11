@@ -9,7 +9,7 @@
  * and DateComponents was removed; PrayerTimes takes a plain Date.
  */
 
-import { dhakaTodayYmd } from './dhaka-date.mjs'
+import { dhakaTodayYmd, dhakaMidnightUtc } from './dhaka-date.mjs'
 
 // Cache resolved named exports across calls
 let adhanExports = null
@@ -47,9 +47,8 @@ export async function getPrayerTimes(date = new Date()) {
       const params       = CalculationMethod.MoonsightingCommittee()
       params.madhab      = Madhab.Shafi  // Common in Bangladesh
 
-      // Anchor at Dhaka noon so the calendar day is correct on UTC VPS hosts
-      const anchor = new Date(`${ymd}T12:00:00+06:00`)
-      const times = new PrayerTimes(coordinates, anchor, params)
+      // Anchor at Dhaka local midnight for the target calendar day
+      const times = new PrayerTimes(coordinates, dhakaMidnightUtc(ymd), params)
 
       return {
         fajr:    { start: times.fajr,    end: times.sunrise },
