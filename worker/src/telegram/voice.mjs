@@ -7,7 +7,6 @@
  */
 
 import { synthesizeSpeech } from '../tts.mjs'
-import FormData from 'form-data'
 
 const APP_URL   = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -30,16 +29,13 @@ export async function transcribeVoiceNote(bot, fileId) {
   if (!audioRes.ok) throw new Error(`Telegram file download failed: ${audioRes.status}`)
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer())
 
-  // Send to internal transcribe endpoint as multipart/form-data
+  // Native FormData + fetch (Node 20+). npm "form-data" streams break req.formData() on Vercel.
   const form = new FormData()
-  form.append('audio', audioBuffer, { filename: 'voice.ogg', contentType: 'audio/ogg' })
+  form.append('audio', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg')
 
   const transcribeRes = await fetch(`${APP_URL()}/api/assistant/internal/transcribe`, {
     method: 'POST',
-    headers: {
-      ...form.getHeaders(),
-      Authorization: `Bearer ${INT_TOKEN()}`,
-    },
+    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
     body: form,
   })
   if (!transcribeRes.ok) {

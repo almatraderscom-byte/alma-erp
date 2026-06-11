@@ -27,6 +27,33 @@ function verifyToken(provided: string): boolean {
   } catch { return false }
 }
 
+async function parseAudioFile(req: NextRequest): Promise<File | null> {
+  const contentType = req.headers.get('content-type') ?? ''
+
+  if (contentType.includes('multipart/form-data')) {
+    try {
+      const formData = await req.formData()
+      const audio = formData.get('audio')
+      if (audio instanceof File) return audio
+      if (audio && typeof audio !== 'string') {
+        const blob = audio as Blob
+        return new File([blob], 'voice.ogg', { type: blob.type || 'audio/ogg' })
+      }
+    } catch (err) {
+      console.warn('[internal/transcribe] multipart parse failed:', err)
+    }
+    return null
+  }
+
+  if (contentType.startsWith('audio/') || contentType === 'application/octet-stream') {
+    const buf = await req.arrayBuffer()
+    const mime = contentType.split(';')[0].trim() || 'audio/ogg'
+    return new File([buf], 'voice.ogg', { type: mime })
+  }
+
+  return null
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -40,8 +67,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const formData = await req.formData()
-    const audioFile = formData.get('audio') as File | null
+    const audioFile = await parseAudioFile(req)
     if (!audioFile) return Response.json({ error: 'audio file missing' }, { status: 400 })
     if (audioFile.size > 25 * 1024 * 1024) {
       return Response.json({ error: 'audio too large (max 25 MB)' }, { status: 400 })
