@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       businessId: result.businessId,
       periodYm: result.periodYm,
       pendingReversalCount: result.pendingReversalCount,
-      createdCount: result.createdCount,
+      createdCount: 'createdCount' in result ? result.createdCount : 0,
     })
     return NextResponse.json(result)
   } catch (e) {
