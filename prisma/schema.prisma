@@ -1801,20 +1801,20 @@ model AgentStaff {
 
 model AgentStaffTask {
   id               String    @id @default(uuid())
-  staffId          String
+  staffId          String    @map("staff_id")
   staff            AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
   title            String
   detail           String?   @db.Text
   type             String    @default("misc")
-  productRef       String?
+  productRef       String?   @map("product_ref")
   status           String    @default("proposed")
-  proposedFor      DateTime  @db.Date
-  completedAt      DateTime?
-  carriedFromTaskId String?
+  proposedFor      DateTime  @map("proposed_for") @db.Date
+  completedAt      DateTime? @map("completed_at")
+  carriedFromTaskId String?  @map("carried_from_task_id")
   carriedFrom      AgentStaffTask?  @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
   carriedTasks     AgentStaffTask[] @relation("CarryForward")
   source           String    @default("agent")
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime  @default(now()) @map("created_at")
   marketingHistory AgentProductMarketingHistory[]
 
   @@index([staffId])
@@ -1825,14 +1825,14 @@ model AgentStaffTask {
 
 model AgentProductMarketingHistory {
   id             String    @id @default(uuid())
-  productRef     String
+  productRef     String    @map("product_ref")
   business       String
-  lastPromotedAt DateTime  @default(now())
-  contentType    String?
-  taskId         String?
+  lastPromotedAt DateTime  @default(now()) @map("last_promoted_at")
+  contentType    String?   @map("content_type")
+  taskId         String?   @map("task_id")
   task           AgentStaffTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
   notes          String?   @db.Text
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   @@index([productRef, lastPromotedAt(sort: Desc)])
   @@index([business, lastPromotedAt(sort: Desc)])
@@ -1845,12 +1845,12 @@ model AgentSalahRecord {
   id            String    @id @default(uuid())
   date          DateTime  @db.Date
   waqt          String
-  windowStart   DateTime
-  windowEnd     DateTime
+  windowStart   DateTime  @map("window_start")
+  windowEnd     DateTime  @map("window_end")
   status        String    @default("pending")
-  confirmedAt   DateTime?
-  remindersSent Int       @default(0)
-  createdAt     DateTime  @default(now())
+  confirmedAt   DateTime? @map("confirmed_at")
+  remindersSent Int       @default(0) @map("reminders_sent")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   @@unique([date, waqt])
   @@index([date(sort: Desc)])
@@ -1862,11 +1862,11 @@ model AgentSalahOverride {
   id           String    @id @default(uuid())
   date         DateTime? @db.Date
   waqt         String?
-  overrideTime DateTime?
-  delayUntil   DateTime?
+  overrideTime DateTime? @map("override_time")
+  delayUntil   DateTime? @map("delay_until")
   skip         Boolean   @default(false)
   reason       String?   @db.Text
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   @@index([date, waqt])
   @@map("salah_overrides")
@@ -1875,7 +1875,7 @@ model AgentSalahOverride {
 model AgentKvSetting {
   key       String   @id
   value     String   @db.Text
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("agent_kv_settings")
 }
@@ -1888,8 +1888,8 @@ model AgentFinanceExpense {
   currency   String   @default("BDT")
   category   String?
   note       String?  @db.Text
-  occurredAt DateTime
-  createdAt  DateTime @default(now())
+  occurredAt DateTime @map("occurred_at")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([occurredAt(sort: Desc)])
   @@index([currency])
@@ -1898,13 +1898,13 @@ model AgentFinanceExpense {
 
 model AgentFinanceLedger {
   id         String   @id @default(uuid())
-  personName String
+  personName String   @map("person_name")
   direction  String
   amount     Int
   currency   String   @default("BDT")
   note       String?  @db.Text
-  occurredAt DateTime
-  createdAt  DateTime @default(now())
+  occurredAt DateTime @map("occurred_at")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([personName, occurredAt(sort: Desc)])
   @@index([direction])
@@ -1915,14 +1915,16 @@ model AgentFinanceLedger {
 
 model AgentMessengerAlert {
   id             String    @id @default(uuid())
-  pageId         String
-  conversationId String
-  alertType      String
-  detectedAt     DateTime  @default(now())
+  pageId         String    @map("page_id")
+  conversationId String    @map("conversation_id")
+  alertType      String    @map("alert_type")
+  detectedAt     DateTime  @default(now()) @map("detected_at")
+  detectedDate   DateTime  @default(now()) @map("detected_date") @db.Date
   resolved       Boolean   @default(false)
-  resolvedAt     DateTime?
-  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime? @map("resolved_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
+  @@unique([conversationId, alertType, detectedDate])
   @@index([pageId, detectedAt(sort: Desc)])
   @@index([resolved, detectedAt(sort: Desc)])
   @@map("messenger_alerts")

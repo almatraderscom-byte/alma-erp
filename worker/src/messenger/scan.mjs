@@ -153,6 +153,7 @@ export async function runMessengerScan({ supabase, bot }) {
             conversation_id: conv.id,
             alert_type:      alert.type,
             detected_at:     new Date().toISOString(),
+            detected_date:   today,
           })
 
           // Build owner notification

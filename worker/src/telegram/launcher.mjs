@@ -27,7 +27,13 @@ export async function launchTelegramBot() {
     // Ensure polling mode — drop stale webhook updates from any prior instance
     await instance.telegram.deleteWebhook({ drop_pending_updates: true }).catch(() => {})
 
-    await instance.launch({ dropPendingUpdates: true })
+    // launch() runs until stop() — must not await or the worker freezes on startup
+    instance.launch({ dropPendingUpdates: true }).catch((err) => {
+      console.error('[telegram] Polling ended:', err.message)
+      bot = null
+      isLaunched = false
+    })
+
     bot = instance
     isLaunched = true
     console.log('[telegram] Bot started (long-polling)')
