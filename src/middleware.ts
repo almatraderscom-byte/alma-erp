@@ -24,6 +24,8 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/orders/website') return true
   // Hermes agent read-only orders API — uses X-ALMA-API-KEY in route handler
   if (pathname.startsWith('/api/agent/')) return true
+  // Internal worker callbacks — use AGENT_INTERNAL_TOKEN in route handler, no session cookie
+  if (pathname.startsWith('/api/assistant/internal/')) return true
   // /api/debug/* paths apply their own SUPER_ADMIN / CRON_SECRET checks
   // inside the handler so monitoring scripts can hit them via Bearer auth.
   if (pathname.startsWith('/api/debug/')) return true
