@@ -4,52 +4,47 @@
  *
  * Dhaka coordinates: 23.8103°N, 90.4125°E
  * Calculation method: MoonsightingCommittee (standard for BD)
+ *
+ * ESM note: adhan v4.x exports named exports only — no default export,
+ * and DateComponents was removed; PrayerTimes takes a plain Date.
  */
 
-// Dynamic import — adhan package may not be installed at startup
-let Adhan = null
+// Cache resolved named exports across calls
+let adhanExports = null
 
 async function getAdhan() {
-  if (Adhan) return Adhan
+  if (adhanExports) return adhanExports
   try {
+    // adhan v4 ESM: named exports, no default
     const mod = await import('adhan')
-    Adhan = mod.default || mod
-    return Adhan
-  } catch {
-    console.warn('[salah] adhan package not available — using static estimates')
+    // Destructure the named exports we need
+    const { Coordinates, CalculationMethod, Madhab, PrayerTimes } = mod
+    if (!Coordinates || !PrayerTimes) throw new Error('unexpected adhan export shape')
+    adhanExports = { Coordinates, CalculationMethod, Madhab, PrayerTimes }
+    return adhanExports
+  } catch (err) {
+    console.warn('[salah] adhan package not available — using static estimates:', err.message)
     return null
   }
 }
 
 /**
  * Returns prayer times for a given date as { fajr, dhuhr, asr, maghrib, isha } Date objects.
- * Also includes window end times (next prayer = end of window).
+ * Window end = start of next prayer (isha window = +3h after isha start).
  */
 export async function getPrayerTimes(date = new Date()) {
   const adhan = await getAdhan()
 
   if (adhan) {
     try {
-      const coordinates = new adhan.Coordinates(23.8103, 90.4125)
-      const params       = adhan.CalculationMethod.MoonsightingCommittee()
-      params.madhab      = adhan.Madhab.Shafi  // Common in Bangladesh
+      const { Coordinates, CalculationMethod, Madhab, PrayerTimes } = adhan
 
-      const prayerDate = new adhan.DateComponents(
-        date.getFullYear(),
-        date.getMonth() + 1,
-        date.getDate(),
-      )
+      const coordinates = new Coordinates(23.8103, 90.4125)
+      const params       = CalculationMethod.MoonsightingCommittee()
+      params.madhab      = Madhab.Shafi  // Common in Bangladesh
 
-      const times = new adhan.PrayerTimes(coordinates, prayerDate, params)
-
-      // Window end = next prayer start (isha ends at midnight of next day)
-      const nextDay = new Date(date)
-      nextDay.setDate(nextDay.getDate() + 1)
-      const nextDayTimes = new adhan.PrayerTimes(
-        coordinates,
-        new adhan.DateComponents(nextDay.getFullYear(), nextDay.getMonth() + 1, nextDay.getDate()),
-        params,
-      )
+      // adhan v4: PrayerTimes(coordinates, Date, params) — no DateComponents
+      const times = new PrayerTimes(coordinates, date, params)
 
       return {
         fajr:    { start: times.fajr,    end: times.sunrise },
@@ -60,12 +55,12 @@ export async function getPrayerTimes(date = new Date()) {
       }
     } catch (err) {
       console.error('[salah] adhan calculation error:', err.message)
+      // Fall through to static fallback
     }
   }
 
-  // Fallback: static Dhaka estimates (approximate)
-  const d = new Date(date)
-  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate()
+  // Fallback: static Dhaka estimates (approximate, UTC+6)
+  const y = date.getFullYear(), m = date.getMonth(), day = date.getDate()
 
   function t(h, min) { return new Date(y, m, day, h, min, 0) }
 
