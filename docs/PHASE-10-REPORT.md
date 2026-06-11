@@ -145,4 +145,15 @@ Owner can copy via Telegram: `/staff_onboard`
 3. VPS: `git pull`, `pm2 restart alma-worker`
 4. Confirm `META_ADS_TOKEN` has `ads_management` before using pause/budget tools
 
-**No merge to main** — owner tests preview and approves merge separately.
+## Production deployment (approved)
+
+| Step | Status |
+|------|--------|
+| Merge `agent-phase-10` → `main` (`584017d`) | ✅ |
+| `git push origin main` | ✅ |
+| VPS `git pull` + `prisma migrate deploy` (`20260614120000_agent_phase10`) | ✅ |
+| Tables `agent_ask_cards`, `staff_reply_stats`, `staff_locations` on Supabase | ✅ verified |
+| `pm2 restart agent-worker` — 13 schedulers online | ✅ |
+| Vercel auto-deploy from `main` push | ✅ (in progress ~2 min) |
+
+**Production URLs:** https://alma-erp-six.vercel.app · VPS worker `31.97.237.40`
