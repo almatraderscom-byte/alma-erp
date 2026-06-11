@@ -47,7 +47,7 @@ export async function getDhakaSchedule(ymd: string): Promise<Record<string, Waqt
     dhuhr: {
       start: dhuhrStart,
       end: dhuhrEnd,
-      label: friday ? 'জুম্মা (যোহর)' : 'যোহর',
+      label: friday ? 'জুম্মা' : 'যোহর',
       azanLabel: friday ? '১:০০ (জুম্মা ১:৩০)' : '১২:১৫',
     },
     asr: { start: asrStart, end: maghribStart, label: 'আসর', azanLabel: '৫:০০' },

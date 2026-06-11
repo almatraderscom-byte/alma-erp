@@ -60,7 +60,7 @@ export async function getDhakaSchedule(ymd) {
     dhuhr: {
       start: dhuhrStart,
       end: dhuhrEnd,
-      label: friday ? 'জুম্মা (যোহর)' : 'যোহর',
+      label: friday ? 'জুম্মা' : 'যোহর',
       azanLabel: friday ? '১:০০ (জুম্মা ১:৩০)' : '১২:১৫',
     },
     asr: {
