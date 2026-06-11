@@ -147,6 +147,22 @@ function userWantsVoiceReply(text) {
 
 // ── Handle text message from owner ────────────────────────────────────────
 
+async function autoMarkSalahFromText(text) {
+  if (!text?.trim()) return
+  try {
+    await fetch(`${APP_URL}/api/assistant/internal/salah-auto-mark`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${INT_TOKEN}`,
+      },
+      body: JSON.stringify({ text }),
+    })
+  } catch (err) {
+    console.warn('[telegram] salah-auto-mark failed:', err.message)
+  }
+}
+
 async function handleOwnerText(ctx, text) {
   const chatId = ctx.chat?.id
   if (chatId && !checkFlood(chatId)) {
@@ -154,6 +170,9 @@ async function handleOwnerText(ctx, text) {
     return
   }
   safeLogMessage('[telegram] owner message', `[len=${String(text ?? '').length}]`)
+
+  // Persist prayer confirmations immediately (before agent turn / scheduler race)
+  await autoMarkSalahFromText(text)
 
   // Use current conversation or get/create daily one
   let convId = ownerState.conversationId

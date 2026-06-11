@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
 import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
+import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
@@ -230,19 +231,30 @@ export async function* runAgentTurn(
   let messages: ApiMessage[] = await loadHistory(conversationId)
   const assistantTurns: CollectedBlock[][] = []
 
-  // Extract the text of the last user message for auto-retrieval
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
-  const lastUserText = lastUserMsg
-    ? Array.isArray(lastUserMsg.content)
-      ? lastUserMsg.content.filter((b): b is Anthropic.Messages.TextBlockParam => b.type === 'text').map((b) => b.text).join(' ')
-      : String(lastUserMsg.content)
-    : ''
+  // Extract recent owner messages for salah auto-mark + RAG
+  const recentUserTexts: string[] = []
+  for (let i = messages.length - 1; i >= 0 && recentUserTexts.length < 12; i--) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    const text = Array.isArray(m.content)
+      ? m.content
+          .filter((b): b is Anthropic.Messages.TextBlockParam => b.type === 'text')
+          .map((b) => b.text)
+          .join(' ')
+      : String(m.content)
+    if (text.trim()) recentUserTexts.unshift(text.trim())
+  }
+  const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+
+  const now = new Date()
+  // Persist prayer confirmations before accountability injection (fixes missed re-reminders)
+  await applySalahAutoMarkFromUserTexts(recentUserTexts, now)
 
   // Load pinned memories and retrieve relevant memories in parallel
   const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
     loadPinnedMemories(),
     lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
-    loadSalahAccountabilityContext(new Date(), lastUserText),
+    loadSalahAccountabilityContext(now, lastUserText),
     loadRecentOtherConversations(conversationId, 5),
   ])
 
