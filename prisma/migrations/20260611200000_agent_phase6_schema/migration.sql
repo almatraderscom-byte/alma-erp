@@ -4,7 +4,7 @@
 -- ── Staff Tasks ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS staff_tasks (
-  id               TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id               TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   staff_id         TEXT        NOT NULL REFERENCES agent_staff(id) ON DELETE CASCADE,
   title            TEXT        NOT NULL,
   detail           TEXT,
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS staff_tasks_status_idx          ON staff_tasks (statu
 -- ── Product Marketing History ────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS product_marketing_history (
-  id               TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id               TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   product_ref      TEXT        NOT NULL,
   business         TEXT        NOT NULL,
   last_promoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS pmh_business_idx    ON product_marketing_history (bus
 -- ── Salah Records ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS salah_records (
-  id              TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id              TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   date            DATE        NOT NULL,
   waqt            TEXT        NOT NULL
                               CHECK (waqt IN ('fajr','dhuhr','asr','maghrib','isha')),
@@ -85,7 +85,7 @@ ON CONFLICT (key) DO NOTHING;
 -- ── Salah Overrides ──────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS salah_overrides (
-  id          TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id          TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   date        DATE,
   waqt        TEXT        CHECK (waqt IN ('fajr','dhuhr','asr','maghrib','isha')),
   override_time TIMESTAMPTZ,
@@ -100,7 +100,7 @@ CREATE INDEX IF NOT EXISTS salah_overrides_date_waqt_idx ON salah_overrides (dat
 -- ── Finance: Expenses ────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS finance_expenses (
-  id          TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id          TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   amount      INT         NOT NULL CHECK (amount > 0),
   currency    TEXT        NOT NULL DEFAULT 'BDT' CHECK (currency IN ('BDT','AED')),
   category    TEXT,
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS finance_expenses_category_idx  ON finance_expenses (c
 -- ── Finance: Ledger ──────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS finance_ledger (
-  id           TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id           TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   person_name  TEXT        NOT NULL,
   direction    TEXT        NOT NULL
                            CHECK (direction IN ('lent','borrowed','repaid_to_me','repaid_by_me')),
@@ -133,7 +133,7 @@ CREATE INDEX IF NOT EXISTS finance_ledger_direction_idx  ON finance_ledger (dire
 -- ── Messenger Alert Log ──────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS messenger_alerts (
-  id              TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id              TEXT        PRIMARY KEY DEFAULT CAST(gen_random_uuid() AS TEXT),
   page_id         TEXT        NOT NULL,
   conversation_id TEXT        NOT NULL,
   alert_type      TEXT        NOT NULL
@@ -141,9 +141,12 @@ CREATE TABLE IF NOT EXISTS messenger_alerts (
   detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved        BOOLEAN     NOT NULL DEFAULT FALSE,
   resolved_at     TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (conversation_id, alert_type, detected_at::date)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- One alert per conversation/type per calendar day (expression unique — not valid inline in CREATE TABLE)
+CREATE UNIQUE INDEX IF NOT EXISTS messenger_alerts_conv_type_day_uniq
+  ON messenger_alerts (conversation_id, alert_type, CAST(detected_at AS DATE));
 
 CREATE INDEX IF NOT EXISTS messenger_alerts_page_idx     ON messenger_alerts (page_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS messenger_alerts_resolved_idx ON messenger_alerts (resolved, detected_at DESC);
