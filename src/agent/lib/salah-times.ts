@@ -29,7 +29,7 @@ function formatTimeDhaka(d: Date): string {
 /** Static Dhaka estimates — keep in sync with worker/src/salah/times.mjs fallback. */
 export function getDhakaPrayerTimes(ymd = todayYmdDhaka()) {
   const windows: Record<WaqtKey, { start: Date; end: Date }> = {
-    fajr:    { start: dhakaTime(ymd, 4, 43),  end: dhakaTime(ymd, 5, 11) },
+    fajr:    { start: dhakaTime(ymd, 3, 43),  end: dhakaTime(ymd, 5, 11) },
     dhuhr:   { start: dhakaTime(ymd, 12, 3),  end: dhakaTime(ymd, 15, 17) },
     asr:     { start: dhakaTime(ymd, 15, 17), end: dhakaTime(ymd, 18, 48) },
     maghrib: { start: dhakaTime(ymd, 18, 48), end: dhakaTime(ymd, 20, 2) },
