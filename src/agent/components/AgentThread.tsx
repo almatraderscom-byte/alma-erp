@@ -29,6 +29,7 @@ interface AgentThreadProps {
   onArtifactSave: (artifact: Omit<Artifact, 'id' | 'createdAt'>) => void
   conversationId: string | null
   onArtifactOpen: () => void
+  onActionApproved?: () => void
 }
 
 // Detect artifact-worthy content: code block ≥ 15 lines OR markdown doc ≥ 800 chars
@@ -125,7 +126,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
@@ -248,8 +249,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {msg.pendingAction && (
                     <AgentConfirmCard
                       action={msg.pendingAction}
-                      onResolved={() => {
-                        // Card stays rendered but buttons disable after resolution
+                      onResolved={(status) => {
+                        if (status === 'approved') onActionApproved?.()
                       }}
                     />
                   )}

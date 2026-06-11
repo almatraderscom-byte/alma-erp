@@ -47,6 +47,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
 
   const abortRef = useRef<AbortController | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Close sidebar by default on mobile
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
@@ -277,6 +278,56 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     abortRef.current?.abort()
   }
 
+  // Poll for new messages after a confirm-card action is approved.
+  // Checks immediately (catches fb_post inline result) then every 8s for up to 96s
+  // (covers the worker's 30s poll cycle + image generation time).
+  function startResultPolling(convId: string) {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+    let attempts = 0
+    const initialCount = messages.length
+
+    async function fetchAndUpdate() {
+      try {
+        const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
+        if (!res.ok) return
+        const rows: Array<{
+          id: string; role: string
+          content: Array<{ type: string; text?: string; mediaType?: string }>
+          tokensIn: number | null; tokensOut: number | null; costUsd: string | null
+        }> = await res.json()
+
+        if (rows.length > initialCount) {
+          setMessages(rows.map((r) => {
+            const textBlocks = r.content.filter((b) => b.type === 'text')
+            const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
+            return {
+              id: r.id,
+              role: r.role as 'user' | 'assistant',
+              text: textBlocks.map((b) => b.text ?? '').join(''),
+              files: fileBlocks.map((b) => ({ previewUrl: '', mediaType: b.mediaType ?? 'image/jpeg' })),
+              tokensIn: r.tokensIn ?? undefined,
+              tokensOut: r.tokensOut ?? undefined,
+              costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+            }
+          }))
+          clearInterval(pollTimerRef.current!)
+          pollTimerRef.current = null
+        }
+      } catch { /* ignore */ }
+    }
+
+    void fetchAndUpdate() // immediate check
+    pollTimerRef.current = setInterval(() => {
+      attempts++
+      if (attempts >= 12) { // ~96s max
+        clearInterval(pollTimerRef.current!)
+        pollTimerRef.current = null
+        return
+      }
+      void fetchAndUpdate()
+    }, 8000)
+  }
+
   async function saveArtifact(art: Omit<Artifact, 'id' | 'createdAt'>) {
     const res = await fetch('/api/assistant/artifacts', {
       method: 'POST',
@@ -334,6 +385,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onArtifactSave={saveArtifact}
             conversationId={activeConvId}
             onArtifactOpen={() => setArtifactsOpen(true)}
+            onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
           />
           <AgentArtifactsPanel
             artifacts={artifacts}
