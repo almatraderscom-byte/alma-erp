@@ -48,18 +48,76 @@ function detectArtifact(text: string): { type: 'code' | 'markdown'; content: str
   return null
 }
 
-function TtsButton({ text }: { text: string }) {
+function TtsButton({ text, messageId }: { text: string; messageId: string }) {
+  const [loading, setLoading] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const blobUrlRef = useRef<string | null>(null)
+
   async function speak() {
-    const res = await fetch('/api/assistant/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-    if (res.status === 501) toast('🔊 Phase 3-এ চালু হবে', { icon: 'ℹ️' })
+    // If already playing, pause
+    if (playing && audioRef.current) {
+      audioRef.current.pause()
+      setPlaying(false)
+      return
+    }
+
+    // Replay from cache if available
+    if (blobUrlRef.current) {
+      const audio = new Audio(blobUrlRef.current)
+      audioRef.current = audio
+      audio.onended = () => setPlaying(false)
+      audio.onerror = () => { setPlaying(false); toast.error('অডিও প্লে ব্যর্থ।') }
+      setPlaying(true)
+      void audio.play()
+      return
+    }
+
+    setLoading(true)
+    try {
+      const res = await fetch('/api/assistant/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (!res.ok) {
+        const data = await res.json() as { error?: string }
+        toast.error(data.error ?? 'TTS ব্যর্থ হয়েছে।')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      blobUrlRef.current = url // cache per message
+
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => setPlaying(false)
+      audio.onerror = () => { setPlaying(false); toast.error('অডিও প্লে ব্যর্থ।') }
+      setPlaying(true)
+      void audio.play()
+    } catch {
+      toast.error('TTS ব্যর্থ হয়েছে।')
+    } finally {
+      setLoading(false)
+    }
   }
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
+    }
+  }, [])
+
   return (
-    <button onClick={speak} className="rounded-md p-1 text-zinc-600 hover:text-muted-hi transition-colors" title="TTS">
-      🔊
+    <button
+      onClick={speak}
+      disabled={loading}
+      data-message-id={messageId}
+      className={`rounded-md p-1 transition-colors disabled:opacity-50 ${playing ? 'text-gold-lt' : 'text-zinc-600 hover:text-muted-hi'}`}
+      title={playing ? 'থামান' : 'শুনুন'}
+    >
+      {loading ? '⏳' : playing ? '⏸' : '🔊'}
     </button>
   )
 }
@@ -186,7 +244,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {/* Footer actions */}
                   {!msg.streaming && msg.text && (
                     <div className="mt-1.5 flex items-center gap-2">
-                      <TtsButton text={msg.text} />
+                      <TtsButton text={msg.text} messageId={msg.id} />
                       {/* Artifact offer */}
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button

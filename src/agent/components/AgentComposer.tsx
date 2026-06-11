@@ -99,13 +99,24 @@ export default function AgentComposer({
         clearInterval(recordTimerRef.current!)
         setRecording(false)
         setRecordSecs(0)
-        // Send to stub endpoint
+        // Transcribe via Whisper
         const blob = new Blob(chunks, { type: 'audio/webm' })
         const fd = new FormData()
         fd.append('audio', blob, 'recording.webm')
-        const res = await fetch('/api/assistant/transcribe', { method: 'POST', body: fd })
-        if (res.status === 501) {
-          toast('🎤 Phase 3-এ চালু হবে', { icon: 'ℹ️' })
+        const toastId = toast.loading('ট্রান্সক্রাইব হচ্ছে…')
+        try {
+          const res = await fetch('/api/assistant/transcribe', { method: 'POST', body: fd })
+          const data = await res.json() as { text?: string; error?: string }
+          toast.dismiss(toastId)
+          if (res.ok && data.text) {
+            // Insert transcription into composer for review/edit before send
+            setText((prev) => (prev ? `${prev} ${data.text}` : data.text!).trim())
+          } else {
+            toast.error(data.error ?? 'ট্রান্সক্রিপশন ব্যর্থ হয়েছে।')
+          }
+        } catch {
+          toast.dismiss(toastId)
+          toast.error('ট্রান্সক্রিপশন ব্যর্থ হয়েছে।')
         }
       }
       mr.start()
