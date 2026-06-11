@@ -9,6 +9,8 @@
  * and DateComponents was removed; PrayerTimes takes a plain Date.
  */
 
+import { dhakaTodayYmd } from './dhaka-date.mjs'
+
 // Cache resolved named exports across calls
 let adhanExports = null
 
@@ -31,8 +33,10 @@ async function getAdhan() {
 /**
  * Returns prayer times for a given date as { fajr, dhuhr, asr, maghrib, isha } Date objects.
  * Window end = start of next prayer (isha window = +3h after isha start).
+ * @param {Date} date — anchor instant; calendar day taken in Asia/Dhaka
  */
 export async function getPrayerTimes(date = new Date()) {
+  const ymd = dhakaTodayYmd(date)
   const adhan = await getAdhan()
 
   if (adhan) {
@@ -43,8 +47,9 @@ export async function getPrayerTimes(date = new Date()) {
       const params       = CalculationMethod.MoonsightingCommittee()
       params.madhab      = Madhab.Shafi  // Common in Bangladesh
 
-      // adhan v4: PrayerTimes(coordinates, Date, params) — no DateComponents
-      const times = new PrayerTimes(coordinates, date, params)
+      // Anchor at Dhaka noon so the calendar day is correct on UTC VPS hosts
+      const anchor = new Date(`${ymd}T12:00:00+06:00`)
+      const times = new PrayerTimes(coordinates, anchor, params)
 
       return {
         fajr:    { start: times.fajr,    end: times.sunrise },
@@ -60,8 +65,6 @@ export async function getPrayerTimes(date = new Date()) {
   }
 
   // Fallback: static Dhaka estimates — always +06:00 (not server local TZ)
-  const ymd = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-
   function t(h, min) {
     return new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+06:00`)
   }

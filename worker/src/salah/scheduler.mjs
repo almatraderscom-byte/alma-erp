@@ -12,6 +12,7 @@
  */
 
 import { getPrayerTimes, windowProgress } from './times.mjs'
+import { dhakaTodayYmd, dhakaNoonUtc, dhakaYesterdayYmd } from './dhaka-date.mjs'
 import { notify } from '../notify/index.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
@@ -191,10 +192,8 @@ function normalizeSalahRecord(record) {
   }
 }
 
-function dhakaYesterday(todayYmd) {
-  const d = new Date(`${todayYmd}T12:00:00+06:00`)
-  d.setDate(d.getDate() - 1)
-  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+function isValidWindow(start, end) {
+  return Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && end > start
 }
 
 async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
@@ -217,7 +216,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   const griefEnabled    = settings.salah_grief_reminder_enabled === 'true'
   const griefContext    = griefEnabled ? (settings.salah_grief_context ?? '') : ''
 
-  const today   = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const today   = dhakaTodayYmd()
   const records = await getSalahRecords(today)
   const now     = new Date()
 
@@ -227,7 +226,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const fajr = normalizeSalahRecord(fajrRecord)
     const msSinceFajr = now - fajr.windowStart
     if (fajr.status === 'pending' && msSinceFajr >= 0 && msSinceFajr < 6 * 60 * 1000 && fajr.remindersSent === 0) {
-      const yesterday = dhakaYesterday(today)
+      const yesterday = dhakaYesterdayYmd()
       const yRecords = await getSalahRecords(yesterday)
       for (const yr of yRecords) {
         const y = normalizeSalahRecord(yr)
@@ -250,7 +249,12 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 
     const { windowStart, windowEnd, waqt, remindersSent } = record
 
-    // Future waqt — do not remind
+    if (!isValidWindow(windowStart, windowEnd)) {
+      console.warn(`[salah] skip invalid window for ${waqt} on ${today}`)
+      continue
+    }
+
+    // Future waqt — do not remind or mark missed
     if (now < windowStart) continue
 
     const progress = windowProgress(windowStart, windowEnd)
@@ -261,7 +265,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       const msg = level1Message(waqt)
       await notify({
         tier:     escalationLevel >= 2 ? 2 : 1,
-        title:    `🕌 ${WAQT_NAMES[waqt]}-এর আযান`,
+        title:    `${WAQT_NAMES[waqt]} Azan`,
         message:  msg,
         category: 'salah',
         voice:    true,
@@ -269,7 +273,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       await sendTelegramSafe(
         bot,
         ownerChatId,
-        `🕌 *${WAQT_NAMES[waqt]}-এর আযান হয়েছে*\n\n${msg}`,
+        `🕌 *${WAQT_NAMES[waqt]}-এর আযান হয়েছে*`,
         { parse_mode: 'Markdown', reply_markup: salahButtons(waqt) },
       )
 
@@ -295,19 +299,19 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // Window closed → mark missed
-    if (progress >= 100) {
+    // Window closed → mark missed (only after windowEnd, never for future waqts)
+    if (now > windowEnd) {
       await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
       const missedMsg = missedMessage(waqt, griefContext)
       await notify({
         tier:     2,
-        title:    `❌ ${WAQT_NAMES[waqt]}-এর ওয়াক্ত শেষ`,
+        title:    `${WAQT_NAMES[waqt]} window ended`,
         message:  missedMsg,
         category: 'salah',
-        voice:    true,
+        voice:    false,
       })
-      await sendTelegramSafe(bot, ownerChatId, missedMsg, { reply_markup: qazaButtons(waqt) })
+      await sendTelegramSafe(bot, ownerChatId, '👉 পড়েছেন কি?', { reply_markup: qazaButtons(waqt) })
       continue
     }
 
@@ -316,14 +320,14 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       const msg = level1Message(waqt)
       await notify({
         tier:     1,
-        title:    `⏰ ${WAQT_NAMES[waqt]} — স্মরণ`,
+        title:    `${WAQT_NAMES[waqt]} reminder`,
         message:  msg,
         category: 'salah',
       })
       await sendTelegramSafe(
         bot,
         ownerChatId,
-        `⏰ ${msg}`,
+        '👉',
         { reply_markup: salahButtons(waqt) },
       )
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
@@ -334,12 +338,12 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       const msg = level2Message(waqt)
       await notify({
         tier:     escalationLevel >= 2 ? 2 : 1,
-        title:    `⚠️ ${WAQT_NAMES[waqt]} — সময় শেষ হচ্ছে`,
+        title:    `${WAQT_NAMES[waqt]} ending soon`,
         message:  msg,
         category: 'salah',
         voice:    true,
       })
-      await sendTelegramSafe(bot, ownerChatId, msg, { reply_markup: salahButtons(waqt) })
+      await sendTelegramSafe(bot, ownerChatId, '👉', { reply_markup: salahButtons(waqt) })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
 
@@ -348,12 +352,12 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       const msg = level3Message(waqt, griefContext)
       await notify({
         tier:     Math.min(3, escalationLevel + 1),
-        title:    `🚨 ${WAQT_NAMES[waqt]} — শেষ সুযোগ`,
+        title:    `${WAQT_NAMES[waqt]} last chance`,
         message:  msg,
         category: 'salah',
         voice:    true,
       })
-      await sendTelegramSafe(bot, ownerChatId, msg, { reply_markup: salahButtons(waqt) })
+      await sendTelegramSafe(bot, ownerChatId, '👉', { reply_markup: salahButtons(waqt) })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
   }
@@ -362,8 +366,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 // ── Initialize today's salah records at dawn ──────────────────────────────────
 
 export async function initializeDailySalahRecords(supabase) {
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-  const times = await getPrayerTimes(new Date())
+  const today = dhakaTodayYmd()
+  const times = await getPrayerTimes(dhakaNoonUtc(today))
 
   for (const waqt of WAQT_ORDER) {
     const prayerWindow = times[waqt]
@@ -396,6 +400,7 @@ export async function initializeDailySalahRecords(supabase) {
       windowStart: waqtStart.toISOString(),
       windowEnd:   prayerWindow.end.toISOString(),
       status:      'pending',
+      resetDay:    true,
     })
     console.log(`[salah] initialized ${waqt} for ${today}`)
   }
@@ -409,7 +414,7 @@ export async function handleSalahCallback(ctx, action, waqt, status) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
 
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const today = dhakaTodayYmd()
 
   if (action === 'salah_done') {
     await upsertSalahRecord({ date: today, waqt, status })

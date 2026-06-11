@@ -238,7 +238,7 @@ export async function* runAgentTurn(
   const [pinnedMemories, relevantMemories, salahContext] = await Promise.all([
     loadPinnedMemories(),
     lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
-    loadSalahAccountabilityContext(),
+    loadSalahAccountabilityContext(new Date(), lastUserText),
   ])
 
   type ToolRecord = {

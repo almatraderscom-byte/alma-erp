@@ -8,10 +8,47 @@ import {
   summarizeWaqts,
   pickAccountableWaqts,
 } from '@/agent/lib/salah-context'
+import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+// ── get_prayer_times ──────────────────────────────────────────────────────────
+
+const get_prayer_times: AgentTool = {
+  name: 'get_prayer_times',
+  description:
+    'Returns today\'s 5 waqt prayer START/END times for Dhaka (informational only). ' +
+    'Use when the owner asks for namaz times / schedule — do NOT use get_salah_status for that.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const dateYmd = (input.date as string) || todayYmdDhaka()
+      const times = getDhakaPrayerTimes(dateYmd)
+      const now = new Date()
+      return {
+        success: true,
+        data: {
+          date: dateYmd,
+          timezone: 'Asia/Dhaka',
+          waqts: times.map((w) => ({
+            ...w,
+            state: now < new Date(w.start) ? 'upcoming' : now > new Date(w.end) ? 'ended' : 'active',
+          })),
+          note: 'এটি শুধু সময়সূচি — জবাবদিহিতা বা মিসড মেসেজ পাঠাবেন না।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
 
 // ── get_salah_status ──────────────────────────────────────────────────────────
 
@@ -193,6 +230,7 @@ const get_salah_weekly_summary: AgentTool = {
 }
 
 export const SALAH_TOOLS: AgentTool[] = [
+  get_prayer_times,
   get_salah_status,
   mark_salah,
   get_salah_weekly_summary,

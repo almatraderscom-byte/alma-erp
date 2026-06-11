@@ -3,6 +3,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
+import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
 import type { SalahContext } from '@/agent/lib/system-prompt'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,7 +84,13 @@ export function pickAccountableWaqts(today: WaqtSummary[], yesterday: WaqtSummar
   return [...fromYesterday, ...fromToday]
 }
 
-export async function loadSalahAccountabilityContext(now = new Date()): Promise<SalahContext | undefined> {
+export async function loadSalahAccountabilityContext(
+  now = new Date(),
+  userMessage = '',
+): Promise<SalahContext | undefined> {
+  if (userMessage && isPrayerTimeInquiry(userMessage)) {
+    return undefined
+  }
   try {
     const todayYmd = todayYmdDhaka(now)
     const yesterdayYmd = addDaysYmd(todayYmd, -1)

@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-  const { date, waqt, windowStart, windowEnd, status, incrementReminders } = body as {
+  const { date, waqt, windowStart, windowEnd, status, incrementReminders, resetDay } = body as {
     date?: string; waqt?: string; windowStart?: string; windowEnd?: string;
-    status?: string; incrementReminders?: boolean;
+    status?: string; incrementReminders?: boolean; resetDay?: boolean;
   }
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
@@ -68,8 +68,11 @@ export async function POST(req: NextRequest) {
     const record = await db.agentSalahRecord.upsert({
       where:  { date_waqt: { date: dateObj, waqt } },
       update: {
+        ...(windowStart           ? { windowStart: windowStartDt } : {}),
+        ...(windowEnd             ? { windowEnd: windowEndDt } : {}),
         ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
         ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
+        ...(resetDay            ? { remindersSent: 0, confirmedAt: null } : {}),
       },
       create: {
         date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
