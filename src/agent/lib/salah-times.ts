@@ -1,21 +1,10 @@
 /**
- * Dhaka prayer times for agent informational replies (matches worker fallback).
+ * Dhaka prayer times for agent informational replies.
  */
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 
 export type WaqtKey = 'fajr' | 'dhuhr' | 'asr' | 'maghrib' | 'isha'
-
-const WAQT_LABELS: Record<WaqtKey, string> = {
-  fajr: 'ফজর',
-  dhuhr: 'যোহর',
-  asr: 'আসর',
-  maghrib: 'মাগরিব',
-  isha: 'ইশা',
-}
-
-function dhakaTime(ymd: string, h: number, min: number): Date {
-  return new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+06:00`)
-}
 
 function formatTimeDhaka(d: Date): string {
   return d.toLocaleTimeString('bn-BD', {
@@ -26,24 +15,22 @@ function formatTimeDhaka(d: Date): string {
   })
 }
 
-/** Static Dhaka estimates — keep in sync with worker/src/salah/times.mjs fallback. */
-export function getDhakaPrayerTimes(ymd = todayYmdDhaka()) {
-  const windows: Record<WaqtKey, { start: Date; end: Date }> = {
-    fajr:    { start: dhakaTime(ymd, 3, 43),  end: dhakaTime(ymd, 5, 11) },
-    dhuhr:   { start: dhakaTime(ymd, 12, 3),  end: dhakaTime(ymd, 15, 17) },
-    asr:     { start: dhakaTime(ymd, 15, 17), end: dhakaTime(ymd, 18, 48) },
-    maghrib: { start: dhakaTime(ymd, 18, 48), end: dhakaTime(ymd, 20, 2) },
-    isha:    { start: dhakaTime(ymd, 20, 2),  end: dhakaTime(ymd, 23, 2) },
-  }
+export async function getDhakaPrayerTimes(ymd = todayYmdDhaka()) {
+  const schedule = await getDhakaSchedule(ymd)
+  const order: WaqtKey[] = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
 
-  return (Object.keys(windows) as WaqtKey[]).map((waqt) => ({
-    waqt,
-    label: WAQT_LABELS[waqt],
-    start: windows[waqt].start.toISOString(),
-    end: windows[waqt].end.toISOString(),
-    startLabel: formatTimeDhaka(windows[waqt].start),
-    endLabel: formatTimeDhaka(windows[waqt].end),
-  }))
+  return order.map((waqt) => {
+    const w = schedule[waqt]!
+    return {
+      waqt,
+      label: w.label,
+      start: w.start.toISOString(),
+      end: w.end.toISOString(),
+      startLabel: formatTimeDhaka(w.start),
+      endLabel: formatTimeDhaka(w.end),
+      azanLabel: w.azanLabel,
+    }
+  })
 }
 
 export function isPrayerTimeInquiry(text: string): boolean {

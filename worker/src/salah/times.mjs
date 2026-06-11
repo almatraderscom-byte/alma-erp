@@ -1,29 +1,21 @@
 /**
- * Prayer times calculator for Dhaka, Bangladesh.
- *
- * Uses verified static +06:00 times (adhan.js returns one day early on UTC VPS hosts).
- * Keep in sync with src/agent/lib/salah-times.ts
+ * Prayer times for Dhaka — Sir's local mosque schedule.
  */
 
 import { dhakaTodayYmd } from './dhaka-date.mjs'
+import { getDhakaSchedule } from './dhaka-schedule.mjs'
 
 /**
  * @param {Date} date — anchor instant; calendar day taken in Asia/Dhaka
  */
 export async function getPrayerTimes(date = new Date()) {
   const ymd = dhakaTodayYmd(date)
-
-  function t(h, min) {
-    return new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+06:00`)
+  const schedule = await getDhakaSchedule(ymd)
+  const out = {}
+  for (const [waqt, w] of Object.entries(schedule)) {
+    out[waqt] = { start: w.start, end: w.end, label: w.label }
   }
-
-  return {
-    fajr:    { start: t(3, 43),  end: t(5, 11)  },
-    dhuhr:   { start: t(12, 3),  end: t(15, 17) },
-    asr:     { start: t(15, 17), end: t(18, 48) },
-    maghrib: { start: t(18, 48), end: t(20, 2)  },
-    isha:    { start: t(20, 2),  end: t(23, 2)  },
-  }
+  return out
 }
 
 /**

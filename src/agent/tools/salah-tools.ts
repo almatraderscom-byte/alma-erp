@@ -30,7 +30,7 @@ const get_prayer_times: AgentTool = {
   handler: async (input) => {
     try {
       const dateYmd = (input.date as string) || todayYmdDhaka()
-      const times = getDhakaPrayerTimes(dateYmd)
+      const times = await getDhakaPrayerTimes(dateYmd)
       const now = new Date()
       return {
         success: true,

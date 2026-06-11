@@ -220,6 +220,26 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   const records = await getSalahRecords(today)
   const now     = new Date()
 
+  // Stale DB windows (wrong day / bad adhan) — re-init instead of mass "missed" flood
+  const pendingPastEnd = records.filter((r) => {
+    const rec = normalizeSalahRecord(r)
+    return rec.status === 'pending' && now > rec.windowEnd
+  })
+  if (pendingPastEnd.length >= 2) {
+    const expected = await getPrayerTimes(dhakaNoonUtc(today))
+    const stale = pendingPastEnd.filter((r) => {
+      const rec = normalizeSalahRecord(r)
+      const exp = expected[rec.waqt]
+      if (!exp) return true
+      return Math.abs(rec.windowStart - exp.start) > 2 * 60 * 60 * 1000
+    })
+    if (stale.length >= 2) {
+      console.warn(`[salah] stale windows (${stale.length}) — re-initializing ${today}`)
+      await initializeDailySalahRecords(supabase)
+      return
+    }
+  }
+
   // Fajr carryover: ask about yesterday's pending waqts once per morning
   const fajrRecord = records.find((r) => r.waqt === 'fajr')
   if (fajrRecord) {
