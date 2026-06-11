@@ -53,15 +53,16 @@ async function logNotification(tier, category, channels, statuses) {
  *   title: string,
  *   message: string,
  *   category?: 'salah'|'urgent'|'task'|'report',
- *   voice?: boolean
+ *   voice?: boolean,
+ *   skipTelegram?: boolean
  * }} opts
  */
-export async function notify({ tier, title, message, category, voice = false }) {
+export async function notify({ tier, title, message, category, voice = false, skipTelegram = false }) {
   const channels = []
   const statuses = {}
 
   // ── Tier 1: Telegram ──────────────────────────────────────────────────────
-  if (_telegramBot && _ownerChatId) {
+  if (!skipTelegram && _telegramBot && _ownerChatId) {
     channels.push('telegram')
     try {
       const fullText = `*${title}*\n\n${message}`

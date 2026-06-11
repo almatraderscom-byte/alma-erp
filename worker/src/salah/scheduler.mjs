@@ -303,15 +303,19 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     if (now > windowEnd) {
       await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
-      const missedMsg = missedMessage(waqt, griefContext)
+      const missedMsg = `❌ ${WAQT_NAMES[waqt]}-এর ওয়াক্ত শেষ\n\n${missedMessage(waqt, griefContext)}`
       await notify({
-        tier:     2,
-        title:    `${WAQT_NAMES[waqt]} window ended`,
-        message:  missedMsg,
-        category: 'salah',
-        voice:    false,
+        tier:         2,
+        title:        `${WAQT_NAMES[waqt]} window ended`,
+        message:      missedMsg,
+        category:     'salah',
+        voice:        false,
+        skipTelegram: true,
       })
-      await sendTelegramSafe(bot, ownerChatId, '👉 পড়েছেন কি?', { reply_markup: qazaButtons(waqt) })
+      await sendTelegramSafe(bot, ownerChatId, missedMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: qazaButtons(waqt),
+      })
       continue
     }
 

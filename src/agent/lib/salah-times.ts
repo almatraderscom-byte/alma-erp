@@ -50,6 +50,7 @@ export function isPrayerTimeInquiry(text: string): boolean {
   const t = text.toLowerCase()
   return (
     /নামাজের\s*সময়|নামাজ\s*সময়|ওয়াক্তের\s*সময়|আজকে.*নামাজ|namaz.*time|salah.*time|prayer.*time|মুআজ্জিন|আযানের\s*সময়/i.test(t)
-    || (/সময়|টাইম|time/i.test(t) && /নামাজ|namaz|salah|ওয়াক্ত|prayer/i.test(t))
+    || (/সময়|টাইম|time|gulo/i.test(t) && /নামাজ|namaz|salah|ওয়াক্ত|prayer|waqt/i.test(t))
+    || /ajke.*namaz|aajke.*namaz|ajker.*namaz/i.test(t)
   )
 }

@@ -112,8 +112,18 @@ export function buildSystemPrompt(
     })
   }
 
+  if (prayerTimeOnlyTurn) {
+    blocks.push({
+      type: 'text',
+      text:
+        '\n## এই টার্ন: শুধু নামাজের সময়সূচি\n' +
+        'মালিক সময়/টাইম চেয়েছেন — get_prayer_times দিয়ে শুধু টেবিল দিন। ' +
+        'get_salah_status কল করবেন না। "পড়েছেন কি?", "ওয়াক্ত শেষ", মিসড বা জবাবদিহিতা যোগ করবেন না।',
+    })
+  }
+
   // Salah accountability context (injected per-turn if there are pending/missed waqts)
-  if (salahContext?.pendingWaqts?.length) {
+  if (!prayerTimeOnlyTurn && salahContext?.pendingWaqts?.length) {
     const waqtList = salahContext.pendingWaqts
       .map(w => `${w.waqt}${w.isMissed ? ' (MISSED — window closed)' : w.isOverdue ? ' (overdue)' : ''}`)
       .join(', ')
