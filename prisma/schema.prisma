@@ -1726,6 +1726,7 @@ model AgentMemory {
   content   String   @db.Text
   pinned    Boolean  @default(false)
   metadata  Json?
+  embedding Unsupported("vector(1536)")?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

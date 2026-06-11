@@ -1,9 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
-import { buildSystemPrompt } from '@/agent/lib/system-prompt'
+import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
+import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -148,6 +149,51 @@ function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
   return messages
 }
 
+// ── Memory helpers ─────────────────────────────────────────────────────────
+
+async function loadPinnedMemories(): Promise<PinnedMemory[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (prisma as any).agentMemory.findMany({
+      where: { pinned: true },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+      select: { id: true, content: true, scope: true },
+    })
+    return rows as PinnedMemory[]
+  } catch {
+    return []
+  }
+}
+
+const SIMILARITY_THRESHOLD = 0.45
+
+async function retrieveRelevantMemories(userMessage: string): Promise<RelevantMemory[]> {
+  try {
+    const embedResult = await embed(userMessage)
+    if (!embedResult.success) return []
+
+    const vec = vectorLiteral(embedResult.data)
+    const rows: Array<{ id: string; content: string; scope: string; score: number }> =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).$queryRawUnsafe(
+        `SELECT id, content, scope,
+                1 - (embedding <=> $1::vector) AS score
+         FROM agent_memory
+         WHERE embedding IS NOT NULL AND pinned = false
+         ORDER BY embedding <=> $1::vector
+         LIMIT 3`,
+        vec,
+      )
+
+    return rows
+      .filter((r) => r.score >= SIMILARITY_THRESHOLD)
+      .map((r) => ({ ...r, score: Math.round(r.score * 100) / 100 }))
+  } catch {
+    return []
+  }
+}
+
 // ── Options ────────────────────────────────────────────────────────────────
 
 export interface RunAgentTurnOptions {
@@ -174,6 +220,20 @@ export async function* runAgentTurn(
   let messages: ApiMessage[] = await loadHistory(conversationId)
   const assistantTurns: CollectedBlock[][] = []
 
+  // Extract the text of the last user message for auto-retrieval
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserText = lastUserMsg
+    ? Array.isArray(lastUserMsg.content)
+      ? lastUserMsg.content.filter((b): b is Anthropic.Messages.TextBlockParam => b.type === 'text').map((b) => b.text).join(' ')
+      : String(lastUserMsg.content)
+    : ''
+
+  // Load pinned memories and retrieve relevant memories in parallel
+  const [pinnedMemories, relevantMemories] = await Promise.all([
+    loadPinnedMemories(),
+    lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
+  ])
+
   type ToolRecord = {
     id: string; toolName: string; input: Record<string, unknown>
     output: Record<string, unknown> | null; status: 'success' | 'error'
@@ -192,7 +252,7 @@ export async function* runAgentTurn(
           model: AGENT_MODEL,
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
-          system: buildSystemPrompt(projectSystemInstructions),
+          system: buildSystemPrompt(projectSystemInstructions, pinnedMemories, relevantMemories),
           tools: TOOL_DEFINITIONS,
           messages: apiMessages,
         },
