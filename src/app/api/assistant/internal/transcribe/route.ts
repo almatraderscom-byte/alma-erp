@@ -82,11 +82,12 @@ export async function POST(req: NextRequest) {
     }
 
     const client = getClient()
+    // Whisper API does not accept ISO 'bn' — omit language for auto-detect (Bangla/Banglish).
     const transcription = await client.audio.transcriptions.create({
       file: audioFile,
       model: 'whisper-1',
-      language: 'bn',
       response_format: 'json',
+      prompt: 'Bangla and Banglish speech.',
     })
 
     return Response.json({ text: transcription.text })
