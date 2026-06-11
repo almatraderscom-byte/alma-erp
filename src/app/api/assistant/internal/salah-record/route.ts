@@ -31,18 +31,27 @@ export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get('date')
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
 
-  const records = await db.agentSalahRecord.findMany({
-    where:   { date: new Date(date) },
-    orderBy: { windowStart: 'asc' },
-  })
-
-  return NextResponse.json({ date, records })
+  try {
+    const records = await db.agentSalahRecord.findMany({
+      where:   { date: new Date(`${date}T00:00:00+06:00`) },
+      orderBy: { windowStart: 'asc' },
+    })
+    return NextResponse.json({ date, records })
+  } catch (err) {
+    console.error('[salah-record GET]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await req.json()
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
   const { date, waqt, windowStart, windowEnd, status, incrementReminders } = body as {
     date?: string; waqt?: string; windowStart?: string; windowEnd?: string;
     status?: string; incrementReminders?: boolean;
@@ -50,22 +59,27 @@ export async function POST(req: NextRequest) {
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
 
-  const dateObj        = new Date(date)
-  const windowStartDt  = windowStart ? new Date(windowStart) : new Date()
-  const windowEndDt    = windowEnd   ? new Date(windowEnd)   : new Date()
-  const recordStatus   = status || 'pending'
+  try {
+    const dateObj        = new Date(`${date}T00:00:00+06:00`)
+    const windowStartDt  = windowStart ? new Date(windowStart) : new Date()
+    const windowEndDt    = windowEnd   ? new Date(windowEnd)   : new Date()
+    const recordStatus   = status || 'pending'
 
-  const record = await db.agentSalahRecord.upsert({
-    where:  { date_waqt: { date: dateObj, waqt } },
-    update: {
-      ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
-      ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
-    },
-    create: {
-      date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
-      status: recordStatus,
-    },
-  })
+    const record = await db.agentSalahRecord.upsert({
+      where:  { date_waqt: { date: dateObj, waqt } },
+      update: {
+        ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
+        ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
+      },
+      create: {
+        date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
+        status: recordStatus,
+      },
+    })
 
-  return NextResponse.json({ ok: true, record })
+    return NextResponse.json({ ok: true, record })
+  } catch (err) {
+    console.error('[salah-record POST]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
