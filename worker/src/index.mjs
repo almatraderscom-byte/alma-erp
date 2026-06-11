@@ -10,6 +10,9 @@
  */
 
 import 'dotenv/config'
+import { initWorkerSentry, captureWorkerError } from './sentry.mjs'
+import { startHeartbeatLoop } from './heartbeat.mjs'
+import { startHealthPingLoop } from './health-ping.mjs'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
@@ -28,6 +31,8 @@ const required = [
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
 ]
+initWorkerSentry()
+
 for (const key of required) {
   if (!process.env[key]) {
     console.error(`[worker] Missing required env var: ${key}`)
@@ -98,6 +103,7 @@ async function pollPendingJobs() {
     }
   } catch (err) {
     console.error('[worker] poll error:', err.message)
+    captureWorkerError(err, 'worker.poll_pending_jobs')
   }
 }
 
@@ -248,6 +254,7 @@ staffDispatchWorker.on('failed', (job, err) => {
 imageGenWorker.on('completed', (job) => console.log(`[worker] image-gen ${job.id} completed`))
 imageGenWorker.on('failed', (job, err) => {
   console.error(`[worker] image-gen ${job?.id} failed:`, err.message)
+  captureWorkerError(err, 'worker.image_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
   }
@@ -291,6 +298,12 @@ try {
 await pollPendingJobs()
 const pollInterval = setInterval(pollPendingJobs, 30_000)
 
+const heartbeatInterval = startHeartbeatLoop({
+  hasTelegram: Boolean(process.env.ASSISTANT_BOT_TOKEN),
+  hasSchedulers: Boolean(schedulerQueue),
+})
+const healthPingInterval = startHealthPingLoop()
+
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
 let shuttingDown = false
@@ -300,6 +313,8 @@ async function shutdown(signal) {
   shuttingDown = true
   console.log(`[worker] ${signal} — draining...`)
   clearInterval(pollInterval)
+  clearInterval(heartbeatInterval)
+  clearInterval(healthPingInterval)
   await stopTelegramBot(signal)
   await Promise.all([
     imageGenWorker.close(),

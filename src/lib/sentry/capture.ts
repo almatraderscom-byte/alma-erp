@@ -15,6 +15,7 @@ export type SentryCategory =
   | 'hydration'
   | 'client'
   | 'erp'
+  | 'agent'
 
 /** Events that should always alert in Sentry (paired with alert rules in docs/SENTRY.md). */
 const CRITICAL_EVENT_PATTERNS: RegExp[] = [
@@ -42,6 +43,7 @@ export function eventCategory(event: string): SentryCategory {
   if (event.startsWith('attendance.')) return 'attendance'
   if (event.startsWith('archive.')) return 'archive'
   if (event.startsWith('orders.')) return 'orders'
+  if (event.startsWith('agent.')) return 'agent'
   if (event.includes('hydration')) return 'hydration'
   if (event.startsWith('prisma.') || event.includes('database')) return 'prisma'
   return 'erp'

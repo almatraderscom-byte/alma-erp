@@ -30,14 +30,15 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
   const { data: tasks, error } = await query
   if (error) throw new Error(`DB error: ${error.message}`)
-  if (!tasks?.length) {
-    console.warn('[dispatch] no approved tasks found for', date)
+  const pending = (tasks ?? []).filter((t) => t.status === 'approved')
+  if (!pending.length) {
+    console.warn('[dispatch] no approved tasks to dispatch for', date)
     return
   }
 
   // Group by staff member
   const byStaff = {}
-  for (const task of tasks) {
+  for (const task of pending) {
     const staffId = task.agent_staff?.id || task.staff_id
     if (!byStaff[staffId]) byStaff[staffId] = { staff: task.agent_staff, tasks: [] }
     byStaff[staffId].tasks.push(task)
@@ -57,13 +58,13 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
 
   // Mark as 'sent'
-  const allIds = tasks.map(t => t.id)
+  const allIds = pending.map(t => t.id)
   await supabase
     .from('staff_tasks')
     .update({ status: 'sent' })
     .in('id', allIds)
 
-  console.log(`[dispatch] dispatched ${tasks.length} tasks to ${Object.keys(byStaff).length} staff`)
+  console.log(`[dispatch] dispatched ${pending.length} tasks to ${Object.keys(byStaff).length} staff`)
 }
 
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {

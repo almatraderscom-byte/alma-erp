@@ -61,10 +61,18 @@ export async function POST(
 
   if (action.type === 'fb_post') {
     try {
-      await db.agentPendingAction.update({
-        where: { id: actionId },
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
         data: { status: 'approved', resolvedAt: new Date() },
       })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        const existingResult = current?.result as { postId?: string } | null
+        if (current?.status === 'executed' && existingResult?.postId) {
+          return Response.json({ success: true, postId: existingResult.postId, idempotent: true })
+        }
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
 
       const pageId = String(payload.pageId ?? resolvePageId(String(payload.page ?? 'lifestyle')))
       const message = String(payload.message ?? '')

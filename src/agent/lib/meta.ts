@@ -1,5 +1,7 @@
 // Minimal Meta Graph API client — no SDK dependency.
 
+import { resilientFetch } from '@/agent/lib/fetch-retry'
+
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
 
 const PAGE_TOKENS: Record<string, string | undefined> = {
@@ -42,10 +44,12 @@ export async function createPagePost(opts: {
   const body: Record<string, string> = { message: opts.message, access_token: token }
   if (opts.imageUrl) body.url = opts.imageUrl
 
-  const res = await fetch(endpoint, {
+  const res = await resilientFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    timeoutMs: 30_000,
+    retries: 1,
   })
 
   if (!res.ok) {
@@ -62,8 +66,9 @@ export async function verifyPost(pageId: string, postId: string): Promise<boolea
   const token = tokenFor(pageId)
   // Graph postId for feed posts is "pageId_postId"
   const graphId = postId.includes('_') ? postId : `${pageId}_${postId}`
-  const res = await fetch(
+  const res = await resilientFetch(
     `${GRAPH_BASE}/${graphId}?fields=id&access_token=${token}`,
+    { timeoutMs: 15_000, retries: 1 },
   )
   if (!res.ok) return false
   const data = (await res.json()) as { id?: string }

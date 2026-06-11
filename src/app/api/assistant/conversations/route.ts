@@ -33,11 +33,32 @@ export async function GET(req: NextRequest) {
 
   const limitParam = req.nextUrl.searchParams.get('limit')
   const take = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 50) : 50
+  const cursor = req.nextUrl.searchParams.get('cursor')
+
+  let cursorUpdatedAt: Date | undefined
+  let cursorId: string | undefined
+  if (cursor) {
+    const [ts, id] = cursor.split('_')
+    if (ts && id) {
+      cursorUpdatedAt = new Date(ts)
+      cursorId = id
+    }
+  }
 
   const conversations = await prisma.agentConversation.findMany({
-    where: { archived: false },
-    orderBy: { updatedAt: 'desc' },
-    take,
+    where: {
+      archived: false,
+      ...(cursorUpdatedAt && cursorId
+        ? {
+            OR: [
+              { updatedAt: { lt: cursorUpdatedAt } },
+              { AND: [{ updatedAt: cursorUpdatedAt }, { id: { lt: cursorId } }] },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    take: take + 1,
     select: {
       id: true,
       title: true,
@@ -49,9 +70,20 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // Return plain array to preserve web UI compatibility.
-  // Telegram bot and internal callers also accept this format.
-  return Response.json(conversations)
+  const hasMore = conversations.length > take
+  const page = hasMore ? conversations.slice(0, take) : conversations
+  const last = page[page.length - 1]
+  const nextCursor = hasMore && last
+    ? `${last.updatedAt.toISOString()}_${last.id}`
+    : null
+
+  const paginated = req.nextUrl.searchParams.get('paginated') === 'true'
+  if (paginated) {
+    return Response.json({ conversations: page, nextCursor, hasMore })
+  }
+
+  // Plain array for Telegram / legacy callers
+  return Response.json(page)
 }
 
 export async function POST(req: NextRequest) {

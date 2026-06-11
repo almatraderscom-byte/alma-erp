@@ -4,6 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { isPendingActionExpired } from '@/agent/lib/pending-action'
 
 export const runtime = 'nodejs'
 
@@ -41,6 +42,14 @@ export async function POST(
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+  }
+
+  if (isPendingActionExpired(action.createdAt)) {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'expired', resolvedAt: new Date() },
+    })
+    return Response.json({ error: 'expired', message: 'অনুমোদনের সময় শেষ — ৩০ মিনিটের মধ্যে সিদ্ধান্ত নিতে হবে।' }, { status: 410 })
   }
 
   await db.agentPendingAction.update({

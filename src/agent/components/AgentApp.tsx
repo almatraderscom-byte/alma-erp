@@ -45,6 +45,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [convLoading, setConvLoading] = useState(false)
+  const [convLoadError, setConvLoadError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -69,11 +71,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(conv.id)
     setMessages([])
     setArtifacts([])
+    setConvLoading(true)
+    setConvLoadError(null)
 
+    try {
     const [msgRes, artRes] = await Promise.all([
       fetch(`/api/assistant/conversations/${conv.id}/messages`),
       fetch(`/api/assistant/conversations/${conv.id}/artifacts`),
     ])
+
+    if (!msgRes.ok) throw new Error(`মেসেজ লোড ব্যর্থ (HTTP ${msgRes.status})`)
 
     if (msgRes.ok) {
       const rows: Array<{
@@ -101,6 +108,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
 
     if (artRes.ok) setArtifacts(await artRes.json())
+    } catch (err) {
+      setConvLoadError(err instanceof Error ? err.message : 'লোড ব্যর্থ')
+    } finally {
+      setConvLoading(false)
+    }
   }
 
   function newConversation(projectId?: string) {
@@ -242,10 +254,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           } else if (evt.type === 'error') {
             const errText = evt.message as string
             let banglaMsg = errText
-            if (errText.includes('ANTHROPIC_API_KEY') || errText.includes('api_key')) {
+            if (errText.includes('কোটা') || /quota|credit|billing/i.test(errText)) {
+              banglaMsg = 'Anthropic API কোটা শেষ — মালিককে জানানো হয়েছে। পরে আবার চেষ্টা করুন।'
+            } else if (errText.includes('ANTHROPIC_API_KEY') || errText.includes('api_key')) {
               banglaMsg = 'API Key সেট করা নেই। Vercel-এ ANTHROPIC_API_KEY যোগ করুন।'
             } else if (errText.includes('overloaded')) {
               banglaMsg = 'সার্ভার ব্যস্ত। কিছুক্ষণ পরে আবার চেষ্টা করুন।'
+            } else if (/rate_limited|অনেক দ্রুত/i.test(errText)) {
+              banglaMsg = 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
             }
             setMessages((prev) => prev.map((m) =>
               m.id === assistantMsgId
@@ -380,6 +396,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
         {/* Thread + artifacts */}
         <div className="flex flex-1 overflow-hidden">
+          {convLoading ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-zinc-500 animate-pulse">
+              কথোপকথন লোড হচ্ছে…
+            </div>
+          ) : convLoadError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <p className="text-sm text-red-400">⚠️ {convLoadError}</p>
+              <button
+                onClick={() => activeConvId && loadConversation({ id: activeConvId, title: null, projectId: null, archived: false, updatedAt: '' })}
+                className="rounded-xl border border-border px-4 py-2 text-xs text-muted-hi hover:text-cream"
+              >
+                আবার চেষ্টা
+              </button>
+            </div>
+          ) : (
           <AgentThread
             messages={messages}
             onArtifactSave={saveArtifact}
@@ -387,6 +418,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onArtifactOpen={() => setArtifactsOpen(true)}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
           />
+          )}
           <AgentArtifactsPanel
             artifacts={artifacts}
             open={artifactsOpen}

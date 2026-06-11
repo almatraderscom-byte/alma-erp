@@ -5,6 +5,9 @@ import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/age
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
+import { captureAgentError } from '@/agent/lib/sentry'
+import { notifyOwner } from '@/agent/lib/notify-owner'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -327,6 +330,13 @@ export async function* runAgentTurn(
         const result = await executeTool(tb.name, tb.input, { conversationId })
         const durationMs = Date.now() - started
 
+        if (!result.success) {
+          await captureAgentError(new Error(result.error ?? 'tool_failed'), 'agent.tool.failed', {
+            tool: tb.name,
+            conversationId,
+          })
+        }
+
         toolRecords.push({
           id: tb.id, toolName: tb.name, input: tb.input,
           output: result.data !== undefined ? { data: result.data } : null,
@@ -391,6 +401,18 @@ export async function* runAgentTurn(
     yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
   } catch (err) {
     if (signal?.aborted) return
-    yield { type: 'error', message: err instanceof Error ? err.message : String(err) }
+    const requestId = extractAnthropicRequestId(err)
+    await captureAgentError(err, 'agent.anthropic.error', { conversationId, requestId })
+
+    if (isAnthropicQuotaExhausted(err)) {
+      void notifyOwner({
+        tier: 1,
+        category: 'urgent',
+        title: 'Anthropic quota exhausted',
+        message: `Agent chat failed — API quota/credits exhausted. requestId=${requestId ?? 'n/a'}`,
+      })
+    }
+
+    yield { type: 'error', message: banglaAnthropicError(err) }
   }
 }

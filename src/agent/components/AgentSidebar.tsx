@@ -51,17 +51,42 @@ export default function AgentSidebar({
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
 
-  const loadData = useCallback(async () => {
-    const [pRes, cRes] = await Promise.all([
-      fetch('/api/assistant/projects'),
-      fetch('/api/assistant/conversations'),
-    ])
-    if (pRes.ok) setProjects(await pRes.json())
-    if (cRes.ok) setConversations(await cRes.json())
+  const loadData = useCallback(async (append = false, cursor?: string | null) => {
+    if (append) setLoadingMore(true)
+    else { setLoading(true); setLoadError(null) }
+
+    try {
+      const convUrl = cursor
+        ? `/api/assistant/conversations?paginated=true&limit=30&cursor=${encodeURIComponent(cursor)}`
+        : '/api/assistant/conversations?paginated=true&limit=30'
+
+      const [pRes, cRes] = await Promise.all([
+        append ? Promise.resolve(null) : fetch('/api/assistant/projects'),
+        fetch(convUrl),
+      ])
+
+      if (!append && pRes && !pRes.ok) throw new Error('প্রজেক্ট লোড ব্যর্থ')
+      if (!cRes.ok) throw new Error('কথোপকথন লোড ব্যর্থ')
+
+      if (!append && pRes?.ok) setProjects(await pRes.json())
+
+      const cData = await cRes.json() as { conversations: Conversation[]; nextCursor: string | null }
+      setConversations((prev) => append ? [...prev, ...cData.conversations] : cData.conversations)
+      setNextCursor(cData.nextCursor)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'লোড ব্যর্থ')
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { void loadData() }, [loadData])
 
   const filtered = conversations.filter((c) => {
     if (c.archived) return false
@@ -171,8 +196,22 @@ export default function AgentSidebar({
 
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
-        {filtered.length === 0 && (
-          <p className="py-8 text-center text-[11px] text-zinc-600">কোনো কথোপকথন নেই</p>
+        {loading && (
+          <p className="py-8 text-center text-[11px] text-zinc-500 animate-pulse">লোড হচ্ছে…</p>
+        )}
+        {!loading && loadError && (
+          <div className="py-6 text-center space-y-2">
+            <p className="text-[11px] text-red-400">{loadError}</p>
+            <button
+              onClick={() => void loadData()}
+              className="rounded-lg border border-border px-3 py-1.5 text-[11px] text-muted-hi hover:text-cream"
+            >
+              আবার চেষ্টা
+            </button>
+          </div>
+        )}
+        {!loading && !loadError && filtered.length === 0 && (
+          <p className="py-8 text-center text-[11px] text-zinc-600">কোনো কথোপকথন নেই — নতুন চ্যাট শুরু করুন</p>
         )}
         {filtered.map((c) => (
           <div
@@ -249,6 +288,15 @@ export default function AgentSidebar({
             )}
           </div>
         ))}
+        {!loading && !loadError && nextCursor && (
+          <button
+            onClick={() => void loadData(true, nextCursor)}
+            disabled={loadingMore}
+            className="mt-2 w-full rounded-xl border border-border py-2 text-[11px] text-muted-hi hover:text-cream disabled:opacity-50"
+          >
+            {loadingMore ? 'লোড হচ্ছে…' : 'আরও দেখুন'}
+          </button>
+        )}
       </div>
 
       {/* Project edit/create dialog */}

@@ -112,9 +112,30 @@ nano /opt/alma-erp/worker/.env
 
 ```bash
 cd /opt/alma-erp/worker
-pm2 start src/index.mjs --name alma-agent-worker --interpreter node
+npm ci   # includes @sentry/node for Phase 7
+
+# Recommended: ecosystem file sets max_memory_restart (512M) and process name agent-worker
+pm2 start ecosystem.config.cjs
 pm2 save
-pm2 logs alma-agent-worker   # verify it started without errors
+pm2 logs agent-worker --lines 30   # verify heartbeats + Telegram started
+```
+
+**Survive reboots:** after `pm2 startup` (step 4), every `pm2 save` persists the process list across VPS restarts.
+
+## 8b. Phase 7 — nightly backups (cron 03:00 UTC / 09:00 BD)
+
+```bash
+sudo mkdir -p /opt/agent-backups
+sudo chown "$USER:$USER" /opt/agent-backups
+chmod +x /opt/alma-erp/scripts/agent-backup.sh
+
+# Add to crontab (loads worker .env for DATABASE_URL):
+(crontab -l 2>/dev/null; echo '0 3 * * * set -a && . /opt/alma-erp/worker/.env && set +a && /opt/alma-erp/scripts/agent-backup.sh') | crontab -
+```
+
+Restore to scratch schema:
+```bash
+gunzip -c /opt/agent-backups/agent_finance_YYYYMMDD_HHMMSS.sql.gz | psql "$SCRATCH_DATABASE_URL"
 ```
 
 ---

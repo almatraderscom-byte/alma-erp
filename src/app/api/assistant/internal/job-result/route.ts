@@ -56,6 +56,10 @@ export async function POST(req: NextRequest) {
   const action = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
+  if (action.status === 'executed' || action.status === 'failed') {
+    return Response.json({ ok: true, idempotent: true, status: action.status })
+  }
+
   await db.agentPendingAction.update({
     where: { id: pendingActionId },
     data: {

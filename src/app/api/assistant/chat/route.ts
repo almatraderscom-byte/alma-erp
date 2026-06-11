@@ -5,6 +5,9 @@ import { requireAgentEnabled, requireAnthropicApiKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
+import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
+import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
+import { captureAgentError } from '@/agent/lib/sentry'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -52,6 +55,17 @@ export async function POST(req: NextRequest) {
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
+
+  const rateKey = isInternalCall
+    ? `internal:${bearerToken.slice(0, 8)}`
+    : `session:${typeof body.conversationId === 'string' ? body.conversationId : req.headers.get('x-forwarded-for') ?? 'anon'}`
+  const rate = checkAssistantChatRateLimit(rateKey, ASSISTANT_CHAT_RATE_LIMIT_PER_MIN)
+  if (!rate.ok) {
+    return Response.json(
+      { error: 'rate_limited', message: 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।', retryAfterSec: rate.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
+    )
+  }
 
   const files: FileRef[] = Array.isArray(body.files)
     ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
@@ -143,6 +157,7 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         if (!req.signal.aborted) {
+          void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
           enqueue({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {

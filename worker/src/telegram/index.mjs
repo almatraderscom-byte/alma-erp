@@ -19,6 +19,8 @@ import { setTelegramForNotify } from '../notify/index.mjs'
 import { setDispatcherBot } from './dispatcher.mjs'
 import { handleSalahCallback } from '../salah/scheduler.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
+import { captureWorkerError } from '../sentry.mjs'
+import { safeLogMessage } from '../log-safe.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -36,6 +38,21 @@ function createSupabase() {
 // Per-owner conversation state (in-memory — resets on worker restart, which is fine)
 const ownerState = {
   conversationId: null, // null = auto-assign (daily conversation)
+}
+
+// Flood guard: max 12 messages/min per chat (owner Telegram)
+const floodBuckets = new Map()
+const FLOOD_LIMIT = Number(process.env.TELEGRAM_AGENT_FLOOD_PER_MIN ?? 12)
+
+function checkFlood(chatId) {
+  const now = Date.now()
+  let bucket = floodBuckets.get(chatId)
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + 60_000 }
+    floodBuckets.set(chatId, bucket)
+  }
+  bucket.count += 1
+  return bucket.count <= FLOOD_LIMIT
 }
 
 function isOwner(chatId) {
@@ -108,6 +125,13 @@ function toTelegramMd(text) {
 // ── Handle text message from owner ────────────────────────────────────────
 
 async function handleOwnerText(ctx, text) {
+  const chatId = ctx.chat?.id
+  if (chatId && !checkFlood(chatId)) {
+    await ctx.reply('অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।')
+    return
+  }
+  safeLogMessage('[telegram] owner message', `[len=${String(text ?? '').length}]`)
+
   // Use current conversation or get/create daily one
   let convId = ownerState.conversationId
   if (!convId) convId = await getDailyConversationId()
@@ -162,8 +186,14 @@ async function handleOwnerText(ctx, text) {
     }
   } catch (err) {
     clearInterval(typingInterval)
-    console.error('[telegram] agent call error:', err.message)
-    await ctx.reply(`❌ সমস্যা হয়েছে: ${err.message}`)
+    captureWorkerError(err, 'worker.telegram.agent_call')
+    safeLogMessage('[telegram] agent call error:', err.message)
+    const bangla = /rate_limited|429/i.test(err.message)
+      ? 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
+      : /quota|credit|billing/i.test(err.message)
+        ? 'API কোটা শেষ — মালিককে জানানো হয়েছে।'
+        : `সমস্যা হয়েছে। আবার চেষ্টা করুন।`
+    await ctx.reply(`❌ ${bangla}`)
   }
 }
 

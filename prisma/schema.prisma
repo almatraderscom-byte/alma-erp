@@ -1929,3 +1929,12 @@ model AgentMessengerAlert {
   @@index([resolved, detectedAt(sort: Desc)])
   @@map("messenger_alerts")
 }
+
+// ─── PHASE 7: Watchdog heartbeats ────────────────────────────────────────────
+
+model AgentHeartbeat {
+  service    String   @id
+  lastBeatAt DateTime @default(now()) @map("last_beat_at")
+
+  @@map("agent_heartbeats")
+}

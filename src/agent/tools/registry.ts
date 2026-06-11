@@ -271,6 +271,9 @@ export const STAFF_SAFE_TOOLS: AgentTool[] = [
   ...ERP_TOOLS,
 ]
 
+/** Tool names exposed to staff-scoped agent contexts (for audits/tests). */
+export const STAFF_SAFE_TOOL_NAMES = STAFF_SAFE_TOOLS.map((t) => t.name)
+
 export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
   name: t.name,
   description: t.description,
