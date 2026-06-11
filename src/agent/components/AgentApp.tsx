@@ -156,7 +156,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       text,
       files: pendingFiles.map((pf) => ({ previewUrl: pf.previewUrl, mediaType: pf.file.type })),
     }
-    setMessages((prev) => [...prev, userMsg])
+    setMessages((prev) => [
+      ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),
+      userMsg,
+    ])
 
     // Streaming assistant placeholder
     const assistantMsgId = nextId('streaming')
@@ -259,6 +262,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                     ...m,
                     id: evt.messageId as string,
                     streaming: false,
+                    askCard: undefined,
                     tokensIn: evt.tokensIn as number,
                     tokensOut: evt.tokensOut as number,
                     costUsd: evt.costUsd as number,
