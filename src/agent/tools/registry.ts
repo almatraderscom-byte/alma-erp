@@ -264,11 +264,12 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
+  serverContext: Record<string, unknown> = {},
 ): Promise<ToolResult> {
   const tool = TOOLS.find((t) => t.name === name)
   if (!tool) return { success: false, error: `Unknown tool: ${name}` }
   try {
-    return await tool.handler(input)
+    return await tool.handler({ ...input, ...serverContext })
   } catch (err) {
     return { success: false, error: String(err) }
   }

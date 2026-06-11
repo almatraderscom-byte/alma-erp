@@ -324,7 +324,7 @@ export async function* runAgentTurn(
       const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
       for (const tb of toolUseBlocks) {
         const started = Date.now()
-        const result = await executeTool(tb.name, tb.input)
+        const result = await executeTool(tb.name, tb.input, { conversationId })
         const durationMs = Date.now() - started
 
         toolRecords.push({
