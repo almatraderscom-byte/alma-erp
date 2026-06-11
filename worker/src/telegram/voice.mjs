@@ -29,14 +29,14 @@ export async function transcribeVoiceNote(bot, fileId) {
   if (!audioRes.ok) throw new Error(`Telegram file download failed: ${audioRes.status}`)
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer())
 
-  // Native FormData + fetch (Node 20+). npm "form-data" streams break req.formData() on Vercel.
-  const form = new FormData()
-  form.append('audio', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg')
-
+  // Raw audio body — reliable server-to-server (multipart field names vary across runtimes).
   const transcribeRes = await fetch(`${APP_URL()}/api/assistant/internal/transcribe`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
-    body: form,
+    headers: {
+      Authorization: `Bearer ${INT_TOKEN()}`,
+      'Content-Type': 'audio/ogg',
+    },
+    body: audioBuffer,
   })
   if (!transcribeRes.ok) {
     const err = await transcribeRes.text()

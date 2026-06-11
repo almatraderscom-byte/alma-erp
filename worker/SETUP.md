@@ -75,9 +75,11 @@ ASSISTANT_BOT_TOKEN=
 TELEGRAM_OWNER_CHAT_ID=    # Your personal Telegram chat ID (see "Find your chat ID" below)
 
 # ── Phase 5 — Google TTS (Bangla voice notes) ───────────────────────────────
-# Paste the full JSON of your Google Cloud service account key as a single line.
+# Paste the full JSON of your Google Cloud service account key as ONE line (no line breaks).
+# If the key has quotes, wrap the whole value in single quotes in .env:
+# GOOGLE_TTS_CREDENTIALS='{"type":"service_account",...}'
 # Same account as Vercel's GOOGLE_TTS_CREDENTIALS.
-GOOGLE_TTS_CREDENTIALS={"type":"service_account","client_email":"...","private_key":"..."}
+GOOGLE_TTS_CREDENTIALS=
 
 # ── Phase 5 — OpenAI Whisper (voice-to-text) ─────────────────────────────────
 OPENAI_API_KEY=

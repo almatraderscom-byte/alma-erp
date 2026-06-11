@@ -27,28 +27,36 @@ function verifyToken(provided: string): boolean {
   } catch { return false }
 }
 
+function blobToAudioFile(blob: Blob, fallbackType = 'audio/ogg'): File {
+  return new File([blob], 'voice.ogg', { type: blob.type || fallbackType })
+}
+
 async function parseAudioFile(req: NextRequest): Promise<File | null> {
   const contentType = req.headers.get('content-type') ?? ''
+
+  // Preferred for VPS worker / Telegram bridge (raw OGG bytes).
+  if (contentType.startsWith('audio/') || contentType === 'application/octet-stream') {
+    const buf = await req.arrayBuffer()
+    if (buf.byteLength === 0) return null
+    const mime = contentType.split(';')[0].trim() || 'audio/ogg'
+    return new File([buf], 'voice.ogg', { type: mime })
+  }
 
   if (contentType.includes('multipart/form-data')) {
     try {
       const formData = await req.formData()
       const audio = formData.get('audio')
       if (audio instanceof File) return audio
-      if (audio && typeof audio !== 'string') {
-        const blob = audio as Blob
-        return new File([blob], 'voice.ogg', { type: blob.type || 'audio/ogg' })
+      if (audio && typeof audio !== 'string') return blobToAudioFile(audio as Blob)
+
+      // curl -F or some clients use a different field name — take first file-like part.
+      for (const [, value] of formData.entries()) {
+        if (value instanceof File) return value
+        if (value && typeof value !== 'string') return blobToAudioFile(value as Blob)
       }
     } catch (err) {
       console.warn('[internal/transcribe] multipart parse failed:', err)
     }
-    return null
-  }
-
-  if (contentType.startsWith('audio/') || contentType === 'application/octet-stream') {
-    const buf = await req.arrayBuffer()
-    const mime = contentType.split(';')[0].trim() || 'audio/ogg'
-    return new File([buf], 'voice.ogg', { type: mime })
   }
 
   return null
