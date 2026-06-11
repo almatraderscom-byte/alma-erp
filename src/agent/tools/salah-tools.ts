@@ -1,26 +1,26 @@
 /**
  * Phase 6D — Salah accountability tools.
- * The agent uses these to check, confirm, and report on prayer status.
  */
 import { prisma } from '@/lib/prisma'
 import type { AgentTool } from './registry'
+import {
+  WAQTS,
+  summarizeWaqts,
+  pickAccountableWaqts,
+} from '@/agent/lib/salah-context'
+import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-function dhakaToday(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-}
-
-const WAQTS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 
 // ── get_salah_status ──────────────────────────────────────────────────────────
 
 const get_salah_status: AgentTool = {
   name: 'get_salah_status',
   description:
-    'Returns today\'s salah record for all 5 waqts. ' +
-    'CALL THIS at the start of every conversation turn to check for pending/missed prayers before answering.',
+    'Returns today\'s salah record for all 5 waqts plus accountable carryover from yesterday. ' +
+    'Only waqts whose window has STARTED (or yesterday still pending) require accountability. ' +
+    'CALL at the start of every turn before answering.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -29,41 +29,41 @@ const get_salah_status: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const date = (input.date as string) || dhakaToday()
-      const records = await db.agentSalahRecord.findMany({
-        where: { date: new Date(date) },
-        orderBy: { windowStart: 'asc' },
-      })
-
+      const todayYmd = (input.date as string) || todayYmdDhaka()
+      const yesterdayYmd = addDaysYmd(todayYmd, -1)
       const now = new Date()
-      const summary = WAQTS.map(waqt => {
-        const r = records.find((x: { waqt: string }) => x.waqt === waqt)
-        if (!r) return { waqt, status: 'not_scheduled' }
-        const pastWindowStart = now > new Date(r.windowStart)
-        const pastWindowEnd   = now > new Date(r.windowEnd)
-        return {
-          waqt:          r.waqt,
-          status:        r.status,
-          windowStart:   r.windowStart,
-          windowEnd:     r.windowEnd,
-          remindersSent: r.remindersSent,
-          confirmedAt:   r.confirmedAt,
-          isOverdue:     pastWindowStart && r.status === 'pending',
-          isMissed:      pastWindowEnd   && r.status === 'pending',
-        }
-      })
 
-      const pendingOrMissed = summary.filter(
-        s => s.status === 'pending' || s.status === 'missed',
-      )
+      const [todayRecords, yesterdayRecords] = await Promise.all([
+        db.agentSalahRecord.findMany({
+          where: { date: dhakaMidnightUtc(todayYmd) },
+          orderBy: { windowStart: 'asc' },
+        }),
+        db.agentSalahRecord.findMany({
+          where: { date: dhakaMidnightUtc(yesterdayYmd) },
+          orderBy: { windowStart: 'asc' },
+        }),
+      ])
+
+      const todaySummary = summarizeWaqts(todayYmd, todayRecords, now)
+      const yesterdaySummary = summarizeWaqts(yesterdayYmd, yesterdayRecords, now)
+      const accountableWaqts = pickAccountableWaqts(todaySummary, yesterdaySummary)
+      const notYetDueToday = todaySummary.filter((s) => s.notYetDue)
 
       return {
         success: true,
         data: {
-          date,
-          waqts: summary,
-          pendingOrMissed,
-          requiresAccountability: pendingOrMissed.length > 0,
+          date: todayYmd,
+          yesterday: yesterdayYmd,
+          todayWaqts: todaySummary,
+          yesterdayWaqts: yesterdaySummary,
+          accountableWaqts,
+          notYetDueToday,
+          // Legacy fields for older prompt references
+          waqts: todaySummary,
+          pendingOrMissed: accountableWaqts,
+          requiresAccountability: accountableWaqts.length > 0,
+          guidance:
+            'গতকালের পেন্ডিং ওয়াক্ত আগে জিজ্ঞেস করুন। আজকের ওয়াক্ত যার সময় এখনো শুরু হয়নি (notYetDueToday) — সেগুলো "পড়েননি" বলবেন না।',
         },
       }
     } catch (err) {
@@ -91,16 +91,17 @@ const mark_salah: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const date   = (input.date as string) || dhakaToday()
+      const dateYmd = (input.date as string) || todayYmdDhaka()
       const waqt   = String(input.waqt)
       const status = String(input.status)
       const now    = new Date()
+      const dateObj = dhakaMidnightUtc(dateYmd)
 
       const record = await db.agentSalahRecord.upsert({
-        where: { date_waqt: { date: new Date(date), waqt } },
+        where: { date_waqt: { date: dateObj, waqt } },
         update: { status, confirmedAt: now },
         create: {
-          date:        new Date(date),
+          date: dateObj,
           waqt,
           windowStart: now,
           windowEnd:   now,
@@ -145,12 +146,16 @@ const get_salah_weekly_summary: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const end   = new Date((input.endDate as string) || dhakaToday())
-      const start = new Date(end)
-      start.setDate(start.getDate() - 6)
+      const endYmd = (input.endDate as string) || todayYmdDhaka()
+      const startYmd = addDaysYmd(endYmd, -6)
 
       const records = await db.agentSalahRecord.findMany({
-        where: { date: { gte: start, lte: end } },
+        where: {
+          date: {
+            gte: dhakaMidnightUtc(startYmd),
+            lte: dhakaMidnightUtc(endYmd),
+          },
+        },
         orderBy: [{ date: 'asc' }, { windowStart: 'asc' }],
       })
 
@@ -174,7 +179,7 @@ const get_salah_weekly_summary: AgentTool = {
       return {
         success: true,
         data: {
-          period: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+          period: { start: startYmd, end: endYmd },
           totalRecorded: total,
           counts,
           rows,

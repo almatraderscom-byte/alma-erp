@@ -33,7 +33,14 @@ async function logNotification(tier, category, channels, statuses) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${INT_TOKEN()}`,
       },
-      body: JSON.stringify({ tier, category, channels, statuses }),
+      body: JSON.stringify({
+        tier,
+        category,
+        channels,
+        statuses,
+        title: String(title),
+        message: String(message),
+      }),
     })
   } catch {
     // Non-fatal — logging failure doesn't block delivery

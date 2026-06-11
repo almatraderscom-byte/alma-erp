@@ -17,7 +17,7 @@ import { createClient } from '@supabase/supabase-js'
 const jobName = process.argv[2]
 if (!jobName) {
   console.error('Usage: node trigger.mjs <job-name>')
-  console.error('Jobs: morning-proposal, ads-monitor, midday-checkin, salah-escalation,')
+  console.error('Jobs: salah-init, morning-proposal, ads-monitor, midday-checkin, salah-escalation,')
   console.error('      messenger-scan, night-report, weekly-review, daily-summary')
   process.exit(1)
 }

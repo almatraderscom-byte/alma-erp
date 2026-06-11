@@ -41,6 +41,7 @@ const lazy = {
 // This is the authoritative list of every repeatable job.
 
 export const SCHEDULER_REGISTRY = [
+  { name: 'salah-init',             cronUtc: '0 18 * * *',   description: 'Midnight Dhaka — create today salah records' },
   { name: 'morning-proposal',       cronUtc: '0 3 * * *',   description: 'Morning task proposal to owner (09:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
@@ -99,6 +100,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
 
     try {
       switch (job.name) {
+        case 'salah-init': {
+          const { initializeDailySalahRecords } = await lazy.salahScheduler()
+          await initializeDailySalahRecords(supabase)
+          break
+        }
         case 'morning-proposal': {
           const { runMorningProposal } = await lazy.morningProposal()
           await runMorningProposal(supabase)

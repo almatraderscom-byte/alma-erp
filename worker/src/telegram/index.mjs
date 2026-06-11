@@ -122,6 +122,15 @@ function toTelegramMd(text) {
     .replace(/\\\*(.*?)\\\*/g, '_$1_')           // *italic* → _italic_
 }
 
+/** Voice reply only when owner explicitly asks — not on every message. Reminders use notify({ voice: true }). */
+function userWantsVoiceReply(text) {
+  const t = String(text ?? '').toLowerCase()
+  return (
+    /\b(voice|audio|read aloud|শুনান|শুনতে|শোনাও|শুনিয়ে|কণ্ঠে|কথায় বল|ভয়েস)\b/i.test(t)
+    || /শুনিয়ে দাও|voice note|বলে শোনাও|কথায় উত্তর/i.test(t)
+  )
+}
+
 // ── Handle text message from owner ────────────────────────────────────────
 
 async function handleOwnerText(ctx, text) {
@@ -160,8 +169,8 @@ async function handleOwnerText(ctx, text) {
       await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk))
     }
 
-    // Send voice note reply
-    if (process.env.GOOGLE_TTS_CREDENTIALS) {
+    // Voice only when owner explicitly requests it (reminders send voice via notify())
+    if (process.env.GOOGLE_TTS_CREDENTIALS && userWantsVoiceReply(text)) {
       try {
         await sendVoiceMessage(ctx.telegram, ctx.chat.id, replyText)
       } catch (ttsErr) {
@@ -328,7 +337,7 @@ export function createTelegramBot() {
     await ctx.reply(
       '*ALMA Assistant Bot*\n\n' +
       '• যেকোনো বার্তা পাঠান — আমি উত্তর দেব\n' +
-      '• ভয়েস নোট পাঠাতে পারবেন\n' +
+      '• ভয়েস নোট পাঠাতে পারবেন (উত্তর শুনতে চাইলে "শুনান" বলুন)\n' +
       '• ✅/❌ বোতাম দিয়ে অনুমোদন দিন\n\n' +
       '*কমান্ড:*\n' +
       '/new — নতুন চ্যাট শুরু\n' +

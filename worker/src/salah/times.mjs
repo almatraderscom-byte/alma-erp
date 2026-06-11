@@ -59,10 +59,12 @@ export async function getPrayerTimes(date = new Date()) {
     }
   }
 
-  // Fallback: static Dhaka estimates (approximate, UTC+6)
-  const y = date.getFullYear(), m = date.getMonth(), day = date.getDate()
+  // Fallback: static Dhaka estimates — always +06:00 (not server local TZ)
+  const ymd = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
-  function t(h, min) { return new Date(y, m, day, h, min, 0) }
+  function t(h, min) {
+    return new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+06:00`)
+  }
 
   return {
     fajr:    { start: t(4, 45),  end: t(6, 15)  },

@@ -180,6 +180,32 @@ async function sendAzanNotification(bot, ownerChatId, waqt, prevPendingWaqt, set
   )
 }
 
+// API returns Prisma camelCase — tolerate legacy snake_case from older clients.
+function normalizeSalahRecord(record) {
+  return {
+    waqt: record.waqt,
+    status: record.status,
+    windowStart: new Date(record.windowStart ?? record.window_start),
+    windowEnd: new Date(record.windowEnd ?? record.window_end),
+    remindersSent: record.remindersSent ?? record.reminders_sent ?? 0,
+  }
+}
+
+function dhakaYesterday(todayYmd) {
+  const d = new Date(`${todayYmd}T12:00:00+06:00`)
+  d.setDate(d.getDate() - 1)
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
+  if (!bot?.telegram || !ownerChatId) return
+  try {
+    await bot.telegram.sendMessage(ownerChatId, text, extra)
+  } catch (err) {
+    console.warn('[salah] telegram send failed:', err.message)
+  }
+}
+
 // ── Escalation check (called on a schedule — e.g. every 5 min) ────────────────
 
 export async function checkAndEscalateSalah({ supabase, bot }) {
@@ -195,86 +221,140 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   const records = await getSalahRecords(today)
   const now     = new Date()
 
-  for (const record of records) {
+  // Fajr carryover: ask about yesterday's pending waqts once per morning
+  const fajrRecord = records.find((r) => r.waqt === 'fajr')
+  if (fajrRecord) {
+    const fajr = normalizeSalahRecord(fajrRecord)
+    const msSinceFajr = now - fajr.windowStart
+    if (fajr.status === 'pending' && msSinceFajr >= 0 && msSinceFajr < 6 * 60 * 1000 && fajr.remindersSent === 0) {
+      const yesterday = dhakaYesterday(today)
+      const yRecords = await getSalahRecords(yesterday)
+      for (const yr of yRecords) {
+        const y = normalizeSalahRecord(yr)
+        if (y.status === 'pending' || y.status === 'missed') {
+          const prevName = WAQT_NAMES[y.waqt] || y.waqt
+          await sendTelegramSafe(
+            bot,
+            ownerChatId,
+            `Sir, গতকাল *${prevName}*-এর নামাজ পড়েছেন কি?`,
+            { parse_mode: 'Markdown', reply_markup: qazaButtons(y.waqt) },
+          )
+        }
+      }
+    }
+  }
+
+  for (const raw of records) {
+    const record = normalizeSalahRecord(raw)
     if (record.status !== 'pending') continue
 
-    const windowStart = new Date(record.window_start)
-    const windowEnd   = new Date(record.window_end)
+    const { windowStart, windowEnd, waqt, remindersSent } = record
 
-    // Only process if window has started
+    // Future waqt — do not remind
     if (now < windowStart) continue
 
     const progress = windowProgress(windowStart, windowEnd)
+    const msSinceStart = now - windowStart
 
-    // Window closed → mark missed
-    if (progress >= 100) {
-      await upsertSalahRecord({
-        date: today, waqt: record.waqt, status: 'missed',
-      })
-
-      const missedMsg = missedMessage(record.waqt, griefContext)
+    // Azan at window start (first ~6 min) — Tier 2 + voice + ntfy
+    if (msSinceStart >= 0 && msSinceStart < 6 * 60 * 1000 && remindersSent === 0) {
+      const msg = level1Message(waqt)
       await notify({
-        tier:     2,
-        title:    `❌ ${WAQT_NAMES[record.waqt]}-এর ওয়াক্ত শেষ`,
-        message:  missedMsg,
+        tier:     escalationLevel >= 2 ? 2 : 1,
+        title:    `🕌 ${WAQT_NAMES[waqt]}-এর আযান`,
+        message:  msg,
         category: 'salah',
+        voice:    true,
       })
-      await bot.telegram.sendMessage(
+      await sendTelegramSafe(
+        bot,
         ownerChatId,
-        missedMsg,
-        { reply_markup: qazaButtons(record.waqt) },
+        `🕌 *${WAQT_NAMES[waqt]}-এর আযান হয়েছে*\n\n${msg}`,
+        { parse_mode: 'Markdown', reply_markup: salahButtons(waqt) },
       )
+
+      // Same-day carryover: previous waqt still pending
+      const prevIdx = WAQT_ORDER.indexOf(waqt) - 1
+      if (prevIdx >= 0) {
+        const prevWaqt = WAQT_ORDER[prevIdx]
+        const prevRaw = records.find((r) => r.waqt === prevWaqt)
+        if (prevRaw) {
+          const prev = normalizeSalahRecord(prevRaw)
+          if (prev.status === 'pending' && now > prev.windowEnd) {
+            await sendTelegramSafe(
+              bot,
+              ownerChatId,
+              `Sir, আগে বলুন — *${WAQT_NAMES[prevWaqt]}*-এর নামাজ পড়েছেন কি?`,
+              { parse_mode: 'Markdown', reply_markup: qazaButtons(prevWaqt) },
+            )
+          }
+        }
+      }
+
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
-    // Skip if reminders already maxed for this window
-    const remindersSent = record.reminders_sent ?? 0
+    // Window closed → mark missed
+    if (progress >= 100) {
+      await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
-    // At ~40%: Level 1 gentle reminder
-    if (progress >= 40 && remindersSent === 0) {
-      const msg = level1Message(record.waqt)
-      await bot.telegram.sendMessage(
+      const missedMsg = missedMessage(waqt, griefContext)
+      await notify({
+        tier:     2,
+        title:    `❌ ${WAQT_NAMES[waqt]}-এর ওয়াক্ত শেষ`,
+        message:  missedMsg,
+        category: 'salah',
+        voice:    true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, missedMsg, { reply_markup: qazaButtons(waqt) })
+      continue
+    }
+
+    // At ~40%: Level 1 gentle reminder + ntfy push
+    if (progress >= 40 && remindersSent === 1) {
+      const msg = level1Message(waqt)
+      await notify({
+        tier:     1,
+        title:    `⏰ ${WAQT_NAMES[waqt]} — স্মরণ`,
+        message:  msg,
+        category: 'salah',
+      })
+      await sendTelegramSafe(
+        bot,
         ownerChatId,
         `⏰ ${msg}`,
-        { reply_markup: salahButtons(record.waqt) },
+        { reply_markup: salahButtons(waqt) },
       )
-      await upsertSalahRecord({ date: today, waqt: record.waqt, incrementReminders: true })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
 
     // At ~70%: Level 2 firm reminder + voice
-    if (progress >= 70 && remindersSent <= 1) {
-      const msg = level2Message(record.waqt)
+    if (progress >= 70 && remindersSent <= 2) {
+      const msg = level2Message(waqt)
       await notify({
         tier:     escalationLevel >= 2 ? 2 : 1,
-        title:    `⚠️ ${WAQT_NAMES[record.waqt]} — সময় শেষ হচ্ছে`,
+        title:    `⚠️ ${WAQT_NAMES[waqt]} — সময় শেষ হচ্ছে`,
         message:  msg,
         category: 'salah',
         voice:    true,
       })
-      await bot.telegram.sendMessage(
-        ownerChatId,
-        msg,
-        { reply_markup: salahButtons(record.waqt) },
-      )
-      await upsertSalahRecord({ date: today, waqt: record.waqt, incrementReminders: true })
+      await sendTelegramSafe(bot, ownerChatId, msg, { reply_markup: salahButtons(waqt) })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
 
-    // At ~90%: Level 3 critical
-    if (progress >= 90 && remindersSent <= 2) {
-      const msg = level3Message(record.waqt, griefContext)
+    // At ~90%: Level 3 critical + call
+    if (progress >= 90 && remindersSent <= 3) {
+      const msg = level3Message(waqt, griefContext)
       await notify({
         tier:     Math.min(3, escalationLevel + 1),
-        title:    `🚨 ${WAQT_NAMES[record.waqt]} — শেষ সুযোগ`,
+        title:    `🚨 ${WAQT_NAMES[waqt]} — শেষ সুযোগ`,
         message:  msg,
         category: 'salah',
         voice:    true,
       })
-      await bot.telegram.sendMessage(
-        ownerChatId,
-        msg,
-        { reply_markup: salahButtons(record.waqt) },
-      )
-      await upsertSalahRecord({ date: today, waqt: record.waqt, incrementReminders: true })
+      await sendTelegramSafe(bot, ownerChatId, msg, { reply_markup: salahButtons(waqt) })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
   }
 }

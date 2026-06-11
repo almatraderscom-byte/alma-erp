@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
 import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
+import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
@@ -234,9 +235,10 @@ export async function* runAgentTurn(
     : ''
 
   // Load pinned memories and retrieve relevant memories in parallel
-  const [pinnedMemories, relevantMemories] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext] = await Promise.all([
     loadPinnedMemories(),
     lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
+    loadSalahAccountabilityContext(),
   ])
 
   type ToolRecord = {
@@ -257,7 +259,7 @@ export async function* runAgentTurn(
           model: AGENT_MODEL,
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
-          system: buildSystemPrompt(projectSystemInstructions, pinnedMemories, relevantMemories),
+          system: buildSystemPrompt(projectSystemInstructions, pinnedMemories, relevantMemories, salahContext),
           tools: TOOL_DEFINITIONS,
           messages: apiMessages,
         },
