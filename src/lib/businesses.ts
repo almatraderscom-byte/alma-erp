@@ -61,6 +61,9 @@ const FINANCE_SUITE: NavItem[] = [
   { href: '/payroll', icon: '⌁', label: 'Payroll' },
 ]
 
+/** Super Admin only — filtered in filterNavByRole; requires AGENT_ENABLED=true on server. */
+export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✦', label: 'ALMA Agent' }
+
 const SETTINGS_NAV: NavItem[] = [
   { href: '/operations/task-spotlight', icon: '✦', label: 'Task Spotlight' },
   { href: '/operations/business-archive', icon: '📦', label: 'Archive Control' },
@@ -84,6 +87,7 @@ const ALMA_NAV: NavItem[] = [
   { href: '/invoice', icon: '◈', label: 'Invoice' },
   ...FINANCE_SUITE,
   { href: '/analytics', icon: '◩', label: 'Analytics' },
+  AGENT_NAV_ITEM,
   ...SETTINGS_NAV,
 ]
 
@@ -95,6 +99,7 @@ const CDIT_NAV: NavItem[] = [
   { href: '/digital/projects', icon: '◰', label: 'Projects' },
   { href: '/digital/invoices', icon: '◈', label: 'Invoices' },
   ...FINANCE_SUITE,
+  AGENT_NAV_ITEM,
   ...SETTINGS_NAV,
 ]
 
@@ -113,6 +118,7 @@ export function getNavForBusiness(businessId: BusinessId): NavItem[] {
     { href: '/trading/analytics', icon: '◩', label: 'Analytics' },
     { href: '/trading/analytics?view=reports', icon: '▣', label: 'Reports' },
     { href: '/portal', icon: '◇', label: 'My desk' },
+    AGENT_NAV_ITEM,
     ...SETTINGS_NAV,
   ]
   return ALMA_NAV
@@ -131,6 +137,7 @@ export function isRouteAllowed(path: string, businessId: BusinessId): boolean {
   if (
     path.startsWith('/settings')
     || path.startsWith('/operations')
+    || path.startsWith('/agent')
     || path.startsWith('/invoice/share')
     || path.startsWith('/audit')
     || path.startsWith('/approvals')

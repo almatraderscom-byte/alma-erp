@@ -75,6 +75,8 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
 
   if (pathname.startsWith('/operations')) return role === 'SUPER_ADMIN'
 
+  if (pathname.startsWith('/agent')) return role === 'SUPER_ADMIN'
+
   if (pathname.startsWith('/api/business-archive')) return role === 'SUPER_ADMIN'
 
   if (role === 'SUPER_ADMIN') return true
@@ -137,6 +139,7 @@ const TRADING_STAFF_NAV_HIDE = new Set([
 
 export function filterNavByRole(items: NavItem[], role: AlmaRole, businessId: BusinessId): NavItem[] {
   return items.filter(item => {
+    if (item.href === '/agent' && role !== 'SUPER_ADMIN') return false
     if (item.href.startsWith('/operations/') && role !== 'SUPER_ADMIN') return false
     if (!isPathAllowedForRole(item.href, role, businessId)) return false
     if (businessId === 'ALMA_TRADING' && item.href === '/trading/target-control' && role !== 'SUPER_ADMIN') {
