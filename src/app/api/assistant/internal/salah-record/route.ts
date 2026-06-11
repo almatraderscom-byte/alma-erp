@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
 
+export const runtime = 'nodejs'
+
 function checkToken(req: NextRequest): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN
   if (!expected) return false

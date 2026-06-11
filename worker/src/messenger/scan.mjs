@@ -162,7 +162,7 @@ export async function runMessengerScan({ supabase, bot }) {
 
           const draft = draftReply(lastCustomerMsg?.message)
 
-          const alertTypes: Record<string, string> = {
+          const alertTypes = {
             unanswered_30min:    `📨 ${page.name}: ${alert.ageMin} মিনিট ধরে কাস্টমার উত্তর পাননি`,
             image_only_reply:    `🖼 ${page.name}: স্টাফ শুধু ছবি পাঠিয়েছে, টেক্সট/দাম নেই`,
             dead_after_question: `❓ ${page.name}: কাস্টমার প্রশ্ন করেছে, ${alert.ageMin} মিনিট উত্তর নেই`,
