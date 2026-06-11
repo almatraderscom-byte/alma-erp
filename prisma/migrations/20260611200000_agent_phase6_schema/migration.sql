@@ -139,14 +139,19 @@ CREATE TABLE IF NOT EXISTS messenger_alerts (
   alert_type      TEXT        NOT NULL
                               CHECK (alert_type IN ('unanswered_30min','image_only_reply','dead_after_question')),
   detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  detected_date   DATE        NOT NULL DEFAULT CURRENT_DATE,
   resolved        BOOLEAN     NOT NULL DEFAULT FALSE,
   resolved_at     TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- One alert per conversation/type per calendar day (expression unique — not valid inline in CREATE TABLE)
+-- Idempotent: table may exist from a prior failed run without detected_date
+ALTER TABLE messenger_alerts ADD COLUMN IF NOT EXISTS detected_date DATE NOT NULL DEFAULT CURRENT_DATE;
+
+-- One alert per conversation/type per calendar day (plain columns — no expression index)
+DROP INDEX IF EXISTS messenger_alerts_conv_type_day_uniq;
 CREATE UNIQUE INDEX IF NOT EXISTS messenger_alerts_conv_type_day_uniq
-  ON messenger_alerts (conversation_id, alert_type, CAST(detected_at AS DATE));
+  ON messenger_alerts (conversation_id, alert_type, detected_date);
 
 CREATE INDEX IF NOT EXISTS messenger_alerts_page_idx     ON messenger_alerts (page_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS messenger_alerts_resolved_idx ON messenger_alerts (resolved, detected_at DESC);
