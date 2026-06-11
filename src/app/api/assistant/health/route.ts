@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { isAnthropicConfigured } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
@@ -30,8 +31,15 @@ export async function GET(req: NextRequest) {
     db = false
   }
 
+  const anthropic = isAnthropicConfigured()
+
   return new Response(
-    JSON.stringify({ ok: true, db, timestamp: new Date().toISOString() }),
+    JSON.stringify({
+      ok: db && anthropic,
+      db,
+      anthropic,
+      timestamp: new Date().toISOString(),
+    }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   )
 }

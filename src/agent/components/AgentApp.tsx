@@ -15,6 +15,26 @@ interface AgentAppProps {
 let _msgCounter = 0
 function nextId(prefix = 'msg') { return `${prefix}-${++_msgCounter}` }
 
+async function readAssistantError(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json() as { error?: string; message?: string }
+    if (data.error === 'anthropic_key_missing') {
+      return 'ANTHROPIC_API_KEY Production-এ set নেই। Vercel → Environment Variables → Production চেক করে redeploy করুন।'
+    }
+    if (data.error === 'agent_db_not_migrated') {
+      return 'Agent database migration apply করা হয়নি। Production DB-তে prisma migrate deploy চালান।'
+    }
+    if (data.error === 'agent_disabled') {
+      return 'Agent বন্ধ আছে (AGENT_ENABLED=false)'
+    }
+    if (data.message) return data.message
+    if (data.error) return data.error
+  } catch {
+    /* non-JSON body */
+  }
+  return fallback
+}
+
 export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const isMobile = useMediaQuery('(max-width: 767px)')
 
@@ -30,6 +50,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // Close sidebar by default on mobile
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
+
+  // Surface real server config issues (not the old misleading client guess).
+  useEffect(() => {
+    void fetch('/api/assistant/health')
+      .then(async (res) => (res.ok ? res.json() as Promise<{ db?: boolean; anthropic?: boolean }> : null))
+      .then((data) => {
+        if (!data) return
+        if (!data.db) toast.error('Agent DB tables নেই — production-এ migration apply করুন')
+        else if (!data.anthropic) toast.error('ANTHROPIC_API_KEY server-এ পাওয়া যায়নি — Vercel Production env + redeploy')
+      })
+      .catch(() => {})
+  }, [])
 
   // Load messages when conversation changes
   async function loadConversation(conv: Conversation) {
@@ -135,11 +167,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       if (!res.ok || !res.body) {
         let errMsg = `HTTP ${res.status}`
-        if (res.status === 503) errMsg = 'Agent feature is disabled (AGENT_ENABLED=false)'
-        else if (res.status === 401) errMsg = 'অননুমোদিত'
-        else if (!process.env.NEXT_PUBLIC_ANTHROPIC_CONFIGURED && res.status === 500) {
-          errMsg = 'ANTHROPIC_API_KEY সেট করা হয়নি'
-        }
+        if (res.status === 401) errMsg = 'অননুমোদিত'
+        else errMsg = await readAssistantError(res, errMsg)
         throw new Error(errMsg)
       }
 

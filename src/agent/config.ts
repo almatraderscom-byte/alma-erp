@@ -10,6 +10,12 @@
 
 export const isAgentEnabled = () => process.env.AGENT_ENABLED === 'true'
 
+/** Server-only — never expose the key value. */
+export const isAnthropicConfigured = () => {
+  const key = process.env.ANTHROPIC_API_KEY?.trim()
+  return Boolean(key && key.length >= 20 && !/^REPLACE_|YOUR_/i.test(key))
+}
+
 export const AGENT_MODEL = 'claude-sonnet-4-6'
 
 export const MAX_TOOL_ITERATIONS = 8
