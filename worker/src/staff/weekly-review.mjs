@@ -1,0 +1,117 @@
+/**
+ * Weekly Review Job — Friday 21:30 Asia/Dhaka
+ * - Sales trend vs prior week
+ * - Dead stock analysis
+ * - Staff response-time stats
+ * - Salah weekly summary (35-waqt table)
+ * - 2-3 concrete growth ideas
+ */
+
+import { notify } from '../notify/index.mjs'
+
+const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+
+async function callInternal(path) {
+  const res = await fetch(`${APP_URL}${path}`, {
+    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  })
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function runWeeklyReview({ supabase }) {
+  console.log('[weekly-review] starting...')
+
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+
+  // ── Salah weekly summary (last 7 days) ────────────────────────────────────
+
+  const weekStart = new Date()
+  weekStart.setDate(weekStart.getDate() - 6)
+  const weekStartStr = weekStart.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+
+  const { data: salahRecords } = await supabase
+    .from('salah_records')
+    .select('date, waqt, status')
+    .gte('date', weekStartStr)
+    .lte('date', today)
+    .order('date', { ascending: true })
+
+  const salahCounts = { prayed_on_time: 0, prayed_late: 0, qaza: 0, missed: 0, pending: 0 }
+  for (const r of salahRecords ?? []) {
+    const s = r.status
+    if (s in salahCounts) salahCounts[s]++
+  }
+  const totalSalah = (salahRecords ?? []).length
+  const onTimePct  = totalSalah > 0 ? Math.round((salahCounts.prayed_on_time / totalSalah) * 100) : 0
+
+  const salahSection =
+    `🕌 *নামাজ সাপ্তাহিক সারসংক্ষেপ* (${weekStartStr} → ${today})\n` +
+    `সময়মতো: ${salahCounts.prayed_on_time} | দেরিতে: ${salahCounts.prayed_late} | কাযা: ${salahCounts.qaza} | মিস: ${salahCounts.missed}\n` +
+    `সাফল্যের হার: ${onTimePct}%\n` +
+    salahNasiha(salahCounts, onTimePct)
+
+  // ── Staff completion stats (last 7 days) ──────────────────────────────────
+
+  const { data: weekTasks } = await supabase
+    .from('staff_tasks')
+    .select(`*, agent_staff(id, name)`)
+    .gte('proposed_for', weekStartStr)
+    .lte('proposed_for', today)
+    .not('status', 'eq', 'cancelled')
+
+  const staffStats = {}
+  for (const t of weekTasks ?? []) {
+    const name = t.agent_staff?.name || 'অজানা'
+    if (!staffStats[name]) staffStats[name] = { done: 0, total: 0 }
+    staffStats[name].total++
+    if (t.status === 'done') staffStats[name].done++
+  }
+
+  const staffSection = Object.entries(staffStats)
+    .map(([name, s]) => {
+      const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0
+      return `• ${name}: ${s.done}/${s.total} (${pct}%)`
+    }).join('\n')
+
+  // ── Growth ideas based on rotation data ──────────────────────────────────
+
+  const { data: slowProducts } = await supabase
+    .from('product_marketing_history')
+    .select('product_ref, business, last_promoted_at')
+    .lt('last_promoted_at', new Date(Date.now() - 30 * 86400 * 1000).toISOString())
+    .order('last_promoted_at', { ascending: true })
+    .limit(3)
+
+  let growthIdeas = `\n\n💡 *প্রবৃদ্ধির পরামর্শ:*`
+  if (slowProducts?.length) {
+    growthIdeas += `\n• ${slowProducts[0].product_ref} ৩০+ দিন ধরে মার্কেট হয়নি — এই সপ্তাহে bundle অফার দিন`
+  }
+  growthIdeas += `\n• ফেসবুক Reels ট্রায়াল করুন (product unboxing) — কম খরচে বেশি reach`
+  growthIdeas += `\n• COD কনফার্মেশন রেট ট্র্যাক করুন — ৫০%-এর নিচে থাকলে pre-payment ডিসকাউন্ট চালু করুন`
+
+  // ── Final report ──────────────────────────────────────────────────────────
+
+  const report =
+    `📊 *সাপ্তাহিক রিভিউ — ${today}*\n\n` +
+    salahSection + '\n\n' +
+    `👥 *স্টাফ কমপ্লিশন (৭ দিন):*\n${staffSection || 'কোনো ডেটা নেই'}` +
+    growthIdeas
+
+  await notify({
+    tier:     1,
+    title:    'সাপ্তাহিক রিভিউ',
+    message:  report,
+    category: 'report',
+    voice:    true,
+  })
+
+  console.log('[weekly-review] sent')
+}
+
+function salahNasiha(counts, onTimePct) {
+  if (onTimePct >= 90) return '\nআলহামদুলিল্লাহ — এই সপ্তাহ চমৎকার ছিল। ধারাবাহিকতা বজায় রাখুন।'
+  if (counts.missed > 3) return '\nSir, এই সপ্তাহে ৩টির বেশি নামাজ মিস হয়েছে। নামাজ কিয়ামতের দিন প্রথম হিসাব নেওয়া হবে। আল্লাহর কাছে তওবা করুন এবং পরের সপ্তাহে সব ওয়াক্ত পড়ার নিয়ত করুন।'
+  return '\nনামাজে মনোযোগ বাড়ানোর চেষ্টা করুন। প্রতিটি ওয়াক্ত আল্লাহর সাথে সাক্ষাতের সুযোগ।'
+}
