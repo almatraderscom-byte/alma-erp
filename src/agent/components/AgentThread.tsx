@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
+import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 
@@ -14,6 +15,8 @@ export interface ChatMessage {
   files?: Array<{ previewUrl: string; mediaType: string }>
   // Tool activity (for streaming assistant messages)
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
+  // Pending action confirm card (image gen, FB post, etc.)
+  pendingAction?: PendingAction
   // Usage stats (final)
   tokensIn?: number
   tokensOut?: number
@@ -239,6 +242,16 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <div className="rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3 text-sm text-muted-hi">
                       <AgentMarkdown content={msg.text} />
                     </div>
+                  )}
+
+                  {/* Confirm card for pending actions */}
+                  {msg.pendingAction && (
+                    <AgentConfirmCard
+                      action={msg.pendingAction}
+                      onResolved={() => {
+                        // Card stays rendered but buttons disable after resolution
+                      }}
+                    />
                   )}
 
                   {/* Footer actions */}

@@ -1,6 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { ERP_TOOLS } from './erp-tools'
+import { CONFIRM_TOOLS } from './confirm-tools'
 
 export interface ToolResult {
   success: boolean
@@ -242,7 +244,16 @@ const delete_memory: AgentTool = {
   },
 }
 
-export const TOOLS: AgentTool[] = [get_current_datetime, list_agent_projects, save_memory, search_memory, update_memory, delete_memory]
+export const TOOLS: AgentTool[] = [
+  get_current_datetime,
+  list_agent_projects,
+  save_memory,
+  search_memory,
+  update_memory,
+  delete_memory,
+  ...ERP_TOOLS,
+  ...CONFIRM_TOOLS,
+]
 
 export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
   name: t.name,

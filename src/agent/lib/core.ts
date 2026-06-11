@@ -12,6 +12,7 @@ export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
+  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number }
   | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
   | { type: 'error'; message: string }
 
@@ -334,6 +335,19 @@ export async function* runAgentTurn(
         })
 
         yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error }
+
+        // Emit confirm_card when a privileged tool created a pending action
+        if (result.success && result.data != null && typeof result.data === 'object') {
+          const d = result.data as Record<string, unknown>
+          if (typeof d.pendingActionId === 'string') {
+            yield {
+              type: 'confirm_card',
+              pendingActionId: d.pendingActionId,
+              summary: typeof d.summary === 'string' ? d.summary : '',
+              costEstimate: typeof d.costEstimate === 'number' ? d.costEstimate : undefined,
+            }
+          }
+        }
 
         toolResultContent.push({
           type: 'tool_result',

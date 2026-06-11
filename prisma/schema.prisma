@@ -1750,3 +1750,21 @@ model AgentToolCall {
   @@index([messageId])
   @@map("agent_tool_calls")
 }
+
+/// Costly/destructive actions pending owner confirmation before execution.
+model AgentPendingAction {
+  id             String    @id @default(uuid())
+  conversationId String?
+  type           String
+  payload        Json
+  summary        String    @db.Text
+  costEstimate   Float?
+  status         String    @default("pending")
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+  result         Json?
+
+  @@index([status])
+  @@index([conversationId])
+  @@map("agent_pending_actions")
+}

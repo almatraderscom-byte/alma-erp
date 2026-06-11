@@ -212,6 +212,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   }
                 : m
             ))
+          } else if (evt.type === 'confirm_card') {
+            setMessages((prev) => prev.map((m) =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    pendingAction: {
+                      id: evt.pendingActionId as string,
+                      summary: evt.summary as string,
+                      costEstimate: evt.costEstimate as number | undefined,
+                    },
+                  }
+                : m
+            ))
           } else if (evt.type === 'done') {
             setMessages((prev) => prev.map((m) =>
               m.id === assistantMsgId

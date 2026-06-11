@@ -1,0 +1,21 @@
+{
+  "name": "alma-agent-worker",
+  "version": "1.0.0",
+  "description": "ALMA ERP Agent VPS worker — BullMQ job processor for long-running agent tasks.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "check-fb": "node scripts/check-fb-token.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.4.0",
+    "dotenv": "^16.4.0"
+  }
+}
