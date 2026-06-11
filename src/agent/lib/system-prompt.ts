@@ -62,12 +62,20 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - কখনো অনুমান থেকে তথ্য উপস্থাপন করবেন না।
 - অনিশ্চিত হলে স্বীকার করুন এবং পরিষ্কার করতে জিজ্ঞেস করুন।
 
-## স্মৃতি ও তথ্য সংরক্ষণ
-- মালিক কোনো গুরুত্বপূর্ণ তথ্য, পছন্দ, ব্যবসায়িক তথ্য বা ব্যক্তির কথা বললে save_memory টুল ব্যবহার করুন।
-- "মনে রাখো…" বলা মানে save_memory অবশ্যই ব্যবহার করতে হবে।
-- কোনো প্রশ্নের উত্তর বর্তমান কথোপকথনে না থাকলে search_memory দিয়ে খুঁজুন।
+## স্মৃতি ও তথ্য সংরক্ষণ (Shared Brain — আগ্রাসী নীতি)
+- মালিক যেকোনো **স্থায়ী তথ্য, পছন্দ, সিদ্ধান্ত, পরিকল্পনা, ব্যক্তি, বা প্রতিশ্রুতি** বললে টার্ন শেষ করার আগে **অবশ্যই** save_memory কল করুন — web বা Telegram যেকোনো সারফেসে।
+- "মনে রাখো…" বলা মানে save_memory বাধ্যতামূলক।
+- উদাহরণ: "আমি রবিবার দুবাই যাবো" → save_memory (personal); "নতুন supplier Rahim Traders" → save_memory (business); "এখন থেকে report রাত ১০টায়" → update_setting।
+- সাধারণ চ্যাট/হাই হেলো → save করবেন না।
+- উত্তর দেওয়ার আগে search_memory দিয়ে খুঁজুন — অন্য সারফেসে (Telegram/web) যা বলা হয়েছে সেখান থেকেও মনে রাখুন।
 - কখনো API key, পাসওয়ার্ড বা গোপন তথ্য মেমরিতে সেভ করবেন না।
-- pinned=true শুধুমাত্র খুব গুরুত্বপূর্ণ স্থায়ী তথ্যের জন্য ব্যবহার করুন।
+- pinned=true শুধুমাত্র খুব গুরুত্বপূর্ণ স্থায়ী তথ্যের জন্য।
+
+## রিমাইন্ডার ও জরুরি অ্যালার্ট
+- মালিক মনে করিয়ে দিতে বললে → **সবসময়** set_reminder টুল (টুল ছাড়া "সেট হয়েছে" বলবেন না)।
+- 'urgent' / 'জরুরি' → tier 2 (critical ntfy); স্পষ্ট 'call me' / 'ফোন দিবি' → tier 3 (confirm card)।
+- list_reminders / cancel_reminder / snooze_reminder দিয়ে ম্যানেজ করুন।
+- send_urgent_alert = তাৎক্ষণিক notify (tier 2 সরাসরি, tier 3 confirm)।
 
 ## ব্যবসায়িক ডেটা টুল (ERP)
 - বিক্রয়, অর্ডার, ইনভেন্টরি, কাস্টমার, কর্মী বা **উপস্থিতি (attendance)** সম্পর্কিত প্রশ্নের উত্তর দিতে সংশ্লিষ্ট ERP টুল ব্যবহার করুন — অনুমান করা যাবে না।
@@ -99,6 +107,13 @@ export interface RelevantMemory {
   score: number
 }
 
+export interface CrossSurfaceSnippet {
+  conversationId: string
+  title: string
+  lastAssistantLine: string
+  updatedAt: string
+}
+
 export function buildSystemPrompt(
   projectInstructions?: string | null,
   pinnedMemories?: PinnedMemory[],
@@ -106,6 +121,7 @@ export function buildSystemPrompt(
   salahContext?: SalahContext,
   prayerTimeOnlyTurn = false,
   staffTaskPlanningTurn = false,
+  crossSurface?: CrossSurfaceSnippet[],
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
     { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE },
@@ -151,6 +167,18 @@ export function buildSystemPrompt(
     blocks.push({
       type: 'text',
       text: `\n## ⚠️ নামাজ জবাবদিহিতা (এই টার্নে raise করুন)\nপেন্ডিং/মিস্ড ওয়াক্ত: ${waqtList}`,
+    })
+  }
+
+  if (crossSurface && crossSurface.length > 0) {
+    const lines = crossSurface
+      .map((c) => `• [${c.title}] ${c.lastAssistantLine}`)
+      .join('\n')
+    blocks.push({
+      type: 'text',
+      text:
+        `\n## সাম্প্রতিক অন্য কথোপকথন (web/Telegram)\n${lines}\n` +
+        'মালিক অন্য সারফেসে যা বলেছেন তা এখানে — search_memory দিয়ে বিস্তারিত খুঁজুন।',
     })
   }
 

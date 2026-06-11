@@ -18,7 +18,7 @@ const jobName = process.argv[2]
 if (!jobName) {
   console.error('Usage: node trigger.mjs <job-name>')
   console.error('Jobs: salah-init, morning-proposal, ads-monitor, midday-checkin, salah-escalation,')
-  console.error('      messenger-scan, night-report, weekly-review, daily-summary')
+  console.error('      messenger-scan, night-report, weekly-review, daily-summary, reminder-ticker')
   process.exit(1)
 }
 
@@ -66,6 +66,7 @@ const handlers = {
   'weekly-review':     async () => { const { runWeeklyReview } = await import('../src/staff/weekly-review.mjs'); await runWeeklyReview({ supabase }) },
   'daily-summary':     async () => { const { runDailySummary } = await import('../src/schedulers/daily-summary.mjs'); await runDailySummary(context) },
   'salah-init':        async () => { const { initializeDailySalahRecords } = await import('../src/salah/scheduler.mjs'); await initializeDailySalahRecords(supabase) },
+  'reminder-ticker':   async () => { const { runReminderTicker } = await import('../src/reminders/ticker.mjs'); await runReminderTicker(context) },
 }
 
 const handler = handlers[jobName]

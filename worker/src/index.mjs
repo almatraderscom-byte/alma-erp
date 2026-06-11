@@ -99,6 +99,11 @@ async function pollPendingJobs() {
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
         console.log(`[worker] enqueued staff dispatch for action ${job.id}`)
+      } else if (job.type === 'urgent_notify') {
+        const { processUrgentNotify } = await import('./reminders/ticker.mjs')
+        await processUrgentNotify(job.payload)
+        await callJobResult(job.id, 'executed', { ok: true })
+        console.log(`[worker] urgent_notify dispatched for action ${job.id}`)
       }
     }
   } catch (err) {

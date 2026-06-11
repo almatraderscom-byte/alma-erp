@@ -5,6 +5,7 @@ import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/age
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
+import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
@@ -237,10 +238,11 @@ export async function* runAgentTurn(
     : ''
 
   // Load pinned memories and retrieve relevant memories in parallel
-  const [pinnedMemories, relevantMemories, salahContext] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
     loadPinnedMemories(),
     lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
     loadSalahAccountabilityContext(new Date(), lastUserText),
+    loadRecentOtherConversations(conversationId, 5),
   ])
 
   type ToolRecord = {
@@ -268,6 +270,7 @@ export async function* runAgentTurn(
             salahContext,
             isPrayerTimeInquiry(lastUserText),
             isStaffTaskPlanningInquiry(lastUserText),
+            crossSurface,
           ),
           tools: TOOL_DEFINITIONS,
           messages: apiMessages,

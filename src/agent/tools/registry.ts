@@ -8,6 +8,7 @@ import { SETTINGS_TOOLS } from './settings-tools'
 import { SALAH_TOOLS } from './salah-tools'
 import { FINANCE_TOOLS } from './finance-tools'
 import { COST_TOOLS } from './cost-tools'
+import { REMINDER_TOOLS } from './reminder-tools'
 
 export interface ToolResult {
   success: boolean
@@ -263,6 +264,7 @@ export const TOOLS: AgentTool[] = [
   ...SALAH_TOOLS,
   ...FINANCE_TOOLS,
   ...COST_TOOLS,
+  ...REMINDER_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

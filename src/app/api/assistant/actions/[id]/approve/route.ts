@@ -244,6 +244,41 @@ export async function POST(
     return Response.json({ success: true, expenseId: expense.id })
   }
 
+  if (action.type === 'set_reminder_tier3') {
+    const { title, body, dueAt, recurrenceRrule, tier, voice } = payload as {
+      title: string; body?: string; dueAt: string; recurrenceRrule?: string; tier?: number; voice?: boolean
+    }
+    const reminder = await db.agentReminder.create({
+      data: {
+        title: String(title),
+        body: body ? String(body) : null,
+        dueAt: new Date(dueAt),
+        recurrenceRrule: recurrenceRrule ? String(recurrenceRrule) : null,
+        tier: tier ?? 3,
+        voice: voice !== false,
+        status: 'pending',
+        sourceConversationId: action.conversationId,
+      },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { reminderId: reminder.id } },
+    })
+    return Response.json({ success: true, reminderId: reminder.id, message: 'Tier-3 reminder saved.' })
+  }
+
+  if (action.type === 'urgent_notify') {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    return Response.json({
+      success: true,
+      queued: true,
+      message: 'Urgent alert approved. Worker will dispatch notify shortly.',
+    })
+  }
+
   if (action.type === 'log_ledger_entry') {
     const { personName, direction, amount, currency, note, occurredAt } = payload as {
       personName: string; direction: string; amount: number; currency: string;

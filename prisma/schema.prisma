@@ -1784,6 +1784,28 @@ model AgentNotification {
   @@map("agent_notifications")
 }
 
+// ─── PHASE 9: Personal Reminders ──────────────────────────────────────────────
+
+model AgentReminder {
+  id                   String    @id @default(uuid())
+  title                String
+  body                 String?   @db.Text
+  dueAt                DateTime  @map("due_at")
+  recurrenceRrule      String?   @map("recurrence_rrule")
+  tier                 Int       @default(1)
+  voice                Boolean   @default(true)
+  status               String    @default("pending")
+  snoozedUntil         DateTime? @map("snoozed_until")
+  lastSentAt           DateTime? @map("last_sent_at")
+  sendCount            Int       @default(0) @map("send_count")
+  sourceConversationId String?   @map("source_conversation_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  @@index([status, dueAt])
+  @@index([dueAt])
+  @@map("agent_reminders")
+}
+
 model AgentStaff {
   id             String       @id @default(uuid())
   name           String

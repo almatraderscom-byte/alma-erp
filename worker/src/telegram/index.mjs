@@ -18,6 +18,7 @@ import { transcribeVoiceNote, sendVoiceMessage } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
 import { setDispatcherBot } from './dispatcher.mjs'
 import { handleSalahCallback } from '../salah/scheduler.mjs'
+import { handleReminderCallback } from '../reminders/callbacks.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
@@ -418,6 +419,9 @@ export function createTelegramBot() {
       const waqt   = parts[1]
       const status = parts[2]
       await handleSalahCallback(ctx, action, waqt, status)
+
+    } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
+      await handleReminderCallback(ctx, data)
 
     } else if (data.startsWith('task_done:')) {
       // task_done:<taskId>:<staffId>  — sent to staff member

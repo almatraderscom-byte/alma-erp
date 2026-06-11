@@ -35,6 +35,7 @@ const lazy = {
   subscriptionRenewal: () => import('./subscription-renewal.mjs'),
   budgetCheck:        () => import('./budget-check.mjs'),
   costReconcile:      () => import('./cost-reconcile.mjs'),
+  reminderTicker:     () => import('../reminders/ticker.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
+  { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
 ]
 
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
@@ -158,6 +160,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'cost-reconcile': {
           const { runCostReconciliation } = await lazy.costReconcile()
           await runCostReconciliation()
+          break
+        }
+        case 'reminder-ticker': {
+          const { runReminderTicker } = await lazy.reminderTicker()
+          await runReminderTicker(context)
           break
         }
         default:
