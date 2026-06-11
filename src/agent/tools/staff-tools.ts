@@ -4,6 +4,7 @@
  * The agent proposes/approves tasks; the worker handles dispatch timing.
  */
 import { prisma } from '@/lib/prisma'
+import { buildStaffTaskProposal } from '@/agent/lib/staff-task-proposal'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -17,6 +18,96 @@ function dhakaToday(): string {
 
 function dhakaDateStr(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+// ── prepare_staff_task_proposal ───────────────────────────────────────────────
+
+const prepare_staff_task_proposal: AgentTool = {
+  name: 'prepare_staff_task_proposal',
+  description:
+    'MUST use when owner asks about staff tasks for today. ' +
+    'Checks inventory, 30-day sales, FB posts, yesterday carry-forward — builds full Bangla task plan for all staff. ' +
+    'Saves as proposed tasks and optionally creates approval card. ' +
+    'Do NOT ask owner "কি বিষয়ে টাস্ক দিব" — run this tool first.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      saveProposal: { type: 'boolean', description: 'Save tasks as proposed (default true)' },
+      createApprovalCard: { type: 'boolean', description: 'Create dispatch confirm card (default true)' },
+      conversationId: { type: 'string' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const save = input.saveProposal !== false
+      const createCard = input.createApprovalCard !== false
+
+      const proposal = await buildStaffTaskProposal(date)
+      if (!proposal.success) return { success: false, error: proposal.error }
+
+      if (!proposal.tasks.length) {
+        return { success: false, error: 'ডেটা থেকে কোনো টাস্ক জেনারেট হয়নি — ERP/অর্ডার চেক করুন' }
+      }
+
+      if (save) {
+        await db.agentStaffTask.deleteMany({
+          where: { proposedFor: new Date(date), status: 'proposed' },
+        })
+        await db.agentStaffTask.createMany({
+          data: proposal.tasks.map((t) => ({
+            staffId: t.staffId,
+            title: t.title,
+            detail: t.detail ?? null,
+            type: t.type,
+            productRef: t.productRef ?? null,
+            source: t.source,
+            status: 'proposed',
+            proposedFor: new Date(date),
+          })),
+        })
+      }
+
+      let pendingActionId: string | undefined
+      if (createCard && save) {
+        const proposed = await db.agentStaffTask.findMany({
+          where: { proposedFor: new Date(date), status: 'proposed' },
+          include: { staff: { select: { name: true } } },
+        })
+        const action = await db.agentPendingAction.create({
+          data: {
+            conversationId: input.conversationId ? String(input.conversationId) : null,
+            type: 'dispatch_staff_tasks',
+            payload: { date, taskIds: proposed.map((t: { id: string }) => t.id) },
+            summary: proposal.summaryBangla,
+            costEstimate: 0,
+            status: 'pending',
+          },
+        })
+        pendingActionId = action.id as string
+      }
+
+      return {
+        success: true,
+        data: {
+          date,
+          taskCount: proposal.tasks.length,
+          tasks: proposal.tasks,
+          rotationPicks: proposal.rotationPicks,
+          topProducts: proposal.topProducts,
+          carryForwardCount: proposal.carryForwardCount,
+          pendingOrders: proposal.pendingOrders,
+          summaryBangla: proposal.summaryBangla,
+          pendingActionId,
+          message:
+            'প্রস্তাব তৈরি হয়েছে। মালিককে summaryBangla দেখান এবং Approve করতে বলুন — তারপর স্টাফকে Telegram-এ যাবে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
 }
 
 // ── get_staff_tasks ───────────────────────────────────────────────────────────
@@ -324,6 +415,7 @@ const get_marketing_history: AgentTool = {
 }
 
 export const STAFF_TOOLS: AgentTool[] = [
+  prepare_staff_task_proposal,
   get_all_staff,
   get_staff_tasks,
   propose_staff_tasks,

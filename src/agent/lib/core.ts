@@ -4,6 +4,7 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
 import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
+import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
@@ -266,6 +267,7 @@ export async function* runAgentTurn(
             relevantMemories,
             salahContext,
             isPrayerTimeInquiry(lastUserText),
+            isStaffTaskPlanningInquiry(lastUserText),
           ),
           tools: TOOL_DEFINITIONS,
           messages: apiMessages,

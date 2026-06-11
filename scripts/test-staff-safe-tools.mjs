@@ -20,7 +20,7 @@ const FORBIDDEN = new Set([
   // Privileged confirm tools
   'generate_image', 'post_to_facebook',
   // Staff management (owner-only)
-  'propose_staff_tasks', 'approve_and_dispatch_tasks', 'add_staff_task_now',
+  'prepare_staff_task_proposal', 'propose_staff_tasks', 'approve_and_dispatch_tasks', 'add_staff_task_now',
   'update_setting',
   'add_subscription', 'list_subscriptions',
 ])
