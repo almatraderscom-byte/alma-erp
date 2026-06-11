@@ -163,3 +163,46 @@ export async function reverseDuplicatePayrollAccruals(input: ReverseDuplicateAcc
     ...preview,
   }
 }
+
+/** Reverse one salary accrual ledger row (Super Admin / HR). */
+export async function reverseSingleSalaryAccrual(accrualEntryId: string, actorUserId?: string | null) {
+  const accrual = await prisma.employeeLedgerEntry.findUnique({ where: { id: accrualEntryId } })
+  if (!accrual || accrual.type !== 'SALARY_ACCRUAL' || accrual.isArchived) {
+    throw new Error('Salary accrual entry not found')
+  }
+
+  const alreadyReversed = await existingReversalIds([accrual.id])
+  if (alreadyReversed.has(accrual.id)) {
+    throw new Error('This salary accrual was already reversed')
+  }
+
+  const amount = Number(accrual.amount || 0)
+  if (!Number.isFinite(amount) || amount === 0) {
+    throw new Error('Accrual amount is zero — nothing to reverse')
+  }
+
+  const entry = await prisma.employeeLedgerEntry.create({
+    data: {
+      employeeId: accrual.employeeId,
+      businessId: accrual.businessId,
+      date: new Date(),
+      periodYm: accrual.periodYm,
+      type: 'ADJUSTMENT',
+      amount: moneyDecimal(-amount),
+      note: `Reverse salary accrual ${accrual.id} (admin)`.slice(0, 800),
+      source: PAYROLL_DUPLICATE_ACCRUAL_REVERSAL_SOURCE,
+      sourceRef: `${PAYROLL_DUPLICATE_ACCRUAL_REVERSAL_SOURCE}:${accrual.id}`,
+      createdById: actorUserId || null,
+      approvedById: actorUserId || null,
+    },
+  })
+
+  return {
+    ok: true,
+    adjustmentId: entry.id,
+    accrualId: accrual.id,
+    employeeId: accrual.employeeId,
+    amount: Number(entry.amount),
+    periodYm: accrual.periodYm,
+  }
+}

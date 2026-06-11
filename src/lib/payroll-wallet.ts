@@ -91,6 +91,17 @@ export function periodFromDate(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
+export function shiftPeriodYm(periodYm: string, months: number): string {
+  const [y, m] = periodYm.split('-').map(Number)
+  const d = new Date(y, (m || 1) - 1 + months, 1)
+  return periodFromDate(d)
+}
+
+/** Salary run on the 10th credits the previous calendar month (June 10 → May salary). */
+export function payrollAccrualPeriodYm(runDate = new Date()): string {
+  return shiftPeriodYm(periodFromDate(runDate), -1)
+}
+
 export function signedAmount(type: EmployeeLedgerEntryType, amount: unknown): number {
   const n = Number(amount || 0)
   if (WALLET_CREDIT_TYPES.includes(type)) return n

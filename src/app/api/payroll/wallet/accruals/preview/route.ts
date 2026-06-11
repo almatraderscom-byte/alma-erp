@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext, forbidden } from '@/lib/payroll-wallet-access'
-import { periodFromDate } from '@/lib/payroll-wallet'
+import { payrollAccrualPeriodYm } from '@/lib/payroll-wallet'
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const businessId = url.searchParams.get('business_id')
-  const periodYm = url.searchParams.get('period_ym') || periodFromDate()
+  const periodYm = url.searchParams.get('period_ym') || payrollAccrualPeriodYm()
   const ctx = await getWalletContext(req, businessId)
   if ('error' in ctx) return ctx.error
   if (!ctx.isAdmin) return forbidden('Only HR/Admin can preview payroll accruals.')

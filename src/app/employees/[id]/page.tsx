@@ -133,6 +133,8 @@ export default function EmployeeDetailPage() {
   const actorRole = normalizeAlmaRole(session?.user?.role)
   const canEditSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'ADMIN' || actorRole === 'HR'
   const canWriteWallet = isWalletAdmin(actorRole)
+  const canReverseSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'HR'
+  const canResetAttendance = actorRole === 'SUPER_ADMIN'
   const { data: txs, loading, refetch } = useHRPayrollForEmployee(decoded || null)
   const { mutate: postPay, loading: paying } = useHrAddPayroll()
   const { branding } = useBranding()
@@ -159,6 +161,8 @@ export default function EmployeeDetailPage() {
   const [correctionReversals, setCorrectionReversals] = useState<CorrectionReversalDraft[]>([])
   const [pendingCorrections, setPendingCorrections] = useState<PendingSalaryCorrectionRow[]>([])
   const [pendingCorrectionsLoading, setPendingCorrectionsLoading] = useState(false)
+  const [reversingEntryId, setReversingEntryId] = useState<string | null>(null)
+  const [resettingAttendanceId, setResettingAttendanceId] = useState<string | null>(null)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
   const transactions = txs?.transactions ?? []
@@ -283,6 +287,47 @@ export default function EmployeeDetailPage() {
     window.addEventListener('alma:approvals-updated', onUpdated)
     return () => window.removeEventListener('alma:approvals-updated', onUpdated)
   }, [loadPendingCorrections])
+
+  async function reverseSalaryAccrual(entryId: string, amount: number) {
+    if (!canReverseSalary || reversingEntryId) return
+    const ok = window.confirm(`Reverse full salary accrual of ${formatMoneyBDT(amount)}? This posts an equal ADJUSTMENT debit.`)
+    if (!ok) return
+    setReversingEntryId(entryId)
+    try {
+      const res = await fetch('/api/payroll/wallet/entries/reverse-accrual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, accrual_entry_id: entryId }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      toast.success('Salary accrual reversed')
+      void loadWallet()
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not reverse accrual')
+    } finally {
+      setReversingEntryId(null)
+    }
+  }
+
+  async function resetAttendanceRecord(recordId: string, attendanceDate: string) {
+    if (!canResetAttendance || resettingAttendanceId) return
+    const ok = window.confirm(`Remove attendance for ${attendanceDate.slice(0, 10)}? Employee can check in again; any late penalty will be reversed.`)
+    if (!ok) return
+    setResettingAttendanceId(recordId)
+    try {
+      const res = await fetch(`/api/attendance/${encodeURIComponent(recordId)}`, { method: 'DELETE' })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      toast.success('Attendance reset — employee can check in again')
+      void loadAttendance()
+      void loadWallet()
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not reset attendance')
+    } finally {
+      setResettingAttendanceId(null)
+    }
+  }
 
   function resetCorrectionForm() {
     setCorrectionAccrualId('')
@@ -589,7 +634,8 @@ export default function EmployeeDetailPage() {
                       <th className="py-2 pr-3 text-left">Check out</th>
                       <th className="py-2 pr-3 text-right">Worked</th>
                       <th className="py-2 pr-3 text-right">Late</th>
-                      <th className="py-2 text-right">Penalty</th>
+                      <th className="py-2 pr-3 text-right">Penalty</th>
+                      {canResetAttendance ? <th className="py-2 text-right">Actions</th> : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -600,7 +646,19 @@ export default function EmployeeDetailPage() {
                         <td className="py-2 pr-3 font-mono">{row.checkOutAt ? timeLabel(row.checkOutAt) : '—'}</td>
                         <td className="py-2 pr-3 text-right font-mono">{durationLabel(row.totalWorkMinutes)}</td>
                         <td className={`py-2 pr-3 text-right font-mono ${row.lateMinutes ? 'text-red-400' : 'text-green-400'}`}>{durationLabel(row.lateMinutes)}</td>
-                        <td className="py-2 text-right font-mono text-red-400">৳ {row.penaltyAmount.toLocaleString('en-BD')}</td>
+                        <td className="py-2 pr-3 text-right font-mono text-red-400">৳ {row.penaltyAmount.toLocaleString('en-BD')}</td>
+                        {canResetAttendance ? (
+                          <td className="py-2 text-right">
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              disabled={resettingAttendanceId === row.id}
+                              onClick={() => void resetAttendanceRecord(row.id, row.attendanceDate)}
+                            >
+                              {resettingAttendanceId === row.id ? '…' : 'Reset'}
+                            </Button>
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -652,6 +710,7 @@ export default function EmployeeDetailPage() {
                       <th className="py-2 pr-3 text-right">Movement</th>
                       <th className="py-2 pr-3 text-right">Running</th>
                       <th className="py-2 text-left">Note</th>
+                      {canReverseSalary ? <th className="py-2 text-right">Actions</th> : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -662,6 +721,20 @@ export default function EmployeeDetailPage() {
                         <td className={`py-2 pr-3 text-right font-mono ${tx.signedAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>{tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}</td>
                         <td className="py-2 pr-3 text-right font-mono text-gold-lt">৳ {tx.runningBalance.toLocaleString('en-BD')}</td>
                         <td className="py-2 text-zinc-500">{tx.note || '—'}</td>
+                        {canReverseSalary ? (
+                          <td className="py-2 text-right">
+                            {tx.type === 'SALARY_ACCRUAL' && tx.id && tx.signedAmount > 0 ? (
+                              <Button
+                                size="xs"
+                                variant="secondary"
+                                disabled={reversingEntryId === tx.id}
+                                onClick={() => void reverseSalaryAccrual(tx.id!, tx.signedAmount)}
+                              >
+                                {reversingEntryId === tx.id ? '…' : 'Reverse'}
+                              </Button>
+                            ) : null}
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>

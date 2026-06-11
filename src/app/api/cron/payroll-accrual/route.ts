@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BUSINESS_LIST } from '@/lib/businesses'
 import { prisma } from '@/lib/prisma'
 import { runPayrollAccrual } from '@/lib/payroll-accrual'
-import { periodFromDate } from '@/lib/payroll-wallet'
+import { payrollAccrualPeriodYm } from '@/lib/payroll-wallet'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   const now = new Date()
   const day = now.getUTCDate()
-  const periodYm = periodFromDate(now)
+  const periodYm = payrollAccrualPeriodYm(now)
   if (!setting.enabled) {
     return NextResponse.json({ ok: true, skipped: 'automation_disabled', periodYm })
   }

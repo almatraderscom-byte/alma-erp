@@ -296,8 +296,12 @@ export default function PayrollPage() {
   async function submitCompensation(e: React.FormEvent) {
     e.preventDefault()
     const amount = Number(compForm.amount)
-    if (!compForm.employeeId || !amount || amount <= 0) {
-      toast.error('Employee and positive amount required')
+    if (!compForm.employeeId || !Number.isFinite(amount) || amount === 0) {
+      toast.error('Employee and non-zero amount required')
+      return
+    }
+    if (compForm.type !== 'ADJUSTMENT' && amount <= 0) {
+      toast.error('Amount must be positive for this entry type')
       return
     }
     setCompBusy(true)
@@ -368,7 +372,7 @@ export default function PayrollPage() {
                 </option>
               ))}
             </select>
-            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min="1" step="1" placeholder="Amount" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
+            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
             <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
             <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
             <Button size="xs" variant="gold" type="submit" disabled={compBusy}>{compBusy ? 'Posting…' : 'Post'}</Button>
@@ -398,7 +402,7 @@ export default function PayrollPage() {
             <div>
               <p className="text-sm font-bold text-cream">Monthly payroll automation</p>
               <p className="text-[11px] text-zinc-500 mt-1">
-                Runs automatically on day {automation?.dayOfMonth ?? 10} · {automation?.timezone ?? 'Asia/Dhaka'} · Cron path /api/cron/payroll-accrual
+                Runs on day {automation?.dayOfMonth ?? 10} · credits previous month salary (e.g. June 10 → May) · {automation?.timezone ?? 'Asia/Dhaka'}
               </p>
             </div>
             <div className="flex gap-2">

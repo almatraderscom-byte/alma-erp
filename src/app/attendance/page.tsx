@@ -135,6 +135,8 @@ function AttendancePageInner() {
   const [viewAllBusinesses, setViewAllBusinesses] = useState(role === 'SUPER_ADMIN')
   const [showIntegrity, setShowIntegrity] = useState(false)
   const [reviewBusy, setReviewBusy] = useState(false)
+  const [resettingRecordId, setResettingRecordId] = useState<string | null>(null)
+  const canResetAttendance = role === 'SUPER_ADMIN'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -237,6 +239,24 @@ function AttendancePageInner() {
     if (!result.ok) return
     toast.success('Verification requested — employee will see Verify Face Now on My Desk')
     void load()
+  }
+
+  async function resetAttendance(recordId: string, employeeName: string) {
+    if (!canResetAttendance || resettingRecordId) return
+    const ok = window.confirm(`Remove ${employeeName}'s attendance for today? They can check in again; any late penalty will be reversed.`)
+    if (!ok) return
+    setResettingRecordId(recordId)
+    try {
+      const result = await safeFetchJsonWithToast(`/api/attendance/${encodeURIComponent(recordId)}`, {
+        method: 'DELETE',
+      })
+      if (!result.ok) return
+      toast.success('Attendance reset — employee can check in again')
+      void load()
+      void loadAnalytics()
+    } finally {
+      setResettingRecordId(null)
+    }
   }
 
   async function reviewSelfie(
@@ -420,9 +440,21 @@ function AttendancePageInner() {
                         {r.trustStatus.replace(/_/g, ' ')}
                       </td>
                       <td className="py-2 text-right">
-                        <Button size="xs" variant="secondary" disabled={role !== 'SUPER_ADMIN' || r.verificationRequired || r.selfieCount > 0} onClick={() => void requestVerification(r.id)}>
-                          {r.selfieCount > 0 ? 'Verified' : r.verificationRequired ? 'Requested' : 'Selfie'}
-                        </Button>
+                        <div className="flex justify-end gap-1 flex-wrap">
+                          {canResetAttendance ? (
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              disabled={resettingRecordId === r.id}
+                              onClick={() => void resetAttendance(r.id, r.employeeName)}
+                            >
+                              {resettingRecordId === r.id ? '…' : 'Reset'}
+                            </Button>
+                          ) : null}
+                          <Button size="xs" variant="secondary" disabled={role !== 'SUPER_ADMIN' || r.verificationRequired || r.selfieCount > 0} onClick={() => void requestVerification(r.id)}>
+                            {r.selfieCount > 0 ? 'Verified' : r.verificationRequired ? 'Requested' : 'Selfie'}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

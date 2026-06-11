@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { serverGet } from '@/lib/server-api'
-import { moneyDecimal, periodFromDate } from '@/lib/payroll-wallet'
+import { moneyDecimal, payrollAccrualPeriodYm, periodFromDate } from '@/lib/payroll-wallet'
 import { notifyAdminsFailure, notifyUser } from '@/lib/notifications'
 import { errorMeta, logEvent } from '@/lib/logger'
 import type { HREmployeesApi } from '@/types/hr'
@@ -20,7 +20,7 @@ function periodStart(periodYm: string): Date {
 
 export async function runPayrollAccrual({
   businessId,
-  periodYm = periodFromDate(),
+  periodYm = payrollAccrualPeriodYm(),
   runById,
   trigger = 'manual',
   force = false,
