@@ -43,6 +43,10 @@ async function upsertSalahRecord(data) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
     body: JSON.stringify(data),
   })
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '(no body)')
+    throw new Error(`salah-record ${res.status}: ${errText}`)
+  }
   return res.json()
 }
 
@@ -282,8 +286,8 @@ export async function initializeDailySalahRecords(supabase) {
   const times = await getPrayerTimes(new Date())
 
   for (const waqt of WAQT_ORDER) {
-    const window = times[waqt]
-    if (!window) continue
+    const prayerWindow = times[waqt]
+    if (!prayerWindow) continue
 
     // Check for override
     const { data: override } = await supabase
@@ -300,22 +304,23 @@ export async function initializeDailySalahRecords(supabase) {
       continue
     }
 
-    const windowStart = ov?.override_time
+    const waqtStart = ov?.override_time
       ? new Date(ov.override_time)
       : ov?.delay_until
         ? new Date(ov.delay_until)
-        : window.start
+        : prayerWindow.start
 
     await upsertSalahRecord({
       date:        today,
-      waqt,
-      windowStart: windowStart.toISOString(),
-      windowEnd:   window.end.toISOString(),
+      waqt:        waqt,
+      windowStart: waqtStart.toISOString(),
+      windowEnd:   prayerWindow.end.toISOString(),
       status:      'pending',
     })
+    console.log(`[salah] initialized ${waqt} for ${today}`)
   }
 
-  console.log(`[salah] initialized ${WAQT_ORDER.length} salah records for ${today}`)
+  console.log(`[salah] initialized salah records for ${today} — done`)
 }
 
 // ── Handle Telegram salah button callbacks ────────────────────────────────────
