@@ -14,6 +14,10 @@ import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
 import { createTelegramBot } from './telegram/index.mjs'
+import { setupSchedulers } from './schedulers/index.mjs'
+import { dispatchTasksToStaff } from './staff/dispatch.mjs'
+import { initializeDailySalahRecords } from './salah/scheduler.mjs'
+import { setDispatcherBot } from './telegram/dispatcher.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -61,6 +65,13 @@ const longTaskQueue = new Queue('long-agent-task', {
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 
+// ── Phase 6: Staff task dispatch queue ────────────────────────────────────────
+
+const staffDispatchQueue = new Queue('staff-dispatch', {
+  connection,
+  defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
+})
+
 // ── Polling for new approved jobs ──────────────────────────────────────────
 
 async function pollPendingJobs() {
@@ -81,6 +92,9 @@ async function pollPendingJobs() {
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+      } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now') {
+        await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
+        console.log(`[worker] enqueued staff dispatch for action ${job.id}`)
       }
     }
   } catch (err) {
@@ -192,6 +206,46 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
   console.log(`[worker] long-agent-task ${job.id} — not yet implemented`)
 }, { connection, concurrency: 1 })
 
+// ── Staff dispatch worker ──────────────────────────────────────────────────────
+
+const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
+  const { payload, type } = job.data
+  const bot = telegramBot
+
+  if (!bot) {
+    console.warn('[worker] staff-dispatch: Telegram bot not ready')
+    return
+  }
+
+  if (type === 'dispatch_staff_tasks') {
+    const { date, taskIds } = payload ?? {}
+    await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+
+    // Mark pending action as executed
+    await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds?.length ?? 0 })
+
+  } else if (type === 'add_staff_task_now') {
+    // Single task dispatch
+    const { staffId, staffName, date } = payload ?? {}
+    const { data: tasks } = await supabase
+      .from('staff_tasks')
+      .select('*')
+      .eq('staff_id', staffId)
+      .eq('proposed_for', date)
+      .eq('status', 'approved')
+      .limit(1)
+
+    if (tasks?.length) {
+      await dispatchTasksToStaff({ supabase, bot, date, taskIds: [tasks[0].id] })
+    }
+    await callJobResult(job.data.pendingActionId, 'success', { dispatched: 1 })
+  }
+}, { connection, concurrency: 1 })
+
+staffDispatchWorker.on('failed', (job, err) => {
+  console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)
+})
+
 imageGenWorker.on('completed', (job) => console.log(`[worker] image-gen ${job.id} completed`))
 imageGenWorker.on('failed', (job, err) => {
   console.error(`[worker] image-gen ${job?.id} failed:`, err.message)
@@ -211,11 +265,32 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
       .then(() => console.log('[telegram] Bot started (long-polling)'))
       .catch((err) => console.error('[telegram] Bot launch failed:', err.message))
     console.log('[telegram] Bot initializing...')
+    // Register bot with dispatcher module for scheduler-initiated messages
+    setDispatcherBot(telegramBot, process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
   } catch (err) {
     console.error('[telegram] Failed to create bot:', err.message)
   }
 } else {
   console.warn('[worker] ASSISTANT_BOT_TOKEN not set — Telegram bot disabled')
+}
+
+// ── Phase 6: Schedulers ────────────────────────────────────────────────────
+
+let schedulerQueue = null
+try {
+  schedulerQueue = await setupSchedulers({
+    connection,
+    supabase,
+    bot: telegramBot,
+  })
+  if (schedulerQueue) {
+    // Initialize today's salah records on startup (idempotent)
+    await initializeDailySalahRecords(supabase).catch(err =>
+      console.error('[salah] init failed:', err.message)
+    )
+  }
+} catch (err) {
+  console.error('[schedulers] setup error:', err.message)
 }
 
 // ── Start polling ──────────────────────────────────────────────────────────
@@ -229,7 +304,11 @@ process.on('SIGTERM', async () => {
   console.log('[worker] SIGTERM — draining...')
   clearInterval(pollInterval)
   if (telegramBot) telegramBot.stop('SIGTERM')
-  await Promise.all([imageGenWorker.close(), longTaskWorker.close()])
+  await Promise.all([
+    imageGenWorker.close(),
+    longTaskWorker.close(),
+    staffDispatchWorker.close(),
+  ])
   process.exit(0)
 })
 
@@ -237,6 +316,10 @@ process.on('SIGINT', async () => {
   console.log('[worker] SIGINT — shutting down...')
   clearInterval(pollInterval)
   if (telegramBot) telegramBot.stop('SIGINT')
-  await Promise.all([imageGenWorker.close(), longTaskWorker.close()])
+  await Promise.all([
+    imageGenWorker.close(),
+    longTaskWorker.close(),
+    staffDispatchWorker.close(),
+  ])
   process.exit(0)
 })
