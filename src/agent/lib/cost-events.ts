@@ -3,6 +3,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import type { CostKind, CostProvider } from '@/agent/lib/pricing'
+import { queryCostSumBetween } from '@/agent/lib/cost-db'
 
 export type LogCostInput = {
   provider: CostProvider
@@ -59,16 +60,7 @@ export async function logCost(input: LogCostInput): Promise<{ id: string } | nul
 
 /** Sum cost events in a date range (Asia/Dhaka calendar dates as UTC boundaries). */
 export async function sumCostUsdBetween(start: Date, end: Date): Promise<number> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const rows: Array<{ total: string | null }> = await db.$queryRawUnsafe(
-    `SELECT COALESCE(SUM(cost_usd), 0)::text AS total
-     FROM agent_cost_events
-     WHERE occurred_at >= $1 AND occurred_at < $2`,
-    start,
-    end,
-  )
-  return parseFloat(rows[0]?.total ?? '0') || 0
+  return queryCostSumBetween(start, end)
 }
 
 export const BUDGET_KEYS = {
@@ -77,12 +69,10 @@ export const BUDGET_KEYS = {
 } as const
 
 export async function getBudgetSettings(): Promise<{ dailyUsd: number | null; monthlyUsd: number | null }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const rows = await db.agentKvSetting.findMany({
+  const rows = await prisma.agentKvSetting.findMany({
     where: { key: { in: [BUDGET_KEYS.dailyUsd, BUDGET_KEYS.monthlyUsd] } },
   })
-  const map = new Map<string, string>(rows.map((r: { key: string; value: string }) => [r.key, r.value]))
+  const map = new Map<string, string>(rows.map((r) => [r.key, r.value]))
   const daily = map.get(BUDGET_KEYS.dailyUsd)
   const monthly = map.get(BUDGET_KEYS.monthlyUsd)
   return {

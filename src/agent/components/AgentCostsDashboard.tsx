@@ -59,8 +59,13 @@ export default function AgentCostsDashboard() {
     setError(null)
     try {
       const res = await fetch('/api/assistant/costs/summary')
-      if (!res.ok) throw new Error(`লোড ব্যর্থ (HTTP ${res.status})`)
-      const json = await res.json() as DashboardData
+      const json = await res.json() as DashboardData & { error?: string; message?: string }
+      if (!res.ok) {
+        if (json.error === 'agent_db_not_migrated') {
+          throw new Error('Cost DB migration apply করা হয়নি। Production-এ `npx prisma migrate deploy` চালান।')
+        }
+        throw new Error(json.message ?? `লোড ব্যর্থ (HTTP ${res.status})`)
+      }
       setData(json)
       setBudgetDaily(json.budgets.dailyUsd != null ? String(json.budgets.dailyUsd) : '')
       setBudgetMonthly(json.budgets.monthlyUsd != null ? String(json.budgets.monthlyUsd) : '')
