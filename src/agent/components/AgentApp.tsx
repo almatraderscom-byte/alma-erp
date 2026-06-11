@@ -7,6 +7,7 @@ import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
+import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 
 interface AgentAppProps {
   userName: string
@@ -358,7 +359,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] overflow-hidden bg-black">
+    <div className="flex h-full min-h-0 overflow-hidden bg-black">
       {/* Sidebar */}
       <AgentSidebar
         open={sidebarOpen}
@@ -371,40 +372,43 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       />
 
       {/* Main area */}
-      <div className="flex flex-1 flex-col min-w-0">
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* Top bar */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+        <header className="safe-top safe-x flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/80 px-3 py-2 backdrop-blur-md md:gap-3 md:px-4 md:py-2.5">
           <button
+            type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="rounded-lg p-1.5 text-muted hover:text-cream transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg text-muted transition-colors hover:bg-white/[0.04] hover:text-cream active:scale-[0.98] md:h-9 md:w-9"
             title="সাইডবার"
+            aria-label="সাইডবার খুলুন"
           >
             ☰
           </button>
-          <span className="flex-1 truncate text-sm font-semibold text-cream">
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-tight text-cream md:text-sm">
             {activeConvId ? 'কথোপকথন' : 'নতুন কথোপকথন'}
           </span>
           <a
             href="/agent/costs"
-            className="rounded-lg border border-border px-2.5 py-1 text-[10px] text-muted hover:text-gold-lt"
+            className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-gold-lt active:scale-[0.98] md:px-2.5"
           >
             খরচ
           </a>
           {artifacts.length > 0 && (
             <button
+              type="button"
               onClick={() => setArtifactsOpen((v) => !v)}
-              className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-semibold text-muted-hi hover:text-cream hover:border-gold-dim/30 transition-colors"
+              className="hidden h-9 shrink-0 items-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-semibold text-muted-hi transition-colors hover:border-gold-dim/30 hover:text-cream sm:flex"
             >
-              ✦ {artifacts.length} আর্টিফ্যাক্ট
+              ✦ {artifacts.length}
             </button>
           )}
-        </div>
+        </header>
 
         {/* Thread + artifacts */}
         <div className="flex flex-1 overflow-hidden">
           {convLoading ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-zinc-500 animate-pulse">
-              কথোপকথন লোড হচ্ছে…
+            <div className="flex flex-1 overflow-y-auto">
+              <AgentConversationSkeleton />
             </div>
           ) : convLoadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -423,6 +427,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             conversationId={activeConvId}
             onArtifactOpen={() => setArtifactsOpen(true)}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
+            onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
           />
           )}
           <AgentArtifactsPanel
@@ -440,6 +445,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           onStop={stopGeneration}
           streaming={streaming}
           conversationId={activeConvId}
+          isMobile={isMobile}
         />
       </div>
     </div>

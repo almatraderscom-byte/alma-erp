@@ -6,6 +6,8 @@ import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
+import AgentEmptyState from './AgentEmptyState'
+import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 
 export interface ChatMessage {
   id: string
@@ -30,6 +32,7 @@ interface AgentThreadProps {
   conversationId: string | null
   onArtifactOpen: () => void
   onActionApproved?: () => void
+  onQuickSend?: (text: string) => void
 }
 
 // Detect artifact-worthy content: code block ≥ 15 lines OR markdown doc ≥ 800 chars
@@ -126,7 +129,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
@@ -166,15 +169,16 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     onArtifactOpen()
   }
 
+  const activeTool = messages
+    .filter((m) => m.streaming)
+    .flatMap((m) => m.toolActivity ?? [])
+    .find((t) => !t.done)
+
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
+    <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-4 pb-6 md:py-6">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <span className="mb-4 text-5xl opacity-20">✦</span>
-            <p className="text-sm font-semibold text-zinc-400">আস্সালামু আলাইকুম</p>
-            <p className="mt-1 text-[12px] text-zinc-600">কিভাবে সাহায্য করতে পারি, স্যার?</p>
-          </div>
+          <AgentEmptyState onSuggestion={onQuickSend} />
         )}
 
         <AnimatePresence initial={false}>
@@ -236,12 +240,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {/* Message body */}
                   {msg.streaming && !msg.text ? (
-                    <div className="flex items-center gap-2 py-2">
-                      <span className="text-gold animate-pulse">▌</span>
-                    </div>
+                    <AgentThinkingIndicator
+                      label="উত্তর তৈরি হচ্ছে"
+                      toolName={activeTool?.name}
+                    />
                   ) : (
-                    <div className="rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3 text-sm text-muted-hi">
-                      <AgentMarkdown content={msg.text} />
+                    <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-muted-hi">
+                      {msg.streaming && msg.text ? (
+                        <div className="relative">
+                          <AgentMarkdown content={msg.text} />
+                          <motion.span
+                            className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-gold/70"
+                            animate={{ opacity: [1, 0.2, 1] }}
+                            transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
+                            aria-hidden
+                          />
+                        </div>
+                      ) : (
+                        <AgentMarkdown content={msg.text} />
+                      )}
                     </div>
                   )}
 
@@ -291,15 +308,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         <div ref={bottomRef} />
       </div>
 
-      {/* Jump-to-bottom pill */}
       <AnimatePresence>
         {showJumpBtn && (
           <motion.button
+            type="button"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-muted-hi shadow-xl hover:text-cream transition-colors"
+            className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/[0.1] bg-zinc-900/95 px-4 py-2 text-xs font-semibold text-muted-hi shadow-xl backdrop-blur-md transition-colors hover:text-cream"
           >
             ↓ নিচে যান
           </motion.button>

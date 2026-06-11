@@ -3,11 +3,11 @@
 import { usePathname } from 'next/navigation'
 import { MobileNav } from '@/components/layout/Sidebar'
 
-const HIDE_PREFIX = '/orders/new'
+const HIDE_PREFIXES = ['/orders/new', '/agent']
 
 function useHideMobileChrome() {
-  const path = usePathname()
-  return path.startsWith(HIDE_PREFIX)
+  const path = usePathname() ?? ''
+  return HIDE_PREFIXES.some((prefix) => path.startsWith(prefix))
 }
 
 /** Extra scroll room above the fixed bottom tab bar (hidden on full-screen flows). */

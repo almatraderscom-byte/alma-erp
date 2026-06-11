@@ -6,6 +6,7 @@ import { PLATFORM_Z } from '@/lib/platform-z-index'
 import { cn } from '@/lib/utils'
 
 const PUBLIC_PREFIXES = ['/login', '/forgot-password', '/reset-password', '/invoice/share']
+const AGENT_PREFIX = '/agent'
 const FULL_TEXT = 'Developed by Maruf'
 const PREFIX = 'Developed by '
 const TYPING_MS = 80
@@ -18,6 +19,11 @@ type Phase = 'typing' | 'hold' | 'erasing' | 'pause'
 function useCompactBottom(): boolean {
   const pathname = usePathname() ?? ''
   return PUBLIC_PREFIXES.some(prefix => pathname.startsWith(prefix))
+}
+
+function useAgentRoute(): boolean {
+  const pathname = usePathname() ?? ''
+  return pathname.startsWith(AGENT_PREFIX)
 }
 
 function WatermarkDisplay({ text, showCursor }: { text: string; showCursor: boolean }) {
@@ -47,6 +53,7 @@ function WatermarkDisplay({ text, showCursor }: { text: string; showCursor: bool
  */
 export function DeveloperWatermark() {
   const compactBottom = useCompactBottom()
+  const isAgent = useAgentRoute()
   const [displayed, setDisplayed] = useState('')
   const [showCursor, setShowCursor] = useState(true)
   const [clientReady, setClientReady] = useState(false)
@@ -135,7 +142,7 @@ export function DeveloperWatermark() {
       : 'bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-5',
   )
 
-  if (!clientReady) {
+  if (!clientReady || isAgent) {
     return null
   }
 

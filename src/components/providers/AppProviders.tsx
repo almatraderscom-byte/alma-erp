@@ -23,6 +23,7 @@ import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
 import { isAuthPath } from '@/lib/auth-paths'
+import { cn } from '@/lib/utils'
 
 const NotificationShellProvider = dynamic(
   () => import('@/contexts/NotificationShellContext').then(mod => mod.NotificationShellProvider),
@@ -63,23 +64,38 @@ function RoutePrefetcher() {
   return null
 }
 
+function useIsAgentRoute() {
+  const path = usePathname() ?? ''
+  return path.startsWith('/agent')
+}
+
 function ErpChrome({ children }: { children: ReactNode }) {
   const mainScrollRef = useRef<HTMLElement>(null)
+  const isAgent = useIsAgentRoute()
 
   return (
     <ApprovalCountProvider>
       <NotificationShellProvider>
         <SentryUserBridge />
         <div className="flex h-[100dvh] w-full min-w-0 overflow-hidden">
-          <Sidebar />
+          {!isAgent && <Sidebar />}
           <main
             ref={mainScrollRef}
-            className="flex-1 min-w-0 overflow-x-auto overflow-y-auto scrollbar-hide overscroll-y-contain"
+            className={cn(
+              'flex-1 min-w-0 scrollbar-hide overscroll-y-contain',
+              isAgent
+                ? 'overflow-hidden'
+                : 'overflow-x-auto overflow-y-auto',
+            )}
           >
-            <MobilePullToRefresh scrollRef={mainScrollRef}>
-              <div className="min-w-0 max-w-full">{children}</div>
-              <MobileBottomSpacer />
-            </MobilePullToRefresh>
+            {isAgent ? (
+              <div className="flex h-full min-h-0 min-w-0 flex-col">{children}</div>
+            ) : (
+              <MobilePullToRefresh scrollRef={mainScrollRef}>
+                <div className="min-w-0 max-w-full">{children}</div>
+                <MobileBottomSpacer />
+              </MobilePullToRefresh>
+            )}
           </main>
         </div>
         <MobileNavBar />

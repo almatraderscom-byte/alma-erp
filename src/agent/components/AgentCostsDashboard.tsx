@@ -110,8 +110,14 @@ export default function AgentCostsDashboard() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center text-sm text-zinc-500 animate-pulse">
-        খরচ ড্যাশবোর্ড লোড হচ্ছে…
+      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6">
+        <div className="skeleton h-8 w-48 rounded-lg" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-24 rounded-2xl" />
+          ))}
+        </div>
+        <div className="skeleton h-56 rounded-2xl" />
       </div>
     )
   }
@@ -128,7 +134,7 @@ export default function AgentCostsDashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-4 pb-24 md:p-6">
+    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-gold-lt">AI খরচ ড্যাশবোর্ড</h1>

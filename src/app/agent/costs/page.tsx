@@ -15,7 +15,7 @@ export default async function AgentCostsPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <div className="min-h-[calc(100dvh-56px)] bg-black">
+    <div className="h-full min-h-0 overflow-y-auto bg-black">
       <AgentCostsDashboard />
     </div>
   )
