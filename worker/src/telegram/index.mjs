@@ -331,6 +331,74 @@ async function handleCsResume(ctx, convId) {
   await ctx.reply(`✅ CS resumed for ${convId}`)
 }
 
+async function handleCsFollowups(ctx, on) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-followups`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ action: 'set_enabled', enabled: on }),
+  })
+  if (!res.ok) {
+    await ctx.reply('❌ followups setting failed')
+    return
+  }
+  await ctx.reply(`✅ CS follow-ups → *${on ? 'on' : 'off'}*`, { parse_mode: 'Markdown' })
+}
+
+async function handleCsBlock(ctx, psid) {
+  if (!psid) {
+    await ctx.reply('ব্যবহার: /cs block <psid>')
+    return
+  }
+  const pageId = process.env.CS_DEFAULT_PAGE_ID ?? '1044848232034171'
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-block`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ pageId, psid, blockedBy: String(ctx.chat?.id) }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.reply(`❌ ${data.error ?? 'block failed'}`)
+    return
+  }
+  await ctx.reply(`✅ Blocked ${psid}`)
+}
+
+async function handlePostlink(ctx, args) {
+  if (args.length < 2) {
+    await ctx.reply('ব্যবহার: /postlink <fb post url or id> CODE1 CODE2')
+    return
+  }
+  const postRef = args[0]
+  const codes = args.slice(1)
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-postlink`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ postRef, productCodes: codes }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.reply(`❌ ${data.error ?? 'postlink failed'}`)
+    return
+  }
+  await ctx.reply(`✅ Post linked: ${data.postId}\nCodes: ${(data.codes ?? []).join(', ')}`)
+}
+
+async function handleCsConfirmOrder(ctx, draftId) {
+  await ctx.answerCbQuery('⏳ কনফার্ম হচ্ছে…')
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-confirm-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ draftId, confirmedBy: String(ctx.chat?.id) }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.reply(`❌ ${data.error ?? 'confirm failed'}`)
+    return
+  }
+  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+  await ctx.reply('✅ অর্ডার কনফার্ম — কাস্টমারকে মেসেজ পাঠানো হয়েছে')
+}
+
 async function handleCsSendDraft(ctx, draftId) {
   await ctx.answerCbQuery('⏳ পাঠানো হচ্ছে…')
   const res = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
@@ -580,6 +648,15 @@ export function createTelegramBot() {
     await handleSizeChartCommand(ctx, args, { isOwner: isOwner(ctx.chat?.id) })
   })
 
+  bot.command('postlink', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    const args = ctx.message.text.replace(/^\/postlink\s*/, '').trim().split(/\s+/)
+    await handlePostlink(ctx, args)
+  })
+
   bot.command('cs', async (ctx) => {
     if (!isOwner(ctx.chat?.id)) {
       await ctx.reply('শুধু Owner')
@@ -589,8 +666,12 @@ export function createTelegramBot() {
     const sub = args[0]?.toLowerCase()
     if (sub === 'status') await handleCsStatus(ctx)
     else if (sub === 'resume') await handleCsResume(ctx, args[1])
+    else if (sub === 'followups') await handleCsFollowups(ctx, args[1]?.toLowerCase() === 'on')
+    else if (sub === 'block') await handleCsBlock(ctx, args[1])
     else if (sub && ['off', 'shadow', 'night', 'auto'].includes(sub)) await handleCsModeCommand(ctx, sub)
-    else await ctx.reply('ব্যবহার:\n/cs off|shadow|night|auto\n/cs status\n/cs resume <conversationId>')
+    else await ctx.reply(
+      'ব্যবহার:\n/cs off|shadow|night|auto\n/cs status\n/cs resume <conversationId>\n/cs followups on|off\n/cs block <psid>\n/postlink <post> CODE1 CODE2',
+    )
   })
 
   // ── Catalog photos (owner + staff) ────────────────────────────────────────
@@ -837,6 +918,29 @@ export function createTelegramBot() {
       } else {
         await ctx.answerCbQuery('অনুমতি নেই')
       }
+
+    } else if (data.startsWith('cs_confirm:')) {
+      if (isOwner(ctx.chat?.id)) {
+        await handleCsConfirmOrder(ctx, data.slice('cs_confirm:'.length))
+      } else {
+        await ctx.answerCbQuery('অনুমতি নেই')
+      }
+
+    } else if (data.startsWith('postlink_ok:')) {
+      if (isOwner(ctx.chat?.id)) {
+        const [, pageId, postId, code] = data.split(':')
+        await ctx.answerCbQuery('লিঙ্ক হচ্ছে…')
+        const res = await fetch(`${APP_URL}/api/assistant/internal/cs-postlink`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+          body: JSON.stringify({ postRef: postId, pageId, productCodes: [code] }),
+        })
+        if (res.ok) await ctx.reply(`✅ Post ${postId} → ${code}`)
+        else await ctx.reply('❌ postlink failed')
+      }
+
+    } else if (data.startsWith('postlink_skip:')) {
+      await ctx.answerCbQuery('Skip')
 
     } else if (data.startsWith('cs_edit:')) {
       const draftId = data.slice('cs_edit:'.length)

@@ -6,6 +6,8 @@ import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL } from '@/agent/config'
 import { roundMoney } from '@/lib/money'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { recordCsEvent } from '@/agent/lib/cs/analytics'
+import { getCustomerOrderStatus } from '@/agent/lib/cs/order-lifecycle'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { describeProductImage } from '@/agent/lib/cs/gemini-vision'
 import { searchVisualIndex } from '@/agent/lib/cs/product-index'
@@ -323,6 +325,28 @@ const create_order_draft: AgentTool = {
         category: 'task',
       })
 
+      const ownerId = process.env.TELEGRAM_OWNER_CHAT_ID
+      if (ownerId && process.env.ASSISTANT_BOT_TOKEN) {
+        await fetch(`https://api.telegram.org/bot${process.env.ASSISTANT_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: ownerId,
+            text: `🛒 CS Order Draft\n${summary}\nফোন: ${input.phone}\nID: ${draft.id}`,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '✅ Confirm', callback_data: `cs_confirm:${draft.id}` },
+              ]],
+            },
+          }),
+        }).catch(() => {})
+      }
+
+      await recordCsEvent('draft_created', {
+        conversationId: csConversationId,
+        metadata: { draftId: draft.id },
+      })
+
       const eyafi = await db.agentStaff.findFirst({
         where: { name: { contains: 'Eyafi', mode: 'insensitive' }, active: true },
       })
@@ -343,6 +367,49 @@ const create_order_draft: AgentTool = {
           draftId: draft.id,
           path: 'cs_order_drafts',
           message: 'Draft saved — owner and Eyafi notified. Do not promise delivery date or payment.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const get_customer_order_status: AgentTool = {
+  name: 'get_customer_order_status',
+  description:
+    'Look up this customer CS/ERP order status by psid. Never invent tracking — only real statuses.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      psid: { type: 'string' },
+      pageId: { type: 'string' },
+    },
+    required: ['psid'],
+  },
+  handler: async (input) => {
+    try {
+      const result = await getCustomerOrderStatus({
+        psid: String(input.psid ?? ''),
+        pageId: input.pageId ? String(input.pageId) : undefined,
+      })
+      if (!result.orders.length) {
+        return {
+          success: true,
+          data: {
+            found: false,
+            message: 'এই কাস্টমারের কোনো অর্ডার পাওয়া যায়নি।',
+            unknownExternal: result.unknownExternal,
+          },
+        }
+      }
+      return {
+        success: true,
+        data: {
+          found: true,
+          orders: result.orders,
+          unknownExternal: result.unknownExternal,
+          message: 'শুধু উপরের স্ট্যাটাস বলুন — ট্র্যাকিং নম্বর বানাবেন না।',
         },
       }
     } catch (err) {
@@ -405,6 +472,7 @@ export const CS_CUSTOMER_TOOLS: AgentTool[] = [
   get_product_details,
   send_product_image,
   create_order_draft,
+  get_customer_order_status,
   handoff_to_human,
 ]
 

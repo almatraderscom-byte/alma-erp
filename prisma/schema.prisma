@@ -2156,22 +2156,31 @@ model CsSizeChart {
 // ─── CS-1: Customer sales messenger agent ───────────────────────────────────
 
 model CsConversation {
-  id               String          @id @default(uuid())
-  pageId           String          @map("page_id")
-  psid             String          @map("psid")
-  fbConversationId String?         @map("fb_conversation_id")
-  customerName     String?         @map("customer_name")
-  mode             String          @default("auto")
-  status           String          @default("open")
-  failedMatchCount Int             @default(0) @map("failed_match_count")
-  lastMessageAt    DateTime        @default(now()) @map("last_message_at")
-  lastCsReplyAt    DateTime?       @map("last_cs_reply_at")
-  createdAt        DateTime        @default(now()) @map("created_at")
-  updatedAt        DateTime        @updatedAt @map("updated_at")
-  messages         CsMessage[]
-  orderDrafts      CsOrderDraft[]
-  shadowDrafts     CsShadowDraft[]
-  replyJobs        CsReplyJob[]
+  id                    String          @id @default(uuid())
+  pageId                String          @map("page_id")
+  psid                  String          @map("psid")
+  fbConversationId      String?         @map("fb_conversation_id")
+  customerName          String?         @map("customer_name")
+  mode                  String          @default("auto")
+  status                String          @default("open")
+  failedMatchCount      Int             @default(0) @map("failed_match_count")
+  lastMessageAt         DateTime        @default(now()) @map("last_message_at")
+  lastCustomerMessageAt DateTime?       @map("last_customer_message_at")
+  lastCsReplyAt         DateTime?       @map("last_cs_reply_at")
+  agentRepliesToday     Int             @default(0) @map("agent_replies_today")
+  agentRepliesResetDate String?         @map("agent_replies_reset_date")
+  abuseWarned           Boolean         @default(false) @map("abuse_warned")
+  loopCount             Int             @default(0) @map("loop_count")
+  lastQuestionHash      String?         @map("last_question_hash")
+  lostSaleReason        String?         @map("lost_sale_reason")
+  metadata              Json            @default("{}")
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+  messages              CsMessage[]
+  orderDrafts           CsOrderDraft[]
+  shadowDrafts          CsShadowDraft[]
+  replyJobs             CsReplyJob[]
+  followups             CsFollowup[]
 
   @@unique([pageId, psid])
   @@index([lastMessageAt(sort: Desc)])
@@ -2222,11 +2231,16 @@ model CsOrderDraft {
   items          Json           @default("[]")
   note           String?        @db.Text
   status         String         @default("draft")
+  confirmedAt    DateTime?      @map("confirmed_at")
+  confirmedBy    String?        @map("confirmed_by")
+  codAmount      Int?           @map("cod_amount")
+  erpOrderId     String?        @map("erp_order_id")
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
   @@index([conversationId])
   @@index([status])
+  @@index([psid, status])
   @@map("cs_order_drafts")
 }
 
@@ -2264,4 +2278,90 @@ model CsReplyJob {
 
   @@index([status, createdAt])
   @@map("cs_reply_jobs")
+}
+
+model CsPostProduct {
+  id           String   @id @default(uuid())
+  postId       String   @map("post_id")
+  pageId       String   @map("page_id")
+  productCodes Json     @default("[]") @map("product_codes")
+  business     String   @default("ALMA_LIFESTYLE")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([postId, pageId])
+  @@index([pageId])
+  @@map("cs_post_products")
+}
+
+model CsCustomer {
+  id          String    @id @default(uuid())
+  psid        String    @map("psid")
+  pageId      String    @map("page_id")
+  name        String?
+  phone       String?
+  addressLast String?   @map("address_last") @db.Text
+  sizesNoted  Json      @default("{}") @map("sizes_noted")
+  ordersCount Int       @default(0) @map("orders_count")
+  lastOrderAt DateTime? @map("last_order_at")
+  tags        Json      @default("[]")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([pageId, psid])
+  @@index([phone])
+  @@map("cs_customers")
+}
+
+model CsFollowup {
+  id             String         @id @default(uuid())
+  conversationId String         @map("conversation_id")
+  conversation   CsConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  type           String
+  scheduledAt    DateTime       @map("scheduled_at")
+  sentAt         DateTime?      @map("sent_at")
+  status         String         @default("pending")
+  messageText    String?        @map("message_text") @db.Text
+  metadata       Json           @default("{}")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@index([status, scheduledAt])
+  @@index([conversationId])
+  @@map("cs_followups")
+}
+
+model CsCommentReply {
+  id              String   @id @default(uuid())
+  commentId       String   @unique @map("comment_id")
+  postId          String   @map("post_id")
+  pageId          String   @map("page_id")
+  psid            String   @map("psid")
+  privateRepliedAt DateTime @default(now()) @map("private_replied_at")
+  publicReplied   Boolean  @default(false) @map("public_replied")
+
+  @@index([postId, psid])
+  @@map("cs_comment_replies")
+}
+
+model CsBlock {
+  id        String   @id @default(uuid())
+  pageId    String   @map("page_id")
+  psid      String   @map("psid")
+  reason    String?
+  blockedBy String?  @map("blocked_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([pageId, psid])
+  @@map("cs_blocks")
+}
+
+model CsAnalyticsEvent {
+  id             String   @id @default(uuid())
+  kind           String
+  conversationId String?  @map("conversation_id")
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([kind, createdAt])
+  @@map("cs_analytics_events")
 }

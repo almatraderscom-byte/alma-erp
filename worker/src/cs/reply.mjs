@@ -36,7 +36,7 @@ export async function processCsReplyJob(job, bot) {
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `cs-run HTTP ${res.status}`)
 
-  if (data.skipped) {
+  if (data.skipped && !(data.parts?.length)) {
     console.log(`[cs-reply] skipped ${conversationId}: ${data.reason}`)
     return
   }

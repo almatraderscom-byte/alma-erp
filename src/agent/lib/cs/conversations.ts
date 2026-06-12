@@ -50,9 +50,14 @@ export async function appendCsMessage(
       metaMessageId: metaMessageId ?? null,
     },
   })
+  const now = new Date()
   await db.csConversation.update({
     where: { id: conversationId },
-    data: { lastMessageAt: new Date(), updatedAt: new Date() },
+    data: {
+      lastMessageAt: now,
+      updatedAt: now,
+      ...(role === 'user' ? { lastCustomerMessageAt: now } : {}),
+    },
   })
   return msg
 }

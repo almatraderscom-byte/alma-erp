@@ -67,6 +67,16 @@ export async function indexProductVisual(productCode: string, business = DEFAULT
   return true
 }
 
+export async function searchVisualIndexFromImage(
+  imageB64: string,
+  mimeType: string,
+  limit = 5,
+  business = DEFAULT_CATALOG_BUSINESS,
+): Promise<IndexCandidate[]> {
+  const vision = await describeProductImage(imageB64, mimeType)
+  return searchVisualIndex(vision.combinedText, limit, business)
+}
+
 export async function searchVisualIndex(
   queryText: string,
   limit = 5,

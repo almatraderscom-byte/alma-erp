@@ -133,6 +133,20 @@ export async function runWeeklyReview({ supabase }) {
   growthIdeas += `\n• ফেসবুক Reels ট্রায়াল করুন (product unboxing) — কম খরচে বেশি reach`
   growthIdeas += `\n• COD কনফার্মেশন রেট ট্র্যাক করুন — ৫০%-এর নিচে থাকলে pre-payment ডিসকাউন্ট চালু করুন`
 
+  // ── CS sales analytics (CS-2) ───────────────────────────────────────────────
+
+  let csSection = ''
+  try {
+    const csData = await callInternal('/api/assistant/internal/cs-analytics?days=7')
+    if (csData?.formatted) {
+      csSection = `\n\n${csData.formatted}`
+      const top = csData.summary?.topAskedProducts?.[0]
+      if (top) {
+        growthIdeas += `\n• ${top.code} নিয়ে ${top.count} জন জিজ্ঞেস করেছে — আরও কন্টেন্ট/ছবি দিন`
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // ── Final report ──────────────────────────────────────────────────────────
 
   const report =
@@ -140,6 +154,7 @@ export async function runWeeklyReview({ supabase }) {
     salahSection + '\n\n' +
     `👥 *স্টাফ কমপ্লিশন (৭ দিন):*\n${staffSection || 'কোনো ডেটা নেই'}` +
     replySection +
+    csSection +
     growthIdeas
 
   await notify({

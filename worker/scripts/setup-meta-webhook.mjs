@@ -31,7 +31,7 @@ async function main() {
       object: 'page',
       callback_url: CALLBACK,
       verify_token: verify,
-      fields: 'messages,messaging_postbacks,messaging_optins',
+      fields: 'messages,messaging_postbacks,messaging_optins,feed',
       access_token: appToken,
     }),
   })
@@ -44,7 +44,7 @@ async function main() {
       continue
     }
     const res = await fetch(
-      `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins&access_token=${page.token}`,
+      `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,feed&access_token=${page.token}`,
       { method: 'POST' },
     )
     const data = await res.json()

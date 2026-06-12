@@ -78,3 +78,47 @@ export async function downloadMessengerAttachment(url: string): Promise<{ buffer
   const buffer = Buffer.from(await res.arrayBuffer())
   return { buffer, mimeType }
 }
+
+/** One private message per comment (Meta policy). */
+export async function sendPrivateReplyToComment(
+  pageId: string,
+  commentId: string,
+  message: string,
+): Promise<void> {
+  const token = pageAccessToken(pageId)
+  if (!token) throw new Error(`No page token for ${pageId}`)
+  await graphPost(`${commentId}/private_replies`, token, {
+    message: message.slice(0, 2000),
+  })
+}
+
+export async function sendPublicReplyToComment(
+  pageId: string,
+  commentId: string,
+  message: string,
+): Promise<void> {
+  const token = pageAccessToken(pageId)
+  if (!token) throw new Error(`No page token for ${pageId}`)
+  await graphPost(`${commentId}/comments`, token, {
+    message: message.slice(0, 500),
+  })
+}
+
+export async function fetchPostImageUrl(pageId: string, postId: string): Promise<string | null> {
+  const token = pageAccessToken(pageId)
+  if (!token) return null
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v21.0/${postId}?fields=full_picture,attachments{media}&access_token=${token}`,
+    )
+    const data = await res.json() as {
+      full_picture?: string
+      attachments?: { data?: Array<{ media?: { image?: { src?: string } } }> }
+    }
+    return data.full_picture
+      ?? data.attachments?.data?.[0]?.media?.image?.src
+      ?? null
+  } catch {
+    return null
+  }
+}

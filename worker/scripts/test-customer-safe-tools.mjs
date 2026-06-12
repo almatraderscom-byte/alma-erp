@@ -12,6 +12,7 @@ const ALLOWED = [
   'get_product_details',
   'send_product_image',
   'create_order_draft',
+  'get_customer_order_status',
   'handoff_to_human',
 ]
 

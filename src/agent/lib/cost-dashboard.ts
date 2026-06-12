@@ -61,6 +61,21 @@ export async function getCostDashboardData() {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, providers]) => ({ date, ...providers }))
 
+  let csAnalytics: Record<string, unknown> | null = null
+  try {
+    const { getCsAnalyticsSummary } = await import('@/agent/lib/cs/analytics')
+    csAnalytics = await getCsAnalyticsSummary(7)
+  } catch { /* CS tables may not exist yet */ }
+
+  const csCostRows = await prisma.$queryRaw<Array<{ kind: string; total: string }>>(
+    Prisma.sql`SELECT kind, SUM(cost_usd)::text AS total
+               FROM agent_cost_events
+               WHERE kind LIKE 'cs_%'
+                 AND occurred_at >= ${monthB.start} AND occurred_at < ${monthB.end}
+               GROUP BY kind
+               ORDER BY SUM(cost_usd) DESC`,
+  ).catch(() => [] as Array<{ kind: string; total: string }>)
+
   const providerRows = await prisma.$queryRaw<Array<{ provider: string; total: string }>>(
     Prisma.sql`SELECT provider, SUM(cost_usd)::text AS total
                FROM agent_cost_events
@@ -126,6 +141,11 @@ export async function getCostDashboardData() {
       dailyUsd: subscriptionDailyUsd(Number(s.amount), s.billingCycle as 'monthly' | 'yearly'),
     })),
     budgets,
+    csByKind: csCostRows.map((r) => ({
+      kind: r.kind,
+      totalUsd: parseFloat(r.total) || 0,
+    })),
+    csAnalytics,
     asOf: new Date().toISOString(),
   }
 }

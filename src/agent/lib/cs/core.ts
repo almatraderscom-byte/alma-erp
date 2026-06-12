@@ -6,9 +6,14 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
 import { buildCsCustomerPrompt } from '@/agent/lib/cs/customer-prompt'
 import { CUSTOMER_TOOL_DEFINITIONS, executeCsTool } from '@/agent/tools/cs-registry'
 import { appendCsMessage, loadCsHistory } from '@/agent/lib/cs/conversations'
+import { loadCsCustomer, formatCustomerContextForPrompt } from '@/agent/lib/cs/customers'
 import { logCost } from '@/agent/lib/cost-events'
 
 export type CsReplyPart = { type: 'text'; text: string } | { type: 'image'; imageUrl: string }
+
+export type CsFollowupHint =
+  | { type: 'price_no_reply'; productLabel: string; stockLow: boolean }
+  | { type: 'half_order' }
 
 export type CsTurnResult = {
   parts: CsReplyPart[]
@@ -17,6 +22,7 @@ export type CsTurnResult = {
   tokensIn: number
   tokensOut: number
   costUsd: number
+  followupHints: CsFollowupHint[]
 }
 
 const globalForAnthropic = globalThis as unknown as { anthropicCs: Anthropic | undefined }
@@ -70,7 +76,8 @@ export async function runCsTurn(input: {
   imageMime?: string
   shadowOnly: boolean
 }): Promise<CsTurnResult> {
-  const system = buildCsCustomerPrompt()
+  const customer = await loadCsCustomer(input.pageId, input.psid)
+  const system = buildCsCustomerPrompt() + formatCustomerContextForPrompt(customer)
   const history = await loadCsHistory(input.csConversationId, 24)
   let messages: Anthropic.Messages.MessageParam[] = historyToMessages(history)
   messages.push({
@@ -80,9 +87,11 @@ export async function runCsTurn(input: {
 
   const client = getClient()
   const parts: CsReplyPart[] = []
+  const followupHints: CsFollowupHint[] = []
   let handedOff = false
   let tokensIn = 0
   let tokensOut = 0
+  let halfOrderNudge = false
 
   const ctx = {
     csConversationId: input.csConversationId,
@@ -119,6 +128,24 @@ export async function runCsTurn(input: {
       if (tu.type !== 'tool_use') continue
       const result = await executeCsTool(tu.name, tu.input as Record<string, unknown>, ctx)
       if (tu.name === 'handoff_to_human' && result.success) handedOff = true
+      if (tu.name === 'get_product_details' && result.success && result.data) {
+        const d = result.data as { code?: string; name?: string; stock?: number }
+        if (d.code) {
+          const { recordCsEvent } = await import('@/agent/lib/cs/analytics')
+          void recordCsEvent('product_asked', {
+            conversationId: input.csConversationId,
+            metadata: { code: d.code },
+          })
+          const priceAsked = /দাম|price|কত|koto/i.test(input.userText)
+          if (priceAsked && d.name) {
+            followupHints.push({
+              type: 'price_no_reply',
+              productLabel: d.name,
+              stockLow: (d.stock ?? 99) <= 3,
+            })
+          }
+        }
+      }
       if (tu.name === 'send_product_image' && result.success && result.data) {
         const d = result.data as { imageUrl?: string }
         if (d.imageUrl) parts.push({ type: 'image', imageUrl: d.imageUrl })
@@ -138,6 +165,13 @@ export async function runCsTurn(input: {
 
     messages.push({ role: 'user', content: toolResults })
   }
+
+  const orderHints = /ঠিকানা|ফোন|phone|address|সাইজ|size/i.test(input.userText)
+  const noDraftYet = !messages.some((m) => JSON.stringify(m).includes('create_order_draft'))
+  if (orderHints && noDraftYet && input.userText.trim().length > 5) {
+    halfOrderNudge = true
+  }
+  if (halfOrderNudge) followupHints.push({ type: 'half_order' })
 
   const costUsd = calcCostUsd({ input_tokens: tokensIn, output_tokens: tokensOut })
   void logCost({
@@ -161,5 +195,6 @@ export async function runCsTurn(input: {
     tokensIn,
     tokensOut,
     costUsd,
+    followupHints,
   }
 }

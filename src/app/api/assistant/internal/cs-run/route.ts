@@ -4,6 +4,8 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { runCsTurn } from '@/agent/lib/cs/core'
 import { csReplyPermitted } from '@/agent/lib/cs/modes'
 import { agentStorageDownload } from '@/agent/lib/storage'
+import { checkCsGuards } from '@/agent/lib/cs/guards'
+import { appendCsMessage } from '@/agent/lib/cs/conversations'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -75,6 +77,36 @@ export async function POST(req: NextRequest) {
 
   const shadowOnly = effectiveMode === 'shadow'
 
+  const guard = await checkCsGuards({
+    conversationId: conv.id,
+    pageId: conv.pageId,
+    psid: conv.psid,
+    userText: userText.trim(),
+  })
+
+  if (!guard.allowed) {
+    const sendParts = guard.reason === 'rate_limited' && guard.message
+      ? [{ type: 'text', text: guard.message }]
+      : []
+    if (sendParts.length) {
+      await appendCsMessage(conv.id, 'assistant', sendParts)
+    }
+    if (jobId) {
+      await db.csReplyJob.update({
+        where: { id: jobId },
+        data: { status: 'done', processedAt: new Date(), lastError: guard.reason },
+      })
+    }
+    return Response.json({
+      ok: true,
+      skipped: sendParts.length === 0,
+      reason: guard.reason,
+      parts: sendParts,
+      shadowOnly: false,
+      handedOff: guard.reason === 'spam_silent' && (conv.loopCount ?? 0) >= 4,
+    })
+  }
+
   try {
     const result = await runCsTurn({
       csConversationId: conv.id,
@@ -103,10 +135,19 @@ export async function POST(req: NextRequest) {
       })
       shadowDraftId = draft.id
     } else if (!shadowOnly && !result.handedOff) {
-      await db.csConversation.update({
-        where: { id: conv.id },
-        data: { lastCsReplyAt: new Date() },
-      })
+      const { incrementCsReplyCount } = await import('@/agent/lib/cs/guards')
+      await incrementCsReplyCount(conv.id)
+    }
+
+    if (result.followupHints?.length) {
+      const { schedulePriceNoReplyFollowup, scheduleHalfOrderFollowup } = await import('@/agent/lib/cs/followups')
+      for (const hint of result.followupHints) {
+        if (hint.type === 'price_no_reply') {
+          await schedulePriceNoReplyFollowup(conv.id, hint.productLabel, hint.stockLow)
+        } else if (hint.type === 'half_order') {
+          await scheduleHalfOrderFollowup(conv.id)
+        }
+      }
     }
 
     if (jobId) {

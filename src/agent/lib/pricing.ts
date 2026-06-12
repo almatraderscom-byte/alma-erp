@@ -21,6 +21,7 @@ export type CostKind =
   | 'call'
   | 'cs_chat'
   | 'cs_vision'
+  | 'cs_comment_classify'
 
 export const PRICING_META = {
   anthropic: {

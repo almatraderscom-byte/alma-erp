@@ -126,12 +126,24 @@ export async function runNightReport({ supabase, bot }) {
     }
   } catch { /* non-fatal */ }
 
+  let csSummary = ''
+  try {
+    const csRes = await fetch(`${process.env.APP_URL}/api/assistant/internal/cs-analytics?days=1`, {
+      headers: { Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN}` },
+    })
+    if (csRes.ok) {
+      const csData = await csRes.json()
+      if (csData.formatted) csSummary = `\n\n${csData.formatted}`
+    }
+  } catch { /* non-fatal */ }
+
   const reportText =
     `📋 *রাতের রিপোর্ট — ${today}*\n\n` +
     reportLines.join('\n\n') +
     salahSummary +
     salesSummary +
     replySummary +
+    csSummary +
     gpsGapLine +
     (tasksToCarry.length > 0 ? `\n\n↩ ${tasksToCarry.length}টি কাজ আগামীকালের জন্য নিয়ে যাওয়া হয়েছে।` : '')
 

@@ -40,6 +40,7 @@ const lazy = {
   reminderTicker:     () => import('../reminders/ticker.mjs'),
   csIndexProducts:    () => import('../cs/index-products.mjs'),
   csEscalation:       () => import('../cs/escalation.mjs'),
+  csFollowups:        () => import('../cs/followups.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
   { name: 'cs-index-products',      cronUtc: '30 18 * * *',  description: 'Nightly product visual index (00:30 Dhaka)' },
   { name: 'cs-escalation',          cronUtc: '* * * * *',    description: 'CS shadow draft escalation (every minute)' },
+  { name: 'cs-followups',           cronUtc: '*/15 * * * *', description: 'CS follow-up recovery (every 15 min)' },
 ]
 
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
@@ -187,6 +189,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'cs-escalation': {
           const { runCsEscalation } = await lazy.csEscalation()
           await runCsEscalation(bot)
+          break
+        }
+        case 'cs-followups': {
+          const { runCsFollowups } = await lazy.csFollowups()
+          await runCsFollowups()
           break
         }
         default:
