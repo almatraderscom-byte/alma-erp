@@ -1,4 +1,5 @@
 -- CS-2: comment capture, follow-ups, repeat customers, guards
+-- IDs are TEXT (matches CS-1 cs_conversations.id)
 
 ALTER TABLE "cs_conversations"
   ADD COLUMN IF NOT EXISTS "last_customer_message_at" TIMESTAMPTZ,
@@ -17,7 +18,7 @@ ALTER TABLE "cs_order_drafts"
   ADD COLUMN IF NOT EXISTS "erp_order_id" TEXT;
 
 CREATE TABLE IF NOT EXISTS "cs_post_products" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
   "post_id" TEXT NOT NULL,
   "page_id" TEXT NOT NULL,
   "product_codes" JSONB NOT NULL DEFAULT '[]',
@@ -31,7 +32,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cs_post_products_post_page_key" ON "cs_post_p
 CREATE INDEX IF NOT EXISTS "cs_post_products_page_id_idx" ON "cs_post_products"("page_id");
 
 CREATE TABLE IF NOT EXISTS "cs_customers" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
   "psid" TEXT NOT NULL,
   "page_id" TEXT NOT NULL,
   "name" TEXT,
@@ -50,8 +51,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cs_customers_page_psid_key" ON "cs_customers"
 CREATE INDEX IF NOT EXISTS "cs_customers_phone_idx" ON "cs_customers"("phone");
 
 CREATE TABLE IF NOT EXISTS "cs_followups" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "conversation_id" UUID NOT NULL,
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
+  "conversation_id" TEXT NOT NULL,
   "type" TEXT NOT NULL,
   "scheduled_at" TIMESTAMPTZ NOT NULL,
   "sent_at" TIMESTAMPTZ,
@@ -67,7 +68,7 @@ CREATE INDEX IF NOT EXISTS "cs_followups_status_scheduled_idx" ON "cs_followups"
 CREATE INDEX IF NOT EXISTS "cs_followups_conversation_id_idx" ON "cs_followups"("conversation_id");
 
 CREATE TABLE IF NOT EXISTS "cs_comment_replies" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
   "comment_id" TEXT NOT NULL,
   "post_id" TEXT NOT NULL,
   "page_id" TEXT NOT NULL,
@@ -81,7 +82,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cs_comment_replies_comment_id_key" ON "cs_com
 CREATE INDEX IF NOT EXISTS "cs_comment_replies_post_psid_idx" ON "cs_comment_replies"("post_id", "psid");
 
 CREATE TABLE IF NOT EXISTS "cs_blocks" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
   "page_id" TEXT NOT NULL,
   "psid" TEXT NOT NULL,
   "reason" TEXT,
@@ -93,9 +94,9 @@ CREATE TABLE IF NOT EXISTS "cs_blocks" (
 CREATE UNIQUE INDEX IF NOT EXISTS "cs_blocks_page_psid_key" ON "cs_blocks"("page_id", "psid");
 
 CREATE TABLE IF NOT EXISTS "cs_analytics_events" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" TEXT NOT NULL DEFAULT CAST(gen_random_uuid() AS TEXT),
   "kind" TEXT NOT NULL,
-  "conversation_id" UUID,
+  "conversation_id" TEXT,
   "metadata" JSONB NOT NULL DEFAULT '{}',
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT "cs_analytics_events_pkey" PRIMARY KEY ("id")
