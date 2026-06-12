@@ -27,6 +27,8 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname.startsWith('/api/agent/')) return true
   // Internal worker callbacks — use AGENT_INTERNAL_TOKEN in route handler, no session cookie
   if (pathname.startsWith('/api/assistant/internal/')) return true
+  // Twilio TwiML + audio proxy + status callbacks (no session cookie)
+  if (pathname.startsWith('/api/twilio/')) return true
   // /api/debug/* paths apply their own SUPER_ADMIN / CRON_SECRET checks
   // inside the handler so monitoring scripts can hit them via Bearer auth.
   if (pathname.startsWith('/api/debug/')) return true
