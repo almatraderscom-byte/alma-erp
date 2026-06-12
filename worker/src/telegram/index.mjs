@@ -418,23 +418,43 @@ async function handleCsConfirmOrder(ctx, draftId) {
 
 async function handleCsSendDraft(ctx, draftId) {
   await ctx.answerCbQuery('⏳ পাঠানো হচ্ছে…')
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
-    body: JSON.stringify({ draftId, action: 'send', sentBy: String(ctx.chat?.id) }),
-  })
-  const data = await res.json()
-  if (!res.ok) {
-    await ctx.reply(`❌ ${data.error ?? 'send failed'}`)
-    return
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+      body: JSON.stringify({ draftId, action: 'send', sentBy: String(ctx.chat?.id) }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      await ctx.reply(`❌ পাঠানো যায়নি: ${data.error ?? `HTTP ${res.status}`}`)
+      return
+    }
+    const { sendMessengerText, sendMessengerImage } = await import('../cs/meta-send.mjs')
+    const attachments = Array.isArray(data.attachments) ? data.attachments : []
+    try {
+      await sendMessengerText(data.pageId, data.psid, data.draftText)
+      for (const att of attachments) {
+        if (att?.imageUrl) await sendMessengerImage(data.pageId, data.psid, att.imageUrl)
+      }
+    } catch (sendErr) {
+      await ctx.reply(`❌ Facebook পাঠাতে ব্যর্থ: ${sendErr.message}`)
+      return
+    }
+    const markRes = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+      body: JSON.stringify({ draftId, action: 'mark_sent', sentBy: String(ctx.chat?.id) }),
+    })
+    if (!markRes.ok) {
+      const markData = await markRes.json().catch(() => ({}))
+      await ctx.reply(`⚠️ পাঠানো হয়েছে কিন্তু স্ট্যাটাস আপডেট ব্যর্থ: ${markData.error ?? markRes.status}`)
+      return
+    }
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+    await ctx.reply('✅ কাস্টমারকে পাঠানো হয়েছে')
+  } catch (err) {
+    await ctx.reply(`❌ সমস্যা: ${err.message}`)
   }
-  const { sendMessengerText, sendMessengerImage } = await import('../cs/meta-send.mjs')
-  await sendMessengerText(data.pageId, data.psid, data.draftText)
-  for (const att of data.attachments ?? []) {
-    if (att.imageUrl) await sendMessengerImage(data.pageId, data.psid, att.imageUrl)
-  }
-  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-  await ctx.reply('✅ কাস্টমারকে পাঠানো হয়েছে')
 }
 
 // ── /chats command ────────────────────────────────────────────────────────

@@ -11,6 +11,8 @@ import { prisma } from '@/lib/prisma'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+const POLL_MAX_AGE_MS = Number(process.env.CS_POLL_MAX_AGE_HOURS ?? 4) * 60 * 60 * 1000
+
 export type InboundMessengerMessage = {
   pageId: string
   psid: string
@@ -18,10 +20,12 @@ export type InboundMessengerMessage = {
   text?: string
   imageUrls?: string[]
   customerName?: string
+  messageCreatedAt?: string
+  source?: 'webhook' | 'poll'
 }
 
 export type IngestResult =
-  | { ingested: false; reason: 'skip_echo' | 'duplicate' | 'not_permitted' | 'empty' }
+  | { ingested: false; reason: 'skip_echo' | 'duplicate' | 'not_permitted' | 'empty' | 'already_replied' | 'too_old' }
   | { ingested: true; conversationId: string; messageId: string; jobQueued: boolean }
 
 async function ensureCustomerName(
@@ -76,8 +80,33 @@ export async function ingestInboundMessengerMessage(
   })
   if (existing) return { ingested: false, reason: 'duplicate' }
 
+  if (input.source === 'poll' && input.messageCreatedAt) {
+    const msgAt = new Date(input.messageCreatedAt)
+    if (!Number.isFinite(msgAt.getTime())) {
+      return { ingested: false, reason: 'empty' }
+    }
+    if (Date.now() - msgAt.getTime() > POLL_MAX_AGE_MS) {
+      return { ingested: false, reason: 'too_old' }
+    }
+  }
+
   const pageToken = pageAccessToken(pageId)
   const conv = await findOrCreateCsConversation({ pageId, psid, customerName: input.customerName })
+
+  const fresh = await db.csConversation.findUnique({
+    where: { id: conv.id },
+    select: { lastCsReplyAt: true, mode: true, status: true },
+  })
+  if (fresh?.mode === 'human' || fresh?.status === 'human') {
+    return { ingested: false, reason: 'not_permitted' }
+  }
+  if (input.messageCreatedAt && fresh?.lastCsReplyAt) {
+    const msgAt = new Date(input.messageCreatedAt)
+    if (msgAt <= new Date(fresh.lastCsReplyAt)) {
+      return { ingested: false, reason: 'already_replied' }
+    }
+  }
+
   await ensureCustomerName(conv, pageId, psid, pageToken, input.customerName)
 
   const content: unknown[] = []

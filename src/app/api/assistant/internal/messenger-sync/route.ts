@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
     text?: string
     imageUrls?: string[]
     customerName?: string
+    messageCreatedAt?: string
+    source?: 'webhook' | 'poll'
   }
   try { body = await req.json() } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
@@ -47,6 +49,8 @@ export async function POST(req: NextRequest) {
     text: body.text,
     imageUrls: body.imageUrls,
     customerName: body.customerName,
+    messageCreatedAt: body.messageCreatedAt,
+    source: body.source,
   })
 
   return Response.json({ ok: true, ...result })

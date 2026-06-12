@@ -38,6 +38,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'send') {
+    if (draft.status !== 'pending') {
+      return Response.json({ error: `draft_${draft.status}` }, { status: 409 })
+    }
+    return Response.json({
+      ok: true,
+      pageId: draft.pageId,
+      psid: draft.psid,
+      draftText: draft.draftText,
+      attachments: draft.attachments ?? [],
+      sentBy: sentBy ?? 'owner',
+    })
+  }
+
+  if (action === 'mark_sent') {
+    if (draft.status === 'sent') return Response.json({ ok: true })
     await db.csShadowDraft.update({
       where: { id: draftId },
       data: { status: 'sent', sentAt: new Date(), escalationStage: 'none' },
@@ -46,14 +61,16 @@ export async function POST(req: NextRequest) {
       where: { id: draft.conversationId },
       data: { lastCsReplyAt: new Date() },
     })
-    return Response.json({
-      ok: true,
-      pageId: draft.pageId,
-      psid: draft.psid,
-      draftText: draft.draftText,
-      attachments: draft.attachments,
-      sentBy: sentBy ?? 'owner',
+    return Response.json({ ok: true })
+  }
+
+  if (action === 'dismiss') {
+    if (draft.status !== 'pending') return Response.json({ ok: true })
+    await db.csShadowDraft.update({
+      where: { id: draftId },
+      data: { status: 'dismissed', escalationStage: 'none' },
     })
+    return Response.json({ ok: true })
   }
 
   if (action === 'acknowledge') {
