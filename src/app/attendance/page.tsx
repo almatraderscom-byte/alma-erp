@@ -6,7 +6,8 @@ import { useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
-import { Button, Card, Empty, KpiCard, Skeleton } from '@/components/ui'
+import { Button, Card, Empty, KpiCard, Skeleton, KPI_AUTO_GRID } from '@/components/ui'
+import { PageEnter } from '@/components/layout/AgentAccess'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
@@ -302,7 +303,14 @@ function AttendancePageInner() {
         </div>
       }
     >
-      <div className="min-w-0 max-w-full space-y-5">
+      <PageEnter className="min-w-0 max-w-full space-y-5">
+      {!loading && !data && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+          <span>Could not load attendance dashboard</span>
+          <Button variant="ghost" size="xs" onClick={() => void load()}>Retry</Button>
+        </div>
+      )}
+
       {showIntegrity && data?.integrity && (
         <Card className="p-4 border-amber-500/25 bg-amber-500/5">
           <p className="text-sm font-black text-cream">Attendance Integrity Monitor</p>
@@ -332,17 +340,17 @@ function AttendancePageInner() {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Today present" value={loading ? '—' : Number(k?.todayAttendance ?? 0)} loading={loading} />
-        <KpiCard label="Absent today" value={loading ? '—' : Number(k?.absentEmployees ?? 0)} color="text-red-400" loading={loading} />
-        <KpiCard label="Late today" value={loading ? '—' : Number(k?.lateEmployees ?? 0)} color="text-amber-300" loading={loading} />
-        <KpiCard label="Today penalties" value={loading ? '—' : Number(k?.todayPenaltyTotal ?? 0)} color="text-red-400" loading={loading} />
-        <KpiCard label="Employee scope" value={loading ? '—' : Number(k?.employeeCount ?? 0)} loading={loading} />
-        <KpiCard label="Monthly attendance" value={loading ? '—' : `${Number(k?.attendanceRate ?? 0)}%`} loading={loading} />
-        <KpiCard label="Monthly penalties" value={loading ? '—' : Number(k?.monthPenaltyTotal ?? 0)} color="text-red-400" loading={loading} />
-        <KpiCard label="Pending reviews" value={loading ? '—' : Number(k?.pendingWaivers ?? 0)} color="text-gold-lt" loading={loading} />
-        <KpiCard label="Security flags" value={loading ? '—' : Number(k?.suspiciousAttendance ?? 0)} color="text-amber-300" loading={loading} />
-        <KpiCard label="Verification due" value={loading ? '—' : Number(k?.pendingVerifications ?? 0)} color="text-amber-300" loading={loading} />
+      <div className={KPI_AUTO_GRID}>
+        <KpiCard label="Today present" value={k?.todayAttendance ?? 0} valueKind="plain" loading={loading} />
+        <KpiCard label="Absent today" value={k?.absentEmployees ?? 0} valueKind="plain" color="text-red-400" loading={loading} />
+        <KpiCard label="Late today" value={k?.lateEmployees ?? 0} valueKind="plain" color="text-amber-300" loading={loading} />
+        <KpiCard label="Today penalties" value={k?.todayPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} />
+        <KpiCard label="Employee scope" value={k?.employeeCount ?? 0} valueKind="plain" loading={loading} />
+        <KpiCard label="Monthly attendance" value={loading ? '—' : `${Number(k?.attendanceRate ?? 0)}%`} valueKind="plain" loading={loading} />
+        <KpiCard label="Monthly penalties" value={k?.monthPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} />
+        <KpiCard label="Pending reviews" value={k?.pendingWaivers ?? 0} valueKind="plain" color="text-gold-lt" loading={loading} />
+        <KpiCard label="Security flags" value={k?.suspiciousAttendance ?? 0} valueKind="plain" color="text-amber-300" loading={loading} />
+        <KpiCard label="Verification due" value={k?.pendingVerifications ?? 0} valueKind="plain" color="text-amber-300" loading={loading} />
       </div>
 
       {canReview && analytics && (
@@ -370,7 +378,7 @@ function AttendancePageInner() {
           </div>
         </div>
         {loading ? <Skeleton className="h-28" /> : !(data?.pendingWaivers ?? []).length ? (
-          <p className="text-[11px] text-zinc-500">No pending penalty review requests.</p>
+          <Empty icon="◷" title="No pending penalty reviews" desc="Employee appeals will appear here." />
         ) : (
           <div className="grid gap-2">
             {data!.pendingWaivers.map(w => (
@@ -399,11 +407,17 @@ function AttendancePageInner() {
         <Card className="p-5">
           <p className="text-sm font-bold text-cream mb-4">Today attendance log</p>
           {loading ? <Skeleton className="h-40" /> : !(data?.records ?? []).length ? (
-            <Empty icon="◇" title="No check-ins yet" desc="Employees will appear here after tapping Start Work." />
+            <Empty
+              icon="◇"
+              title="No check-ins yet"
+              desc="Employees will appear here after tapping Start Work."
+              action={<Link href="/portal"><Button variant="gold" size="sm">My desk</Button></Link>}
+            />
           ) : (
-            <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px]">
+            <>
+            <div className="hidden overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px] md:block">
               <table className="w-full min-w-[760px] text-left text-[11px]">
-                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm border-b border-border text-zinc-500">
                   <tr>
                     <th className="py-2 pr-3">Employee</th>
                     {data?.scopeAllBusinesses && <th className="py-2 pr-3">Business</th>}
@@ -418,7 +432,7 @@ function AttendancePageInner() {
                 </thead>
                 <tbody>
                   {data!.records.map(r => (
-                    <tr key={r.id} className="border-b border-border/60">
+                    <tr key={r.id} className="border-b border-border/60 transition-colors hover:bg-white/[0.015]">
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
@@ -461,6 +475,43 @@ function AttendancePageInner() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-2 md:hidden">
+              {data!.records.slice(0, 60).map(r => (
+                <Card key={r.id} interactive className="p-3 text-[11px]">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-cream">{r.employeeName}</p>
+                        <p className="font-mono text-zinc-600">{r.employeeId}</p>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 font-bold ${r.trustStatus === 'TRUSTED' ? 'text-green-400' : r.trustStatus === 'WARNING' ? 'text-amber-300' : 'text-red-400'}`}>
+                      {r.trustStatus.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="font-mono text-cream">{time(r.checkInAt)}</p>
+                      <p className="text-[10px] text-zinc-600">In</p>
+                    </div>
+                    <div>
+                      <p className="font-mono text-cream">{r.checkOutAt ? time(r.checkOutAt) : '--'}</p>
+                      <p className="text-[10px] text-zinc-600">Out</p>
+                    </div>
+                    <div>
+                      <p className={`font-mono ${r.lateMinutes ? 'text-red-400' : 'text-green-400'}`}>{duration(r.lateMinutes)}</p>
+                      <p className="text-[10px] text-zinc-600">Late</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-zinc-500">Worked {duration(r.totalWorkMinutes)}</span>
+                    <span className="font-mono text-red-400">{money(r.penaltyAmount)}</span>
+                  </div>
+                </Card>
+              ))}
+            </div>
+            </>
           )}
         </Card>
 
@@ -471,7 +522,7 @@ function AttendancePageInner() {
           ) : (
             <div className="space-y-2 max-h-[420px] overflow-y-auto">
               {data!.ranking.slice(0, 20).map((r, i) => (
-                <div key={`${r.employeeId}-${i}`} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+                <div key={`${r.employeeId}-${i}`} className="card-interactive rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
                   <div className="flex justify-between gap-2 items-center">
                     <span className="flex items-center gap-2 min-w-0">
                       <EmployeeAvatar userId={r.userId} name={r.name} imageUrl={r.profileImageUrl} size="sm" />
@@ -598,7 +649,7 @@ function AttendancePageInner() {
           </Card>
         </MobileModalPortal>
       )}
-      </div>
+      </PageEnter>
     </FinancePageChrome>
   )
 }
