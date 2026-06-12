@@ -348,9 +348,14 @@ const outbound_phone_call: AgentTool = {
             success: true,
             data: {
               duplicatePrevented: true,
-              ...summary,
+              existingActionId: summary.pendingActionId,
+              phone: summary.phone,
+              status: summary.status,
+              phase: summary.phase,
+              dialed: summary.dialed,
+              answered: summary.answered,
               message:
-                'Existing outbound call for this number — use get_outbound_call_status; do not create another card.',
+                'Existing outbound call for this number — use get_outbound_call_status to report status; do not create another card.',
             },
           }
         }

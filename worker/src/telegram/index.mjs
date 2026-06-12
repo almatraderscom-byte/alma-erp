@@ -255,6 +255,9 @@ async function handleOwnerText(ctx, text) {
 async function handleActionCallback(ctx, action, actionId) {
   const endpoint = action === 'approve' ? 'approve' : 'reject'
   try {
+    await ctx.answerCbQuery('⏳ প্রক্রিয়া চলছে…')
+    await ctx.sendChatAction('typing').catch(() => {})
+
     const res = await fetch(`${APP_URL}/api/assistant/actions/${actionId}/${endpoint}`, {
       method: 'POST',
       headers: {
@@ -266,10 +269,19 @@ async function handleActionCallback(ctx, action, actionId) {
     if (res.ok) {
       const label = action === 'approve' ? '✅ অনুমোদিত' : '❌ বাতিল করা হয়েছে'
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-      await ctx.answerCbQuery(label)
       await ctx.reply(label + (data.message ? `\n${data.message}` : ''))
+    } else if (data.error === 'already_resolved') {
+      const statusLabel = data.status === 'executed' ? '✅ ইতিমধ্যে সম্পন্ন হয়েছে' :
+                          data.status === 'approved' ? '✅ ইতিমধ্যে অনুমোদিত' :
+                          data.status === 'rejected' ? '❌ ইতিমধ্যে বাতিল' :
+                          `ℹ️ স্ট্যাটাস: ${data.status ?? 'unknown'}`
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+      await ctx.reply(statusLabel)
+    } else if (data.error === 'expired') {
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+      await ctx.reply('⏰ এই কার্ডটির মেয়াদ শেষ হয়ে গেছে। নতুন করে অনুরোধ করুন।')
     } else {
-      await ctx.answerCbQuery(`সমস্যা: ${data.error ?? 'unknown'}`)
+      await ctx.reply(`❌ সমস্যা: ${data.error ?? 'unknown'}`)
     }
   } catch (err) {
     await ctx.answerCbQuery(`Error: ${err.message}`)
