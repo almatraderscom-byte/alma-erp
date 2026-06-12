@@ -19,7 +19,7 @@ const jobName = process.argv[2]
 if (!jobName) {
   console.error('Usage: node trigger.mjs <job-name>')
   console.error('Jobs: salah-init, evening-proposal, morning-staff-reminder, ads-monitor, midday-checkin, salah-escalation,')
-  console.error('      messenger-scan, night-report, weekly-review, daily-summary, reminder-ticker')
+  console.error('      messenger-scan, night-report, weekly-review, daily-summary, reminder-ticker, import-size-charts')
   process.exit(1)
 }
 
@@ -70,6 +70,18 @@ const handlers = {
   'daily-summary':     async () => { const { runDailySummary } = await import('../src/schedulers/daily-summary.mjs'); await runDailySummary(context) },
   'salah-init':        async () => { const { initializeDailySalahRecords } = await import('../src/salah/scheduler.mjs'); await initializeDailySalahRecords(supabase) },
   'reminder-ticker':   async () => { const { runReminderTicker } = await import('../src/reminders/ticker.mjs'); await runReminderTicker(context) },
+  'import-size-charts': async () => {
+    const APP_URL = process.env.APP_URL?.replace(/\/$/, '')
+    const TOKEN = process.env.AGENT_INTERNAL_TOKEN
+    const res = await fetch(`${APP_URL}/api/assistant/internal/catalog/import-size-charts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ useSeedFile: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+    console.log(`[trigger] imported ${data.inserted} size chart rows`)
+  },
 }
 
 const handler = handlers[jobName]

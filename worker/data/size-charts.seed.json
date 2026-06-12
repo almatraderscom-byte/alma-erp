@@ -1,0 +1,20 @@
+{
+  "entries": [
+    { "category": "boys_panjabi", "ageMinYears": 2, "ageMaxYears": 3, "sizeLabel": "22", "heightNote": "~92-98 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 3, "ageMaxYears": 4, "sizeLabel": "24", "heightNote": "~98-104 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 4, "ageMaxYears": 5, "sizeLabel": "26", "heightNote": "~104-110 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 5, "ageMaxYears": 6, "sizeLabel": "28", "heightNote": "~110-116 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 6, "ageMaxYears": 7, "sizeLabel": "30", "heightNote": "~116-122 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 7, "ageMaxYears": 8, "sizeLabel": "32", "heightNote": "~122-128 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 8, "ageMaxYears": 9, "sizeLabel": "34", "heightNote": "~128-134 cm" },
+    { "category": "boys_panjabi", "ageMinYears": 9, "ageMaxYears": 10, "sizeLabel": "36", "heightNote": "~134-140 cm" },
+    { "category": "girls_dress", "ageMinYears": 2, "ageMaxYears": 3, "sizeLabel": "22" },
+    { "category": "girls_dress", "ageMinYears": 3, "ageMaxYears": 4, "sizeLabel": "24" },
+    { "category": "girls_dress", "ageMinYears": 4, "ageMaxYears": 5, "sizeLabel": "26" },
+    { "category": "girls_dress", "ageMinYears": 5, "ageMaxYears": 6, "sizeLabel": "28" },
+    { "category": "girls_dress", "ageMinYears": 6, "ageMaxYears": 7, "sizeLabel": "30" },
+    { "category": "girls_dress", "ageMinYears": 7, "ageMaxYears": 8, "sizeLabel": "32" },
+    { "category": "mens_panjabi", "ageMinYears": 16, "ageMaxYears": 99, "sizeLabel": "40", "heightNote": "Adult — confirm chest size" },
+    { "category": "mens_panjabi", "ageMinYears": 16, "ageMaxYears": 99, "sizeLabel": "42", "heightNote": "Adult — confirm chest size" }
+  ]
+}

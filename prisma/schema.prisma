@@ -2095,3 +2095,60 @@ model AgentStaffLocation {
   @@index([staffId, recordedAt(sort: Desc)])
   @@map("staff_locations")
 }
+
+// ─── CS-0: Customer-sales catalog foundation (additive) ─────────────────────
+
+model ProductImage {
+  id               String   @id @default(uuid())
+  productCode      String   @map("product_code")
+  business         String
+  storagePath      String   @map("storage_path")
+  url              String?  @db.Text
+  isPrimary        Boolean  @default(false) @map("is_primary")
+  uploadedByChatId String?  @map("uploaded_by_chat_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([productCode])
+  @@index([business])
+  @@map("product_images")
+}
+
+model CsDesignGroup {
+  id        String                @id @default(uuid())
+  groupCode String                @unique @map("group_code")
+  title     String?
+  business  String
+  notes     String?               @db.Text
+  createdAt DateTime              @default(now()) @map("created_at")
+  members   CsDesignGroupMember[]
+
+  @@index([business])
+  @@map("cs_design_groups")
+}
+
+model CsDesignGroupMember {
+  id          String        @id @default(uuid())
+  groupId     String        @map("group_id")
+  group       CsDesignGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  productCode String        @map("product_code")
+  memberRole  String        @default("other") @map("member_role")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@unique([groupId, productCode])
+  @@index([productCode])
+  @@map("cs_design_group_members")
+}
+
+model CsSizeChart {
+  id          String   @id @default(uuid())
+  business    String
+  category    String
+  ageMinYears Decimal  @map("age_min_years") @db.Decimal(4, 1)
+  ageMaxYears Decimal  @map("age_max_years") @db.Decimal(4, 1)
+  sizeLabel   String   @map("size_label")
+  heightNote  String?  @map("height_note") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([business, category])
+  @@map("cs_size_charts")
+}

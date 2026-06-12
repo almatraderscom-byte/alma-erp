@@ -33,6 +33,14 @@ import {
   handleAskCommand,
   sendAskCardTelegram,
 } from './quick-commands.mjs'
+import {
+  handleCatalogPhotoMessage,
+  handleCatalogStatus,
+  handleCatalogSuggest,
+  handleGroupCommand,
+  handleSizeChartCommand,
+  handleCatalogCallback,
+} from './catalog.mjs'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
 
@@ -355,6 +363,8 @@ export function createTelegramBot() {
         || cbData.startsWith('reminder_')
         || cbData.startsWith('ask_pick:')
         || cbData.startsWith('switch:')
+        || cbData.startsWith('cat_del_')
+        || cbData.startsWith('csg_')
       if (ownerOnlyCb) {
         await ctx.answerCbQuery?.('এই বাটন শুধু Owner-এর জন্য')
         return
@@ -418,6 +428,10 @@ export function createTelegramBot() {
       '/khoroch — খরচ সারাংশ\n' +
       '/ask <প্রশ্ন> — agent-কে জিজ্ঞেস করুন\n' +
       '/staff_onboard — স্টাফ GPS অনবোর্ডিং মেসেজ\n' +
+      '/catalog status — প্রোডাক্ট ছবির অগ্রগতি\n' +
+      '/group — ফ্যামিলি ডিজাইন গ্রুপ\n' +
+      '/sizechart — বয়স→সাইজ চার্ট (Owner)\n' +
+      'ফটো + ক্যাপশন কোড — ক্যাটালগ ছবি যোগ\n' +
       '/help — এই সাহায্য',
       { parse_mode: 'Markdown' },
     )
@@ -466,6 +480,57 @@ export function createTelegramBot() {
     await ctx.reply(STAFF_ONBOARDING_BANGLA, { parse_mode: 'Markdown' })
   })
 
+  // ── CS-0 catalog commands ─────────────────────────────────────────────────
+
+  bot.command('catalog', async (ctx) => {
+    const args = ctx.message.text.replace(/^\/catalog\s*/, '').trim()
+    const owner = isOwner(ctx.chat?.id)
+    if (args === 'suggest') {
+      if (!owner) {
+        await ctx.reply('❌ শুধু Owner।')
+        return
+      }
+      await handleCatalogSuggest(ctx)
+      return
+    }
+    await handleCatalogStatus(ctx)
+  })
+
+  bot.command('group', async (ctx) => {
+    const args = ctx.message.text.replace(/^\/group\s*/, '').trim()
+    await handleGroupCommand(ctx, args)
+  })
+
+  bot.command('sizechart', async (ctx) => {
+    const args = ctx.message.text.replace(/^\/sizechart\s*/, '').trim()
+    await handleSizeChartCommand(ctx, args, { isOwner: isOwner(ctx.chat?.id) })
+  })
+
+  // ── Catalog photos (owner + staff) ────────────────────────────────────────
+
+  bot.on('photo', async (ctx) => {
+    const chatId = ctx.chat?.id
+    const owner = isOwner(chatId)
+    if (owner) {
+      try {
+        await handleCatalogPhotoMessage(ctx, { isOwner: true })
+      } catch (err) {
+        console.error('[telegram] catalog photo error:', err.message)
+        await ctx.reply(`❌ ছবি সংরক্ষণ হয়নি: ${err.message}`)
+      }
+      return
+    }
+    const supabase = createSupabase()
+    const staff = await resolveStaffByChatId(supabase, chatId)
+    if (!staff) return
+    try {
+      await handleCatalogPhotoMessage(ctx, { isOwner: false })
+    } catch (err) {
+      console.error('[telegram] catalog photo (staff) error:', err.message)
+      await ctx.reply(`❌ ছবি সংরক্ষণ হয়নি: ${err.message}`)
+    }
+  })
+
   // ── Text messages ─────────────────────────────────────────────────────────
 
   bot.on('text', async (ctx) => {
@@ -481,10 +546,25 @@ export function createTelegramBot() {
         return
       }
 
+      if (text.startsWith('/catalog') || text.startsWith('/group')) {
+        if (text.startsWith('/catalog')) {
+          const args = text.replace(/^\/catalog\s*/, '').trim()
+          if (args === 'suggest') {
+            await ctx.reply('❌ শুধু Owner।')
+            return
+          }
+          await handleCatalogStatus(ctx)
+          return
+        }
+        await handleGroupCommand(ctx, text.replace(/^\/group\s*/, '').trim())
+        return
+      }
+
       await ctx.reply(
         `ওয়ালাইকুম আসসালাম ${staff.name} ভাই! 🤲\n\n` +
-          `এই বট শুধু *কাজের টাস্ক* ও *লোকেশন*-এর জন্য — AI চ্যাট নয়।\n` +
-          `নতুন টাস্ক এলে ✅ Done বাটন চাপবেন।`,
+          `• *ক্যাটালগ ছবি*: ফটো পাঠান, ক্যাপশনে প্রোডাক্ট কোড (যেমন FM-204)\n` +
+          `• /catalog status — ছবির অগ্রগতি\n` +
+          `• কাজের টাস্ক এলে ✅ Done চাপবেন`,
         { parse_mode: 'Markdown' },
       )
       return
@@ -655,6 +735,13 @@ export function createTelegramBot() {
         const supabase = createSupabase()
         await ctx.answerCbQuery()
         await handleDetailsCommand(ctx, name, supabase, parseInt(pageStr || '0', 10))
+      }
+
+    } else if (data.startsWith('cat_del_') || data.startsWith('csg_')) {
+      if (isOwner(ctx.chat?.id)) {
+        await handleCatalogCallback(ctx, data, { isOwner: true })
+      } else {
+        await ctx.answerCbQuery('শুধু Owner')
       }
 
     } else if (data.startsWith('msg_draft:') || data.startsWith('staff_feedback:')) {

@@ -13,6 +13,7 @@ import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
 import { ADS_TOOLS } from './ads-tools'
 import { LOCATION_TOOLS } from './location-tools'
+import { CATALOG_TOOLS } from './catalog-tools'
 
 export interface ToolResult {
   success: boolean
@@ -275,6 +276,7 @@ export const TOOLS: AgentTool[] = [
   ...ASK_TOOLS,
   ...ADS_TOOLS,
   ...LOCATION_TOOLS,
+  ...CATALOG_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.
@@ -283,6 +285,7 @@ export const STAFF_SAFE_TOOLS: AgentTool[] = [
   get_current_datetime,
   list_agent_projects,
   ...ERP_TOOLS,
+  ...CATALOG_TOOLS,
 ]
 
 /** Tool names exposed to staff-scoped agent contexts (for audits/tests). */
