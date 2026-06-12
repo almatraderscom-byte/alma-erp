@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * 1. At each azan time: create salah_record (pending) + send Tier 2 notification with inline buttons
- * 2. Within window: escalating follow-ups at 40%, 70%, 90% of window
+ * 2. Within window: azan → prayer start (SMS+call) → +15min NTFY → call → grave messages
  * 3. On window close unconfirmed: mark 'missed' + Level 3 message
  * 4. Carryover: each azan first settles the previous pending waqt
  * 5. Tone ladder: Level 1 (warm) → Level 2 (firm Quran/Sunnah) → Level 3 (mortality + grief context)
@@ -11,7 +11,8 @@
  * Called by the scheduler (BullMQ) via index.mjs.
  */
 
-import { getPrayerTimes, windowProgress } from './times.mjs'
+import { getPrayerTimes } from './times.mjs'
+import { getDhakaSchedule } from './dhaka-schedule.mjs'
 import { dhakaTodayYmd, dhakaNoonUtc, dhakaYesterdayYmd } from './dhaka-date.mjs'
 import { isFridayDhaka } from './dhaka-schedule.mjs'
 import {
@@ -35,8 +36,10 @@ const WAQT_NAMES = {
 
 const WAQT_ORDER = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
 const SETTLED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
-/** Friday: follow-up 90 min after 1:00 PM azan (~2:30 PM) — jummah window, not full zuhr end. */
-const JUMMAH_FOLLOWUP_MS = 90 * 60 * 1000
+/** 15 min after prayer start — NTFY if owner has not confirmed */
+const PRAYER_NUDGE_MS = 15 * 60 * 1000
+/** Friday jummah follow-up ~60 min after 1:30 PM prayer */
+const JUMMAH_FOLLOWUP_MS = 60 * 60 * 1000
 
 function isOwnerConfirmed(rec) {
   return SETTLED_STATUSES.has(rec.status) || Boolean(rec.confirmedAt)
@@ -190,6 +193,24 @@ async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
   }
 }
 
+async function sendOwnerSms(message) {
+  if (!APP_URL || !INT_TOKEN) return { ok: false, error: 'not configured' }
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/owner-sms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+      body: JSON.stringify({ message }),
+    })
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      return { ok: false, error: errText || String(res.status) }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
 // ── Escalation check (called on a schedule — e.g. every 5 min) ────────────────
 
 export async function checkAndEscalateSalah({ supabase, bot }) {
@@ -205,6 +226,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   let records       = await getSalahRecords(today)
   const now         = new Date()
   const prayerTimes = await getPrayerTimes(dhakaNoonUtc(today))
+  const schedule    = await getDhakaSchedule(today)
   const waqtName    = (waqt) => waqtDisplayName(waqt, prayerTimes)
 
   // Heal rows where owner confirmed but status is still pending/missed (race with escalation).
@@ -287,16 +309,19 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // Future waqt — do not remind or mark missed
     if (now < windowStart) continue
 
-    const progress = windowProgress(windowStart, windowEnd)
-    const msSinceStart = now - windowStart
+    const waqtSchedule = schedule[waqt] ?? prayerTimes[waqt]
+    const azanTime = new Date(waqtSchedule?.azan ?? windowStart)
+    const prayerStart = new Date(waqtSchedule?.prayerStart ?? windowStart)
+    const msSinceAzan = now - azanTime
+    const msSincePrayerStart = now - prayerStart
 
-    // Azan at window start — catch up on first check after start (not limited to 6 min)
-    if (msSinceStart >= 0 && remindersSent === 0 && now < windowEnd) {
+    // Step 0: Azan — Quran/Hadith reminder
+    if (msSinceAzan >= 0 && remindersSent === 0 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level1Message(waqt, name, today, remindersSent)
       await notify({
         tier:         escalationLevel >= 2 ? 2 : 1,
-        title:        `${name} Azan`,
+        title:        `${name} আযান`,
         message:      msg,
         category:     'salah',
         voice:        true,
@@ -309,7 +334,6 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         { parse_mode: 'Markdown', reply_markup: salahButtons(waqt) },
       )
 
-      // Same-day carryover: previous waqt still pending
       const prevIdx = WAQT_ORDER.indexOf(waqt) - 1
       if (prevIdx >= 0) {
         const prevWaqt = WAQT_ORDER[prevIdx]
@@ -331,13 +355,35 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // Friday Jummah: firm follow-up ~90 min after azan (≈2:30 PM) — before full zuhr window ends
+    // Step 1: Prayer start — SMS + call + NTFY + Telegram
+    if (msSincePrayerStart >= 0 && remindersSent === 1 && now < windowEnd) {
+      const name = waqtName(waqt)
+      const msg = level2Message(waqt, name, today, remindersSent)
+      const smsText = `Sir, ${name} নামাজের সময় হয়েছে। এখনই পড়ুন।`
+      await sendOwnerSms(smsText)
+      await notify({
+        tier:         Math.min(3, escalationLevel + 1),
+        title:        `${name} — নামাজের সময়`,
+        message:      msg,
+        category:     'salah',
+        voice:        true,
+        skipTelegram: true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, `⏰ *${name} — নামাজের সময়*\n\n${msg}`, {
+        parse_mode: 'Markdown',
+        reply_markup: salahButtons(waqt),
+      })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
+      continue
+    }
+
+    // Friday Jummah: follow-up ~60 min after 1:30 PM prayer
     if (
       waqt === 'dhuhr'
       && isFridayDhaka(today)
-      && msSinceStart >= JUMMAH_FOLLOWUP_MS
+      && msSincePrayerStart >= JUMMAH_FOLLOWUP_MS
       && now < windowEnd
-      && remindersSent === 1
+      && remindersSent === 2
     ) {
       const name = waqtName(waqt)
       const msg = `Sir, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${level2Message(waqt, name, today, remindersSent)}`
@@ -350,6 +396,70 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         skipTelegram: true,
       })
       await sendTelegramSafe(bot, ownerChatId, msg, {
+        parse_mode: 'Markdown',
+        reply_markup: salahButtons(waqt),
+      })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
+      continue
+    }
+
+    // Step 2: 15 min after prayer start — NTFY critical if not confirmed
+    if (
+      msSincePrayerStart >= PRAYER_NUDGE_MS
+      && remindersSent === 2
+      && now < windowEnd
+      && !(waqt === 'dhuhr' && isFridayDhaka(today))
+    ) {
+      const name = waqtName(waqt)
+      const msg = `Sir, ${name} — এখনো confirm করেননি। "পড়েছি" বলুন বা বাটন চাপুন।\n\n${level2Message(waqt, name, today, remindersSent)}`
+      await notify({
+        tier:         2,
+        title:        `${name} — এখনো পড়েননি?`,
+        message:      msg,
+        category:     'salah',
+        skipTelegram: true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, msg, {
+        parse_mode: 'Markdown',
+        reply_markup: salahButtons(waqt),
+      })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
+      continue
+    }
+
+    // Step 3: Emotional voice call
+    if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent === 3 && now < windowEnd) {
+      const name = waqtName(waqt)
+      const msg = level3Message(waqt, name, today, remindersSent, griefContext)
+      await notify({
+        tier:         3,
+        title:        `${name} — Sir, উঠুন`,
+        message:      msg,
+        category:     'salah',
+        voice:        true,
+        skipTelegram: true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, msg, {
+        parse_mode: 'Markdown',
+        reply_markup: salahButtons(waqt),
+      })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
+      continue
+    }
+
+    // Step 4+: Grave / kabir azab — personal, until window ends
+    if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent >= 4 && remindersSent <= 8 && now < windowEnd) {
+      const name = waqtName(waqt)
+      const msg = level3Message(waqt, name, today, remindersSent, griefContext)
+      await notify({
+        tier:         3,
+        title:        `${name} — কবরের কথা`,
+        message:      msg,
+        category:     'salah',
+        voice:        true,
+        skipTelegram: true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, `⚰️ *${name} — Sir, শুনুন*\n\n${msg}`, {
         parse_mode: 'Markdown',
         reply_markup: salahButtons(waqt),
       })
@@ -378,62 +488,6 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         reply_markup: qazaButtons(waqt),
       })
       continue
-    }
-
-    // At ~40%: Level 1 gentle reminder (needs azan milestone — remindersSent >= 1)
-    if (progress >= 40 && remindersSent === 1 && now < windowEnd) {
-      const name = waqtName(waqt)
-      const msg = level1Message(waqt, name, today, remindersSent)
-      await notify({
-        tier:         1,
-        title:        `${name} reminder`,
-        message:      msg,
-        category:     'salah',
-        skipTelegram: true,
-      })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
-      })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
-    }
-
-    // At ~70%: Level 2 firm reminder + voice
-    if (progress >= 70 && remindersSent <= 2 && remindersSent >= 1 && now < windowEnd) {
-      const name = waqtName(waqt)
-      const msg = level2Message(waqt, name, today, remindersSent)
-      await notify({
-        tier:         escalationLevel >= 2 ? 2 : 1,
-        title:        `${name} ending soon`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
-      })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
-      })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
-    }
-
-    // At ~90%: Level 3 critical + Twilio phone call
-    if (progress >= 90 && remindersSent <= 3 && remindersSent >= 1 && now < windowEnd) {
-      const name = waqtName(waqt)
-      const msg = level3Message(waqt, name, today, remindersSent, griefContext)
-      await notify({
-        tier:         Math.min(3, escalationLevel + 1),
-        title:        `${name} last chance`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
-      })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
-      })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
   }
 }

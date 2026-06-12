@@ -1,13 +1,7 @@
 /**
  * Sir's Dhaka mosque schedule (+06:00).
- * adhan.js (Karachi) does not match local announced times — use this config.
  * Keep in sync with src/agent/lib/dhaka-schedule.ts
  */
-
-import { PrayerTimes, Coordinates, CalculationMethod } from 'adhan'
-
-const DHAKA = new Coordinates(23.8103, 90.4125)
-const ADHAN_PARAMS = CalculationMethod.Karachi()
 
 /** @param {string} ymd YYYY-MM-DD Dhaka calendar day */
 export function isFridayDhaka(ymd) {
@@ -23,61 +17,74 @@ export function dhakaInstant(ymd, h, min) {
   return new Date(`${ymd}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+06:00`)
 }
 
-function adhanTimes(ymd) {
-  const pt = new PrayerTimes(DHAKA, new Date(`${ymd}T12:00:00+06:00`), ADHAN_PARAMS)
-  return {
-    maghrib: pt.maghrib,
-    isha: pt.isha,
-    sunrise: pt.sunrise,
-  }
-}
-
 /**
  * @param {string} ymd
- * @returns {Promise<Record<string, { start: Date, end: Date, label?: string }>>}
+ * @returns {Promise<Record<string, { start: Date, end: Date, azan: Date, prayerStart: Date, label?: string, azanLabel?: string, prayerLabel?: string }>>}
  */
 export async function getDhakaSchedule(ymd) {
   const friday = isFridayDhaka(ymd)
-  const adhan = adhanTimes(ymd)
 
-  const fajrStart = dhakaInstant(ymd, 4, 15) // local azan
-  const fajrEnd = dhakaInstant(ymd, 5, 30)
+  const fajrAzan = dhakaInstant(ymd, 3, 43)
+  const fajrEnd = dhakaInstant(ymd, 5, 11)
 
-  const dhuhrStart = friday ? dhakaInstant(ymd, 13, 0) : dhakaInstant(ymd, 12, 15)
-  const dhuhrEnd = dhakaInstant(ymd, 16, 45)
+  const dhuhrAzan = friday ? dhakaInstant(ymd, 13, 0) : dhakaInstant(ymd, 12, 30)
+  const dhuhrPrayer = dhakaInstant(ymd, 13, 30)
+  const dhuhrEnd = dhakaInstant(ymd, 15, 17)
 
-  const asrStart = dhakaInstant(ymd, 17, 0)
-  const maghribStart = adhan.maghrib
-  const ishaStart = adhan.isha
+  const asrAzan = dhakaInstant(ymd, 16, 30)
+  const asrPrayer = dhakaInstant(ymd, 17, 0)
+  const asrEnd = dhakaInstant(ymd, 18, 30)
+
+  const maghribStart = dhakaInstant(ymd, 18, 45)
+  const maghribEnd = dhakaInstant(ymd, 20, 13)
+
+  const ishaAzan = dhakaInstant(ymd, 20, 13)
+  const ishaPrayer = dhakaInstant(ymd, 20, 45)
+  const ishaEnd = dhakaInstant(ymd, 23, 0)
 
   return {
     fajr: {
-      start: fajrStart,
+      start: fajrAzan,
       end: fajrEnd,
+      azan: fajrAzan,
+      prayerStart: fajrAzan,
       label: 'ফজর',
-      azanLabel: '৪:১৫',
+      azanLabel: '৩:৪৩',
     },
     dhuhr: {
-      start: dhuhrStart,
+      start: dhuhrAzan,
       end: dhuhrEnd,
+      azan: dhuhrAzan,
+      prayerStart: dhuhrPrayer,
       label: friday ? 'জুম্মা' : 'যোহর',
-      azanLabel: friday ? '১:০০ (জুম্মা ১:৩০)' : '১২:১৫',
+      azanLabel: friday ? '১:০০' : '১২:৩০',
+      prayerLabel: '১:৩০',
     },
     asr: {
-      start: asrStart,
-      end: maghribStart,
+      start: asrAzan,
+      end: asrEnd,
+      azan: asrAzan,
+      prayerStart: asrPrayer,
       label: 'আসর',
-      azanLabel: '৫:০০',
+      azanLabel: '৪:৩০',
+      prayerLabel: '৫:০০',
     },
     maghrib: {
       start: maghribStart,
-      end: ishaStart,
+      end: maghribEnd,
+      azan: maghribStart,
+      prayerStart: maghribStart,
       label: 'মাগরিব',
+      azanLabel: '৬:৪৫',
     },
     isha: {
-      start: ishaStart,
-      end: dhakaInstant(ymd, 23, 30),
+      start: ishaAzan,
+      end: ishaEnd,
+      azan: ishaAzan,
+      prayerStart: ishaPrayer,
       label: 'ইশা',
+      azanLabel: '৮:১৩',
+      prayerLabel: '৮:৪৫',
     },
   }
 }

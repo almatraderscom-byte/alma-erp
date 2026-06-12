@@ -11,6 +11,12 @@ export const SALAH_ACCOUNTABILITY_RULE = `
 - get_prayer_times টুল ব্যবহার করুন — শুধু সময়সূচি দিন।
 - get_salah_status কল করবেন না, জবাবদিহিতা চালাবেন না, "ওয়াক্ত শেষ/মিস" বলবেন না।
 
+**স্ট্যাটাস জিজ্ঞাসা (বাকি/কোন নামাজ/পড়েছি কি):**
+মালিক "কোন নামাজ বাকি", "কয়টায় নামাজ", "সব পড়েছি কি" জিজ্ঞেস করলে:
+- **অবশ্যই** get_salah_status কল করুন — DB ছাড়া উত্তর দেওয়া নিষিদ্ধ।
+- notYetDueToday = এখনো সময় হয়নি — কখনো "পড়েছেন/আদায় হয়েছে" বলবেন না।
+- prayed_on_time/prayed_late/qaza ছাড়া pending ওয়াক্ত = এখনো বাকি বা জিজ্ঞেস করতে হবে।
+
 অন্য ব্যবসায়িক/সাধারণ বার্তার আগে get_salah_status দিয়ে অবস্থা চেক করুন।
 
 গুরুত্বপূর্ণ নিয়ম:
@@ -136,6 +142,11 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 
 export interface SalahContext {
   pendingWaqts: Array<{ waqt: string; isOverdue: boolean; isMissed: boolean }>
+  statusSummary?: {
+    doneToday: string[]
+    upcomingToday: string[]
+    note: string
+  }
 }
 
 export interface PinnedMemory {
@@ -166,6 +177,7 @@ export function buildSystemPrompt(
   prayerTimeOnlyTurn = false,
   staffTaskPlanningTurn = false,
   crossSurface?: CrossSurfaceSnippet[],
+  salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
     { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE },
@@ -183,7 +195,15 @@ export function buildSystemPrompt(
     })
   }
 
-  if (prayerTimeOnlyTurn) {
+  if (salahStatusTurn) {
+    blocks.push({
+      type: 'text',
+      text:
+        '\n## এই টার্ন: নামাজের স্ট্যাটাস (বাকি/কোন ওয়াক্ত)\n' +
+        'মালিক বাকি নামাজ বা আজকের অবস্থা জিজ্ঞেস করেছেন — **প্রথমে get_salah_status** কল করুন। ' +
+        'notYetDueToday-কে "পড়েছেন" বলবেন না। ভবিষ্যতের ওয়াক্ত pending থাকলেও "সব শেষ" বলবেন না।',
+    })
+  } else if (prayerTimeOnlyTurn) {
     blocks.push({
       type: 'text',
       text:
@@ -203,8 +223,20 @@ export function buildSystemPrompt(
     })
   }
 
+  if (salahStatusTurn && salahContext?.statusSummary) {
+    const { doneToday, upcomingToday, note } = salahContext.statusSummary
+    blocks.push({
+      type: 'text',
+      text:
+        `\n## নামাজ স্ট্যাটাস হিন্ট (get_salah_status দিয়ে যাচাই করুন)\n` +
+        `আজ আদায় (DB): ${doneToday.length ? doneToday.join(', ') : 'কিছুই না'}\n` +
+        `এখনো সময় হয়নি: ${upcomingToday.length ? upcomingToday.join(', ') : 'কিছুই না'}\n` +
+        note,
+    })
+  }
+
   // Salah accountability context (injected per-turn if there are pending/missed waqts)
-  if (!prayerTimeOnlyTurn && salahContext?.pendingWaqts?.length) {
+  if (!prayerTimeOnlyTurn && !salahStatusTurn && salahContext?.pendingWaqts?.length) {
     const waqtList = salahContext.pendingWaqts
       .map(w => `${w.waqt}${w.isMissed ? ' (MISSED — window closed)' : w.isOverdue ? ' (overdue)' : ''}`)
       .join(', ')

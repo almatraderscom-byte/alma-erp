@@ -134,14 +134,29 @@ const mark_salah: AgentTool = {
       const now    = new Date()
       const dateObj = dhakaMidnightUtc(dateYmd)
 
+      const existing = await db.agentSalahRecord.findUnique({
+        where: { date_waqt: { date: dateObj, waqt } },
+      })
+
+      if (
+        existing
+        && now < new Date(existing.windowStart)
+        && (status === 'prayed_on_time' || status === 'prayed_late')
+      ) {
+        return {
+          success: false,
+          error: `${waqt} ওয়াক্তের সময় এখনো শুরু হয়নি — ভবিষ্যতের নামাজ মার্ক করা যাবে না।`,
+        }
+      }
+
       const record = await db.agentSalahRecord.upsert({
         where: { date_waqt: { date: dateObj, waqt } },
         update: { status, confirmedAt: now },
         create: {
           date: dateObj,
           waqt,
-          windowStart: now,
-          windowEnd:   now,
+          windowStart: existing?.windowStart ?? now,
+          windowEnd:   existing?.windowEnd ?? now,
           status,
           confirmedAt: now,
         },

@@ -4,7 +4,7 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
 import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
-import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
+import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
@@ -255,7 +255,7 @@ export async function* runAgentTurn(
 
   const now = new Date()
   // Persist prayer confirmations before accountability injection (fixes missed re-reminders)
-  await applySalahAutoMarkFromUserTexts(recentUserTexts, now)
+  await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
 
   // Load pinned memories and retrieve relevant memories in parallel
   const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
@@ -288,9 +288,10 @@ export async function* runAgentTurn(
             pinnedMemories,
             relevantMemories,
             salahContext,
-            isPrayerTimeInquiry(lastUserText),
+            !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
             isStaffTaskPlanningInquiry(lastUserText),
             crossSurface,
+            isSalahStatusInquiry(lastUserText),
           ),
           tools: TOOL_DEFINITIONS,
           messages: apiMessages,

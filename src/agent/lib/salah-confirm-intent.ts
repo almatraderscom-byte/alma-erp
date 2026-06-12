@@ -23,6 +23,7 @@ function isSalahQuestion(text: string): boolean {
 function hasPrayedSignal(text: string): boolean {
   return (
     /পড়েছি|পড়লাম|পড়েছেন(?! কি)|পড়ে\s*ছি|পড়ে\s*ফেল|পড়ে\s*গেছি|পড়ে\s*নিয়েছি/i.test(text)
+    || /porlam|porchi|porechi|korechi|korsi|korlam/i.test(text)
     || /নামাজ\s*করেছি|namaz\s*kore|namaz\s*kor|prayed/i.test(text)
     || /আদায়\s*কর|namaz\s*por/i.test(text)
     || /আলহামদুলিল্লাহ.*(পড়|নামাজ|কর)/i.test(text)

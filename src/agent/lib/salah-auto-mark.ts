@@ -26,9 +26,16 @@ async function loadDayRecords(dateYmd: string) {
   }>>
 }
 
+function waqtWindowStarted(
+  summary: { waqt: string; date: string; windowStart: Date; notYetDue: boolean },
+  now: Date,
+): boolean {
+  return !summary.notYetDue && now >= new Date(summary.windowStart)
+}
+
 /**
  * Scan owner messages (newest last) and upsert salah when they confirm prayer.
- * Upgrades pending/missed → prayed_on_time so reminders do not repeat.
+ * Only marks waqts whose window has already started — never future Maghrib/Isha at Asr time.
  */
 export async function applySalahAutoMarkFromUserTexts(
   texts: string[],
@@ -50,10 +57,12 @@ export async function applySalahAutoMarkFromUserTexts(
   const yesterdaySummary = summarizeWaqts(yesterdayYmd, yesterdayRecords, now)
   const accountable = pickAccountableWaqts(todaySummary, yesterdaySummary)
 
-  // Also allow fixing rows already wrongly marked missed
   const fixable = [
     ...accountable,
-    ...todaySummary.filter((s) => s.status === 'missed' || s.status === 'pending'),
+    ...todaySummary.filter(
+      (s) =>
+        (s.status === 'missed' || s.status === 'pending') && waqtWindowStarted(s, now),
+    ),
     ...yesterdaySummary.filter((s) => s.status === 'missed' || s.status === 'pending'),
   ]
 
@@ -75,7 +84,7 @@ export async function applySalahAutoMarkFromUserTexts(
       if (!candidate) {
         const fallback = fixable.find((a) => {
           const d = a.date
-          return !markedKeys.has(`${d}:${a.waqt}`)
+          return !markedKeys.has(`${d}:${a.waqt}`) && waqtWindowStarted(a, now)
         })
         if (!fallback) continue
         targetWaqt = fallback.waqt
@@ -96,6 +105,10 @@ export async function applySalahAutoMarkFromUserTexts(
     const existing = records.find((r) => r.waqt === targetWaqt)
     if (existing && isSalahSettled(existing.status)) {
       markedKeys.add(key)
+      continue
+    }
+
+    if (existing && now < new Date(existing.windowStart)) {
       continue
     }
 

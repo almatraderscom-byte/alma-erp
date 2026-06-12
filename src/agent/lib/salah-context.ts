@@ -3,7 +3,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
-import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
+import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isOwnerConfirmed } from '@/agent/lib/salah-resolve'
 import type { SalahContext } from '@/agent/lib/system-prompt'
 
@@ -94,7 +94,7 @@ export async function loadSalahAccountabilityContext(
   now = new Date(),
   userMessage = '',
 ): Promise<SalahContext | undefined> {
-  if (userMessage && isPrayerTimeInquiry(userMessage)) {
+  if (userMessage && isPrayerTimeInquiry(userMessage) && !isSalahStatusInquiry(userMessage)) {
     return undefined
   }
   try {
@@ -109,16 +109,38 @@ export async function loadSalahAccountabilityContext(
     const todaySummary = summarizeWaqts(todayYmd, todayRecords, now)
     const yesterdaySummary = summarizeWaqts(yesterdayYmd, yesterdayRecords, now)
     const accountable = pickAccountableWaqts(todaySummary, yesterdaySummary)
+    const statusInquiry = Boolean(userMessage && isSalahStatusInquiry(userMessage))
 
-    if (accountable.length === 0) return undefined
+    if (accountable.length === 0 && !statusInquiry) return undefined
 
-    return {
-      pendingWaqts: accountable.map((s) => ({
-        waqt: s.date === yesterdayYmd ? `${s.waqt} (গতকাল)` : s.waqt,
-        isOverdue: s.isOverdue,
-        isMissed: s.isMissed || s.status === 'missed',
-      })),
+    const pendingWaqts = accountable.map((s) => ({
+      waqt: s.date === yesterdayYmd ? `${s.waqt} (গতকাল)` : s.waqt,
+      isOverdue: s.isOverdue,
+      isMissed: s.isMissed || s.status === 'missed',
+    }))
+
+    if (statusInquiry) {
+      const upcomingToday = todaySummary
+        .filter((s) => s.notYetDue && !isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt }))
+        .map((s) => s.waqt)
+      const doneToday = todaySummary
+        .filter((s) => isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt }))
+        .map((s) => s.waqt)
+
+      return {
+        pendingWaqts,
+        statusSummary: {
+          doneToday,
+          upcomingToday,
+          note:
+            'upcomingToday = সময় এখনো হয়নি — "পড়েছেন" বলবেন না। get_salah_status দিয়ে DB যাচাই করুন।',
+        },
+      }
     }
+
+    if (pendingWaqts.length === 0) return undefined
+
+    return { pendingWaqts }
   } catch {
     return undefined
   }

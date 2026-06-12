@@ -13,7 +13,15 @@ export async function getPrayerTimes(date = new Date()) {
   const schedule = await getDhakaSchedule(ymd)
   const out = {}
   for (const [waqt, w] of Object.entries(schedule)) {
-    out[waqt] = { start: w.start, end: w.end, label: w.label }
+    out[waqt] = {
+      start: w.start,
+      end: w.end,
+      azan: w.azan,
+      prayerStart: w.prayerStart,
+      label: w.label,
+      azanLabel: w.azanLabel,
+      prayerLabel: w.prayerLabel,
+    }
   }
   return out
 }
