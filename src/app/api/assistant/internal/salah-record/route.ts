@@ -80,7 +80,8 @@ export async function POST(req: NextRequest) {
     if (reopen && existing) {
       const record = await db.agentSalahRecord.update({
         where: { date_waqt: { date: dateObj, waqt } },
-        data: { status: 'pending', confirmedAt: null, remindersSent: 0 },
+        // Keep remindersSent — avoids re-sending the same azan copy after phantom heal.
+        data: { status: 'pending', confirmedAt: null },
       })
       return NextResponse.json({ ok: true, record, reopened: true })
     }

@@ -25,7 +25,7 @@ export function setTelegramForNotify(bot, ownerChatId) {
 const APP_URL    = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN  = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
-async function logNotification(tier, category, channels, statuses) {
+async function logNotification(tier, category, channels, statuses, title, message) {
   try {
     await fetch(`${APP_URL()}/api/assistant/internal/notification-log`, {
       method: 'POST',
@@ -57,38 +57,60 @@ async function logNotification(tier, category, channels, statuses) {
  *   skipTelegram?: boolean
  * }} opts
  */
-export async function notify({ tier, title, message, category, voice = false, skipTelegram = false }) {
+/**
+ * @param {'both'|'general'|'critical'|'none'} ntfyMode
+ *   salah: use 'critical' only — avoids duplicate push with same body as Telegram.
+ */
+export async function notify({
+  tier,
+  title,
+  message,
+  category,
+  voice = false,
+  skipTelegram = false,
+  ntfyMode = 'both',
+  voiceMessage,
+}) {
   const channels = []
   const statuses = {}
 
-  // ── Tier 1: Telegram ──────────────────────────────────────────────────────
+  // ── Tier 1: Telegram text ─────────────────────────────────────────────────
   if (!skipTelegram && _telegramBot && _ownerChatId) {
     channels.push('telegram')
     try {
       const fullText = `*${title}*\n\n${message}`
       await _telegramBot.telegram.sendMessage(_ownerChatId, fullText, { parse_mode: 'Markdown' })
       statuses.telegram = 'sent'
-
-      if (voice) {
-        // Lazy-import to avoid circular dep issues
-        const { sendVoiceMessage } = await import('../telegram/voice.mjs')
-        await sendVoiceMessage(_telegramBot, _ownerChatId, `${title}. ${message}`)
-        statuses.telegram_voice = 'sent'
-      }
     } catch (err) {
       statuses.telegram = `error: ${err.message}`
     }
-  } else {
+  } else if (!skipTelegram) {
     statuses.telegram = 'skipped: bot not initialized'
   }
 
-  // ntfy GENERAL (Tier 1+)
-  channels.push('ntfy_general')
-  const ntfyGenResult = await sendNtfy('general', title, message, category)
-  statuses.ntfy_general = ntfyGenResult.ok ? 'sent' : `error: ${ntfyGenResult.error}`
+  // Voice note — independent of skipTelegram (salah sends its own Telegram text + buttons).
+  if (voice && _telegramBot && _ownerChatId) {
+    channels.push('telegram_voice')
+    try {
+      const { sendVoiceMessage } = await import('../telegram/voice.mjs')
+      const speech = voiceMessage ?? `${title}. ${message}`
+      await sendVoiceMessage(_telegramBot, _ownerChatId, speech)
+      statuses.telegram_voice = 'sent'
+    } catch (err) {
+      statuses.telegram_voice = `error: ${err.message}`
+    }
+  }
 
-  // ── Tier 2: ntfy CRITICAL ────────────────────────────────────────────────
-  if (tier >= 2) {
+  const sendGeneral = ntfyMode === 'both' || ntfyMode === 'general'
+  const sendCritical = ntfyMode === 'both' || ntfyMode === 'critical'
+
+  if (sendGeneral) {
+    channels.push('ntfy_general')
+    const ntfyGenResult = await sendNtfy('general', title, message, category)
+    statuses.ntfy_general = ntfyGenResult.ok ? 'sent' : `error: ${ntfyGenResult.error}`
+  }
+
+  if (tier >= 2 && sendCritical) {
     channels.push('ntfy_critical')
     const ntfyCritResult = await sendNtfy('critical', title, message, category)
     statuses.ntfy_critical = ntfyCritResult.ok ? 'sent' : `error: ${ntfyCritResult.error}`
@@ -97,11 +119,12 @@ export async function notify({ tier, title, message, category, voice = false, sk
   // ── Tier 3: Twilio call ──────────────────────────────────────────────────
   if (tier >= 3) {
     channels.push('twilio_call')
-    const callResult = await makeTwilioCall(`${title}. ${message}`)
+    const callText = voiceMessage ?? `${title}. ${message}`
+    const callResult = await makeTwilioCall(callText, { force: true })
     statuses.twilio_call = callResult.ok ? `sent:${callResult.callSid}` : `error: ${callResult.error}`
   }
 
-  await logNotification(tier, category ?? null, channels, statuses)
+  await logNotification(tier, category ?? null, channels, statuses, title, message)
 
   return { channels, statuses }
 }

@@ -131,8 +131,10 @@ export function salahReminderMessage({
   dateYmd,
   remindersSent = 0,
   griefContext = '',
+  /** 0=telegram, 1=ntfy, 2=voice — different copy per channel at same step */
+  variant = 0,
 }) {
-  const seed = `${dateYmd}:${waqt}:t${tier}:r${remindersSent}`
+  const seed = `${dateYmd}:${waqt}:t${tier}:r${remindersSent}:v${variant}`
 
   if (tier === 'missed') {
     let msg = buildMessage({
@@ -162,17 +164,27 @@ export function salahReminderMessage({
   return msg
 }
 
+/** Per-channel copy for one escalation step (no duplicate hadith across pushes). */
+export function salahChannelMessages(opts) {
+  const base = { ...opts, griefContext: opts.griefContext ?? '' }
+  const telegram = salahReminderMessage({ ...base, variant: 0 })
+  const ntfy = salahReminderMessage({ ...base, variant: 1 })
+  const voice = salahReminderMessage({ ...base, variant: 2 })
+  const voiceShort = voice.split('\n\n').slice(0, 2).join('\n\n').slice(0, 380)
+  return { telegram, ntfy, voice: voiceShort }
+}
+
 /** @deprecated use salahReminderMessage */
-export function level1Message(waqt, waqtName, dateYmd, remindersSent = 0) {
-  return salahReminderMessage({ tier: 1, waqt, waqtName, dateYmd, remindersSent })
+export function level1Message(waqt, waqtName, dateYmd, remindersSent = 0, variant = 0) {
+  return salahReminderMessage({ tier: 1, waqt, waqtName, dateYmd, remindersSent, variant })
 }
 
-export function level2Message(waqt, waqtName, dateYmd, remindersSent = 0) {
-  return salahReminderMessage({ tier: 2, waqt, waqtName, dateYmd, remindersSent })
+export function level2Message(waqt, waqtName, dateYmd, remindersSent = 0, variant = 0) {
+  return salahReminderMessage({ tier: 2, waqt, waqtName, dateYmd, remindersSent, variant })
 }
 
-export function level3Message(waqt, waqtName, dateYmd, remindersSent = 0, griefContext = '') {
-  return salahReminderMessage({ tier: 3, waqt, waqtName, dateYmd, remindersSent, griefContext })
+export function level3Message(waqt, waqtName, dateYmd, remindersSent = 0, griefContext = '', variant = 0) {
+  return salahReminderMessage({ tier: 3, waqt, waqtName, dateYmd, remindersSent, griefContext, variant })
 }
 
 export function missedMessage(waqt, waqtName, dateYmd, griefContext = '') {

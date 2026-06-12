@@ -20,6 +20,7 @@ import {
   level2Message,
   level3Message,
   missedMessage,
+  salahChannelMessages,
 } from './reminder-messages.mjs'
 import { notify } from '../notify/index.mjs'
 
@@ -152,28 +153,23 @@ async function sendAzanNotification(bot, ownerChatId, waqt, prevPendingWaqt, set
     await new Promise(r => setTimeout(r, 1000))
   }
 
-  // Send azan notification (Tier 2 by default)
   const tier = escalationLevel >= 2 ? 2 : 1
-  const text = level1Message(waqt, name, dateYmd, 0)
-
+  const msgs = salahChannelMessages({ tier: 1, waqt, waqtName: name, dateYmd, remindersSent: 0 })
+  msgs.telegram = `🕌 *${name}-এর আযান হয়েছে*\n\n${msgs.telegram}`
   await notify({
     tier,
-    title:    `🕌 ${name}-এর আযান`,
-    message:  text,
+    title: `${name} আযান`,
+    message: msgs.ntfy,
     category: 'salah',
-    voice:    true,
+    voice: true,
+    voiceMessage: msgs.voice,
     skipTelegram: true,
+    ntfyMode: tier >= 2 ? 'critical' : 'general',
   })
-
-  // Also send Telegram with buttons
-  await bot.telegram.sendMessage(
-    ownerChatId,
-    `🕌 *${name}-এর আযান হয়েছে*\n\n${text}`,
-    {
-      parse_mode:   'Markdown',
-      reply_markup: salahButtons(waqt),
-    },
-  )
+  await bot.telegram.sendMessage(ownerChatId, msgs.telegram, {
+    parse_mode: 'Markdown',
+    reply_markup: salahButtons(waqt),
+  })
 }
 
 // API returns Prisma camelCase — tolerate legacy snake_case from older clients.
@@ -199,6 +195,36 @@ async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
   } catch (err) {
     console.warn('[salah] telegram send failed:', err.message)
   }
+}
+
+/** Telegram (buttons) + optional ntfy + voice + optional Twilio call — one distinct copy per channel. */
+async function deliverSalahAlert({
+  tier,
+  title,
+  msgs,
+  bot,
+  ownerChatId,
+  waqt,
+  replyMarkup,
+  withVoice = true,
+  ntfyMode = 'critical',
+}) {
+  await notify({
+    tier,
+    title,
+    message: msgs.ntfy,
+    category: 'salah',
+    voice: withVoice,
+    voiceMessage: msgs.voice,
+    skipTelegram: true,
+    ntfyMode,
+  })
+  await sendTelegramSafe(
+    bot,
+    ownerChatId,
+    msgs.telegram,
+    { parse_mode: 'Markdown', reply_markup: replyMarkup ?? salahButtons(waqt) },
+  )
 }
 
 // ── Escalation check (called on a schedule — e.g. every 5 min) ────────────────
@@ -281,11 +307,14 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const azanTimeEarly = new Date(waqtScheduleEarly?.azan ?? windowStart)
 
     // Agent/LLM sometimes marks Maghrib/Isha before azan — heal and resume reminders.
-    if (isPhantomConfirmation(record.confirmedAt, azanTimeEarly) && now >= azanTimeEarly) {
+    if (
+      isPhantomConfirmation(record.confirmedAt, azanTimeEarly)
+      && now >= azanTimeEarly
+      && record.status !== 'pending'
+    ) {
       console.warn(`[salah] phantom confirmation for ${waqt} — reopening for reminders`)
       await upsertSalahRecord({ date: today, waqt, reopen: true })
-      record = { ...record, status: 'pending', confirmedAt: null, remindersSent: 0 }
-      remindersSent = 0
+      record = { ...record, status: 'pending', confirmedAt: null }
       raw.status = 'pending'
     }
 
@@ -321,21 +350,23 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // Step 0: Azan — Quran/Hadith reminder
     if (msSinceAzan >= 0 && remindersSent === 0 && now < windowEnd) {
       const name = waqtName(waqt)
-      const msg = level1Message(waqt, name, today, remindersSent)
-      await notify({
-        tier:         escalationLevel >= 2 ? 2 : 1,
-        title:        `${name} আযান`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 1,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
       })
-      await sendTelegramSafe(
+      msgs.telegram = `🕌 *${name}-এর আযান হয়েছে*\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: escalationLevel >= 2 ? 2 : 1,
+        title: `${name} আযান`,
+        msgs,
         bot,
         ownerChatId,
-        `🕌 *${name}-এর আযান হয়েছে*\n\n${msg}`,
-        { parse_mode: 'Markdown', reply_markup: salahButtons(waqt) },
-      )
+        waqt,
+        ntfyMode: escalationLevel >= 2 ? 'critical' : 'general',
+      })
 
       const prevIdx = WAQT_ORDER.indexOf(waqt) - 1
       if (prevIdx >= 0) {
@@ -361,18 +392,22 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // Step 1: Prayer start — direct phone call + NTFY + Telegram (no SMS)
     if (msSincePrayerStart >= 0 && remindersSent === 1 && now < windowEnd) {
       const name = waqtName(waqt)
-      const msg = level2Message(waqt, name, today, remindersSent)
-      await notify({
-        tier:         3,
-        title:        `${name} — নামাজের সময়`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 2,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
       })
-      await sendTelegramSafe(bot, ownerChatId, `⏰ *${name} — নামাজের সময়*\n\n${msg}`, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
+      msgs.telegram = `⏰ *${name} — নামাজের সময়*\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: 3,
+        title: `${name} — নামাজের সময়`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        ntfyMode: 'critical',
       })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
@@ -387,18 +422,22 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       && remindersSent === 2
     ) {
       const name = waqtName(waqt)
-      const msg = `Sir, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${level2Message(waqt, name, today, remindersSent)}`
-      await notify({
-        tier:         escalationLevel >= 2 ? 2 : 1,
-        title:        `${name} — জুম্মা follow-up`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 2,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
       })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
+      msgs.telegram = `Sir, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: escalationLevel >= 2 ? 2 : 1,
+        title: `${name} — জুম্মা follow-up`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        ntfyMode: 'critical',
       })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
@@ -412,17 +451,23 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       && !(waqt === 'dhuhr' && isFridayDhaka(today))
     ) {
       const name = waqtName(waqt)
-      const msg = `Sir, ${name} — এখনো confirm করেননি। "পড়েছি" বলুন বা বাটন চাপুন।\n\n${level2Message(waqt, name, today, remindersSent)}`
-      await notify({
-        tier:         2,
-        title:        `${name} — এখনো পড়েননি?`,
-        message:      msg,
-        category:     'salah',
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 2,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
       })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
+      msgs.telegram = `Sir, ${name} — এখনো confirm করেননি। "পড়েছি" বলুন বা বাটন চাপুন।\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: 2,
+        title: `${name} — এখনো পড়েননি?`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        withVoice: false,
+        ntfyMode: 'critical',
       })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
@@ -431,18 +476,23 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // Step 3: Emotional voice call
     if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent === 3 && now < windowEnd) {
       const name = waqtName(waqt)
-      const msg = level3Message(waqt, name, today, remindersSent, griefContext)
-      await notify({
-        tier:         3,
-        title:        `${name} — Sir, উঠুন`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 3,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
+        griefContext,
       })
-      await sendTelegramSafe(bot, ownerChatId, msg, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
+      msgs.telegram = `🚨 *${name} — Sir, উঠুন*\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: 3,
+        title: `${name} — Sir, উঠুন`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        ntfyMode: 'critical',
       })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
@@ -451,18 +501,23 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // Step 4+: Grave / kabir azab — personal, until window ends
     if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent >= 4 && remindersSent <= 8 && now < windowEnd) {
       const name = waqtName(waqt)
-      const msg = level3Message(waqt, name, today, remindersSent, griefContext)
-      await notify({
-        tier:         3,
-        title:        `${name} — কবরের কথা`,
-        message:      msg,
-        category:     'salah',
-        voice:        true,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 3,
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
+        griefContext,
       })
-      await sendTelegramSafe(bot, ownerChatId, `⚰️ *${name} — Sir, শুনুন*\n\n${msg}`, {
-        parse_mode: 'Markdown',
-        reply_markup: salahButtons(waqt),
+      msgs.telegram = `⚰️ *${name} — Sir, শুনুন*\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: 3,
+        title: `${name} — কবরের কথা`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        ntfyMode: 'critical',
       })
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
@@ -474,19 +529,26 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
       const name = waqtName(waqt)
-      const missedMsg = `❌ ${name}-এর ওয়াক্ত শেষ\n\n${missedMessage(waqt, name, today, griefContext)}`
       const missedTier = escalationLevel >= 2 ? 3 : 2
-      await notify({
-        tier:         missedTier,
-        title:        `${name} window ended`,
-        message:      missedMsg,
-        category:     'salah',
-        voice:        missedTier >= 3,
-        skipTelegram: true,
+      const msgs = salahChannelMessages({
+        tier: 'missed',
+        waqt,
+        waqtName: name,
+        dateYmd: today,
+        remindersSent,
+        griefContext,
       })
-      await sendTelegramSafe(bot, ownerChatId, missedMsg, {
-        parse_mode: 'Markdown',
-        reply_markup: qazaButtons(waqt),
+      msgs.telegram = `❌ ${name}-এর ওয়াক্ত শেষ\n\n${msgs.telegram}`
+      await deliverSalahAlert({
+        tier: missedTier,
+        title: `${name} window ended`,
+        msgs,
+        bot,
+        ownerChatId,
+        waqt,
+        replyMarkup: qazaButtons(waqt),
+        withVoice: missedTier >= 3,
+        ntfyMode: 'critical',
       })
       continue
     }
