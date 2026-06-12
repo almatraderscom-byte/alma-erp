@@ -3,6 +3,8 @@
  * Owner + linked staff may upload catalog photos and manage groups.
  */
 
+import { replyMarkdownSafe } from './markdown-safe.mjs'
+
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -219,16 +221,42 @@ export function handleCatalogPhotoMessage(ctx, opts) {
   }, 800)
 }
 
-export async function handleCatalogStatus(ctx) {
+export async function handleCatalogStatus(ctx, { replyMarkup } = {}) {
   const status = await callCatalog('/api/assistant/internal/catalog/status')
   const missing = (status.topMissing ?? []).slice(0, 10).join(', ') || '(নেই)'
-  await ctx.reply(
-    `📦 *ক্যাটালগ স্ট্যাটাস* (${status.business})\n\n` +
+  const pct = status.totalProducts
+    ? Math.round((status.withImages / status.totalProducts) * 100)
+    : 0
+  await replyMarkdownSafe(
+    ctx,
+    `📦 *ক্যাটালগ স্ট্যাটাস*\n\n` +
       `মোট প্রোডাক্ট: ${bnNum(status.totalProducts)}\n` +
-      `ছবি আছে: ${bnNum(status.withImages)}\n` +
+      `ছবি আছে: ${bnNum(status.withImages)} (${bnNum(pct)}%)\n` +
       `ছবি নেই: ${bnNum(status.missingCount)}\n\n` +
       `*অগ্রাধিকার (বিক্রয় অনুযায়ী):*\n${missing}`,
-    { parse_mode: 'Markdown' },
+    replyMarkup ? { reply_markup: replyMarkup } : {},
+  )
+}
+
+export function catalogPanelKeyboard(isOwner) {
+  const rows = [[
+    { text: '🔄 আপডেট', callback_data: 'catalog:refresh' },
+    { text: '📷 ছবি যোগ গাইড', callback_data: 'catalog:guide' },
+  ]]
+  if (isOwner) {
+    rows.push([{ text: '💡 গ্রুপ সাজেস্ট', callback_data: 'catalog:suggest' }])
+  }
+  return { inline_keyboard: rows }
+}
+
+export async function showCatalogGuide(ctx) {
+  await replyMarkdownSafe(
+    ctx,
+    '📷 *ছবি যোগ করুন*\n\n' +
+      '১. ফটো পাঠান\n' +
+      '২. ক্যাপশনে প্রোডাক্ট কোড লিখুন — যেমন: FM-204\n' +
+      '৩. একাধিক কোডে গ্রুপ: FM-204 FM-205 group Eid Family\n\n' +
+      '/catalog — অগ্রগতি দেখুন',
   )
 }
 
@@ -293,9 +321,9 @@ export async function handleGroupCommand(ctx, args) {
   })
   const g = result.group
   const lines = (g?.members ?? []).map((m) => `• ${m.productCode} (${m.memberRole}) — ৳${m.sellPrice}, স্টক ${m.currentStock}`)
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     `✅ গ্রুপ *${g?.groupCode}*: ${g?.title}\n\n${lines.join('\n')}`,
-    { parse_mode: 'Markdown' },
   )
 }
 

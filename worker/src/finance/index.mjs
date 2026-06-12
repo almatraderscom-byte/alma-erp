@@ -1,3 +1,5 @@
+import { replyMarkdownSafe } from '../telegram/markdown-safe.mjs'
+
 /**
  * Finance module — Telegram command handlers.
  * /pawna  — grouped receivables + payables per currency
@@ -80,7 +82,7 @@ export async function handlePawnaCommand(ctx, supabase) {
     if (payables.length)    msg += `📤 *দেনা (আপনার দেওয়া):*\n${payables.join('\n')}`
     if (!receivables.length && !payables.length) msg += 'সব হিসাব শূন্য।'
 
-    await ctx.reply(msg, { parse_mode: 'Markdown' })
+    await replyMarkdownSafe(ctx, msg)
   } catch (err) {
     console.error('[finance] /pawna error:', err.message)
     await ctx.reply(`❌ হিসাব আনা যায়নি: ${err.message}`)
@@ -129,12 +131,10 @@ export async function handleDetailsCommand(ctx, name, supabase, page = 0) {
     if (page > 0)            buttons.push({ text: '◀ আগে',   callback_data: `details:${name}:${page - 1}` })
     if (page < totalPages - 1) buttons.push({ text: 'পরে ▶', callback_data: `details:${name}:${page + 1}` })
 
-    await ctx.reply(
+    await replyMarkdownSafe(
+      ctx,
       header + lines.join('\n'),
-      {
-        parse_mode: 'Markdown',
-        ...(buttons.length ? { reply_markup: { inline_keyboard: [buttons] } } : {}),
-      },
+      buttons.length ? { reply_markup: { inline_keyboard: [buttons] } } : {},
     )
   } catch (err) {
     console.error('[finance] /details error:', err.message)

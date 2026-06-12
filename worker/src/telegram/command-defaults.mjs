@@ -4,7 +4,13 @@
  */
 
 import { handleDetailsCommand } from '../finance/index.mjs'
-import { handleCatalogSuggest } from './catalog.mjs'
+import {
+  handleCatalogSuggest,
+  handleCatalogStatus,
+  catalogPanelKeyboard,
+  showCatalogGuide,
+} from './catalog.mjs'
+import { replyMarkdownSafe } from './markdown-safe.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -42,12 +48,68 @@ export async function showCsPanel(ctx) {
   const mode = data.cs_mode ?? 'off'
   const followups = String(data.cs_followups_enabled ?? 'true') === 'true' ? 'চালু' : 'বন্ধ'
 
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     `🤖 *কাস্টমার এজেন্ট*\n\n` +
       `মোড: *${mode}*\n` +
       `ফলো-আপ: *${followups}*\n\n` +
       `বাটন চাপুন — সাথে সাথে কাজ হবে:`,
-    { parse_mode: 'Markdown', reply_markup: csControlKeyboard() },
+    { reply_markup: csControlKeyboard() },
+  )
+}
+
+export async function showCatalogPanel(ctx, { isOwner }) {
+  await handleCatalogStatus(ctx, { replyMarkup: catalogPanelKeyboard(isOwner) })
+}
+
+export async function showStaffPanel(ctx, supabase) {
+  const { data: rows } = await supabase
+    .from('agent_staff')
+    .select('name, role, telegram_chat_id, active')
+    .order('name')
+
+  const active = (rows ?? []).filter((r) => r.active !== false)
+  let list = 'কোনো স্টাফ নেই।'
+  if (active.length) {
+    list = active.map((s) => {
+      const linked = s.telegram_chat_id ? `✅ ${s.telegram_chat_id}` : '❌ লিঙ্ক নেই'
+      return `• ${s.name} (${s.role}) — ${linked}`
+    }).join('\n')
+  }
+
+  await replyMarkdownSafe(
+    ctx,
+    `👥 *স্টাফ তালিকা*\n\n${list}\n\n` +
+      '*নতুন লিঙ্ক:*\n' +
+      '`/staff link Eyafi 1234567890`\n\n' +
+      'GPS গাইড: /staff_onboard',
+  )
+}
+
+export async function showPostlinkPanel(ctx, supabase) {
+  const { data: posts } = await supabase
+    .from('cs_post_products')
+    .select('post_id, product_codes, created_at')
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  let recent = ''
+  if (posts?.length) {
+    recent = '\n\n*সাম্প্রতিক লিঙ্ক:*\n' + posts.map((p) => {
+      const codes = Array.isArray(p.product_codes)
+        ? p.product_codes.join(', ')
+        : String(p.product_codes ?? '')
+      return `• ${p.post_id} → ${codes || '—'}`
+    }).join('\n')
+  }
+
+  await replyMarkdownSafe(
+    ctx,
+    '🔗 *FB পোস্ট লিঙ্ক*' + recent + '\n\n' +
+      'নতুন লিঙ্ক:\n' +
+      '`/postlink <পোস্ট ID বা URL> FM-204 FM-205`\n\n' +
+      'উদাহরণ:\n' +
+      '`/postlink 123456789012345 FM-204`',
   )
 }
 
@@ -69,9 +131,9 @@ export async function showDetailsPicker(ctx, supabase) {
   }
 
   if (!names.length) {
-    await ctx.reply(
-      '💰 কোনো হিসাব নেই।\n\n' +
-        'নাম লিখে খুঁজুন:\n/details Hossain mama',
+    await replyMarkdownSafe(
+      ctx,
+      '💰 কোনো হিসাব নেই।\n\nনাম লিখে খুঁজুন:\n/details Hossain mama',
     )
     return
   }
@@ -84,10 +146,11 @@ export async function showDetailsPicker(ctx, supabase) {
     keyboard.push(row)
   }
 
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     '💰 *কার হিসাব দেখবেন?* — নাম চাপুন:\n\n' +
       'অথবা লিখুন: /details Hossain mama',
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } },
+    { reply_markup: { inline_keyboard: keyboard } },
   )
 }
 
@@ -122,11 +185,12 @@ export async function showAskPrompt(ctx) {
     callback_data: `ask_go:${i}`,
   }])
 
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     '💬 *এজেন্টকে প্রশ্ন করুন*\n\n' +
       'নিচের উদাহরণ চাপুন অথবা লিখুন:\n' +
       '/ask আজ কত বিক্রি?',
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } },
+    { reply_markup: { inline_keyboard: keyboard } },
   )
 }
 
@@ -134,29 +198,12 @@ export function getAskExample(index) {
   return ASK_EXAMPLES[index] ?? null
 }
 
-export async function showPostlinkGuide(ctx) {
-  await ctx.reply(
-    '🔗 *FB পোস্ট লিঙ্ক*\n\n' +
-      'ফরম্যাট:\n' +
-      '`/postlink <পোস্ট URL বা ID> FM-204 FM-205`\n\n' +
-      'উদাহরণ:\n' +
-      '`/postlink 123456789012345 FM-204`\n' +
-      '`/postlink https://facebook.com/.../posts/123 FM-204 FM-205`\n\n' +
-      'পোস্ট URL বা numeric post ID কপি করে পেস্ট করুন।',
-    { parse_mode: 'Markdown' },
-  )
+export async function showPostlinkGuide(ctx, supabase) {
+  await showPostlinkPanel(ctx, supabase)
 }
 
-export async function showStaffGuide(ctx) {
-  await ctx.reply(
-    '👥 *স্টাফ টেলিগ্রাম লিঙ্ক*\n\n' +
-      '১. স্টাফকে বটে /start করতে বলুন\n' +
-      '২. তাদের Chat ID নোট করুন (বট দেখাবে)\n' +
-      '৩. লিঙ্ক করুন:\n' +
-      '`/staff link Eyafi 1234567890`\n\n' +
-      'GPS অনবোর্ডিং গাইড: /staff_onboard',
-    { parse_mode: 'Markdown' },
-  )
+export async function showStaffGuide(ctx, supabase) {
+  await showStaffPanel(ctx, supabase)
 }
 
 export async function showGroupPanel(ctx, { isOwner, supabase }) {
@@ -178,18 +225,20 @@ export async function showGroupPanel(ctx, { isOwner, supabase }) {
   }
   keyboard.push([{ text: '📖 ব্যবহারের উদাহরণ', callback_data: 'group:help' }])
 
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     '👨‍👩‍👧‍👦 *ফ্যামিলি ডিজাইন গ্রুপ*' + list + '\n\n' +
       'নতুন গ্রুপ:\n' +
       '`/group FM-204 FM-205 Family Panjabi Eid`\n\n' +
       'রোল সেট:\n' +
       '`/group set FMG-001 FM-205 chele`',
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } },
+    { reply_markup: { inline_keyboard: keyboard } },
   )
 }
 
 export async function showGroupHelp(ctx) {
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     '👨‍👩‍👧‍👦 *গ্রুপ কমান্ড*\n\n' +
       'নতুন গ্রুপ:\n' +
       '`/group FM-204 FM-205 Family Panjabi Eid`\n\n' +
@@ -197,7 +246,6 @@ export async function showGroupHelp(ctx) {
       '`/group set FMG-001 FM-205 chele`\n' +
       'অথবা\n' +
       '`/group set FM-205 chele`',
-    { parse_mode: 'Markdown' },
   )
 }
 

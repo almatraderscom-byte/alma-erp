@@ -9,8 +9,8 @@ import {
   handleSalahTodayCommand,
 } from './quick-commands.mjs'
 import { handlePawnaCommand } from '../finance/index.mjs'
-import { handleCatalogStatus } from './catalog.mjs'
-import { showDetailsPicker } from './command-defaults.mjs'
+import { replyMarkdownSafe } from './markdown-safe.mjs'
+import { showDetailsPicker, showCatalogPanel } from './command-defaults.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -56,8 +56,7 @@ export function menuKeyboard() {
 }
 
 export async function showMenuPanel(ctx) {
-  await ctx.reply('🎛️ *কন্ট্রোল প্যানেল* — বাটন চাপুন:', {
-    parse_mode: 'Markdown',
+  await replyMarkdownSafe(ctx, '🎛️ *কন্ট্রোল প্যানেল* — বাটন চাপুন:', {
     reply_markup: menuKeyboard(),
   })
 }
@@ -154,7 +153,7 @@ export async function handleMenuCallback(ctx, action, deps) {
       return ctx.reply(`🔕 আজ রাত পর্যন্ত ${n}টি রিমাইন্ডার স্নুজ করা হয়েছে।`)
     }
     case 'catalog:status':
-      return handleCatalogStatus(ctx)
+      return showCatalogPanel(ctx, { isOwner: true })
     case 'sys:scheduler': {
       const data = await fetchInternal('/api/assistant/internal/watchdog')
       if (!data) return ctx.reply('❌ Scheduler স্ট্যাটাস লোড হয়নি')

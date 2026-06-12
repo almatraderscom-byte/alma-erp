@@ -3,6 +3,11 @@
  * Try Markdown first; on entity parse errors, retry plain text (keep reply_markup).
  */
 
+/** Escape `_` and `*` in dynamic text for legacy Telegram Markdown. */
+export function escapeMarkdown(text) {
+  return String(text ?? '').replace(/([_*`\\[])/g, '\\$1')
+}
+
 function isMarkdownParseError(err) {
   const msg = String(err?.message ?? err ?? '')
   return /parse entities|can't find end of the entity/i.test(msg)

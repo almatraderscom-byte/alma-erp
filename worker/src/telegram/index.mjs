@@ -40,6 +40,7 @@ import {
   handleGroupCommand,
   handleSizeChartCommand,
   handleCatalogCallback,
+  showCatalogGuide,
 } from './catalog.mjs'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
@@ -59,6 +60,7 @@ import {
   showGroupPanel,
   showGroupHelp,
   handleGroupSuggestCallback,
+  showCatalogPanel,
 } from './command-defaults.mjs'
 
 import { createClient } from '@supabase/supabase-js'
@@ -502,6 +504,18 @@ export function createTelegramBot() {
 
   const bot = new Telegraf(token)
 
+  bot.use(async (ctx, next) => {
+    try {
+      await next()
+    } catch (err) {
+      console.error('[telegram] handler error:', err.message)
+      captureWorkerError('telegram.handler', err)
+      try {
+        await ctx.reply?.('❌ সমস্যা হয়েছে। আবার চাপুন।')
+      } catch { /* ignore secondary failure */ }
+    }
+  })
+
   // Access guard: owner full access; linked staff = tasks + location only (not AI agent).
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id
@@ -526,6 +540,7 @@ export function createTelegramBot() {
         || cbData.startsWith('details_pick:')
         || cbData.startsWith('ask_go:')
         || cbData === 'group:suggest'
+        || cbData === 'catalog:suggest'
       if (ownerOnlyCb) {
         await ctx.answerCbQuery?.('এই বাটন শুধু Owner-এর জন্য')
         return
@@ -585,7 +600,7 @@ export function createTelegramBot() {
 
   bot.command('help', async (ctx) => {
     const text = isOwner(ctx.chat?.id) ? buildOwnerHelpText() : buildStaffHelpText()
-    await ctx.reply(text, { parse_mode: 'Markdown' })
+    await replyMarkdownSafe(ctx, text)
   })
 
   bot.command('staff', async (ctx) => {
@@ -594,8 +609,9 @@ export function createTelegramBot() {
       return
     }
     const args = ctx.message.text.replace(/^\/staff\s*/, '').trim()
+    const supabase = createSupabase()
     if (!args) {
-      await showStaffGuide(ctx)
+      await showStaffGuide(ctx, supabase)
       return
     }
     await handleStaffLink(ctx, args)
@@ -660,7 +676,7 @@ export function createTelegramBot() {
       await handleCatalogSuggest(ctx)
       return
     }
-    await handleCatalogStatus(ctx)
+    await showCatalogPanel(ctx, { isOwner: owner })
   })
 
   bot.command('group', async (ctx) => {
@@ -685,7 +701,8 @@ export function createTelegramBot() {
     }
     const args = ctx.message.text.replace(/^\/postlink\s*/, '').trim().split(/\s+/)
     if (!args[0] || args.length < 2) {
-      await showPostlinkGuide(ctx)
+      const supabase = createSupabase()
+      await showPostlinkGuide(ctx, supabase)
       return
     }
     await handlePostlink(ctx, args)
@@ -773,7 +790,7 @@ export function createTelegramBot() {
             await ctx.reply('❌ শুধু Owner।')
             return
           }
-          await handleCatalogStatus(ctx)
+          await showCatalogPanel(ctx, { isOwner: false })
           return
         }
         const gArgs = text.replace(/^\/group\s*/, '').trim()
@@ -997,6 +1014,22 @@ export function createTelegramBot() {
       await ctx.answerCbQuery()
       await showGroupHelp(ctx)
 
+    } else if (data === 'catalog:refresh') {
+      await ctx.answerCbQuery('আপডেট…')
+      await showCatalogPanel(ctx, { isOwner: isOwner(ctx.chat?.id) })
+
+    } else if (data === 'catalog:guide') {
+      await ctx.answerCbQuery()
+      await showCatalogGuide(ctx)
+
+    } else if (data === 'catalog:suggest') {
+      if (isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery()
+        await handleCatalogSuggest(ctx)
+      } else {
+        await ctx.answerCbQuery('শুধু Owner')
+      }
+
     } else if (data.startsWith('cat_del_') || data.startsWith('csg_')) {
       if (isOwner(ctx.chat?.id)) {
         await handleCatalogCallback(ctx, data, { isOwner: true })
@@ -1077,6 +1110,11 @@ export function createTelegramBot() {
 
   // Register bot with notify module so Tier 1+ can use it
   setTelegramForNotify(bot, OWNER_ID)
+
+  bot.catch((err) => {
+    console.error('[telegram] polling error:', err.message)
+    captureWorkerError('telegram.polling', err)
+  })
 
   void registerBotCommands(bot, OWNER_ID)
 

@@ -42,7 +42,7 @@ export async function handleSalahTodayCommand(ctx, supabase) {
   }).join('\n')
 
   const on = salahRecords.filter((r) => r.status === 'prayed_on_time').length
-  await ctx.reply(`🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`, { parse_mode: 'Markdown' })
+  await replyMarkdownSafe(ctx, `🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`)
 }
 
 export async function handleTodayCommand(ctx, supabase) {
@@ -89,7 +89,7 @@ export async function handleTodayCommand(ctx, supabase) {
     salesLine +
     (pending ? `\n\n⏳ বাকি:\n${pending}` : '')
 
-  await ctx.reply(msg, { parse_mode: 'Markdown' })
+  await replyMarkdownSafe(ctx, msg)
 }
 
 export async function handleKhorochCommand(ctx, supabase) {
@@ -136,7 +136,7 @@ export async function handleKhorochCommand(ctx, supabase) {
     fmt(t, 'আজ') + '\n' +
     fmt(m, 'এই মাস')
 
-  await ctx.reply(msg, { parse_mode: 'Markdown' })
+  await replyMarkdownSafe(ctx, msg)
 }
 
 export async function handleAskCommand(ctx, text, sendToAgent, ownerState) {
