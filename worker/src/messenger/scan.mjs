@@ -11,6 +11,8 @@
 
 import { notify } from '../notify/index.mjs'
 import { recordReplyStats } from './reply-stats.mjs'
+import { buildCallbackData } from '../telegram/callback-data.mjs'
+import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle',   envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
@@ -187,15 +189,17 @@ export async function runMessengerScan({ supabase, bot }) {
           const tier = alert.urgency === 'critical' ? 2 : 1
 
           // Send to owner with inline buttons
-          await bot.telegram.sendMessage(
+          const draftCb = buildCallbackData('msg_draft', conv.id)
+          const feedbackCb = buildCallbackData('staff_feedback', conv.id)
+          await sendMarkdownSafe(
+            bot.telegram,
             ownerChatId,
-            `${alertMsg}\n\nকাস্টমার: "${lastCustomerMsg?.message?.slice(0, 80) ?? ''}"\n\n💬 _Draft:_ "${draft}"`,
+            `${alertMsg}\n\nকাস্টমার: "${lastCustomerMsg?.message?.slice(0, 80) ?? ''}"\n\n💬 Draft: "${draft}"`,
             {
-              parse_mode: 'Markdown',
               reply_markup: {
                 inline_keyboard: [[
-                  { text: '📋 নতুন draft',      callback_data: `msg_draft:${conv.id}:${page.id}` },
-                  { text: '👤 Staff-কে feedback', callback_data: `staff_feedback:${conv.id}:${page.id}` },
+                  { text: '📋 নতুন draft', callback_data: draftCb },
+                  { text: '👤 Staff-কে feedback', callback_data: feedbackCb },
                 ]],
               },
             },

@@ -4,6 +4,9 @@
  * Sends each staff member their Bangla task list via Telegram with [✅ Done] buttons.
  */
 
+import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
+
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -73,29 +76,27 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 }
 
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {
-  // Build task list message
   const taskLines = staffTasks.map((t, i) =>
-    `${i + 1}. ${t.title}${t.detail ? `\n   _${t.detail}_` : ''}`
+    `${i + 1}. ${t.title}${t.detail ? `\n   ${t.detail}` : ''}`,
   )
 
   const msg =
     `আস্সালামু আলাইকুম ${staffName} ভাই!\n\n` +
-    `📋 *আজকের কাজের তালিকা:*\n\n` +
+    `📋 আজকের কাজের তালিকা:\n\n` +
     taskLines.join('\n\n')
 
-  await bot.telegram.sendMessage(chatId, msg, { parse_mode: 'Markdown' })
+  await sendMarkdownSafe(bot.telegram, chatId, msg)
 
-  // Send each task as individual Done button
   for (const task of staffTasks) {
-    await bot.telegram.sendMessage(
+    const callbackData = taskDoneCallbackData(task.id)
+    await sendMarkdownSafe(
+      bot.telegram,
       chatId,
-      `✏️ *${task.title}*${task.detail ? `\n${task.detail}` : ''}`,
+      `✏️ ${task.title}${task.detail ? `\n${task.detail}` : ''}`,
       {
-        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            // Telegram callback_data max 64 bytes — task UUID only (staff resolved on tap).
-            { text: '✅ Done', callback_data: `task_done:${task.id}` },
+            { text: '✅ Done', callback_data: callbackData },
           ]],
         },
       },

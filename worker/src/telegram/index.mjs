@@ -44,6 +44,7 @@ import {
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
 import { replyMarkdownSafe } from './markdown-safe.mjs'
+import { parseTaskIdFromCallback } from './callback-data.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -652,7 +653,7 @@ export function createTelegramBot() {
       await handleReminderCallback(ctx, data)
 
     } else if (data.startsWith('task_done:')) {
-      const taskId = data.slice('task_done:'.length).split(':')[0]
+      const taskId = parseTaskIdFromCallback(data.slice('task_done:'.length))
       const supabase = createSupabase()
       const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
       if (!staff) {
@@ -742,9 +743,10 @@ export function createTelegramBot() {
       }
 
     } else if (data.startsWith('msg_draft:') || data.startsWith('staff_feedback:')) {
-      // Messenger alert callbacks — owner-only
+      // Messenger alert callbacks — owner-only (conv id only — fits 64-byte limit)
       if (isOwner(ctx.chat?.id)) {
-        const [action, convId, pageId] = data.split(':')
+        const action = data.startsWith('msg_draft:') ? 'msg_draft' : 'staff_feedback'
+        const convId = data.slice(action.length + 1)
         await ctx.answerCbQuery()
         if (action === 'msg_draft') {
           await ctx.reply(
@@ -752,7 +754,7 @@ export function createTelegramBot() {
           )
         } else {
           await ctx.reply(
-            'স্টাফকে feedback পাঠানোর জন্য বলুন: "এই কনভার্সেশনে staff-কে feedback দাও"',
+            'স্টাফকে feedback পাঠানোর জন্য বলুন: "Conversation ' + convId + '-এ staff-কে feedback দাও"',
           )
         }
       }
