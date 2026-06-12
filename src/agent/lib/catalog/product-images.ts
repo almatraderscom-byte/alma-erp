@@ -76,8 +76,10 @@ export async function addProductImage(input: {
     return {
       ok: true,
       collection: resolved.collectionCode,
+      code: resolved.collectionCode,
       codes: results.map((r) => r.code),
       results,
+      total: results.reduce((sum, r) => sum + r.total, 0),
     }
   }
 

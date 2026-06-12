@@ -5,6 +5,18 @@
 
 import { replyMarkdownSafe } from './markdown-safe.mjs'
 
+function formatUploadSuccessReply(r, fallbackCode) {
+  if (r.collection && r.codes?.length) {
+    return (
+      `✅ কালেকশন ${r.collection} — ${bnNum(r.codes.length)}টি SKU-তে ছবি যুক্ত:\n` +
+      r.codes.map((c) => `• ${c}`).join('\n')
+    )
+  }
+  const code = r.code ?? fallbackCode
+  const total = r.total ?? r.results?.[0]?.total ?? 1
+  return `✅ ${code} এ ছবি যুক্ত হলো (মোট ${bnNum(total)}টা)`
+}
+
 async function replyInvalidCode(ctx, code, suggestions) {
   const sug = (suggestions ?? []).join(', ')
   await replyMarkdownSafe(
@@ -159,15 +171,7 @@ export async function handleCatalogPhoto(ctx, { isOwner }) {
   if (parsed.type === 'single') {
     try {
       const r = await uploadPhotoForCode(ctx, parsed.code)
-      if (r.collection && r.codes?.length) {
-        await replyMarkdownSafe(
-          ctx,
-          `✅ *কালেকশন ${r.collection}* — ${bnNum(r.codes.length)}টি SKU-তে ছবি যুক্ত:\n` +
-            r.codes.map((c) => `• ${c}`).join('\n'),
-        )
-      } else {
-        await ctx.reply(`✅ ${r.code} এ ছবি যুক্ত হলো (মোট ${bnNum(r.total)}টা)`)
-      }
+      await ctx.reply(formatUploadSuccessReply(r, parsed.code))
     } catch (err) {
       if (err.data?.reason === 'invalid_code') {
         await replyInvalidCode(ctx, parsed.code, err.data.suggestions)
@@ -210,15 +214,14 @@ export function handleCatalogPhotoMessage(ctx, opts) {
     }
     const codes = parsed.type === 'group_photo' ? parsed.codes : [parsed.code]
     const targetCode = codes[0]
-    let total = 0
+    let lastResult = null
     for (const fileId of buf.photos) {
       const fakeCtx = {
         ...buf.ctx,
         message: { ...buf.ctx.message, photo: [{ file_id: fileId }] },
       }
       try {
-        const r = await uploadPhotoForCode(fakeCtx, targetCode)
-        total = r.total
+        lastResult = await uploadPhotoForCode(fakeCtx, targetCode)
       } catch (err) {
         if (err.data?.reason === 'invalid_code') {
           await replyInvalidCode(buf.ctx, targetCode, err.data.suggestions)
@@ -234,7 +237,7 @@ export function handleCatalogPhotoMessage(ctx, opts) {
         title: parsed.title,
       }).catch(() => {})
     }
-    await buf.ctx.reply(`✅ ${targetCode} এ ছবি যুক্ত হলো (মোট ${bnNum(total)}টা)`)
+    await buf.ctx.reply(formatUploadSuccessReply(lastResult ?? {}, targetCode))
   }, 800)
 }
 
