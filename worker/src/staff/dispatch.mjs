@@ -44,6 +44,8 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     byStaff[staffId].tasks.push(task)
   }
 
+  const sentIds = []
+
   for (const { staff, tasks: staffTasks } of Object.values(byStaff)) {
     const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
@@ -54,17 +56,20 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       continue
     }
 
-    await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase })
+    try {
+      await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase })
+      sentIds.push(...staffTasks.map((t) => t.id))
+    } catch (err) {
+      console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)
+      await notifyOwnerTelegramFailed(bot, staffName, chatId, staffTasks, err.message)
+    }
   }
 
-  // Mark as 'sent'
-  const allIds = pending.map(t => t.id)
-  await supabase
-    .from('staff_tasks')
-    .update({ status: 'sent' })
-    .in('id', allIds)
+  if (sentIds.length) {
+    await supabase.from('staff_tasks').update({ status: 'sent' }).in('id', sentIds)
+  }
 
-  console.log(`[dispatch] dispatched ${pending.length} tasks to ${Object.keys(byStaff).length} staff`)
+  console.log(`[dispatch] sent ${sentIds.length}/${pending.length} tasks to ${Object.keys(byStaff).length} staff`)
 }
 
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {
@@ -95,6 +100,22 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }
       },
     )
   }
+}
+
+async function notifyOwnerTelegramFailed(bot, staffName, chatId, tasks, errorMsg) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!ownerChatId) return
+
+  const taskList = tasks.map((t) => `• ${t.title}`).join('\n')
+  await bot.telegram.sendMessage(
+    ownerChatId,
+    `⚠️ *${staffName}*-কে Telegram-এ মেসেজ যায়নি (chat \`${chatId}\`).\n` +
+      `কারণ: ${errorMsg}\n\n` +
+      `কাজ:\n${taskList}\n\n` +
+      `${staffName} যেন *ALMA Assistant* বটে /start করে, তারপর:\n` +
+      `\`/staff link ${staffName} <তার_chat_id>\``,
+    { parse_mode: 'Markdown' },
+  )
 }
 
 async function notifyOwnerOfUnlinkedStaff(bot, staffName, tasks) {
