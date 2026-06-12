@@ -22,6 +22,36 @@ function verifyInternalToken(provided: string): boolean {
   } catch { return false }
 }
 
+function resolveConversationId(action: { conversationId?: string | null; payload: unknown }) {
+  const payload = action.payload as Record<string, unknown>
+  const id = action.conversationId ?? payload.conversationId
+  return typeof id === 'string' && id.trim() ? id.trim() : null
+}
+
+async function appendConversationNote(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  action: { conversationId?: string | null; payload: unknown },
+  text: string,
+) {
+  const conversationId = resolveConversationId(action)
+  if (!conversationId) return
+  await db.agentMessage.create({
+    data: {
+      conversationId,
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    },
+  })
+  await prisma.agentConversation.update({
+    where: { id: conversationId },
+    data: { updatedAt: new Date() },
+  })
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -181,13 +211,18 @@ export async function POST(
       where: { id: actionId },
       data:  { status: 'approved', resolvedAt: new Date() },
     })
+    await appendConversationNote(
+      db,
+      action,
+      `✅ মালিক ${date}-এর স্টাফ টাস্ক অনুমোদন করেছেন। Worker Telegram-এ পাঠাবে — আবার অনুমোদন চাইবেন না।`,
+    )
     return Response.json({ success: true, queued: true, date, taskCount: (taskIds ?? []).length,
       message: 'Tasks approved. Worker will dispatch to staff via Telegram.' })
   }
 
   if (action.type === 'add_staff_task_now') {
-    const { staffId, title, type, detail, date } = payload as {
-      staffId: string; title: string; type: string; detail?: string; date: string
+    const { staffId, staffName, title, type, detail, date } = payload as {
+      staffId: string; staffName?: string; title: string; type: string; detail?: string; date: string
     }
     const task = await db.agentStaffTask.create({
       data: { staffId, title, detail: detail ?? null, type, status: 'approved', proposedFor: new Date(date), source: 'owner' },
@@ -195,8 +230,17 @@ export async function POST(
     })
     await db.agentPendingAction.update({
       where: { id: actionId },
-      data:  { status: 'executed', resolvedAt: new Date(), result: { taskId: task.id } },
+      data: {
+        status: 'approved',
+        resolvedAt: new Date(),
+        payload: { ...payload, taskId: task.id },
+      },
     })
+    await appendConversationNote(
+      db,
+      action,
+      `✅ মালিক "${title}" টাস্ক অনুমোদন করেছেন (${staffName ?? 'staff'})। Worker এখন Telegram-এ পাঠাবে — আবার অনুমোদন চাইবেন না।`,
+    )
     return Response.json({ success: true, taskId: task.id, queued: true,
       message: `Task "${title}" added and queued for dispatch to staff.` })
   }

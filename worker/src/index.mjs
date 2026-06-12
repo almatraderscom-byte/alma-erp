@@ -246,20 +246,26 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
     await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds?.length ?? 0 })
 
   } else if (type === 'add_staff_task_now') {
-    // Single task dispatch
-    const { staffId, staffName, date } = payload ?? {}
-    const { data: tasks } = await supabase
-      .from('staff_tasks')
-      .select('*')
-      .eq('staff_id', staffId)
-      .eq('proposed_for', date)
-      .eq('status', 'approved')
-      .limit(1)
-
-    if (tasks?.length) {
-      await dispatchTasksToStaff({ supabase, bot, date, taskIds: [tasks[0].id] })
+    const { staffId, date, taskId } = payload ?? {}
+    let taskIds = taskId ? [taskId] : []
+    if (!taskIds.length && staffId && date) {
+      const { data: tasks } = await supabase
+        .from('staff_tasks')
+        .select('id')
+        .eq('staff_id', staffId)
+        .eq('proposed_for', date)
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(1)
+      taskIds = tasks?.map(t => t.id) ?? []
     }
-    await callJobResult(job.data.pendingActionId, 'success', { dispatched: 1 })
+
+    if (taskIds.length) {
+      await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+    } else {
+      console.warn('[worker] add_staff_task_now: no approved task found to dispatch', payload)
+    }
+    await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds.length })
   }
 }, { connection, concurrency: 1 })
 
