@@ -8,6 +8,7 @@ import { logEvent, errorMeta } from '@/lib/logger'
 type TradingCommissionAccount = {
   id: string
   accountTitle: string
+  partnershipEnabled?: boolean
   assignedUser?: { id?: string | null; employeeIdGas?: string | null } | null
   commissionType: 'NONE' | 'PERCENTAGE' | 'FIXED'
   commissionRate: unknown
@@ -22,6 +23,9 @@ export async function postTradingTradeCommission(input: {
   netProfitBdt: number
   actorUserId?: string | null
 }) {
+  if (input.account.partnershipEnabled) {
+    return { ok: true, skipped: 'partnership_enabled' }
+  }
   const employeeId = input.account.assignedUser?.employeeIdGas?.trim()
   if (!employeeId || input.netProfitBdt <= 0) {
     return { ok: true, skipped: 'not_commissionable' }

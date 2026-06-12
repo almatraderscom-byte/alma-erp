@@ -6,9 +6,9 @@ import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import { Button, Card, Empty, Input, KpiCard, KPI_AUTO_GRID, Money, Progress, Select, Skeleton, Spinner, StatRow } from '@/components/ui'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
-import { useAddTradingBkashSummary, useTradingAccountDetail, useTradingStaff, useUpdateTradingTrade, useUploadTradingPerformanceScreenshot } from '@/hooks/useTrading'
+import { useAddTradingBkashSummary, useSettleTradingPartnership, useTradingAccountDetail, useTradingPartnership, useTradingStaff, useUpdateTradingTrade, useUploadTradingPerformanceScreenshot } from '@/hooks/useTrading'
 import { useActor } from '@/contexts/ActorContext'
-import type { TradingAccount, TradingBkashDailySummary, TradingCapitalEntry, TradingDailySummary, TradingExpense, TradingMutationResponse, TradingPerformanceScreenshot, TradingSummary, TradingTrade, TradingTradeActionInput } from '@/types/trading'
+import type { TradingAccount, TradingBkashDailySummary, TradingCapitalEntry, TradingDailySummary, TradingExpense, TradingMutationResponse, TradingPartnershipSettlement, TradingPerformanceScreenshot, TradingSummary, TradingTrade, TradingTradeActionInput } from '@/types/trading'
 import { money, signedClass, statusClass } from '@/components/trading/trading-utils'
 import { optimizeTradingScreenshot } from '@/lib/trading-screenshot'
 import { invalidateQueryCache } from '@/hooks/useQuery'
@@ -35,7 +35,7 @@ const ScreenshotUploadModal = dynamic(
   { ssr: false, loading: () => null },
 )
 
-type Tab = 'TRADES' | 'EXPENSES' | 'DAILY_SUMMARY' | 'PERFORMANCE' | 'STAFF'
+type Tab = 'TRADES' | 'EXPENSES' | 'DAILY_SUMMARY' | 'PERFORMANCE' | 'STAFF' | 'SETTLEMENT'
 type TradeActionMode = 'edit' | 'request_delete' | 'approve_delete' | 'reject_delete' | 'audit'
 
 export default function TradingAccountDetailPage() {
@@ -48,7 +48,7 @@ export default function TradingAccountDetailPage() {
   const { data, loading, refetch } = useTradingAccountDetail(accountId)
   const { data: staffData } = useTradingStaff()
   const initialTab = (searchParams.get('tab')?.toUpperCase() || 'TRADES') as Tab
-  const [tab, setTab] = useState<Tab>(['TRADES', 'EXPENSES', 'DAILY_SUMMARY', 'PERFORMANCE', 'STAFF'].includes(initialTab) ? initialTab : 'TRADES')
+  const [tab, setTab] = useState<Tab>(['TRADES', 'EXPENSES', 'DAILY_SUMMARY', 'PERFORMANCE', 'STAFF', 'SETTLEMENT'].includes(initialTab) ? initialTab : 'TRADES')
   const [tradeOpen, setTradeOpen] = useState(searchParams.get('action') === 'trade')
   const [screenshotOpen, setScreenshotOpen] = useState(searchParams.get('action') === 'screenshot' || searchParams.get('upload') === '1')
   const [expenseOpen, setExpenseOpen] = useState(false)
@@ -71,6 +71,12 @@ export default function TradingAccountDetailPage() {
   const capitalEntries = useMemo(() => [...optimisticCapital, ...(data?.recentCapitalEntries ?? [])].slice(0, 30), [data?.recentCapitalEntries, optimisticCapital])
   const bkashSummaries = useMemo(() => [...optimisticBkashSummaries, ...(data?.bkashSummaries ?? [])].slice(0, 30), [data?.bkashSummaries, optimisticBkashSummaries])
   const performanceScreenshots = useMemo(() => [...optimisticScreenshots, ...(data?.performanceScreenshots ?? [])].slice(0, 7), [data?.performanceScreenshots, optimisticScreenshots])
+  const partnershipEnabled = Boolean(account?.partnershipEnabled)
+  const visibleTabs = useMemo(() => {
+    const base: Tab[] = ['TRADES', 'EXPENSES', 'DAILY_SUMMARY', 'PERFORMANCE', 'STAFF']
+    if (partnershipEnabled) base.push('SETTLEMENT')
+    return base
+  }, [partnershipEnabled])
 
   function onMutation(res: TradingMutationResponse) {
     setOptimisticSummary(res.summary)
@@ -221,12 +227,15 @@ export default function TradingAccountDetailPage() {
 
           <Card className="overflow-hidden">
             <div className="flex gap-1 overflow-x-auto border-b border-border p-2">
-              {(['TRADES', 'EXPENSES', 'DAILY_SUMMARY', 'PERFORMANCE', 'STAFF'] as Tab[]).map(t => (
-                <button key={t} onClick={() => setTab(t)} className={`rounded-xl px-3 py-2 text-xs font-bold ${tab === t ? 'bg-gold/15 text-gold-lt' : 'text-zinc-500 hover:bg-white/[0.04]'}`}>{t.replace('_', ' ')}</button>
+              {visibleTabs.map(t => (
+                <button key={t} onClick={() => setTab(t)} className={`rounded-xl px-3 py-2 text-xs font-bold ${tab === t ? 'bg-gold/15 text-gold-lt' : 'text-zinc-500 hover:bg-white/[0.04]'}`}>{t === 'SETTLEMENT' ? 'SETTLEMENT' : t.replace('_', ' ')}</button>
               ))}
             </div>
             {tab === 'TRADES' && <TradeList rows={trades} isSuperAdmin={role === 'SUPER_ADMIN'} onAction={(mode, trade) => setTradeAction({ mode, trade })} />}
-            {tab === 'EXPENSES' && <ExpenseList rows={expenses} />}
+            {tab === 'EXPENSES' && <ExpenseList rows={expenses} showPaidBy={partnershipEnabled} />}
+            {tab === 'SETTLEMENT' && partnershipEnabled && account && (
+              <PartnershipSettlementPanel accountId={account.id} isAdmin={isAdmin} onSettled={refetch} />
+            )}
             {tab === 'DAILY_SUMMARY' && <DailySummaryPanel accountId={account.id} rows={bkashSummaries} onCreated={onMutation} />}
             {tab === 'PERFORMANCE' && <PerformancePanel accountId={account.id} rows={performanceScreenshots} onUploaded={shot => { setOptimisticScreenshots(rows => [shot, ...rows].slice(0, 7)); refetch() }} />}
             {tab === 'STAFF' && <StaffPanel account={account} summary={summary} capitalEntries={capitalEntries} timeline={data?.timeline ?? []} />}
@@ -509,9 +518,152 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
   )
 }
 
-function ExpenseList({ rows }: { rows: TradingExpense[] }) {
+function paidByLabel(paidBy?: string | null) {
+  if (paidBy === 'OWNER') return 'Owner'
+  if (paidBy === 'STAFF') return 'Staff'
+  return '—'
+}
+
+function ExpenseList({ rows, showPaidBy }: { rows: TradingExpense[]; showPaidBy?: boolean }) {
   if (!rows.length) return <Empty icon="◇" title="No expenses yet" />
-  return <div className="divide-y divide-border">{rows.map(r => <div key={r.id} className="grid gap-2 px-4 py-3 text-xs md:grid-cols-[1fr_1fr_1fr_2fr]"><span className="text-zinc-500">{new Date(r.expenseDate).toLocaleDateString()}</span><span className="font-bold text-cream">{r.expenseType}</span><span className="font-black text-red-300"><Money amount={Number(r.amount)} /></span><span className="truncate text-zinc-500">{r.notes || r.attachmentUrl || 'No notes'}</span></div>)}</div>
+  return (
+    <div className="divide-y divide-border">
+      {rows.map(r => (
+        <div key={r.id} className={`grid gap-2 px-4 py-3 text-xs ${showPaidBy ? 'md:grid-cols-[1fr_1fr_1fr_1fr_2fr]' : 'md:grid-cols-[1fr_1fr_1fr_2fr]'}`}>
+          <span className="text-zinc-500">{new Date(r.expenseDate).toLocaleDateString()}</span>
+          <span className="font-bold text-cream">{r.expenseType}</span>
+          {showPaidBy && <span className="font-bold text-zinc-300">{paidByLabel(r.paidBy)}</span>}
+          <span className="font-black text-red-300"><Money amount={Number(r.amount)} /></span>
+          <span className="truncate text-zinc-500">{r.notes || r.attachmentUrl || 'No notes'}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PartnershipSettlementPanel({ accountId, isAdmin, onSettled }: { accountId: string; isAdmin: boolean; onSettled: () => void }) {
+  const { data, loading, refetch } = useTradingPartnership(accountId)
+  const { mutate: settle, loading: settling } = useSettleTradingPartnership()
+  const [settleOpen, setSettleOpen] = useState(false)
+  const [notes, setNotes] = useState('')
+  const [override, setOverride] = useState('')
+  const [postToWallet, setPostToWallet] = useState(false)
+
+  const preview = data?.preview
+  const history = data?.history ?? []
+
+  async function confirmSettle() {
+    const res = await settle(accountId, {
+      notes,
+      adminOverrideBdt: override.trim() ? Number(override) : null,
+      postToWallet,
+    })
+    if (!res?.ok) {
+      toast.error('Settlement failed')
+      return
+    }
+    toast.success('Partnership settled')
+    setSettleOpen(false)
+    setNotes('')
+    setOverride('')
+    setPostToWallet(false)
+    invalidateQueryCache('trading-partnership:')
+    invalidateQueryCache('trading-account:')
+    refetch()
+    onSettled()
+  }
+
+  if (loading && !data) return <div className="p-6"><Spinner /></div>
+  if (!preview?.partnershipEnabled) return <Empty icon="◇" title="Partnership not enabled" />
+
+  return (
+    <div className="space-y-4 p-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <SettlementKpi label="Period trading delta" value={preview.netTradingDeltaBdt} negativeIsBad />
+        <SettlementKpi label="Owner-paid expenses" value={preview.ownerPaidExpensesBdt} />
+        <SettlementKpi label="Staff-paid expenses" value={preview.staffPaidExpensesBdt} />
+        <SettlementKpi label="Staff trading share" value={preview.staffTradingShareBdt} />
+        <SettlementKpi label="Expense adjustment" value={preview.expenseAdjustmentBdt} />
+        <SettlementKpi label="Net staff owes" value={preview.netStaffOwesBdt} highlight />
+      </div>
+
+      {preview.unsettledExpenses.length > 0 && (
+        <div>
+          <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Unsettled expenses</p>
+          <div className="divide-y divide-border rounded-xl border border-border">
+            {preview.unsettledExpenses.map(e => (
+              <div key={e.id} className="grid gap-2 px-3 py-2 text-xs md:grid-cols-[1fr_1fr_1fr_2fr]">
+                <span className="text-zinc-500">{new Date(e.expenseDate).toLocaleDateString()}</span>
+                <span className="text-cream">{e.expenseType}</span>
+                <span className="text-zinc-300">{paidByLabel(e.paidBy)}</span>
+                <span className="font-bold text-red-300"><Money amount={Number(e.amount)} /></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <Button variant="gold" onClick={() => setSettleOpen(true)} disabled={settling}>
+          Settle now
+        </Button>
+      )}
+
+      {history.length > 0 && (
+        <div>
+          <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Settlement history</p>
+          <div className="divide-y divide-border rounded-xl border border-border">
+            {history.map((row: TradingPartnershipSettlement) => (
+              <div key={row.id} className="grid gap-2 px-3 py-3 text-xs md:grid-cols-[1fr_1fr_1fr_2fr]">
+                <span className="text-zinc-500">{new Date(row.periodEnd).toLocaleDateString()}</span>
+                <span className="font-bold text-cream"><Money amount={Number(row.netStaffOwesBdt)} /></span>
+                <span className="text-zinc-400">{row.settledBy?.name || 'Admin'}</span>
+                <span className="truncate text-zinc-500">{row.notes || '—'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <MobileModalPortal open={settleOpen} onBackdropClick={() => setSettleOpen(false)}>
+        <Card className="mx-auto w-full max-w-md p-5">
+          <p className="text-sm font-bold text-cream">Confirm settlement</p>
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Suggested net staff owes: <Money amount={preview.netStaffOwesBdt} />
+            {preview.netStaffOwesBdt > 0 ? ' (staff → owner)' : preview.netStaffOwesBdt < 0 ? ' (owner → staff)' : ''}
+          </p>
+          <div className="mt-4 space-y-3">
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} className="min-h-16 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none" placeholder="Notes (optional)" />
+            <Input inputMode="decimal" type="number" step="0.01" value={override} onChange={e => setOverride(e.target.value)} placeholder="Admin override amount (optional)" />
+            <label className="flex items-center gap-2 text-xs text-zinc-400">
+              <input type="checkbox" checked={postToWallet} onChange={e => setPostToWallet(e.target.checked)} />
+              Post to staff payroll wallet
+            </label>
+            <div className="flex gap-2">
+              <Button variant="ghost" className="flex-1" onClick={() => setSettleOpen(false)}>Cancel</Button>
+              <Button variant="gold" className="flex-1" disabled={settling} onClick={() => void confirmSettle()}>
+                {settling ? <><Spinner /> Settling</> : 'Confirm settle'}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </MobileModalPortal>
+    </div>
+  )
+}
+
+function SettlementKpi({ label, value, highlight, negativeIsBad }: { label: string; value: number; highlight?: boolean; negativeIsBad?: boolean }) {
+  const color = highlight
+    ? value > 0 ? 'text-amber-300' : value < 0 ? 'text-green-400' : 'text-zinc-300'
+    : negativeIsBad && value < 0
+      ? 'text-red-400'
+      : 'text-cream'
+  return (
+    <div className="rounded-xl border border-border bg-black/20 p-3">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">{label}</p>
+      <p className={`mt-1 text-lg font-black ${color}`}><Money amount={value} /></p>
+    </div>
+  )
 }
 
 function DailySummaryPanel({ accountId, rows, onCreated }: { accountId: string; rows: TradingBkashDailySummary[]; onCreated: (res: TradingMutationResponse) => void }) {

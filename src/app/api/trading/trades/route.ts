@@ -129,6 +129,7 @@ export async function POST(req: NextRequest) {
           select: {
             id: true,
             accountTitle: true,
+            partnershipEnabled: true,
             commissionType: true,
             commissionRate: true,
             fixedCommission: true,

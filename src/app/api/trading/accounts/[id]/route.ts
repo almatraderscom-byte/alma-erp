@@ -46,6 +46,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       startDate?: string
       completedDate?: string | null
       notes?: string | null
+      partnershipEnabled?: boolean
+      staffSharePercent?: number
     }
 
     const existing = await prisma.tradingAccount.findFirst({
@@ -117,6 +119,14 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         if (!assigned) return NextResponse.json({ error: 'assignedUserId must be an active user with ALMA_TRADING access' }, { status: 400 })
       }
       data.assignedUserId = assignedUserId
+    }
+    if (body.partnershipEnabled !== undefined) data.partnershipEnabled = Boolean(body.partnershipEnabled)
+    if (body.staffSharePercent !== undefined) {
+      const pct = Number(body.staffSharePercent)
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        return NextResponse.json({ error: 'staffSharePercent must be between 0 and 100' }, { status: 400 })
+      }
+      data.staffSharePercent = rateDecimal(pct)
     }
 
     const account = await prisma.$transaction(async tx => {

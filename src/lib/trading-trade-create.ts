@@ -84,6 +84,7 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
         select: {
           id: true,
           accountTitle: true,
+          partnershipEnabled: true,
           commissionType: true,
           commissionRate: true,
           fixedCommission: true,

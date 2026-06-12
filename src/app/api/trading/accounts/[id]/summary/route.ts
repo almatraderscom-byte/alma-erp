@@ -50,6 +50,9 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         completionBonus: true,
         merchantTarget: true,
         merchantProgress: true,
+        partnershipEnabled: true,
+        staffSharePercent: true,
+        lastPartnershipSettledAt: true,
         startDate: true,
         completedDate: true,
         notes: true,
@@ -98,7 +101,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       }),
       prisma.tradingExpense.findMany({
         where: { tradingAccountId: account.id, businessId: TRADING_BUSINESS_ID, deletedAt: null },
-        select: { id: true, expenseType: true, amount: true, notes: true, attachmentUrl: true, expenseDate: true, createdAt: true },
+        select: { id: true, expenseType: true, amount: true, paidBy: true, settlementId: true, notes: true, attachmentUrl: true, expenseDate: true, createdAt: true },
         orderBy: { expenseDate: 'desc' },
         take: 20,
       }),

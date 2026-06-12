@@ -3,6 +3,7 @@ export type TradingAccountType = 'BINANCE_P2P' | 'MERCHANT' | 'STAFF_OPERATED' |
 export type TradingCapitalEntryType = 'DEPOSIT' | 'WITHDRAW' | 'ADJUSTMENT'
 export type TradingTradeType = 'BUY' | 'SELL'
 export type TradingCommissionType = 'NONE' | 'PERCENTAGE' | 'FIXED'
+export type TradingExpensePaidBy = 'OWNER' | 'STAFF'
 
 export type TradingUser = {
   id: string
@@ -44,6 +45,9 @@ export type TradingAccount = {
   completionBonus: number | string
   merchantTarget?: number | string | null
   merchantProgress: number | string
+  partnershipEnabled?: boolean
+  staffSharePercent?: number | string
+  lastPartnershipSettledAt?: string | null
   startDate: string
   completedDate?: string | null
   notes?: string | null
@@ -100,6 +104,8 @@ export type TradingExpense = {
   businessId: 'ALMA_TRADING'
   expenseType: string
   amount: number | string
+  paidBy?: TradingExpensePaidBy | null
+  settlementId?: string | null
   notes?: string | null
   attachmentUrl?: string | null
   expenseDate: string
@@ -107,6 +113,50 @@ export type TradingExpense = {
   createdAt: string
   tradingAccount?: { accountTitle: string }
   creator?: { name: string }
+}
+
+export type TradingPartnershipSettlement = {
+  id: string
+  tradingAccountId: string
+  periodStart: string
+  periodEnd: string
+  deltaProfitBdt: number | string
+  deltaLossBdt: number | string
+  netTradingDeltaBdt: number | string
+  ownerPaidExpensesBdt: number | string
+  staffPaidExpensesBdt: number | string
+  staffSharePercent: number | string
+  staffTradingShareBdt: number | string
+  expenseAdjustmentBdt: number | string
+  netStaffOwesBdt: number | string
+  adminOverrideBdt?: number | string | null
+  notes?: string | null
+  ledgerEntryId?: string | null
+  settledByUserId: string
+  createdAt: string
+  settledBy?: { id?: string; name: string } | null
+}
+
+export type TradingPartnershipPreview = {
+  partnershipEnabled: boolean
+  staffSharePercent: number
+  periodStart: string | null
+  periodEnd: string
+  deltaProfitBdt: number
+  deltaLossBdt: number
+  netTradingDeltaBdt: number
+  ownerPaidExpensesBdt: number
+  staffPaidExpensesBdt: number
+  staffTradingShareBdt: number
+  expenseAdjustmentBdt: number
+  netStaffOwesBdt: number
+  unsettledExpenses: TradingExpense[]
+}
+
+export type TradingPartnershipResponse = {
+  ok: boolean
+  preview: TradingPartnershipPreview
+  history: TradingPartnershipSettlement[]
 }
 
 export type TradingCapitalEntry = {
@@ -552,8 +602,12 @@ export type TradingStaffRanking = {
   score: number
 }
 
+export type TradingAccountListItem = TradingAccount & {
+  partnershipNetStaffOwes?: number | null
+}
+
 export type TradingAccountsResponse = {
-  accounts: TradingAccount[]
+  accounts: TradingAccountListItem[]
   total: number
 }
 
@@ -644,6 +698,14 @@ export type TradingAccountInput = {
   startDate?: string
   completedDate?: string | null
   notes?: string | null
+  partnershipEnabled?: boolean
+  staffSharePercent?: number
+}
+
+export type TradingPartnershipSettleInput = {
+  notes?: string
+  adminOverrideBdt?: number | null
+  postToWallet?: boolean
 }
 
 export type TradingTradeInput = {
@@ -674,8 +736,10 @@ export type TradingExpenseInput = {
   tradingAccountId: string
   expenseType: string
   amount: number
+  paidBy?: TradingExpensePaidBy
   notes?: string
   attachmentUrl?: string | null
+  expenseDate?: string
 }
 
 export type TradingBkashSummaryInput = {

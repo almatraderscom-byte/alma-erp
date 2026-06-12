@@ -7,7 +7,7 @@ import { Button, Card, Empty, Money, Progress, SearchInput, Select, Skeleton } f
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { useTradingAccounts, useTradingStaff, useUpdateTradingAccount } from '@/hooks/useTrading'
 import { useActor } from '@/contexts/ActorContext'
-import type { TradingAccount } from '@/types/trading'
+import type { TradingAccountListItem } from '@/types/trading'
 import { money, statusClass, TRADING_STATUS_OPTIONS } from '@/components/trading/trading-utils'
 
 const TradingAccountModal = dynamic(
@@ -23,7 +23,7 @@ export default function TradingAccountsPage() {
   const deferredSearch = useDeferredValue(search)
   const [status, setStatus] = useState('ALL')
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<TradingAccount | null>(null)
+  const [editing, setEditing] = useState<TradingAccountListItem | null>(null)
   const { data, loading, refetch } = useTradingAccounts({ search: deferredSearch, status })
   const { data: staffData } = useTradingStaff()
   const { mutate: updateAccount, loading: archiving } = useUpdateTradingAccount()
@@ -34,12 +34,12 @@ export default function TradingAccountsPage() {
     setModalOpen(true)
   }
 
-  function openEdit(account: TradingAccount) {
+  function openEdit(account: TradingAccountListItem) {
     setEditing(account)
     setModalOpen(true)
   }
 
-  async function archive(account: TradingAccount) {
+  async function archive(account: TradingAccountListItem) {
     if (!window.confirm(`Archive ${account.accountTitle}?`)) return
     const res = await updateAccount(account.id, { action: 'archive' })
     if (!res?.ok) { toast.error('Could not archive account'); return }
@@ -80,7 +80,17 @@ export default function TradingAccountsPage() {
                 {accounts.map(account => (
                   <tr key={account.id} className="border-b border-border/60 hover:bg-white/[0.02]">
                     <td className="px-4 py-3">
-                      <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream hover:text-gold-lt">{account.accountTitle}</Link>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream hover:text-gold-lt">{account.accountTitle}</Link>
+                        {account.partnershipEnabled && (
+                          <span className="rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[10px] font-black text-gold-lt">
+                            50/50
+                            {account.partnershipNetStaffOwes != null && account.partnershipNetStaffOwes !== 0 && (
+                              <span className="ml-1 text-amber-200">· ৳{Math.abs(account.partnershipNetStaffOwes).toLocaleString('en-BD')}</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
                       <p className="mt-0.5 font-mono text-[10px] text-zinc-600">{account.binanceUid || account.id}</p>
                     </td>
                     <td className="px-4 py-3 text-zinc-400">{account.assignedUser?.name || 'Unassigned'}</td>
@@ -116,7 +126,17 @@ export default function TradingAccountsPage() {
           <Card key={account.id} className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream">{account.accountTitle}</Link>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream">{account.accountTitle}</Link>
+                  {account.partnershipEnabled && (
+                    <span className="rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[9px] font-black text-gold-lt">
+                      50/50
+                      {account.partnershipNetStaffOwes != null && account.partnershipNetStaffOwes !== 0 && (
+                        <span className="ml-1">· ৳{Math.abs(account.partnershipNetStaffOwes).toLocaleString('en-BD')}</span>
+                      )}
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-zinc-500">{account.assignedUser?.name || 'Unassigned'} · {account.binanceUid || 'No UID'}</p>
               </div>
               <span className={`rounded-full border px-2 py-1 text-[9px] font-black ${statusClass(account.status)}`}>{account.status}</span>

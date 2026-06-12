@@ -85,6 +85,8 @@ export function TradingAccountModal({
     startDate: new Date().toISOString().slice(0, 10),
     assignedUserId: '',
     notes: '',
+    partnershipEnabled: false,
+    staffSharePercent: 50,
   })
   useEffect(() => {
     if (!open) return
@@ -103,6 +105,8 @@ export function TradingAccountModal({
       completedDate: account?.completedDate ? account.completedDate.slice(0, 10) : null,
       assignedUserId: account?.assignedUserId || '',
       notes: account?.notes || '',
+      partnershipEnabled: Boolean(account?.partnershipEnabled),
+      staffSharePercent: n(account?.staffSharePercent ?? 50) || 50,
     })
   }, [account, open])
 
@@ -168,8 +172,40 @@ export function TradingAccountModal({
           ...staff.map(s => ({ label: `${s.name}${s.role ? ` · ${s.role}` : ''}`, value: s.id })),
         ]} className="w-full" />
         <div className="rounded-2xl border border-border bg-black/20 p-3">
+          <p className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Partnership / 50-50 Loss Share</p>
+          <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-cream">
+            <input
+              type="checkbox"
+              checked={Boolean(form.partnershipEnabled)}
+              onChange={e => setForm(f => ({ ...f, partnershipEnabled: e.target.checked }))}
+              className="rounded border-border bg-card"
+            />
+            Enable partnership settlement
+          </label>
+          {form.partnershipEnabled && (
+            <>
+              <Input
+                inputMode="decimal"
+                type="number"
+                min="1"
+                max="100"
+                step="0.01"
+                value={form.staffSharePercent ?? 50}
+                onChange={e => setForm(f => ({ ...f, staffSharePercent: Number(e.target.value) }))}
+                placeholder="Staff share % (default 50)"
+              />
+              <p className="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[11px] text-amber-200">
+                Partnership ON হলে trade commission auto-disable হবে — loss/expense settlement আলাদা হিসাবে হবে।
+              </p>
+            </>
+          )}
+        </div>
+        <div className="rounded-2xl border border-border bg-black/20 p-3">
           <p className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Optional Staff Commission</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {form.partnershipEnabled && (
+            <p className="mb-3 text-[11px] text-zinc-500">Commission disabled while partnership is active.</p>
+          )}
+          <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${form.partnershipEnabled ? 'pointer-events-none opacity-50' : ''}`}>
             <Select value={form.commissionType || 'NONE'} onChange={v => setForm(f => ({ ...f, commissionType: v as never }))} options={[
               { label: 'No commission', value: 'NONE' },
               { label: 'Percentage of profit', value: 'PERCENTAGE' },
@@ -442,8 +478,20 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
   const { mutate, loading } = useAddTradingExpense()
   const { mutate: upload, loading: uploading } = useUploadTradingAttachment()
   const formRef = useRef<HTMLFormElement>(null)
-  const [form, setForm] = useState({ tradingAccountId: '', expenseType: 'Mobile', amount: '', notes: '', attachmentUrl: '' })
-  useEffect(() => { if (open) setForm(f => ({ ...f, tradingAccountId: account?.id || accounts?.[0]?.id || '', amount: '', notes: '', attachmentUrl: '' })) }, [account?.id, accounts, open])
+  const [form, setForm] = useState({ tradingAccountId: '', expenseType: 'Mobile', amount: '', paidBy: 'OWNER' as 'OWNER' | 'STAFF', notes: '', attachmentUrl: '' })
+  const activeAccount = account ?? accounts?.find(a => a.id === form.tradingAccountId) ?? accounts?.[0] ?? null
+  const partnershipOn = Boolean(activeAccount?.partnershipEnabled)
+  useEffect(() => {
+    if (!open) return
+    setForm(f => ({
+      ...f,
+      tradingAccountId: account?.id || accounts?.[0]?.id || '',
+      amount: '',
+      notes: '',
+      attachmentUrl: '',
+      paidBy: 'OWNER',
+    }))
+  }, [account?.id, accounts, open])
 
   async function onFile(file?: File) {
     if (!file) return
@@ -457,7 +505,15 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.tradingAccountId || n(form.amount) <= 0) { toast.error('Account and amount required'); return }
-    const res = await mutate({ tradingAccountId: form.tradingAccountId, expenseType: form.expenseType, amount: n(form.amount), notes: form.notes, attachmentUrl: form.attachmentUrl || null })
+    if (partnershipOn && !form.paidBy) { toast.error('কে দিয়েছে তা নির্বাচন করুন'); return }
+    const res = await mutate({
+      tradingAccountId: form.tradingAccountId,
+      expenseType: form.expenseType,
+      amount: n(form.amount),
+      paidBy: partnershipOn ? form.paidBy : undefined,
+      notes: form.notes,
+      attachmentUrl: form.attachmentUrl || null,
+    })
     if (!res?.ok) { toast.error('Expense save failed'); return }
     toast.success('Expense added')
     onCreated(res)
@@ -488,6 +544,17 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
           <Select value={form.expenseType} onChange={v => setForm(f => ({ ...f, expenseType: v }))} options={EXPENSE_TYPES.map(t => ({ label: t, value: t }))} />
           <Input inputMode="decimal" type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="Expense Amount (BDT)" />
         </div>
+        {partnershipOn && (
+          <Select
+            value={form.paidBy}
+            onChange={v => setForm(f => ({ ...f, paidBy: v as 'OWNER' | 'STAFF' }))}
+            options={[
+              { label: 'আমি (Owner)', value: 'OWNER' },
+              { label: 'Staff', value: 'STAFF' },
+            ]}
+            className="w-full"
+          />
+        )}
         <input type="file" accept="image/*,application/pdf" onChange={e => void onFile(e.target.files?.[0])} className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-gold/10 file:px-3 file:py-1.5 file:text-gold-lt" />
         {uploading && <p className="text-[11px] text-zinc-500">Uploading attachment...</p>}
         {form.attachmentUrl && <p className="text-[11px] text-green-400">Attachment ready</p>}

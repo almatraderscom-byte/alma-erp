@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       tradingAccountId?: string
       expenseType?: string
       amount?: number
+      paidBy?: string
       notes?: string
       attachmentUrl?: string
       expenseDate?: string
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
 
     const account = await prisma.tradingAccount.findFirst({
       where: { id: tradingAccountId, businessId: TRADING_BUSINESS_ID, deletedAt: null },
-      select: { id: true, assignedUserId: true },
+      select: { id: true, assignedUserId: true, partnershipEnabled: true },
     })
     if (!account) return NextResponse.json({ error: 'Trading account not found' }, { status: 404 })
     if (!canAccessTradingAccount(ctx, account)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -45,6 +46,18 @@ export async function POST(req: NextRequest) {
     const expenseDate = parseTradingDate(body.expenseDate, 'expenseDate')
     if (isResponse(expenseDate)) return expenseDate
 
+    let paidBy: 'OWNER' | 'STAFF' | null = null
+    if (account.partnershipEnabled) {
+      const raw = String(body.paidBy || '').trim().toUpperCase()
+      if (raw !== 'OWNER' && raw !== 'STAFF') {
+        return NextResponse.json({ error: 'paidBy (OWNER or STAFF) is required when partnership is enabled' }, { status: 400 })
+      }
+      paidBy = raw
+    } else if (body.paidBy) {
+      const raw = String(body.paidBy).trim().toUpperCase()
+      if (raw === 'OWNER' || raw === 'STAFF') paidBy = raw
+    }
+
     const result = await prisma.$transaction(async tx => {
       const expense = await tx.tradingExpense.create({
         data: {
@@ -52,6 +65,7 @@ export async function POST(req: NextRequest) {
           businessId: TRADING_BUSINESS_ID,
           expenseType,
           amount,
+          paidBy,
           notes: String(body.notes || '').trim() || null,
           attachmentUrl: String(body.attachmentUrl || '').trim() || null,
           expenseDate,

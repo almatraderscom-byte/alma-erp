@@ -44,6 +44,8 @@ import type {
   TradingHrProfileInput,
   TradingHrResponse,
   TradingMutationResponse,
+  TradingPartnershipResponse,
+  TradingPartnershipSettleInput,
   TradingPerformanceScreenshot,
   TradingStaffSummaryResponse,
   TradingTradeActionInput,
@@ -812,6 +814,10 @@ export const api = {
       apiPatch(`/api/trading/trades/${encodeURIComponent(id)}`, payload as Record<string, unknown>, { timeoutMs: 20_000 }),
     addExpense: (payload: TradingExpenseInput): Promise<TradingMutationResponse> =>
       apiPost('/api/trading/expenses', payload as Record<string, unknown>),
+    partnership: (accountId: string): Promise<TradingPartnershipResponse> =>
+      apiGet(`/api/trading/accounts/${encodeURIComponent(accountId)}/partnership`),
+    settlePartnership: (accountId: string, payload: TradingPartnershipSettleInput): Promise<{ ok: boolean; settlement: unknown; ledgerEntryId?: string | null }> =>
+      apiPost(`/api/trading/accounts/${encodeURIComponent(accountId)}/partnership/settle`, payload as Record<string, unknown>),
     addCapital: (payload: TradingCapitalInput): Promise<TradingMutationResponse> =>
       apiPost('/api/trading/capital', payload as Record<string, unknown>),
     addBkashSummary: (payload: TradingBkashSummaryInput): Promise<TradingMutationResponse> =>

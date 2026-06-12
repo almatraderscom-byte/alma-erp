@@ -38,6 +38,7 @@ model User {
   assignedTradingAccounts TradingAccount[]               @relation("TradingAccountAssignedUser")
   tradingTrades           TradingTrade[]                 @relation("TradingTradeUser")
   tradingExpensesCreated  TradingExpense[]               @relation("TradingExpenseCreatedBy")
+  tradingPartnershipSettlements TradingPartnershipSettlement[] @relation("TradingPartnershipSettledBy")
   tradingCapitalCreated   TradingCapitalEntry[]          @relation("TradingCapitalCreatedBy")
   tradingBkashCreated     TradingBkashDailySummary[]     @relation("TradingBkashSummaryCreatedBy")
   tradingPerformanceShots TradingPerformanceScreenshot[] @relation("TradingPerformanceUploadedBy")
@@ -205,6 +206,11 @@ enum TradingCommissionType {
   NONE
   PERCENTAGE
   FIXED
+}
+
+enum TradingExpensePaidBy {
+  OWNER
+  STAFF
 }
 
 model SalaryAdvanceRequest {
@@ -843,6 +849,13 @@ model TradingAccount {
   completionBonus  Decimal                        @default(0) @db.Decimal(12, 2)
   merchantTarget   Decimal?                       @db.Decimal(14, 2)
   merchantProgress Decimal                        @default(0) @db.Decimal(14, 2)
+  partnershipEnabled       Boolean                @default(false)
+  staffSharePercent        Decimal                @default(50) @db.Decimal(8, 4)
+  lastPartnershipSettledAt DateTime?
+  partnershipBaselineProfit      Decimal          @default(0) @db.Decimal(14, 2)
+  partnershipBaselineLoss        Decimal        @default(0) @db.Decimal(14, 2)
+  partnershipBaselineOwnerExpenses Decimal      @default(0) @db.Decimal(14, 2)
+  partnershipBaselineStaffExpenses Decimal      @default(0) @db.Decimal(14, 2)
   startDate        DateTime
   completedDate    DateTime?
   notes            String?                        @db.Text
@@ -851,6 +864,7 @@ model TradingAccount {
   updatedAt        DateTime                       @updatedAt
   trades           TradingTrade[]
   expenses         TradingExpense[]
+  partnershipSettlements TradingPartnershipSettlement[]
   capitalEntries   TradingCapitalEntry[]
   dailySnapshots   TradingDailySnapshot[]
   volumeTargets    TradingDailyVolumeTarget[]
@@ -955,6 +969,9 @@ model TradingExpense {
   businessId       String
   expenseType      String
   amount           Decimal        @db.Decimal(14, 2)
+  paidBy           TradingExpensePaidBy?
+  settlementId     String?
+  settlement       TradingPartnershipSettlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
   notes            String?        @db.Text
   attachmentUrl    String?        @db.Text
   expenseDate      DateTime
@@ -973,7 +990,37 @@ model TradingExpense {
   @@index([businessId, deletedAt, createdAt])
   @@index([tradingAccountId, expenseDate])
   @@index([tradingAccountId, deletedAt, createdAt])
+  @@index([settlementId])
   @@index([createdBy])
+}
+
+model TradingPartnershipSettlement {
+  id                      String         @id @default(cuid())
+  tradingAccountId        String
+  tradingAccount            TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId                String
+  periodStart               DateTime
+  periodEnd                 DateTime
+  deltaProfitBdt            Decimal        @default(0) @db.Decimal(14, 2)
+  deltaLossBdt              Decimal        @default(0) @db.Decimal(14, 2)
+  netTradingDeltaBdt        Decimal        @default(0) @db.Decimal(14, 2)
+  ownerPaidExpensesBdt      Decimal        @default(0) @db.Decimal(14, 2)
+  staffPaidExpensesBdt      Decimal        @default(0) @db.Decimal(14, 2)
+  staffSharePercent         Decimal        @default(50) @db.Decimal(8, 4)
+  staffTradingShareBdt      Decimal        @default(0) @db.Decimal(14, 2)
+  expenseAdjustmentBdt      Decimal        @default(0) @db.Decimal(14, 2)
+  netStaffOwesBdt           Decimal        @default(0) @db.Decimal(14, 2)
+  adminOverrideBdt          Decimal?       @db.Decimal(14, 2)
+  notes                     String?        @db.Text
+  settledByUserId           String
+  settledBy                 User           @relation("TradingPartnershipSettledBy", fields: [settledByUserId], references: [id], onDelete: Restrict)
+  ledgerEntryId             String?
+  expenses                  TradingExpense[]
+  createdAt                 DateTime       @default(now())
+
+  @@index([tradingAccountId, createdAt])
+  @@index([businessId, createdAt])
+  @@index([settledByUserId])
 }
 
 model TradingBkashDailySummary {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
+import { computePartnershipPreview } from '@/lib/trading-partnership'
 import {
   TRADING_BUSINESS_ID,
   getTradingContext,
@@ -42,7 +43,22 @@ export async function GET(req: NextRequest) {
     include: { assignedUser: { select: { id: true, name: true, email: true, role: true, employeeIdGas: true, salaryHint: true } } },
   })
 
-  return NextResponse.json({ accounts, total: accounts.length }, { headers: { 'Cache-Control': 'private, no-store' } })
+  const partnershipIds = accounts.filter(a => a.partnershipEnabled).map(a => a.id)
+  const partnershipHints = new Map<string, number>()
+  if (partnershipIds.length > 0) {
+    const previews = await Promise.all(partnershipIds.map(id => computePartnershipPreview(id).catch(() => null)))
+    for (let i = 0; i < partnershipIds.length; i++) {
+      const preview = previews[i]
+      if (preview?.partnershipEnabled) partnershipHints.set(partnershipIds[i], preview.netStaffOwesBdt)
+    }
+  }
+
+  const enriched = accounts.map(account => ({
+    ...account,
+    partnershipNetStaffOwes: partnershipHints.get(account.id) ?? null,
+  }))
+
+  return NextResponse.json({ accounts: enriched, total: enriched.length }, { headers: { 'Cache-Control': 'private, no-store' } })
 }
 
 export async function POST(req: NextRequest) {
@@ -68,6 +84,8 @@ export async function POST(req: NextRequest) {
       status?: string
       startDate?: string
       notes?: string
+      partnershipEnabled?: boolean
+      staffSharePercent?: number
     }
 
     const accountTitle = String(body.accountTitle || '').trim()
@@ -117,6 +135,8 @@ export async function POST(req: NextRequest) {
         completionBonus: moneyDecimal(body.completionBonus ?? 0),
         startDate,
         notes: String(body.notes || '').trim() || null,
+        partnershipEnabled: Boolean(body.partnershipEnabled),
+        staffSharePercent: rateDecimal(body.staffSharePercent ?? 50),
       },
     })
 

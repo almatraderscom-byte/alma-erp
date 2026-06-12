@@ -3,7 +3,7 @@ import { useCallback } from 'react'
 import { api } from '@/lib/api'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useMutation, useQuery } from '@/hooks/useQuery'
-import type { TradingAccountInput, TradingAnalyticsFilters, TradingBkashSummaryInput, TradingCapitalInput, TradingEmployeeReportInput, TradingExpenseInput, TradingHrProfileInput, TradingTradeActionInput, TradingTradeInput } from '@/types/trading'
+import type { TradingAccountInput, TradingAnalyticsFilters, TradingBkashSummaryInput, TradingCapitalInput, TradingEmployeeReportInput, TradingExpenseInput, TradingHrProfileInput, TradingPartnershipSettleInput, TradingTradeActionInput, TradingTradeInput } from '@/types/trading'
 
 export function useTradingAnalytics(filters?: TradingAnalyticsFilters) {
   const { businessId } = useBusiness()
@@ -112,6 +112,18 @@ export function useUpdateTradingTrade() {
 
 export function useAddTradingExpense() {
   return useMutation(useCallback((payload: TradingExpenseInput) => api.trading.addExpense(payload), []))
+}
+
+export function useTradingPartnership(accountId: string) {
+  return useQuery(
+    () => (accountId ? api.trading.partnership(accountId) : Promise.resolve(null)),
+    [accountId],
+    { enabled: Boolean(accountId), cacheKey: `trading-partnership:${accountId}`, cacheMs: 15_000 },
+  )
+}
+
+export function useSettleTradingPartnership() {
+  return useMutation(useCallback((accountId: string, payload: TradingPartnershipSettleInput) => api.trading.settlePartnership(accountId, payload), []))
 }
 
 export function useAddTradingCapital() {
