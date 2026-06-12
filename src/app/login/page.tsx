@@ -80,10 +80,10 @@ function LoginForm() {
       <motion.div
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.35, ease: 'easeOut' }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
         className="w-full max-w-md"
       >
-        <Card gold className="bg-surface/85 backdrop-blur-md p-8 shadow-2xl shadow-black/60">
+        <Card gold interactive className="bg-surface/85 p-8 shadow-elevated backdrop-blur-md">
         <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-gold-dim/50 bg-gold/15 text-sm font-black text-gold-lt shadow-gold-sm">
           A
         </div>
@@ -114,8 +114,8 @@ function LoginForm() {
               onChange={e => setPassword(e.target.value)}
             />
           </label>
-          <Button type="submit" variant="gold" className="w-full justify-center py-3" disabled={loading}>
-            {loading ? 'Signing in…' : 'Continue'}
+          <Button type="submit" variant="gold" className="w-full justify-center py-3" loading={loading}>
+            Continue
           </Button>
         </form>
 
