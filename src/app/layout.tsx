@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
 import './globals.css'
+import '@/components/providers/AppBootSplash.css'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
@@ -43,7 +44,7 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 }
 
-const SERVER_SESSION_TIMEOUT_MS = 2_500
+const SERVER_SESSION_TIMEOUT_MS = 4_000
 
 async function loadServerSession() {
   try {
@@ -75,6 +76,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
       </head>
       <body className="bg-black text-cream antialiased font-sans">
+        <div id="alma-boot-splash" aria-hidden="true">
+          <div className="alma-boot-mark">A</div>
+          <p className="alma-boot-title">Alma ERP</p>
+          <div className="alma-boot-spinner" />
+        </div>
         <AppProviders session={session}>{children}</AppProviders>
         <GlobalPlatformChrome />
         <Toaster

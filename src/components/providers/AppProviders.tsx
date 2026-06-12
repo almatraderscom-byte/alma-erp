@@ -17,6 +17,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { MobileBottomSpacer, MobileNavBar } from '@/components/layout/MobileNavChrome'
 import { AgentFab } from '@/components/layout/AgentAccess'
 import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
+import { AppBootRecovery, AppReadyMarker } from '@/components/providers/AppBootRecovery'
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
@@ -137,7 +138,7 @@ async function forceRelogin() {
   }
 }
 
-function AuthGate({ children }: { children: ReactNode }) {
+function AuthGate({ children, initialSession }: { children: ReactNode; initialSession: Session | null }) {
   const pathname = usePathname()
   const router = useRouter()
   const { data: session, status } = useSession()
@@ -145,6 +146,9 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [retryCount, setRetryCount] = useState(0)
 
   const isPublic = isAuthPath(pathname)
+  const sessionUser = session?.user ?? initialSession?.user
+  const isAuthed = Boolean(sessionUser)
+  const isBooting = status === 'loading' && !sessionUser
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -210,14 +214,14 @@ function AuthGate({ children }: { children: ReactNode }) {
     return <>{children}</>
   }
 
-  if (status === 'loading') {
+  if (isBooting) {
     if (loadingTimedOut) {
       const showForceRelogin = retryCount >= 3
       return (
-        <div className="fixed inset-0 z-[240] flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-black px-6 text-center">
-          <p className="text-sm font-semibold text-cream">Session check timed out</p>
+        <div data-auth-gate className="fixed inset-0 z-[240] flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-black px-6 text-center">
+          <p className="text-sm font-semibold text-cream">সেশন যাচাই হচ্ছে না</p>
           <p className="max-w-sm text-[11px] text-zinc-500">
-            The app could not verify your sign-in. Check your connection and try again.
+            ইন্টারনেট চেক করুন, তারপর আবার চেষ্টা করুন। বারবার সমস্যা হলে পুনরায় লগইন করুন।
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             {!showForceRelogin && (
@@ -235,27 +239,29 @@ function AuthGate({ children }: { children: ReactNode }) {
                   window.location.reload()
                 }}
               >
-                Retry
+                আবার চেষ্টা
               </Button>
             )}
             {showForceRelogin && (
               <Button variant="gold" size="sm" onClick={() => void forceRelogin()}>
-                Force re-login
+                পুনরায় লগইন
               </Button>
             )}
           </div>
         </div>
       )
     }
-    return <LoadingOverlay label="Authenticating" />
+    return <LoadingOverlay label="Alma ERP খুলছে..." />
   }
 
-  if (status === 'unauthenticated') {
-    return <LoadingOverlay label="Redirecting to login" />
+  if (!isAuthed) {
+    return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." />
   }
+
+  const businessAccess = session?.user?.businessAccess ?? initialSession?.user?.businessAccess
 
   return (
-    <BusinessProvider allowedBusinessAccess={session?.user?.businessAccess}>
+    <BusinessProvider allowedBusinessAccess={businessAccess}>
       <ActorProvider>
         <BrandingProvider>
           <BrandingHead />
@@ -279,8 +285,10 @@ function SessionBridge({ children, session }: { children: ReactNode; session: Se
       refetchOnWindowFocus={false}
       refetchInterval={0}
     >
+      <AppBootRecovery />
+      <AppReadyMarker />
       <PwaBootstrap />
-      <AuthGate>{children}</AuthGate>
+      <AuthGate initialSession={session}>{children}</AuthGate>
     </SessionProvider>
   )
 }

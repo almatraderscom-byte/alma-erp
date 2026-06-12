@@ -1,0 +1,55 @@
+/* Instant boot — visible before React hydrates (native-app feel). */
+#alma-boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: radial-gradient(circle at top, rgba(201, 168, 76, 0.14), transparent 34%), #08080a;
+  color: #fafaf8;
+  font-family: system-ui, sans-serif;
+  transition: opacity 0.2s ease;
+}
+
+#alma-boot-splash .alma-boot-mark {
+  display: grid;
+  height: 3rem;
+  width: 3rem;
+  place-items: center;
+  border-radius: 1rem;
+  border: 1px solid rgba(201, 168, 76, 0.45);
+  background: rgba(201, 168, 76, 0.12);
+  color: #e8c96a;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+#alma-boot-splash .alma-boot-title {
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #c9a84c;
+}
+
+#alma-boot-splash .alma-boot-spinner {
+  margin-top: 0.5rem;
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 999px;
+  border: 2px solid rgba(201, 168, 76, 0.25);
+  border-top-color: #c9a84c;
+  animation: alma-boot-spin 0.75s linear infinite;
+}
+
+@keyframes alma-boot-spin {
+  to { transform: rotate(360deg); }
+}
+
+html[data-app-ready='1'] #alma-boot-splash {
+  opacity: 0;
+  pointer-events: none;
+}

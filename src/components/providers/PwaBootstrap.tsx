@@ -60,7 +60,9 @@ export function PwaBootstrap() {
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') return
     if (!('serviceWorker' in navigator)) return
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      void reg.update()
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -195,18 +197,6 @@ export function PwaBootstrap() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!staleBuild || process.env.NODE_ENV !== 'production') return
-    const onChunkError = (event: ErrorEvent) => {
-      const msg = String(event.message || '')
-      if (/chunk|loading chunk|failed to fetch dynamically imported module/i.test(msg)) {
-        void forceRefresh()
-      }
-    }
-    window.addEventListener('error', onChunkError)
-    return () => window.removeEventListener('error', onChunkError)
-  }, [staleBuild, forceRefresh])
-
   async function install() {
     if (!installEvent) return
     await installEvent.prompt()
@@ -226,16 +216,16 @@ export function PwaBootstrap() {
     <>
       {staleBuild && (
         <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[225] mx-auto max-w-md rounded-2xl border border-gold-dim/45 bg-[#101014]/95 px-4 py-3 text-xs text-cream shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <p className="font-black text-gold-lt">App update required</p>
+          <p className="font-black text-gold-lt">অ্যাপ আপডেট দরকার</p>
           <p className="mt-1 text-zinc-400">
-            Your device is running an older Alma ERP build. Refresh to load the latest version and avoid page errors.
+            আপনার ফোনে পুরনো ভার্সন আছে। একবার রিফ্রেশ করলেই নতুন ভার্সন চলবে — আনইনস্টল করতে হবে না।
           </p>
           <button
             type="button"
             onClick={() => void forceRefresh()}
             className="mt-2 rounded-xl border border-gold-dim/50 bg-gold/15 px-3 py-2 text-[11px] font-black text-gold-lt active:scale-[0.98]"
           >
-            Refresh now
+            এখনই রিফ্রেশ করুন
           </button>
         </div>
       )}
