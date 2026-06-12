@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { handleOutboundCallMissed } from '@/agent/lib/outbound-call-missed'
+import { handleOutboundCallMissed, handleOutboundCallAnswered } from '@/agent/lib/outbound-call-missed'
 
 export const runtime = 'nodejs'
 
@@ -38,6 +38,21 @@ export async function POST(req: NextRequest) {
     }
   } else {
     console.log('[twilio:call-status]', { sid, status, duration })
+    if (status === 'completed' && duration >= 12) {
+      try {
+        const answered = await handleOutboundCallAnswered({
+          callSid: sid,
+          callStatus: status,
+          durationSec: duration,
+          toNumber: to,
+        })
+        if (answered.handled) {
+          console.log('[twilio:call-status] outbound answered notified')
+        }
+      } catch (err) {
+        console.error('[twilio:call-status] outbound answered handler error:', err)
+      }
+    }
   }
 
   return new NextResponse('', { status: 200 })

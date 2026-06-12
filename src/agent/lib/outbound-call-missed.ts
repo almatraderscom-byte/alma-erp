@@ -2,7 +2,8 @@
  * When an owner-approved outbound call is not answered, offer a retry confirm card.
  */
 import { prisma } from '@/lib/prisma'
-import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
+import { sendOwnerApprovalCard, sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { findOutboundActionByCallSid } from '@/agent/lib/outbound-call-tracking'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -31,13 +32,53 @@ function isMissedCall(status: string, durationSec: number): boolean {
   )
 }
 
-async function findActionByCallSid(callSid: string) {
-  const rows = await db.agentPendingAction.findMany({
-    where: { type: 'outbound_call', status: 'executed' },
-    orderBy: { resolvedAt: 'desc' },
-    take: 40,
+export async function handleOutboundCallAnswered(input: MissedInput) {
+  const durationSec = Number(input.durationSec ?? 0)
+  if (input.callStatus !== 'completed' || durationSec < 12) {
+    return { handled: false as const, reason: 'not_answered' }
+  }
+
+  const original = await findOutboundActionByCallSid(input.callSid)
+  if (!original) return { handled: false as const, reason: 'action_not_found' }
+
+  const prevResult = (original.result ?? {}) as Record<string, unknown>
+  if (prevResult.answeredNotified) {
+    return { handled: false as const, reason: 'already_notified' }
+  }
+
+  const payload = original.payload as { phone?: string }
+  const phone = String(payload.phone ?? input.toNumber ?? '')
+  const text =
+    `📞 স্যার, ${phone} কল *ধরেছে* — কথা বলা হয়েছে (${durationSec} সেকেন্ড)।`
+
+  await db.agentPendingAction.update({
+    where: { id: original.id },
+    data: {
+      result: {
+        ...prevResult,
+        answeredNotified: true,
+        answeredDurationSec: durationSec,
+        answeredAt: new Date().toISOString(),
+      },
+    },
   })
-  return rows.find((r: { result?: { callSid?: string } }) => r.result?.callSid === callSid) ?? null
+
+  const convId = original.conversationId as string | null
+  if (convId) {
+    await db.agentMessage.create({
+      data: {
+        conversationId: convId,
+        role: 'assistant',
+        content: [{ type: 'text', text: text.replace(/\*/g, '') }],
+        tokensIn: 0,
+        tokensOut: 0,
+        costUsd: 0,
+      },
+    })
+  }
+
+  const tg = await sendOwnerText(text.replace(/\*/g, ''))
+  return { handled: true as const, telegram: tg }
 }
 
 export async function handleOutboundCallMissed(input: MissedInput) {
@@ -46,7 +87,7 @@ export async function handleOutboundCallMissed(input: MissedInput) {
     return { handled: false as const, reason: 'not_missed' }
   }
 
-  const original = await findActionByCallSid(input.callSid)
+  const original = await findOutboundActionByCallSid(input.callSid)
   if (!original) {
     return { handled: false as const, reason: 'action_not_found' }
   }
