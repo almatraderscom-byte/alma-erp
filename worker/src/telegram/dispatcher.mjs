@@ -3,6 +3,8 @@
  * Sends approval cards and staff messages; handles Phase 6 callbacks.
  */
 
+import { sendMarkdownSafe } from './markdown-safe.mjs'
+
 let _bot = null
 let _ownerChatId = null
 
@@ -23,11 +25,11 @@ export async function sendTelegramApprovalCard({ message, pendingActionId, appro
   const chunks = splitMessage(message)
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1
-    await _bot.telegram.sendMessage(
+    await sendMarkdownSafe(
+      _bot.telegram,
       _ownerChatId,
       chunks[i],
       {
-        parse_mode: 'Markdown',
         ...(isLast && pendingActionId ? {
           reply_markup: {
             inline_keyboard: [[

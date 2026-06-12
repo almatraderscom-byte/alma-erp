@@ -2,6 +2,8 @@
  * Phase 10 — /today, /khoroch, /ask quick Telegram commands.
  */
 
+import { replyMarkdownSafe } from './markdown-safe.mjs'
+
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -126,8 +128,7 @@ async function handleOwnerAgentPassthrough(ctx, query, sendToAgent, ownerState) 
       await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk))
     }
     for (const card of result.pendingCards ?? []) {
-      await ctx.reply(`📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
-        parse_mode: 'Markdown',
+      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
         reply_markup: {
           inline_keyboard: [[
             { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },

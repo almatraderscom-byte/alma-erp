@@ -43,6 +43,7 @@ import {
 } from './catalog.mjs'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
+import { replyMarkdownSafe } from './markdown-safe.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -221,18 +222,14 @@ async function handleOwnerText(ctx, text) {
 
     // Send confirm cards as inline keyboard buttons
     for (const card of result.pendingCards ?? []) {
-      await ctx.reply(
-        `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
-              { text: '❌ বাতিল',   callback_data: `reject:${card.pendingActionId}` },
-            ]],
-          },
+      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
+            { text: '❌ বাতিল',   callback_data: `reject:${card.pendingActionId}` },
+          ]],
         },
-      )
+      })
     }
 
     // ask_user clarifying cards
