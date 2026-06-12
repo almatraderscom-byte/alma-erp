@@ -9,7 +9,13 @@
  * - Runs Telegraf long-polling for the assistant Telegram bot
  */
 
-import 'dotenv/config'
+import dotenv from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+const __workerDir = dirname(fileURLToPath(import.meta.url))
+// PM2 may cache stale env vars — worker/.env must always win (e.g. rotated FB tokens).
+dotenv.config({ path: join(__workerDir, '../.env'), override: true })
 import { initWorkerSentry, captureWorkerError } from './sentry.mjs'
 import { startHeartbeatLoop } from './heartbeat.mjs'
 import { startHealthPingLoop } from './health-ping.mjs'
