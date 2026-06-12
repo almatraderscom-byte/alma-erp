@@ -45,6 +45,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  const [streamStatus, setStreamStatus] = useState<string | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
@@ -130,6 +131,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     if (streaming) return
     abortRef.current = new AbortController()
     setStreaming(true)
+    setStreamStatus('প্রসেস করা হচ্ছে…')
 
     // Upload files first, collect file refs.
     const fileRefs: Array<{ bucket: string; path: string; mediaType: string }> = []
@@ -144,6 +146,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       } catch (err) {
         toast.error(`ফাইল আপলোড ব্যর্থ: ${err instanceof Error ? err.message : String(err)}`)
         setStreaming(false)
+        setStreamStatus(null)
         return
       }
     }
@@ -209,10 +212,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             finalConvId = evt.id as string
             setActiveConvId(finalConvId)
           } else if (evt.type === 'text_delta') {
+            setStreamStatus('উত্তর লিখছে…')
             setMessages((prev) => prev.map((m) =>
               m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
             ))
           } else if (evt.type === 'tool_start') {
+            setStreamStatus(`🔧 ${String(evt.name)}`)
             setMessages((prev) => prev.map((m) =>
               m.id === assistantMsgId
                 ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
@@ -302,6 +307,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     } finally {
       setStreaming(false)
+      setStreamStatus(null)
       abortRef.current = null
       // Clean up file preview URLs
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
@@ -461,6 +467,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           disabled={false}
           onStop={stopGeneration}
           streaming={streaming}
+          streamStatus={streamStatus}
           conversationId={activeConvId}
           isMobile={isMobile}
         />

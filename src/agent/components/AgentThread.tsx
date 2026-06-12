@@ -153,7 +153,10 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (last?.streaming || last?.role === 'user') {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      bottomRef.current?.scrollIntoView({
+        behavior: last?.role === 'user' ? 'auto' : 'smooth',
+        block: 'end',
+      })
     }
   }, [messages])
 
@@ -262,6 +265,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       ) : (
                         <AgentMarkdown content={msg.text} />
                       )}
+                    </div>
+                  )}
+
+                  {msg.streaming && msg.text && activeTool && (
+                    <div className="mt-2">
+                      <AgentThinkingIndicator
+                        label="কাজ চলছে"
+                        toolName={activeTool.name}
+                      />
                     </div>
                   )}
 

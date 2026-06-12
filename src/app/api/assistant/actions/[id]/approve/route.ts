@@ -314,6 +314,63 @@ export async function POST(
     return Response.json({ success: true, campaignId, dailyBudget, message: 'Budget updated.' })
   }
 
+  if (action.type === 'log_ledger_entries_batch') {
+    const { entries } = payload as {
+      entries: Array<{
+        personName: string; direction: string; amount: number; currency: string;
+        note?: string | null; occurredAt: string
+      }>
+    }
+    const created: string[] = []
+    for (const e of entries ?? []) {
+      const row = await db.agentFinanceLedger.create({
+        data: {
+          personName: e.personName,
+          direction: e.direction,
+          amount: e.amount,
+          currency: e.currency ?? 'BDT',
+          note: e.note ?? null,
+          occurredAt: new Date(e.occurredAt),
+        },
+        select: { id: true },
+      })
+      created.push(row.id as string)
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { ledgerIds: created, count: created.length } },
+    })
+    return Response.json({ success: true, count: created.length, ledgerIds: created })
+  }
+
+  if (action.type === 'log_expenses_batch') {
+    const { entries } = payload as {
+      entries: Array<{
+        amount: number; currency: string; category?: string | null;
+        note: string; occurredAt: string
+      }>
+    }
+    const created: string[] = []
+    for (const e of entries ?? []) {
+      const row = await db.agentFinanceExpense.create({
+        data: {
+          amount: e.amount,
+          currency: e.currency ?? 'BDT',
+          category: e.category ?? null,
+          note: e.note,
+          occurredAt: new Date(e.occurredAt),
+        },
+        select: { id: true },
+      })
+      created.push(row.id as string)
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { expenseIds: created, count: created.length } },
+    })
+    return Response.json({ success: true, count: created.length, expenseIds: created })
+  }
+
   if (action.type === 'log_ledger_entry') {
     const { personName, direction, amount, currency, note, occurredAt } = payload as {
       personName: string; direction: string; amount: number; currency: string;

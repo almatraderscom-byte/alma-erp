@@ -25,13 +25,80 @@ function dhakaToday(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
+const DIRECTION_BN: Record<string, string> = {
+  lent: 'ধার দিলেন',
+  borrowed: 'ধার নিলেন',
+  repaid_to_me: 'ফেরত পেলেন',
+  repaid_by_me: 'ফেরত দিলেন',
+}
+
+type LedgerEntryInput = {
+  personName: string
+  direction: string
+  amount: number
+  currency?: string
+  note?: string | null
+  occurredAt?: string
+}
+
+type ExpenseEntryInput = {
+  amount: number
+  currency?: string
+  category?: string | null
+  note?: string
+  occurredAt?: string
+}
+
+function formatLedgerBatchSummary(title: string, entries: LedgerEntryInput[]): string {
+  const totals: Record<string, number> = { BDT: 0, AED: 0 }
+  const lines = entries.map((e, i) => {
+    const currency = (e.currency as string) || 'BDT'
+    const amount = Math.round(Number(e.amount))
+    totals[currency] = (totals[currency] || 0) + amount
+    const sym = currency === 'AED' ? 'AED ' : '৳'
+    const dir = DIRECTION_BN[e.direction] || e.direction
+    const note = e.note ? ` — ${e.note}` : ''
+    return `${i + 1}. ${e.personName}: ${sym}${amount.toLocaleString('bn-BD')} (${dir})${note}`
+  })
+  const totalLines = Object.entries(totals)
+    .filter(([, v]) => v > 0)
+    .map(([c, v]) => (c === 'AED' ? `মোট AED: ${v.toLocaleString('bn-BD')}` : `মোট BDT: ৳${v.toLocaleString('bn-BD')}`))
+  return (
+    `📋 ${title} (${entries.length}টি এন্ট্রি)\n\n` +
+    lines.join('\n') +
+    (totalLines.length ? `\n\n${totalLines.join('\n')}` : '') +
+    '\n\n✅ একবার Approve করলে সব সেভ হবে।'
+  )
+}
+
+function formatExpenseBatchSummary(title: string, entries: ExpenseEntryInput[]): string {
+  const totals: Record<string, number> = { BDT: 0, AED: 0 }
+  const lines = entries.map((e, i) => {
+    const currency = (e.currency as string) || 'BDT'
+    const amount = Math.round(Number(e.amount))
+    totals[currency] = (totals[currency] || 0) + amount
+    const sym = currency === 'AED' ? 'AED ' : '৳'
+    const cat = e.category ? ` (${e.category})` : ''
+    return `${i + 1}. ${sym}${amount.toLocaleString('bn-BD')} — ${e.note ?? 'খরচ'}${cat}`
+  })
+  const totalLines = Object.entries(totals)
+    .filter(([, v]) => v > 0)
+    .map(([c, v]) => (c === 'AED' ? `মোট AED: ${v.toLocaleString('bn-BD')}` : `মোট BDT: ৳${v.toLocaleString('bn-BD')}`))
+  return (
+    `📋 ${title} (${entries.length}টি খরচ)\n\n` +
+    lines.join('\n') +
+    (totalLines.length ? `\n\n${totalLines.join('\n')}` : '') +
+    '\n\n✅ একবার Approve করলে সব সেভ হবে।'
+  )
+}
+
 // ── log_expense ───────────────────────────────────────────────────────────────
 
 const log_expense: AgentTool = {
   name: 'log_expense',
   description:
-    'Logs a personal expense. REQUIRES an explicit money signal in the owner\'s message (currency word OR money verb). ' +
-    'Creates a PENDING ACTION (confirm card) — owner must approve before saving. ' +
+    'Logs a SINGLE personal expense (confirm card). For 2+ expenses use log_expenses_batch. ' +
+    'REQUIRES an explicit money signal (currency word OR money verb). ' +
     'NEVER call for: percentages, ordinal numbers, durations, quantities without a currency signal.',
   input_schema: {
     type: 'object' as const,
@@ -83,7 +150,7 @@ const log_expense: AgentTool = {
 const log_ledger_entry: AgentTool = {
   name: 'log_ledger_entry',
   description:
-    'Logs a debt/lending entry. Creates a PENDING ACTION (confirm card). ' +
+    'Logs a SINGLE debt/lending entry (confirm card). For 2+ entries use log_ledger_entries_batch instead. ' +
     'Directions: lent (আপনি দিলেন), borrowed (আপনি নিলেন), repaid_to_me (কেউ ফেরত দিল), repaid_by_me (আপনি ফেরত দিলেন). ' +
     'REQUIRES explicit money signal.',
   input_schema: {
@@ -257,9 +324,160 @@ const get_ledger_balances: AgentTool = {
   },
 }
 
+// ── log_ledger_entries_batch ──────────────────────────────────────────────────
+
+const log_ledger_entries_batch: AgentTool = {
+  name: 'log_ledger_entries_batch',
+  description:
+    'Logs MULTIPLE ledger entries in ONE confirm card. ' +
+    'REQUIRED when owner lists 2+ transactions at once (same or mixed persons). ' +
+    'NEVER call log_ledger_entry repeatedly for a batch — use this tool instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string', description: 'Batch label e.g. "Hossain mama — ধার এন্ট্রি"' },
+      entries: {
+        type: 'array',
+        minItems: 2,
+        maxItems: 30,
+        items: {
+          type: 'object',
+          properties: {
+            personName: { type: 'string' },
+            direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'] },
+            amount: { type: 'number' },
+            currency: { type: 'string', enum: ['BDT', 'AED'] },
+            note: { type: 'string' },
+            occurredAt: { type: 'string' },
+          },
+          required: ['personName', 'direction', 'amount'],
+        },
+      },
+      conversationId: { type: 'string' },
+    },
+    required: ['entries'],
+  },
+  handler: async (input) => {
+    try {
+      const raw = Array.isArray(input.entries) ? input.entries : []
+      if (raw.length < 2) return { success: false, error: 'entries must have at least 2 items' }
+
+      const entries: LedgerEntryInput[] = raw.map((e) => {
+        const row = e as Record<string, unknown>
+        const amount = Math.round(Number(row.amount))
+        if (amount <= 0) throw new Error('each amount must be positive')
+        return {
+          personName: String(row.personName),
+          direction: String(row.direction),
+          amount,
+          currency: (row.currency as string) || 'BDT',
+          note: row.note ? String(row.note) : null,
+          occurredAt: row.occurredAt ? String(row.occurredAt) : new Date().toISOString(),
+        }
+      })
+
+      const title = input.title ? String(input.title) : 'লেজার ব্যাচ'
+      const summary = formatLedgerBatchSummary(title, entries)
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'log_ledger_entries_batch',
+          payload: { title, entries },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: { pendingActionId: action.id as string, summary, count: entries.length, message: 'One confirm card for all entries.' },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── log_expenses_batch ────────────────────────────────────────────────────────
+
+const log_expenses_batch: AgentTool = {
+  name: 'log_expenses_batch',
+  description:
+    'Logs MULTIPLE expenses in ONE confirm card. Use for 2+ expenses in one owner message. ' +
+    'NEVER call log_expense repeatedly for a batch.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string' },
+      entries: {
+        type: 'array',
+        minItems: 2,
+        maxItems: 30,
+        items: {
+          type: 'object',
+          properties: {
+            amount: { type: 'number' },
+            currency: { type: 'string', enum: ['BDT', 'AED'] },
+            category: { type: 'string' },
+            note: { type: 'string' },
+            occurredAt: { type: 'string' },
+          },
+          required: ['amount', 'note'],
+        },
+      },
+      conversationId: { type: 'string' },
+    },
+    required: ['entries'],
+  },
+  handler: async (input) => {
+    try {
+      const raw = Array.isArray(input.entries) ? input.entries : []
+      if (raw.length < 2) return { success: false, error: 'entries must have at least 2 items' }
+
+      const entries: ExpenseEntryInput[] = raw.map((e) => {
+        const row = e as Record<string, unknown>
+        const amount = Math.round(Number(row.amount))
+        if (amount <= 0) throw new Error('each amount must be positive')
+        return {
+          amount,
+          currency: (row.currency as string) || 'BDT',
+          category: row.category ? String(row.category) : null,
+          note: String(row.note ?? 'খরচ'),
+          occurredAt: row.occurredAt ? String(row.occurredAt) : new Date().toISOString(),
+        }
+      })
+
+      const title = input.title ? String(input.title) : `খরচ — ${dhakaToday()}`
+      const summary = formatExpenseBatchSummary(title, entries)
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'log_expenses_batch',
+          payload: { title, entries },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: { pendingActionId: action.id as string, summary, count: entries.length, message: 'One confirm card for all expenses.' },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const FINANCE_TOOLS: AgentTool[] = [
   log_expense,
+  log_expenses_batch,
   log_ledger_entry,
+  log_ledger_entries_batch,
   get_expense_summary,
   get_ledger_balances,
 ]

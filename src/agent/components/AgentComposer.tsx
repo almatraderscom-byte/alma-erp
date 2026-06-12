@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import AgentSparkleLoader from './AgentSparkleLoader'
 
 export interface PendingFile {
   file: File
@@ -14,6 +15,7 @@ interface AgentComposerProps {
   disabled: boolean
   onStop: () => void
   streaming: boolean
+  streamStatus?: string | null
   conversationId: string | null
   isMobile?: boolean
 }
@@ -23,6 +25,7 @@ export default function AgentComposer({
   disabled,
   onStop,
   streaming,
+  streamStatus,
   conversationId: _conversationId,
   isMobile = false,
 }: AgentComposerProps) {
@@ -161,6 +164,13 @@ export default function AgentComposer({
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {streaming && streamStatus && (
+        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-gold-dim/35 bg-gold/5 px-3 py-2.5">
+          <AgentSparkleLoader size="sm" />
+          <span className="flex-1 text-xs font-medium text-gold-lt">{streamStatus}</span>
         </div>
       )}
 
