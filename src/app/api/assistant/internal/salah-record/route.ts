@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { isOwnerConfirmed, isSalahSettled, reconcileConfirmedStatus } from '@/agent/lib/salah-resolve'
 
 export const runtime = 'nodejs'
 
@@ -25,6 +26,12 @@ function checkToken(req: NextRequest): boolean {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+function dateObjFromYmd(date: string) {
+  return new Date(`${date}T00:00:00+06:00`)
+}
+
+const CONFIRMED_AT_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
+
 export async function GET(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -33,7 +40,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const records = await db.agentSalahRecord.findMany({
-      where:   { date: new Date(`${date}T00:00:00+06:00`) },
+      where:   { date: dateObjFromYmd(date) },
       orderBy: { windowStart: 'asc' },
     })
     return NextResponse.json({ date, records })
@@ -59,44 +66,78 @@ export async function POST(req: NextRequest) {
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
 
-  const PRAYED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
-
   try {
-    const dateObj        = new Date(`${date}T00:00:00+06:00`)
-    const windowStartDt  = windowStart ? new Date(windowStart) : new Date()
-    const windowEndDt    = windowEnd   ? new Date(windowEnd)   : new Date()
-    const recordStatus   = status || 'pending'
+    const dateObj       = dateObjFromYmd(date)
+    const windowStartDt = windowStart ? new Date(windowStart) : undefined
+    const windowEndDt   = windowEnd   ? new Date(windowEnd)   : undefined
+    const recordStatus  = status || 'pending'
+    const now           = new Date()
 
     const existing = await db.agentSalahRecord.findUnique({
       where: { date_waqt: { date: dateObj, waqt } },
     })
 
-    // Dawn re-init must not wipe owner confirmations (fixes false fajr re-reminders).
-    if (resetDay && existing && PRAYED_STATUSES.has(existing.status)) {
+    // Dawn re-init: refresh windows only — never wipe owner confirmations.
+    if (resetDay && existing && isOwnerConfirmed(existing)) {
       const record = await db.agentSalahRecord.update({
         where: { date_waqt: { date: dateObj, waqt } },
         data: {
-          ...(windowStart ? { windowStart: windowStartDt } : {}),
-          ...(windowEnd ? { windowEnd: windowEndDt } : {}),
+          ...(windowStartDt ? { windowStart: windowStartDt } : {}),
+          ...(windowEndDt ? { windowEnd: windowEndDt } : {}),
         },
       })
       return NextResponse.json({ ok: true, record })
     }
 
+    // Escalation must not downgrade or re-miss after owner confirmed.
+    if (status === 'missed' && existing && isOwnerConfirmed(existing)) {
+      return NextResponse.json({ ok: true, record: existing, skipped: 'owner_confirmed' })
+    }
+
+    // Reconcile inconsistent rows (confirmedAt set but status still pending/missed).
+    if (existing?.confirmedAt && status === 'missed') {
+      return NextResponse.json({ ok: true, record: existing, skipped: 'already_confirmed' })
+    }
+
     const record = await db.agentSalahRecord.upsert({
       where:  { date_waqt: { date: dateObj, waqt } },
       update: {
-        ...(windowStart           ? { windowStart: windowStartDt } : {}),
-        ...(windowEnd             ? { windowEnd: windowEndDt } : {}),
-        ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
-        ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
-        ...(resetDay            ? { remindersSent: 0, confirmedAt: null, ...(status ? { status: recordStatus } : {}) } : {}),
+        ...(windowStartDt ? { windowStart: windowStartDt } : {}),
+        ...(windowEndDt   ? { windowEnd: windowEndDt } : {}),
+        ...(status && !(status === 'missed' && existing && isSalahSettled(existing.status))
+          ? {
+              status,
+              ...(CONFIRMED_AT_STATUSES.has(status) ? { confirmedAt: now } : {}),
+              ...(status === 'missed' ? { confirmedAt: null } : {}),
+            }
+          : {}),
+        ...(incrementReminders ? { remindersSent: { increment: 1 } } : {}),
+        ...(resetDay && !(existing && isOwnerConfirmed(existing))
+          ? { remindersSent: 0, confirmedAt: null, status: recordStatus }
+          : {}),
       },
       create: {
-        date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,
+        date: dateObj,
+        waqt,
+        windowStart: windowStartDt ?? now,
+        windowEnd: windowEndDt ?? now,
         status: recordStatus,
+        ...(CONFIRMED_AT_STATUSES.has(recordStatus) ? { confirmedAt: now } : {}),
       },
     })
+
+    // Auto-heal if confirmedAt exists but status was pending/missed.
+    const healed = reconcileConfirmedStatus(
+      { status: record.status, confirmedAt: record.confirmedAt, windowEnd: record.windowEnd },
+      now,
+    )
+    if (healed) {
+      const fixed = await db.agentSalahRecord.update({
+        where: { date_waqt: { date: dateObj, waqt } },
+        data: { status: healed },
+      })
+      return NextResponse.json({ ok: true, record: fixed, reconciled: true })
+    }
 
     return NextResponse.json({ ok: true, record })
   } catch (err) {

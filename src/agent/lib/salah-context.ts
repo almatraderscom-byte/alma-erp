@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { isPrayerTimeInquiry } from '@/agent/lib/salah-times'
+import { isOwnerConfirmed } from '@/agent/lib/salah-resolve'
 import type { SalahContext } from '@/agent/lib/system-prompt'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -18,6 +19,7 @@ export type WaqtSummary = {
   status: string
   windowStart: Date
   windowEnd: Date
+  confirmedAt: Date | null
   isOverdue: boolean
   isMissed: boolean
   notYetDue: boolean
@@ -39,7 +41,7 @@ async function loadDayRecords(dateYmd: string) {
 
 export function summarizeWaqts(
   dateYmd: string,
-  records: Array<{ waqt: string; status: string; windowStart: Date; windowEnd: Date }>,
+  records: Array<{ waqt: string; status: string; windowStart: Date; windowEnd: Date; confirmedAt?: Date | null }>,
   now = new Date(),
 ): WaqtSummary[] {
   return WAQTS.map((waqt) => {
@@ -51,6 +53,7 @@ export function summarizeWaqts(
         status: 'not_scheduled',
         windowStart: now,
         windowEnd: now,
+        confirmedAt: null,
         isOverdue: false,
         isMissed: false,
         notYetDue: true,
@@ -58,14 +61,15 @@ export function summarizeWaqts(
     }
     const pastWindowStart = now > new Date(r.windowStart)
     const pastWindowEnd = now > new Date(r.windowEnd)
-    const isOverdue = pastWindowStart && r.status === 'pending'
-    const isMissed = pastWindowEnd && r.status === 'pending'
+    const isOverdue = pastWindowStart && r.status === 'pending' && !r.confirmedAt
+    const isMissed = pastWindowEnd && r.status === 'pending' && !r.confirmedAt
     return {
       date: dateYmd,
       waqt: r.waqt,
       status: r.status,
       windowStart: r.windowStart,
       windowEnd: r.windowEnd,
+      confirmedAt: r.confirmedAt ?? null,
       isOverdue,
       isMissed,
       notYetDue: r.status === 'pending' && !pastWindowStart,
@@ -75,13 +79,15 @@ export function summarizeWaqts(
 
 /** Waqts the agent should ask about — NOT future prayers whose time hasn't come. */
 export function pickAccountableWaqts(today: WaqtSummary[], yesterday: WaqtSummary[]): WaqtSummary[] {
-  const fromYesterday = yesterday.filter(
-    (s) => s.status === 'pending' || s.status === 'missed' || s.isMissed,
-  )
-  const fromToday = today.filter(
-    (s) => s.status === 'missed' || s.isMissed || (s.status === 'pending' && s.isOverdue),
-  )
-  return [...fromYesterday, ...fromToday]
+  const needsAccountability = (s: WaqtSummary) => {
+    if (isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt })) return false
+    if (s.status === 'missed' || s.isMissed) return true
+    return s.status === 'pending' && s.isOverdue
+  }
+  return [
+    ...yesterday.filter(needsAccountability),
+    ...today.filter(needsAccountability),
+  ]
 }
 
 export async function loadSalahAccountabilityContext(

@@ -5,11 +5,10 @@ import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { summarizeWaqts, pickAccountableWaqts, type Waqt } from '@/agent/lib/salah-context'
 import { detectSalahConfirmation, parseWaqtLabel } from '@/agent/lib/salah-confirm-intent'
+import { isSalahSettled, resolvePrayedStatus } from '@/agent/lib/salah-resolve'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-const FINAL_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
 
 export type AutoMarkResult = {
   marked: Array<{ date: string; waqt: string; status: string; fromText: string }>
@@ -95,12 +94,14 @@ export async function applySalahAutoMarkFromUserTexts(
 
     const records = dateYmd === todayYmd ? todayRecords : yesterdayRecords
     const existing = records.find((r) => r.waqt === targetWaqt)
-    if (existing && FINAL_STATUSES.has(existing.status)) {
+    if (existing && isSalahSettled(existing.status)) {
       markedKeys.add(key)
       continue
     }
 
-    const status = 'prayed_on_time'
+    const status = existing?.windowEnd
+      ? resolvePrayedStatus(new Date(existing.windowEnd), now)
+      : 'prayed_on_time'
 
     await db.agentSalahRecord.upsert({
       where: { date_waqt: { date: dhakaMidnightUtc(dateYmd), waqt: targetWaqt } },

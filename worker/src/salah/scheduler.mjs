@@ -33,6 +33,19 @@ const WAQT_NAMES = {
 }
 
 const WAQT_ORDER = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
+const SETTLED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
+
+function isOwnerConfirmed(rec) {
+  return SETTLED_STATUSES.has(rec.status) || Boolean(rec.confirmedAt)
+}
+
+function shouldEscalateSalah(rec) {
+  return rec.status === 'pending' && !rec.confirmedAt
+}
+
+function resolvePrayedStatus(windowEnd, now = new Date()) {
+  return now <= windowEnd ? 'prayed_on_time' : 'prayed_late'
+}
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -156,6 +169,7 @@ function normalizeSalahRecord(record) {
     status: record.status,
     windowStart: new Date(record.windowStart ?? record.window_start),
     windowEnd: new Date(record.windowEnd ?? record.window_end),
+    confirmedAt: record.confirmedAt ?? record.confirmed_at ?? null,
     remindersSent: record.remindersSent ?? record.reminders_sent ?? 0,
   }
 }
@@ -185,10 +199,20 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   const griefContext    = griefEnabled ? (settings.salah_grief_context ?? '') : ''
 
   const today       = dhakaTodayYmd()
-  const records     = await getSalahRecords(today)
+  let records       = await getSalahRecords(today)
   const now         = new Date()
   const prayerTimes = await getPrayerTimes(dhakaNoonUtc(today))
   const waqtName    = (waqt) => waqtDisplayName(waqt, prayerTimes)
+
+  // Heal rows where owner confirmed but status is still pending/missed (race with escalation).
+  for (const raw of records) {
+    const rec = normalizeSalahRecord(raw)
+    if (rec.confirmedAt && !SETTLED_STATUSES.has(rec.status)) {
+      const healed = resolvePrayedStatus(rec.windowEnd, now)
+      await upsertSalahRecord({ date: today, waqt: rec.waqt, status: healed })
+      raw.status = healed
+    }
+  }
 
   // Stale DB windows (wrong day / bad adhan) — re-init instead of mass "missed" flood
   const pendingPastEnd = records.filter((r) => {
@@ -219,7 +243,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       const yRecords = await getSalahRecords(yesterday)
       for (const yr of yRecords) {
         const y = normalizeSalahRecord(yr)
-        if (y.status === 'pending' || y.status === 'missed') {
+        if (!isOwnerConfirmed(y)) {
           const prevName = WAQT_NAMES[y.waqt] || y.waqt
           await sendTelegramSafe(
             bot,
@@ -234,7 +258,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 
   for (const raw of records) {
     const record = normalizeSalahRecord(raw)
-    if (record.status !== 'pending') continue
+    if (!shouldEscalateSalah(record)) continue
 
     const { windowStart, windowEnd, waqt, remindersSent } = record
 
@@ -275,7 +299,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         const prevRaw = records.find((r) => r.waqt === prevWaqt)
         if (prevRaw) {
           const prev = normalizeSalahRecord(prevRaw)
-          if (prev.status === 'pending' && now > prev.windowEnd) {
+          if (shouldEscalateSalah(prev) && now > prev.windowEnd) {
             await sendTelegramSafe(
               bot,
               ownerChatId,
@@ -290,8 +314,9 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // Window closed → mark missed (only after windowEnd, never for future waqts)
+    // Window closed → mark missed (only after windowEnd, never if owner already confirmed)
     if (now > windowEnd) {
+      if (record.confirmedAt) continue
       await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
       const name = waqtName(waqt)
@@ -423,7 +448,15 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
   const recordDate = dateYmd || dhakaTodayYmd()
 
   if (action === 'salah_done') {
-    await upsertSalahRecord({ date: recordDate, waqt, status })
+    const dayRecords = await getSalahRecords(recordDate)
+    const existing = dayRecords.find((r) => r.waqt === waqt)
+    const windowEnd = existing
+      ? new Date(existing.windowEnd ?? existing.window_end)
+      : null
+    const resolved = status === 'prayed_on_time' && windowEnd
+      ? resolvePrayedStatus(windowEnd)
+      : status
+    await upsertSalahRecord({ date: recordDate, waqt, status: resolved })
     const messages = {
       prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।`,
       prayed_late:    `✅ আলহামদুলিল্লাহ। পরের ওয়াক্ত সময়মতো পড়ার চেষ্টা করুন।`,
@@ -431,8 +464,8 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
       missed:         `😔 আল্লাহ মাফ করুন। পরের ওয়াক্ত মিস করবেন না।`,
     }
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-    await ctx.answerCbQuery(messages[status] || 'আপডেট হয়েছে')
-    await ctx.reply(messages[status] || 'রেকর্ড আপডেট হয়েছে।')
+    await ctx.answerCbQuery(messages[resolved] || 'আপডেট হয়েছে')
+    await ctx.reply(messages[resolved] || 'রেকর্ড আপডেট হয়েছে।')
   } else if (action === 'salah_later') {
     await ctx.answerCbQuery('ঠিক আছে — মনে করিয়ে দেব।')
     await ctx.reply(`ঠিক আছে Sir। সময়মতো পড়বেন — ${WAQT_NAMES[waqt]}-এর সময় শেষ হওয়ার আগেই পড়ুন।`)
