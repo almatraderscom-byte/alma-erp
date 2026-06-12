@@ -94,7 +94,8 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: '✅ Done', callback_data: `task_done:${task.id}:${task.staff_id}` },
+            // Telegram callback_data max 64 bytes — task UUID only (staff resolved on tap).
+            { text: '✅ Done', callback_data: `task_done:${task.id}` },
           ]],
         },
       },
@@ -112,8 +113,8 @@ async function notifyOwnerTelegramFailed(bot, staffName, chatId, tasks, errorMsg
     `⚠️ *${staffName}*-কে Telegram-এ মেসেজ যায়নি (chat \`${chatId}\`).\n` +
       `কারণ: ${errorMsg}\n\n` +
       `কাজ:\n${taskList}\n\n` +
-      `${staffName} যেন *ALMA Assistant* বটে /start করে, তারপর:\n` +
-      `\`/staff link ${staffName} <তার_chat_id>\``,
+      `লিঙ্ক ঠিক থাকলেও বাটন ডেটা ভাঙলে মেসেজ যায় না — worker আপডেট করুন।\n` +
+      `${staffName} *ALMA Assistant* বটে /start করুক।`,
     { parse_mode: 'Markdown' },
   )
 }

@@ -575,14 +575,24 @@ export function createTelegramBot() {
       await handleReminderCallback(ctx, data)
 
     } else if (data.startsWith('task_done:')) {
-      const [, taskId, staffId] = data.split(':')
+      const taskId = data.slice('task_done:'.length).split(':')[0]
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
       try {
         const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
-          body: JSON.stringify({ taskId, staffId, action: 'done' }),
+          body: JSON.stringify({ taskId, staffId: staff.id, action: 'done' }),
         })
         const result = await res.json()
+        if (!res.ok) {
+          await ctx.answerCbQuery(result.error ?? 'সমস্যা হয়েছে')
+          return
+        }
         await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
         await ctx.answerCbQuery('✅ Done!')
         await ctx.reply('✅ কাজ সম্পন্ন হিসেবে চিহ্নিত হয়েছে। জাযাকাল্লাহ খাইর!')
@@ -595,7 +605,7 @@ export function createTelegramBot() {
           ).catch(() => {})
         }
 
-        await promptTaskDoneLocation(ctx, staffId, result.staffName)
+        await promptTaskDoneLocation(ctx, staff.id, result.staffName)
       } catch (err) {
         await ctx.answerCbQuery('সমস্যা হয়েছে')
         console.error('[telegram] task_done callback error:', err.message)
