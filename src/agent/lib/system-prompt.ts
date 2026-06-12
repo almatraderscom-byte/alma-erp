@@ -14,7 +14,9 @@ export const SALAH_ACCOUNTABILITY_RULE = `
 **স্ট্যাটাস জিজ্ঞাসা (বাকি/কোন নামাজ/পড়েছি কি):**
 মালিক "কোন নামাজ বাকি", "কয়টায় নামাজ", "সব পড়েছি কি" জিজ্ঞেস করলে:
 - **অবশ্যই** get_salah_status কল করুন — DB ছাড়া উত্তর দেওয়া নিষিদ্ধ।
-- notYetDueToday = এখনো সময় হয়নি — কখনো "পড়েছেন/আদায় হয়েছে" বলবেন না।
+- notYetDueToday / upcomingToday = এখনো সময় হয়নি — কখনো "পড়েছেন/আদায় হয়েছে" বলবেন না।
+- get_salah_status-এর **answerBangla** ও **allDone** ফিল্ড অনুসরণ করুন — raw DB status বিশ্বাস করবেন না।
+- allDone=false হলে "সব ৫ ওয়াক্ত শেষ" বলা **নিষিদ্ধ** (যেমন মাগরিবের পর ইশা বাকি)।
 - prayed_on_time/prayed_late/qaza ছাড়া pending ওয়াক্ত = এখনো বাকি বা জিজ্ঞেস করতে হবে।
 
 অন্য ব্যবসায়িক/সাধারণ বার্তার আগে get_salah_status দিয়ে অবস্থা চেক করুন।
@@ -203,7 +205,7 @@ export function buildSystemPrompt(
       text:
         '\n## এই টার্ন: নামাজের স্ট্যাটাস (বাকি/কোন ওয়াক্ত)\n' +
         'মালিক বাকি নামাজ বা আজকের অবস্থা জিজ্ঞেস করেছেন — **প্রথমে get_salah_status** কল করুন। ' +
-        'notYetDueToday-কে "পড়েছেন" বলবেন না। ভবিষ্যতের ওয়াক্ত pending থাকলেও "সব শেষ" বলবেন না।',
+        'notYetDueToday/upcomingToday-কে "পড়েছেন" বলবেন না। tool-এর answerBangla ও allDone=false মানে "সব শেষ" বলবেন না।',
     })
   } else if (prayerTimeOnlyTurn) {
     blocks.push({

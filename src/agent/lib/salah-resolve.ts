@@ -8,10 +8,22 @@ export function isSalahSettled(status: string): boolean {
   return SETTLED_STATUSES.has(status)
 }
 
-/** Owner confirmed prayer (button, auto-mark, or mark_salah) — never nag or auto-miss again. */
+/** Raw DB row says owner confirmed (may include phantom / future waqt bugs). */
 export function isOwnerConfirmed(record: { status: string; confirmedAt?: Date | string | null }): boolean {
   if (isSalahSettled(record.status)) return true
   return record.confirmedAt != null
+}
+
+/** Counts as done for status replies & accountability — window started, not phantom. */
+export function isEffectivelyDone(
+  record: { status: string; confirmedAt?: Date | string | null; windowStart: Date | string },
+  now = new Date(),
+): boolean {
+  const windowStart = new Date(record.windowStart)
+  if (!Number.isFinite(windowStart.getTime()) || now < windowStart) return false
+  if (!isOwnerConfirmed(record)) return false
+  if (isPhantomSalahConfirmation(record, windowStart)) return false
+  return true
 }
 
 /** Confirmed before azan/window — agent/LLM marked too early; reminders must still fire. */

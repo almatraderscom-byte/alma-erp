@@ -8,7 +8,9 @@ import {
   summarizeWaqts,
   pickAccountableWaqts,
 } from '@/agent/lib/salah-context'
+import { buildSalahStatusAnswer } from '@/agent/lib/salah-status-answer'
 import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
+import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,7 +72,7 @@ const get_salah_status: AgentTool = {
       const yesterdayYmd = addDaysYmd(todayYmd, -1)
       const now = new Date()
 
-      const [todayRecords, yesterdayRecords] = await Promise.all([
+      const [todayRows, yesterdayRecords] = await Promise.all([
         db.agentSalahRecord.findMany({
           where: { date: dhakaMidnightUtc(todayYmd) },
           orderBy: { windowStart: 'asc' },
@@ -81,10 +83,23 @@ const get_salah_status: AgentTool = {
         }),
       ])
 
+      const todayRecords = [...todayRows]
+      for (const r of todayRecords) {
+        if (isPhantomSalahConfirmation(r, r.windowStart)) {
+          await db.agentSalahRecord.update({
+            where: { date_waqt: { date: dhakaMidnightUtc(todayYmd), waqt: r.waqt } },
+            data: { status: 'pending', confirmedAt: null },
+          })
+          r.status = 'pending'
+          r.confirmedAt = null
+        }
+      }
+
       const todaySummary = summarizeWaqts(todayYmd, todayRecords, now)
       const yesterdaySummary = summarizeWaqts(yesterdayYmd, yesterdayRecords, now)
       const accountableWaqts = pickAccountableWaqts(todaySummary, yesterdaySummary)
       const notYetDueToday = todaySummary.filter((s) => s.notYetDue)
+      const statusAnswer = buildSalahStatusAnswer(todaySummary)
 
       return {
         success: true,
@@ -95,12 +110,14 @@ const get_salah_status: AgentTool = {
           yesterdayWaqts: yesterdaySummary,
           accountableWaqts,
           notYetDueToday,
-          // Legacy fields for older prompt references
+          doneToday: todaySummary.filter((s) => s.effectivelyDone).map((s) => s.waqt),
+          upcomingToday: notYetDueToday.map((s) => s.waqt),
+          ...statusAnswer,
           waqts: todaySummary,
           pendingOrMissed: accountableWaqts,
           requiresAccountability: accountableWaqts.length > 0,
           guidance:
-            'গতকালের পেন্ডিং ওয়াক্ত আগে জিজ্ঞেস করুন। আজকের ওয়াক্ত যার সময় এখনো শুরু হয়নি (notYetDueToday) — সেগুলো "পড়েননি" বলবেন না।',
+            'উত্তরে অবশ্যই answerBangla ব্যবহার করুন। notYetDueToday = সময় হয়নি — "আদায় হয়েছে" বলবেন না। allDone=false হলে কখনো "সব ৫ ওয়াক্ত শেষ" বলবেন না।',
         },
       }
     } catch (err) {

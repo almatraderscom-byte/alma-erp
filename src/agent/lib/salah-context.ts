@@ -4,7 +4,11 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
-import { isOwnerConfirmed } from '@/agent/lib/salah-resolve'
+import {
+  isOwnerConfirmed,
+  isEffectivelyDone,
+  isPhantomSalahConfirmation,
+} from '@/agent/lib/salah-resolve'
 import type { SalahContext } from '@/agent/lib/system-prompt'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -22,7 +26,12 @@ export type WaqtSummary = {
   confirmedAt: Date | null
   isOverdue: boolean
   isMissed: boolean
+  /** Window has not started yet — always true for future waqts regardless of DB status */
   notYetDue: boolean
+  /** confirmedAt before windowStart (bad LLM/auto-mark) */
+  isPhantom: boolean
+  /** Safe for "পড়েছেন" / done lists */
+  effectivelyDone: boolean
 }
 
 async function loadDayRecords(dateYmd: string) {
@@ -57,12 +66,23 @@ export function summarizeWaqts(
         isOverdue: false,
         isMissed: false,
         notYetDue: true,
+        isPhantom: false,
+        effectivelyDone: false,
       }
     }
-    const pastWindowStart = now > new Date(r.windowStart)
+    const windowStart = new Date(r.windowStart)
+    const pastWindowStart = now >= windowStart
     const pastWindowEnd = now > new Date(r.windowEnd)
-    const isOverdue = pastWindowStart && r.status === 'pending' && !r.confirmedAt
-    const isMissed = pastWindowEnd && r.status === 'pending' && !r.confirmedAt
+    const phantom = isPhantomSalahConfirmation(r, windowStart)
+    const notYetDue = !pastWindowStart
+    const effectivelyDone = isEffectivelyDone(
+      { status: r.status, confirmedAt: r.confirmedAt, windowStart: r.windowStart },
+      now,
+    )
+    const isOverdue =
+      pastWindowStart && !notYetDue && !effectivelyDone && (r.status === 'pending' || phantom)
+    const isMissed =
+      pastWindowEnd && !effectivelyDone && (r.status === 'pending' || phantom)
     return {
       date: dateYmd,
       waqt: r.waqt,
@@ -72,7 +92,9 @@ export function summarizeWaqts(
       confirmedAt: r.confirmedAt ?? null,
       isOverdue,
       isMissed,
-      notYetDue: r.status === 'pending' && !pastWindowStart,
+      notYetDue,
+      isPhantom: phantom,
+      effectivelyDone,
     }
   })
 }
@@ -80,9 +102,10 @@ export function summarizeWaqts(
 /** Waqts the agent should ask about — NOT future prayers whose time hasn't come. */
 export function pickAccountableWaqts(today: WaqtSummary[], yesterday: WaqtSummary[]): WaqtSummary[] {
   const needsAccountability = (s: WaqtSummary) => {
-    if (isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt })) return false
+    if (s.notYetDue) return false
+    if (s.effectivelyDone) return false
     if (s.status === 'missed' || s.isMissed) return true
-    return s.status === 'pending' && s.isOverdue
+    return s.isOverdue || s.isPhantom
   }
   return [
     ...yesterday.filter(needsAccountability),
@@ -120,12 +143,8 @@ export async function loadSalahAccountabilityContext(
     }))
 
     if (statusInquiry) {
-      const upcomingToday = todaySummary
-        .filter((s) => s.notYetDue && !isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt }))
-        .map((s) => s.waqt)
-      const doneToday = todaySummary
-        .filter((s) => isOwnerConfirmed({ status: s.status, confirmedAt: s.confirmedAt }))
-        .map((s) => s.waqt)
+      const upcomingToday = todaySummary.filter((s) => s.notYetDue).map((s) => s.waqt)
+      const doneToday = todaySummary.filter((s) => s.effectivelyDone).map((s) => s.waqt)
 
       return {
         pendingWaqts,
