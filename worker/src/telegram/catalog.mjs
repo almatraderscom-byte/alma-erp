@@ -33,8 +33,9 @@ const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 function bnNum(n) {
+  if (n == null || n === undefined) return '০'
   const map = { 0: '০', 1: '১', 2: '২', 3: '৩', 4: '৪', 5: '৫', 6: '৬', 7: '৭', 8: '৮', 9: '৯' }
-  return String(n).replace(/\d/g, (d) => map[d] ?? d)
+  return String(Number(n) || 0).replace(/\d/g, (d) => map[d] ?? d)
 }
 
 async function callCatalog(path, method = 'GET', body) {

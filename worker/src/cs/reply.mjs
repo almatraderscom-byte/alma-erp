@@ -7,6 +7,11 @@ import { notifyShadowDraft } from './shadow-notify.mjs'
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
+const PAGE_NAMES = {
+  '1044848232034171': 'Alma Lifestyle',
+  '827260860637393': 'Alma Online Shop',
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
@@ -42,12 +47,18 @@ export async function processCsReplyJob(job, bot) {
   }
 
   if (data.shadowOnly && data.shadowDraftId) {
-    await notifyShadowDraft(bot, {
-      draftId: data.shadowDraftId,
-      pageId,
-      psid,
-      parts: data.parts ?? [],
-    })
+    if (!bot) {
+      console.warn(`[cs-reply] shadow draft ${data.shadowDraftId} — bot unavailable, notification skipped`)
+    } else {
+      await notifyShadowDraft(bot, {
+        draftId: data.shadowDraftId,
+        pageId,
+        psid,
+        parts: data.parts ?? [],
+        customerName: conversation?.customerName ?? null,
+        pageName: PAGE_NAMES[pageId] ?? null,
+      })
+    }
     console.log(`[cs-reply] shadow draft ${data.shadowDraftId} for ${conversationId}`)
     return
   }

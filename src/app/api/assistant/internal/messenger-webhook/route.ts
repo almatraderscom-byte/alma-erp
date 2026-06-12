@@ -127,6 +127,35 @@ export async function POST(req: NextRequest) {
       if (psid === pageId) continue
 
       const conv = await findOrCreateCsConversation({ pageId, psid })
+
+      // Fetch customer name from Facebook Graph API on first inbound if not yet known
+      if (!conv.customerName && pageToken) {
+        try {
+          const profileRes = await fetch(
+            `https://graph.facebook.com/v21.0/${psid}?fields=first_name,last_name&access_token=${pageToken}`,
+          )
+          if (profileRes.ok) {
+            const profile = await profileRes.json() as { first_name?: string; last_name?: string }
+            const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(' ')
+            if (fullName) {
+              await db.csConversation.update({
+                where: { id: conv.id },
+                data: { customerName: fullName },
+              })
+              conv.customerName = fullName
+              // Also upsert to cs_customers
+              await db.csCustomer.upsert({
+                where: { pageId_psid: { pageId, psid } },
+                create: { pageId, psid, name: fullName },
+                update: { name: fullName },
+              })
+            }
+          }
+        } catch (err) {
+          console.warn('[messenger-webhook] profile fetch failed:', err)
+        }
+      }
+
       const content: unknown[] = []
       let imageRef: string | undefined
 

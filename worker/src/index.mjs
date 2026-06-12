@@ -347,7 +347,6 @@ const { pollCsPendingReplies } = await import('./cs/reply.mjs')
 const csEnqueued = new Set()
 
 async function pollAndEnqueueCsReplies() {
-  if (!telegramBot) return
   try {
     const res = await fetch(`${APP_URL}/api/assistant/internal/cs-pending-replies`, {
       headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },

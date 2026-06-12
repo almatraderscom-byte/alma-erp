@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'asc' },
     take: 10,
     include: {
-      conversation: { select: { id: true, pageId: true, psid: true, mode: true, status: true } },
+      conversation: { select: { id: true, pageId: true, psid: true, mode: true, status: true, customerName: true } },
     },
   })
 

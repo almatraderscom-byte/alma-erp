@@ -6,11 +6,14 @@ import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
-export async function notifyShadowDraft(bot, { draftId, pageId, psid, parts }) {
+export async function notifyShadowDraft(bot, { draftId, pageId, psid, parts, customerName, pageName }) {
   const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n')
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
 
-  const body = `📋 CS Shadow Draft\n\n${text.slice(0, 1500)}\n\nPage: ${pageId}\nPSID: ${psid}`
+  const displayName = customerName || 'Unknown Customer'
+  const displayPage = pageName || pageId
+
+  const body = `📋 *${displayName}* — ${displayPage}\n\n${text.slice(0, 1500)}`
 
   const keyboard = [[
     { text: '📤 পাঠাও', callback_data: `cs_send:${draftId}` },

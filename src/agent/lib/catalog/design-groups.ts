@@ -117,7 +117,37 @@ export async function getDesignGroup(input: { codeOrGroup: string; business?: st
     group = member?.group ?? null
   }
 
-  if (!group) return null
+  if (!group) {
+    // Fallback: prefix-based collection resolution from inventory
+    const { resolveCollection } = await import('@/agent/lib/catalog/inventory-lookup')
+    const collection = await resolveCollection(key)
+    if (!collection) return null
+
+    const allRows = await loadAllStockRows()
+
+    const members = await Promise.all(
+      collection.members.map(async (m) => {
+        const variants = allRows.filter((r) => r.sku === m.code)
+        return {
+          productCode: m.code,
+          memberRole: m.role,
+          name: m.code,
+          sellPrice: m.price,
+          currentStock: m.stock,
+          sizesInStock: variants.filter((v) => v.currentStock > 0).map((v) => v.sizeValue || v.size).filter(Boolean),
+          primaryImageUrl: await getPrimaryImageUrl(m.code, business),
+        }
+      }),
+    )
+
+    return {
+      groupCode: `AUTO-${collection.collectionCode}`,
+      title: collection.kindLabelBn,
+      notes: 'Auto-resolved from inventory prefix matching',
+      business,
+      members,
+    }
+  }
 
   const stock = await loadCatalogStock()
   const stockBySku = new Map(stock.map((s) => [s.sku, s]))

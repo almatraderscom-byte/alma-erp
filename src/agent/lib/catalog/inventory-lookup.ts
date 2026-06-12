@@ -2,7 +2,7 @@
  * Read-only inventory access for CS-0 catalog (SKU = product code).
  * Stock API returns one row per SKU/variant; sizes live in size / sizeValue fields.
  */
-import { consolidateCollectionMembers } from '@/agent/lib/catalog/collection-profile'
+import { consolidateCollectionMembers, buildCollectionProfile, type CollectionProfile } from '@/agent/lib/catalog/collection-profile'
 import { serverGet } from '@/lib/server-api'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { Order, StockItem } from '@/types'
@@ -213,6 +213,32 @@ export async function resolveProductCode(
     }
   }
   return { ok: false, suggestions: result.suggestions }
+}
+
+export type CollectionResolveResult = CollectionProfile & {
+  primaryImageUrl?: string | null
+}
+
+/**
+ * Prefix-based collection resolution.
+ * Normalizes input ("133", "133t", "133 two piece") → finds ALL inventory SKUs
+ * whose code starts with that base prefix → returns members with parsed roles/variants,
+ * price, sizes, stock.
+ */
+export async function resolveCollection(codeOrSku: string): Promise<CollectionResolveResult | null> {
+  const norm = normalizeProductCode(codeOrSku)
+  if (!norm) return null
+
+  // Extract the numeric base from the input
+  const base = norm.replace(/T$/i, '').match(/^(\d+)/)?.[1]
+  if (!base) return null
+
+  const rows = await loadCatalogStock()
+  const members = findCollectionFamilyMembers(base, rows)
+  if (members.length < 1) return null
+
+  const profile = buildCollectionProfile(base, members)
+  return { ...profile }
 }
 
 export async function getRecentSalesSkus(days = 30, limit = 50): Promise<string[]> {
