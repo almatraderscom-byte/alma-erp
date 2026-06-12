@@ -8,7 +8,7 @@ try {
   // Push CDN optional — offline shell still works.
 }
 
-const SW_VERSION = 'v5'
+const SW_VERSION = 'v6'
 const SHELL_CACHE = `alma-erp-shell-${SW_VERSION}`
 const ICON_CACHE = `alma-erp-icons-${SW_VERSION}`
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']

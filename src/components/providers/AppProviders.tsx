@@ -120,6 +120,7 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
 }
 
 const AUTH_LOADING_TIMEOUT_MS = 10_000
+const AUTH_SESSION_STUCK_MS = 7_000
 const AUTH_REDIRECT_TIMEOUT_MS = 5_000
 const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
 
@@ -143,6 +144,7 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   const router = useRouter()
   const { data: session, status } = useSession()
   const [loadingTimedOut, setLoadingTimedOut] = useState(false)
+  const [sessionStuck, setSessionStuck] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
 
   const isPublic = isAuthPath(pathname)
@@ -174,11 +176,27 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   useEffect(() => {
     if (status !== 'loading') {
       setLoadingTimedOut(false)
+      setSessionStuck(false)
       return
     }
+    const stuckTimer = window.setTimeout(() => setSessionStuck(true), AUTH_SESSION_STUCK_MS)
     const timer = window.setTimeout(() => setLoadingTimedOut(true), AUTH_LOADING_TIMEOUT_MS)
-    return () => window.clearTimeout(timer)
+    return () => {
+      window.clearTimeout(stuckTimer)
+      window.clearTimeout(timer)
+    }
   }, [status])
+
+  useEffect(() => {
+    if (!sessionStuck || isPublic || isAuthed || typeof window === 'undefined') return
+    const returnTo = `${pathname}${window.location.search}`
+    const loginUrl = `/login?callbackUrl=${encodeURIComponent(returnTo)}`
+    router.replace(loginUrl)
+    const timer = window.setTimeout(() => {
+      window.location.href = loginUrl
+    }, 1_500)
+    return () => window.clearTimeout(timer)
+  }, [sessionStuck, isPublic, isAuthed, pathname, router])
 
   useEffect(() => {
     if (isPublic || status !== 'unauthenticated' || typeof window === 'undefined') return
@@ -215,6 +233,9 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   }
 
   if (isBooting) {
+    if (sessionStuck) {
+      return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." />
+    }
     if (loadingTimedOut) {
       const showForceRelogin = retryCount >= 3
       return (

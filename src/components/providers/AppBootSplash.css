@@ -11,7 +11,8 @@
   background: radial-gradient(circle at top, rgba(201, 168, 76, 0.14), transparent 34%), #08080a;
   color: #fafaf8;
   font-family: system-ui, sans-serif;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.35s ease;
+  animation: alma-boot-fallback-hide 14s ease forwards;
 }
 
 #alma-boot-splash .alma-boot-mark {
@@ -49,7 +50,13 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes alma-boot-fallback-hide {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
+
 html[data-app-ready='1'] #alma-boot-splash {
+  animation: none;
   opacity: 0;
   pointer-events: none;
 }

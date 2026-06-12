@@ -1,20 +1,39 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { clearStaleRuntimeCaches } from '@/components/providers/PwaBootstrap'
+import { isAuthPath } from '@/lib/auth-paths'
 
-const RECOVERY_COOLDOWN_MS = 12_000
+const RECOVERY_COOLDOWN_MS = 15_000
 const RECOVERY_STORAGE_KEY = 'alma_boot_recovery_at'
+const RECOVERY_COUNT_KEY = 'alma_boot_recovery_count'
+const MAX_AUTO_RECOVERIES = 2
 
 function shouldRecoverFromMessage(message: string): boolean {
   return /chunk|loading chunk|failed to fetch dynamically imported module|importing a module script failed|loading css chunk/i.test(message)
 }
 
-async function recoverApp(reason: string) {
-  if (typeof window === 'undefined') return
+function markAppReady() {
+  document.documentElement.dataset.appReady = '1'
   try {
+    sessionStorage.removeItem(RECOVERY_COUNT_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+async function recoverApp(reason: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  try {
+    const count = Number(sessionStorage.getItem(RECOVERY_COUNT_KEY) || 0)
+    if (count >= MAX_AUTO_RECOVERIES) {
+      console.warn('[alma] boot recovery skipped (max):', reason)
+      markAppReady()
+      return false
+    }
     const last = Number(sessionStorage.getItem(RECOVERY_STORAGE_KEY) || 0)
-    if (last && Date.now() - last < RECOVERY_COOLDOWN_MS) return
+    if (last && Date.now() - last < RECOVERY_COOLDOWN_MS) return false
+    sessionStorage.setItem(RECOVERY_COUNT_KEY, String(count + 1))
     sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()))
     console.warn('[alma] boot recovery:', reason)
     await clearStaleRuntimeCaches()
@@ -22,10 +41,27 @@ async function recoverApp(reason: string) {
     // still reload
   }
   window.location.reload()
+  return true
 }
 
-/** Auto-heal stale PWA bundles and blank boots without reinstall. */
+function pageLooksBlank(): boolean {
+  if (document.documentElement.dataset.appReady === '1') return false
+  if (document.querySelector('main')) return false
+  if (document.querySelector('[data-auth-gate]')) return false
+  if (document.querySelector('#login-form, [data-login-form]')) return false
+  const path = window.location.pathname
+  if (isAuthPath(path)) {
+    // Login shell should render without <main>
+    const bodyKids = document.body?.children?.length ?? 0
+    return bodyKids <= 2
+  }
+  return true
+}
+
+/** Auto-heal stale PWA bundles — capped to avoid infinite reload loops. */
 export function AppBootRecovery() {
+  const [showFallback, setShowFallback] = useState(false)
+
   useEffect(() => {
     function onError(event: ErrorEvent) {
       const msg = String(event.message || '')
@@ -42,11 +78,11 @@ export function AppBootRecovery() {
     window.addEventListener('unhandledrejection', onRejection)
 
     const watchdog = window.setTimeout(() => {
-      if (document.documentElement.dataset.appReady === '1') return
-      const hasMain = Boolean(document.querySelector('main'))
-      const hasAuthUi = Boolean(document.querySelector('[data-auth-gate]'))
-      if (!hasMain && !hasAuthUi) void recoverApp('blank-watchdog')
-    }, 14_000)
+      if (!pageLooksBlank()) return
+      void recoverApp('blank-watchdog').then(reloaded => {
+        if (!reloaded) setShowFallback(true)
+      })
+    }, 18_000)
 
     return () => {
       window.removeEventListener('error', onError)
@@ -55,12 +91,38 @@ export function AppBootRecovery() {
     }
   }, [])
 
-  return null
+  if (!showFallback) return null
+
+  return (
+    <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-center gap-4 bg-black px-6 text-center">
+      <p className="text-sm font-semibold text-cream">অ্যাপ লোড হচ্ছে না</p>
+      <p className="max-w-sm text-xs text-zinc-500">
+        ক্যাশ পরিষ্কার করে আবার চেষ্টা করুন। বারবার সমস্যা হলে browser বন্ধ করে আবার খুলুন।
+      </p>
+      <button
+        type="button"
+        className="rounded-xl border border-gold-dim/50 bg-gold/15 px-4 py-2 text-sm font-semibold text-gold-lt"
+        onClick={() => {
+          void clearStaleRuntimeCaches().finally(() => {
+            try {
+              sessionStorage.removeItem(RECOVERY_COUNT_KEY)
+              sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+            } catch {
+              /* ignore */
+            }
+            window.location.href = '/login'
+          })
+        }}
+      >
+        ক্যাশ মুছে রিফ্রেশ
+      </button>
+    </div>
+  )
 }
 
 export function AppReadyMarker() {
   useEffect(() => {
-    document.documentElement.dataset.appReady = '1'
+    markAppReady()
   }, [])
   return null
 }
