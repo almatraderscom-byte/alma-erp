@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
@@ -34,6 +35,57 @@ async function readAssistantError(res: Response, fallback: string): Promise<stri
     /* non-JSON body */
   }
   return fallback
+}
+
+type MessageRow = {
+  id: string
+  role: string
+  content: Array<{ type: string; text?: string; bucket?: string; path?: string; mediaType?: string }>
+  tokensIn: number | null
+  tokensOut: number | null
+  costUsd: string | null
+}
+
+function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
+  return rows.map((r) => {
+    const textBlocks = r.content.filter((b) => b.type === 'text')
+    const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
+    return {
+      id: r.id,
+      role: r.role as 'user' | 'assistant',
+      text: textBlocks.map((b) => b.text ?? '').join(''),
+      files: fileBlocks.map((b) => ({
+        previewUrl: '',
+        mediaType: b.mediaType ?? 'image/jpeg',
+      })),
+      tokensIn: r.tokensIn ?? undefined,
+      tokensOut: r.tokensOut ?? undefined,
+      costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+    }
+  })
+}
+
+function parseSseChunks(buf: string): { remaining: string; events: Array<Record<string, unknown>> } {
+  const parts = buf.split('\n\n')
+  const remaining = parts.pop() ?? ''
+  const events: Array<Record<string, unknown>> = []
+  for (const chunk of parts) {
+    if (!chunk.startsWith('data: ')) continue
+    try {
+      events.push(JSON.parse(chunk.slice(6)) as Record<string, unknown>)
+    } catch { /* skip malformed */ }
+  }
+  return { remaining, events }
+}
+
+function parseTrailingSseEvent(buf: string): Record<string, unknown> | null {
+  const trimmed = buf.trim()
+  if (!trimmed.startsWith('data: ')) return null
+  try {
+    return JSON.parse(trimmed.slice(6)) as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 export default function AgentApp({ userName: _userName }: AgentAppProps) {
@@ -85,28 +137,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     if (!msgRes.ok) throw new Error(`মেসেজ লোড ব্যর্থ (HTTP ${msgRes.status})`)
 
     if (msgRes.ok) {
-      const rows: Array<{
-        id: string; role: string
-        content: Array<{ type: string; text?: string; bucket?: string; path?: string; mediaType?: string }>
-        tokensIn: number | null; tokensOut: number | null; costUsd: string | null
-      }> = await msgRes.json()
-
-      setMessages(rows.map((r) => {
-        const textBlocks = r.content.filter((b) => b.type === 'text')
-        const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
-        return {
-          id: r.id,
-          role: r.role as 'user' | 'assistant',
-          text: textBlocks.map((b) => b.text ?? '').join(''),
-          files: fileBlocks.map((b) => ({
-            previewUrl: '',   // no preview for historical files (path only stored)
-            mediaType: b.mediaType ?? 'image/jpeg',
-          })),
-          tokensIn: r.tokensIn ?? undefined,
-          tokensOut: r.tokensOut ?? undefined,
-          costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
-        }
-      }))
+      const rows: MessageRow[] = await msgRes.json()
+      setMessages(mapMessageRows(rows))
     }
 
     if (artRes.ok) setArtifacts(await artRes.json())
@@ -195,104 +227,121 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
+      let gotStreamDone = false
+
+      const applySseEvent = (evt: Record<string, unknown>) => {
+        if (evt.type === 'conversation_id') {
+          finalConvId = evt.id as string
+          setActiveConvId(finalConvId)
+        } else if (evt.type === 'text_delta') {
+          setStreamStatus('উত্তর লিখছে…')
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
+          ))
+        } else if (evt.type === 'tool_start') {
+          setStreamStatus(`🔧 ${String(evt.name)}`)
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
+              : m
+          ))
+        } else if (evt.type === 'tool_end') {
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  toolActivity: (m.toolActivity ?? []).map((t) =>
+                    t.id === evt.id ? { ...t, done: true, success: evt.success as boolean } : t
+                  ),
+                }
+              : m
+          ))
+        } else if (evt.type === 'confirm_card') {
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  pendingAction: {
+                    id: evt.pendingActionId as string,
+                    summary: evt.summary as string,
+                    costEstimate: evt.costEstimate as number | undefined,
+                  },
+                }
+              : m
+          ))
+        } else if (evt.type === 'ask_card') {
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  askCard: {
+                    id: evt.askCardId as string,
+                    question: evt.question as string,
+                    options: evt.options as string[],
+                  },
+                }
+              : m
+          ))
+        } else if (evt.type === 'done') {
+          gotStreamDone = true
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  id: evt.messageId as string,
+                  streaming: false,
+                  askCard: undefined,
+                  tokensIn: evt.tokensIn as number,
+                  tokensOut: evt.tokensOut as number,
+                  costUsd: evt.costUsd as number,
+                }
+              : m
+          ))
+        } else if (evt.type === 'error') {
+          gotStreamDone = true
+          const errText = evt.message as string
+          let banglaMsg = errText
+          if (errText.includes('কোটা') || /quota|credit|billing/i.test(errText)) {
+            banglaMsg = 'Anthropic API কোটা শেষ — মালিককে জানানো হয়েছে। পরে আবার চেষ্টা করুন।'
+          } else if (errText.includes('ANTHROPIC_API_KEY') || errText.includes('api_key')) {
+            banglaMsg = 'API Key সেট করা নেই। Vercel-এ ANTHROPIC_API_KEY যোগ করুন।'
+          } else if (errText.includes('overloaded')) {
+            banglaMsg = 'সার্ভার ব্যস্ত। কিছুক্ষণ পরে আবার চেষ্টা করুন।'
+          } else if (/rate_limited|অনেক দ্রুত/i.test(errText)) {
+            banglaMsg = 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
+          }
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, streaming: false, text: `⚠️ ${banglaMsg}` }
+              : m
+          ))
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n\n')
-        buf = lines.pop() ?? ''
+        if (value) buf += decoder.decode(value, { stream: true })
 
-        for (const chunk of lines) {
-          if (!chunk.startsWith('data: ')) continue
-          let evt: Record<string, unknown>
-          try { evt = JSON.parse(chunk.slice(6)) } catch { continue }
+        const { remaining, events } = parseSseChunks(buf)
+        buf = remaining
+        for (const evt of events) applySseEvent(evt)
 
-          if (evt.type === 'conversation_id') {
-            finalConvId = evt.id as string
-            setActiveConvId(finalConvId)
-          } else if (evt.type === 'text_delta') {
-            setStreamStatus('উত্তর লিখছে…')
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
-            ))
-          } else if (evt.type === 'tool_start') {
-            setStreamStatus(`🔧 ${String(evt.name)}`)
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
-                : m
-            ))
-          } else if (evt.type === 'tool_end') {
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? {
-                    ...m,
-                    toolActivity: (m.toolActivity ?? []).map((t) =>
-                      t.id === evt.id ? { ...t, done: true, success: evt.success as boolean } : t
-                    ),
-                  }
-                : m
-            ))
-          } else if (evt.type === 'confirm_card') {
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? {
-                    ...m,
-                    pendingAction: {
-                      id: evt.pendingActionId as string,
-                      summary: evt.summary as string,
-                      costEstimate: evt.costEstimate as number | undefined,
-                    },
-                  }
-                : m
-            ))
-          } else if (evt.type === 'ask_card') {
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? {
-                    ...m,
-                    askCard: {
-                      id: evt.askCardId as string,
-                      question: evt.question as string,
-                      options: evt.options as string[],
-                    },
-                  }
-                : m
-            ))
-          } else if (evt.type === 'done') {
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? {
-                    ...m,
-                    id: evt.messageId as string,
-                    streaming: false,
-                    askCard: undefined,
-                    tokensIn: evt.tokensIn as number,
-                    tokensOut: evt.tokensOut as number,
-                    costUsd: evt.costUsd as number,
-                  }
-                : m
-            ))
-          } else if (evt.type === 'error') {
-            const errText = evt.message as string
-            let banglaMsg = errText
-            if (errText.includes('কোটা') || /quota|credit|billing/i.test(errText)) {
-              banglaMsg = 'Anthropic API কোটা শেষ — মালিককে জানানো হয়েছে। পরে আবার চেষ্টা করুন।'
-            } else if (errText.includes('ANTHROPIC_API_KEY') || errText.includes('api_key')) {
-              banglaMsg = 'API Key সেট করা নেই। Vercel-এ ANTHROPIC_API_KEY যোগ করুন।'
-            } else if (errText.includes('overloaded')) {
-              banglaMsg = 'সার্ভার ব্যস্ত। কিছুক্ষণ পরে আবার চেষ্টা করুন।'
-            } else if (/rate_limited|অনেক দ্রুত/i.test(errText)) {
-              banglaMsg = 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
-            }
-            setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsgId
-                ? { ...m, streaming: false, text: `⚠️ ${banglaMsg}` }
-                : m
-            ))
-          }
+        if (done) {
+          buf += decoder.decode()
+          const trailing = parseTrailingSseEvent(buf)
+          if (trailing) applySseEvent(trailing)
+          break
         }
+      }
+
+      if (finalConvId && !gotStreamDone) {
+        try {
+          const msgRes = await fetch(`/api/assistant/conversations/${finalConvId}/messages`)
+          if (msgRes.ok) {
+            const rows: MessageRow[] = await msgRes.json()
+            setMessages(mapMessageRows(rows))
+          }
+        } catch { /* ignore */ }
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
@@ -330,26 +379,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       try {
         const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
         if (!res.ok) return
-        const rows: Array<{
-          id: string; role: string
-          content: Array<{ type: string; text?: string; mediaType?: string }>
-          tokensIn: number | null; tokensOut: number | null; costUsd: string | null
-        }> = await res.json()
+        const rows: MessageRow[] = await res.json()
 
         if (rows.length > initialCount) {
-          setMessages(rows.map((r) => {
-            const textBlocks = r.content.filter((b) => b.type === 'text')
-            const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
-            return {
-              id: r.id,
-              role: r.role as 'user' | 'assistant',
-              text: textBlocks.map((b) => b.text ?? '').join(''),
-              files: fileBlocks.map((b) => ({ previewUrl: '', mediaType: b.mediaType ?? 'image/jpeg' })),
-              tokensIn: r.tokensIn ?? undefined,
-              tokensOut: r.tokensOut ?? undefined,
-              costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
-            }
-          }))
+          setMessages(mapMessageRows(rows))
           clearInterval(pollTimerRef.current!)
           pollTimerRef.current = null
         }
@@ -398,6 +431,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       <div className="flex min-h-0 flex-1 flex-col">
         {/* Top bar */}
         <header className="safe-top safe-x flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/80 px-3 py-2 backdrop-blur-md md:gap-3 md:px-4 md:py-2.5">
+          <Link
+            href="/"
+            className="flex h-11 shrink-0 items-center justify-center gap-1 rounded-xl border border-white/[0.08] px-2.5 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-cream active:scale-[0.98] md:h-9 md:px-3"
+            title="ALMA ERP হোম"
+            aria-label="ALMA ERP হোমে ফিরে যান"
+          >
+            <span aria-hidden>←</span>
+            <span className="hidden sm:inline">হোম</span>
+          </Link>
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
