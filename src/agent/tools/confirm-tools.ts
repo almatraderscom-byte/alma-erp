@@ -81,7 +81,7 @@ const post_to_facebook: AgentTool = {
     'Posts to an Alma Facebook page. ' +
     'This tool ALWAYS creates a PENDING ACTION — the owner must approve before posting. ' +
     'page: "lifestyle" (Alma Lifestyle) | "onlineshop" (Alma Online Shop). ' +
-    'imageArtifactOrFileId: REQUIRED for photo posts — Supabase path from completed generate_image (e.g. generated/<actionId>.png). Do not post ছবিসহ without this.',
+    'imageArtifactOrFileId: photo path — generated/<id>.png from AI OR chat upload path from [Uploaded file path: ...]. Auto-resolved from conversation if omitted.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -93,7 +93,7 @@ const post_to_facebook: AgentTool = {
       message: { type: 'string', description: 'Post text content' },
       imageArtifactOrFileId: {
         type: 'string',
-        description: 'Supabase path from generate_image (generated/<id>.png) — REQUIRED for photo posts',
+        description: 'Supabase path: generated/<id>.png or chat upload path — optional if image was uploaded in this chat',
       },
       textOnly: {
         type: 'boolean',
@@ -112,7 +112,7 @@ const post_to_facebook: AgentTool = {
       const textOnly = input.textOnly === true
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { imageRef, hadRecentImageGen } = await resolveFbPostImageRef(prisma as any, {
+      const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(prisma as any, {
         conversationId,
         imageArtifactOrFileId: input.imageArtifactOrFileId,
         textOnly,
@@ -120,7 +120,7 @@ const post_to_facebook: AgentTool = {
 
       const imageLine = imageRef
         ? `📷 ছবি: ${imageRef}\n\n`
-        : hadRecentImageGen
+        : hadRecentPostableImage
           ? `⚠️ ছবি path খুঁজে পাওয়া যায়নি — Approve করলে শুধু ক্যাপশন যাবে!\n\n`
           : textOnly
             ? `📝 শুধু টেক্সট পোস্ট\n\n`
@@ -143,7 +143,7 @@ const post_to_facebook: AgentTool = {
             imageUrl: imageRef ?? null,
             imageArtifactOrFileId: imageRef ?? null,
             textOnly,
-            wantsImage: Boolean(imageRef) || (hadRecentImageGen && !textOnly),
+            wantsImage: Boolean(imageRef) || (hadRecentPostableImage && !textOnly),
             conversationId,
           },
           summary,

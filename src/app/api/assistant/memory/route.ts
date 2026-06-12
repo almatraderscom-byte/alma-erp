@@ -3,7 +3,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -50,16 +50,21 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const embedResult = await embed(content)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mem = await (prisma as any).agentMemory.create({
-      data: {
-        scope, key: key ?? null, content, pinned,
-        ...(embedResult.success ? { embedding: vectorLiteral(embedResult.data) } : {}),
-      },
-      select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
+    const mem = await createOrUpdateAgentMemory({
+      scope,
+      key: key ?? null,
+      content,
+      pinned,
     })
-    return Response.json(mem, { status: 201 })
+    return Response.json({
+      id: mem.id,
+      scope: mem.scope,
+      key: mem.key,
+      content: mem.content,
+      pinned: mem.pinned,
+      createdAt: mem.createdAt,
+      embedded: mem.embedStatus.embedded,
+    }, { status: 201 })
   } catch (err) {
     return Response.json({ error: String(err) }, { status: 500 })
   }

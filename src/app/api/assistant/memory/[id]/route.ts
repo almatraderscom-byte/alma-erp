@@ -3,7 +3,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { attachMemoryEmbedding } from '@/agent/lib/agent-memory'
 
 async function auth(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -28,10 +28,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!existing) return Response.json({ error: 'not found' }, { status: 404 })
 
     const updateData: Record<string, unknown> = {}
+    let contentToEmbed: string | null = null
     if (body.content !== undefined) {
+      contentToEmbed = body.content
       updateData.content = body.content
-      const embedResult = await embed(body.content)
-      if (embedResult.success) updateData.embedding = vectorLiteral(embedResult.data)
     }
     if (body.pinned !== undefined) updateData.pinned = body.pinned
     if (body.key !== undefined) updateData.key = body.key
@@ -41,6 +41,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data: updateData,
       select: { id: true, scope: true, key: true, content: true, pinned: true, updatedAt: true },
     })
+    if (contentToEmbed) {
+      await attachMemoryEmbedding(params.id, contentToEmbed)
+    }
     return Response.json(updated)
   } catch (err) {
     return Response.json({ error: String(err) }, { status: 500 })

@@ -96,6 +96,14 @@ export async function POST(req: NextRequest) {
     type StoredBlock = { type: string; [k: string]: unknown }
     const userContent: StoredBlock[] = [
       ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
+      ...(files.length > 0
+        ? [{
+            type: 'text',
+            text: files
+              .map((f) => `[Uploaded file path for tools: ${f.path}]`)
+              .join('\n'),
+          }]
+        : []),
       { type: 'text', text: message },
     ]
 

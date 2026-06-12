@@ -50,8 +50,13 @@ export function normalizeFbImageRef(raw: unknown): string | undefined {
 }
 
 function storagePathFromRef(ref: string): string | null {
-  if (/^(generated|uploads)\//.test(ref)) return ref
-  const fromObject = ref.match(/\/object\/(?:sign\/)?agent-files\/([^?]+)/i)
+  const normalized = ref.trim()
+  if (/^(generated|uploads)\//.test(normalized)) return normalized
+  // Chat uploads: <conversationId>/<timestamp>-<rand>.<ext>
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i.test(normalized)) {
+    return normalized
+  }
+  const fromObject = normalized.match(/\/object\/(?:sign\/)?agent-files\/([^?]+)/i)
   if (fromObject?.[1]) return decodeURIComponent(fromObject[1])
   return null
 }
@@ -129,7 +134,7 @@ async function postPhotoByUrl(
 }
 
 async function loadImageBytes(ref: string): Promise<{ buffer: Buffer; contentType: string } | null> {
-  const storagePath = storagePathFromRef(ref) ?? (/^(generated|uploads)\//.test(ref) ? ref : null)
+  const storagePath = storagePathFromRef(ref)
   if (storagePath) {
     const buffer = await agentStorageDownload(storagePath)
     return { buffer, contentType: mimeFromPath(storagePath) }

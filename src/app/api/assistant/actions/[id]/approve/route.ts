@@ -82,14 +82,14 @@ export async function POST(
       const textOnly = payload.textOnly === true
       const wantsImage = payload.wantsImage === true
 
-      const { imageRef, hadRecentImageGen } = await resolveFbPostImageRef(db, {
+      const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(db, {
         conversationId: conversationId || null,
         imageUrl: payload.imageUrl,
         imageArtifactOrFileId: payload.imageArtifactOrFileId,
         textOnly,
       })
 
-      const requireImage = wantsImage || (hadRecentImageGen && !textOnly)
+      const requireImage = wantsImage || (hadRecentPostableImage && !textOnly)
 
       const { postId, postedAsPhoto } = await createPagePost({
         pageId,

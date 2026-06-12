@@ -11,7 +11,7 @@ type AgentDb = {
     } | null>
   }
   agentMessage: {
-    findMany: (args: Record<string, unknown>) => Promise<Array<{ content: unknown }>>
+    findMany: (args: Record<string, unknown>) => Promise<Array<{ content: unknown; createdAt?: Date | string }>>
   }
 }
 
@@ -81,14 +81,49 @@ export async function resolveConversationImagePath(
   return normalizeFbImageRef(`generated/${imageAction.id}.png`)
 }
 
-export async function hasRecentImageGen(
+/** Latest user-uploaded image in this conversation (chat file attachment). */
+export async function resolveUploadedImageFromConversation(
+  db: AgentDb,
+  conversationId: string,
+  opts?: { maxAgeMs?: number },
+): Promise<string | undefined> {
+  const maxAgeMs = opts?.maxAgeMs ?? 24 * 60 * 60 * 1000
+  const messages = await db.agentMessage.findMany({
+    where: { conversationId, role: 'user' },
+    orderBy: { createdAt: 'desc' },
+    take: 25,
+    select: { content: true, createdAt: true },
+  })
+
+  for (const msg of messages) {
+    if (msg.createdAt) {
+      const age = Date.now() - new Date(msg.createdAt).getTime()
+      if (age > maxAgeMs) continue
+    }
+    const blocks = Array.isArray(msg.content) ? msg.content : []
+    for (const block of blocks) {
+      if (!block || typeof block !== 'object') continue
+      const b = block as { type?: string; path?: string; mediaType?: string }
+      if (b.type !== 'file_ref') continue
+      if (!String(b.mediaType ?? '').startsWith('image/')) continue
+      const path = normalizeFbImageRef(b.path)
+      if (path) return path
+    }
+  }
+
+  return undefined
+}
+
+export async function hasRecentPostableImage(
   db: AgentDb,
   conversationId: string | null | undefined,
   maxAgeMs = 6 * 60 * 60 * 1000,
 ): Promise<boolean> {
   if (!conversationId) return false
-  const path = await resolveConversationImagePath(db, conversationId, { maxAgeMs })
-  return Boolean(path)
+  const generated = await resolveConversationImagePath(db, conversationId, { maxAgeMs })
+  if (generated) return true
+  const uploaded = await resolveUploadedImageFromConversation(db, conversationId, { maxAgeMs })
+  return Boolean(uploaded)
 }
 
 export async function resolveFbPostImageRef(
@@ -99,9 +134,9 @@ export async function resolveFbPostImageRef(
     imageArtifactOrFileId?: unknown
     textOnly?: boolean
   },
-): Promise<{ imageRef?: string; hadRecentImageGen: boolean }> {
+): Promise<{ imageRef?: string; hadRecentPostableImage: boolean }> {
   if (opts.textOnly) {
-    return { imageRef: undefined, hadRecentImageGen: false }
+    return { imageRef: undefined, hadRecentPostableImage: false }
   }
 
   let imageRef =
@@ -109,13 +144,17 @@ export async function resolveFbPostImageRef(
     normalizeFbImageRef(opts.imageArtifactOrFileId)
 
   const conversationId = opts.conversationId ? String(opts.conversationId) : null
-  const hadRecentImageGen = conversationId
-    ? await hasRecentImageGen(db, conversationId)
-    : false
 
   if (!imageRef && conversationId) {
     imageRef = await resolveConversationImagePath(db, conversationId)
   }
+  if (!imageRef && conversationId) {
+    imageRef = await resolveUploadedImageFromConversation(db, conversationId)
+  }
 
-  return { imageRef, hadRecentImageGen }
+  const hadRecentPostableImage = conversationId
+    ? await hasRecentPostableImage(db, conversationId)
+    : false
+
+  return { imageRef, hadRecentPostableImage }
 }

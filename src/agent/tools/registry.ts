@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
 import { STAFF_TOOLS } from './staff-tools'
@@ -80,7 +81,7 @@ type MemoryScope = typeof MEMORY_SCOPES[number]
 const save_memory: AgentTool = {
   name: 'save_memory',
   description:
-    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Never save secrets or API keys.',
+    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Use scope=business + key (e.g. contact_phone, contact_website) + pinned=true for standing contact info. Never save secrets or API keys.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -101,17 +102,18 @@ const save_memory: AgentTool = {
     if (!MEMORY_SCOPES.includes(scope)) return { success: false, error: `invalid scope: ${scope}` }
 
     try {
-      const embedResult = await embed(content)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = prisma as any
-      const mem = await db.agentMemory.create({
+      const mem = await createOrUpdateAgentMemory({ scope, key, content, pinned })
+      return {
+        success: true,
         data: {
-          scope, key, content, pinned,
-          ...(embedResult.success ? { embedding: vectorLiteral(embedResult.data) } : {}),
+          id: mem.id,
+          scope: mem.scope,
+          key: mem.key,
+          pinned: mem.pinned,
+          preview: content.slice(0, 80),
+          embedded: mem.embedStatus.embedded,
         },
-        select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
-      })
-      return { success: true, data: { id: mem.id, scope: mem.scope, key: mem.key, pinned: mem.pinned, preview: content.slice(0, 80) } }
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -205,11 +207,10 @@ const update_memory: AgentTool = {
       if (!existing) return { success: false, error: `Memory ${id} not found` }
 
       const updateData: Record<string, unknown> = {}
+      let contentToEmbed: string | null = null
       if (input.content !== undefined) {
-        const content = String(input.content)
-        updateData.content = content
-        const embedResult = await embed(content)
-        if (embedResult.success) updateData.embedding = vectorLiteral(embedResult.data)
+        contentToEmbed = String(input.content)
+        updateData.content = contentToEmbed
       }
       if (input.pinned !== undefined) updateData.pinned = input.pinned === true
 
@@ -218,6 +219,9 @@ const update_memory: AgentTool = {
         data: updateData,
         select: { id: true, scope: true, content: true, pinned: true },
       })
+      if (contentToEmbed) {
+        await attachMemoryEmbedding(id, contentToEmbed)
+      }
       return { success: true, data: updated }
     } catch (err) {
       return { success: false, error: String(err) }

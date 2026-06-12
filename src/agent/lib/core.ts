@@ -115,13 +115,20 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
     for (const block of stored) {
       if (block.type === 'file_ref') {
         if (recentFileSet.has(i)) {
+          apiBlocks.push({
+            type: 'text',
+            text: `[Uploaded file path for tools: ${block.path}]`,
+          })
           try {
             apiBlocks.push(await resolveFileRef(block))
           } catch {
             apiBlocks.push({ type: 'text', text: '[ফাইল লোড করা যায়নি]' })
           }
         } else {
-          apiBlocks.push({ type: 'text', text: '[পূর্ববর্তী ফাইল সংযুক্তি]' })
+          apiBlocks.push({
+            type: 'text',
+            text: `[পূর্ববর্তী ফাইল সংযুক্তি: ${block.path}]`,
+          })
         }
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
