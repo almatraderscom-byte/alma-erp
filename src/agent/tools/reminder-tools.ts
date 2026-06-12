@@ -255,25 +255,29 @@ const send_urgent_alert: AgentTool = {
 const get_outbound_call_status: AgentTool = {
   name: 'get_outbound_call_status',
   description:
-    'Returns status of outbound phone calls in this conversation (pending, dialed, answered, no-answer). ' +
+    'Returns status of recent outbound phone calls (pending, dialed, answered, no-answer). ' +
+    'Searches across ALL conversations — not limited to the current one. ' +
     'Use when Sir asks whether a call was placed, answered, or what happened — do NOT create a new outbound_phone_call.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      phone: { type: 'string', description: 'Optional — filter by number (01… or +880…)' },
+      phone: { type: 'string', description: 'Filter by number (01… or +880…). Recommended.' },
       conversationId: { type: 'string' },
     },
   },
   handler: async (input) => {
     try {
-      const conversationId = input.conversationId ? String(input.conversationId) : null
-      if (!conversationId) return { success: false, error: 'conversationId required' }
-
       const phoneFilter = input.phone ? normalizeOutboundPhone(String(input.phone)) : null
+
+      const where: Record<string, unknown> = {
+        type: 'outbound_call',
+        createdAt: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+      }
+
       const rows = await db.agentPendingAction.findMany({
-        where: { type: 'outbound_call', conversationId },
+        where,
         orderBy: { createdAt: 'desc' },
-        take: 10,
+        take: 20,
       })
 
       const filtered = phoneFilter
@@ -323,15 +327,14 @@ const outbound_phone_call: AgentTool = {
       if (!rate.ok) return { success: false, error: rate.error }
 
       const conversationId = input.conversationId ? String(input.conversationId) : null
-      if (conversationId) {
+      {
         const recent = await db.agentPendingAction.findMany({
           where: {
             type: 'outbound_call',
-            conversationId,
             createdAt: { gte: new Date(Date.now() - 2 * 60 * 60 * 1000) },
           },
           orderBy: { createdAt: 'desc' },
-          take: 8,
+          take: 20,
         })
         const duplicate = recent.find((r: { payload: { phone?: string }; status: string; result?: unknown }) => {
           const p = normalizeOutboundPhone(String(r.payload?.phone ?? ''))
