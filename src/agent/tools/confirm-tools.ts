@@ -1,6 +1,6 @@
 // Tools that create pending actions (confirm-card flow) rather than executing directly.
 import { prisma } from '@/lib/prisma'
-import { resolvePageId, getRecentPosts } from '@/agent/lib/meta'
+import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel } from '@/agent/lib/meta'
 import type { AgentTool } from './registry'
 
 // ── Image generation ───────────────────────────────────────────────────────
@@ -166,4 +166,65 @@ const get_fb_recent_posts: AgentTool = {
   },
 }
 
-export const CONFIRM_TOOLS: AgentTool[] = [generate_image, post_to_facebook, get_fb_recent_posts]
+const get_fb_messenger_inbox: AgentTool = {
+  name: 'get_fb_messenger_inbox',
+  description:
+    'Reads recent Facebook Page Messenger inbox threads (read-only). ' +
+    'Use when the owner asks about page DMs, inbox, customer messages, or unanswered chats — NOT for public posts. ' +
+    'page: "lifestyle" | "onlineshop". limit: 1–25 conversations (default 15).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'] },
+      limit: { type: 'number' },
+    },
+    required: ['page'],
+  },
+  handler: async (input) => {
+    try {
+      const pageId = resolvePageId(String(input.page))
+      const limit = Number(input.limit ?? 15)
+      const threads = await getMessengerInbox({ pageId, limit })
+      const openAlerts = await prisma.agentMessengerAlert.findMany({
+        where: { pageId, resolved: false },
+        orderBy: { detectedAt: 'desc' },
+        take: 20,
+        select: {
+          conversationId: true,
+          alertType: true,
+          detectedAt: true,
+        },
+      })
+
+      const needsReply = threads.filter(t => t.needsReply)
+      const recentCustomer = threads.filter(t => t.lastMessage?.from === 'customer')
+
+      return {
+        success: true,
+        data: {
+          page: input.page,
+          pageId,
+          pageName: pageLabel(pageId),
+          scannedAt: new Date().toISOString(),
+          summary: {
+            threadsScanned: threads.length,
+            awaitingReply30minPlus: needsReply.length,
+            lastFromCustomer: recentCustomer.length,
+            openWorkerAlerts: openAlerts.length,
+          },
+          threads,
+          openAlerts,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const CONFIRM_TOOLS: AgentTool[] = [
+  generate_image,
+  post_to_facebook,
+  get_fb_recent_posts,
+  get_fb_messenger_inbox,
+]
