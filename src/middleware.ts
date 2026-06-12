@@ -5,7 +5,7 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isPathAllowedForRole, normalizeAlmaRole, roleHomePath } from '@/lib/roles'
 import type { BusinessId } from '@/lib/businesses'
 import { businessAllowed } from '@/lib/business-access'
-import { isAuthPath } from '@/lib/auth-paths'
+import { isAuthPath, isPublicAppPath } from '@/lib/auth-paths'
 import { isAssistantWorkerRequest } from '@/lib/agent-internal-auth'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
@@ -100,6 +100,10 @@ export async function middleware(req: NextRequest) {
   // Auth pages are always served. Client-side session handles post-login redirect.
   // Edge redirect here caused ping-pong when JWT existed but /api/auth/session failed.
   if (AUTH_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))) {
+    return NextResponse.next()
+  }
+
+  if (isPublicAppPath(pathname)) {
     return NextResponse.next()
   }
 

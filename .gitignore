@@ -13,3 +13,11 @@ alma-lifestyle-erp@1.0.0
 .env.telegram
 .env*.local
 .next.stale*/
+mobile/dist/*.apk
+mobile/alma-erp-release.keystore
+*.keystore
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/capacitor-cordova-android-plugins/build/

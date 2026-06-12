@@ -24,7 +24,7 @@ import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
-import { isAuthPath } from '@/lib/auth-paths'
+import { isPublicPath } from '@/lib/auth-paths'
 import { cn } from '@/lib/utils'
 
 const NotificationShellProvider = dynamic(
@@ -147,7 +147,7 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   const [sessionStuck, setSessionStuck] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
 
-  const isPublic = isAuthPath(pathname)
+  const isPublic = isPublicPath(pathname ?? '')
   const sessionUser = session?.user ?? initialSession?.user
   const isAuthed = Boolean(sessionUser)
   const isBooting = status === 'loading' && !sessionUser

@@ -20,6 +20,12 @@ function isStandaloneDisplay() {
     || (window.navigator as Navigator & { standalone?: boolean }).standalone === true
 }
 
+function isCapacitorNative() {
+  if (typeof window === 'undefined') return false
+  const cap = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
+  return Boolean(cap?.isNativePlatform?.())
+}
+
 function isIosSafari() {
   if (typeof navigator === 'undefined') return false
   const ua = navigator.userAgent
@@ -59,6 +65,7 @@ export function PwaBootstrap() {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') return
+    if (isCapacitorNative()) return
     if (!('serviceWorker' in navigator)) return
     navigator.serviceWorker.register('/sw.js').then(reg => {
       void reg.update()
@@ -136,7 +143,7 @@ export function PwaBootstrap() {
   }, [offline])
 
   useEffect(() => {
-    if (isStandaloneDisplay()) return
+    if (isCapacitorNative() || isStandaloneDisplay()) return
     const dismissedAt = Number(localStorage.getItem(INSTALL_DISMISSED_KEY) || 0)
     if (dismissedAt && Date.now() - dismissedAt < INSTALL_REMINDER_MS) return
 

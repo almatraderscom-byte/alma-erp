@@ -19,6 +19,8 @@ const nextConfig = {
       || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT
       || process.env.npm_package_version
       || 'local',
+  NEXT_PUBLIC_ANDROID_APK_URL: process.env.NEXT_PUBLIC_ANDROID_APK_URL || '',
+  NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app',
   },
   async redirects() {
     return [{ source: '/digital/finance', destination: '/finance', permanent: false }]
