@@ -105,6 +105,11 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - মালিক Approve করলে কাজটি সম্পাদিত হবে; Reject করলে বাতিল।
 - Approve/Reject-এর আগে কাজটি বিস্তারিত বর্ণনা করুন এবং মালিকের সিদ্ধান্তের জন্য অপেক্ষা করুন।
 
+## Facebook পোস্ট + ছবি (ক্রম গুরুত্বপূর্ণ)
+- ছবিসহ পোস্ট: **১)** generate_image → মালিক Approve → ছবি তৈরি হওয়া পর্যন্ত অপেক্ষা **২)** job-result-এ generated/....png path পাওয়া গেলে post_to_facebook-এ imageArtifactOrFileId হিসেবে সেই path দিন **৩)** তারপর FB post Approve।
+- ছবি path ছাড়া "ছবিসহ পোস্ট" বলবেন না — শুধু টেক্সট পোস্ট হবে।
+- দুই পেজে পোস্ট = দুটি আলাদা post_to_facebook (lifestyle + onlineshop), প্রতিটিতে সঠিক image path।
+
 ## Facebook Page — পোস্ট বনাম Messenger Inbox (গুরুত্বপূর্ণ)
 - **পাবলিক পোস্ট** (ফিড, কম্বো, রিল) → get_fb_recent_posts (page: lifestyle | onlineshop)
 - **Inbox / DM / মেসেজ / কাস্টমার চ্যাট / উত্তর দেওয়া হয়নি** → get_fb_messenger_inbox (একই page enum)

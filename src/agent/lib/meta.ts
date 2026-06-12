@@ -1,6 +1,7 @@
 // Minimal Meta Graph API client — no SDK dependency.
 
 import { resilientFetch } from '@/agent/lib/fetch-retry'
+import { agentStorageDownload } from '@/agent/lib/storage'
 
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
 
@@ -40,35 +41,155 @@ export interface FbPost {
   permalink_url?: string
 }
 
+/** Normalize image ref from agent payload — rejects empty / literal "null". */
+export function normalizeFbImageRef(raw: unknown): string | undefined {
+  if (raw == null) return undefined
+  let s = String(raw).trim().replace(/^`|`$/g, '').trim()
+  if (!s || s === 'null' || s === 'undefined' || s === 'none') return undefined
+  return s
+}
+
+function storagePathFromRef(ref: string): string | null {
+  if (/^(generated|uploads)\//.test(ref)) return ref
+  const fromObject = ref.match(/\/object\/(?:sign\/)?agent-files\/([^?]+)/i)
+  if (fromObject?.[1]) return decodeURIComponent(fromObject[1])
+  return null
+}
+
+function mimeFromPath(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase()
+  if (ext === 'png') return 'image/png'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'gif') return 'image/gif'
+  return 'image/jpeg'
+}
+
+async function postFeedText(pageId: string, token: string, message: string): Promise<string> {
+  const res = await resilientFetch(`${GRAPH_BASE}/${pageId}/feed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, access_token: token }),
+    timeoutMs: 30_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph API error ${res.status}: ${err}`)
+  }
+  const data = (await res.json()) as { id?: string; post_id?: string }
+  return data.post_id ?? data.id ?? ''
+}
+
+async function postPhotoBuffer(
+  pageId: string,
+  token: string,
+  message: string,
+  buffer: Buffer,
+  contentType: string,
+): Promise<string> {
+  const form = new FormData()
+  form.append('message', message)
+  form.append('access_token', token)
+  const ext = contentType.split('/')[1] || 'jpg'
+  form.append('source', new Blob([new Uint8Array(buffer)], { type: contentType }), `post.${ext}`)
+
+  const res = await resilientFetch(`${GRAPH_BASE}/${pageId}/photos`, {
+    method: 'POST',
+    body: form,
+    timeoutMs: 60_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph API error ${res.status}: ${err}`)
+  }
+  const data = (await res.json()) as { id?: string; post_id?: string }
+  return data.post_id ?? data.id ?? ''
+}
+
+async function postPhotoByUrl(
+  pageId: string,
+  token: string,
+  message: string,
+  imageUrl: string,
+): Promise<string> {
+  const res = await resilientFetch(`${GRAPH_BASE}/${pageId}/photos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, url: imageUrl, access_token: token }),
+    timeoutMs: 30_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph API error ${res.status}: ${err}`)
+  }
+  const data = (await res.json()) as { id?: string; post_id?: string }
+  return data.post_id ?? data.id ?? ''
+}
+
+async function loadImageBytes(ref: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const storagePath = storagePathFromRef(ref) ?? (/^(generated|uploads)\//.test(ref) ? ref : null)
+  if (storagePath) {
+    const buffer = await agentStorageDownload(storagePath)
+    return { buffer, contentType: mimeFromPath(storagePath) }
+  }
+
+  if (/^https?:\/\//i.test(ref)) {
+    const res = await resilientFetch(ref, { timeoutMs: 30_000, retries: 1 })
+    if (!res.ok) return null
+    const contentType = res.headers.get('content-type') || 'image/jpeg'
+    const buffer = Buffer.from(await res.arrayBuffer())
+    if (!buffer.length) return null
+    return { buffer, contentType }
+  }
+
+  return null
+}
+
 export async function createPagePost(opts: {
   pageId: string
   message: string
   imageUrl?: string
 }): Promise<{ postId: string; permalinkUrl?: string }> {
   const token = tokenFor(opts.pageId)
-  const endpoint = opts.imageUrl
-    ? `${GRAPH_BASE}/${opts.pageId}/photos`
-    : `${GRAPH_BASE}/${opts.pageId}/feed`
+  const imageRef = normalizeFbImageRef(opts.imageUrl)
 
-  const body: Record<string, string> = { message: opts.message, access_token: token }
-  if (opts.imageUrl) body.url = opts.imageUrl
-
-  const res = await resilientFetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    timeoutMs: 30_000,
-    retries: 1,
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Graph API error ${res.status}: ${err}`)
+  if (!imageRef) {
+    const postId = await postFeedText(opts.pageId, token, opts.message)
+    return { postId }
   }
 
-  const data = (await res.json()) as { id?: string; post_id?: string }
-  const postId = data.post_id ?? data.id ?? ''
-  return { postId }
+  try {
+    const loaded = await loadImageBytes(imageRef)
+    if (loaded) {
+      const postId = await postPhotoBuffer(
+        opts.pageId,
+        token,
+        opts.message,
+        loaded.buffer,
+        loaded.contentType,
+      )
+      return { postId }
+    }
+
+    if (/^https?:\/\//i.test(imageRef)) {
+      const postId = await postPhotoByUrl(opts.pageId, token, opts.message, imageRef)
+      return { postId }
+    }
+
+    throw new Error(
+      `Image not found for "${imageRef}". Approve image generation first, then pass storage path like generated/<id>.png in post_to_facebook.`,
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('324') || msg.toLowerCase().includes('missing file')) {
+      throw new Error(
+        'Facebook could not load the image file. Ensure generate_image is approved and imageArtifactOrFileId is the Supabase path (generated/...).',
+      )
+    }
+    throw err
+  }
 }
 
 export async function verifyPost(pageId: string, postId: string): Promise<boolean> {

@@ -1,6 +1,6 @@
 // Tools that create pending actions (confirm-card flow) rather than executing directly.
 import { prisma } from '@/lib/prisma'
-import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel } from '@/agent/lib/meta'
+import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, normalizeFbImageRef } from '@/agent/lib/meta'
 import type { AgentTool } from './registry'
 
 // ── Image generation ───────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ const post_to_facebook: AgentTool = {
     'Posts to an Alma Facebook page. ' +
     'This tool ALWAYS creates a PENDING ACTION — the owner must approve before posting. ' +
     'page: "lifestyle" (Alma Lifestyle) | "onlineshop" (Alma Online Shop). ' +
-    'imageArtifactOrFileId: optional Supabase storage path or URL of an image to attach.',
+    'imageArtifactOrFileId: REQUIRED for photo posts — Supabase path from completed generate_image (e.g. generated/<actionId>.png). Do not post ছবিসহ without this.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -116,7 +116,7 @@ const post_to_facebook: AgentTool = {
             page,
             pageId,
             message,
-            imageUrl: input.imageArtifactOrFileId ?? null,
+            imageUrl: normalizeFbImageRef(input.imageArtifactOrFileId) ?? null,
             conversationId: input.conversationId ?? null,
           },
           summary,

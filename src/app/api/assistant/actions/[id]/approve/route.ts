@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
+import { createPagePost, verifyPost, resolvePageId, normalizeFbImageRef } from '@/agent/lib/meta'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 
 export const runtime = 'nodejs'
@@ -77,7 +77,7 @@ export async function POST(
 
       const pageId = String(payload.pageId ?? resolvePageId(String(payload.page ?? 'lifestyle')))
       const message = String(payload.message ?? '')
-      const imageUrl = payload.imageUrl ? String(payload.imageUrl) : undefined
+      const imageUrl = normalizeFbImageRef(payload.imageUrl)
 
       const { postId } = await createPagePost({ pageId, message, imageUrl })
 
