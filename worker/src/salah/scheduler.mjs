@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * 1. At each azan time: create salah_record (pending) + send Tier 2 notification with inline buttons
- * 2. Within window: azan → prayer start (SMS+call) → +15min NTFY → call → grave messages
+ * 2. Within window: azan → prayer start (phone call) → +15min NTFY → call → grave messages
  * 3. On window close unconfirmed: mark 'missed' + Level 3 message
  * 4. Carryover: each azan first settles the previous pending waqt
  * 5. Tone ladder: Level 1 (warm) → Level 2 (firm Quran/Sunnah) → Level 3 (mortality + grief context)
@@ -193,24 +193,6 @@ async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
   }
 }
 
-async function sendOwnerSms(message) {
-  if (!APP_URL || !INT_TOKEN) return { ok: false, error: 'not configured' }
-  try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/owner-sms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
-      body: JSON.stringify({ message }),
-    })
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      return { ok: false, error: errText || String(res.status) }
-    }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err.message }
-  }
-}
-
 // ── Escalation check (called on a schedule — e.g. every 5 min) ────────────────
 
 export async function checkAndEscalateSalah({ supabase, bot }) {
@@ -355,14 +337,12 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // Step 1: Prayer start — SMS + call + NTFY + Telegram
+    // Step 1: Prayer start — direct phone call + NTFY + Telegram (no SMS)
     if (msSincePrayerStart >= 0 && remindersSent === 1 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level2Message(waqt, name, today, remindersSent)
-      const smsText = `Sir, ${name} নামাজের সময় হয়েছে। এখনই পড়ুন।`
-      await sendOwnerSms(smsText)
       await notify({
-        tier:         Math.min(3, escalationLevel + 1),
+        tier:         3,
         title:        `${name} — নামাজের সময়`,
         message:      msg,
         category:     'salah',
