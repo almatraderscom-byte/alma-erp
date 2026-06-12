@@ -13,7 +13,12 @@ import { describeProductImage } from '@/agent/lib/cs/gemini-vision'
 import { searchVisualIndex } from '@/agent/lib/cs/product-index'
 import { getPrimaryImageUrl } from '@/agent/lib/catalog/product-images'
 import {
+  buildCollectionProfile,
+  expandSkuToCollectionIfFamily,
+} from '@/agent/lib/catalog/collection-profile'
+import {
   DEFAULT_CATALOG_BUSINESS,
+  findCollectionFamilyMembers,
   loadCatalogStock,
   loadVariantsForCode,
   normalizeProductCode,
@@ -158,9 +163,13 @@ const match_product_by_image: AgentTool = {
         return { success: true, data: { matched: false, confidence: 'low' } }
       }
 
-      const imageUrl = await getPrimaryImageUrl(resolved.code)
-      const variants = await loadVariantsForCode(resolved.code)
-      const totalStock = variants.reduce((s, v) => s + v.currentStock, 0)
+      const stockRows = await loadCatalogStock()
+      const family = expandSkuToCollectionIfFamily(
+        resolved.code,
+        resolved.row,
+        stockRows,
+        findCollectionFamilyMembers,
+      )
 
       if (csConversationId) {
         await db.csConversation.update({
@@ -169,11 +178,44 @@ const match_product_by_image: AgentTool = {
         })
       }
 
+      if (family) {
+        const profile = buildCollectionProfile(family.collectionCode, family.members)
+        const imageUrl = await getPrimaryImageUrl(family.members[0]?.sku ?? resolved.code)
+        return {
+          success: true,
+          data: {
+            matched: true,
+            confidence: pick.confidence,
+            kind: 'collection',
+            collectionCode: profile.collectionCode,
+            collectionProfile: profile.kind,
+            collectionProfileLabel: profile.kindLabelBn,
+            members: profile.members.map((m) => ({
+              code: m.code,
+              role: m.role,
+              roleLabelBn: m.roleLabelBn,
+              price: formatPrice(m.price),
+              priceRaw: m.price,
+              stock: m.stock,
+            })),
+            totalPrice: formatPrice(profile.totalPrice),
+            totalPriceRaw: profile.totalPrice,
+            quoteHint: profile.quoteHintBn,
+            imageUrl,
+          },
+        }
+      }
+
+      const imageUrl = await getPrimaryImageUrl(resolved.code)
+      const variants = await loadVariantsForCode(resolved.code)
+      const totalStock = variants.reduce((s, v) => s + v.currentStock, 0)
+
       return {
         success: true,
         data: {
           matched: true,
           confidence: pick.confidence,
+          kind: 'sku',
           code: resolved.code,
           name: resolved.row.name,
           price: formatPrice(resolved.row.sellPrice),
@@ -237,25 +279,35 @@ const get_product_details: AgentTool = {
     }
 
     if (resolved.kind === 'collection') {
-      const members = await Promise.all(resolved.members.map(async (m) => ({
-        code: m.sku,
-        name: m.name,
-        type: m.collectionType || m.genderType,
-        variant: m.size || m.sizeValue || m.sku.split('-').slice(1).join('-'),
-        price: formatPrice(m.sellPrice),
-        priceRaw: m.sellPrice,
-        stock: m.currentStock,
-        imageUrl: await getPrimaryImageUrl(m.sku),
-        label: formatCollectionMemberLabel(m),
-      })))
+      const profile = buildCollectionProfile(resolved.collectionCode, resolved.members)
+      const members = await Promise.all(profile.members.map(async (m) => {
+        const row = resolved.members.find((r) => r.sku === m.code) ?? resolved.members[0]
+        return {
+          code: m.code,
+          name: row?.name ?? m.code,
+          role: m.role,
+          roleLabelBn: m.roleLabelBn,
+          type: row?.collectionType || row?.genderType,
+          variant: m.variant,
+          price: formatPrice(m.price),
+          priceRaw: m.price,
+          stock: m.stock,
+          imageUrl: await getPrimaryImageUrl(m.code),
+          label: formatCollectionMemberLabel(row ?? resolved.members[0]),
+        }
+      }))
       return {
         success: true,
         data: {
           kind: 'collection',
-          collectionCode: resolved.collectionCode,
-          memberCount: members.length,
+          collectionCode: profile.collectionCode,
+          collectionProfile: profile.kind,
+          collectionProfileLabel: profile.kindLabelBn,
+          memberCount: profile.memberCount,
           members,
-          hint: 'একটি কালেকশন — কাস্টমারকে কোন টাইপ/সাইজ (KIDS/ADULT/ORNA/TWO PIECE) লাগবে জিজ্ঞেস করুন। অর্ডারে exact SKU ব্যবহার করুন।',
+          totalPrice: formatPrice(profile.totalPrice),
+          totalPriceRaw: profile.totalPrice,
+          hint: profile.quoteHintBn,
         },
       }
     }

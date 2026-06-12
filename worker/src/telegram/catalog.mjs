@@ -10,8 +10,8 @@ async function replyInvalidCode(ctx, code, suggestions) {
   await replyMarkdownSafe(
     ctx,
     `❌ *${code}* ERP-তে পাইনি।\n\n` +
-      `কালেকশন কোড: শুধু \`345\` (সব variant একসাথে)\n` +
-      `একটি আইটেম: \`345-ADULT\`, \`345T-ORNA\`\n` +
+      `কালেকশন কোড: শুধু \`133\` বা \`345\` (inventory থেকে পুরো ফ্যামিলি auto)\n` +
+      `একটি আইটেম মাত্র: \`345-ADULT\`\n` +
       `/catalog — অগ্রগতি দেখুন` +
       (sug ? `\n\nকাছাকাছি: ${sug}` : ''),
   )
@@ -271,7 +271,7 @@ export async function showCatalogGuide(ctx) {
     ctx,
     '📷 *ছবি যোগ করুন*\n\n' +
       '১. ফটো পাঠান\n' +
-      '২. ক্যাপশনে প্রোডাক্ট কোড লিখুন — যেমন: FM-204\n' +
+      '২. ক্যাপশনে কোড লিখুন — কালেকশন: `133` বা `345` (variant লাগবে না)\n' +
       '৩. একাধিক কোডে গ্রুপ: FM-204 FM-205 group Eid Family\n\n' +
       '/catalog — অগ্রগতি দেখুন',
   )

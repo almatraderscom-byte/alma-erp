@@ -2,6 +2,7 @@
  * Read-only inventory access for CS-0 catalog (SKU = product code).
  * Stock API returns one row per SKU/variant; sizes live in size / sizeValue fields.
  */
+import { consolidateCollectionMembers } from '@/agent/lib/catalog/collection-profile'
 import { serverGet } from '@/lib/server-api'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { Order, StockItem } from '@/types'
@@ -16,8 +17,11 @@ export type CatalogStockRow = {
   size: string
   sizeValue: string
   sizeCategory: string
+  sizeGroup: string
   genderType: string
   collectionType: string
+  collectionCode: string
+  variantGroup: string
   currentStock: number
   sellPrice: number
   business: string
@@ -52,8 +56,11 @@ function rowFromStock(item: StockItem): CatalogStockRow {
     size: String(item.size ?? ''),
     sizeValue: String(item.sizeValue ?? item.size ?? ''),
     sizeCategory: String(item.sizeCategory ?? item.sizeGroup ?? ''),
+    sizeGroup: String(item.sizeGroup ?? ''),
     genderType: String(item.genderType ?? ''),
     collectionType: String(item.collectionType ?? ''),
+    collectionCode: normalizeProductCode(String(item.collectionCode ?? '')),
+    variantGroup: String(item.variantGroup ?? ''),
     currentStock: Number(item.current_stock ?? item.stockQty ?? 0),
     sellPrice: Number(item.sell_value ?? 0),
     business: DEFAULT_CATALOG_BUSINESS,
@@ -106,13 +113,15 @@ function isBareCollectionCode(norm: string): boolean {
   return /^\d+T?$/i.test(norm)
 }
 
-function findCollectionFamilyMembers(norm: string, rows: CatalogStockRow[]): CatalogStockRow[] {
+export function findCollectionFamilyMembers(norm: string, rows: CatalogStockRow[]): CatalogStockRow[] {
   const base = norm.replace(/T$/i, '')
   if (!/^\d+$/.test(base)) return []
   return rows.filter((r) => {
     const stem = collectionNumericStem(r.sku)
     if (stem === base) return true
-    if (r.sku.startsWith(`${norm}-`)) return true
+    if (r.sku.startsWith(`${norm}-`) || r.sku.startsWith(`${base}T-`)) return true
+    const cc = r.collectionCode.replace(/T$/i, '')
+    if (cc === base) return true
     return false
   })
 }
@@ -154,9 +163,9 @@ export function resolveProductInputFromRows(
   if (exact) return { kind: 'sku', code: exact.sku, row: exact }
 
   if (isBareCollectionCode(norm)) {
-    const members = findCollectionFamilyMembers(norm, rows)
+    const members = consolidateCollectionMembers(findCollectionFamilyMembers(norm, rows))
     if (members.length >= 2) {
-      return { kind: 'collection', collectionCode: norm, members }
+      return { kind: 'collection', collectionCode: norm.replace(/T$/i, ''), members }
     }
     if (members.length === 1) {
       return { kind: 'sku', code: members[0].sku, row: members[0] }
