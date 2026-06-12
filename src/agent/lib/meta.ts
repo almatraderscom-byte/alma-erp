@@ -151,13 +151,20 @@ export async function createPagePost(opts: {
   pageId: string
   message: string
   imageUrl?: string
-}): Promise<{ postId: string; permalinkUrl?: string }> {
+  /** When true, refuse caption-only posts (image expected). */
+  requireImage?: boolean
+}): Promise<{ postId: string; permalinkUrl?: string; postedAsPhoto: boolean }> {
   const token = tokenFor(opts.pageId)
   const imageRef = normalizeFbImageRef(opts.imageUrl)
 
   if (!imageRef) {
+    if (opts.requireImage) {
+      throw new Error(
+        'ছবি পাওয়া যায়নি — শুধু ক্যাপশন পোস্ট করা হয়নি। আগে generate_image approve করুন, তারপর আবার post করুন।',
+      )
+    }
     const postId = await postFeedText(opts.pageId, token, opts.message)
-    return { postId }
+    return { postId, postedAsPhoto: false }
   }
 
   try {
@@ -170,12 +177,12 @@ export async function createPagePost(opts: {
         loaded.buffer,
         loaded.contentType,
       )
-      return { postId }
+      return { postId, postedAsPhoto: true }
     }
 
     if (/^https?:\/\//i.test(imageRef)) {
       const postId = await postPhotoByUrl(opts.pageId, token, opts.message, imageRef)
-      return { postId }
+      return { postId, postedAsPhoto: true }
     }
 
     throw new Error(
@@ -192,17 +199,36 @@ export async function createPagePost(opts: {
   }
 }
 
-export async function verifyPost(pageId: string, postId: string): Promise<boolean> {
+export interface FbPostVerification {
+  ok: boolean
+  hasMedia: boolean
+  statusType?: string
+}
+
+export async function verifyPost(pageId: string, postId: string): Promise<FbPostVerification> {
   const token = tokenFor(pageId)
-  // Graph postId for feed posts is "pageId_postId"
   const graphId = postId.includes('_') ? postId : `${pageId}_${postId}`
   const res = await resilientFetch(
-    `${GRAPH_BASE}/${graphId}?fields=id&access_token=${token}`,
+    `${GRAPH_BASE}/${graphId}?fields=id,full_picture,attachments,status_type&access_token=${token}`,
     { timeoutMs: 15_000, retries: 1 },
   )
-  if (!res.ok) return false
-  const data = (await res.json()) as { id?: string }
-  return Boolean(data.id)
+  if (!res.ok) return { ok: false, hasMedia: false }
+  const data = (await res.json()) as {
+    id?: string
+    full_picture?: string
+    status_type?: string
+    attachments?: { data?: unknown[] }
+  }
+  const hasMedia = Boolean(
+    data.full_picture ||
+    data.attachments?.data?.length ||
+    data.status_type === 'added_photos',
+  )
+  return {
+    ok: Boolean(data.id),
+    hasMedia,
+    statusType: data.status_type,
+  }
 }
 
 export async function getRecentPosts(opts: {

@@ -4,7 +4,8 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { createPagePost, verifyPost, resolvePageId, normalizeFbImageRef } from '@/agent/lib/meta'
+import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
+import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 
 export const runtime = 'nodejs'
@@ -77,14 +78,42 @@ export async function POST(
 
       const pageId = String(payload.pageId ?? resolvePageId(String(payload.page ?? 'lifestyle')))
       const message = String(payload.message ?? '')
-      const imageUrl = normalizeFbImageRef(payload.imageUrl)
+      const conversationId = String(payload.conversationId ?? action.conversationId ?? '')
+      const textOnly = payload.textOnly === true
+      const wantsImage = payload.wantsImage === true
 
-      const { postId } = await createPagePost({ pageId, message, imageUrl })
+      const { imageRef, hadRecentImageGen } = await resolveFbPostImageRef(db, {
+        conversationId: conversationId || null,
+        imageUrl: payload.imageUrl,
+        imageArtifactOrFileId: payload.imageArtifactOrFileId,
+        textOnly,
+      })
 
-      // Self-verify
+      const requireImage = wantsImage || (hadRecentImageGen && !textOnly)
+
+      const { postId, postedAsPhoto } = await createPagePost({
+        pageId,
+        message,
+        imageUrl: imageRef,
+        requireImage,
+      })
+
       const verified = await verifyPost(pageId, postId)
 
-      const result = { postId, pageId, verified }
+      if (imageRef && verified.ok && !verified.hasMedia) {
+        throw new Error(
+          'Facebook-এ পোস্ট হয়েছে কিন্তু ছবি attach হয়নি। আবার চেষ্টা করুন — generate_image path সঠিক কিনা দেখুন।',
+        )
+      }
+
+      const result = {
+        postId,
+        pageId,
+        verified: verified.ok,
+        hasMedia: verified.hasMedia,
+        postedAsPhoto,
+        imagePath: imageRef ?? null,
+      }
       await db.agentPendingAction.update({
         where: { id: actionId },
         data: { status: 'executed', result },
@@ -92,8 +121,10 @@ export async function POST(
 
       // Append result to conversation if present
       if (payload.conversationId) {
-        const note = verified
-          ? `✅ Facebook post published successfully.\nPost ID: ${postId}`
+        const note = verified.ok
+          ? postedAsPhoto && verified.hasMedia
+            ? `✅ Facebook photo post published successfully.\nPost ID: ${postId}`
+            : `✅ Facebook post published (text only).\nPost ID: ${postId}`
           : `⚠️ Post created (ID: ${postId}) but self-verification failed — check the page.`
         await db.agentMessage.create({
           data: {

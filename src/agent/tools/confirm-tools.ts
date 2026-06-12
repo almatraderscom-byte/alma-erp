@@ -1,6 +1,7 @@
 // Tools that create pending actions (confirm-card flow) rather than executing directly.
 import { prisma } from '@/lib/prisma'
-import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, normalizeFbImageRef } from '@/agent/lib/meta'
+import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel } from '@/agent/lib/meta'
+import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
 
@@ -92,7 +93,11 @@ const post_to_facebook: AgentTool = {
       message: { type: 'string', description: 'Post text content' },
       imageArtifactOrFileId: {
         type: 'string',
-        description: 'Optional image URL or Supabase storage path',
+        description: 'Supabase path from generate_image (generated/<id>.png) — REQUIRED for photo posts',
+      },
+      textOnly: {
+        type: 'boolean',
+        description: 'True only for caption-only posts with no image',
       },
       conversationId: { type: 'string' },
     },
@@ -103,22 +108,43 @@ const post_to_facebook: AgentTool = {
       const page = String(input.page)
       const message = String(input.message)
       const pageId = resolvePageId(page)
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      const textOnly = input.textOnly === true
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { imageRef, hadRecentImageGen } = await resolveFbPostImageRef(prisma as any, {
+        conversationId,
+        imageArtifactOrFileId: input.imageArtifactOrFileId,
+        textOnly,
+      })
+
+      const imageLine = imageRef
+        ? `📷 ছবি: ${imageRef}\n\n`
+        : hadRecentImageGen
+          ? `⚠️ ছবি path খুঁজে পাওয়া যায়নি — Approve করলে শুধু ক্যাপশন যাবে!\n\n`
+          : textOnly
+            ? `📝 শুধু টেক্সট পোস্ট\n\n`
+            : ''
 
       const summary =
-        `Facebook post → Alma ${page === 'lifestyle' ? 'Lifestyle' : 'Online Shop'}\n\n` +
+        `Facebook post → Alma ${page === 'lifestyle' ? 'Lifestyle' : 'Online Shop'}\n` +
+        imageLine +
         `"${message.slice(0, 300)}${message.length > 300 ? '…' : ''}"`
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const action = await (prisma as any).agentPendingAction.create({
         data: {
-          conversationId: input.conversationId ? String(input.conversationId) : null,
+          conversationId,
           type: 'fb_post',
           payload: {
             page,
             pageId,
             message,
-            imageUrl: normalizeFbImageRef(input.imageArtifactOrFileId) ?? null,
-            conversationId: input.conversationId ?? null,
+            imageUrl: imageRef ?? null,
+            imageArtifactOrFileId: imageRef ?? null,
+            textOnly,
+            wantsImage: Boolean(imageRef) || (hadRecentImageGen && !textOnly),
+            conversationId,
           },
           summary,
           costEstimate: 0,
