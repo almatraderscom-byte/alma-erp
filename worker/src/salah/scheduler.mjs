@@ -85,20 +85,22 @@ function waqtDisplayName(waqt, prayerTimes) {
 
 // ── Inline keyboard buttons ───────────────────────────────────────────────────
 
-function salahButtons(waqt) {
+function salahButtons(waqt, dateYmd = null) {
+  const d = dateYmd ? `:${dateYmd}` : ''
   return {
     inline_keyboard: [[
-      { text: '✅ পড়েছি',    callback_data: `salah_done:${waqt}:prayed_on_time` },
-      { text: '🕐 পরে পড়বো', callback_data: `salah_later:${waqt}` },
+      { text: '✅ পড়েছি',    callback_data: `salah_done:${waqt}:prayed_on_time${d}` },
+      { text: '🕐 পরে পড়বো', callback_data: `salah_later:${waqt}${d}` },
     ]],
   }
 }
 
-function qazaButtons(waqt) {
+function qazaButtons(waqt, dateYmd = null) {
+  const d = dateYmd ? `:${dateYmd}` : ''
   return {
     inline_keyboard: [[
-      { text: '✅ কাযা পড়েছি', callback_data: `salah_done:${waqt}:qaza` },
-      { text: '😔 মিস হয়েছে',  callback_data: `salah_done:${waqt}:missed` },
+      { text: '✅ কাযা পড়েছি', callback_data: `salah_done:${waqt}:qaza${d}` },
+      { text: '😔 মিস হয়েছে',  callback_data: `salah_done:${waqt}:missed${d}` },
     ]],
   }
 }
@@ -223,7 +225,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
             bot,
             ownerChatId,
             `Sir, গতকাল *${prevName}*-এর নামাজ পড়েছেন কি?`,
-            { parse_mode: 'Markdown', reply_markup: qazaButtons(y.waqt) },
+            { parse_mode: 'Markdown', reply_markup: qazaButtons(y.waqt, yesterday) },
           )
         }
       }
@@ -414,14 +416,14 @@ export async function initializeDailySalahRecords(supabase) {
 
 // ── Handle Telegram salah button callbacks ────────────────────────────────────
 
-export async function handleSalahCallback(ctx, action, waqt, status) {
+export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = null) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
 
-  const today = dhakaTodayYmd()
+  const recordDate = dateYmd || dhakaTodayYmd()
 
   if (action === 'salah_done') {
-    await upsertSalahRecord({ date: today, waqt, status })
+    await upsertSalahRecord({ date: recordDate, waqt, status })
     const messages = {
       prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।`,
       prayed_late:    `✅ আলহামদুলিল্লাহ। পরের ওয়াক্ত সময়মতো পড়ার চেষ্টা করুন।`,

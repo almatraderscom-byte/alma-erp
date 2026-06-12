@@ -59,11 +59,29 @@ export async function POST(req: NextRequest) {
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
 
+  const PRAYED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
+
   try {
     const dateObj        = new Date(`${date}T00:00:00+06:00`)
     const windowStartDt  = windowStart ? new Date(windowStart) : new Date()
     const windowEndDt    = windowEnd   ? new Date(windowEnd)   : new Date()
     const recordStatus   = status || 'pending'
+
+    const existing = await db.agentSalahRecord.findUnique({
+      where: { date_waqt: { date: dateObj, waqt } },
+    })
+
+    // Dawn re-init must not wipe owner confirmations (fixes false fajr re-reminders).
+    if (resetDay && existing && PRAYED_STATUSES.has(existing.status)) {
+      const record = await db.agentSalahRecord.update({
+        where: { date_waqt: { date: dateObj, waqt } },
+        data: {
+          ...(windowStart ? { windowStart: windowStartDt } : {}),
+          ...(windowEnd ? { windowEnd: windowEndDt } : {}),
+        },
+      })
+      return NextResponse.json({ ok: true, record })
+    }
 
     const record = await db.agentSalahRecord.upsert({
       where:  { date_waqt: { date: dateObj, waqt } },
@@ -72,7 +90,7 @@ export async function POST(req: NextRequest) {
         ...(windowEnd             ? { windowEnd: windowEndDt } : {}),
         ...(status              ? { status, confirmedAt: ['prayed_on_time','prayed_late','qaza','missed'].includes(status) ? new Date() : null } : {}),
         ...(incrementReminders  ? { remindersSent: { increment: 1 } } : {}),
-        ...(resetDay            ? { remindersSent: 0, confirmedAt: null } : {}),
+        ...(resetDay            ? { remindersSent: 0, confirmedAt: null, ...(status ? { status: recordStatus } : {}) } : {}),
       },
       create: {
         date: dateObj, waqt, windowStart: windowStartDt, windowEnd: windowEndDt,

@@ -515,12 +515,20 @@ export function createTelegramBot() {
       await ctx.reply('✅ চ্যাট পরিবর্তন হয়েছে।')
 
     } else if (data.startsWith('salah_done:') || data.startsWith('salah_later:')) {
-      // salah_done:<waqt>:<status> or salah_later:<waqt>
+      // salah_done:<waqt>:<status>[:YYYY-MM-DD]  |  salah_later:<waqt>[:YYYY-MM-DD]
       const parts  = data.split(':')
       const action = parts[0]
       const waqt   = parts[1]
       const status = parts[2]
-      await handleSalahCallback(ctx, action, waqt, status)
+      const maybeDate = parts[3] ?? parts[2]
+      const dateYmd = /^\d{4}-\d{2}-\d{2}$/.test(maybeDate) ? maybeDate : null
+      await handleSalahCallback(
+        ctx,
+        action,
+        waqt,
+        action === 'salah_done' ? status : undefined,
+        dateYmd,
+      )
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
       await handleReminderCallback(ctx, data)

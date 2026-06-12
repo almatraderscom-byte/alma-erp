@@ -22,11 +22,12 @@ function isSalahQuestion(text: string): boolean {
 /** Owner confirms prayer was done */
 function hasPrayedSignal(text: string): boolean {
   return (
-    /পড়েছি|পড়লাম|পড়েছেন(?! কি)|পড়ে\s*ছি|পড়ে\s*ফেল|পড়ে\s*নিয়েছি/i.test(text)
-    || /আদায়\s*কর|namaz\s*por|prayed/i.test(text)
-    || /আলহামদুলিল্লাহ.*(পড়|নামাজ)/i.test(text)
-    || /(ফজর|যোহর|জোহর|আসর|মাগরিব|ইশা).*(পড়|শেষ|হয়ে|করে)/i.test(text)
-    || /(fozr|fajr|dhuhr|asr|maghrib|isha).*(por|done|kore|krsi)/i.test(text)
+    /পড়েছি|পড়লাম|পড়েছেন(?! কি)|পড়ে\s*ছি|পড়ে\s*ফেল|পড়ে\s*গেছি|পড়ে\s*নিয়েছি/i.test(text)
+    || /নামাজ\s*করেছি|namaz\s*kore|namaz\s*kor|prayed/i.test(text)
+    || /আদায়\s*কর|namaz\s*por/i.test(text)
+    || /আলহামদুলিল্লাহ.*(পড়|নামাজ|কর)/i.test(text)
+    || /(ফজর|যোহর|জোহর|আসর|মাগরিব|ইশা).*(পড়|শেষ|হয়ে|করে|করেছি|গেছে|গেল)/i.test(text)
+    || /(fozr|fajr|dhuhr|asr|maghrib|isha).*(por|done|kore|krsi|korechi|geche)/i.test(text)
   )
 }
 
