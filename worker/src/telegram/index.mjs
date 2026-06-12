@@ -45,6 +45,9 @@ import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
 import { replyMarkdownSafe } from './markdown-safe.mjs'
 import { parseTaskIdFromCallback } from './callback-data.mjs'
+import { registerBotCommands } from './commands.mjs'
+import { buildOwnerHelpText, buildStaffHelpText } from './help.mjs'
+import { showMenuPanel, handleMenuCallback } from './menu.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -507,6 +510,7 @@ export function createTelegramBot() {
         || cbData.startsWith('switch:')
         || cbData.startsWith('cat_del_')
         || cbData.startsWith('csg_')
+        || cbData.startsWith('menu:')
       if (ownerOnlyCb) {
         await ctx.answerCbQuery?.('এই বাটন শুধু Owner-এর জন্য')
         return
@@ -556,27 +560,17 @@ export function createTelegramBot() {
     )
   })
 
+  bot.command('menu', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    await showMenuPanel(ctx)
+  })
+
   bot.command('help', async (ctx) => {
-    await ctx.reply(
-      '*ALMA Assistant Bot*\n\n' +
-      '• যেকোনো বার্তা পাঠান — আমি উত্তর দেব\n' +
-      '• ভয়েস নোট পাঠাতে পারবেন (উত্তর শুনতে চাইলে "শুনান" বলুন)\n' +
-      '• ✅/❌ বোতাম দিয়ে অনুমোদন দিন\n\n' +
-      '*কমান্ড:*\n' +
-      '/new — নতুন চ্যাট শুরু\n' +
-      '/chats — পুরানো চ্যাট দেখুন\n' +
-      '/staff link <নাম> <chat_id> — স্টাফ লিঙ্ক করুন\n' +
-      '/today — আজকের স্ন্যাপশট\n' +
-      '/khoroch — খরচ সারাংশ\n' +
-      '/ask <প্রশ্ন> — agent-কে জিজ্ঞেস করুন\n' +
-      '/staff_onboard — স্টাফ GPS অনবোর্ডিং মেসেজ\n' +
-      '/catalog status — প্রোডাক্ট ছবির অগ্রগতি\n' +
-      '/group — ফ্যামিলি ডিজাইন গ্রুপ\n' +
-      '/sizechart — বয়স→সাইজ চার্ট (Owner)\n' +
-      'ফটো + ক্যাপশন কোড — ক্যাটালগ ছবি যোগ\n' +
-      '/help — এই সাহায্য',
-      { parse_mode: 'Markdown' },
-    )
+    const text = isOwner(ctx.chat?.id) ? buildOwnerHelpText() : buildStaffHelpText()
+    await ctx.reply(text, { parse_mode: 'Markdown' })
   })
 
   bot.command('staff', async (ctx) => {
@@ -912,6 +906,19 @@ export function createTelegramBot() {
         await ctx.answerCbQuery('শুধু Owner')
       }
 
+    } else if (data.startsWith('menu:')) {
+      if (isOwner(ctx.chat?.id)) {
+        const action = data.slice('menu:'.length)
+        const supabase = createSupabase()
+        await handleMenuCallback(ctx, action, {
+          supabase,
+          handleCsStatus,
+          handleCsModeCommand,
+        })
+      } else {
+        await ctx.answerCbQuery('শুধু Owner')
+      }
+
     } else if (data.startsWith('cs_send:')) {
       if (isOwner(ctx.chat?.id)) {
         await handleCsSendDraft(ctx, data.slice('cs_send:'.length))
@@ -971,6 +978,8 @@ export function createTelegramBot() {
 
   // Register bot with notify module so Tier 1+ can use it
   setTelegramForNotify(bot, OWNER_ID)
+
+  void registerBotCommands(bot, OWNER_ID)
 
   return bot
 }

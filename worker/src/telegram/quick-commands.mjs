@@ -15,6 +15,36 @@ function monthStart(today) {
   return today.slice(0, 8) + '01'
 }
 
+const WAQT_BN = {
+  fajr: 'ফজর', dhuhr: 'যোহর', asr: 'আসর', maghrib: 'মাগরিব', isha: 'ইশা',
+}
+
+export async function handleSalahTodayCommand(ctx, supabase) {
+  const today = dhakaToday()
+  const { data: salahRecords } = await supabase
+    .from('salah_records')
+    .select('waqt, status')
+    .eq('date', today)
+
+  if (!salahRecords?.length) {
+    await ctx.reply(`🕌 ${today} — এখনো নামাজ রেকর্ড নেই।`)
+    return
+  }
+
+  const lines = salahRecords.map((r) => {
+    const name = WAQT_BN[r.waqt] ?? r.waqt
+    const st = r.status === 'prayed_on_time' ? '✅ সময়মতো'
+      : r.status === 'prayed_late' ? '⏰ দেরিতে'
+      : r.status === 'qaza' ? '🔄 কাযা'
+      : r.status === 'missed' ? '❌ মিস'
+      : '⏳ বাকি'
+    return `• ${name}: ${st}`
+  }).join('\n')
+
+  const on = salahRecords.filter((r) => r.status === 'prayed_on_time').length
+  await ctx.reply(`🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`, { parse_mode: 'Markdown' })
+}
+
 export async function handleTodayCommand(ctx, supabase) {
   const today = dhakaToday()
 
