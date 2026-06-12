@@ -13,6 +13,7 @@
 
 import { getPrayerTimes, windowProgress } from './times.mjs'
 import { dhakaTodayYmd, dhakaNoonUtc, dhakaYesterdayYmd } from './dhaka-date.mjs'
+import { isFridayDhaka } from './dhaka-schedule.mjs'
 import {
   level1Message,
   level2Message,
@@ -34,6 +35,8 @@ const WAQT_NAMES = {
 
 const WAQT_ORDER = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
 const SETTLED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
+/** Friday: follow-up 90 min after 1:00 PM azan (~2:30 PM) — jummah window, not full zuhr end. */
+const JUMMAH_FOLLOWUP_MS = 90 * 60 * 1000
 
 function isOwnerConfirmed(rec) {
   return SETTLED_STATUSES.has(rec.status) || Boolean(rec.confirmedAt)
@@ -287,8 +290,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const progress = windowProgress(windowStart, windowEnd)
     const msSinceStart = now - windowStart
 
-    // Azan at window start (first ~6 min) — Tier 2 + voice + ntfy
-    if (msSinceStart >= 0 && msSinceStart < 6 * 60 * 1000 && remindersSent === 0) {
+    // Azan at window start — catch up on first check after start (not limited to 6 min)
+    if (msSinceStart >= 0 && remindersSent === 0 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level1Message(waqt, name, today, remindersSent)
       await notify({
@@ -328,6 +331,32 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
+    // Friday Jummah: firm follow-up ~90 min after azan (≈2:30 PM) — before full zuhr window ends
+    if (
+      waqt === 'dhuhr'
+      && isFridayDhaka(today)
+      && msSinceStart >= JUMMAH_FOLLOWUP_MS
+      && now < windowEnd
+      && remindersSent === 1
+    ) {
+      const name = waqtName(waqt)
+      const msg = `Sir, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${level2Message(waqt, name, today, remindersSent)}`
+      await notify({
+        tier:         escalationLevel >= 2 ? 2 : 1,
+        title:        `${name} — জুম্মা follow-up`,
+        message:      msg,
+        category:     'salah',
+        voice:        true,
+        skipTelegram: true,
+      })
+      await sendTelegramSafe(bot, ownerChatId, msg, {
+        parse_mode: 'Markdown',
+        reply_markup: salahButtons(waqt),
+      })
+      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
+      continue
+    }
+
     // Window closed → mark missed (only after windowEnd, never if owner already confirmed)
     if (now > windowEnd) {
       if (record.confirmedAt) continue
@@ -335,12 +364,13 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 
       const name = waqtName(waqt)
       const missedMsg = `❌ ${name}-এর ওয়াক্ত শেষ\n\n${missedMessage(waqt, name, today, griefContext)}`
+      const missedTier = escalationLevel >= 2 ? 3 : 2
       await notify({
-        tier:         2,
+        tier:         missedTier,
         title:        `${name} window ended`,
         message:      missedMsg,
         category:     'salah',
-        voice:        false,
+        voice:        missedTier >= 3,
         skipTelegram: true,
       })
       await sendTelegramSafe(bot, ownerChatId, missedMsg, {
@@ -350,8 +380,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // At ~40%: Level 1 gentle reminder + ntfy push
-    if (progress >= 40 && remindersSent === 1) {
+    // At ~40%: Level 1 gentle reminder (needs azan milestone — remindersSent >= 1)
+    if (progress >= 40 && remindersSent === 1 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level1Message(waqt, name, today, remindersSent)
       await notify({
@@ -369,7 +399,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     }
 
     // At ~70%: Level 2 firm reminder + voice
-    if (progress >= 70 && remindersSent <= 2) {
+    if (progress >= 70 && remindersSent <= 2 && remindersSent >= 1 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level2Message(waqt, name, today, remindersSent)
       await notify({
@@ -387,8 +417,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
     }
 
-    // At ~90%: Level 3 critical + call
-    if (progress >= 90 && remindersSent <= 3) {
+    // At ~90%: Level 3 critical + Twilio phone call
+    if (progress >= 90 && remindersSent <= 3 && remindersSent >= 1 && now < windowEnd) {
       const name = waqtName(waqt)
       const msg = level3Message(waqt, name, today, remindersSent, griefContext)
       await notify({
