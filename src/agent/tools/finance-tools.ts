@@ -16,6 +16,7 @@
  * EVERY log → confirm card before save.
  */
 import { prisma } from '@/lib/prisma'
+import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -266,58 +267,156 @@ const get_expense_summary: AgentTool = {
 
 // ── get_ledger_balances ───────────────────────────────────────────────────────
 
+function ledgerEntrySign(direction: string): number {
+  return (direction === 'lent' || direction === 'repaid_to_me') ? 1 : -1
+}
+
+type LedgerRow = {
+  id: string
+  direction: string
+  amount: number
+  currency: string
+  note: string | null
+  occurredAt: Date
+}
+
+function serializeLedgerEntries(
+  rows: LedgerRow[],
+  opts: { oldestFirst: boolean; maxEntries: number },
+) {
+  const chronological = [...rows].sort(
+    (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
+  )
+  const totalCount = chronological.length
+  const capped = totalCount > opts.maxEntries
+    ? chronological.slice(totalCount - opts.maxEntries)
+    : chronological
+
+  const runningByCurrency: Record<string, number> = {}
+  const withRunning = capped.map((r) => {
+    const sign = ledgerEntrySign(r.direction)
+    runningByCurrency[r.currency] = (runningByCurrency[r.currency] || 0) + sign * r.amount
+    return {
+      id: r.id,
+      direction: r.direction,
+      directionLabel: DIRECTION_BN[r.direction] ?? r.direction,
+      amount: r.amount,
+      currency: r.currency,
+      note: r.note,
+      occurredAt: r.occurredAt.toISOString(),
+      occurredAtDhaka: formatDateTimeDhaka(r.occurredAt),
+      signedAmount: sign * r.amount,
+      runningBalance: runningByCurrency[r.currency],
+    }
+  })
+
+  const display = opts.oldestFirst ? withRunning : [...withRunning].reverse()
+  const entries = display.map((r, index) => ({
+    serial: index + 1,
+    ...r,
+  }))
+
+  const byCurrency: Record<string, typeof entries> = {}
+  for (const e of entries) {
+    if (!byCurrency[e.currency]) byCurrency[e.currency] = []
+    byCurrency[e.currency].push(e)
+  }
+
+  return { entries, entriesByCurrency: byCurrency, totalCount, truncated: totalCount > opts.maxEntries }
+}
+
 const get_ledger_balances: AgentTool = {
   name: 'get_ledger_balances',
   description:
-    'Returns net balances per person, per currency. ' +
-    'Positive balance = they owe you; negative = you owe them. ' +
-    'Optionally filter by person name.',
+    'Returns net balances per person and ledger transaction history. ' +
+    'When person is set, returns ALL matching entries in serial order (not just recent 5). ' +
+    'Positive balance = they owe you; negative = you owe them.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      person:   { type: 'string', description: 'Filter by person name (optional)' },
-      currency: { type: 'string', enum: ['BDT','AED'], description: 'Filter currency (optional)' },
+      person: {
+        type: 'string',
+        description: 'Filter by person name — returns full transaction list for that person',
+      },
+      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Filter currency (optional)' },
+      order: {
+        type: 'string',
+        enum: ['oldest_first', 'newest_first'],
+        description: 'Serial order (default oldest_first)',
+      },
+      maxEntries: {
+        type: 'number',
+        description: 'Max entries per person (default 500 when person set, else 5 for overview)',
+      },
     },
   },
   handler: async (input) => {
     try {
+      const personFilter = input.person ? String(input.person).trim() : ''
+      const oldestFirst = input.order !== 'newest_first'
+      const maxPerPerson = personFilter
+        ? Math.min(Math.max(Number(input.maxEntries ?? 500), 1), 2000)
+        : Math.min(Math.max(Number(input.maxEntries ?? 5), 1), 50)
+
       const where: Record<string, unknown> = {}
-      if (input.person)   where.personName = { contains: String(input.person), mode: 'insensitive' }
-      if (input.currency) where.currency   = String(input.currency)
+      if (personFilter) where.personName = { contains: personFilter, mode: 'insensitive' }
+      if (input.currency) where.currency = String(input.currency)
 
       const rows = await db.agentFinanceLedger.findMany({
         where,
-        orderBy: [{ personName: 'asc' }, { occurredAt: 'desc' }],
-        take: 500,
+        orderBy: [{ personName: 'asc' }, { occurredAt: 'asc' }],
+        take: personFilter ? 2000 : 500,
       })
 
-      // Net balance: lent/repaid_to_me = positive (they owe me); borrowed/repaid_by_me = negative (I owe them)
       const balances: Record<string, Record<string, number>> = {}
-      const histories: Record<string, Array<{
-        id: string; direction: string; amount: number; currency: string; note: string|null; occurredAt: Date
-      }>> = {}
+      const histories: Record<string, LedgerRow[]> = {}
+      const displayNames: Record<string, string> = {}
 
       for (const r of rows) {
         const key = r.personName.toLowerCase()
+        displayNames[key] = r.personName
         if (!balances[key]) balances[key] = {}
         if (!histories[key]) histories[key] = []
 
-        const sign = (r.direction === 'lent' || r.direction === 'repaid_to_me') ? 1 : -1
+        const sign = ledgerEntrySign(r.direction)
         balances[key][r.currency] = (balances[key][r.currency] || 0) + sign * r.amount
 
         histories[key].push({
-          id: r.id, direction: r.direction, amount: r.amount,
-          currency: r.currency, note: r.note, occurredAt: r.occurredAt,
+          id: r.id,
+          direction: r.direction,
+          amount: r.amount,
+          currency: r.currency,
+          note: r.note,
+          occurredAt: r.occurredAt,
         })
       }
 
-      const result = Object.entries(balances).map(([person, bals]) => ({
-        person,
-        balances: bals,
-        recentEntries: (histories[person] || []).slice(0, 5),
-      }))
+      const result = Object.entries(balances).map(([personKey, bals]) => {
+        const history = histories[personKey] || []
+        const serialized = serializeLedgerEntries(history, {
+          oldestFirst,
+          maxEntries: maxPerPerson,
+        })
+        return {
+          person: displayNames[personKey] ?? personKey,
+          balances: bals,
+          entryCount: serialized.totalCount,
+          truncated: serialized.truncated,
+          entries: serialized.entries,
+          entriesByCurrency: serialized.entriesByCurrency,
+          // Back-compat alias — now same as full list when person filter used
+          recentEntries: serialized.entries.slice(-5),
+        }
+      })
 
-      return { success: true, data: { balances: result } }
+      return {
+        success: true,
+        data: {
+          balances: result,
+          personFilter: personFilter || null,
+          includesAllEntries: Boolean(personFilter),
+        },
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
