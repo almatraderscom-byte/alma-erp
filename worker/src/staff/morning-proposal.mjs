@@ -1,6 +1,6 @@
 /**
- * Morning Proposal Job — runs at 09:00 Asia/Dhaka
- * Uses /api/assistant/internal/staff-task-proposal for data-driven tasks.
+ * Staff task proposal — uses /api/assistant/internal/staff-task-proposal.
+ * Evening job: targetOffsetDays=1 (tomorrow). Legacy morning proposal removed.
  */
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
@@ -27,27 +27,27 @@ function dhakaDateStr(offset = 0) {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
-export async function runMorningProposal(supabase) {
-  console.log('[morning-proposal] starting...')
-  const today = dhakaDateStr(0)
+/** @param {{ targetOffsetDays?: number }} opts — 0=today, 1=tomorrow (evening proposal) */
+export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
+  const targetDate = dhakaDateStr(targetOffsetDays)
+  const label = targetOffsetDays === 1 ? 'evening-proposal' : 'task-proposal'
+  console.log(`[${label}] starting for ${targetDate}...`)
 
   try {
-    const proposal = await callInternal(`/api/assistant/internal/staff-task-proposal?date=${today}`)
+    const proposal = await callInternal(`/api/assistant/internal/staff-task-proposal?date=${targetDate}`)
     if (!proposal.success || !proposal.tasks?.length) {
-      console.warn('[morning-proposal] no tasks from proposal API:', proposal.error || proposal.raw)
+      console.warn(`[${label}] no tasks from proposal API:`, proposal.error || proposal.raw)
       return
     }
 
-    // Mark yesterday carry-forward as carried
-    const yesterday = dhakaDateStr(-1)
+    const carryFrom = dhakaDateStr(targetOffsetDays - 1)
     await supabase
       .from('staff_tasks')
       .update({ status: 'carried' })
-      .eq('proposed_for', yesterday)
+      .eq('proposed_for', carryFrom)
       .in('status', ['sent', 'approved'])
 
-    // Replace today's proposed tasks
-    await supabase.from('staff_tasks').delete().eq('proposed_for', today).eq('status', 'proposed')
+    await supabase.from('staff_tasks').delete().eq('proposed_for', targetDate).eq('status', 'proposed')
 
     const taskData = proposal.tasks.map((t) => ({
       id:           crypto.randomUUID(),
@@ -57,18 +57,18 @@ export async function runMorningProposal(supabase) {
       type:         t.type,
       product_ref:  t.productRef ?? null,
       status:       'proposed',
-      proposed_for: today,
+      proposed_for: targetDate,
       source:       t.source,
       created_at:   new Date().toISOString(),
     }))
 
     await supabase.from('staff_tasks').insert(taskData)
-    console.log(`[morning-proposal] inserted ${taskData.length} proposed tasks for ${today}`)
+    console.log(`[${label}] inserted ${taskData.length} proposed tasks for ${targetDate}`)
 
     const { data: insertedTasks } = await supabase
       .from('staff_tasks')
       .select('id')
-      .eq('proposed_for', today)
+      .eq('proposed_for', targetDate)
       .eq('status', 'proposed')
 
     const taskIds = insertedTasks?.map((t) => t.id) ?? []
@@ -76,8 +76,10 @@ export async function runMorningProposal(supabase) {
     await supabase.from('agent_pending_actions').insert({
       id:           crypto.randomUUID(),
       type:         'dispatch_staff_tasks',
-      payload:      { date: today, taskIds },
-      summary:      proposal.summaryBangla,
+      payload:      { date: targetDate, taskIds },
+      summary:      targetOffsetDays === 1
+        ? `🌙 *আগামীকাল (${targetDate}) স্টাফ টাস্ক*\n\n${proposal.summaryBangla}`
+        : proposal.summaryBangla,
       cost_estimate: 0,
       status:       'pending',
       created_at:   new Date().toISOString(),
@@ -100,9 +102,14 @@ export async function runMorningProposal(supabase) {
       rejectLabel:   '❌ Cancel',
     })
 
-    console.log(`[morning-proposal] approval card sent for ${taskData.length} tasks`)
+    console.log(`[${label}] approval card sent for ${taskData.length} tasks`)
   } catch (err) {
-    console.error('[morning-proposal] error:', err.message, err.stack)
+    console.error(`[${label}] error:`, err.message, err.stack)
     throw err
   }
+}
+
+/** @deprecated Use runEveningProposal or runTaskProposal */
+export async function runMorningProposal(supabase) {
+  return runTaskProposal(supabase, { targetOffsetDays: 0 })
 }

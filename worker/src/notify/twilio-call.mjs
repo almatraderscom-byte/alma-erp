@@ -125,12 +125,12 @@ export async function makeTwilioCall(text, opts = {}) {
   const accountSid  = process.env.TWILIO_ACCOUNT_SID
   const authToken   = process.env.TWILIO_AUTH_TOKEN
   const fromNumber  = process.env.TWILIO_FROM_NUMBER
-  const toNumber    = process.env.TWILIO_TO_NUMBER
+  const toNumber    = opts.toNumber ?? process.env.TWILIO_TO_NUMBER
   const publicBase  = getTwilioPublicBase()
   const appUrl      = (process.env.APP_URL ?? '').replace(/\/$/, '')
 
   if (!accountSid || !authToken || !fromNumber || !toNumber) {
-    return { ok: false, error: 'Twilio env vars missing (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER / TWILIO_TO_NUMBER)' }
+    return { ok: false, error: 'Twilio env vars missing (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER / destination number)' }
   }
 
   const now = Date.now()

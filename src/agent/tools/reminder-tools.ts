@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
 import { checkUrgentRateLimit } from '@/agent/lib/urgent-rate-limit'
+import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -250,10 +251,63 @@ const send_urgent_alert: AgentTool = {
   },
 }
 
+const outbound_phone_call: AgentTool = {
+  name: 'outbound_phone_call',
+  description:
+    'Places a Twilio voice call to a phone number and speaks the owner\'s message (Bangla TTS). ' +
+    'Use when Sir gives a phone number AND what to say on the call (e.g. "017… কে কল করে বলো …"). ' +
+    'Always requires Approve confirm card before dialing. Owner-only; Bangladesh +880 numbers.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      phone: { type: 'string', description: 'Phone number (01XXXXXXXXX or +880…)' },
+      message: { type: 'string', description: 'Exact message to speak on the call' },
+      conversationId: { type: 'string' },
+    },
+    required: ['phone', 'message'],
+  },
+  handler: async (input) => {
+    try {
+      const phone = normalizeOutboundPhone(String(input.phone ?? ''))
+      const message = String(input.message ?? '').trim()
+      if (!phone) return { success: false, error: 'Invalid phone number. Use 01XXXXXXXXX or +880…' }
+      if (!message) return { success: false, error: 'message required' }
+      if (!phone.startsWith('+880')) {
+        return { success: false, error: 'Only Bangladesh numbers (+880) are supported for outbound calls.' }
+      }
+
+      const rate = await checkUrgentRateLimit(3)
+      if (!rate.ok) return { success: false, error: rate.error }
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'outbound_call',
+          payload: { phone, message },
+          summary: `📞 কল → ${phone}\n\n🗣️ "${message.slice(0, 300)}"`,
+          costEstimate: 0.05,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id,
+          phone,
+          message: 'Outbound call queued — Sir must Approve before dialing.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const REMINDER_TOOLS: AgentTool[] = [
   set_reminder,
   list_reminders,
   cancel_reminder,
   snooze_reminder,
   send_urgent_alert,
+  outbound_phone_call,
 ]

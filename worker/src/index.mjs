@@ -105,6 +105,16 @@ async function pollPendingJobs() {
         await processUrgentNotify(job.payload)
         await callJobResult(job.id, 'executed', { ok: true })
         console.log(`[worker] urgent_notify dispatched for action ${job.id}`)
+      } else if (job.type === 'outbound_call') {
+        const { processOutboundCall } = await import('./reminders/ticker.mjs')
+        try {
+          const result = await processOutboundCall(job.payload)
+          await callJobResult(job.id, 'executed', { ok: true, callSid: result.callSid })
+          console.log(`[worker] outbound_call completed for action ${job.id}`)
+        } catch (err) {
+          await callJobResult(job.id, 'failed', undefined, err.message)
+          console.error(`[worker] outbound_call failed for action ${job.id}:`, err.message)
+        }
       }
     }
   } catch (err) {

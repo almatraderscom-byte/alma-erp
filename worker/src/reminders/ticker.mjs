@@ -107,3 +107,16 @@ export async function processUrgentNotify(payload) {
   })
   console.log(`[urgent-notify] dispatched tier=${tier} title=${title}`)
 }
+
+/** Owner-approved call to an arbitrary phone number with a spoken message. */
+export async function processOutboundCall(payload) {
+  const phone = String(payload.phone ?? '')
+  const message = String(payload.message ?? '').trim()
+  if (!phone || !message) throw new Error('phone and message required')
+
+  const { makeTwilioCall } = await import('../notify/twilio-call.mjs')
+  const result = await makeTwilioCall(message, { toNumber: phone, force: true })
+  if (!result.ok) throw new Error(result.error ?? 'call failed')
+  console.log(`[outbound-call] ${phone} callSid=${result.callSid}`)
+  return result
+}

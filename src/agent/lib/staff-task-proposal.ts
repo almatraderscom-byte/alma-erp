@@ -1,6 +1,6 @@
 /**
  * Proactive staff task proposal — inventory, sales, FB, carry-forward.
- * Used by prepare_staff_task_proposal tool and morning-proposal worker job.
+ * Used by prepare_staff_task_proposal tool and evening-proposal worker job.
  */
 import { prisma } from '@/lib/prisma'
 import { serverGet } from '@/lib/server-api'

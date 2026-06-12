@@ -3,7 +3,8 @@
  * Manual job trigger for testing schedulers.
  * Usage: node worker/scripts/trigger.mjs <job-name>
  * Examples:
- *   node worker/scripts/trigger.mjs morning-proposal
+ *   node worker/scripts/trigger.mjs evening-proposal
+ *   node worker/scripts/trigger.mjs morning-staff-reminder
  *   node worker/scripts/trigger.mjs night-report
  *   node worker/scripts/trigger.mjs salah-escalation
  *   node worker/scripts/trigger.mjs messenger-scan
@@ -17,7 +18,7 @@ import { createClient } from '@supabase/supabase-js'
 const jobName = process.argv[2]
 if (!jobName) {
   console.error('Usage: node trigger.mjs <job-name>')
-  console.error('Jobs: salah-init, morning-proposal, ads-monitor, midday-checkin, salah-escalation,')
+  console.error('Jobs: salah-init, evening-proposal, morning-staff-reminder, ads-monitor, midday-checkin, salah-escalation,')
   console.error('      messenger-scan, night-report, weekly-review, daily-summary, reminder-ticker')
   process.exit(1)
 }
@@ -57,7 +58,9 @@ const context = { supabase, bot }
 console.log(`[trigger] Running job: ${jobName}`)
 
 const handlers = {
-  'morning-proposal':  async () => { const { runMorningProposal } = await import('../src/staff/morning-proposal.mjs'); await runMorningProposal(supabase) },
+  'evening-proposal':       async () => { const { runEveningProposal } = await import('../src/staff/evening-proposal.mjs'); await runEveningProposal(supabase) },
+  'morning-staff-reminder': async () => { const { runMorningStaffReminder } = await import('../src/staff/morning-staff-reminder.mjs'); await runMorningStaffReminder(context) },
+  'morning-proposal':       async () => { const { runTaskProposal } = await import('../src/staff/morning-proposal.mjs'); await runTaskProposal(supabase, { targetOffsetDays: 1 }) },
   'ads-monitor':       async () => { const { runAdsMonitor } = await import('../src/ads/monitor.mjs'); await runAdsMonitor({ supabase }) },
   'midday-checkin':    async () => { const { runMiddayCheckin } = await import('../src/staff/midday-checkin.mjs'); await runMiddayCheckin(context) },
   'salah-escalation':  async () => { const { checkAndEscalateSalah } = await import('../src/salah/scheduler.mjs'); await checkAndEscalateSalah(context) },

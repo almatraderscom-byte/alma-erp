@@ -59,9 +59,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-  const { date, waqt, windowStart, windowEnd, status, incrementReminders, resetDay } = body as {
+  const { date, waqt, windowStart, windowEnd, status, incrementReminders, resetDay, reopen } = body as {
     date?: string; waqt?: string; windowStart?: string; windowEnd?: string;
-    status?: string; incrementReminders?: boolean; resetDay?: boolean;
+    status?: string; incrementReminders?: boolean; resetDay?: boolean; reopen?: boolean;
   }
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
@@ -76,6 +76,27 @@ export async function POST(req: NextRequest) {
     const existing = await db.agentSalahRecord.findUnique({
       where: { date_waqt: { date: dateObj, waqt } },
     })
+
+    if (reopen && existing) {
+      const record = await db.agentSalahRecord.update({
+        where: { date_waqt: { date: dateObj, waqt } },
+        data: { status: 'pending', confirmedAt: null, remindersSent: 0 },
+      })
+      return NextResponse.json({ ok: true, record, reopened: true })
+    }
+
+    const effectiveWindowStart = windowStartDt ?? existing?.windowStart
+    if (
+      existing
+      && effectiveWindowStart
+      && (status === 'prayed_on_time' || status === 'prayed_late')
+      && now < new Date(effectiveWindowStart)
+    ) {
+      return NextResponse.json(
+        { error: `${waqt} ওয়াক্তের সময় এখনো শুরু হয়নি — ভবিষ্যতের নামাজ মার্ক করা যাবে না।` },
+        { status: 400 },
+      )
+    }
 
     // Dawn re-init: refresh windows only — never wipe owner confirmations.
     if (resetDay && existing && isOwnerConfirmed(existing)) {

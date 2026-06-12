@@ -45,7 +45,15 @@ function isOwnerConfirmed(rec) {
   return SETTLED_STATUSES.has(rec.status) || Boolean(rec.confirmedAt)
 }
 
-function shouldEscalateSalah(rec) {
+function isPhantomConfirmation(confirmedAt, azanOrWindowStart) {
+  if (!confirmedAt) return false
+  const confirmed = new Date(confirmedAt)
+  const start = new Date(azanOrWindowStart)
+  return Number.isFinite(confirmed.getTime()) && Number.isFinite(start.getTime()) && confirmed < start
+}
+
+function shouldEscalateSalah(rec, azanOrWindowStart) {
+  if (azanOrWindowStart && isPhantomConfirmation(rec.confirmedAt, azanOrWindowStart)) return true
   return rec.status === 'pending' && !rec.confirmedAt
 }
 
@@ -236,7 +244,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     if (stale.length >= 2) {
       console.warn(`[salah] stale windows (${stale.length}) — re-initializing ${today}`)
       await initializeDailySalahRecords(supabase)
-      return
+      records = await getSalahRecords(today)
     }
   }
 
@@ -264,11 +272,24 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   }
 
   for (const raw of records) {
-    const record = normalizeSalahRecord(raw)
-    if (!shouldEscalateSalah(record)) continue
-
-    const { windowEnd, waqt, remindersSent } = record
+    let record = normalizeSalahRecord(raw)
+    const { windowEnd, waqt } = record
     let { windowStart } = record
+    let remindersSent = record.remindersSent
+
+    const waqtScheduleEarly = schedule[waqt] ?? prayerTimes[waqt]
+    const azanTimeEarly = new Date(waqtScheduleEarly?.azan ?? windowStart)
+
+    // Agent/LLM sometimes marks Maghrib/Isha before azan — heal and resume reminders.
+    if (isPhantomConfirmation(record.confirmedAt, azanTimeEarly) && now >= azanTimeEarly) {
+      console.warn(`[salah] phantom confirmation for ${waqt} — reopening for reminders`)
+      await upsertSalahRecord({ date: today, waqt, reopen: true })
+      record = { ...record, status: 'pending', confirmedAt: null, remindersSent: 0 }
+      remindersSent = 0
+      raw.status = 'pending'
+    }
+
+    if (!shouldEscalateSalah(record, azanTimeEarly)) continue
 
     if (!isValidWindow(windowStart, windowEnd)) {
       console.warn(`[salah] skip invalid window for ${waqt} on ${today}`)

@@ -355,6 +355,18 @@ export async function POST(
     })
   }
 
+  if (action.type === 'outbound_call') {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    return Response.json({
+      success: true,
+      queued: true,
+      message: 'Outbound call approved. Worker will place the call shortly.',
+    })
+  }
+
   if (action.type === 'pause_campaign') {
     const { campaignId } = payload as { campaignId: string }
     const result = await pauseCampaign(String(campaignId))

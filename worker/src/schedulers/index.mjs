@@ -6,7 +6,8 @@
  * SCHEDULERS_ENABLED env flag is the global kill switch.
  *
  * Schedule (Asia/Dhaka = UTC+6):
- *   09:00  morning-proposal    (daily)
+ *   20:00  evening-proposal    (daily — tomorrow's tasks)
+ *   09:00  morning-staff-reminder (daily — remind + track)
  *   09:30  ads-monitor         (daily)
  *   13:30  midday-checkin      (daily)
  *   Every 5 min: salah-escalation-check
@@ -24,7 +25,8 @@ import { createClient } from '@supabase/supabase-js'
 // ── Lazy imports (only load when job runs) ─────────────────────────────────
 
 const lazy = {
-  morningProposal:    () => import('../staff/morning-proposal.mjs'),
+  eveningProposal:    () => import('../staff/evening-proposal.mjs'),
+  morningStaffReminder: () => import('../staff/morning-staff-reminder.mjs'),
   middayCheckin:      () => import('../staff/midday-checkin.mjs'),
   nightReport:        () => import('../staff/night-report.mjs'),
   weeklyReview:       () => import('../staff/weekly-review.mjs'),
@@ -43,7 +45,8 @@ const lazy = {
 
 export const SCHEDULER_REGISTRY = [
   { name: 'salah-init',             cronUtc: '0 18 * * *',   description: 'Midnight Dhaka — create today salah records' },
-  { name: 'morning-proposal',       cronUtc: '0 3 * * *',   description: 'Morning task proposal to owner (09:00 Dhaka)' },
+  { name: 'evening-proposal',       cronUtc: '0 14 * * *',  description: 'Evening task proposal for tomorrow (20:00 Dhaka)' },
+  { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
   { name: 'salah-escalation',       cronUtc: '*/5 * * * *',  description: 'Salah escalation check (every 5 min)' },
@@ -107,9 +110,14 @@ export async function setupSchedulers({ connection, supabase, bot }) {
           await initializeDailySalahRecords(supabase)
           break
         }
-        case 'morning-proposal': {
-          const { runMorningProposal } = await lazy.morningProposal()
-          await runMorningProposal(supabase)
+        case 'evening-proposal': {
+          const { runEveningProposal } = await lazy.eveningProposal()
+          await runEveningProposal(supabase)
+          break
+        }
+        case 'morning-staff-reminder': {
+          const { runMorningStaffReminder } = await lazy.morningStaffReminder()
+          await runMorningStaffReminder({ supabase, bot })
           break
         }
         case 'ads-monitor': {

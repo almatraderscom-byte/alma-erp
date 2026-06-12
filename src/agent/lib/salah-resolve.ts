@@ -14,8 +14,24 @@ export function isOwnerConfirmed(record: { status: string; confirmedAt?: Date | 
   return record.confirmedAt != null
 }
 
+/** Confirmed before azan/window — agent/LLM marked too early; reminders must still fire. */
+export function isPhantomSalahConfirmation(
+  record: { confirmedAt?: Date | string | null; windowStart?: Date | string },
+  azanOrWindowStart: Date,
+): boolean {
+  if (!record.confirmedAt) return false
+  const confirmed = new Date(record.confirmedAt)
+  const start = new Date(azanOrWindowStart)
+  if (!Number.isFinite(confirmed.getTime()) || !Number.isFinite(start.getTime())) return false
+  return confirmed < start
+}
+
 /** Scheduler may still remind / mark missed only for untouched pending rows. */
-export function shouldEscalateSalah(record: { status: string; confirmedAt?: Date | string | null }): boolean {
+export function shouldEscalateSalah(
+  record: { status: string; confirmedAt?: Date | string | null; windowStart?: Date | string },
+  azanOrWindowStart?: Date,
+): boolean {
+  if (azanOrWindowStart && isPhantomSalahConfirmation(record, azanOrWindowStart)) return true
   return record.status === 'pending' && record.confirmedAt == null
 }
 
