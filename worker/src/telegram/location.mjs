@@ -16,7 +16,7 @@ export async function resolveStaffByChatId(supabase, chatId) {
   const { data } = await supabase
     .from('agent_staff')
     .select('id, name')
-    .eq('telegram_chat_id', String(chatId))
+    .eq('telegramChatId', String(chatId))
     .eq('active', true)
     .limit(1)
   return data?.[0] ?? null

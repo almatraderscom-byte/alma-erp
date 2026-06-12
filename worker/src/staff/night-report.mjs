@@ -15,7 +15,7 @@ export async function runNightReport({ supabase, bot }) {
 
   const { data: allTasks } = await supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, telegram_chat_id)`)
+    .select(`*, agent_staff(id, name, telegramChatId)`)
     .eq('proposed_for', today)
     .not('status', 'eq', 'cancelled')
 

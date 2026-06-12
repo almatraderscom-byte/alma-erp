@@ -11,7 +11,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
 
   const { data: pendingTasks } = await supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, telegram_chat_id)`)
+    .select(`*, agent_staff(id, name, telegramChatId)`)
     .eq('proposed_for', today)
     .eq('status', 'sent')
 
@@ -31,7 +31,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
   const stuckStaff = []
 
   for (const { staff, tasks } of Object.values(byStaff)) {
-    const chatId = staff?.telegram_chat_id
+    const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
 
     if (chatId) {

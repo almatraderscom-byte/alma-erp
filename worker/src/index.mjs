@@ -270,8 +270,12 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
   }
 }, { connection, concurrency: 1 })
 
-staffDispatchWorker.on('failed', (job, err) => {
+staffDispatchWorker.on('failed', async (job, err) => {
   console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', { error: err.message }).catch(() => {})
+  }
 })
 
 imageGenWorker.on('completed', (job) => console.log(`[worker] image-gen ${job.id} completed`))

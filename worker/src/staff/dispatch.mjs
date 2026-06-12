@@ -20,7 +20,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
   const query = supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, role, telegram_chat_id)`)
+    .select(`*, agent_staff(id, name, role, telegramChatId)`)
     .eq('status', 'approved')
     .eq('proposed_for', date)
 
@@ -45,7 +45,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
 
   for (const { staff, tasks: staffTasks } of Object.values(byStaff)) {
-    const chatId = staff?.telegram_chat_id
+    const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
 
     if (!chatId) {
