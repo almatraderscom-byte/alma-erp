@@ -19,7 +19,8 @@ import {
   statusCountsForPills,
 } from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
-import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText } from '@/components/ui'
+import { PageHeader, Card, StatusBadge, PaymentTag, Button, SearchInput, Select, Avatar, StatRow, Skeleton, Empty, Money, BdtText, KpiCard, KPI_AUTO_GRID } from '@/components/ui'
+import { PageEnter } from '@/components/layout/AgentAccess'
 import { fmt, COURIER_STEPS, STATUS_COLORS, orderStatusLabel } from '@/lib/utils'
 import {
   calculateOrderProfit,
@@ -741,7 +742,7 @@ function OrdersPageContent() {
     }
   }, [searchParams, router, mdUp])
 
-  const { orders: allOrders, loading, refetch, enabled } = useOrdersData()
+  const { orders: allOrders, loading, error, refetch, enabled } = useOrdersData()
   const { businessId } = useBusiness()
   const { range, label: rangeLabel } = useDateRange()
 
@@ -802,9 +803,9 @@ function OrdersPageContent() {
           <>
             <Link
               href="/orders/new"
-              className="md:hidden inline-flex items-center gap-2 rounded-xl border border-gold-dim/50 bg-gold/10 px-3.5 py-2 text-xs font-semibold text-gold-lt transition-all duration-150 hover:bg-gold/20 active:scale-[0.97]"
+              className="md:hidden inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-gold-dim/50 bg-gold/10 px-3.5 py-2 text-xs font-semibold text-gold-lt transition-all duration-150 hover:bg-gold/20 active:scale-[0.98]"
             >
-              + New Order
+              + নতুন অর্ডার
             </Link>
             <Button variant="gold" className="hidden md:inline-flex" onClick={() => setShowNew(true)}>
               + New Order
@@ -813,19 +814,32 @@ function OrdersPageContent() {
         }
       />
 
-      <motion.div layout className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+      <PageEnter className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+
+        {error && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+            <span>{error}</span>
+            <Button variant="ghost" size="xs" onClick={() => void refetch()}>Retry</Button>
+          </div>
+        )}
 
         <DateRangeFilter />
+
+        <div className={KPI_AUTO_GRID}>
+          <KpiCard label="Orders" value={summary.total} valueKind="plain" loading={loading} />
+          <KpiCard label="Revenue" value={summary.total_revenue} valueKind="currency" color="text-gold-lt" loading={loading} />
+          <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="text-green-400" loading={loading} />
+        </div>
 
         {/* Status pills */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
           <button onClick={() => setStatus('')}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
+            className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
             All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
           </button>
           <button
             onClick={() => setStatus(status === ALL_RETURNS_FILTER ? '' : ALL_RETURNS_FILTER)}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+            className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
               status === ALL_RETURNS_FILTER
                 ? 'text-amber-300 bg-amber-400/10 border-amber-400/35'
                 : 'border-border text-zinc-500 hover:text-zinc-300'
@@ -839,7 +853,7 @@ function OrdersPageContent() {
             const active = status === s
             return (
               <button key={s} onClick={() => setStatus(status === s ? '' : s)}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
+                className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
                 {orderStatusLabel(s)} <span className="opacity-70">{statusCounts[s] ?? 0}</span>
               </button>
@@ -855,22 +869,11 @@ function OrdersPageContent() {
           <Select value={sort} onChange={setSort} options={[{ label:'Newest', value:'newest' }, { label:'Oldest', value:'oldest' }, { label:'High price', value:'price' }, { label:'High profit', value:'profit' }]} />
         </div>
 
-        {/* Summary bar */}
-        <div className="flex items-center gap-4 px-4 py-3 bg-card border border-border rounded-xl text-xs transition-all duration-200">
-          <span className="text-zinc-500">{summary.total} orders</span>
-          <span className="w-px h-3 bg-border" />
-          <Money amount={summary.total_revenue} className="text-gold font-bold" />
-          <span className="w-px h-3 bg-border" />
-          <span className="text-green-400 font-bold inline-flex items-center gap-1">
-            <Money amount={summary.total_profit} /> profit
-          </span>
-        </div>
-
         {/* Orders table — desktop */}
         <Card className="hidden min-w-0 md:block">
           <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[72vh]" onScroll={onOrdersScroll}>
             <table className="w-full min-w-[1080px] text-xs border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm">
                 <tr className="border-b border-border">
                   {['Order ID','Date','Customer','Product','Qty','Amount','Payment','Status','Courier','Profit'].map(h => (
                     <th key={h} className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-zinc-500 whitespace-nowrap">{h}</th>
@@ -928,7 +931,16 @@ function OrdersPageContent() {
               </tbody>
             </table>
             {!loading && orders.length === 0 && (
-              <Empty icon="◫" title="No orders found for selected period" desc="Try a different date range or filters" />
+              <Empty
+                icon="◫"
+                title="No orders found for selected period"
+                desc="Try a different date range or filters"
+                action={
+                  <Link href="/orders/new">
+                    <Button variant="gold" size="sm">+ নতুন অর্ডার</Button>
+                  </Link>
+                }
+              />
             )}
           </div>
         </Card>
@@ -938,8 +950,8 @@ function OrdersPageContent() {
           {loading
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
             : mobileOrders.map(o => (
-                <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full text-left">
-                  <Card className={`p-4 transition-colors border-l-2 ${
+                <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full min-h-[44px] text-left active:scale-[0.99]">
+                  <Card interactive className={`p-4 border-l-2 ${
                     o.id === selected?.id ? 'border-gold-dim/50' : ''
                   } ${
                     isTerminalReturnOrderStatus(o.status)
@@ -969,7 +981,16 @@ function OrdersPageContent() {
               ))
           }
           {!loading && orders.length === 0 && (
-            <Empty icon="◫" title="No orders found for selected period" desc="Try a different date range or filters" />
+            <Empty
+              icon="◫"
+              title="No orders found for selected period"
+              desc="Try a different date range or filters"
+              action={
+                <Link href="/orders/new">
+                  <Button variant="gold" size="sm">+ নতুন অর্ডার</Button>
+                </Link>
+              }
+            />
           )}
           {!loading && orders.length > mobileOrders.length && (
             <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
@@ -978,17 +999,16 @@ function OrdersPageContent() {
           )}
         </div>
 
-      </motion.div>
+      </PageEnter>
 
-      {/* Mobile FAB — always visible above MobileNav, only on mobile */}
+      {/* Mobile FAB — left side so Agent FAB stays bottom-right */}
       {!showNew && !selected && (
         <Link
           href="/orders/new"
-          className="md:hidden fixed bottom-[72px] right-4 z-40 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gold/90 text-black text-sm font-bold shadow-lg shadow-gold/20 active:scale-95 transition-transform"
-          style={{ paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}
+          className="fixed bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 flex h-14 min-w-[44px] items-center gap-2 rounded-2xl border border-gold-dim/50 bg-gold/90 px-4 text-sm font-bold text-black shadow-lg shadow-gold/20 transition-transform active:scale-[0.96] md:hidden"
         >
           <span className="text-base leading-none">+</span>
-          <span>New Order</span>
+          <span>নতুন অর্ডার</span>
         </Link>
       )}
 
