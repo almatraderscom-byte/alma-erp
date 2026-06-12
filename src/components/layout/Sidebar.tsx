@@ -16,6 +16,7 @@ import { useMyProfileImage } from '@/hooks/useMyProfileImage'
 import { cn } from '@/lib/utils'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { useApprovalCount } from '@/contexts/ApprovalCountContext'
+import { AgentSidebarLink } from '@/components/layout/AgentAccess'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -60,6 +61,10 @@ export function Sidebar() {
   const nav = filterNavByRole(getNavForBusiness(business.id), role, business.id).map(item => (
     item.href === '/approvals' ? { ...item, badge: approvalCount ? String(approvalCount) : null } : item
   ))
+  const mainNav = nav.filter(n => n.href !== '/agent')
+  const showAgentPin = role === 'SUPER_ADMIN' && nav.some(n => n.href === '/agent')
+  const path = usePathname()
+  const agentActive = path.startsWith('/agent')
 
   return (
     <motion.aside
@@ -83,9 +88,15 @@ export function Sidebar() {
 
       <BusinessSwitcher collapsed={collapsed} />
 
-      <nav className="flex-1 py-3 space-y-0.5 overflow-y-auto scrollbar-hide">
-        {nav.map(n => <NavItem key={n.href} {...n} badge={n.badge ?? null} collapsed={collapsed} />)}
+      <nav className="flex-1 space-y-0.5 overflow-y-auto py-3 scrollbar-hide">
+        {mainNav.map(n => <NavItem key={n.href} {...n} badge={n.badge ?? null} collapsed={collapsed} />)}
       </nav>
+
+      {showAgentPin && (
+        <div className="shrink-0 border-t border-gold-dim/20 bg-gold/[0.03] py-2">
+          <AgentSidebarLink collapsed={collapsed} active={agentActive} />
+        </div>
+      )}
 
       <div className="border-t border-border p-3 space-y-3">
         {!collapsed && (
@@ -184,14 +195,17 @@ export function MobileNav() {
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
   const dashboardHref = roleHomePath(role, business.id)
+  const canAgent = role === 'SUPER_ADMIN' && nav.some(n => n.href === '/agent')
   const primary = useMemo(() => {
+    const crmHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/clients' : '/crm'
     const wanted = [
       { key: 'dashboard', label: 'Dashboard', icon: '⬡', href: dashboardHref },
       { key: 'orders', label: 'Orders', icon: '◫', href: '/orders' },
-      { key: 'crm', label: 'CRM', icon: '◎', href: business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/clients' : '/crm' },
+      ...(canAgent ? [{ key: 'agent', label: 'Agent', icon: '✦', href: '/agent' }] : []),
+      { key: 'crm', label: 'CRM', icon: '◎', href: crmHref },
     ]
-    return wanted.filter(item => nav.some(n => n.href === item.href) || item.href === dashboardHref)
-  }, [business.id, dashboardHref, nav])
+    return wanted.filter(item => nav.some(n => n.href === item.href) || item.href === dashboardHref || item.key === 'agent')
+  }, [business.id, canAgent, dashboardHref, nav])
 
   const secondary = useMemo(() => {
     const primaryHrefs = new Set(primary.map(p => p.href))

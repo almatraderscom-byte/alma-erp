@@ -15,6 +15,7 @@ import { OrdersDataProvider } from '@/contexts/OrdersDataContext'
 import { OrdersDataErrorBoundary } from '@/components/providers/OrdersDataErrorBoundary'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { MobileBottomSpacer, MobileNavBar } from '@/components/layout/MobileNavChrome'
+import { AgentFab } from '@/components/layout/AgentAccess'
 import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
@@ -99,6 +100,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
           </main>
         </div>
         <MobileNavBar />
+        <AgentFab />
         <RouteTransitionLoader />
         <RoutePrefetcher />
         <OneSignalPushManager />
