@@ -7,6 +7,37 @@
   --brand-secondary: #8b6914;
   --brand-accent: #f0d080;
   --font-sans: var(--font-inter), var(--font-bengali), var(--font-hind), 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-body: var(--font-sans);
+  --font-mono-nums: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Elevation layers */
+  --bg-0: #08080a;
+  --bg-1: #0f0f12;
+  --bg-2: #141418;
+  --bg-3: #1a1a20;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(201, 168, 76, 0.35);
+
+  /* Gold scale */
+  --gold-primary: #c9a84c;
+  --gold-hover: #d4b45a;
+  --gold-active: #b8943f;
+  --gold-muted: rgba(201, 168, 76, 0.12);
+
+  /* Semantic (dark-tuned) */
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
   color-scheme: dark;
 }
 
@@ -64,6 +95,24 @@ a,
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+}
+
+/* Typography scale */
+.text-h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.text-h2 { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.015em; line-height: 1.2; }
+.text-h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.25; }
+.text-h4 { font-size: 1rem; font-weight: 600; line-height: 1.3; }
+.text-body { font-size: 0.875rem; line-height: 1.5; }
+.text-caption { font-size: 0.6875rem; line-height: 1.35; letter-spacing: 0.04em; }
+.text-mono-nums { font-family: var(--font-mono-nums); font-variant-numeric: tabular-nums; }
+
+/* Card hover lift */
+.card-interactive {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.card-interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 /* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */

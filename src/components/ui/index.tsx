@@ -10,6 +10,7 @@ export { Money, BdtText } from '@/components/ui/Currency'
 export { SearchableSelect, type SearchableSelectOption } from '@/components/ui/SearchableSelect'
 import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS, orderStatusLabel } from '@/lib/utils'
 import { PageActionBar } from '@/components/layout/PageActionBar'
+import { AgentLauncherButton } from '@/components/layout/AgentAccess'
 import { AlertsActionButton } from '@/components/notifications/AlertsActionButton'
 import { usePathname } from 'next/navigation'
 import { PLATFORM_Z } from '@/lib/platform-z-index'
@@ -20,9 +21,27 @@ export function Skeleton({ className }: { className?: string }) {
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
-export function Card({ children, className, gold }: { children: React.ReactNode; className?: string; gold?: boolean }) {
+export function Card({
+  children,
+  className,
+  gold,
+  interactive,
+}: {
+  children: React.ReactNode
+  className?: string
+  gold?: boolean
+  /** Subtle hover lift — presentation only. */
+  interactive?: boolean
+}) {
   return (
-    <div className={cn('min-w-0 bg-card rounded-2xl border', gold ? 'border-gold-dim/50' : 'border-border', className)}>
+    <div
+      className={cn(
+        'min-w-0 rounded-2xl border bg-card',
+        gold ? 'border-gold-dim/50' : 'border-border',
+        interactive && 'card-interactive',
+        className,
+      )}
+    >
       {children}
     </div>
   )
@@ -167,8 +186,8 @@ export function PageHeader({
   showAlerts?: boolean
 }) {
   const pathname = usePathname() ?? ''
-  const hideAlerts = PAGE_HEADER_NO_ALERTS.some(prefix => pathname.startsWith(prefix))
-  const hasActions = Boolean(actions) || (showAlerts && !hideAlerts)
+  const hideChrome = PAGE_HEADER_NO_ALERTS.some(prefix => pathname.startsWith(prefix))
+  const hasActions = Boolean(actions) || (showAlerts && !hideChrome) || !hideChrome
 
   return (
     <header
@@ -185,7 +204,8 @@ export function PageHeader({
         {hasActions && (
           <PageActionBar className="xl:justify-end">
             {actions}
-            {showAlerts && !hideAlerts && (
+            {!hideChrome && <AgentLauncherButton className="hidden md:inline-flex" />}
+            {showAlerts && !hideChrome && (
               <AlertsActionButton className="hidden md:inline-flex" />
             )}
           </PageActionBar>
@@ -196,11 +216,27 @@ export function PageHeader({
 }
 
 // ── Button ────────────────────────────────────────────────────────────────
-export function Button({ children, onClick, variant = 'ghost', size = 'sm', disabled, className, type = 'button' }: {
-  children: React.ReactNode; onClick?: () => void; variant?: 'gold' | 'ghost' | 'secondary' | 'danger'; size?: 'xs' | 'sm' | 'md'; disabled?: boolean; className?: string; type?: 'button' | 'submit'
+export function Button({
+  children,
+  onClick,
+  variant = 'ghost',
+  size = 'sm',
+  disabled,
+  loading,
+  className,
+  type = 'button',
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  variant?: 'gold' | 'ghost' | 'secondary' | 'danger'
+  size?: 'xs' | 'sm' | 'md'
+  disabled?: boolean
+  loading?: boolean
+  className?: string
+  type?: 'button' | 'submit'
 }) {
-  const base = 'inline-flex items-center gap-2 font-semibold rounded-xl transition-all duration-150 disabled:opacity-40 active:scale-[0.97]'
-  const sizes = { xs: 'px-2.5 py-1.5 text-[11px]', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
+  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
+  const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
     gold:      'bg-gold/10 border border-gold-dim/50 text-gold-lt hover:bg-gold/20',
     secondary: 'bg-white/[0.04] border border-border text-cream hover:bg-white/[0.07] hover:border-gold-dim/30',
@@ -208,7 +244,14 @@ export function Button({ children, onClick, variant = 'ghost', size = 'sm', disa
     danger:    'bg-red-400/10 border border-red-400/30 text-red-400 hover:bg-red-400/20',
   }
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={cn(base, sizes[size], variants[variant], className)}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={cn(base, sizes[size], variants[variant], className)}
+    >
+      {loading && <Spinner size="sm" />}
       {children}
     </button>
   )
@@ -280,12 +323,23 @@ export function Spinner({ size = 'sm' }: { size?: 'sm' | 'md' | 'lg' }) {
 }
 
 // ── Empty State ───────────────────────────────────────────────────────────
-export function Empty({ icon, title, desc }: { icon: string; title: string; desc?: string }) {
+export function Empty({
+  icon,
+  title,
+  desc,
+  action,
+}: {
+  icon: string
+  title: string
+  desc?: string
+  action?: React.ReactNode
+}) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <span className="text-5xl mb-4 opacity-20">{icon}</span>
-      <p className="text-sm font-semibold text-zinc-400 mb-1">{title}</p>
+      <span className="mb-4 text-5xl opacity-20">{icon}</span>
+      <p className="mb-1 text-sm font-semibold text-zinc-400">{title}</p>
       {desc && <p className="text-[11px] text-zinc-600">{desc}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   )
 }
