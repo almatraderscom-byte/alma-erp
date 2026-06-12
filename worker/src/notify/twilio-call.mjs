@@ -9,10 +9,15 @@
  * Inline TwiML + direct Supabase signed URLs caused "completed 9s" ghost calls on BD networks.
  */
 
-import { createHmac } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { synthesizeSpeech, mp3ToTelephonyWav } from '../tts.mjs'
 import { logCost, calcTwilioCostUsd } from '../cost-log.mjs'
+import {
+  buildProxiedAudioUrl,
+  buildTwimlCallbackUrl,
+  buildTwimlSayOnlyUrl,
+  getTwilioPublicBase,
+} from '../twilio-http.mjs'
 
 const CALL_TEXT_LIMIT = 200
 /** Min gap between outbound calls — reduces carrier spam-blocking after back-to-back tests */
@@ -27,34 +32,6 @@ function getSupabase() {
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
   )
-}
-
-function signingSecret() {
-  return process.env.AGENT_INTERNAL_TOKEN ?? process.env.TWILIO_AUTH_TOKEN ?? ''
-}
-
-function signAudioPath(storagePath, expMs) {
-  return createHmac('sha256', signingSecret()).update(`${storagePath}:${expMs}`).digest('hex')
-}
-
-function buildProxiedAudioUrl(appUrl, storagePath, ttlSec = 900) {
-  const exp = Date.now() + ttlSec * 1000
-  const t = signAudioPath(storagePath, exp)
-  const base = appUrl.replace(/\/$/, '')
-  const params = new URLSearchParams({ path: storagePath, exp: String(exp), t })
-  return `${base}/api/twilio/audio?${params.toString()}`
-}
-
-function buildTwimlCallbackUrl(appUrl, audioUrl, sayText) {
-  const base = appUrl.replace(/\/$/, '')
-  const params = new URLSearchParams({ audio: audioUrl })
-  if (sayText?.trim()) params.set('say', sayText.slice(0, 400))
-  return `${base}/api/twilio/twiml/salah-call?${params.toString()}`
-}
-
-function buildTwimlSayOnlyUrl(appUrl, sayText) {
-  const base = appUrl.replace(/\/$/, '')
-  return `${base}/api/twilio/twiml/salah-call?say=${encodeURIComponent(sayText.slice(0, 400))}`
 }
 
 async function fetchCall(accountSid, authToken, callSid) {
@@ -149,13 +126,11 @@ export async function makeTwilioCall(text, opts = {}) {
   const authToken   = process.env.TWILIO_AUTH_TOKEN
   const fromNumber  = process.env.TWILIO_FROM_NUMBER
   const toNumber    = process.env.TWILIO_TO_NUMBER
+  const publicBase  = getTwilioPublicBase()
   const appUrl      = (process.env.APP_URL ?? '').replace(/\/$/, '')
 
   if (!accountSid || !authToken || !fromNumber || !toNumber) {
     return { ok: false, error: 'Twilio env vars missing (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER / TWILIO_TO_NUMBER)' }
-  }
-  if (!appUrl) {
-    return { ok: false, error: 'APP_URL missing — needed for TwiML/audio proxy (deploy Vercel routes first)' }
   }
 
   const now = Date.now()
@@ -177,9 +152,11 @@ export async function makeTwilioCall(text, opts = {}) {
       .upload(storagePath, wavBuffer, { contentType: 'audio/wav', upsert: true })
     if (uploadErr) throw new Error(`Supabase upload: ${uploadErr.message}`)
 
-    const audioUrl = buildProxiedAudioUrl(appUrl, storagePath)
-    const twimlUrl = buildTwimlCallbackUrl(appUrl, audioUrl, speechText)
-    const statusCallbackUrl = `${appUrl}/api/twilio/call-status`
+    const audioUrl = buildProxiedAudioUrl(publicBase, storagePath)
+    const twimlUrl = buildTwimlCallbackUrl(publicBase, audioUrl, speechText)
+    const statusCallbackUrl = appUrl
+      ? `${appUrl}/api/twilio/call-status`
+      : `${publicBase}/call-status`
 
     const result = await placeCall({
       accountSid,
@@ -209,11 +186,11 @@ export async function makeTwilioCall(text, opts = {}) {
       authToken,
       fromNumber,
       toNumber,
-      appUrl,
+      appUrl: publicBase,
       statusCallbackUrl,
     })
 
-    return { ok: true, callSid: result.callSid }
+    return { ok: true, callSid: result.callSid, publicBase }
   } catch (err) {
     return { ok: false, error: err.message }
   }

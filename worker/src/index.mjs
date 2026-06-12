@@ -20,6 +20,7 @@ import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
+import { startTwilioHttpServer } from './twilio-http.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -325,6 +326,8 @@ const heartbeatInterval = startHeartbeatLoop({
   hasSchedulers: Boolean(schedulerQueue),
 })
 const healthPingInterval = startHealthPingLoop()
+
+startTwilioHttpServer()
 
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
