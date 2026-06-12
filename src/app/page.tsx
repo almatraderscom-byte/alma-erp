@@ -28,9 +28,9 @@ const MonthlyRevenueChart = dynamic(() => import('@/components/charts').then(m =
 const StatusPieChart = dynamic(() => import('@/components/charts').then(m => m.StatusPieChart), { ssr: false, loading: chartFallback })
 
 const fade = (i: number) => ({
-  initial: { opacity: 0, y: 16 },
+  initial: { opacity: 0, y: 4 },
   animate: { opacity: 1, y: 0 },
-  transition: { delay: i * 0.07, duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] as const },
+  transition: { delay: i * 0.02, duration: 0.18, ease: [0.22, 1, 0.36, 1] as const },
 })
 
 export default function DashboardPage() {
