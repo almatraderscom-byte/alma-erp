@@ -318,7 +318,10 @@ async function handleStaffLink(ctx, args) {
     try {
       await ctx.telegram.sendMessage(
         chatId,
-        `আস্সালামু আলাইকুম ${name} ভাই! আপনাকে ALMA সিস্টেমে স্বাগতম। 🌙`,
+        `আস্সালামু আলাইকুম ${name} ভাই! আপনাকে ALMA সিস্টেমে স্বাগতম। 🌙\n\n` +
+          `এখানে শুধু দৈনিক *কাজের টাস্ক* আসবে — ✅ Done চাপবেন।\n` +
+          `সাধারণ মেসেজের উত্তর দেওয়া হয় না; /start চাপলে গাইড দেখবেন।`,
+        { parse_mode: 'Markdown' },
       )
     } catch { /* staff may not have started the bot yet */ }
   } else {
@@ -334,29 +337,32 @@ export function createTelegramBot() {
 
   const bot = new Telegraf(token)
 
-  // Access guard: owner + linked staff (callback_query only for staff — no text access)
+  // Access guard: owner full access; linked staff = tasks + location only (not AI agent).
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id
     if (!chatId) return
     if (isOwner(chatId)) return next()
 
-    const cbData = ctx.callbackQuery?.data ?? ''
+    const supabase = createSupabase()
+    const staff = await resolveStaffByChatId(supabase, chatId)
 
-    // Linked staff: task Done, location skip, ask_pick (staff should not get ask_pick — owner only)
-    if (cbData.startsWith('task_done:') || cbData.startsWith('loc_skip:')) {
-      const supabase = createSupabase()
-      const staff = await resolveStaffByChatId(supabase, chatId)
-      if (staff) return next()
+    if (staff) {
+      const cbData = ctx.callbackQuery?.data ?? ''
+      const ownerOnlyCb =
+        cbData.startsWith('approve:')
+        || cbData.startsWith('reject:')
+        || cbData.startsWith('salah_')
+        || cbData.startsWith('reminder_')
+        || cbData.startsWith('ask_pick:')
+        || cbData.startsWith('switch:')
+      if (ownerOnlyCb) {
+        await ctx.answerCbQuery?.('এই বাটন শুধু Owner-এর জন্য')
+        return
+      }
+      return next()
     }
 
-    // Staff location messages (not owner)
-    if (ctx.message?.location && !isOwner(chatId)) {
-      const supabase = createSupabase()
-      const staff = await resolveStaffByChatId(supabase, chatId)
-      if (staff) return next()
-    }
-
-    // Unknown: reject politely and reveal their chat ID for onboarding
+    // Not linked — reject and show chat ID for /staff link
     await ctx.reply(
       `অনুমতি নেই।\n\nআপনার Chat ID: \`${chatId}\`\n\nStaff onboarding এর জন্য Owner-কে জানান।`,
       { parse_mode: 'Markdown' },
@@ -372,6 +378,31 @@ export function createTelegramBot() {
   })
 
   bot.command('chats', showRecentChats)
+
+  bot.start(async (ctx) => {
+    const chatId = ctx.chat?.id
+    if (isOwner(chatId)) {
+      await ctx.reply('আস্সালামু আলাইকুম Sir! যেকোনো বার্তা পাঠান — আমি সাহায্য করব।')
+      return
+    }
+    const supabase = createSupabase()
+    const staff = await resolveStaffByChatId(supabase, chatId)
+    if (staff) {
+      await ctx.reply(
+        `আস্সালামু আলাইকুম ${staff.name} ভাই! 🌙\n\n` +
+          `আপনি ALMA স্টাফ হিসেবে লিঙ্ক আছেন।\n` +
+          `• দৈনিক কাজের টাস্ক এখানে আসবে — ✅ *Done* চাপুন\n` +
+          `• লোকেশন চাইলে শেয়ার করুন (ঐচ্ছিক)\n` +
+          `• সাধারণ চ্যাটের উত্তর এই বট দেয় না`,
+        { parse_mode: 'Markdown' },
+      )
+      return
+    }
+    await ctx.reply(
+      `অনুমতি নেই।\n\nআপনার Chat ID: \`${chatId}\`\n\nOwner-কে বলুন লিঙ্ক করতে: /staff link <নাম> ${chatId}`,
+      { parse_mode: 'Markdown' },
+    )
+  })
 
   bot.command('help', async (ctx) => {
     await ctx.reply(
@@ -442,10 +473,20 @@ export function createTelegramBot() {
     if (!isOwner(chatId)) {
       const supabase = createSupabase()
       const staff = await resolveStaffByChatId(supabase, chatId)
-      if (staff && ctx.message.text === 'লোকেশন skip') {
+      if (!staff) return
+
+      const text = ctx.message.text.trim()
+      if (text === 'লোকেশন skip') {
         await ctx.reply('ঠিক আছে — লোকেশন ছাড়াই চলবে।')
         return
       }
+
+      await ctx.reply(
+        `ওয়ালাইকুম আসসালাম ${staff.name} ভাই! 🤲\n\n` +
+          `এই বট শুধু *কাজের টাস্ক* ও *লোকেশন*-এর জন্য — AI চ্যাট নয়।\n` +
+          `নতুন টাস্ক এলে ✅ Done বাটন চাপবেন।`,
+        { parse_mode: 'Markdown' },
+      )
       return
     }
     await handleOwnerText(ctx, ctx.message.text)
