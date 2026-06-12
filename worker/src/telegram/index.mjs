@@ -288,6 +288,70 @@ async function handleActionCallback(ctx, action, actionId) {
   }
 }
 
+// ── CS-1 customer sales controls (owner only) ─────────────────────────────
+
+async function handleCsModeCommand(ctx, modeArg) {
+  const modes = { off: 'off', shadow: 'shadow', night: 'auto_night', auto: 'auto' }
+  const mode = modes[modeArg?.toLowerCase()]
+  if (!mode) {
+    await ctx.reply('ব্যবহার: /cs off|shadow|night|auto|status|resume <conversationId>')
+    return
+  }
+  await fetch(`${APP_URL}/api/assistant/internal/agent-settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ key: 'cs_mode', value: mode }),
+  })
+  await ctx.reply(`✅ CS mode → *${mode}*`, { parse_mode: 'Markdown' })
+}
+
+async function handleCsStatus(ctx) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=cs_mode`, {
+    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  })
+  const data = await res.json()
+  await ctx.reply(`📊 CS mode: *${data.cs_mode ?? 'off'}*`, { parse_mode: 'Markdown' })
+}
+
+async function handleCsResume(ctx, convId) {
+  if (!convId) {
+    await ctx.reply('ব্যবহার: /cs resume <conversationId>')
+    return
+  }
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ conversationId: convId }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.reply(`❌ ${data.error ?? 'resume failed'}`)
+    return
+  }
+  await ctx.reply(`✅ CS resumed for ${convId}`)
+}
+
+async function handleCsSendDraft(ctx, draftId) {
+  await ctx.answerCbQuery('⏳ পাঠানো হচ্ছে…')
+  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ draftId, action: 'send', sentBy: String(ctx.chat?.id) }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.reply(`❌ ${data.error ?? 'send failed'}`)
+    return
+  }
+  const { sendMessengerText, sendMessengerImage } = await import('../cs/meta-send.mjs')
+  await sendMessengerText(data.pageId, data.psid, data.draftText)
+  for (const att of data.attachments ?? []) {
+    if (att.imageUrl) await sendMessengerImage(data.pageId, data.psid, att.imageUrl)
+  }
+  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+  await ctx.reply('✅ কাস্টমারকে পাঠানো হয়েছে')
+}
+
 // ── /chats command ────────────────────────────────────────────────────────
 
 async function showRecentChats(ctx) {
@@ -514,6 +578,19 @@ export function createTelegramBot() {
   bot.command('sizechart', async (ctx) => {
     const args = ctx.message.text.replace(/^\/sizechart\s*/, '').trim()
     await handleSizeChartCommand(ctx, args, { isOwner: isOwner(ctx.chat?.id) })
+  })
+
+  bot.command('cs', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    const args = ctx.message.text.replace(/^\/cs\s*/, '').trim().split(/\s+/)
+    const sub = args[0]?.toLowerCase()
+    if (sub === 'status') await handleCsStatus(ctx)
+    else if (sub === 'resume') await handleCsResume(ctx, args[1])
+    else if (sub && ['off', 'shadow', 'night', 'auto'].includes(sub)) await handleCsModeCommand(ctx, sub)
+    else await ctx.reply('ব্যবহার:\n/cs off|shadow|night|auto\n/cs status\n/cs resume <conversationId>')
   })
 
   // ── Catalog photos (owner + staff) ────────────────────────────────────────
@@ -753,6 +830,18 @@ export function createTelegramBot() {
       } else {
         await ctx.answerCbQuery('শুধু Owner')
       }
+
+    } else if (data.startsWith('cs_send:')) {
+      if (isOwner(ctx.chat?.id)) {
+        await handleCsSendDraft(ctx, data.slice('cs_send:'.length))
+      } else {
+        await ctx.answerCbQuery('অনুমতি নেই')
+      }
+
+    } else if (data.startsWith('cs_edit:')) {
+      const draftId = data.slice('cs_edit:'.length)
+      await ctx.answerCbQuery()
+      await ctx.reply(`✏️ Draft ${draftId} — Telegram-এ এডিট করে /cs resume বা নতুন মেসেজ পাঠান`)
 
     } else if (data.startsWith('msg_draft:') || data.startsWith('staff_feedback:')) {
       // Messenger alert callbacks — owner-only (conv id only — fits 64-byte limit)

@@ -38,6 +38,8 @@ const lazy = {
   budgetCheck:        () => import('./budget-check.mjs'),
   costReconcile:      () => import('./cost-reconcile.mjs'),
   reminderTicker:     () => import('../reminders/ticker.mjs'),
+  csIndexProducts:    () => import('../cs/index-products.mjs'),
+  csEscalation:       () => import('../cs/escalation.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -58,6 +60,8 @@ export const SCHEDULER_REGISTRY = [
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
   { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
+  { name: 'cs-index-products',      cronUtc: '30 18 * * *',  description: 'Nightly product visual index (00:30 Dhaka)' },
+  { name: 'cs-escalation',          cronUtc: '* * * * *',    description: 'CS shadow draft escalation (every minute)' },
 ]
 
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
@@ -173,6 +177,16 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'reminder-ticker': {
           const { runReminderTicker } = await lazy.reminderTicker()
           await runReminderTicker(context)
+          break
+        }
+        case 'cs-index-products': {
+          const { runCsIndexProducts } = await lazy.csIndexProducts()
+          await runCsIndexProducts()
+          break
+        }
+        case 'cs-escalation': {
+          const { runCsEscalation } = await lazy.csEscalation()
+          await runCsEscalation(bot)
           break
         }
         default:

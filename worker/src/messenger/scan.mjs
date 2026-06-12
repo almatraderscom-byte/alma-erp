@@ -20,6 +20,23 @@ const PAGES = [
 ]
 
 const ALERT_THRESHOLD_MS = 30 * 60 * 1000 // 30 min
+const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
+
+async function isCsHandledConversation(fbConversationId) {
+  if (!APP_URL() || !INT_TOKEN()) return false
+  try {
+    const res = await fetch(
+      `${APP_URL()}/api/assistant/internal/cs-is-handled?conversationId=${encodeURIComponent(fbConversationId)}`,
+      { headers: { Authorization: `Bearer ${INT_TOKEN()}` } },
+    )
+    if (!res.ok) return false
+    const data = await res.json()
+    return Boolean(data.handled)
+  } catch {
+    return false
+  }
+}
 
 async function fbGet(pageId, path, token) {
   const url = `https://graph.facebook.com/v21.0/${pageId}${path}&access_token=${token}`
@@ -147,6 +164,11 @@ export async function runMessengerScan({ supabase, bot }) {
         }
 
         const alerts   = detectAlerts(messages, page.id)
+
+        // CS agent already replied — skip false "late reply" owner alerts
+        if (await isCsHandledConversation(conv.id)) {
+          continue
+        }
 
         for (const alert of alerts) {
           // Deduplicate: check if we already sent this alert today

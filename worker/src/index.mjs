@@ -77,6 +77,11 @@ const staffDispatchQueue = new Queue('staff-dispatch', {
   defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
 })
 
+const csReplyQueue = new Queue('cs-reply', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 4000 } },
+})
+
 // ── Polling for new approved jobs ──────────────────────────────────────────
 
 async function pollPendingJobs() {
@@ -338,6 +343,40 @@ try {
 await pollPendingJobs()
 const pollInterval = setInterval(pollPendingJobs, 30_000)
 
+const { pollCsPendingReplies } = await import('./cs/reply.mjs')
+const csEnqueued = new Set()
+
+async function pollAndEnqueueCsReplies() {
+  if (!telegramBot) return
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/cs-pending-replies`, {
+      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
+    })
+    if (!res.ok) return
+    const { jobs } = await res.json()
+    for (const job of jobs ?? []) {
+      if (csEnqueued.has(job.id)) continue
+      csEnqueued.add(job.id)
+      await csReplyQueue.add('reply', job, { jobId: job.id })
+    }
+  } catch (err) {
+    console.error('[cs-reply] enqueue poll error:', err.message)
+  }
+}
+
+const csReplyWorker = new Worker('cs-reply', async (job) => {
+  const { processCsReplyJob } = await import('./cs/reply.mjs')
+  await processCsReplyJob(job.data, telegramBot)
+}, { connection, concurrency: 2 })
+
+csReplyWorker.on('failed', (job, err) => {
+  console.error(`[cs-reply] ${job?.id} failed:`, err.message)
+  if (job?.id) csEnqueued.delete(job.id)
+})
+
+await pollAndEnqueueCsReplies()
+const csPollInterval = setInterval(pollAndEnqueueCsReplies, 10_000)
+
 const heartbeatInterval = startHeartbeatLoop({
   hasTelegram: Boolean(process.env.ASSISTANT_BOT_TOKEN),
   hasSchedulers: Boolean(schedulerQueue),
@@ -355,6 +394,7 @@ async function shutdown(signal) {
   shuttingDown = true
   console.log(`[worker] ${signal} — draining...`)
   clearInterval(pollInterval)
+  clearInterval(csPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
   await stopTelegramBot(signal)
@@ -362,6 +402,7 @@ async function shutdown(signal) {
     imageGenWorker.close(),
     longTaskWorker.close(),
     staffDispatchWorker.close(),
+    csReplyWorker.close(),
   ])
   process.exit(0)
 }

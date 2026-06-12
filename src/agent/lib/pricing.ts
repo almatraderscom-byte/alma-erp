@@ -19,6 +19,8 @@ export type CostKind =
   | 'tts'
   | 'image'
   | 'call'
+  | 'cs_chat'
+  | 'cs_vision'
 
 export const PRICING_META = {
   anthropic: {
