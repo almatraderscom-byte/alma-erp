@@ -468,9 +468,9 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       continue
     }
 
-    // Window closed → mark missed (only after windowEnd, never if owner already confirmed)
+    // Window closed → mark missed (phantom early marks do not count as confirmed)
     if (now > windowEnd) {
-      if (record.confirmedAt) continue
+      if (record.confirmedAt && !isPhantomConfirmation(record.confirmedAt, azanTimeEarly)) continue
       await upsertSalahRecord({ date: today, waqt, status: 'missed' })
 
       const name = waqtName(waqt)
