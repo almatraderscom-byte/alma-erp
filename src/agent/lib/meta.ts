@@ -49,15 +49,26 @@ export function normalizeFbImageRef(raw: unknown): string | undefined {
   return s
 }
 
-function storagePathFromRef(ref: string): string | null {
+/** Resolve agent-files bucket object path from tool payload or signed URL. */
+export function storagePathFromRef(ref: string): string | null {
   const normalized = ref.trim()
-  if (/^(generated|uploads)\//.test(normalized)) return normalized
+  if (!normalized || /^https?:\/\//i.test(normalized)) return null
+
+  const fromObject = normalized.match(/\/object\/(?:sign\/)?agent-files\/([^?]+)/i)
+  if (fromObject?.[1]) return decodeURIComponent(fromObject[1])
+
+  if (/^(generated|uploads|general)\//.test(normalized)) return normalized
+
   // Chat uploads: <conversationId>/<timestamp>-<rand>.<ext>
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i.test(normalized)) {
     return normalized
   }
-  const fromObject = normalized.match(/\/object\/(?:sign\/)?agent-files\/([^?]+)/i)
-  if (fromObject?.[1]) return decodeURIComponent(fromObject[1])
+
+  // Fallback: any folder/file path in agent-files (e.g. general/1234-abc.png)
+  if (/^[\w.-]+\/[\w.\-]+\.(png|jpe?g|webp|gif|pdf)$/i.test(normalized)) {
+    return normalized
+  }
+
   return null
 }
 
@@ -191,7 +202,7 @@ export async function createPagePost(opts: {
     }
 
     throw new Error(
-      `Image not found for "${imageRef}". Approve image generation first, then pass storage path like generated/<id>.png in post_to_facebook.`,
+      `Image not found for "${imageRef}". Use a valid agent-files path (general/..., generated/..., or conversation upload path).`,
     )
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

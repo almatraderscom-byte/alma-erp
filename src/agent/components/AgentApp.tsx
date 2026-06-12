@@ -165,13 +165,32 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
 
+    // Ensure conversation exists before upload so files land under <convId>/ not general/.
+    let convIdForUpload = activeConvId
+    if (!convIdForUpload && pendingFiles.length > 0) {
+      try {
+        const convRes = await fetch('/api/assistant/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: text.slice(0, 60) || null }),
+        })
+        if (convRes.ok) {
+          const conv = await convRes.json() as { id: string }
+          convIdForUpload = conv.id
+          setActiveConvId(conv.id)
+        }
+      } catch {
+        // fall back to general/ prefix in upload route
+      }
+    }
+
     // Upload files first, collect file refs.
     const fileRefs: Array<{ bucket: string; path: string; mediaType: string }> = []
     for (const pf of pendingFiles) {
       try {
         const fd = new FormData()
         fd.append('file', pf.file)
-        if (activeConvId) fd.append('conversationId', activeConvId)
+        if (convIdForUpload) fd.append('conversationId', convIdForUpload)
         const res = await fetch('/api/assistant/upload', { method: 'POST', body: fd })
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
         fileRefs.push(await res.json())
@@ -203,7 +222,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       { id: assistantMsgId, role: 'assistant', text: '', streaming: true, toolActivity: [] },
     ])
 
-    let finalConvId = activeConvId
+    let finalConvId = convIdForUpload ?? activeConvId
 
     try {
       const body: Record<string, unknown> = { message: text }
