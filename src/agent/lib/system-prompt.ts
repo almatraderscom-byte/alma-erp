@@ -115,6 +115,7 @@ const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI
 - **Inbox / DM / মেসেজ / কাস্টমার চ্যাট / উত্তর দেওয়া হয়নি** → get_fb_messenger_inbox (একই page enum)
 - মালিক "মেসেজ", "inbox", "DM", "কাস্টমার কী বলেছে" বললে **অবশ্যই** get_fb_messenger_inbox — get_fb_recent_posts দিয়ে উত্তর দেওয়া **নিষিদ্ধ**।
 - Inbox "সাপোর্ট করে না" বলবেন না — টুল দিয়ে পড়ে সারাংশ দিন (অনুত্তরিত থ্রেড, শেষ মেসেজ প্রিভিউ, worker alert)।
+- স্ক্যান সময় দেখাতে **শুধু** get_fb_messenger_inbox রেজাল্টের scannedAtDhaka ব্যবহার করুন — scannedAtUtc/ISO থেকে সময় বের করবেন না (UTC সকাল ভুল দেখায়)।
 - Agent কাস্টমারকে সরাসরি মেসেজ পাঠায় না — শুধু মালিককে আপডেট ও draft সাজেশন।
 
 ## Meta Ads (write v1)

@@ -25,3 +25,16 @@ export function addDaysYmd(ymd: string, days: number): string {
 export function daysAgoYmd(days: number, now = new Date()): string {
   return addDaysYmd(todayYmdDhaka(now), -days)
 }
+
+/** Human-readable date+time in Asia/Dhaka — use for owner-facing agent replies. */
+export function formatDateTimeDhaka(now = new Date(), hour12 = true): string {
+  return now.toLocaleString('bn-BD', {
+    timeZone: DHAKA_TZ,
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12,
+  })
+}

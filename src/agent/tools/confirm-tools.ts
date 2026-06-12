@@ -1,6 +1,7 @@
 // Tools that create pending actions (confirm-card flow) rather than executing directly.
 import { prisma } from '@/lib/prisma'
 import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, normalizeFbImageRef } from '@/agent/lib/meta'
+import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
 
 // ── Image generation ───────────────────────────────────────────────────────
@@ -198,6 +199,7 @@ const get_fb_messenger_inbox: AgentTool = {
 
       const needsReply = threads.filter(t => t.needsReply)
       const recentCustomer = threads.filter(t => t.lastMessage?.from === 'customer')
+      const scannedNow = new Date()
 
       return {
         success: true,
@@ -205,7 +207,9 @@ const get_fb_messenger_inbox: AgentTool = {
           page: input.page,
           pageId,
           pageName: pageLabel(pageId),
-          scannedAt: new Date().toISOString(),
+          scannedAtUtc: scannedNow.toISOString(),
+          scannedAtDhaka: formatDateTimeDhaka(scannedNow),
+          timezone: 'Asia/Dhaka (UTC+6)',
           summary: {
             threadsScanned: threads.length,
             awaitingReply30minPlus: needsReply.length,
@@ -213,7 +217,10 @@ const get_fb_messenger_inbox: AgentTool = {
             openWorkerAlerts: openAlerts.length,
           },
           threads,
-          openAlerts,
+          openAlerts: openAlerts.map(a => ({
+            ...a,
+            detectedAtDhaka: formatDateTimeDhaka(a.detectedAt),
+          })),
         },
       }
     } catch (err) {
