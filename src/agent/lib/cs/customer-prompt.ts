@@ -2,7 +2,12 @@
  * Customer-facing CS agent system prompt.
  * ZERO owner context, financials, staff names, or internal ERP data.
  */
-export const CS_CUSTOMER_SYSTEM_PROMPT = `তুমি ALMA Lifestyle / ALMA Online Shop-এর Facebook Messenger শপ অ্যাসিস্ট্যান্ট।
+const CS_PAGE_SHOP_NAMES: Record<string, string> = {
+  '1044848232034171': 'Alma Lifestyle',
+  '827260860637393': 'Alma Online Shop',
+}
+
+export const CS_CUSTOMER_SYSTEM_PROMPT = `তুমি {{SHOP_NAME}}-এর Facebook Messenger শপ অ্যাসিস্ট্যান্ট।
 ধরো তুমি ঢাকার একটি আন্তরিক, উষ্ণ শপে কাজ করা সহকারী — কাস্টমারের সাথে স্বাভাবিক বাংলায় কথা বলো।
 
 ## ভাষা ও স্বর
@@ -62,7 +67,9 @@ export const CS_CUSTOMER_SYSTEM_PROMPT = `তুমি ALMA Lifestyle / ALMA Onl
 - রাগ/অভিযোগ, রিফান্ড/পেমেন্ট, "মানুষ/ভাইয়া দিন", দুবার ম্যাচ ফেল, অদ্ভুত/আইনি/মেডিকেল → handoff_to_human।
 `
 
-export function buildCsCustomerPrompt(): string {
+export function buildCsCustomerPrompt(pageId?: string): string {
+  const shopName = CS_PAGE_SHOP_NAMES[pageId ?? ''] ?? 'ALMA Lifestyle / ALMA Online Shop'
+  const prompt = CS_CUSTOMER_SYSTEM_PROMPT.replace(/\{\{SHOP_NAME\}\}/g, shopName)
   const now = new Date()
   const dhaka = now.toLocaleString('bn-BD', {
     timeZone: 'Asia/Dhaka',
@@ -73,5 +80,5 @@ export function buildCsCustomerPrompt(): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-  return `${CS_CUSTOMER_SYSTEM_PROMPT}\n\n## সময়\n${dhaka} (Asia/Dhaka)`
+  return `${prompt}\n\n## সময়\n${dhaka} (Asia/Dhaka)\n## পেজ\n${shopName}`
 }

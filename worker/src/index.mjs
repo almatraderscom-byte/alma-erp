@@ -376,6 +376,12 @@ csReplyWorker.on('failed', (job, err) => {
 await pollAndEnqueueCsReplies()
 const csPollInterval = setInterval(pollAndEnqueueCsReplies, 10_000)
 
+const { pollMessengerInbox } = await import('./cs/messenger-poll.mjs')
+await pollMessengerInbox().catch((err) => console.error('[cs-messenger-poll] startup error:', err.message))
+const csMessengerPollInterval = setInterval(() => {
+  pollMessengerInbox().catch((err) => console.error('[cs-messenger-poll] error:', err.message))
+}, 60_000)
+
 const heartbeatInterval = startHeartbeatLoop({
   hasTelegram: Boolean(process.env.ASSISTANT_BOT_TOKEN),
   hasSchedulers: Boolean(schedulerQueue),
@@ -394,6 +400,7 @@ async function shutdown(signal) {
   console.log(`[worker] ${signal} — draining...`)
   clearInterval(pollInterval)
   clearInterval(csPollInterval)
+  clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
   await stopTelegramBot(signal)

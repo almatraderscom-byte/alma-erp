@@ -77,7 +77,7 @@ export async function runCsTurn(input: {
   shadowOnly: boolean
 }): Promise<CsTurnResult> {
   const customer = await loadCsCustomer(input.pageId, input.psid)
-  const system = buildCsCustomerPrompt() + formatCustomerContextForPrompt(customer)
+  const system = buildCsCustomerPrompt(input.pageId) + formatCustomerContextForPrompt(customer)
   const history = await loadCsHistory(input.csConversationId, 24)
   let messages: Anthropic.Messages.MessageParam[] = historyToMessages(history)
   messages.push({

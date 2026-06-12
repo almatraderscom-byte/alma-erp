@@ -6,17 +6,10 @@
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { verifyMetaWebhookSignature, pageAccessToken } from '@/agent/lib/cs/meta-messenger'
-import { findOrCreateCsConversation, appendCsMessage } from '@/agent/lib/cs/conversations'
-import { csReplyPermitted } from '@/agent/lib/cs/modes'
-import { downloadMessengerAttachment } from '@/agent/lib/cs/meta-messenger'
-import { agentStorageUpload } from '@/agent/lib/storage'
+import { ingestInboundMessengerMessage } from '@/agent/lib/cs/messenger-ingest'
 import { handleFeedComment, handleFeedPostAdded } from '@/agent/lib/cs/comments'
-import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any
 
 export async function GET(req: NextRequest) {
   const mode = req.nextUrl.searchParams.get('hub.mode')
@@ -123,72 +116,17 @@ export async function POST(req: NextRequest) {
       const psid = ev.sender?.id
       const msg = ev.message
       if (!psid || !msg?.mid) continue
-      // Ignore echoes from the page itself
-      if (psid === pageId) continue
 
-      const conv = await findOrCreateCsConversation({ pageId, psid })
+      const imageUrls = (msg.attachments ?? [])
+        .filter((att) => att.type === 'image' && att.payload?.url)
+        .map((att) => att.payload!.url!)
 
-      // Fetch customer name from Facebook Graph API on first inbound if not yet known
-      if (!conv.customerName && pageToken) {
-        try {
-          const profileRes = await fetch(
-            `https://graph.facebook.com/v21.0/${psid}?fields=first_name,last_name&access_token=${pageToken}`,
-          )
-          if (profileRes.ok) {
-            const profile = await profileRes.json() as { first_name?: string; last_name?: string }
-            const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(' ')
-            if (fullName) {
-              await db.csConversation.update({
-                where: { id: conv.id },
-                data: { customerName: fullName },
-              })
-              conv.customerName = fullName
-              // Also upsert to cs_customers
-              await db.csCustomer.upsert({
-                where: { pageId_psid: { pageId, psid } },
-                create: { pageId, psid, name: fullName },
-                update: { name: fullName },
-              })
-            }
-          }
-        } catch (err) {
-          console.warn('[messenger-webhook] profile fetch failed:', err)
-        }
-      }
-
-      const content: unknown[] = []
-      let imageRef: string | undefined
-
-      if (msg.text) content.push({ type: 'text', text: msg.text })
-
-      for (const att of msg.attachments ?? []) {
-        if (att.type === 'image' && att.payload?.url) {
-          try {
-            const { buffer, mimeType } = await downloadMessengerAttachment(att.payload.url)
-            const path = `cs-inbound/${conv.id}/${msg.mid}.jpg`
-            await agentStorageUpload(path, buffer, mimeType)
-            imageRef = path
-            content.push({ type: 'image_ref', path, mimeType })
-          } catch (err) {
-            console.error('[messenger-webhook] image save failed:', err)
-            content.push({ type: 'image_url', url: att.payload.url })
-          }
-        }
-      }
-
-      const stored = await appendCsMessage(conv.id, 'user', content, msg.mid)
-
-      const { permitted } = await csReplyPermitted(conv)
-      if (!permitted) continue
-
-      await db.csReplyJob.upsert({
-        where: { messageId: stored.id },
-        create: {
-          conversationId: conv.id,
-          messageId: stored.id,
-          status: 'pending',
-        },
-        update: { status: 'pending', attempts: 0, lastError: null },
+      await ingestInboundMessengerMessage({
+        pageId,
+        psid,
+        mid: msg.mid,
+        text: msg.text,
+        imageUrls,
       })
     }
   }
