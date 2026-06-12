@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
 import { checkUrgentRateLimit } from '@/agent/lib/urgent-rate-limit'
+import { summarizeOutboundAction, outboundWasDialed } from '@/agent/lib/outbound-call-tracking'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import type { AgentTool } from './registry'
 
@@ -251,6 +252,48 @@ const send_urgent_alert: AgentTool = {
   },
 }
 
+const get_outbound_call_status: AgentTool = {
+  name: 'get_outbound_call_status',
+  description:
+    'Returns status of outbound phone calls in this conversation (pending, dialed, answered, no-answer). ' +
+    'Use when Sir asks whether a call was placed, answered, or what happened — do NOT create a new outbound_phone_call.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      phone: { type: 'string', description: 'Optional — filter by number (01… or +880…)' },
+      conversationId: { type: 'string' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!conversationId) return { success: false, error: 'conversationId required' }
+
+      const phoneFilter = input.phone ? normalizeOutboundPhone(String(input.phone)) : null
+      const rows = await db.agentPendingAction.findMany({
+        where: { type: 'outbound_call', conversationId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      })
+
+      const filtered = phoneFilter
+        ? rows.filter((r: { payload: { phone?: string } }) =>
+            normalizeOutboundPhone(String(r.payload?.phone ?? '')) === phoneFilter)
+        : rows
+
+      return {
+        success: true,
+        data: {
+          calls: filtered.map(summarizeOutboundAction),
+          hint: 'phase: awaiting_approve | approved_queued | dialed | answered | no_answer_retry_offered | failed',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const outbound_phone_call: AgentTool = {
   name: 'outbound_phone_call',
   description:
@@ -278,6 +321,37 @@ const outbound_phone_call: AgentTool = {
 
       const rate = await checkUrgentRateLimit(3)
       if (!rate.ok) return { success: false, error: rate.error }
+
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (conversationId) {
+        const recent = await db.agentPendingAction.findMany({
+          where: {
+            type: 'outbound_call',
+            conversationId,
+            createdAt: { gte: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+        })
+        const duplicate = recent.find((r: { payload: { phone?: string }; status: string; result?: unknown }) => {
+          const p = normalizeOutboundPhone(String(r.payload?.phone ?? ''))
+          if (p !== phone) return false
+          if (r.status === 'pending' || r.status === 'approved') return true
+          return outboundWasDialed(r as Parameters<typeof outboundWasDialed>[0])
+        })
+        if (duplicate) {
+          const summary = summarizeOutboundAction(duplicate)
+          return {
+            success: true,
+            data: {
+              duplicatePrevented: true,
+              ...summary,
+              message:
+                'Existing outbound call for this number — use get_outbound_call_status; do not create another card.',
+            },
+          }
+        }
+      }
 
       const action = await db.agentPendingAction.create({
         data: {
@@ -309,5 +383,6 @@ export const REMINDER_TOOLS: AgentTool[] = [
   cancel_reminder,
   snooze_reminder,
   send_urgent_alert,
+  get_outbound_call_status,
   outbound_phone_call,
 ]

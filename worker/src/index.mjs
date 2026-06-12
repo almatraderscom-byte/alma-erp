@@ -221,7 +221,10 @@ async function callJobResult(pendingActionId, status, data, error) {
       },
       body: JSON.stringify({ pendingActionId, status, data, error }),
     })
-    if (!res.ok) console.error(`[worker] job-result callback HTTP ${res.status}`)
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[worker] job-result callback HTTP ${res.status}: ${body.slice(0, 200)}`)
+    }
   } catch (err) {
     console.error('[worker] job-result callback error:', err.message)
   }
