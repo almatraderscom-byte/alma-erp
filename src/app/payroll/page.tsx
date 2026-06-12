@@ -4,7 +4,8 @@ import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHRDashboard } from '@/hooks/useHr'
 import Link from 'next/link'
-import { Card, KpiCard, Skeleton, Empty, Button } from '@/components/ui'
+import { Card, KpiCard, Skeleton, Empty, Button, KPI_AUTO_GRID } from '@/components/ui'
+import { PageEnter } from '@/components/layout/AgentAccess'
 import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
 import { useBusiness } from '@/contexts/BusinessContext'
@@ -59,6 +60,7 @@ export default function PayrollPage() {
   const [compWallets, setCompWallets] = useState<PayrollWallet[]>([])
   const [orphanLedgerCount, setOrphanLedgerCount] = useState(0)
   const [walletLoading, setWalletLoading] = useState(false)
+  const [walletError, setWalletError] = useState<string | null>(null)
   const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
@@ -78,6 +80,7 @@ export default function PayrollPage() {
     if (!showApprovals) return
     const requestId = ++walletRequestId.current
     setWalletLoading(true)
+    setWalletError(null)
     const qs = fresh ? `&refresh=${Date.now()}` : ''
     try {
       const [fullRes, rosterRes] = await Promise.all([
@@ -104,7 +107,9 @@ export default function PayrollPage() {
       }
     } catch (e) {
       if (requestId !== walletRequestId.current) return
-      toast.error((e as Error).message || 'Could not load employee wallets')
+      const message = (e as Error).message || 'Could not load employee wallets'
+      setWalletError(message)
+      toast.error(message)
     } finally {
       if (requestId === walletRequestId.current) setWalletLoading(false)
     }
@@ -342,14 +347,21 @@ export default function PayrollPage() {
       subtitle="Salary burden · advances · settlement health"
       actions={<div className="flex gap-2 flex-wrap justify-end"><Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run accrual</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportPdf()}>PDF</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => exportCsv()}>CSV</Button><Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportXlsx()}>Excel</Button><Link href="/employees"><Button size="xs" variant="secondary">Employees</Button></Link></div>}
     >
-      <div className="min-w-0 max-w-full space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <KpiCard label="Monthly salary budget" value={loading ? '—' : Number(k?.total_monthly_salary ?? 0)} loading={loading} />
-        <KpiCard label="Company liability" value={walletLoading ? '—' : Number(walletData?.totals.companyLiability ?? 0)} color="text-green-400" loading={walletLoading} />
-        <KpiCard label="Commission totals" value={walletLoading ? '—' : Number(walletData?.totals.totalCommissions ?? 0)} color="text-green-400" loading={walletLoading} />
-        <KpiCard label="Bonus totals" value={walletLoading ? '—' : Number(walletData?.totals.totalBonuses ?? 0)} color="text-gold-lt" loading={walletLoading} />
-        <KpiCard label="Meal deductions" value={walletLoading ? '—' : Number(walletData?.totals.totalMealDeductions ?? 0)} color="text-red-400" loading={walletLoading} />
-        <KpiCard label="Unpaid balance" value={walletLoading ? '—' : Number(walletData?.totals.currentBalance ?? 0)} loading={walletLoading} />
+      <PageEnter className="min-w-0 max-w-full space-y-5">
+      {walletError && showApprovals && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+          <span>{walletError}</span>
+          <Button variant="ghost" size="xs" onClick={() => void loadWallets(true)}>Retry</Button>
+        </div>
+      )}
+
+      <div className={KPI_AUTO_GRID}>
+        <KpiCard label="Monthly salary budget" value={k?.total_monthly_salary ?? 0} valueKind="currency" loading={loading} />
+        <KpiCard label="Company liability" value={walletData?.totals.companyLiability ?? 0} valueKind="currency" color="text-green-400" loading={walletLoading} />
+        <KpiCard label="Commission totals" value={walletData?.totals.totalCommissions ?? 0} valueKind="currency" color="text-green-400" loading={walletLoading} />
+        <KpiCard label="Bonus totals" value={walletData?.totals.totalBonuses ?? 0} valueKind="currency" color="text-gold-lt" loading={walletLoading} />
+        <KpiCard label="Meal deductions" value={walletData?.totals.totalMealDeductions ?? 0} valueKind="currency" color="text-red-400" loading={walletLoading} />
+        <KpiCard label="Unpaid balance" value={walletData?.totals.currentBalance ?? 0} valueKind="currency" loading={walletLoading} />
       </div>
 
       {showApprovals && (
@@ -375,7 +387,7 @@ export default function PayrollPage() {
             <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
             <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
             <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-            <Button size="xs" variant="gold" type="submit" disabled={compBusy}>{compBusy ? 'Posting…' : 'Post'}</Button>
+            <Button size="xs" variant="gold" type="submit" loading={compBusy}>Post</Button>
           </form>
           {orphanLedgerCount > 0 && (
             <p className="mt-3 text-[11px] text-amber-300/90 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
@@ -446,7 +458,7 @@ export default function PayrollPage() {
           {walletLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : !(walletData?.pendingRequests ?? []).length ? (
-            <p className="text-[11px] text-zinc-500">No pending requests for your business scope.</p>
+            <Empty icon="◆" title="No pending wallet requests" desc="Advance and withdrawal requests will appear here." />
           ) : (
             <div className="overflow-x-auto space-y-2">
               {walletData!.pendingRequests.map(req => (
@@ -472,19 +484,38 @@ export default function PayrollPage() {
       <Card className="p-5">
         <div className="flex justify-between gap-3 items-center flex-wrap mb-4">
           <p className="text-sm font-bold text-cream">Employee profitability and liabilities</p>
-          <div className="flex gap-2 flex-wrap">
-            <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream" />
-            <select value={ledgerTypeFilter} onChange={e => setLedgerTypeFilter(e.target.value)} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream">
-              {['ALL', 'SALARY_ACCRUAL', 'COMMISSION', 'EID_BONUS', 'PERFORMANCE_BONUS', 'OVERTIME', 'REIMBURSEMENT', 'MEAL_DEDUCTION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL', 'ADJUSTMENT'].map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-            </select>
+          <div className="flex flex-1 flex-wrap gap-2">
+            <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="min-h-[44px] flex-1 min-w-[10rem] rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream md:min-h-0" />
           </div>
         </div>
+        <div className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          {(['ALL', 'SALARY_ACCRUAL', 'COMMISSION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL'] as const).map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setLedgerTypeFilter(t)}
+              className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
+                ledgerTypeFilter === t
+                  ? 'border-gold-dim/50 bg-gold/10 text-gold-lt'
+                  : 'border-border text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {t.replace(/_/g, ' ')}
+            </button>
+          ))}
+        </div>
         {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
-          <Empty icon="◈" title="No wallet ledger yet" desc="Run accrual or approve requests to create wallet entries." />
+          <Empty
+            icon="◈"
+            title="No wallet ledger yet"
+            desc="Run accrual or approve requests to create wallet entries."
+            action={showApprovals ? <Button variant="gold" size="sm" onClick={() => void runAccrual()}>Run accrual</Button> : undefined}
+          />
         ) : (
-          <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
+          <>
+          <div className="hidden overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px] md:block">
             <table className="w-full min-w-[1080px] text-left text-[11px]">
-              <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+              <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 pr-3">Employee</th>
                   <th className="py-2 pr-3 text-right">Earned</th>
@@ -499,7 +530,7 @@ export default function PayrollPage() {
               </thead>
               <tbody>
                 {filteredWallets.map((w: PayrollWallet) => (
-                  <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60">
+                  <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60 transition-colors hover:bg-white/[0.015]">
                     <td className="py-2 pr-3"><span className="text-cream">{w.name}</span><span className="block text-zinc-600 font-mono">{w.employeeId}</span></td>
                     <td className="py-2 pr-3 font-mono text-right">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
                     <td className="py-2 pr-3 font-mono text-right text-green-400">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
@@ -514,6 +545,40 @@ export default function PayrollPage() {
               </tbody>
             </table>
           </div>
+          <div className="space-y-2 md:hidden">
+            {filteredWallets.slice(0, 80).map((w: PayrollWallet) => (
+              <Card key={`${w.businessId}:${w.employeeId}`} interactive className="p-4 text-[11px]">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-cream">{w.name}</p>
+                    <p className="font-mono text-zinc-600">{w.employeeId}</p>
+                  </div>
+                  <Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="shrink-0 text-gold-lt underline">
+                    Ledger
+                  </Link>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                    <p className="text-[10px] text-zinc-600">Earned</p>
+                    <p className="font-mono font-bold text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                    <p className="text-[10px] text-zinc-600">Held balance</p>
+                    <p className="font-mono font-bold text-green-400">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                    <p className="text-[10px] text-zinc-600">Commission</p>
+                    <p className="font-mono text-green-400">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                    <p className="text-[10px] text-zinc-600">Deductions</p>
+                    <p className="font-mono text-red-400">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+          </>
         )}
       </Card>
 
@@ -532,7 +597,7 @@ export default function PayrollPage() {
           ) : (
             <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px] mt-4">
               <table className="w-full min-w-[720px] text-left text-[11px]">
-                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm border-b border-border text-zinc-500">
                   <tr>
                     <th className="py-2 pr-3">Employee</th>
                     <th className="py-2 pr-3">Phone</th>
@@ -642,7 +707,7 @@ export default function PayrollPage() {
         ) : (
           <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
             <table className="w-full min-w-[980px] text-left text-[11px]">
-              <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+              <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm border-b border-border text-zinc-500">
                 <tr>
                   <th className="py-2 pr-3">Employee</th>
                   <th className="py-2 pr-3 text-right">Salary</th>
@@ -685,7 +750,7 @@ export default function PayrollPage() {
           </div>
         )}
       </Card>
-      </div>
+      </PageEnter>
     </FinancePageChrome>
   )
 }
