@@ -22,7 +22,7 @@ export function RouteTransitionLoader() {
     previousPath.current = pathname
 
     setVisible(true)
-    const timer = window.setTimeout(() => setVisible(false), reduceMotion ? 120 : 520)
+    const timer = window.setTimeout(() => setVisible(false), reduceMotion ? 100 : 240)
     return () => window.clearTimeout(timer)
   }, [pathname, reduceMotion])
 
@@ -41,7 +41,7 @@ export function RouteTransitionLoader() {
               className="h-full bg-gradient-to-r from-transparent via-gold to-transparent"
               initial={reduceMotion ? { x: '0%' } : { x: '-100%' }}
               animate={reduceMotion ? { x: '0%' } : { x: '100%' }}
-              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             />
           </motion.div>
           <motion.div

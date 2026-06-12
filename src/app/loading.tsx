@@ -1,5 +1,5 @@
-import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
+import { ModulePageSkeleton } from '@/components/loading/ModulePageSkeleton'
 
 export default function Loading() {
-  return <LoadingOverlay label="Loading secure workspace" />
+  return <ModulePageSkeleton kpiCount={5} showChart tableRows={6} />
 }
