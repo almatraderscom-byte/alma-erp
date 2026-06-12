@@ -26,12 +26,22 @@ export type CatalogStockRow = {
 let stockCache: { at: number; rows: CatalogStockRow[] } | null = null
 const CACHE_MS = 60_000
 
+const BN_DIGITS = '০১২৩৪৫৬৭৮৯'
+
+function bnDigitsToAscii(raw: string): string {
+  return raw.replace(/[০-৯]/g, (ch) => {
+    const i = BN_DIGITS.indexOf(ch)
+    return i >= 0 ? String(i) : ch
+  })
+}
+
 export function normalizeProductCode(raw: string): string {
-  return String(raw ?? '')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, '')
-    .replace(/_/g, '-')
+  let s = bnDigitsToAscii(String(raw ?? '').trim())
+  s = s.toUpperCase().replace(/\s+/g, '')
+  // Marketing captions: "Code-345", "ALM-345", "FM-345"
+  s = s.replace(/^(FM|ALM|CODE|REF|SKU|কোড)[-:]/i, '')
+  s = s.replace(/_/g, '-')
+  return s
 }
 
 function rowFromStock(item: StockItem): CatalogStockRow {
@@ -92,7 +102,22 @@ export async function resolveProductCode(
   const exact = rows.find((r) => r.sku === norm)
   if (exact) return { ok: true, code: exact.sku, row: exact }
 
-  const suggestions = fuzzySuggest(norm, rows.map((r) => r.sku), 2)
+  const prefixMatches = rows.filter((r) => r.sku.startsWith(`${norm}-`))
+  if (prefixMatches.length === 1) {
+    return { ok: true, code: prefixMatches[0].sku, row: prefixMatches[0] }
+  }
+  if (prefixMatches.length > 1) {
+    const preferred =
+      prefixMatches.find((r) => /-ADULT$/i.test(r.sku))
+      ?? prefixMatches.find((r) => /-\d+$/i.test(r.sku))
+      ?? prefixMatches[0]
+    return { ok: true, code: preferred.sku, row: preferred }
+  }
+
+  const suggestions = [
+    ...prefixMatches.map((r) => r.sku),
+    ...fuzzySuggest(norm, rows.map((r) => r.sku), 3),
+  ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 3)
   return { ok: false, suggestions }
 }
 

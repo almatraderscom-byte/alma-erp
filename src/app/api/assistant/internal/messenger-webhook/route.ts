@@ -114,12 +114,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!pageAccessToken(pageId)) continue
+    const pageToken = pageAccessToken(pageId)
+    if (!pageToken) {
+      console.warn(`[messenger-webhook] no page token for ${pageId} — ingesting messages only (set FB_PAGE_TOKEN on Vercel)`)
+    }
 
     for (const ev of entry.messaging ?? []) {
       const psid = ev.sender?.id
       const msg = ev.message
       if (!psid || !msg?.mid) continue
+      // Ignore echoes from the page itself
+      if (psid === pageId) continue
 
       const conv = await findOrCreateCsConversation({ pageId, psid })
       const content: unknown[] = []

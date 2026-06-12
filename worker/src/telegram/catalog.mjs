@@ -5,6 +5,18 @@
 
 import { replyMarkdownSafe } from './markdown-safe.mjs'
 
+async function replyInvalidCode(ctx, code, suggestions) {
+  const sug = (suggestions ?? []).join(', ')
+  await replyMarkdownSafe(
+    ctx,
+    `❌ *${code}* ERP-তে পাইনি।\n\n` +
+      `মার্কেটিং কোড (যেমন ৩৪৫) আর ERP SKU আলাদা হতে পারে।\n` +
+      `সঠিক ফরম্যাট: 133-ADULT, 133-34, 231-38\n` +
+      `/catalog — অগ্রগতি ও priority কোড` +
+      (sug ? `\n\nকাছাকাছি SKU: ${sug}` : ''),
+  )
+}
+
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -117,8 +129,7 @@ export async function handleCatalogPhoto(ctx, { isOwner }) {
         lastCode = r.code
       } catch (err) {
         if (err.data?.reason === 'invalid_code') {
-          const sug = (err.data.suggestions ?? []).join(', ')
-          await ctx.reply(`❌ ${code} পাইনি${sug ? ` — কাছাকাছি: ${sug}` : ''}`)
+          await replyInvalidCode(ctx, code, err.data.suggestions)
           return
         }
         throw err
@@ -151,8 +162,7 @@ export async function handleCatalogPhoto(ctx, { isOwner }) {
       await ctx.reply(`✅ ${r.code} এ ছবি যুক্ত হলো (মোট ${bnNum(r.total)}টা)`)
     } catch (err) {
       if (err.data?.reason === 'invalid_code') {
-        const sug = (err.data.suggestions ?? []).join(', ')
-        await ctx.reply(`❌ এই code পাইনি — আবার দেখুন${sug ? `: ${sug}` : ''}`)
+        await replyInvalidCode(ctx, parsed.code, err.data.suggestions)
         return
       }
       throw err
@@ -203,8 +213,7 @@ export function handleCatalogPhotoMessage(ctx, opts) {
         total = r.total
       } catch (err) {
         if (err.data?.reason === 'invalid_code') {
-          const sug = (err.data.suggestions ?? []).join(', ')
-          await buf.ctx.reply(`❌ এই code পাইনি${sug ? `: ${sug}` : ''}`)
+          await replyInvalidCode(buf.ctx, targetCode, err.data.suggestions)
           return
         }
         throw err
