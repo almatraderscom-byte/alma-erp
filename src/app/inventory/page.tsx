@@ -4,7 +4,8 @@ import { useState, useMemo, useCallback, useEffect, useDeferredValue, type UIEve
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { useStock, useProducts, useCreateProduct } from '@/hooks/useERP'
-import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty, Money, BdtText } from '@/components/ui'
+import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty, Money, BdtText, KPI_AUTO_GRID } from '@/components/ui'
+import { PageEnter } from '@/components/layout/AgentAccess'
 import { fmt } from '@/lib/utils'
 import { api, type CreateProductInput } from '@/lib/api'
 import toast from 'react-hot-toast'
@@ -201,13 +202,10 @@ export default function InventoryPage() {
         subtitle={<>{summary?.total_skus ?? 0} SKUs · <BdtText value={fmt(totalValue)} /> stock value</>}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Link
-              href="/inventory/supplier-import"
-              className="inline-flex items-center gap-2 font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] px-3.5 py-2 text-xs bg-gold/10 border border-gold-dim/50 text-gold-lt hover:bg-gold/20"
-            >
-              Import Supplier Products
+            <Link href="/inventory/supplier-import" className="hidden sm:inline-flex">
+              <Button variant="secondary" size="sm">Import Supplier</Button>
             </Link>
-            <Button variant="ghost" size="sm" onClick={openAddModal}>
+            <Button variant="ghost" size="sm" className="hidden md:inline-flex" onClick={openAddModal}>
               Add inventory
             </Button>
             <Button variant="gold" size="sm" onClick={openAddModal}>
@@ -217,10 +215,11 @@ export default function InventoryPage() {
         }
       />
 
-      <div className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+      <PageEnter className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
         {error && (
-          <div className="px-4 py-3 bg-red-400/10 border border-red-400/25 rounded-xl text-sm text-red-300">
-            {error}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+            <span>{error}</span>
+            <Button variant="ghost" size="xs" onClick={() => void refetchStock()}>Retry</Button>
           </div>
         )}
 
@@ -236,16 +235,39 @@ export default function InventoryPage() {
           </div>
         </Card>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard label="Total SKUs" value={summary?.total_skus ?? 0} loading={loading} />
-          <KpiCard label="Stock Value" value={fmt(totalValue)} color="text-gold-lt" loading={loading} />
-          <KpiCard label="Potential Profit" value={fmt(potentialProfit)} color="text-green-400" loading={loading} />
+        <div className={KPI_AUTO_GRID}>
+          <KpiCard label="Total SKUs" value={summary?.total_skus ?? 0} valueKind="plain" loading={loading} />
+          <KpiCard label="Stock Value" value={totalValue} valueKind="currency" color="text-gold-lt" loading={loading} />
+          <KpiCard label="Potential Profit" value={potentialProfit} valueKind="currency" color="text-green-400" loading={loading} />
           <KpiCard
             label="Low Stock"
             value={summary?.low_stock ?? 0}
+            valueKind="plain"
             color={summary?.low_stock ? 'text-amber-400' : 'text-cream'}
             loading={loading}
           />
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          {([
+            { id: 'active' as const, label: 'Active' },
+            { id: 'archived' as const, label: 'Archived' },
+            { id: 'low' as const, label: 'Low stock' },
+            { id: 'out' as const, label: 'Out of stock' },
+          ]).map(v => (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => setView(v.id)}
+              className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
+                view === v.id
+                  ? 'border-gold-dim/50 bg-gold/10 text-gold-lt'
+                  : 'border-border text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -257,23 +279,13 @@ export default function InventoryPage() {
             onChange={setCat}
             options={[{ label: 'All categories', value: '' }, ...categoryOptions.map(c => ({ label: c, value: c }))]}
           />
-          <Select
-            value={view}
-            onChange={v => setView(v as typeof view)}
-            options={[
-              { label: 'Active', value: 'active' },
-              { label: 'Archived', value: 'archived' },
-              { label: 'Low stock', value: 'low' },
-              { label: 'Out of stock', value: 'out' },
-            ]}
-          />
         </div>
 
         {/* Desktop table */}
         <Card className="hidden min-w-0 md:block">
           <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[72vh]" onScroll={onInventoryScroll}>
           <table className="w-full min-w-[1120px] text-xs border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm">
               <tr className="border-b border-border">
                 {['SKU', 'Collection', 'Product', 'Type', 'Size/Variant', 'Available', 'Buying', 'Sold', 'Status', 'Value', 'Actions'].map(h => (
                   <th
@@ -362,7 +374,14 @@ export default function InventoryPage() {
                 )}
             </tbody>
           </table>
-          {!loading && items.length === 0 && <Empty icon="◧" title="No items found" />}
+          {!loading && items.length === 0 && (
+            <Empty
+              icon="◧"
+              title="No items found"
+              desc="Try another filter or add a product"
+              action={<Button variant="gold" size="sm" onClick={openAddModal}>+ Add item</Button>}
+            />
+          )}
           </div>
         </Card>
 
@@ -375,7 +394,7 @@ export default function InventoryPage() {
             : mobileItems.map(item => {
                 const utilPct = Math.round((item.sold / (item.opening + item.purchased + 0.01)) * 100)
                 return (
-                  <Card key={item.sku} className="p-4">
+                  <Card key={item.sku} interactive className="p-4">
                     <div className="flex items-start justify-between mb-3">
                       <div>
                         <p className="font-mono text-[11px] text-gold font-bold">{item.sku}</p>
@@ -420,13 +439,30 @@ export default function InventoryPage() {
                   </Card>
                 )
               })}
+          {!loading && items.length === 0 && (
+            <Empty
+              icon="◧"
+              title="No items found"
+              action={<Button variant="gold" size="sm" onClick={openAddModal}>+ Add item</Button>}
+            />
+          )}
           {!loading && items.length > mobileItems.length && (
             <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
               Showing first {mobileItems.length.toLocaleString()} matches. Use filters/search for the rest.
             </p>
           )}
         </div>
-      </div>
+      </PageEnter>
+
+      <button
+        type="button"
+        onClick={openAddModal}
+        className="fixed bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 flex h-14 min-w-[44px] items-center gap-2 rounded-2xl border border-gold-dim/50 bg-gold/90 px-4 text-sm font-bold text-black shadow-lg shadow-gold/20 transition-transform active:scale-[0.96] md:hidden"
+        aria-label="Add inventory item"
+      >
+        <span className="text-base leading-none">+</span>
+        <span>Add item</span>
+      </button>
 
       <AddProductModal
         open={isAddModalOpen}
