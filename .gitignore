@@ -10,3 +10,6 @@ tmp/
 node
 alma-lifestyle-erp@1.0.0
 .github/workflows/
+.env.telegram
+.env*.local
+.next.stale*/
