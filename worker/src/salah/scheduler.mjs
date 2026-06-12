@@ -260,11 +260,25 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const record = normalizeSalahRecord(raw)
     if (!shouldEscalateSalah(record)) continue
 
-    const { windowStart, windowEnd, waqt, remindersSent } = record
+    const { windowEnd, waqt, remindersSent } = record
+    let { windowStart } = record
 
     if (!isValidWindow(windowStart, windowEnd)) {
       console.warn(`[salah] skip invalid window for ${waqt} on ${today}`)
       continue
+    }
+
+    // Overrides set after today's init ("আজ Dhuhr ২:৩০ এ পড়বো") must take
+    // effect on this run, not tomorrow's init.
+    const override = await getSalahOverride(supabase, today, waqt)
+    if (override?.skip) continue
+    const overrideStart = override?.override_time
+      ? new Date(override.override_time)
+      : override?.delay_until
+        ? new Date(override.delay_until)
+        : null
+    if (overrideStart && Number.isFinite(overrideStart.getTime()) && overrideStart < windowEnd) {
+      windowStart = overrideStart
     }
 
     // Future waqt — do not remind or mark missed
