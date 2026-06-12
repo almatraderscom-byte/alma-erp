@@ -11,13 +11,11 @@ export function buildOwnerHelpText() {
     `/today — আজকের স্ন্যাপশট (টাস্ক, নামাজ, সেলস)\n` +
     `/khoroch — আজ + এই মাসের খরচ\n` +
     `/pawna — পাওনা-দেনার তালিকা\n` +
-    `/details Hossain mama — কারো পুরো হিসাব\n` +
-    `/ask আজ কত বিক্রি? — এজেন্টকে জিজ্ঞেস\n\n` +
+    `/details — নাম বেছে নিন (বাটন)\n` +
+    `/ask — উদাহরণ প্রশ্ন বাটন\n\n` +
     `*🤖 কাস্টমার এজেন্ট*\n` +
-    `/cs status — বর্তমান মোড\n` +
-    `/cs shadow — ড্রাফট মোড (অনুমোদনে পাঠানো)\n` +
-    `/cs auto — সম্পূর্ণ অটো\n` +
-    `/cs off — বন্ধ\n` +
+    `/cs — কন্ট্রোল প্যানেল (বাটন)\n` +
+    `/csstatus /csshadow /csauto /csoff — এক ট্যাপে মোড\n` +
     `/cs followups on — ফলো-আপ চালু\n` +
     `/cs block 123456 — কাস্টমার ব্লক\n` +
     `/postlink <পোস্ট> FM-204 — FB পোস্ট লিঙ্ক\n\n` +

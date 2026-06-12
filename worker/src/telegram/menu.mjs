@@ -10,6 +10,7 @@ import {
 } from './quick-commands.mjs'
 import { handlePawnaCommand } from '../finance/index.mjs'
 import { handleCatalogStatus } from './catalog.mjs'
+import { showDetailsPicker } from './command-defaults.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -82,6 +83,7 @@ export async function handleMenuCallback(ctx, action, deps) {
     supabase,
     handleCsStatus,
     handleCsModeCommand,
+    handleCsFollowups,
   } = deps
 
   await ctx.answerCbQuery()
@@ -94,7 +96,7 @@ export async function handleMenuCallback(ctx, action, deps) {
     case 'pawna':
       return handlePawnaCommand(ctx, supabase)
     case 'details':
-      return ctx.reply('নাম লিখুন:\n/details Hossain mama')
+      return showDetailsPicker(ctx, supabase)
     case 'cs:status':
       return handleCsStatus(ctx)
     case 'cs:shadow':
@@ -103,6 +105,10 @@ export async function handleMenuCallback(ctx, action, deps) {
       return handleCsModeCommand(ctx, 'auto')
     case 'cs:off':
       return handleCsModeCommand(ctx, 'off')
+    case 'cs:followups:on':
+      return handleCsFollowups(ctx, true)
+    case 'cs:followups:off':
+      return handleCsFollowups(ctx, false)
     case 'salah:status':
       return handleSalahTodayCommand(ctx, supabase)
     case 'salah:pause': {

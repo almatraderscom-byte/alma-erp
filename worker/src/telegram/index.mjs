@@ -48,6 +48,18 @@ import { parseTaskIdFromCallback } from './callback-data.mjs'
 import { registerBotCommands } from './commands.mjs'
 import { buildOwnerHelpText, buildStaffHelpText } from './help.mjs'
 import { showMenuPanel, handleMenuCallback } from './menu.mjs'
+import {
+  showCsPanel,
+  showDetailsPicker,
+  handleDetailsPick,
+  showAskPrompt,
+  getAskExample,
+  showPostlinkGuide,
+  showStaffGuide,
+  showGroupPanel,
+  showGroupHelp,
+  handleGroupSuggestCallback,
+} from './command-defaults.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -511,6 +523,9 @@ export function createTelegramBot() {
         || cbData.startsWith('cat_del_')
         || cbData.startsWith('csg_')
         || cbData.startsWith('menu:')
+        || cbData.startsWith('details_pick:')
+        || cbData.startsWith('ask_go:')
+        || cbData === 'group:suggest'
       if (ownerOnlyCb) {
         await ctx.answerCbQuery?.('এই বাটন শুধু Owner-এর জন্য')
         return
@@ -574,7 +589,15 @@ export function createTelegramBot() {
   })
 
   bot.command('staff', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
     const args = ctx.message.text.replace(/^\/staff\s*/, '').trim()
+    if (!args) {
+      await showStaffGuide(ctx)
+      return
+    }
     await handleStaffLink(ctx, args)
   })
 
@@ -589,8 +612,11 @@ export function createTelegramBot() {
   bot.command('details', async (ctx) => {
     if (!isOwner(ctx.chat?.id)) return
     const args = ctx.message.text.replace(/^\/details\s*/, '').trim()
-    if (!args) { await ctx.reply('ব্যবহার: /details <নাম>'); return }
     const supabase = createSupabase()
+    if (!args) {
+      await showDetailsPicker(ctx, supabase)
+      return
+    }
     await handleDetailsCommand(ctx, args, supabase)
   })
 
@@ -608,6 +634,11 @@ export function createTelegramBot() {
 
   bot.command('ask', async (ctx) => {
     if (!isOwner(ctx.chat?.id)) return
+    const query = ctx.message.text.replace(/^\/ask\s*/i, '').trim()
+    if (!query) {
+      await showAskPrompt(ctx)
+      return
+    }
     await handleAskCommand(ctx, ctx.message.text, sendToAgent, ownerState)
   })
 
@@ -634,6 +665,11 @@ export function createTelegramBot() {
 
   bot.command('group', async (ctx) => {
     const args = ctx.message.text.replace(/^\/group\s*/, '').trim()
+    if (!args) {
+      const supabase = createSupabase()
+      await showGroupPanel(ctx, { isOwner: isOwner(ctx.chat?.id), supabase })
+      return
+    }
     await handleGroupCommand(ctx, args)
   })
 
@@ -648,8 +684,20 @@ export function createTelegramBot() {
       return
     }
     const args = ctx.message.text.replace(/^\/postlink\s*/, '').trim().split(/\s+/)
+    if (!args[0] || args.length < 2) {
+      await showPostlinkGuide(ctx)
+      return
+    }
     await handlePostlink(ctx, args)
   })
+
+  const csModeHandler = async (ctx, modeArg) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    await handleCsModeCommand(ctx, modeArg)
+  }
 
   bot.command('cs', async (ctx) => {
     if (!isOwner(ctx.chat?.id)) {
@@ -658,15 +706,25 @@ export function createTelegramBot() {
     }
     const args = ctx.message.text.replace(/^\/cs\s*/, '').trim().split(/\s+/)
     const sub = args[0]?.toLowerCase()
+    if (!sub) {
+      await showCsPanel(ctx)
+      return
+    }
     if (sub === 'status') await handleCsStatus(ctx)
     else if (sub === 'resume') await handleCsResume(ctx, args[1])
     else if (sub === 'followups') await handleCsFollowups(ctx, args[1]?.toLowerCase() === 'on')
     else if (sub === 'block') await handleCsBlock(ctx, args[1])
-    else if (sub && ['off', 'shadow', 'night', 'auto'].includes(sub)) await handleCsModeCommand(ctx, sub)
-    else await ctx.reply(
-      'ব্যবহার:\n/cs off|shadow|night|auto\n/cs status\n/cs resume <conversationId>\n/cs followups on|off\n/cs block <psid>\n/postlink <post> CODE1 CODE2',
-    )
+    else if (['off', 'shadow', 'night', 'auto'].includes(sub)) await handleCsModeCommand(ctx, sub)
+    else await showCsPanel(ctx)
   })
+
+  bot.command('csstatus', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) { await ctx.reply('শুধু Owner'); return }
+    await handleCsStatus(ctx)
+  })
+  bot.command('csshadow', (ctx) => csModeHandler(ctx, 'shadow'))
+  bot.command('csauto', (ctx) => csModeHandler(ctx, 'auto'))
+  bot.command('csoff', (ctx) => csModeHandler(ctx, 'off'))
 
   // ── Catalog photos (owner + staff) ────────────────────────────────────────
 
@@ -718,7 +776,12 @@ export function createTelegramBot() {
           await handleCatalogStatus(ctx)
           return
         }
-        await handleGroupCommand(ctx, text.replace(/^\/group\s*/, '').trim())
+        const gArgs = text.replace(/^\/group\s*/, '').trim()
+        if (!gArgs) {
+          await showGroupPanel(ctx, { isOwner: false, supabase })
+          return
+        }
+        await handleGroupCommand(ctx, gArgs)
         return
       }
 
@@ -899,6 +962,41 @@ export function createTelegramBot() {
         await handleDetailsCommand(ctx, name, supabase, parseInt(pageStr || '0', 10))
       }
 
+    } else if (data.startsWith('details_pick:')) {
+      if (isOwner(ctx.chat?.id)) {
+        const index = parseInt(data.slice('details_pick:'.length), 10)
+        const supabase = createSupabase()
+        await ctx.answerCbQuery()
+        await handleDetailsPick(ctx, supabase, index)
+      } else {
+        await ctx.answerCbQuery('শুধু Owner')
+      }
+
+    } else if (data.startsWith('ask_go:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('শুধু Owner')
+        return
+      }
+      const index = parseInt(data.slice('ask_go:'.length), 10)
+      const query = getAskExample(index)
+      if (!query) {
+        await ctx.answerCbQuery('প্রশ্ন পাওয়া যায়নি')
+        return
+      }
+      await ctx.answerCbQuery()
+      await handleAskCommand(ctx, `/ask ${query}`, sendToAgent, ownerState)
+
+    } else if (data === 'group:suggest') {
+      if (isOwner(ctx.chat?.id)) {
+        await handleGroupSuggestCallback(ctx)
+      } else {
+        await ctx.answerCbQuery('শুধু Owner')
+      }
+
+    } else if (data === 'group:help') {
+      await ctx.answerCbQuery()
+      await showGroupHelp(ctx)
+
     } else if (data.startsWith('cat_del_') || data.startsWith('csg_')) {
       if (isOwner(ctx.chat?.id)) {
         await handleCatalogCallback(ctx, data, { isOwner: true })
@@ -914,6 +1012,7 @@ export function createTelegramBot() {
           supabase,
           handleCsStatus,
           handleCsModeCommand,
+          handleCsFollowups,
         })
       } else {
         await ctx.answerCbQuery('শুধু Owner')
