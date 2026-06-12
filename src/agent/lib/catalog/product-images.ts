@@ -3,7 +3,7 @@ import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
 import {
   DEFAULT_CATALOG_BUSINESS,
   normalizeProductCode,
-  resolveProductCode,
+  resolveProductInput,
 } from '@/agent/lib/catalog/inventory-lookup'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -18,46 +18,71 @@ export async function countImagesForCode(productCode: string, business = DEFAULT
   return db.productImage.count({ where: { productCode: code, business } })
 }
 
+export type AddProductImageResult =
+  | { ok: true; code: string; total: number; isPrimary: boolean }
+  | { ok: true; collection: string; codes: string[]; results: Array<{ code: string; total: number; isPrimary: boolean }> }
+  | { ok: false; reason: string; suggestions?: string[] }
+
 export async function addProductImage(input: {
   productCode: string
   business?: string
   imageBuffer: Buffer
   uploadedByChatId?: string
   contentType?: string
-}): Promise<{ ok: true; code: string; total: number; isPrimary: boolean } | { ok: false; reason: string; suggestions?: string[] }> {
+}): Promise<AddProductImageResult> {
   const business = input.business ?? DEFAULT_CATALOG_BUSINESS
-  const resolved = await resolveProductCode(input.productCode)
-  if (!resolved.ok) {
+  const resolved = await resolveProductInput(input.productCode)
+
+  if (resolved.kind === 'not_found') {
     return { ok: false, reason: 'invalid_code', suggestions: resolved.suggestions }
   }
 
-  const code = resolved.code
-  const existing = await db.productImage.count({ where: { productCode: code, business } })
-  const index = existing + 1
-  const slug = businessStorageSlug(business)
-  const storagePath = `product-images/${slug}/${code}/${index}.jpg`
+  const targetCodes =
+    resolved.kind === 'collection'
+      ? resolved.members.map((m) => m.sku)
+      : [resolved.code]
 
-  await agentStorageUpload(storagePath, input.imageBuffer, input.contentType ?? 'image/jpeg')
-  let url: string | null = null
-  try {
-    url = await agentStorageSignedUrl(storagePath, 86400 * 7)
-  } catch {
-    url = null
+  const slug = businessStorageSlug(business)
+  const results: Array<{ code: string; total: number; isPrimary: boolean }> = []
+
+  for (const code of targetCodes) {
+    const existing = await db.productImage.count({ where: { productCode: code, business } })
+    const index = existing + 1
+    const storagePath = `product-images/${slug}/${code}/${index}.jpg`
+
+    await agentStorageUpload(storagePath, input.imageBuffer, input.contentType ?? 'image/jpeg')
+    let url: string | null = null
+    try {
+      url = await agentStorageSignedUrl(storagePath, 86400 * 7)
+    } catch {
+      url = null
+    }
+
+    const isPrimary = existing === 0
+    await db.productImage.create({
+      data: {
+        productCode: code,
+        business,
+        storagePath,
+        url,
+        isPrimary,
+        uploadedByChatId: input.uploadedByChatId ?? null,
+      },
+    })
+    results.push({ code, total: index, isPrimary })
   }
 
-  const isPrimary = existing === 0
-  await db.productImage.create({
-    data: {
-      productCode: code,
-      business,
-      storagePath,
-      url,
-      isPrimary,
-      uploadedByChatId: input.uploadedByChatId ?? null,
-    },
-  })
+  if (resolved.kind === 'collection') {
+    return {
+      ok: true,
+      collection: resolved.collectionCode,
+      codes: results.map((r) => r.code),
+      results,
+    }
+  }
 
-  return { ok: true, code, total: index, isPrimary }
+  const first = results[0]
+  return { ok: true, code: first.code, total: first.total, isPrimary: first.isPrimary }
 }
 
 export async function getPrimaryImageUrl(productCode: string, business = DEFAULT_CATALOG_BUSINESS): Promise<string | null> {

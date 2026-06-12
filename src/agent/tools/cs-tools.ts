@@ -18,6 +18,8 @@ import {
   loadVariantsForCode,
   normalizeProductCode,
   resolveProductCode,
+  resolveProductInput,
+  formatCollectionMemberLabel,
 } from '@/agent/lib/catalog/inventory-lookup'
 import type { AgentTool } from './registry'
 
@@ -229,13 +231,41 @@ const get_product_details: AgentTool = {
     required: ['code'],
   },
   handler: async (input) => {
-    const resolved = await resolveProductCode(String(input.code ?? ''))
-    if (!resolved.ok) return { success: false, error: 'product not found', data: { suggestions: resolved.suggestions } }
+    const resolved = await resolveProductInput(String(input.code ?? ''))
+    if (resolved.kind === 'not_found') {
+      return { success: false, error: 'product not found', data: { suggestions: resolved.suggestions } }
+    }
+
+    if (resolved.kind === 'collection') {
+      const members = await Promise.all(resolved.members.map(async (m) => ({
+        code: m.sku,
+        name: m.name,
+        type: m.collectionType || m.genderType,
+        variant: m.size || m.sizeValue || m.sku.split('-').slice(1).join('-'),
+        price: formatPrice(m.sellPrice),
+        priceRaw: m.sellPrice,
+        stock: m.currentStock,
+        imageUrl: await getPrimaryImageUrl(m.sku),
+        label: formatCollectionMemberLabel(m),
+      })))
+      return {
+        success: true,
+        data: {
+          kind: 'collection',
+          collectionCode: resolved.collectionCode,
+          memberCount: members.length,
+          members,
+          hint: 'একটি কালেকশন — কাস্টমারকে কোন টাইপ/সাইজ (KIDS/ADULT/ORNA/TWO PIECE) লাগবে জিজ্ঞেস করুন। অর্ডারে exact SKU ব্যবহার করুন।',
+        },
+      }
+    }
+
     const variants = await loadVariantsForCode(resolved.code)
     const imageUrl = await getPrimaryImageUrl(resolved.code)
     return {
       success: true,
       data: {
+        kind: 'sku',
         code: resolved.code,
         name: resolved.row.name,
         category: resolved.row.category,

@@ -10,10 +10,10 @@ async function replyInvalidCode(ctx, code, suggestions) {
   await replyMarkdownSafe(
     ctx,
     `❌ *${code}* ERP-তে পাইনি।\n\n` +
-      `মার্কেটিং কোড (যেমন ৩৪৫) আর ERP SKU আলাদা হতে পারে।\n` +
-      `সঠিক ফরম্যাট: 133-ADULT, 133-34, 231-38\n` +
-      `/catalog — অগ্রগতি ও priority কোড` +
-      (sug ? `\n\nকাছাকাছি SKU: ${sug}` : ''),
+      `কালেকশন কোড: শুধু \`345\` (সব variant একসাথে)\n` +
+      `একটি আইটেম: \`345-ADULT\`, \`345T-ORNA\`\n` +
+      `/catalog — অগ্রগতি দেখুন` +
+      (sug ? `\n\nকাছাকাছি: ${sug}` : ''),
   )
 }
 
@@ -159,7 +159,15 @@ export async function handleCatalogPhoto(ctx, { isOwner }) {
   if (parsed.type === 'single') {
     try {
       const r = await uploadPhotoForCode(ctx, parsed.code)
-      await ctx.reply(`✅ ${r.code} এ ছবি যুক্ত হলো (মোট ${bnNum(r.total)}টা)`)
+      if (r.collection && r.codes?.length) {
+        await replyMarkdownSafe(
+          ctx,
+          `✅ *কালেকশন ${r.collection}* — ${bnNum(r.codes.length)}টি SKU-তে ছবি যুক্ত:\n` +
+            r.codes.map((c) => `• ${c}`).join('\n'),
+        )
+      } else {
+        await ctx.reply(`✅ ${r.code} এ ছবি যুক্ত হলো (মোট ${bnNum(r.total)}টা)`)
+      }
     } catch (err) {
       if (err.data?.reason === 'invalid_code') {
         await replyInvalidCode(ctx, parsed.code, err.data.suggestions)

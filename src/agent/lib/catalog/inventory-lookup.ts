@@ -92,33 +92,29 @@ export async function loadAllStockRows(): Promise<CatalogStockRow[]> {
   return items.map(rowFromStock).filter((r) => r.sku)
 }
 
-export async function resolveProductCode(
-  raw: string,
-): Promise<{ ok: true; code: string; row: CatalogStockRow } | { ok: false; suggestions: string[] }> {
-  const norm = normalizeProductCode(raw)
-  if (!norm) return { ok: false, suggestions: [] }
+export type ProductResolveResult =
+  | { kind: 'sku'; code: string; row: CatalogStockRow }
+  | { kind: 'collection'; collectionCode: string; members: CatalogStockRow[] }
+  | { kind: 'not_found'; suggestions: string[] }
 
-  const rows = await loadCatalogStock()
-  const exact = rows.find((r) => r.sku === norm)
-  if (exact) return { ok: true, code: exact.sku, row: exact }
+function collectionNumericStem(sku: string): string | null {
+  const m = normalizeProductCode(sku).match(/^(\d+)T?-/i)
+  return m ? m[1] : null
+}
 
-  const prefixMatches = rows.filter((r) => r.sku.startsWith(`${norm}-`))
-  if (prefixMatches.length === 1) {
-    return { ok: true, code: prefixMatches[0].sku, row: prefixMatches[0] }
-  }
-  if (prefixMatches.length > 1) {
-    const preferred =
-      prefixMatches.find((r) => /-ADULT$/i.test(r.sku))
-      ?? prefixMatches.find((r) => /-\d+$/i.test(r.sku))
-      ?? prefixMatches[0]
-    return { ok: true, code: preferred.sku, row: preferred }
-  }
+function isBareCollectionCode(norm: string): boolean {
+  return /^\d+T?$/i.test(norm)
+}
 
-  const suggestions = [
-    ...prefixMatches.map((r) => r.sku),
-    ...fuzzySuggest(norm, rows.map((r) => r.sku), 3),
-  ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 3)
-  return { ok: false, suggestions }
+function findCollectionFamilyMembers(norm: string, rows: CatalogStockRow[]): CatalogStockRow[] {
+  const base = norm.replace(/T$/i, '')
+  if (!/^\d+$/.test(base)) return []
+  return rows.filter((r) => {
+    const stem = collectionNumericStem(r.sku)
+    if (stem === base) return true
+    if (r.sku.startsWith(`${norm}-`)) return true
+    return false
+  })
 }
 
 function fuzzySuggest(query: string, codes: string[], limit: number): string[] {
@@ -145,6 +141,69 @@ function editDistance(a: string, b: string): number {
     }
   }
   return dp[m][n]
+}
+
+export function resolveProductInputFromRows(
+  raw: string,
+  rows: CatalogStockRow[],
+): ProductResolveResult {
+  const norm = normalizeProductCode(raw)
+  if (!norm) return { kind: 'not_found', suggestions: [] }
+
+  const exact = rows.find((r) => r.sku === norm)
+  if (exact) return { kind: 'sku', code: exact.sku, row: exact }
+
+  if (isBareCollectionCode(norm)) {
+    const members = findCollectionFamilyMembers(norm, rows)
+    if (members.length >= 2) {
+      return { kind: 'collection', collectionCode: norm, members }
+    }
+    if (members.length === 1) {
+      return { kind: 'sku', code: members[0].sku, row: members[0] }
+    }
+  }
+
+  const prefixMatches = rows.filter((r) => r.sku.startsWith(`${norm}-`))
+  if (prefixMatches.length === 1) {
+    return { kind: 'sku', code: prefixMatches[0].sku, row: prefixMatches[0] }
+  }
+
+  return { kind: 'not_found', suggestions: fuzzySuggest(norm, rows.map((r) => r.sku), 5) }
+}
+
+export function formatCollectionMemberLabel(row: CatalogStockRow): string {
+  const variant = row.size || row.sizeValue || row.sku.split('-').slice(1).join('-')
+  const type = row.collectionType || row.genderType || ''
+  const price = row.sellPrice > 0 ? `৳${row.sellPrice.toLocaleString('en-US')}` : '—'
+  return `${row.sku} (${type} ${variant}) — ${price}, স্টক ${row.currentStock}`
+}
+
+/** Full resolution — SKU or collection family. */
+export async function resolveProductInput(raw: string): Promise<ProductResolveResult> {
+  const rows = await loadCatalogStock()
+  return resolveProductInputFromRows(raw, rows)
+}
+
+/** Exact SKU only — never auto-picks a variant from a bare collection code. */
+export async function resolveProductCode(
+  raw: string,
+): Promise<
+  | { ok: true; code: string; row: CatalogStockRow }
+  | { ok: false; suggestions: string[]; collection?: string; collectionMembers?: string[] }
+> {
+  const result = await resolveProductInput(raw)
+  if (result.kind === 'sku') {
+    return { ok: true, code: result.code, row: result.row }
+  }
+  if (result.kind === 'collection') {
+    return {
+      ok: false,
+      suggestions: result.members.map((m) => m.sku),
+      collection: result.collectionCode,
+      collectionMembers: result.members.map((m) => m.sku),
+    }
+  }
+  return { ok: false, suggestions: result.suggestions }
 }
 
 export async function getRecentSalesSkus(days = 30, limit = 50): Promise<string[]> {
