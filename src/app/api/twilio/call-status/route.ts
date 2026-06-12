@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { handleOutboundCallMissed } from '@/agent/lib/outbound-call-missed'
 
 export const runtime = 'nodejs'
 
 /**
- * Twilio StatusCallback — logs delivery quality for ops.
- * Short completed calls (<12s) often mean the handset never rang (carrier ghost-connect).
+ * Twilio StatusCallback — logs delivery quality; offers owner retry when outbound call missed.
  */
 export async function POST(req: NextRequest) {
   const body = await req.formData().catch(() => null)
@@ -23,6 +23,19 @@ export async function POST(req: NextRequest) {
 
   if (suspicious) {
     console.warn('[twilio:call-status]', { sid, status, duration, toLast4: to.slice(-4) })
+    try {
+      const missed = await handleOutboundCallMissed({
+        callSid: sid,
+        callStatus: status,
+        durationSec: duration,
+        toNumber: to,
+      })
+      if (missed.handled) {
+        console.log('[twilio:call-status] outbound retry offered:', missed.retryActionId)
+      }
+    } catch (err) {
+      console.error('[twilio:call-status] outbound missed handler error:', err)
+    }
   } else {
     console.log('[twilio:call-status]', { sid, status, duration })
   }

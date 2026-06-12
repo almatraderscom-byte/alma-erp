@@ -179,16 +179,18 @@ export async function makeTwilioCall(text, opts = {}) {
       dedupKey: `twilio:${result.callSid}`,
     })
 
-    void maybeRetrySayOnly({
-      callSid: result.callSid,
-      sayText: speechText,
-      accountSid,
-      authToken,
-      fromNumber,
-      toNumber,
-      appUrl: publicBase,
-      statusCallbackUrl,
-    })
+    if (!opts.skipAutoRetry) {
+      void maybeRetrySayOnly({
+        callSid: result.callSid,
+        sayText: speechText,
+        accountSid,
+        authToken,
+        fromNumber,
+        toNumber,
+        appUrl: publicBase,
+        statusCallbackUrl,
+      })
+    }
 
     return { ok: true, callSid: result.callSid, publicBase }
   } catch (err) {
