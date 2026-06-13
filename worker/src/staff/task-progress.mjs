@@ -26,6 +26,71 @@ async function storeMessageId(supabase, staffId, date, messageId) {
   })
 }
 
+export function dhakaTodayYmd() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+/** All non-cancelled tasks for one staff member on a calendar day. */
+export async function fetchStaffTasksForDay(supabase, staffId, dateYmd) {
+  const { data, error } = await supabase
+    .from('staff_tasks')
+    .select('id, title, status, type, verification_status')
+    .eq('staff_id', staffId)
+    .eq('proposed_for', dateYmd)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(error.message)
+  return data ?? []
+}
+
+export async function resolveTaskProgressContext(supabase, taskId) {
+  const { data, error } = await supabase
+    .from('staff_tasks')
+    .select('id, staff_id, proposed_for, title, status, verification_status, agent_staff(name)')
+    .eq('id', taskId)
+    .maybeSingle()
+  if (error || !data) throw new Error('Task not found for progress summary')
+  return {
+    staffId: data.staff_id,
+    staffName: data.agent_staff?.name ?? 'স্টাফ',
+    dateYmd: String(data.proposed_for).slice(0, 10),
+    task: data,
+  }
+}
+
+/** Ensure freshly approved task counts as done even if read replica lags. */
+export function ensureTaskMarkedDone(tasks, taskId, title) {
+  const list = [...tasks]
+  const idx = list.findIndex((t) => t.id === taskId)
+  const donePatch = {
+    id: taskId,
+    title: title ?? list[idx]?.title ?? 'টাস্ক',
+    status: 'done',
+    verification_status: 'owner_approved',
+  }
+  if (idx >= 0) list[idx] = { ...list[idx], ...donePatch }
+  else list.push(donePatch)
+  return list
+}
+
+export async function notifyStaffTaskProgress(telegram, supabase, ownerChatId, opts) {
+  const {
+    staffId,
+    staffName,
+    dateYmd,
+    tasks,
+    approvedTaskId,
+    approvedTitle,
+  } = opts
+
+  let rows = tasks ?? await fetchStaffTasksForDay(supabase, staffId, dateYmd)
+  if (approvedTaskId) {
+    rows = ensureTaskMarkedDone(rows, approvedTaskId, approvedTitle)
+  }
+  await sendOrUpdateTaskProgress(telegram, supabase, ownerChatId, staffId, staffName, rows, dateYmd)
+  return rows
+}
+
 export function buildProgressiveSummary(staffName, tasks) {
   const active = tasks.filter((t) => t.status !== 'cancelled')
   const total = active.length

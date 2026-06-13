@@ -202,6 +202,9 @@ export async function POST(req: NextRequest) {
       staffName: task.staff.name,
       taskTitle: task.title,
       staffId: task.staff.id,
+      proposedFor: task.proposedFor instanceof Date
+        ? task.proposedFor.toISOString().slice(0, 10)
+        : String(task.proposedFor).slice(0, 10),
       completed: true,
     })
   }

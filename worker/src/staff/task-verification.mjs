@@ -4,7 +4,7 @@
 import { autoVerifyTask } from './verify-task.mjs'
 import { taskDoneCallbackData, compactUuid, buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
-import { sendOrUpdateTaskProgress } from './task-progress.mjs'
+import { notifyStaffTaskProgress, resolveTaskProgressContext } from './task-progress.mjs'
 
 const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -186,32 +186,26 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
 }
 
 export async function finalizeOwnerApprove(ctx, supabase, taskId) {
+  const progressCtx = await resolveTaskProgressContext(supabase, taskId)
   const result = await callTaskCallback({ taskId, action: 'approve' })
   await ctx.answerCbQuery('✅ অনুমোদিত')
   await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
 
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-  const { data: todayTasks } = await supabase
-    .from('staff_tasks')
-    .select('id, title, status, type, verification_status')
-    .eq('staff_id', result.staffId)
-    .eq('proposed_for', today)
-    .not('status', 'eq', 'cancelled')
-    .order('created_at', { ascending: true })
+  const dateYmd = result.proposedFor ?? progressCtx.dateYmd
+  const staffId = result.staffId ?? progressCtx.staffId
+  const staffName = result.staffName ?? progressCtx.staffName
 
-  if (OWNER_ID && result.staffName) {
-    await sendOrUpdateTaskProgress(
-      ctx.telegram,
-      supabase,
-      OWNER_ID,
-      result.staffId,
-      result.staffName,
-      todayTasks ?? [],
-      today,
-    ).catch(() => {})
+  if (OWNER_ID && staffName) {
+    await notifyStaffTaskProgress(ctx.telegram, supabase, OWNER_ID, {
+      staffId,
+      staffName,
+      dateYmd,
+      approvedTaskId: taskId,
+      approvedTitle: result.taskTitle ?? progressCtx.task?.title,
+    }).catch(() => {})
   }
 
-  return result
+  return { ...result, staffId, staffName, proposedFor: dateYmd }
 }
 
 export async function startOwnerRedo(ctx, taskId) {

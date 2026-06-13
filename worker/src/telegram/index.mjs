@@ -1030,25 +1030,24 @@ export function createTelegramBot() {
         }
 
         if (outcome.instant && OWNER_ID && outcome.result?.staffName) {
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-          const { data: todayTasks } = await supabase
-            .from('staff_tasks')
-            .select('id, title, status, type, verification_status')
-            .eq('staff_id', staff.id)
-            .eq('proposed_for', today)
-            .not('status', 'eq', 'cancelled')
-            .order('created_at', { ascending: true })
-
-          const { sendOrUpdateTaskProgress } = await import('../staff/task-progress.mjs')
-          await sendOrUpdateTaskProgress(
+          const { notifyStaffTaskProgress, resolveTaskProgressContext } = await import('../staff/task-progress.mjs')
+          const progressCtx = await resolveTaskProgressContext(supabase, taskId).catch(() => null)
+          const dateYmd = progressCtx?.dateYmd ?? new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+          const todayTasks = await notifyStaffTaskProgress(
             ctx.telegram,
             supabase,
             OWNER_ID,
-            staff.id,
-            outcome.result.staffName,
-            todayTasks ?? [],
-            today,
-          ).catch((err) => console.warn('[telegram] task progress notify failed:', err.message))
+            {
+              staffId: staff.id,
+              staffName: outcome.result.staffName,
+              dateYmd,
+              approvedTaskId: taskId,
+              approvedTitle: outcome.result.taskTitle,
+            },
+          ).catch((err) => {
+            console.warn('[telegram] task progress notify failed:', err.message)
+            return []
+          })
 
           const active = (todayTasks ?? []).filter((t) => t.status !== 'cancelled')
           const allTasksDone = active.length > 0 && active.every((t) => t.status === 'done')
@@ -1058,7 +1057,7 @@ export function createTelegramBot() {
               supabase,
               telegram: ctx.telegram,
               staff,
-              today,
+              today: dateYmd,
               existingTasks: active,
             }).catch((err) => console.warn('[telegram] bonus suggest failed:', err.message))
           }
@@ -1077,17 +1076,14 @@ export function createTelegramBot() {
       const supabase = createSupabase()
       try {
         const { finalizeOwnerApprove } = await import('../staff/task-verification.mjs')
+        const { fetchStaffTasksForDay } = await import('../staff/task-progress.mjs')
         const result = await finalizeOwnerApprove(ctx, supabase, taskId)
 
-        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-        const { data: todayTasks } = await supabase
-          .from('staff_tasks')
-          .select('id, title, status, type')
-          .eq('staff_id', result.staffId)
-          .eq('proposed_for', today)
-          .not('status', 'eq', 'cancelled')
+        const dateYmd = result.proposedFor
+          ?? new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+        const todayTasks = await fetchStaffTasksForDay(supabase, result.staffId, dateYmd)
 
-        const active = (todayTasks ?? []).filter((t) => t.status !== 'cancelled')
+        const active = todayTasks.filter((t) => t.status !== 'cancelled')
         const allTasksDone = active.length > 0 && active.every((t) => t.status === 'done')
         if (allTasksDone) {
           const { data: staffRow } = await supabase
@@ -1101,7 +1097,7 @@ export function createTelegramBot() {
               supabase,
               telegram: ctx.telegram,
               staff: staffRow,
-              today,
+              today: dateYmd,
               existingTasks: active,
             }).catch(() => {})
           }
