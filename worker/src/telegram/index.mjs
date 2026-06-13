@@ -710,8 +710,11 @@ export function createTelegramBot() {
     if (!isOwner(ctx.chat?.id)) return
     const supabase = createSupabase()
     try {
-      const { sent, failed, total } = await broadcastStaffOnboard(ctx.telegram, supabase)
+      const { sent, failed, total, onboarded } = await broadcastStaffOnboard(ctx.telegram, supabase)
       let msg = `✅ GPS অনবোর্ডিং গাইড ${sent}/${total} জন স্টাফকে পাঠানো হয়েছে।`
+      if (onboarded?.length) {
+        msg += `\n⏱️ ৩ মিনিটের মধ্যে লোকেশন না পাঠালে আপনাকে জানানো হবে: ${onboarded.join(', ')}`
+      }
       if (failed.length) msg += `\n⚠️ ব্যর্থ: ${failed.join(', ')}`
       await ctx.reply(msg)
     } catch (err) {

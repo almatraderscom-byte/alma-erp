@@ -10,7 +10,7 @@ const THROTTLE_MS = 2 * 60 * 1000
 /** Boss rule: staff must share location within this window after task Done. */
 export const LOCATION_TIMEOUT_MS = 3 * 60 * 1000
 
-const pendingLocationRequest = new Map() // chatId → { staffId, staffName, taskId?, at }
+const pendingLocationRequest = new Map() // chatId → { staffId, staffName, taskId?, at, reason }
 const locationTimeouts = new Map() // chatId → timeoutId
 
 function clearLocationTimeout(chatId) {
@@ -22,10 +22,10 @@ function clearLocationTimeout(chatId) {
   }
 }
 
-export function markPendingLocationRequest(chatId, staffId, staffName, taskId = null) {
+export function markPendingLocationRequest(chatId, staffId, staffName, taskId = null, reason = 'task_done') {
   const key = String(chatId)
   clearLocationTimeout(key)
-  pendingLocationRequest.set(key, { staffId, staffName, taskId, at: Date.now() })
+  pendingLocationRequest.set(key, { staffId, staffName, taskId, at: Date.now(), reason })
 }
 
 export function scheduleLocationTimeout(chatId, staffName) {
@@ -37,10 +37,13 @@ export function scheduleLocationTimeout(chatId, staffName) {
     pendingLocationRequest.delete(key)
     locationTimeouts.delete(key)
     const name = pending?.staffName ?? staffName ?? 'স্টাফ'
+    const isOnboard = pending?.reason === 'onboard'
     await notify({
       tier: 1,
       title: '⚠️ লোকেশন পাঠায়নি',
-      message: `${name} কাজ Done করার পর ৩ মিনিটে Live Location পাঠায়নি।`,
+      message: isOnboard
+        ? `${name} GPS অনবোর্ডিং গাইড পাওয়ার পর ৩ মিনিটে লোকেশন পাঠায়নি।`
+        : `${name} কাজ Done করার পর ৩ মিনিটে Live Location পাঠায়নি।`,
       category: 'staff',
       ntfyMode: 'critical',
     }).catch((err) => console.warn('[location] timeout notify failed:', err.message))
@@ -72,7 +75,7 @@ async function insertLocation(supabase, { staffId, lat, lng, accuracy, source, m
     accuracy:    accuracy ?? null,
     recorded_at: new Date().toISOString(),
     source,
-    metadata:    metadata ?? null,
+    metadata:    metadata ?? 'active',
     created_at:  new Date().toISOString(),
   })
   return true
@@ -99,18 +102,37 @@ export async function handleStaffLocation(ctx, supabase, location, source = 'liv
 
   const { latitude: lat, longitude: lng, horizontal_accuracy: accuracy, live_period: livePeriod } = location
 
-  const wasPending = pendingLocationRequest.has(String(chatId))
+  const pendingKey = String(chatId)
+  const pendingInfo = pendingLocationRequest.get(pendingKey)
+  const wasPending = pendingLocationRequest.has(pendingKey)
   const inserted = await insertLocation(supabase, {
     staffId: staff.id,
     lat,
     lng,
     accuracy,
-    source: wasPending ? 'task_done' : source,
-    metadata: livePeriod != null ? `live_period=${livePeriod}` : null,
+    source: wasPending && pendingInfo?.reason !== 'onboard' ? 'task_done' : source,
+    metadata: livePeriod != null ? `live_period=${livePeriod}` : 'active',
   })
 
-  pendingLocationRequest.delete(String(chatId))
+  pendingLocationRequest.delete(pendingKey)
   clearLocationTimeout(chatId)
+
+  if (inserted && lat !== 0 && lng !== 0) {
+    const time = formatDhakaTime()
+    const maps = `https://www.google.com/maps?q=${lat},${lng}`
+    let context = 'লোকেশন শেয়ার করেছে'
+    if (pendingInfo?.reason === 'onboard') {
+      context = 'GPS অনবোর্ডিংয়ের পর লোকেশন শেয়ার করেছে'
+    } else if (wasPending) {
+      context = 'কাজ Done-এর পর লোকেশন শেয়ার করেছে'
+    }
+    await notify({
+      tier: 1,
+      title: `📍 ${staff.name} লোকেশন`,
+      message: `${staff.name} ${context} (${time})\n${maps}`,
+      category: 'staff',
+    }).catch((err) => console.warn('[location] owner notify failed:', err.message))
+  }
 
   if (inserted && wasPending) {
     await ctx.reply('✅ লোকেশন সংরক্ষিত হয়েছে। জাযাকাল্লাহ খাইর!')
@@ -178,7 +200,7 @@ ALMA অফিসে কাজের সময় আপনার Telegram থ�
 export async function broadcastStaffOnboard(telegram, supabase) {
   const { data: staff, error } = await supabase
     .from('agent_staff')
-    .select('name, telegramChatId')
+    .select('id, name, telegramChatId')
     .eq('active', true)
     .not('telegramChatId', 'is', null)
 
@@ -186,15 +208,19 @@ export async function broadcastStaffOnboard(telegram, supabase) {
 
   let sent = 0
   const failed = []
+  const onboarded = []
   for (const s of staff ?? []) {
     if (!s.telegramChatId) continue
     try {
       await telegram.sendMessage(s.telegramChatId, STAFF_ONBOARDING_BANGLA, { parse_mode: 'Markdown' })
+      markPendingLocationRequest(s.telegramChatId, s.id, s.name, null, 'onboard')
+      scheduleLocationTimeout(s.telegramChatId, s.name)
       sent++
+      onboarded.push(s.name)
     } catch (err) {
       console.warn(`[location] onboard failed for ${s.name}:`, err.message)
       failed.push(s.name)
     }
   }
-  return { sent, failed, total: (staff ?? []).length }
+  return { sent, failed, total: (staff ?? []).length, onboarded }
 }

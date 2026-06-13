@@ -136,7 +136,7 @@ export async function runNightReport({ supabase, bot }) {
       .from('staff_locations')
       .select('staff_id')
       .gte('recorded_at', today + 'T00:00:00+06:00')
-      .neq('metadata', 'stopped')
+      .or('metadata.is.null,metadata.neq.stopped')
 
     const staffWithLoc = new Set((locRows ?? []).map((r) => r.staff_id))
     const gaps = (doneTasks ?? []).filter((t) => !staffWithLoc.has(t.staff_id)).length

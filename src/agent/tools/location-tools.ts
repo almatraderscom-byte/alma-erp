@@ -27,6 +27,15 @@ async function resolveStaff(staffQuery: string) {
   return match ?? null
 }
 
+/** NULL metadata must be included — PostgreSQL excludes NULL from `NOT metadata = 'stopped'`. */
+function activeLocationWhere(staffId: string, extra: Record<string, unknown> = {}) {
+  return {
+    staffId,
+    OR: [{ metadata: null }, { metadata: { not: 'stopped' } }],
+    ...extra,
+  }
+}
+
 const get_staff_location: AgentTool = {
   name: 'get_staff_location',
   description: 'Returns the latest GPS location shared by a staff member (Telegram live location or task-done share) with Google Maps link. Owner only.',
@@ -42,7 +51,7 @@ const get_staff_location: AgentTool = {
     if (!staff) return { success: false, error: `Staff "${input.staff}" পাওয়া যায়নি` }
 
     const loc = await db.agentStaffLocation.findFirst({
-      where: { staffId: staff.id, NOT: { metadata: 'stopped' } },
+      where: activeLocationWhere(staff.id),
       orderBy: { recordedAt: 'desc' },
       select: { lat: true, lng: true, accuracy: true, recordedAt: true, source: true },
     })
@@ -89,11 +98,9 @@ const get_staff_location_history: AgentTool = {
     const dayEnd = new Date(`${dateStr}T23:59:59+06:00`)
 
     const rows = await db.agentStaffLocation.findMany({
-      where: {
-        staffId: staff.id,
+      where: activeLocationWhere(staff.id, {
         recordedAt: { gte: dayStart, lte: dayEnd },
-        NOT: { metadata: 'stopped' },
-      },
+      }),
       orderBy: { recordedAt: 'asc' },
       select: { lat: true, lng: true, accuracy: true, recordedAt: true, source: true },
     })
