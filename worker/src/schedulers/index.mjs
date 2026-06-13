@@ -36,6 +36,7 @@ const lazy = {
   dailySummary:       () => import('./daily-summary.mjs'),
   subscriptionRenewal: () => import('./subscription-renewal.mjs'),
   budgetCheck:        () => import('./budget-check.mjs'),
+  balanceCheck:       () => import('./balance-check.mjs'),
   costReconcile:      () => import('./cost-reconcile.mjs'),
   reminderTicker:     () => import('../reminders/ticker.mjs'),
   csIndexProducts:    () => import('../cs/index-products.mjs'),
@@ -61,6 +62,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
+  { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
   { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
   { name: 'cs-index-products',      cronUtc: '30 18 * * *',  description: 'Nightly product visual index (00:30 Dhaka)' },
@@ -174,6 +176,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'budget-check': {
           const { runBudgetCheck } = await lazy.budgetCheck()
           await runBudgetCheck()
+          break
+        }
+        case 'balance-check': {
+          const { runBalanceCheck } = await lazy.balanceCheck()
+          await runBalanceCheck()
           break
         }
         case 'cost-reconcile': {

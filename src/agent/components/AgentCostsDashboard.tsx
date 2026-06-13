@@ -23,6 +23,22 @@ type DashboardData = {
   budgets: { dailyUsd: number | null; monthlyUsd: number | null }
 }
 
+type BalanceProviderRow = {
+  id: string
+  label: string
+  balanceUsd: number | null
+  todayUsd: number | null
+  monthUsd: number | null
+  source: string
+  free?: boolean
+}
+
+type BalanceData = {
+  checkedAt: string
+  providers: BalanceProviderRow[]
+  summaryLine: string
+}
+
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#C9A84C',
   openai: '#10B981',
@@ -46,10 +62,35 @@ function renewalBadge(dateStr: string) {
   return { label: `${days} দিন`, cls: 'bg-white/5 text-muted' }
 }
 
+function fmtBalanceCell(row: BalanceProviderRow) {
+  if (row.free) return 'Free'
+  if (row.balanceUsd == null) return '—'
+  return fmtUsd(row.balanceUsd)
+}
+
+function fmtSpendCell(n: number | null) {
+  if (n == null) return '—'
+  return fmtUsd(n)
+}
+
+function fmtCheckedAt(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  } catch {
+    return iso
+  }
+}
+
 export default function AgentCostsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
+  const [balances, setBalances] = useState<BalanceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [refreshingBalances, setRefreshingBalances] = useState(false)
   const [budgetDaily, setBudgetDaily] = useState('')
   const [budgetMonthly, setBudgetMonthly] = useState('')
   const [savingBudget, setSavingBudget] = useState(false)
@@ -58,23 +99,43 @@ export default function AgentCostsDashboard() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/assistant/costs/summary')
-      const json = await res.json() as DashboardData & { error?: string; message?: string }
-      if (!res.ok) {
+      const [summaryRes, balanceRes] = await Promise.all([
+        fetch('/api/assistant/costs/summary'),
+        fetch('/api/assistant/costs/balances'),
+      ])
+      const json = await summaryRes.json() as DashboardData & { error?: string; message?: string }
+      if (!summaryRes.ok) {
         if (json.error === 'agent_db_not_migrated') {
           throw new Error('Cost DB migration apply করা হয়নি। Production-এ `npx prisma migrate deploy` চালান।')
         }
-        throw new Error(json.message ?? `লোড ব্যর্থ (HTTP ${res.status})`)
+        throw new Error(json.message ?? `লোড ব্যর্থ (HTTP ${summaryRes.status})`)
       }
       setData(json)
       setBudgetDaily(json.budgets.dailyUsd != null ? String(json.budgets.dailyUsd) : '')
       setBudgetMonthly(json.budgets.monthlyUsd != null ? String(json.budgets.monthlyUsd) : '')
+
+      if (balanceRes.ok) {
+        setBalances(await balanceRes.json() as BalanceData)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'লোড ব্যর্থ')
     } finally {
       setLoading(false)
     }
   }, [])
+
+  async function refreshBalances() {
+    setRefreshingBalances(true)
+    try {
+      const res = await fetch('/api/assistant/costs/balances', { method: 'POST' })
+      if (!res.ok) throw new Error('ব্যালেন্স রিফ্রেশ ব্যর্থ')
+      setBalances(await res.json() as BalanceData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'রিফ্রেশ ব্যর্থ')
+    } finally {
+      setRefreshingBalances(false)
+    }
+  }
 
   useEffect(() => { void load() }, [load])
 
@@ -156,6 +217,55 @@ export default function AgentCostsDashboard() {
             CSV ডাউনলোড
           </a>
         </div>
+      </div>
+
+      {/* API balances */}
+      <div className="rounded-2xl border border-border bg-surface p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-gold-lt">💳 API ব্যালেন্স</p>
+          <div className="flex items-center gap-2">
+            {balances?.checkedAt && (
+              <p className="text-[10px] text-muted">
+                শেষ চেক: {fmtCheckedAt(balances.checkedAt)}
+              </p>
+            )}
+            <button
+              onClick={() => void refreshBalances()}
+              disabled={refreshingBalances}
+              className="rounded-lg border border-border px-2.5 py-1 text-[10px] text-muted-hi hover:text-cream disabled:opacity-50"
+            >
+              {refreshingBalances ? 'রিফ্রেশ…' : '🔄 Refresh'}
+            </button>
+          </div>
+        </div>
+        {!balances?.providers?.length ? (
+          <p className="py-4 text-center text-[11px] text-zinc-600">ব্যালেন্স লোড হচ্ছে…</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-left text-[11px]">
+              <thead>
+                <tr className="border-b border-border/60 text-muted">
+                  <th className="py-2 pr-3 font-medium">Provider</th>
+                  <th className="py-2 pr-3 font-medium">ব্যালেন্স</th>
+                  <th className="py-2 pr-3 font-medium">আজ খরচ</th>
+                  <th className="py-2 pr-3 font-medium">এই মাসে</th>
+                  <th className="py-2 font-medium">সূত্র</th>
+                </tr>
+              </thead>
+              <tbody>
+                {balances.providers.map((row) => (
+                  <tr key={row.id} className="border-b border-border/40 last:border-0">
+                    <td className="py-2 pr-3 text-cream">{row.label}</td>
+                    <td className="py-2 pr-3 font-medium text-gold-lt">{fmtBalanceCell(row)}</td>
+                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.todayUsd)}</td>
+                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.monthUsd)}</td>
+                    <td className="py-2 text-muted">{row.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Summary cards */}

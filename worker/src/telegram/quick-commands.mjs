@@ -221,6 +221,20 @@ export async function handleSalahTodayCommand(ctx, supabase) {
   await replyMarkdownSafe(ctx, `🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`)
 }
 
+async function fetchApiBalanceSummary(supabase) {
+  try {
+    const { data } = await supabase
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', 'api_balance_cache')
+      .maybeSingle()
+    if (!data?.value) return ''
+    const cache = JSON.parse(data.value)
+    if (cache?.summaryLine) return `\n${cache.summaryLine}`
+  } catch { /* non-fatal */ }
+  return ''
+}
+
 export async function handleKhorochCommand(ctx, supabase) {
   const today = dhakaToday()
   const mStart = monthStart(today)
@@ -252,6 +266,7 @@ export async function handleKhorochCommand(ctx, supabase) {
 
   const t = sumByCurrency(todayExp)
   const m = sumByCurrency(monthExp)
+  const balanceLine = await fetchApiBalanceSummary(supabase)
 
   const fmt = (sums, label) => {
     const parts = []
@@ -263,7 +278,8 @@ export async function handleKhorochCommand(ctx, supabase) {
   const msg =
     `💸 *খরচ সারাংশ — ${today}*\n\n` +
     fmt(t, 'আজ') + '\n' +
-    fmt(m, 'এই মাস')
+    fmt(m, 'এই মাস') +
+    balanceLine
 
   await replyMarkdownSafe(ctx, msg)
 }

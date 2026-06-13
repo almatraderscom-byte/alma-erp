@@ -160,6 +160,40 @@ export async function runNightReport({ supabase, bot }) {
     }
   } catch { /* non-fatal */ }
 
+  let aiCostSummary = ''
+  try {
+    const dayStart = `${today}T00:00:00+06:00`
+    const dayEnd = `${today}T23:59:59.999+06:00`
+    const { data: costRows } = await supabase
+      .from('agent_cost_events')
+      .select('provider, cost_usd')
+      .gte('occurred_at', dayStart)
+      .lte('occurred_at', dayEnd)
+
+    const byProvider = {}
+    for (const row of costRows ?? []) {
+      const p = row.provider
+      byProvider[p] = (byProvider[p] ?? 0) + Number(row.cost_usd ?? 0)
+    }
+
+    const labels = {
+      anthropic: 'Anthropic',
+      twilio: 'Twilio',
+      openai: 'OpenAI',
+      gemini: 'Gemini',
+      google_tts: 'Google TTS',
+    }
+
+    const parts = Object.entries(byProvider)
+      .filter(([, v]) => v > 0.0001)
+      .sort((a, b) => b[1] - a[1])
+      .map(([p, v]) => `${labels[p] ?? p} $${v.toFixed(2)}`)
+
+    if (parts.length) {
+      aiCostSummary = `\n\n💰 AI খরচ আজ: ${parts.join(', ')}`
+    }
+  } catch { /* non-fatal */ }
+
   const dateLabel = formatDhakaDateLabel(today)
   const carryLine = tasksToCarry.length > 0
     ? `, ${bnNum(tasksToCarry.length)}টি carry-forward`
@@ -173,6 +207,7 @@ export async function runNightReport({ supabase, bot }) {
     salesSummary +
     replySummary +
     csSummary +
+    aiCostSummary +
     gpsGapLine +
     (tasksToCarry.length > 0 ? `\n\n↩ ${tasksToCarry.length}টি কাজ আগামীকালের জন্য নিয়ে যাওয়া হয়েছে।` : '')
 

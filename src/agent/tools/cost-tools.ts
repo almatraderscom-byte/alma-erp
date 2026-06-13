@@ -1,11 +1,80 @@
 /**
- * Phase 8 — Subscription tracker tools (confirm card for add).
+ * Phase 8 — Subscription tracker + API balance tools.
  */
 import { prisma } from '@/lib/prisma'
 import type { AgentTool } from './registry'
+import {
+  getApiBalances,
+  normalizeBalanceProvider,
+  setApiCredit,
+  type BalanceProviderId,
+} from '@/agent/lib/api-balances'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+const CREDIT_PROVIDERS: BalanceProviderId[] = ['anthropic', 'openai', 'gemini', 'google_tts']
+
+const set_api_credit: AgentTool = {
+  name: 'set_api_credit',
+  description:
+    'Sets owner-reported API wallet credit for a provider (e.g. "Claude e 50 dollar recharge korlam"). ' +
+    'Balance = credit minus tracked spend since top-up. Providers: anthropic/claude, openai, gemini, google_tts.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      provider: { type: 'string', description: 'Provider name or alias (claude, anthropic, gemini, openai, google_tts)' },
+      amount: { type: 'number', description: 'Current credit balance in USD after recharge' },
+      currency: { type: 'string', enum: ['USD'], description: 'Default USD' },
+    },
+    required: ['provider', 'amount'],
+  },
+  handler: async (input) => {
+    try {
+      const provider = normalizeBalanceProvider(String(input.provider))
+      if (!provider || !CREDIT_PROVIDERS.includes(provider)) {
+        return { success: false, error: `Unknown provider. Use: ${CREDIT_PROVIDERS.join(', ')}` }
+      }
+      const amount = Number(input.amount)
+      if (!Number.isFinite(amount) || amount < 0) {
+        return { success: false, error: 'amount must be a non-negative number' }
+      }
+      const credit = await setApiCredit(provider, amount, (input.currency as string) || 'USD')
+      const cache = await getApiBalances({ refresh: true })
+      const row = cache.providers.find((p) => p.id === provider)
+      return {
+        success: true,
+        data: {
+          provider,
+          credit,
+          balanceUsd: row?.balanceUsd ?? amount,
+          message: `${provider} credit $${amount} set — refreshed balance cache.`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const get_api_balances: AgentTool = {
+  name: 'get_api_balances',
+  description: 'Returns all API provider balances for cost dashboard (live Twilio, credit-tracked others, free services).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      refresh: { type: 'boolean', description: 'Force refresh from provider APIs before returning' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const cache = await getApiBalances({ refresh: Boolean(input.refresh) })
+      return { success: true, data: cache }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
 
 const list_subscriptions: AgentTool = {
   name: 'list_subscriptions',
@@ -109,4 +178,9 @@ const add_subscription: AgentTool = {
   },
 }
 
-export const COST_TOOLS: AgentTool[] = [list_subscriptions, add_subscription]
+export const COST_TOOLS: AgentTool[] = [
+  set_api_credit,
+  get_api_balances,
+  list_subscriptions,
+  add_subscription,
+]
