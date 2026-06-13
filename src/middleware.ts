@@ -92,6 +92,11 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
   const secret = process.env.NEXTAUTH_SECRET
 
+  // Static staff APK page + files — never auth-gate (works on slow phones without React).
+  if (pathname === '/download.html' || pathname.startsWith('/releases/')) {
+    return NextResponse.next()
+  }
+
   if (!secret) {
     console.error('[middleware] NEXTAUTH_SECRET missing')
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
