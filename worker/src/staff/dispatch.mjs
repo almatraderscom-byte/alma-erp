@@ -96,8 +96,8 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }
   }))
 
   const rows = []
-  for (let i = 0; i < buttons.length; i += 4) {
-    rows.push(buttons.slice(i, i + 4))
+  for (let i = 0; i < buttons.length; i += 2) {
+    rows.push(buttons.slice(i, i + 2))
   }
 
   await sendMarkdownSafe(bot.telegram, chatId, msg, {

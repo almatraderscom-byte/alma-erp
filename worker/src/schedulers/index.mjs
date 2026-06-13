@@ -42,6 +42,7 @@ const lazy = {
   csEscalation:       () => import('../cs/escalation.mjs'),
   csFollowups:        () => import('../cs/followups.mjs'),
   csMessengerPoll:    () => import('../cs/messenger-poll.mjs'),
+  tokenHealth:        () => import('../cs/token-health.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -66,6 +67,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'cs-escalation',          cronUtc: '* * * * *',    description: 'CS shadow draft escalation (every minute)' },
   { name: 'cs-followups',           cronUtc: '*/15 * * * *', description: 'CS follow-up recovery (every 15 min)' },
   { name: 'cs-messenger-poll',      cronUtc: '*/2 * * * *',  description: 'CS inbox poll fallback (every 2 min)' },
+  { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
 ]
 
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
@@ -202,6 +204,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'cs-messenger-poll': {
           const { pollMessengerInbox } = await lazy.csMessengerPoll()
           await pollMessengerInbox()
+          break
+        }
+        case 'token-health': {
+          const { checkPageTokenHealth } = await lazy.tokenHealth()
+          await checkPageTokenHealth()
           break
         }
         default:

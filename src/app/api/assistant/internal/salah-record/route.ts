@@ -27,7 +27,8 @@ function checkToken(req: NextRequest): boolean {
 const db = prisma as any
 
 function dateObjFromYmd(date: string) {
-  return new Date(`${date}T00:00:00+06:00`)
+  // Noon UTC ensures PostgreSQL DATE cast yields the correct calendar day
+  return new Date(`${date}T12:00:00Z`)
 }
 
 const CONFIRMED_AT_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])

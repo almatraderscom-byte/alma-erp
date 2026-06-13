@@ -89,10 +89,11 @@ export async function runNightReport({ supabase, bot }) {
   // Get today's salah summary
   let salahSummary = ''
   try {
+    const { salahDateFilter } = await import('../salah/dhaka-date.mjs')
     const { data: salahRecords } = await supabase
       .from('salah_records')
       .select('waqt, status')
-      .eq('date', today)
+      .eq('date', salahDateFilter(today))
 
     if (salahRecords?.length > 0) {
       const onTime = salahRecords.filter(r => r.status === 'prayed_on_time').length

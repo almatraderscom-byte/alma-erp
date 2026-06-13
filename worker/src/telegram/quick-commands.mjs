@@ -3,12 +3,13 @@
  */
 
 import { replyMarkdownSafe } from './markdown-safe.mjs'
+import { dhakaTodayYmd, salahDateFilter } from '../salah/dhaka-date.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 function dhakaToday() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  return dhakaTodayYmd()
 }
 
 function monthStart(today) {
@@ -24,7 +25,7 @@ export async function handleSalahTodayCommand(ctx, supabase) {
   const { data: salahRecords } = await supabase
     .from('salah_records')
     .select('waqt, status')
-    .eq('date', today)
+    .eq('date', salahDateFilter(today))
 
   if (!salahRecords?.length) {
     await ctx.reply(`🕌 ${today} — এখনো নামাজ রেকর্ড নেই।`)
@@ -51,7 +52,7 @@ export async function handleTodayCommand(ctx, supabase) {
   const { data: salahRecords } = await supabase
     .from('salah_records')
     .select('waqt, status')
-    .eq('date', today)
+    .eq('date', salahDateFilter(today))
 
   const salahOn = salahRecords?.filter((r) => r.status === 'prayed_on_time').length ?? 0
   const salahMiss = salahRecords?.filter((r) => r.status === 'missed').length ?? 0

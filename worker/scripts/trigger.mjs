@@ -46,11 +46,17 @@ try {
   console.warn('[trigger] Telegram not available:', err.message)
 }
 
-// Set up notify module
+// Set up notify + dispatcher modules
 try {
   const { setTelegramForNotify } = await import('../src/notify/index.mjs')
   if (bot && process.env.TELEGRAM_OWNER_CHAT_ID) {
     setTelegramForNotify(bot, process.env.TELEGRAM_OWNER_CHAT_ID)
+  }
+} catch {}
+try {
+  const { setDispatcherBot } = await import('../src/telegram/dispatcher.mjs')
+  if (bot && process.env.TELEGRAM_OWNER_CHAT_ID) {
+    setDispatcherBot(bot, process.env.TELEGRAM_OWNER_CHAT_ID)
   }
 } catch {}
 
@@ -74,6 +80,10 @@ const handlers = {
   'cs-index-products': async () => {
     const { runCsIndexProducts } = await import('../src/cs/index-products.mjs')
     await runCsIndexProducts()
+  },
+  'token-health': async () => {
+    const { checkPageTokenHealth } = await import('../src/cs/token-health.mjs')
+    await checkPageTokenHealth()
   },
   'cs-escalation': async () => {
     const { runCsEscalation } = await import('../src/cs/escalation.mjs')

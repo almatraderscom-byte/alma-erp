@@ -5,6 +5,7 @@
  */
 
 import { notify } from '../notify/index.mjs'
+import { dhakaTodayYmd, salahDateFilter } from '../salah/dhaka-date.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -12,14 +13,14 @@ const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 export async function runDailySummary({ supabase, bot }) {
   console.log('[daily-summary] starting...')
 
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const today = dhakaTodayYmd()
 
   // ── Salah scorecard ───────────────────────────────────────────────────────
 
   const { data: salahRecords } = await supabase
     .from('salah_records')
     .select('waqt, status')
-    .eq('date', today)
+    .eq('date', salahDateFilter(today))
 
   const salahCounts = { prayed_on_time: 0, prayed_late: 0, qaza: 0, missed: 0, pending: 0 }
   for (const r of salahRecords ?? []) {

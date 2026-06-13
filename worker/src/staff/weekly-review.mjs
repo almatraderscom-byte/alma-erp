@@ -9,6 +9,7 @@
 
 import { notify } from '../notify/index.mjs'
 import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
+import { salahDateFilter } from '../salah/dhaka-date.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -35,8 +36,8 @@ export async function runWeeklyReview({ supabase }) {
   const { data: salahRecords } = await supabase
     .from('salah_records')
     .select('date, waqt, status')
-    .gte('date', weekStartStr)
-    .lte('date', today)
+    .gte('date', salahDateFilter(weekStartStr))
+    .lte('date', salahDateFilter(today))
     .order('date', { ascending: true })
 
   const salahCounts = { prayed_on_time: 0, prayed_late: 0, qaza: 0, missed: 0, pending: 0 }
