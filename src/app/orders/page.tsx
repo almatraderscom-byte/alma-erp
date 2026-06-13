@@ -742,7 +742,7 @@ function OrdersPageContent() {
     }
   }, [searchParams, router, mdUp])
 
-  const { orders: allOrders, loading, error, refetch, enabled } = useOrdersData()
+  const { orders: allOrders, loading, initialLoading, error, refetch, enabled } = useOrdersData()
   const { businessId } = useBusiness()
   const { range, label: rangeLabel } = useDateRange()
 
@@ -757,6 +757,7 @@ function OrdersPageContent() {
   )
 
   const orders = useMemo(() => sortOrders(filtered, sort), [filtered, sort])
+  const tableLoading = initialLoading && allOrders.length === 0
   useLayoutEffect(() => {
     setRowWindow({ start: 0, end: ORDER_WINDOW_SIZE })
   }, [deferredSearch, status, source, payment, sort, range.start, range.end])
@@ -826,9 +827,9 @@ function OrdersPageContent() {
         <DateRangeFilter />
 
         <div className={KPI_AUTO_GRID}>
-          <KpiCard label="Orders" value={summary.total} valueKind="plain" loading={loading} />
-          <KpiCard label="Revenue" value={summary.total_revenue} valueKind="currency" color="text-gold-lt" loading={loading} />
-          <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="text-green-400" loading={loading} />
+          <KpiCard label="Orders" value={summary.total} valueKind="plain" loading={tableLoading} />
+          <KpiCard label="Revenue" value={summary.total_revenue} valueKind="currency" color="text-gold-lt" loading={tableLoading} />
+          <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="text-green-400" loading={tableLoading} />
         </div>
 
         {/* Status pills */}
@@ -881,7 +882,7 @@ function OrdersPageContent() {
                 </tr>
               </thead>
               <tbody>
-                {loading
+                {tableLoading
                   ? Array(6).fill(0).map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
                         {Array(10).fill(0).map((__, j) => (
@@ -930,7 +931,7 @@ function OrdersPageContent() {
                 }
               </tbody>
             </table>
-            {!loading && orders.length === 0 && (
+            {!tableLoading && orders.length === 0 && (
               <Empty
                 icon="◫"
                 title="No orders found for selected period"
@@ -947,7 +948,7 @@ function OrdersPageContent() {
 
         {/* Orders cards — mobile */}
         <div className="md:hidden space-y-2">
-          {loading
+          {tableLoading
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
             : mobileOrders.map(o => (
                 <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full min-h-[44px] text-left active:scale-[0.99]">
@@ -992,7 +993,7 @@ function OrdersPageContent() {
               }
             />
           )}
-          {!loading && orders.length > mobileOrders.length && (
+          {!tableLoading && orders.length > mobileOrders.length && (
             <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
               Showing latest {mobileOrders.length.toLocaleString()} matches. Use filters/search for older orders.
             </p>

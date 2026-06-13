@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import Link from 'next/link'
 import { CditPageShell } from '@/components/digital/CditPageShell'
 import { useCditClients, useCreateCditClient } from '@/hooks/useDigital'
@@ -9,12 +9,13 @@ import toast from 'react-hot-toast'
 
 export default function DigitalClientsPage() {
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
     name: '', company: '', phone: '', email: '', country: 'Bangladesh',
     service_type: CDIT_SERVICES[0] as string, lead_source: '', notes: '', tags: '',
   })
-  const { data, loading, refetch } = useCditClients(search)
+  const { data, initialLoading, refetch } = useCditClients(deferredSearch || undefined)
   const { mutate: create, loading: saving, error: saveError } = useCreateCditClient()
 
   async function handleCreate() {
@@ -41,6 +42,7 @@ export default function DigitalClientsPage() {
   }
 
   const clients = data?.clients ?? []
+  const listLoading = initialLoading && clients.length === 0
 
   return (
     <CditPageShell
@@ -91,7 +93,7 @@ export default function DigitalClientsPage() {
       )}
 
       <Card className="min-w-0">
-        {loading ? (
+        {listLoading ? (
           <div className="p-4"><Skeleton className="h-32" /></div>
         ) : clients.length === 0 ? (
           <div className="p-8"><Empty icon="◎" title="No clients yet" desc="Add your first agency client" /></div>

@@ -120,7 +120,8 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
 }
 
 const AUTH_LOADING_TIMEOUT_MS = 10_000
-const AUTH_SESSION_STUCK_MS = 7_000
+const AUTH_SESSION_STUCK_MS = 5_000
+const AUTH_SESSION_PROBE_MS = 4_000
 const AUTH_REDIRECT_TIMEOUT_MS = 5_000
 const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
 
@@ -172,6 +173,22 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
       setRetryCount(0)
     }
   }, [])
+
+  useEffect(() => {
+    if (status !== 'loading' || isPublic || typeof window === 'undefined') return
+    const ac = new AbortController()
+    const timer = window.setTimeout(() => {
+      void fetch('/api/auth/session', { cache: 'no-store', signal: ac.signal })
+        .then(res => {
+          if (!res.ok) setSessionStuck(true)
+        })
+        .catch(() => setSessionStuck(true))
+    }, AUTH_SESSION_PROBE_MS)
+    return () => {
+      window.clearTimeout(timer)
+      ac.abort()
+    }
+  }, [status, isPublic])
 
   useEffect(() => {
     if (status !== 'loading') {
@@ -303,7 +320,7 @@ function SessionBridge({ children, session }: { children: ReactNode; session: Se
   return (
     <SessionProvider
       session={session}
-      refetchOnWindowFocus={false}
+      refetchOnWindowFocus
       refetchInterval={0}
     >
       <AppBootRecovery />

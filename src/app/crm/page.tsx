@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
@@ -17,6 +17,7 @@ const SEGMENTS: CustomerSegment[] = ['VIP','REGULAR','NEW','RISKY','BLACKLIST','
 
 export default function CrmPage() {
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [segment, setSegment] = useState('')
   const [risk, setRisk]     = useState('')
   const [selected, setSelected] = useState<Customer | null>(null)
@@ -27,9 +28,10 @@ export default function CrmPage() {
   const role = normalizeAlmaRole(session?.user?.role)
   const canSyncFromOrders = role === 'SUPER_ADMIN'
 
-  const { data, loading, refetch } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: search || undefined })
+  const { data, initialLoading, refetch } = useCustomers({ segment: segment || undefined, risk_level: risk || undefined, search: deferredSearch || undefined })
   const { orders: allOrders, enabled: ordersEnabled } = useOrdersData()
   const customers = data?.customers ?? []
+  const listLoading = initialLoading && customers.length === 0
 
   const returnInsightsByPhone = useMemo(() => {
     if (!ordersEnabled || !allOrders.length) return new Map<string, ReturnType<typeof buildCustomerReturnInsights>>()
@@ -105,11 +107,11 @@ export default function CrmPage() {
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <KpiCard label="Total Customers" value={summary?.total ?? 0} loading={loading} />
-          <KpiCard label="Lifetime Revenue" value={fmt(summary?.total_revenue ?? 0)} color="text-gold-lt" loading={loading} />
-          <KpiCard label="VIP"          value={summary?.by_segment?.VIP ?? 0}       color="text-gold"      loading={loading} />
-          <KpiCard label="Avg CLV Score" value={`${summary?.avg_clv ?? 0}/100`}      color="text-blue-400"  loading={loading} />
-          <KpiCard label="High Risk"     value={summary?.by_segment?.HIGH ?? (data?.customers ?? []).filter(c => c.risk_level === 'HIGH').length ?? 0} color="text-red-400" loading={loading} />
+          <KpiCard label="Total Customers" value={summary?.total ?? 0} loading={listLoading} />
+          <KpiCard label="Lifetime Revenue" value={fmt(summary?.total_revenue ?? 0)} color="text-gold-lt" loading={listLoading} />
+          <KpiCard label="VIP"          value={summary?.by_segment?.VIP ?? 0}       color="text-gold"      loading={listLoading} />
+          <KpiCard label="Avg CLV Score" value={`${summary?.avg_clv ?? 0}/100`}      color="text-blue-400"  loading={listLoading} />
+          <KpiCard label="High Risk"     value={summary?.by_segment?.HIGH ?? (data?.customers ?? []).filter(c => c.risk_level === 'HIGH').length ?? 0} color="text-red-400" loading={listLoading} />
         </div>
 
         {/* Segment tabs */}
@@ -147,7 +149,7 @@ export default function CrmPage() {
               </tr>
             </thead>
             <tbody>
-              {loading
+              {listLoading
                 ? Array(5).fill(0).map((_, i) => (
                     <tr key={i} className="border-b border-border/50">
                       {Array(9).fill(0).map((__, j) => <td key={j} className="px-3 py-3.5"><div className="skeleton h-3 rounded w-full" /></td>)}
@@ -211,13 +213,13 @@ export default function CrmPage() {
               }
             </tbody>
           </table>
-          {!loading && customers.length === 0 && <Empty icon="◎" title="No customers match" desc="Try a different filter" />}
+          {!listLoading && customers.length === 0 && <Empty icon="◎" title="No customers match" desc="Try a different filter" />}
           </div>
         </Card>
 
         {/* Mobile cards */}
         <div className="md:hidden space-y-2">
-          {loading ? Array(4).fill(0).map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />) : customers.map(c => (
+          {listLoading ? Array(4).fill(0).map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />) : customers.map(c => (
             <button key={c.id} className="w-full text-left" onClick={() => setSelected(c.id === selected?.id ? null : c)}>
               <Card className={`p-4 ${c.id === selected?.id ? 'border-gold-dim/50' : ''}`}>
                 <div className="flex items-center gap-3 mb-3">
@@ -237,7 +239,7 @@ export default function CrmPage() {
               </Card>
             </button>
           ))}
-          {!loading && customers.length === 0 && <Empty icon="◎" title="No customers match" />}
+          {!listLoading && customers.length === 0 && <Empty icon="◎" title="No customers match" />}
         </div>
 
       </div>

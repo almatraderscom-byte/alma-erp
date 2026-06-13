@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import Link from 'next/link'
 import { CditPageShell } from '@/components/digital/CditPageShell'
 import { PaymentProgressBar, PaymentStatusBadge } from '@/components/digital/PaymentProgress'
@@ -15,6 +15,7 @@ const PRIORITIES: CditPriority[] = ['Low', 'Medium', 'High', 'Urgent']
 
 export default function DigitalProjectsPage() {
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [status, setStatus] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
@@ -22,7 +23,7 @@ export default function DigitalProjectsPage() {
     total_amount: '', currency: 'BDT', start_date: '',
     status: 'Lead' as CditProjectStatus, deadline: '', assigned_to: '', priority: 'Medium' as CditPriority,
   })
-  const { data, loading, refetch } = useCditProjects({ status: status || undefined, search })
+  const { data, initialLoading, refetch } = useCditProjects({ status: status || undefined, search: deferredSearch || undefined })
   const { mutate: create, loading: saving } = useCreateCditProject()
 
   async function handleCreate() {
@@ -40,6 +41,7 @@ export default function DigitalProjectsPage() {
   }
 
   const projects = data?.projects ?? []
+  const listLoading = initialLoading && projects.length === 0
 
   return (
     <CditPageShell title="Projects" subtitle={`${projects.length} projects · billing tracked`} actions={
@@ -68,7 +70,7 @@ export default function DigitalProjectsPage() {
         </Card>
       )}
       <Card className="min-w-0">
-        {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : projects.length === 0 ? (
+        {listLoading ? <div className="p-4"><Skeleton className="h-32" /></div> : projects.length === 0 ? (
           <div className="p-8"><Empty icon="◰" title="No projects" desc="Start tracking client work here" /></div>
         ) : (
           <div className="overflow-x-auto min-w-0 max-w-full">

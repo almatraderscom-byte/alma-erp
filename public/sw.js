@@ -1,5 +1,5 @@
 /**
- * Alma ERP service worker — v7
+ * Alma ERP service worker — v8
  * IMPORTANT: Do NOT cache /_next/static/* — stale chunks cause blank screens after deploy.
  *
  * OneSignal web push SDK: used only when PwaBootstrap registers this SW (browser/PWA).
@@ -11,7 +11,7 @@ try {
   // Push CDN optional — offline shell still works.
 }
 
-const SW_VERSION = 'v7'
+const SW_VERSION = 'v8'
 const SHELL_CACHE = `alma-erp-shell-${SW_VERSION}`
 const ICON_CACHE = `alma-erp-icons-${SW_VERSION}`
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
@@ -46,6 +46,23 @@ function isIconAsset(url) {
   )
 }
 
+async function fetchWithNavigateRetry(req) {
+  try {
+    return await fetch(req)
+  } catch {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    try {
+      return await fetch(req)
+    } catch {
+      if (req.mode === 'navigate') {
+        const cached = await caches.match('/offline.html')
+        if (cached) return cached
+      }
+      return Response.error()
+    }
+  }
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request
   if (req.method !== 'GET') return
@@ -57,12 +74,7 @@ self.addEventListener('fetch', event => {
   if (url.pathname.startsWith('/_next/')) return
 
   if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).catch(async () => {
-        const cached = await caches.match('/offline.html')
-        return cached || Response.error()
-      }),
-    )
+    event.respondWith(fetchWithNavigateRetry(req))
     return
   }
 

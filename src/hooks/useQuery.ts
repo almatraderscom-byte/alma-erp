@@ -117,7 +117,7 @@ export function useQuery<T>(
       setError(msg)
       opts.onError?.(msg)
     } finally {
-      if (mounted.current) setLoading(false)
+      if (mounted.current && id === requestId.current) setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)

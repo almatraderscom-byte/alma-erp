@@ -25,6 +25,8 @@ import type { BusinessId } from '@/lib/businesses'
 export interface OrdersDataContextValue {
   orders: Order[]
   loading: boolean
+  /** True only on first fetch when no cached rows yet — use for skeletons, not refetch/search. */
+  initialLoading: boolean
   error: string | null
   refetch: () => void
   /** True when this business/route should load lifestyle orders. */
@@ -36,6 +38,7 @@ export interface OrdersDataContextValue {
 const EMPTY_ORDERS_VALUE: OrdersDataContextValue = {
   orders: [],
   loading: false,
+  initialLoading: false,
   error: null,
   refetch: () => {},
   enabled: false,
@@ -86,7 +89,7 @@ export function OrdersDataProvider({ children }: { children: ReactNode }) {
   const { range } = useDateRange()
   const enabled = ordersDataActiveForRoute(pathname ?? '', businessId)
 
-  const { data, loading, error, refetch } = useQuery(
+  const { data, loading, initialLoading, error, refetch } = useQuery(
     () =>
       api.orders.list({
         limit: '5000',
@@ -111,12 +114,13 @@ export function OrdersDataProvider({ children }: { children: ReactNode }) {
     (): OrdersDataContextValue => ({
       orders,
       loading: enabled ? loading : false,
+      initialLoading: enabled ? initialLoading : false,
       error: enabled ? (error ?? null) : null,
       refetch: enabled ? refetch : () => {},
       enabled,
       fromProvider: true,
     }),
-    [orders, loading, error, refetch, enabled],
+    [orders, loading, initialLoading, error, refetch, enabled],
   )
 
   return (

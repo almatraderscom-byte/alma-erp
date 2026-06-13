@@ -62,7 +62,10 @@ export function useMyDeskProfile(businessId: string) {
   }, [businessId, sessionUserId])
 
   const load = useCallback(async (silent = false) => {
-    if (sessionStatusRef.current === 'loading') return
+    if (sessionStatusRef.current === 'loading') {
+      if (!silent) setLoading(true)
+      return
+    }
     if (!sessionUserId) {
       setProfile(null)
       setLoading(false)
@@ -125,8 +128,17 @@ export function useMyDeskProfile(businessId: string) {
   }, [businessId, sessionUserId])
 
   useEffect(() => {
+    if (sessionStatus === 'loading') {
+      const timer = window.setTimeout(() => {
+        if (sessionStatusRef.current === 'loading') {
+          setLoading(false)
+          setError('সেশন লোড হতে দেরি হচ্ছে — পেজ রিফ্রেশ করুন বা আবার লগইন করুন')
+        }
+      }, 12_000)
+      return () => window.clearTimeout(timer)
+    }
     void load()
-  }, [load])
+  }, [sessionStatus, load])
 
   useEffect(() => {
     if (typeof document === 'undefined') return
