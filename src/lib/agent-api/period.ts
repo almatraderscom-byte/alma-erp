@@ -24,9 +24,10 @@ function parseYmd(ymd: string): { y: number; m: number; d: number } {
   return { y, m, d }
 }
 
-/** Calendar date in Asia/Dhaka → UTC instant at local midnight */
+/** Calendar date ymd (Dhaka) → Date at UTC midnight; matches ERP attendanceDateFor(). */
 function dhakaMidnightUtc(ymd: string): Date {
-  return new Date(`${ymd}T00:00:00+06:00`)
+  const { y, m, d } = parseYmd(ymd)
+  return new Date(Date.UTC(y, m - 1, d))
 }
 
 function addDaysYmd(ymd: string, days: number): string {

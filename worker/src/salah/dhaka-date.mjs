@@ -17,9 +17,10 @@ export function dhakaTodayYmd(now = new Date()) {
   return ymdFormatter.format(now)
 }
 
-/** Dhaka midnight as UTC instant for API/DB date fields. */
+/** Calendar date ymd (Dhaka) → Date at UTC midnight; matches ERP attendanceDateFor(). */
 export function dhakaMidnightUtc(ymd) {
-  return new Date(`${ymd}T00:00:00+06:00`)
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d))
 }
 
 /** Noon on a Dhaka calendar day — stable anchor for adhan.js. */
@@ -33,7 +34,6 @@ export function salahDateFilter(ymd) {
 }
 
 export function dhakaYesterdayYmd(now = new Date()) {
-  const today = dhakaMidnightUtc(dhakaTodayYmd(now))
-  today.setDate(today.getDate() - 1)
-  return ymdFormatter.format(today)
+  const [y, m, d] = dhakaTodayYmd(now).split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10)
 }

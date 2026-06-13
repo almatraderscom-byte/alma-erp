@@ -12,8 +12,10 @@ export function todayYmdDhaka(now = new Date()): string {
   }).format(now)
 }
 
+/** Calendar date ymd (Dhaka) → Date at UTC midnight; matches ERP attendanceDateFor(). */
 export function dhakaMidnightUtc(ymd: string): Date {
-  return new Date(`${ymd}T00:00:00+06:00`)
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(Date.UTC(y!, m! - 1, d!))
 }
 
 export function addDaysYmd(ymd: string, days: number): string {

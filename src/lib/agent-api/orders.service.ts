@@ -1,5 +1,6 @@
 import { serverGet } from '@/lib/server-api'
 import { getPeriodRangeDhaka, isoToYmd } from '@/lib/agent-api/period'
+import { dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
 import type {
   AgentOrder,
   AgentOrderDetail,
@@ -53,7 +54,7 @@ function mapStatus(almaStatus: string): AgentStatus {
 function orderDateToIso(dateStr: string): string {
   const ymd = dateStr.slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return new Date().toISOString()
-  return new Date(`${ymd}T00:00:00+06:00`).toISOString()
+  return dhakaMidnightUtc(ymd).toISOString()
 }
 
 function extractCity(address: string): string | null {

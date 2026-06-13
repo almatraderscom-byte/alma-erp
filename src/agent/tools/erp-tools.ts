@@ -12,7 +12,7 @@ import { getAttendanceHistory } from '@/lib/agent-api/services/attendance.servic
 import { listFines } from '@/lib/agent-api/services/fines.service'
 import { buildAdminAttendanceDashboard } from '@/lib/attendance-admin-dashboard'
 import { prisma } from '@/lib/prisma'
-import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { BusinessId } from '@/lib/businesses'
 import type { AgentTool } from './registry'
@@ -20,7 +20,7 @@ import type { AgentTool } from './registry'
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function ymdToIso(ymd: string): string {
-  return new Date(`${ymd}T00:00:00+06:00`).toISOString()
+  return dhakaMidnightUtc(ymd).toISOString()
 }
 
 function resolveBusinessId(slug?: string): BusinessId {
@@ -534,9 +534,7 @@ const get_dashboard_snapshot: AgentTool = {
       const db = prisma as any
       const todayYmd = todayYmdDhaka()
       const dayStart = dhakaMidnightUtc(todayYmd)
-      const dayEnd = dhakaMidnightUtc(
-        daysAgoYmd(-1, new Date(`${todayYmd}T00:00:00+06:00`)),
-      )
+      const dayEnd = dhakaMidnightUtc(addDaysYmd(todayYmd, 1))
 
       let checkedInToday = 0
       try {

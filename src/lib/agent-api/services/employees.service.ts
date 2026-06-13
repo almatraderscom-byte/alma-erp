@@ -4,7 +4,7 @@ import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 import type { HREmployee, HREmployeesApi } from '@/types/hr'
 import type { AgentEmployee } from '@/lib/agent-api/schemas/employees.schema'
-import { todayYmdDhaka, daysAgoYmd } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, daysAgoYmd, dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
 
 /** GAS hr_employees columns: emp_id, name, phone, email, role, joining_date, monthly_salary, status */
 function mapEmployee(row: HREmployee, telegramId?: string | null): AgentEmployee {
@@ -76,7 +76,7 @@ export async function getEmployee(id: string) {
       businessId: DEFAULT_AGENT_BUSINESS_ID,
       employeeId: id,
       isArchived: false,
-      attendanceDate: { gte: new Date(`${monthStart}T00:00:00+06:00`) },
+      attendanceDate: { gte: dhakaMidnightUtc(monthStart) },
     },
   })
   const presentDays = records.length
