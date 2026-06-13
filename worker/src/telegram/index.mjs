@@ -23,7 +23,6 @@ import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
 import {
   handleStaffLocation,
   handleLiveLocationStopped,
-  promptTaskDoneLocation,
   resolveStaffByChatId,
   broadcastStaffOnboard,
 } from './location.mjs'
@@ -925,6 +924,13 @@ export function createTelegramBot() {
   bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data ?? ''
 
+    if (data.startsWith('bonus_approve:') || data.startsWith('bonus_edit:') || data.startsWith('bonus_dismiss:')) {
+      const [action, actionId] = data.split(':')
+      const { handleBonusCallback } = await import('./dispatcher.mjs')
+      await handleBonusCallback(ctx, action, actionId)
+      return
+    }
+
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
       if (action === 'edit') {
@@ -1005,14 +1011,39 @@ export function createTelegramBot() {
         }
 
         if (OWNER_ID && result.staffName) {
-          await ctx.telegram.sendMessage(
-            OWNER_ID,
-            `✅ *${result.staffName}* "${result.taskTitle ?? 'কাজ'}" সম্পন্ন করেছে।`,
-            { parse_mode: 'Markdown' },
-          ).catch(() => {})
-        }
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+          const { data: todayTasks } = await supabase
+            .from('staff_tasks')
+            .select('id, title, status, type')
+            .eq('staff_id', staff.id)
+            .eq('proposed_for', today)
+            .not('status', 'eq', 'cancelled')
+            .order('created_at', { ascending: true })
 
-        await promptTaskDoneLocation(ctx, staff.id, result.staffName)
+          const { sendOrUpdateTaskProgress } = await import('../staff/task-progress.mjs')
+          await sendOrUpdateTaskProgress(
+            ctx.telegram,
+            supabase,
+            OWNER_ID,
+            staff.id,
+            result.staffName,
+            todayTasks ?? [],
+            today,
+          ).catch((err) => console.warn('[telegram] task progress notify failed:', err.message))
+
+          const active = (todayTasks ?? []).filter((t) => t.status !== 'cancelled')
+          const allTasksDone = active.length > 0 && active.every((t) => t.status === 'done')
+          if (allTasksDone) {
+            const { suggestBonusTasks } = await import('../staff/bonus-task-suggest.mjs')
+            await suggestBonusTasks({
+              supabase,
+              telegram: ctx.telegram,
+              staff,
+              today,
+              existingTasks: active,
+            }).catch((err) => console.warn('[telegram] bonus suggest failed:', err.message))
+          }
+        }
       } catch (err) {
         await ctx.answerCbQuery('সমস্যা হয়েছে')
         console.error('[telegram] task_done callback error:', err.message)

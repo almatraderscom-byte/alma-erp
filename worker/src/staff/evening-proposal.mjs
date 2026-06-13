@@ -3,6 +3,7 @@
  * Profiles live HERE (VPS) — read from agent_kv_settings, not Vercel-only code.
  */
 import { dhakaTodayYmd } from '../salah/dhaka-date.mjs'
+import { formatDhakaDateLabel } from './bn-format.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -215,14 +216,18 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
   for (const carried of carryForward.filter((t) => t.staff_id === staff.id || t.staffId === staff.id)) {
     const type = carried.type || 'misc'
     if (!staffHasSkill(profile, type)) continue
+    const rawTitle = String(carried.title ?? '').replace(/^↩\s*/, '')
+    const title = rawTitle.startsWith('🔄')
+      ? rawTitle
+      : `🔄 গতকাল থেকে বাকি: ${rawTitle}`
     tasks.push({
       staffId: staff.id,
       staffName: staff.name,
-      title: `↩ ${carried.title} (গতকালের কাজ)`,
+      title,
       detail: carried.detail ?? undefined,
       type,
       productRef: carried.product_ref ?? carried.productRef ?? undefined,
-      source: 'pattern',
+      source: carried.source === 'carry_forward' ? 'carry_forward' : 'pattern',
     })
     usedTypes.add(type)
   }
@@ -261,28 +266,39 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
     round++
   }
 
-  const carryCount = tasks.filter((t) => t.title.startsWith('↩')).length
+  const carryCount = tasks.filter((t) => t.title.startsWith('🔄')).length
   if (tasks.length > targetCount + carryCount) {
-    const carries = tasks.filter((t) => t.title.startsWith('↩'))
-    const rest = tasks.filter((t) => !t.title.startsWith('↩')).slice(0, targetCount)
+    const carries = tasks.filter((t) => t.title.startsWith('🔄'))
+    const rest = tasks.filter((t) => !t.title.startsWith('🔄')).slice(0, targetCount)
     return [...carries, ...rest]
   }
 
   return tasks
 }
 
+function formatStaffTaskBlock(staffName, staffTasks) {
+  const carries = staffTasks.filter((t) => t.title.startsWith('🔄'))
+  const fresh = staffTasks.filter((t) => !t.title.startsWith('🔄'))
+  const lines = [
+    ...carries.map((t) => `  • ${t.title}`),
+    ...fresh.map((t) => `  • ${t.title}`),
+  ]
+  return `*${staffName}* (${staffTasks.length}টি):\n${lines.join('\n')}`
+}
+
 function formatSummary(date, staffList, tasks, picks, carryCount, pendingOrders) {
+  const dateLabel = formatDhakaDateLabel(date)
   const byStaff = staffList.map((s) => {
     const sTasks = tasks.filter((t) => t.staffName === s.name)
-    return `*${s.name}* (${sTasks.length}টি):\n${sTasks.map((t) => `  • ${t.title}`).join('\n')}`
+    return formatStaffTaskBlock(s.name, sTasks)
   })
   const topLine = picks.slice(0, 3).map((p) => `  • ${p.name}: ${p.reasons?.[0] ?? ''}`).join('\n')
   let msg =
-    `📋 *আজকের স্টাফ টাস্ক প্রস্তাব* — ${date}\n\n` +
+    `🌙 *আগামীকালের (${dateLabel}) টাস্ক প্রস্তাব:*\n\n` +
     byStaff.join('\n\n') +
     (topLine ? `\n\n🔥 *বেস্টসেলার/ফোকাস পণ্য (৩০ দিন):*\n${topLine}` : '') +
     (pendingOrders > 0 ? `\n\n📦 পেন্ডিং অর্ডার: ${pendingOrders}টি` : '')
-  if (carryCount > 0) msg += `\n\n⚠️ গতকালের ${carryCount}টি অসম্পূর্ণ কাজ যোগ করা হয়েছে।`
+  if (carryCount > 0) msg += `\n\n🔄 গতকালের ${carryCount}টি অসম্পূর্ণ কাজ প্রথমে যোগ করা হয়েছে।`
   return msg
 }
 
@@ -318,11 +334,21 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
     return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
   })()
 
-  const { data: carryRows } = await supabase
+  const { data: nightCarry } = await supabase
     .from('staff_tasks')
-    .select('staff_id, title, detail, type, product_ref')
-    .eq('proposed_for', yesterday)
-    .in('status', ['sent', 'approved'])
+    .select('staff_id, title, detail, type, product_ref, source')
+    .eq('proposed_for', targetDate)
+    .eq('source', 'carry_forward')
+
+  let carryRows = nightCarry ?? []
+  if (!carryRows.length) {
+    const { data: yesterdayCarry } = await supabase
+      .from('staff_tasks')
+      .select('staff_id, title, detail, type, product_ref, source')
+      .eq('proposed_for', yesterday)
+      .in('status', ['sent', 'approved'])
+    carryRows = yesterdayCarry ?? []
+  }
 
   const allTasks = []
   for (const staff of staffList) {
@@ -422,7 +448,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       type: 'dispatch_staff_tasks',
       payload: { date: targetDate, taskIds },
       summary: targetOffsetDays === 1
-        ? `🌙 *আগামীকাল (${targetDate}) স্টাফ টাস্ক*\n\n${proposal.summaryBangla}`
+        ? `🌙 *আগামীকালের (${formatDhakaDateLabel(targetDate)}) স্টাফ টাস্ক*\n\n${proposal.summaryBangla}`
         : proposal.summaryBangla,
       costEstimate: 0,
       status: 'pending',

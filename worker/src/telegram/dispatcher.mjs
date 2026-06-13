@@ -3,10 +3,16 @@
  * Sends approval cards and staff messages; handles Phase 6 callbacks.
  */
 
+import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
+import { dispatchTasksToStaff } from '../staff/dispatch.mjs'
 
 let _bot = null
 let _ownerChatId = null
+
+function createSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+}
 
 export function setDispatcherBot(bot, ownerChatId) {
   _bot = bot
@@ -50,6 +56,117 @@ export async function sendTelegramApprovalCard({ message, pendingActionId, appro
       extra,
     )
   }
+}
+
+/**
+ * Bonus task suggestion card (all daily tasks completed early).
+ */
+export async function sendBonusSuggestCard({ message, pendingActionId }) {
+  if (!_bot || !_ownerChatId) {
+    console.warn('[dispatcher] bot not initialized for bonus suggest card')
+    return
+  }
+  if (!pendingActionId) {
+    console.error('[dispatcher] pendingActionId missing for bonus suggest card')
+  }
+
+  const chunks = splitMessage(message)
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1
+    const buttons = [
+      { text: '✅ সব Approve', callback_data: `bonus_approve:${pendingActionId}` },
+      { text: '✏️ Edit', callback_data: `bonus_edit:${pendingActionId}` },
+      { text: '❌ আজ আর না', callback_data: `bonus_dismiss:${pendingActionId}` },
+    ]
+    const extra = isLast && pendingActionId
+      ? { reply_markup: { inline_keyboard: [buttons] } }
+      : {}
+    await sendMarkdownSafe(_bot.telegram, _ownerChatId, chunks[i], extra)
+  }
+}
+
+/**
+ * Handle bonus task suggestion callbacks (worker-side, no Vercel round-trip).
+ */
+export async function handleBonusCallback(ctx, action, actionId) {
+  const supabase = createSupabase()
+
+  const { data: pendingAction, error } = await supabase
+    .from('agent_pending_actions')
+    .select('id, type, payload, status')
+    .eq('id', actionId)
+    .maybeSingle()
+
+  if (error || !pendingAction) {
+    await ctx.answerCbQuery('কার্ড পাওয়া যায়নি')
+    return
+  }
+  if (pendingAction.type !== 'bonus_task_suggest') {
+    await ctx.answerCbQuery('অনুমতি নেই')
+    return
+  }
+  if (pendingAction.status !== 'pending') {
+    await ctx.answerCbQuery('ইতিমধ্যে প্রক্রিয়া হয়েছে')
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+    return
+  }
+
+  const { staffId, staffName, date, taskIds } = pendingAction.payload ?? {}
+  const now = new Date().toISOString()
+
+  if (action === 'bonus_dismiss') {
+    await ctx.answerCbQuery('বাতিল')
+    if (taskIds?.length) {
+      await supabase.from('staff_tasks').update({ status: 'cancelled' }).in('id', taskIds)
+    }
+    await supabase
+      .from('agent_pending_actions')
+      .update({ status: 'rejected', resolvedAt: now })
+      .eq('id', actionId)
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+    await ctx.reply(`❌ ${staffName ?? 'স্টাফ'}-এর জন্য আজ আর বোনাস কাজ যোগ করা হবে না।`)
+    return
+  }
+
+  if (action === 'bonus_edit') {
+    await ctx.answerCbQuery('সম্পাদনা')
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+    await ctx.reply(
+      `✏️ ${staffName ?? 'স্টাফ'}-এর নতুন কাজ লিখে পাঠান, অথবা এজেন্টকে বলুন কোন কাজগুলো পাঠাতে হবে।`,
+    )
+    return
+  }
+
+  if (action === 'bonus_approve') {
+    await ctx.answerCbQuery('⏳ পাঠানো হচ্ছে…')
+    if (taskIds?.length) {
+      await supabase.from('staff_tasks').update({ status: 'approved' }).in('id', taskIds)
+    }
+    await supabase
+      .from('agent_pending_actions')
+      .update({ status: 'approved', resolvedAt: now })
+      .eq('id', actionId)
+
+    if (_bot && date && taskIds?.length) {
+      await dispatchTasksToStaff({
+        supabase,
+        bot: _bot,
+        date,
+        taskIds,
+      })
+    }
+
+    await supabase
+      .from('agent_pending_actions')
+      .update({ status: 'executed', resolvedAt: now })
+      .eq('id', actionId)
+
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+    await ctx.reply(`✅ ${staffName ?? 'স্টাফ'}-কে ${taskIds?.length ?? 0}টি বোনাস কাজ পাঠানো হয়েছে।`)
+    return
+  }
+
+  await ctx.answerCbQuery('অজানা অ্যাকশন')
 }
 
 function splitMessage(text, limit = 4000) {

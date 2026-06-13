@@ -7,6 +7,7 @@
 
 import { notify } from '../notify/index.mjs'
 import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
+import { bnNum, formatDhakaDateLabel } from './bn-format.mjs'
 
 export async function runNightReport({ supabase, bot }) {
   console.log('[night-report] starting...')
@@ -40,11 +41,14 @@ export async function runNightReport({ supabase, bot }) {
 
   const reportLines = []
   const tasksToCarry = []
+  const compactParts = []
 
   for (const { staff, done, pending } of Object.values(byStaff)) {
     const staffName = staff?.name || 'অজানা'
     const total = done.length + pending.length
     const pct = total > 0 ? Math.round((done.length / total) * 100) : 0
+    const shortName = staffName.split(' ').pop() ?? staffName
+    compactParts.push(`${shortName} ${bnNum(done.length)}/${bnNum(total)} সম্পন্ন`)
 
     reportLines.push(
       `👤 *${staffName}*: ${done.length}/${total} (${pct}%)\n` +
@@ -58,7 +62,7 @@ export async function runNightReport({ supabase, bot }) {
     }
   }
 
-  // Auto-carry incomplete tasks: mark old ones + create new proposals for tomorrow
+  // Auto-carry incomplete tasks BEFORE owner notification (evening-proposal reads these at 21:05)
   if (tasksToCarry.length > 0) {
     await supabase
       .from('staff_tasks')
@@ -156,8 +160,14 @@ export async function runNightReport({ supabase, bot }) {
     }
   } catch { /* non-fatal */ }
 
+  const dateLabel = formatDhakaDateLabel(today)
+  const carryLine = tasksToCarry.length > 0
+    ? `, ${bnNum(tasksToCarry.length)}টি carry-forward`
+    : ''
+  const compactHeader = `আজকের (${dateLabel}) রিপোর্ট: ${compactParts.join(', ')}${carryLine}`
+
   const reportText =
-    `📋 *রাতের রিপোর্ট — ${today}*\n\n` +
+    `📋 *${compactHeader}*\n\n` +
     reportLines.join('\n\n') +
     salahSummary +
     salesSummary +
