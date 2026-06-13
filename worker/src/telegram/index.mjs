@@ -25,7 +25,7 @@ import {
   handleLiveLocationStopped,
   promptTaskDoneLocation,
   resolveStaffByChatId,
-  STAFF_ONBOARDING_BANGLA,
+  broadcastStaffOnboard,
 } from './location.mjs'
 import {
   handleTodayCommand,
@@ -534,6 +534,7 @@ async function handleStaffLink(ctx, args) {
         chatId,
         `আস্সালামু আলাইকুম ${name} ভাই! আপনাকে ALMA সিস্টেমে স্বাগতম। 🌙\n\n` +
           `এখানে শুধু দৈনিক *কাজের টাস্ক* আসবে — ✅ Done চাপবেন।\n` +
+          `অফিসে কাজের সময় *Live Location* শেয়ার করা বাধ্যতামূলক।\n` +
           `সাধারণ মেসেজের উত্তর দেওয়া হয় না; /start চাপলে গাইড দেখবেন।`,
         { parse_mode: 'Markdown' },
       )
@@ -625,7 +626,7 @@ export function createTelegramBot() {
         `আস্সালামু আলাইকুম ${staff.name} ভাই! 🌙\n\n` +
           `আপনি ALMA স্টাফ হিসেবে লিঙ্ক আছেন।\n` +
           `• দৈনিক কাজের টাস্ক এখানে আসবে — ✅ *Done* চাপুন\n` +
-          `• লোকেশন চাইলে শেয়ার করুন (ঐচ্ছিক)\n` +
+          `• কাজ Done-এর পর লোকেশন শেয়ার *বাধ্যতামূলক* (৩ মিনিটের মধ্যে)\n` +
           `• সাধারণ চ্যাটের উত্তর এই বট দেয় না`,
         { parse_mode: 'Markdown' },
       )
@@ -707,7 +708,15 @@ export function createTelegramBot() {
 
   bot.command('staff_onboard', async (ctx) => {
     if (!isOwner(ctx.chat?.id)) return
-    await ctx.reply(STAFF_ONBOARDING_BANGLA, { parse_mode: 'Markdown' })
+    const supabase = createSupabase()
+    try {
+      const { sent, failed, total } = await broadcastStaffOnboard(ctx.telegram, supabase)
+      let msg = `✅ GPS অনবোর্ডিং গাইড ${sent}/${total} জন স্টাফকে পাঠানো হয়েছে।`
+      if (failed.length) msg += `\n⚠️ ব্যর্থ: ${failed.join(', ')}`
+      await ctx.reply(msg)
+    } catch (err) {
+      await ctx.reply(`❌ পাঠানো যায়নি: ${err.message}`)
+    }
   })
 
   // ── CS-0 catalog commands ─────────────────────────────────────────────────
@@ -826,7 +835,7 @@ export function createTelegramBot() {
 
       const text = ctx.message.text.trim()
       if (text === 'লোকেশন skip') {
-        await ctx.reply('ঠিক আছে — লোকেশন ছাড়াই চলবে।')
+        await ctx.reply('⚠️ লোকেশন শেয়ার *বাধ্যতামূলক*। 📍 বাটন চাপুন বা Attachment → Location শেয়ার করুন।', { parse_mode: 'Markdown' })
         return
       }
 
@@ -1040,8 +1049,8 @@ export function createTelegramBot() {
       }
 
     } else if (data.startsWith('loc_skip:')) {
-      await ctx.answerCbQuery('লোকেশন skip')
-      await ctx.reply('ঠিক আছে — লোকেশন ছাড়াই চলবে।')
+      await ctx.answerCbQuery('বাধ্যতামূলক')
+      await ctx.reply('⚠️ লোকেশন শেয়ার বাধ্যতামূলক — skip করা যাবে না।')
 
     } else if (data.startsWith('details:')) {
       // details:<name>:<page>  — owner's paginated finance details
