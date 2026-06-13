@@ -3,7 +3,8 @@
  */
 
 import { replyMarkdownSafe } from './markdown-safe.mjs'
-import { dhakaTodayYmd, salahDateFilter } from '../salah/dhaka-date.mjs'
+import { dhakaTodayYmd, dhakaMidnightUtc, salahDateFilter } from '../salah/dhaka-date.mjs'
+import { bnNum } from '../staff/bn-format.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -46,6 +47,66 @@ export async function handleSalahTodayCommand(ctx, supabase) {
   await replyMarkdownSafe(ctx, `🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`)
 }
 
+function dhakaTomorrowYmd(today) {
+  const d = dhakaMidnightUtc(today)
+  d.setDate(d.getDate() + 1)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Dhaka',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
+async function fetchActiveTasksForDate(supabase, date) {
+  const { data } = await supabase
+    .from('staff_tasks')
+    .select('status, title, staff_id, agent_staff(name)')
+    .eq('proposed_for', date)
+    .in('status', ['sent', 'approved', 'done'])
+    .order('created_at', { ascending: true })
+  return data ?? []
+}
+
+function buildStaffTaskSections(tasks) {
+  const byStaff = {}
+  for (const t of tasks) {
+    const staffId = t.staff_id ?? t.agent_staff?.name ?? 'unknown'
+    if (!byStaff[staffId]) {
+      byStaff[staffId] = { name: t.agent_staff?.name ?? 'অজানা', tasks: [] }
+    }
+    byStaff[staffId].tasks.push(t)
+  }
+
+  const sections = []
+  for (const { name, tasks: staffTasks } of Object.values(byStaff)) {
+    const doneCount = staffTasks.filter((t) => t.status === 'done').length
+    const sorted = [...staffTasks].sort((a, b) => {
+      const aDone = a.status === 'done' ? 0 : 1
+      const bDone = b.status === 'done' ? 0 : 1
+      return aDone - bDone || 0
+    })
+    const lines = sorted.map((t) => {
+      const icon = t.status === 'done' ? '☑️' : '⏳'
+      return `${icon} ${t.title}`
+    })
+    sections.push(`👤 ${name} (${bnNum(doneCount)}/${bnNum(staffTasks.length)}):\n${lines.join('\n')}`)
+  }
+  return sections.join('\n')
+}
+
+function buildSalahLine(salahRecords) {
+  const salahOn = salahRecords?.filter((r) => r.status === 'prayed_on_time').length ?? 0
+  const salahMiss = salahRecords?.filter((r) => r.status === 'missed').length ?? 0
+  const notYet = (salahRecords ?? [])
+    .filter((r) => r.status === 'pending' && (r.waqt === 'maghrib' || r.waqt === 'isha'))
+    .map((r) => WAQT_BN[r.waqt] ?? r.waqt)
+  let line = `🕌 নামাজ: ${bnNum(salahOn)}/৫ সময়মতো`
+  if (salahMiss > 0) line += `, ${bnNum(salahMiss)} মিস`
+  if (notYet.length > 0) line += ` (${notYet.join(' ও ')} এখনো সময় হয়নি)`
+  return line
+}
+
 export async function handleTodayCommand(ctx, supabase) {
   const today = dhakaToday()
 
@@ -54,19 +115,17 @@ export async function handleTodayCommand(ctx, supabase) {
     .select('waqt, status')
     .eq('date', salahDateFilter(today))
 
-  const salahOn = salahRecords?.filter((r) => r.status === 'prayed_on_time').length ?? 0
-  const salahMiss = salahRecords?.filter((r) => r.status === 'missed').length ?? 0
-  const salahLine = `🕌 নামাজ: ${salahOn}/5 সময়মতো${salahMiss > 0 ? `, ${salahMiss} মিস` : ''}`
+  const salahLine = buildSalahLine(salahRecords)
 
-  const { data: tasks } = await supabase
-    .from('staff_tasks')
-    .select('status, title, agent_staff(name)')
-    .eq('proposed_for', today)
-    .not('status', 'eq', 'cancelled')
+  let tasks = await fetchActiveTasksForDate(supabase, today)
+  if (!tasks.length) {
+    tasks = await fetchActiveTasksForDate(supabase, dhakaTomorrowYmd(today))
+  }
 
-  const done = tasks?.filter((t) => t.status === 'done').length ?? 0
-  const total = tasks?.length ?? 0
-  const taskLine = `📋 টাস্ক: ${done}/${total} সম্পন্ন`
+  const done = tasks.filter((t) => t.status === 'done').length
+  const total = tasks.length
+  const taskLine = `📋 টাস্ক: ${bnNum(done)}/${bnNum(total)} সম্পন্ন`
+  const staffSection = tasks.length ? `\n${buildStaffTaskSections(tasks)}` : ''
 
   let salesLine = ''
   try {
@@ -79,16 +138,12 @@ export async function handleTodayCommand(ctx, supabase) {
     }
   } catch { /* non-fatal */ }
 
-  const pending = tasks?.filter((t) => t.status !== 'done').slice(0, 5)
-    .map((t) => `  • ${t.agent_staff?.name ?? ''}: ${t.title}`)
-    .join('\n') ?? ''
-
   const msg =
-    `📅 *আজকের স্ন্যাপশট — ${today}*\n\n` +
-    taskLine + '\n' +
-    salahLine +
-    salesLine +
-    (pending ? `\n\n⏳ বাকি:\n${pending}` : '')
+    `📅 *আজকের স্ন্যাপশট — ${today}*\n` +
+    taskLine +
+    staffSection +
+    `\n${salahLine}` +
+    salesLine
 
   await replyMarkdownSafe(ctx, msg)
 }
