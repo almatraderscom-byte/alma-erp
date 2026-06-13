@@ -33,15 +33,21 @@ export async function sendTelegramApprovalCard({ message, pendingActionId, appro
       ...(editLabel ? [{ text: editLabel, callback_data: `edit:${pendingActionId}` }] : []),
       { text: rejectLabel,  callback_data: `reject:${pendingActionId}`  },
     ]
+    const extra = isLast && pendingActionId
+      ? { reply_markup: { inline_keyboard: [buttons] } }
+      : {}
+    if (isLast) {
+      console.log('[dispatcher] sendMessage args:', JSON.stringify({
+        chatId: _ownerChatId,
+        textLen: chunks[i].length,
+        reply_markup: extra.reply_markup ?? null,
+      }))
+    }
     await sendMarkdownSafe(
       _bot.telegram,
       _ownerChatId,
       chunks[i],
-      {
-        ...(isLast && pendingActionId ? {
-          reply_markup: { inline_keyboard: [buttons] },
-        } : {}),
-      },
+      extra,
     )
   }
 }

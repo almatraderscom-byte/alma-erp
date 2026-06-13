@@ -275,6 +275,32 @@ async function handleActionCallback(ctx, action, actionId) {
     await ctx.answerCbQuery('⏳ প্রক্রিয়া চলছে…')
     await ctx.sendChatAction('typing').catch(() => {})
 
+    // Pre-check dispatch_staff_tasks — skip if tasks already sent
+    if (action === 'approve') {
+      const supabase = createSupabase()
+      const { data: pendingAction } = await supabase
+        .from('agent_pending_actions')
+        .select('type, payload, status')
+        .eq('id', actionId)
+        .maybeSingle()
+      if (pendingAction?.type === 'dispatch_staff_tasks' && pendingAction.payload?.date) {
+        const { count } = await supabase
+          .from('staff_tasks')
+          .select('id', { count: 'exact', head: true })
+          .eq('proposed_for', pendingAction.payload.date)
+          .in('status', ['sent', 'done'])
+        if ((count ?? 0) > 0) {
+          await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+          await ctx.reply('✅ ইতিমধ্যে স্টাফকে পাঠানো হয়েছে — আবার approve করার দরকার নেই।')
+          await supabase
+            .from('agent_pending_actions')
+            .update({ status: 'executed', resolvedAt: new Date().toISOString() })
+            .eq('id', actionId)
+          return
+        }
+      }
+    }
+
     const res = await fetch(`${APP_URL}/api/assistant/actions/${actionId}/${endpoint}`, {
       method: 'POST',
       headers: {

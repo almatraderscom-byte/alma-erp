@@ -73,6 +73,28 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
 
   console.log(`[dispatch] sent ${sentIds.length}/${pending.length} tasks to ${Object.keys(byStaff).length} staff`)
+
+  // Mark all dispatch_staff_tasks pending/approved actions for this date as executed
+  await markDispatchActionsExecuted(supabase, date)
+}
+
+/** Prevent double-dispatch cards — close all pending/approved dispatch actions for a date. */
+export async function markDispatchActionsExecuted(supabase, date) {
+  const { data: actions } = await supabase
+    .from('agent_pending_actions')
+    .select('id, payload, status')
+    .eq('type', 'dispatch_staff_tasks')
+    .in('status', ['pending', 'approved'])
+
+  const now = new Date().toISOString()
+  for (const a of actions ?? []) {
+    if (a.payload?.date === date) {
+      await supabase
+        .from('agent_pending_actions')
+        .update({ status: 'executed', resolvedAt: now })
+        .eq('id', a.id)
+    }
+  }
 }
 
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {

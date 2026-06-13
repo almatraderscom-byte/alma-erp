@@ -203,15 +203,29 @@ export async function POST(
   if (action.type === 'dispatch_staff_tasks') {
     const { date, taskIds } = payload as { date: string; taskIds: string[] }
 
-    // Check if tasks are already dispatched (approved by another path)
+    // Already dispatched (sent/done) — idempotent
     const alreadySent = await db.agentStaffTask.count({
-      where: { id: { in: taskIds ?? [] }, status: { in: ['sent', 'done'] } },
+      where: {
+        OR: [
+          { id: { in: taskIds ?? [] }, status: { in: ['sent', 'done'] } },
+          ...(date ? [{ proposedFor: new Date(date), status: { in: ['sent', 'done'] } }] : []),
+        ],
+      },
     })
     if (alreadySent > 0) {
-      await db.agentPendingAction.update({
-        where: { id: actionId },
-        data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
+      const sameDateActions = await db.agentPendingAction.findMany({
+        where: { type: 'dispatch_staff_tasks', status: { in: ['pending', 'approved'] } },
+        select: { id: true, payload: true },
       })
+      for (const a of sameDateActions) {
+        const p = a.payload as { date?: string }
+        if (!date || p.date === date) {
+          await db.agentPendingAction.update({
+            where: { id: a.id },
+            data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
+          })
+        }
+      }
       return Response.json({
         success: true, alreadyDispatched: true,
         message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — আবার পাঠানোর দরকার নেই।',
@@ -222,19 +236,29 @@ export async function POST(
       where: { id: { in: taskIds ?? [] }, status: 'proposed' },
       data:  { status: 'approved' },
     })
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data:  { status: 'approved', resolvedAt: new Date() },
-    })
 
-    // Auto-resolve any other pending dispatch actions for the same date
-    await db.agentPendingAction.updateMany({
+    // Supersede other pending cards for the same date before approving this one
+    const otherPending = await db.agentPendingAction.findMany({
       where: {
         id: { not: actionId },
         type: 'dispatch_staff_tasks',
         status: 'pending',
       },
-      data: { status: 'executed', resolvedAt: new Date() },
+      select: { id: true, payload: true },
+    })
+    for (const other of otherPending) {
+      const p = other.payload as { date?: string }
+      if (!date || p.date === date) {
+        await db.agentPendingAction.update({
+          where: { id: other.id },
+          data: { status: 'executed', resolvedAt: new Date(), result: { supersededBy: actionId } },
+        })
+      }
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data:  { status: 'approved', resolvedAt: new Date() },
     })
 
     await appendConversationNote(
