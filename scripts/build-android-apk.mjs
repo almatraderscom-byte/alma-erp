@@ -49,5 +49,10 @@ if (!existsSync(built)) {
   process.exit(1)
 }
 copyFileSync(built, outPath)
+const publicApk = path.join(ROOT, 'public/releases/alma-erp.apk')
+mkdirSync(path.dirname(publicApk), { recursive: true })
+copyFileSync(built, publicApk)
 console.log('\n✅ APK ready:', outPath)
-console.log('Upload to CDN/Drive and set NEXT_PUBLIC_ANDROID_APK_URL for /app/download')
+console.log('✅ Public download:', publicApk)
+console.log('Live URL: https://alma-erp-six.vercel.app/releases/alma-erp.apk')
+console.log('Staff page: https://alma-erp-six.vercel.app/app/download')
