@@ -10,10 +10,11 @@ export async function notifyShadowDraft(bot, { draftId, pageId, psid, parts, cus
   const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n')
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
 
-  const displayName = customerName || 'Unknown Customer'
+  const displayName = customerName || psid
   const displayPage = pageName || pageId
+  const nameLabel = customerName ? `👤 ${customerName}` : `👤 ${psid}`
 
-  const body = `📋 *${displayName}* — ${displayPage}\n\n${text.slice(0, 1500)}`
+  const body = `${nameLabel} — ${displayPage}\n\n📋 Draft:\n${text.slice(0, 1500)}`
 
   const keyboard = [[
     { text: '📤 পাঠাও', callback_data: `cs_send:${draftId}` },

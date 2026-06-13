@@ -38,9 +38,24 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'send') {
-    if (draft.status !== 'pending') {
+    if (['sent', 'dismissed'].includes(draft.status)) {
       return Response.json({ error: `draft_${draft.status}` }, { status: 409 })
     }
+
+    const conv = await db.csConversation.findUnique({
+      where: { id: draft.conversationId },
+      select: { lastCustomerMessageAt: true },
+    })
+    if (conv?.lastCustomerMessageAt) {
+      const ageMs = Date.now() - new Date(conv.lastCustomerMessageAt).getTime()
+      if (ageMs > 23.5 * 60 * 60 * 1000) {
+        return Response.json({
+          error: 'meta_24h_expired',
+          message: '24-ঘণ্টা পার হয়ে গেছে, Meta নিয়ম অনুযায়ী পাঠানো যাবে না',
+        }, { status: 422 })
+      }
+    }
+
     return Response.json({
       ok: true,
       pageId: draft.pageId,

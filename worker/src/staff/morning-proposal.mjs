@@ -37,6 +37,13 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
     const proposal = await callInternal(`/api/assistant/internal/staff-task-proposal?date=${targetDate}`)
     if (!proposal.success || !proposal.tasks?.length) {
       console.warn(`[${label}] no tasks from proposal API:`, proposal.error || proposal.raw)
+      const { notify } = await import('../notify/index.mjs')
+      await notify({
+        tier: 1,
+        title: label === 'evening-proposal' ? '🌙 আজ কোনো টাস্ক প্রস্তাব নেই' : 'টাস্ক প্রস্তাব',
+        message: `${targetDate} — আজ কোনো task তৈরি হয়নি। ইনভেন্টরিতে active product কম, বা সব task আগেই complete।`,
+        category: 'task',
+      }).catch(() => {})
       return
     }
 
@@ -103,6 +110,17 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
     })
 
     console.log(`[${label}] approval card sent for ${taskData.length} tasks`)
+
+    if (targetOffsetDays === 1) {
+      const { notify } = await import('../notify/index.mjs')
+      await notify({
+        tier: 1,
+        title: '🌙 আগামীকালের টাস্ক তৈরি হয়েছে',
+        message: `${taskData.length}টি টাস্ক প্রস্তাবিত — Telegram-এ Approve করুন।`,
+        category: 'task',
+        ntfyMode: 'critical',
+      }).catch(() => {})
+    }
   } catch (err) {
     console.error(`[${label}] error:`, err.message, err.stack)
     throw err

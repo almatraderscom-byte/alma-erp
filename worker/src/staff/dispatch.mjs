@@ -76,32 +76,33 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 }
 
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {
-  const taskLines = staffTasks.map((t, i) =>
-    `${i + 1}. ${t.title}${t.detail ? `\n   ${t.detail}` : ''}`,
-  )
+  const numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+
+  const taskLines = staffTasks.map((t, i) => {
+    const num = numEmojis[i] ?? `${i + 1}.`
+    const detail = t.detail ? `\n   → ${t.detail}` : ''
+    return `${num} ${t.title}${detail}`
+  })
 
   const msg =
-    `আস্সালামু আলাইকুম ${staffName} ভাই!\n\n` +
-    `📋 আজকের কাজের তালিকা:\n\n` +
-    taskLines.join('\n\n')
+    `আস্সালামু আলাইকুম ${staffName} ভাই! 📋\n\n` +
+    `আজকের কাজ (${staffTasks.length}টি):\n\n` +
+    taskLines.join('\n\n') +
+    `\n\nপ্রতিটা শেষ হলে নিচে Done চাপুন ✅`
 
-  await sendMarkdownSafe(bot.telegram, chatId, msg)
+  const buttons = staffTasks.map((t, i) => ({
+    text: `✅ ${i + 1} Done`,
+    callback_data: taskDoneCallbackData(t.id),
+  }))
 
-  for (const task of staffTasks) {
-    const callbackData = taskDoneCallbackData(task.id)
-    await sendMarkdownSafe(
-      bot.telegram,
-      chatId,
-      `✏️ ${task.title}${task.detail ? `\n${task.detail}` : ''}`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '✅ Done', callback_data: callbackData },
-          ]],
-        },
-      },
-    )
+  const rows = []
+  for (let i = 0; i < buttons.length; i += 4) {
+    rows.push(buttons.slice(i, i + 4))
   }
+
+  await sendMarkdownSafe(bot.telegram, chatId, msg, {
+    reply_markup: { inline_keyboard: rows },
+  })
 }
 
 async function notifyOwnerTelegramFailed(bot, staffName, chatId, tasks, errorMsg) {

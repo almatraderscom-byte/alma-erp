@@ -255,9 +255,123 @@ const get_fb_messenger_inbox: AgentTool = {
   },
 }
 
+// ── Send customer message (Messenger DM) ─────────────────────────────────
+
+const send_customer_message: AgentTool = {
+  name: 'send_customer_message',
+  description:
+    'Sends a message to a customer via Facebook Messenger (page DM, not wall post). ' +
+    'Creates a PENDING ACTION — owner must approve before sending. ' +
+    'Resolves customer by name (from cs_customers) or by raw PSID. ' +
+    'page: "lifestyle" | "onlineshop". Respects Meta 24-hour messaging window.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customerNameOrPsid: {
+        type: 'string',
+        description: 'Customer name (looked up in cs_customers) or raw Facebook PSID',
+      },
+      page: {
+        type: 'string',
+        enum: ['lifestyle', 'onlineshop'],
+        description: 'Facebook page to send from',
+      },
+      message: {
+        type: 'string',
+        description: 'Message text to send (max 2000 chars)',
+      },
+      conversationId: { type: 'string' },
+    },
+    required: ['customerNameOrPsid', 'page', 'message'],
+  },
+  handler: async (input) => {
+    try {
+      const customerInput = String(input.customerNameOrPsid).trim()
+      const page = String(input.page)
+      const message = String(input.message).slice(0, 2000)
+      const pageId = resolvePageId(page)
+      const pageName = pageLabel(pageId)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+
+      let psid: string | null = null
+      let customerName: string | null = null
+
+      const isRawPsid = /^\d{10,}$/.test(customerInput)
+      if (isRawPsid) {
+        psid = customerInput
+        const cust = await db.csCustomer.findFirst({
+          where: { psid: customerInput, pageId },
+          select: { name: true },
+        })
+        customerName = cust?.name ?? customerInput
+      } else {
+        const cust = await db.csCustomer.findFirst({
+          where: {
+            name: { contains: customerInput, mode: 'insensitive' },
+            pageId,
+          },
+          select: { psid: true, name: true },
+        })
+        if (!cust) {
+          return {
+            success: false,
+            error: `"${customerInput}" নামে কোনো কাস্টমার ${pageName}-এ পাওয়া যায়নি। সঠিক নাম বা PSID দিন।`,
+          }
+        }
+        psid = cust.psid
+        customerName = cust.name
+      }
+
+      const conv = await db.csConversation.findFirst({
+        where: { pageId, psid },
+        select: { lastCustomerMessageAt: true },
+      })
+      if (conv?.lastCustomerMessageAt) {
+        const ageMs = Date.now() - new Date(conv.lastCustomerMessageAt).getTime()
+        if (ageMs > 23.5 * 60 * 60 * 1000) {
+          return {
+            success: false,
+            error: `24-ঘণ্টা পার হয়ে গেছে — Meta নিয়ম অনুযায়ী কাস্টমারকে message পাঠানো যাবে না। কাস্টমার আবার message করলে window নতুন করে শুরু হবে।`,
+          }
+        }
+      }
+
+      const summary =
+        `📩 কাস্টমার মেসেজ → ${customerName} (${pageName})\n\n` +
+        `"${message.slice(0, 300)}${message.length > 300 ? '…' : ''}"`
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'send_customer_message',
+          payload: { pageId, psid, page, message, customerName },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          summary,
+          costEstimate: 0,
+          message: `মেসেজ ${customerName}-কে পাঠানোর জন্য তৈরি। মালিকের Approve প্রয়োজন।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const CONFIRM_TOOLS: AgentTool[] = [
   generate_image,
   post_to_facebook,
+  send_customer_message,
   get_fb_recent_posts,
   get_fb_messenger_inbox,
 ]

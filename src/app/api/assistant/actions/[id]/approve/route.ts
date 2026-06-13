@@ -220,6 +220,46 @@ export async function POST(
       message: 'Tasks approved. Worker will dispatch to staff via Telegram.' })
   }
 
+  if (action.type === 'send_customer_message') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+
+      const { pageId, psid, message, customerName } = payload as {
+        pageId: string; psid: string; message: string; customerName?: string
+      }
+
+      const { sendMessengerText } = await import('@/agent/lib/cs/meta-messenger')
+      const msgId = await sendMessengerText(pageId, psid, message)
+
+      const result = { messageId: msgId, pageId, psid, customerName }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result },
+      })
+
+      await appendConversationNote(
+        db,
+        action,
+        `✅ কাস্টমার ${customerName ?? psid}-কে মেসেজ পাঠানো হয়েছে।`,
+      )
+
+      return Response.json({ success: true, ...result })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'add_staff_task_now') {
     const { staffId, staffName, title, type, detail, date } = payload as {
       staffId: string; staffName?: string; title: string; type: string; detail?: string; date: string

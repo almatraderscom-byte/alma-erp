@@ -127,18 +127,50 @@ function draftReply(lastCustomerMsg) {
   return 'আস্সালামু আলাইকুম! আপনার মেসেজ পেয়েছি। আমরা শীঘ্রই যোগাযোগ করব। জাযাকাল্লাহ খাইর।'
 }
 
+async function checkPageTokenHealth(page, token) {
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v21.0/${page.id}?fields=name&access_token=${token}`,
+    )
+    if (!res.ok) {
+      const err = await res.text()
+      await notify({
+        tier: 1,
+        title: `⚠️ ${page.name} token অকার্যকর`,
+        message: `${page.name}-র page token কাজ করছে না — Meta App-এ গিয়ে নতুন করুন। Error: ${err.slice(0, 100)}`,
+        category: 'urgent',
+      })
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error(`[messenger] token health check failed for ${page.name}:`, err.message)
+    return false
+  }
+}
+
 export async function runMessengerScan({ supabase, bot }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId) return
 
   let totalAlerts = 0
+  let pagesScanned = 0
 
   for (const page of PAGES) {
     const token = process.env[page.envKey]
     if (!token) {
       console.warn(`[messenger] ${page.envKey} not set — skipping ${page.name}`)
+      await notify({
+        tier: 1,
+        title: `⚠️ ${page.name} token নেই`,
+        message: `${page.envKey} environment variable সেট করা হয়নি — messenger scan চলবে না।`,
+        category: 'urgent',
+      }).catch(() => {})
       continue
     }
+
+    const tokenOk = await checkPageTokenHealth(page, token)
+    if (!tokenOk) continue
 
     try {
       // Fetch recent conversations
@@ -231,12 +263,11 @@ export async function runMessengerScan({ supabase, bot }) {
           console.log(`[messenger] alert ${alert.type} for conv ${conv.id} on ${page.name}`)
         }
       }
+      pagesScanned++
     } catch (err) {
       console.error(`[messenger] scan error for ${page.name}:`, err.message)
     }
   }
 
-  if (totalAlerts > 0) {
-    console.log(`[messenger] scan complete — ${totalAlerts} new alerts sent`)
-  }
+  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts`)
 }

@@ -67,6 +67,40 @@ async function ensureCustomerName(
   }
 }
 
+const CS_PAGE_NAMES: Record<string, string> = {
+  '1044848232034171': 'Alma Lifestyle',
+  '827260860637393': 'Alma Online Shop',
+}
+
+async function notifyOwnerNewMessage(
+  pageId: string,
+  psid: string,
+  text: string | undefined,
+  customerName: string | null | undefined,
+) {
+  const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
+  const TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  if (!APP_URL || !TOKEN) return
+
+  const pageName = CS_PAGE_NAMES[pageId] ?? pageId
+  const name = customerName || psid
+  const preview = text?.slice(0, 100) ?? '(ছবি/মিডিয়া)'
+
+  await fetch(`${APP_URL}/api/assistant/internal/urgent-alert`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${TOKEN}`,
+    },
+    body: JSON.stringify({
+      tier: 1,
+      title: `📨 ${pageName}: নতুন কাস্টমার মেসেজ`,
+      message: `${name}: "${preview}"\n\nCS mode বন্ধ আছে — reply হবে না।`,
+      category: 'urgent',
+    }),
+  })
+}
+
 export async function ingestInboundMessengerMessage(
   input: InboundMessengerMessage,
 ): Promise<IngestResult> {
@@ -129,8 +163,13 @@ export async function ingestInboundMessengerMessage(
   const stored = await appendCsMessage(conv.id, 'user', content, mid)
   console.log(`[messenger-ingest] page=${pageId} psid=${psid} mid=${mid}`)
 
-  const { permitted } = await csReplyPermitted(conv)
-  if (!permitted) return { ingested: true, conversationId: conv.id, messageId: stored.id, jobQueued: false }
+  const { permitted, effectiveMode } = await csReplyPermitted(conv)
+  if (!permitted) {
+    if (effectiveMode === 'off') {
+      void notifyOwnerNewMessage(pageId, psid, input.text, conv.customerName).catch(() => {})
+    }
+    return { ingested: true, conversationId: conv.id, messageId: stored.id, jobQueued: false }
+  }
 
   await db.csReplyJob.upsert({
     where: { messageId: stored.id },

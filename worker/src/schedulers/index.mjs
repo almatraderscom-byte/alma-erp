@@ -107,7 +107,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
       return
     }
 
-    console.log(`[schedulers] running ${job.name}...`)
+    const started = Date.now()
+    console.log(`[schedulers] ▶ ${job.name} starting...`)
 
     const context = { supabase, bot }
 
@@ -207,9 +208,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
           console.warn(`[schedulers] unknown job: ${job.name}`)
       }
 
-      console.log(`[schedulers] ${job.name} done`)
+      const elapsed = ((Date.now() - started) / 1000).toFixed(1)
+      console.log(`[schedulers] ✓ ${job.name} done (${elapsed}s)`)
     } catch (err) {
-      console.error(`[schedulers] ${job.name} FAILED:`, err.message, err.stack)
+      const elapsed = ((Date.now() - started) / 1000).toFixed(1)
+      console.error(`[schedulers] ✗ ${job.name} FAILED (${elapsed}s):`, err.message, err.stack)
       throw err  // BullMQ will retry based on job options
     }
   }, {

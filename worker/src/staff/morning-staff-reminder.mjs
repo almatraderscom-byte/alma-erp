@@ -19,6 +19,16 @@ export async function runMorningStaffReminder({ supabase, bot }) {
     const taskIds = approved.map((t) => t.id)
     console.log(`[morning-staff-reminder] dispatching ${taskIds.length} approved tasks`)
     await dispatchTasksToStaff({ supabase, bot, date: today, taskIds })
+  } else {
+    console.log(`[morning-staff-reminder] 0 approved tasks for ${today} — checking if proposals exist`)
+    const { count: proposedCount } = await supabase
+      .from('staff_tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('proposed_for', today)
+      .eq('status', 'proposed')
+    if (proposedCount > 0) {
+      console.warn(`[morning-staff-reminder] ${proposedCount} tasks proposed but NOT approved — owner didn't approve last night's proposal`)
+    }
   }
 
   const { data: sentTasks } = await supabase

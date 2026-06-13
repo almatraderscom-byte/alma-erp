@@ -51,5 +51,5 @@ export async function POST(req: NextRequest) {
     data:  { status, completedAt: new Date() },
   })
 
-  return NextResponse.json({ ok: true, taskId, status, staffName: task.staff.name })
+  return NextResponse.json({ ok: true, taskId, status, staffName: task.staff.name, taskTitle: task.title })
 }

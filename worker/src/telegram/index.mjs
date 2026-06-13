@@ -426,7 +426,8 @@ async function handleCsSendDraft(ctx, draftId) {
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
-      await ctx.reply(`❌ পাঠানো যায়নি: ${data.error ?? `HTTP ${res.status}`}`)
+      const errMsg = data.message || data.error || `HTTP ${res.status}`
+      await ctx.reply(`❌ পাঠানো যায়নি: ${errMsg}`)
       return
     }
     const { sendMessengerText, sendMessengerImage } = await import('../cs/meta-send.mjs')
@@ -437,7 +438,7 @@ async function handleCsSendDraft(ctx, draftId) {
         if (att?.imageUrl) await sendMessengerImage(data.pageId, data.psid, att.imageUrl)
       }
     } catch (sendErr) {
-      await ctx.reply(`❌ Facebook পাঠাতে ব্যর্থ: ${sendErr.message}`)
+      await ctx.reply(`❌ Facebook পাঠাতে ব্যর্থ (page ${data.pageId}): ${sendErr.message?.slice(0, 200)}`)
       return
     }
     const markRes = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
@@ -935,14 +936,34 @@ export function createTelegramBot() {
           await ctx.answerCbQuery(result.error ?? 'সমস্যা হয়েছে')
           return
         }
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
         await ctx.answerCbQuery('✅ Done!')
-        await ctx.reply('✅ কাজ সম্পন্ন হিসেবে চিহ্নিত হয়েছে। জাযাকাল্লাহ খাইর!')
+
+        try {
+          const origMsg = ctx.callbackQuery?.message
+          if (origMsg?.text && origMsg?.reply_markup?.inline_keyboard) {
+            const doneTaskCompact = data.slice('task_done:'.length)
+            const updatedRows = origMsg.reply_markup.inline_keyboard
+              .map((row) => row.map((btn) => {
+                if (btn.callback_data?.endsWith(doneTaskCompact)) {
+                  return { text: btn.text.replace('✅', '☑️'), callback_data: `noop:${doneTaskCompact}` }
+                }
+                return btn
+              }))
+            const allDone = updatedRows.flat().every((btn) => btn.callback_data?.startsWith('noop:'))
+            await ctx.editMessageReplyMarkup({
+              inline_keyboard: allDone ? [] : updatedRows,
+            })
+          } else {
+            await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+          }
+        } catch {
+          await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+        }
 
         if (OWNER_ID && result.staffName) {
           await ctx.telegram.sendMessage(
             OWNER_ID,
-            `✅ *${result.staffName}* একটি কাজ সম্পন্ন করেছে।`,
+            `✅ *${result.staffName}* "${result.taskTitle ?? 'কাজ'}" সম্পন্ন করেছে।`,
             { parse_mode: 'Markdown' },
           ).catch(() => {})
         }

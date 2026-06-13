@@ -79,6 +79,50 @@ const handlers = {
     const { runCsEscalation } = await import('../src/cs/escalation.mjs')
     await runCsEscalation(bot)
   },
+  'full-day-simulation': async () => {
+    console.log('[simulation] === Full Day Chain Simulation ===')
+    console.log('[simulation] Step 1: evening-proposal (propose tomorrow\'s tasks)')
+    const { runEveningProposal } = await import('../src/staff/evening-proposal.mjs')
+    await runEveningProposal(supabase)
+    console.log('[simulation] ✅ evening-proposal done')
+
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+
+    const { data: proposed } = await supabase
+      .from('staff_tasks')
+      .select('id')
+      .eq('proposed_for', tomorrowStr)
+      .eq('status', 'proposed')
+    console.log(`[simulation] ${proposed?.length ?? 0} tasks proposed for ${tomorrowStr}`)
+
+    if (proposed?.length) {
+      console.log('[simulation] Step 2: auto-approving proposed tasks for simulation')
+      await supabase
+        .from('staff_tasks')
+        .update({ status: 'approved' })
+        .eq('proposed_for', tomorrowStr)
+        .eq('status', 'proposed')
+    }
+
+    console.log('[simulation] Step 3: morning-staff-reminder (dispatch)')
+    const { runMorningStaffReminder } = await import('../src/staff/morning-staff-reminder.mjs')
+    await runMorningStaffReminder({ supabase, bot })
+    console.log('[simulation] ✅ morning-staff-reminder done')
+
+    console.log('[simulation] Step 4: midday-checkin')
+    const { runMiddayCheckin } = await import('../src/staff/midday-checkin.mjs')
+    await runMiddayCheckin({ supabase, bot })
+    console.log('[simulation] ✅ midday-checkin done')
+
+    console.log('[simulation] Step 5: night-report')
+    const { runNightReport } = await import('../src/staff/night-report.mjs')
+    await runNightReport({ supabase, bot })
+    console.log('[simulation] ✅ night-report done')
+
+    console.log('[simulation] === Simulation Complete ===')
+  },
   'import-size-charts': async () => {
     const APP_URL = process.env.APP_URL?.replace(/\/$/, '')
     const TOKEN = process.env.AGENT_INTERNAL_TOKEN

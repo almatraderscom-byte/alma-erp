@@ -58,14 +58,32 @@ export async function runNightReport({ supabase, bot }) {
     }
   }
 
-  // Auto-carry incomplete tasks
+  // Auto-carry incomplete tasks: mark old ones + create new proposals for tomorrow
   if (tasksToCarry.length > 0) {
     await supabase
       .from('staff_tasks')
       .update({ status: 'carried' })
       .in('id', tasksToCarry.map(t => t.id))
 
-    console.log(`[night-report] carried ${tasksToCarry.length} tasks to tomorrow`)
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+
+    const carryData = tasksToCarry.map(t => ({
+      id:           crypto.randomUUID(),
+      staff_id:     t.staff_id,
+      title:        `↩ ${t.title}`,
+      detail:       t.detail ?? null,
+      type:         t.type ?? 'general',
+      product_ref:  t.product_ref ?? null,
+      status:       'proposed',
+      proposed_for: tomorrowStr,
+      source:       'carry_forward',
+      created_at:   new Date().toISOString(),
+    }))
+
+    await supabase.from('staff_tasks').insert(carryData)
+    console.log(`[night-report] carried ${tasksToCarry.length} tasks → ${tomorrowStr} as proposed`)
   }
 
   // Get today's salah summary
