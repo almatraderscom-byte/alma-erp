@@ -77,7 +77,8 @@ function createSupabase() {
 
 // Per-owner conversation state (in-memory — resets on worker restart, which is fine)
 const ownerState = {
-  conversationId: null, // null = auto-assign (daily conversation)
+  conversationId: null,
+  financeEdit: null, // { actionId, field } while awaiting new value
 }
 
 // Flood guard: max 12 messages/min per chat (owner Telegram)
@@ -191,6 +192,13 @@ async function autoMarkSalahFromText(text) {
 
 async function handleOwnerText(ctx, text) {
   const chatId = ctx.chat?.id
+
+  if (ownerState.financeEdit) {
+    const { handleFinanceEditValue } = await import('../finance/confirm-cards.mjs')
+    const handled = await handleFinanceEditValue(ctx, APP_URL, INT_TOKEN, ownerState, text)
+    if (handled) return
+  }
+
   const { awaitingRedoNote, applyOwnerRedoNote } = await import('../staff/task-verification.mjs')
   const redoTaskId = awaitingRedoNote.get(String(chatId))
   if (redoTaskId) {
@@ -249,14 +257,17 @@ async function handleOwnerText(ctx, text) {
     }
 
     // Send confirm cards as inline keyboard buttons
+    const { buildFinanceKeyboard } = await import('../finance/confirm-cards.mjs')
     for (const card of result.pendingCards ?? []) {
-      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
-        reply_markup: {
-          inline_keyboard: [[
+      const isFinance = card.isFinance === true
+      const keyboard = isFinance
+        ? buildFinanceKeyboard(card)
+        : [[
             { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
-            { text: '❌ বাতিল',   callback_data: `reject:${card.pendingActionId}` },
-          ]],
-        },
+            { text: '❌ বাতিল', callback_data: `reject:${card.pendingActionId}` },
+          ]]
+      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
+        reply_markup: { inline_keyboard: keyboard },
       })
     }
 
@@ -951,12 +962,38 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('fin_rm:')) {
+      const [, actionId, idxStr] = data.split(':')
+      const { handleFinanceRemove } = await import('../finance/confirm-cards.mjs')
+      await handleFinanceRemove(ctx, APP_URL, INT_TOKEN, actionId, Number(idxStr))
+      return
+    }
+
+    if (data.startsWith('fin_edit_f:')) {
+      const [, actionId, field] = data.split(':')
+      const { handleFinanceEditField } = await import('../finance/confirm-cards.mjs')
+      await handleFinanceEditField(ctx, actionId, field, ownerState)
+      return
+    }
+
+    if (data.startsWith('fin_edit_cancel:')) {
+      ownerState.financeEdit = null
+      await ctx.answerCbQuery('বাতিল')
+      return
+    }
+
+    if (data.startsWith('fin_edit:')) {
+      const actionId = data.slice('fin_edit:'.length)
+      const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
+      await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
+      return
+    }
+
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
       if (action === 'edit') {
-        await ctx.answerCbQuery('✏️')
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-        await ctx.reply('✏️ টাস্ক লিস্ট এডিট করতে চাইলে লিখুন কোন টাস্ক বাদ দিতে বা যোগ করতে চান।\n\nযেমন: "টাস্ক ৩ বাদ দাও" বা "নতুন টাস্ক যোগ করো: গোডাউন চেক"')
+        const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
+        await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
       } else {
         await handleActionCallback(ctx, action, actionId)
       }

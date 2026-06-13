@@ -153,12 +153,28 @@ export async function POST(req: NextRequest) {
   if (!streamMode) {
     let finalText = ''
     let errorMsg = ''
-    const pendingCards: Array<{ pendingActionId: string; summary: string }> = []
+    const pendingCards: Array<{
+      pendingActionId: string
+      summary: string
+      actionType?: string
+      entryCount?: number
+      isFinance?: boolean
+      isBatch?: boolean
+    }> = []
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     try {
       for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions })) {
         if (event.type === 'text_delta') finalText += event.delta
-        else if (event.type === 'confirm_card') pendingCards.push({ pendingActionId: event.pendingActionId, summary: event.summary })
+        else if (event.type === 'confirm_card') {
+          pendingCards.push({
+            pendingActionId: event.pendingActionId,
+            summary: event.summary,
+            actionType: event.actionType,
+            entryCount: event.entryCount,
+            isFinance: event.isFinance,
+            isBatch: event.isBatch,
+          })
+        }
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
         else if (event.type === 'done') break

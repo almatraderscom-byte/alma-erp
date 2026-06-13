@@ -1967,10 +1967,12 @@ model AgentFinanceExpense {
   category   String?
   note       String?  @db.Text
   occurredAt DateTime @map("occurred_at")
+  deleted    Boolean  @default(false)
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([occurredAt(sort: Desc)])
   @@index([currency])
+  @@index([deleted])
   @@map("finance_expenses")
 }
 
@@ -1982,10 +1984,12 @@ model AgentFinanceLedger {
   currency   String   @default("BDT")
   note       String?  @db.Text
   occurredAt DateTime @map("occurred_at")
+  deleted    Boolean  @default(false)
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([personName, occurredAt(sort: Desc)])
   @@index([direction])
+  @@index([deleted])
   @@map("finance_ledger")
 }
 

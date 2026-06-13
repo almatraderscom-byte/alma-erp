@@ -22,7 +22,7 @@ export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
-  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number }
+  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
   | { type: 'error'; message: string }
@@ -409,6 +409,10 @@ export async function* runAgentTurn(
               pendingActionId: d.pendingActionId,
               summary: typeof d.summary === 'string' ? d.summary : '',
               costEstimate: typeof d.costEstimate === 'number' ? d.costEstimate : undefined,
+              actionType: typeof d.actionType === 'string' ? d.actionType : undefined,
+              entryCount: typeof d.entryCount === 'number' ? d.entryCount : undefined,
+              isFinance: d.isFinance === true,
+              isBatch: d.isBatch === true,
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {

@@ -284,6 +284,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                     id: evt.pendingActionId as string,
                     summary: evt.summary as string,
                     costEstimate: evt.costEstimate as number | undefined,
+                    actionType: evt.actionType as string | undefined,
+                    entryCount: evt.entryCount as number | undefined,
+                    isFinance: evt.isFinance as boolean | undefined,
+                    isBatch: evt.isBatch as boolean | undefined,
                   },
                 }
               : m

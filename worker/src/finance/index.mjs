@@ -42,6 +42,7 @@ export async function handlePawnaCommand(ctx, supabase) {
     const { data: rows } = await supabase
       .from('finance_ledger')
       .select('person_name, direction, amount, currency')
+      .eq('deleted', false)
       .order('person_name')
 
     if (!rows?.length) {
@@ -99,6 +100,7 @@ export async function handleDetailsCommand(ctx, name, supabase, page = 0) {
     const { data: rows, count } = await supabase
       .from('finance_ledger')
       .select('*', { count: 'exact' })
+      .eq('deleted', false)
       .ilike('person_name', `%${name}%`)
       .order('occurred_at', { ascending: false })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)

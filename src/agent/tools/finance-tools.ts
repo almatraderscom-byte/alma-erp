@@ -1,96 +1,39 @@
 /**
- * Phase 6E — Personal finance tools.
- *
- * FINANCE INTENT RULE (from Phase 6 spec):
- * Finance intent REQUIRES an explicit money signal:
- *   - currency word: tk/taka/টাকা/BDT/AED/dirham
- *   - OR money verb: disi/dilam/nilam/dhar/pawna/khoroch/ferot/dena
- * Bare numbers are NEVER amounts. The model enforces this; tools accept explicit calls only.
- *
- * Direction mapping:
- *   "Karim k 5000 disi"           → lent
- *   "Nahid theke 2000 nilam"      → borrowed
- *   "Hasib 1000 ferot dilo"       → repaid_to_me
- *   "Nahid ke 500 diye disi..."   → repaid_by_me
- *
- * EVERY log → confirm card before save.
+ * Phase 6E — Personal finance tools (+ delete/edit/list).
  */
-import { prisma } from '@/lib/prisma'
-import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any
+import {
+  ACTIVE_FINANCE_FILTER,
+  DIRECTION_BN,
+  type ExpenseEntryInput,
+  type LedgerEntryInput,
+  financeDb,
+  formatDhakaShort,
+  formatEditSummary,
+  formatExpenseBatchSummary,
+  formatExpenseDeleteSummary,
+  formatExpenseLineSummary,
+  formatLedgerBatchSummary,
+  formatLedgerDeleteSummary,
+  formatLedgerLineSummary,
+  formatAmount,
+  ledgerEntrySign,
+  formatDateTimeDhaka,
+} from '@/agent/lib/finance-shared'
 
 function dhakaToday(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
-const DIRECTION_BN: Record<string, string> = {
-  lent: 'ধার দিলেন',
-  borrowed: 'ধার নিলেন',
-  repaid_to_me: 'ফেরত পেলেন',
-  repaid_by_me: 'ফেরত দিলেন',
-}
-
-type LedgerEntryInput = {
-  personName: string
-  direction: string
-  amount: number
-  currency?: string
-  note?: string | null
-  occurredAt?: string
-}
-
-type ExpenseEntryInput = {
-  amount: number
-  currency?: string
-  category?: string | null
-  note?: string
-  occurredAt?: string
-}
-
-function formatLedgerBatchSummary(title: string, entries: LedgerEntryInput[]): string {
-  const totals: Record<string, number> = { BDT: 0, AED: 0 }
-  const lines = entries.map((e, i) => {
-    const currency = (e.currency as string) || 'BDT'
-    const amount = Math.round(Number(e.amount))
-    totals[currency] = (totals[currency] || 0) + amount
-    const sym = currency === 'AED' ? 'AED ' : '৳'
-    const dir = DIRECTION_BN[e.direction] || e.direction
-    const note = e.note ? ` — ${e.note}` : ''
-    return `${i + 1}. ${e.personName}: ${sym}${amount.toLocaleString('bn-BD')} (${dir})${note}`
-  })
-  const totalLines = Object.entries(totals)
-    .filter(([, v]) => v > 0)
-    .map(([c, v]) => (c === 'AED' ? `মোট AED: ${v.toLocaleString('bn-BD')}` : `মোট BDT: ৳${v.toLocaleString('bn-BD')}`))
-  return (
-    `📋 ${title} (${entries.length}টি এন্ট্রি)\n\n` +
-    lines.join('\n') +
-    (totalLines.length ? `\n\n${totalLines.join('\n')}` : '') +
-    '\n\n✅ একবার Approve করলে সব সেভ হবে।'
-  )
-}
-
-function formatExpenseBatchSummary(title: string, entries: ExpenseEntryInput[]): string {
-  const totals: Record<string, number> = { BDT: 0, AED: 0 }
-  const lines = entries.map((e, i) => {
-    const currency = (e.currency as string) || 'BDT'
-    const amount = Math.round(Number(e.amount))
-    totals[currency] = (totals[currency] || 0) + amount
-    const sym = currency === 'AED' ? 'AED ' : '৳'
-    const cat = e.category ? ` (${e.category})` : ''
-    return `${i + 1}. ${sym}${amount.toLocaleString('bn-BD')} — ${e.note ?? 'খরচ'}${cat}`
-  })
-  const totalLines = Object.entries(totals)
-    .filter(([, v]) => v > 0)
-    .map(([c, v]) => (c === 'AED' ? `মোট AED: ${v.toLocaleString('bn-BD')}` : `মোট BDT: ৳${v.toLocaleString('bn-BD')}`))
-  return (
-    `📋 ${title} (${entries.length}টি খরচ)\n\n` +
-    lines.join('\n') +
-    (totalLines.length ? `\n\n${totalLines.join('\n')}` : '') +
-    '\n\n✅ একবার Approve করলে সব সেভ হবে।'
-  )
+function pendingMeta(type: string, extra: Record<string, unknown> = {}) {
+  const isBatch = type === 'log_ledger_entries_batch' || type === 'log_expenses_batch'
+  return {
+    actionType: type,
+    isFinance: true,
+    isBatch,
+    entryCount: typeof extra.entryCount === 'number' ? extra.entryCount : undefined,
+    ...extra,
+  }
 }
 
 // ── log_expense ───────────────────────────────────────────────────────────────
@@ -99,46 +42,43 @@ const log_expense: AgentTool = {
   name: 'log_expense',
   description:
     'Logs a SINGLE personal expense (confirm card). For 2+ expenses use log_expenses_batch. ' +
-    'REQUIRES an explicit money signal (currency word OR money verb). ' +
-    'NEVER call for: percentages, ordinal numbers, durations, quantities without a currency signal.',
+    'REQUIRES an explicit money signal (currency word OR money verb).',
   input_schema: {
     type: 'object' as const,
     properties: {
-      amount:         { type: 'number', description: 'Amount in whole units (no decimals)' },
-      currency:       { type: 'string', enum: ['BDT','AED'], description: 'Currency (default BDT)' },
-      category:       { type: 'string', description: 'Expense category (food, transport, utilities, etc.)' },
-      note:           { type: 'string', description: 'Description of the expense' },
-      occurredAt:     { type: 'string', description: 'ISO date/datetime when expense occurred (default: now)' },
+      amount: { type: 'number' },
+      currency: { type: 'string', enum: ['BDT', 'AED'] },
+      category: { type: 'string' },
+      note: { type: 'string' },
+      occurredAt: { type: 'string' },
       conversationId: { type: 'string' },
     },
     required: ['amount', 'note'],
   },
   handler: async (input) => {
     try {
-      const amount   = Math.round(Number(input.amount))
+      const amount = Math.round(Number(input.amount))
       if (amount <= 0) return { success: false, error: 'amount must be positive' }
       const currency = (input.currency as string) || 'BDT'
-      const note     = String(input.note)
+      const note = String(input.note)
       const category = input.category ? String(input.category) : null
       const occurredAt = input.occurredAt ? new Date(String(input.occurredAt)) : new Date()
+      const summary = formatExpenseLineSummary(amount, currency, note, category)
 
-      const currencySymbol = currency === 'AED' ? 'AED ' : '৳'
-      const summary = `খরচ লগ: ${currencySymbol}${amount.toLocaleString('bn-BD')} — ${note}${category ? ` (${category})` : ''}`
-
-      const action = await db.agentPendingAction.create({
+      const action = await financeDb.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
-          type:     'log_expense',
-          payload:  { amount, currency, category, note, occurredAt: occurredAt.toISOString() },
+          type: 'log_expense',
+          payload: { amount, currency, category, note, occurredAt: occurredAt.toISOString() },
           summary,
           costEstimate: 0,
-          status:   'pending',
+          status: 'pending',
         },
       })
 
       return {
         success: true,
-        data: { pendingActionId: action.id as string, summary, message: 'Pending your confirmation.' },
+        data: { pendingActionId: action.id as string, summary, ...pendingMeta('log_expense') },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -151,55 +91,45 @@ const log_expense: AgentTool = {
 const log_ledger_entry: AgentTool = {
   name: 'log_ledger_entry',
   description:
-    'Logs a SINGLE debt/lending entry (confirm card). For 2+ entries use log_ledger_entries_batch instead. ' +
-    'Directions: lent (আপনি দিলেন), borrowed (আপনি নিলেন), repaid_to_me (কেউ ফেরত দিল), repaid_by_me (আপনি ফেরত দিলেন). ' +
-    'REQUIRES explicit money signal.',
+    'Logs a SINGLE debt/lending entry (confirm card). For 2+ entries use log_ledger_entries_batch.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      personName:     { type: 'string', description: 'The other person\'s name' },
-      direction:      { type: 'string', enum: ['lent','borrowed','repaid_to_me','repaid_by_me'] },
-      amount:         { type: 'number', description: 'Amount in whole units' },
-      currency:       { type: 'string', enum: ['BDT','AED'] },
-      note:           { type: 'string', description: 'Context/reason' },
-      occurredAt:     { type: 'string', description: 'ISO date/datetime (default: now)' },
+      personName: { type: 'string' },
+      direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'] },
+      amount: { type: 'number' },
+      currency: { type: 'string', enum: ['BDT', 'AED'] },
+      note: { type: 'string' },
+      occurredAt: { type: 'string' },
       conversationId: { type: 'string' },
     },
     required: ['personName', 'direction', 'amount'],
   },
   handler: async (input) => {
     try {
-      const amount   = Math.round(Number(input.amount))
+      const amount = Math.round(Number(input.amount))
       if (amount <= 0) return { success: false, error: 'amount must be positive' }
       const personName = String(input.personName)
-      const direction  = String(input.direction)
-      const currency   = (input.currency as string) || 'BDT'
-      const note       = input.note ? String(input.note) : null
+      const direction = String(input.direction)
+      const currency = (input.currency as string) || 'BDT'
+      const note = input.note ? String(input.note) : null
       const occurredAt = input.occurredAt ? new Date(String(input.occurredAt)) : new Date()
+      const summary = formatLedgerLineSummary(personName, direction, amount, currency, note)
 
-      const currencySymbol = currency === 'AED' ? 'AED ' : '৳'
-      const directionBn: Record<string, string> = {
-        lent:          `${personName}-কে ধার দিলেন`,
-        borrowed:      `${personName}-এর কাছ থেকে ধার নিলেন`,
-        repaid_to_me:  `${personName} ফেরত দিল`,
-        repaid_by_me:  `${personName}-কে ফেরত দিলেন`,
-      }
-      const summary = `লেজার: ${currencySymbol}${amount.toLocaleString('bn-BD')} — ${directionBn[direction] || direction}${note ? ` (${note})` : ''}`
-
-      const action = await db.agentPendingAction.create({
+      const action = await financeDb.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
-          type:     'log_ledger_entry',
-          payload:  { personName, direction, amount, currency, note, occurredAt: occurredAt.toISOString() },
+          type: 'log_ledger_entry',
+          payload: { personName, direction, amount, currency, note, occurredAt: occurredAt.toISOString() },
           summary,
           costEstimate: 0,
-          status:   'pending',
+          status: 'pending',
         },
       })
 
       return {
         success: true,
-        data: { pendingActionId: action.id as string, summary, message: 'Pending your confirmation.' },
+        data: { pendingActionId: action.id as string, summary, ...pendingMeta('log_ledger_entry') },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -215,16 +145,15 @@ const get_expense_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      period:  { type: 'string', enum: ['today','week','month','all'], description: 'Time range' },
-      groupBy: { type: 'string', enum: ['category','currency','day'], description: 'Aggregation dimension' },
-      currency: { type: 'string', enum: ['BDT','AED'], description: 'Filter currency (optional)' },
+      period: { type: 'string', enum: ['today', 'week', 'month', 'all'] },
+      groupBy: { type: 'string', enum: ['category', 'currency', 'day'] },
+      currency: { type: 'string', enum: ['BDT', 'AED'] },
     },
   },
   handler: async (input) => {
     try {
-      const period   = (input.period as string) || 'month'
+      const period = (input.period as string) || 'month'
       const currency = input.currency ? String(input.currency) : null
-
       let startDate: Date | null = null
       const now = new Date()
       if (period === 'today') {
@@ -235,26 +164,23 @@ const get_expense_summary: AgentTool = {
         startDate = new Date(now.getFullYear(), now.getMonth(), 1)
       }
 
-      const where: Record<string, unknown> = {}
+      const where: Record<string, unknown> = { ...ACTIVE_FINANCE_FILTER }
       if (startDate) where.occurredAt = { gte: startDate }
-      if (currency)  where.currency   = currency
+      if (currency) where.currency = currency
 
-      const rows = await db.agentFinanceExpense.findMany({
+      const rows = await financeDb.agentFinanceExpense.findMany({
         where,
         orderBy: { occurredAt: 'desc' },
         take: 200,
       })
 
-      // Aggregate
       const totals: Record<string, number> = {}
       const grouped: Record<string, number> = {}
       for (const r of rows) {
-        const key = `${r.currency}`
-        totals[key] = (totals[key] || 0) + r.amount
-
+        totals[r.currency] = (totals[r.currency] || 0) + r.amount
         const gKey = input.groupBy === 'category' ? `${r.currency}:${r.category || 'অন্যান্য'}`
-                   : input.groupBy === 'day'      ? `${r.currency}:${r.occurredAt.toISOString().slice(0, 10)}`
-                   : key
+          : input.groupBy === 'day' ? `${r.currency}:${r.occurredAt.toISOString().slice(0, 10)}`
+            : r.currency
         grouped[gKey] = (grouped[gKey] || 0) + r.amount
       }
 
@@ -267,10 +193,6 @@ const get_expense_summary: AgentTool = {
 
 // ── get_ledger_balances ───────────────────────────────────────────────────────
 
-function ledgerEntrySign(direction: string): number {
-  return (direction === 'lent' || direction === 'repaid_to_me') ? 1 : -1
-}
-
 type LedgerRow = {
   id: string
   direction: string
@@ -280,10 +202,7 @@ type LedgerRow = {
   occurredAt: Date
 }
 
-function serializeLedgerEntries(
-  rows: LedgerRow[],
-  opts: { oldestFirst: boolean; maxEntries: number },
-) {
+function serializeLedgerEntries(rows: LedgerRow[], opts: { oldestFirst: boolean; maxEntries: number }) {
   const chronological = [...rows].sort(
     (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
   )
@@ -311,43 +230,26 @@ function serializeLedgerEntries(
   })
 
   const display = opts.oldestFirst ? withRunning : [...withRunning].reverse()
-  const entries = display.map((r, index) => ({
-    serial: index + 1,
-    ...r,
-  }))
-
+  const entries = display.map((r, index) => ({ serial: index + 1, ...r }))
   const byCurrency: Record<string, typeof entries> = {}
   for (const e of entries) {
     if (!byCurrency[e.currency]) byCurrency[e.currency] = []
     byCurrency[e.currency].push(e)
   }
-
   return { entries, entriesByCurrency: byCurrency, totalCount, truncated: totalCount > opts.maxEntries }
 }
 
 const get_ledger_balances: AgentTool = {
   name: 'get_ledger_balances',
   description:
-    'Returns net balances per person and ledger transaction history. ' +
-    'When person is set, returns ALL matching entries in serial order (not just recent 5). ' +
-    'Positive balance = they owe you; negative = you owe them.',
+    'Returns net balances per person and ledger transaction history. Positive = they owe you.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      person: {
-        type: 'string',
-        description: 'Filter by person name — returns full transaction list for that person',
-      },
-      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Filter currency (optional)' },
-      order: {
-        type: 'string',
-        enum: ['oldest_first', 'newest_first'],
-        description: 'Serial order (default oldest_first)',
-      },
-      maxEntries: {
-        type: 'number',
-        description: 'Max entries per person (default 500 when person set, else 5 for overview)',
-      },
+      person: { type: 'string' },
+      currency: { type: 'string', enum: ['BDT', 'AED'] },
+      order: { type: 'string', enum: ['oldest_first', 'newest_first'] },
+      maxEntries: { type: 'number' },
     },
   },
   handler: async (input) => {
@@ -358,11 +260,11 @@ const get_ledger_balances: AgentTool = {
         ? Math.min(Math.max(Number(input.maxEntries ?? 500), 1), 2000)
         : Math.min(Math.max(Number(input.maxEntries ?? 5), 1), 50)
 
-      const where: Record<string, unknown> = {}
+      const where: Record<string, unknown> = { ...ACTIVE_FINANCE_FILTER }
       if (personFilter) where.personName = { contains: personFilter, mode: 'insensitive' }
       if (input.currency) where.currency = String(input.currency)
 
-      const rows = await db.agentFinanceLedger.findMany({
+      const rows = await financeDb.agentFinanceLedger.findMany({
         where,
         orderBy: [{ personName: 'asc' }, { occurredAt: 'asc' }],
         take: personFilter ? 2000 : 500,
@@ -377,10 +279,8 @@ const get_ledger_balances: AgentTool = {
         displayNames[key] = r.personName
         if (!balances[key]) balances[key] = {}
         if (!histories[key]) histories[key] = []
-
         const sign = ledgerEntrySign(r.direction)
         balances[key][r.currency] = (balances[key][r.currency] || 0) + sign * r.amount
-
         histories[key].push({
           id: r.id,
           direction: r.direction,
@@ -392,8 +292,7 @@ const get_ledger_balances: AgentTool = {
       }
 
       const result = Object.entries(balances).map(([personKey, bals]) => {
-        const history = histories[personKey] || []
-        const serialized = serializeLedgerEntries(history, {
+        const serialized = serializeLedgerEntries(histories[personKey] || [], {
           oldestFirst,
           maxEntries: maxPerPerson,
         })
@@ -404,18 +303,13 @@ const get_ledger_balances: AgentTool = {
           truncated: serialized.truncated,
           entries: serialized.entries,
           entriesByCurrency: serialized.entriesByCurrency,
-          // Back-compat alias — now same as full list when person filter used
           recentEntries: serialized.entries.slice(-5),
         }
       })
 
       return {
         success: true,
-        data: {
-          balances: result,
-          personFilter: personFilter || null,
-          includesAllEntries: Boolean(personFilter),
-        },
+        data: { balances: result, personFilter: personFilter || null, includesAllEntries: Boolean(personFilter) },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -423,18 +317,15 @@ const get_ledger_balances: AgentTool = {
   },
 }
 
-// ── log_ledger_entries_batch ──────────────────────────────────────────────────
+// ── batch tools ───────────────────────────────────────────────────────────────
 
 const log_ledger_entries_batch: AgentTool = {
   name: 'log_ledger_entries_batch',
-  description:
-    'Logs MULTIPLE ledger entries in ONE confirm card. ' +
-    'REQUIRED when owner lists 2+ transactions at once (same or mixed persons). ' +
-    'NEVER call log_ledger_entry repeatedly for a batch — use this tool instead.',
+  description: 'Logs MULTIPLE ledger entries in ONE confirm card (2+ entries).',
   input_schema: {
     type: 'object' as const,
     properties: {
-      title: { type: 'string', description: 'Batch label e.g. "Hossain mama — ধার এন্ট্রি"' },
+      title: { type: 'string' },
       entries: {
         type: 'array',
         minItems: 2,
@@ -478,7 +369,7 @@ const log_ledger_entries_batch: AgentTool = {
       const title = input.title ? String(input.title) : 'লেজার ব্যাচ'
       const summary = formatLedgerBatchSummary(title, entries)
 
-      const action = await db.agentPendingAction.create({
+      const action = await financeDb.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'log_ledger_entries_batch',
@@ -491,7 +382,12 @@ const log_ledger_entries_batch: AgentTool = {
 
       return {
         success: true,
-        data: { pendingActionId: action.id as string, summary, count: entries.length, message: 'One confirm card for all entries.' },
+        data: {
+          pendingActionId: action.id as string,
+          summary,
+          count: entries.length,
+          ...pendingMeta('log_ledger_entries_batch', { entryCount: entries.length }),
+        },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -499,13 +395,9 @@ const log_ledger_entries_batch: AgentTool = {
   },
 }
 
-// ── log_expenses_batch ────────────────────────────────────────────────────────
-
 const log_expenses_batch: AgentTool = {
   name: 'log_expenses_batch',
-  description:
-    'Logs MULTIPLE expenses in ONE confirm card. Use for 2+ expenses in one owner message. ' +
-    'NEVER call log_expense repeatedly for a batch.',
+  description: 'Logs MULTIPLE expenses in ONE confirm card (2+ expenses).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -551,7 +443,7 @@ const log_expenses_batch: AgentTool = {
       const title = input.title ? String(input.title) : `খরচ — ${dhakaToday()}`
       const summary = formatExpenseBatchSummary(title, entries)
 
-      const action = await db.agentPendingAction.create({
+      const action = await financeDb.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'log_expenses_batch',
@@ -564,7 +456,255 @@ const log_expenses_batch: AgentTool = {
 
       return {
         success: true,
-        data: { pendingActionId: action.id as string, summary, count: entries.length, message: 'One confirm card for all expenses.' },
+        data: {
+          pendingActionId: action.id as string,
+          summary,
+          count: entries.length,
+          ...pendingMeta('log_expenses_batch', { entryCount: entries.length }),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── list_recent_transactions ──────────────────────────────────────────────────
+
+const list_recent_transactions: AgentTool = {
+  name: 'list_recent_transactions',
+  description:
+    'Lists recent finance transactions with numbers and IDs so owner can reference "5 নম্বরটা delete করো". ' +
+    'Call this FIRST when owner wants to delete/fix/double-entry.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      type: { type: 'string', enum: ['expense', 'ledger', 'all'], description: 'Filter type (default all)' },
+      limit: { type: 'number', description: 'Max rows (default 10)' },
+      person: { type: 'string', description: 'Filter ledger by person name' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const filterType = (input.type as string) || 'all'
+      const limit = Math.min(Math.max(Number(input.limit ?? 10), 1), 50)
+      const person = input.person ? String(input.person).trim() : ''
+
+      type Tx = {
+        occurredAt: Date
+        type: 'expense' | 'ledger'
+        id: string
+        label: string
+        amount: number
+        currency: string
+        direction?: string
+      }
+
+      const txs: Tx[] = []
+
+      if (filterType === 'all' || filterType === 'expense') {
+        const expenses = await financeDb.agentFinanceExpense.findMany({
+          where: ACTIVE_FINANCE_FILTER,
+          orderBy: { occurredAt: 'desc' },
+          take: limit,
+        })
+        for (const e of expenses) {
+          txs.push({
+            occurredAt: e.occurredAt,
+            type: 'expense',
+            id: e.id,
+            label: e.note || e.category || 'খরচ',
+            amount: e.amount,
+            currency: e.currency,
+          })
+        }
+      }
+
+      if (filterType === 'all' || filterType === 'ledger') {
+        const ledgerWhere: Record<string, unknown> = { ...ACTIVE_FINANCE_FILTER }
+        if (person) ledgerWhere.personName = { contains: person, mode: 'insensitive' }
+        const ledgers = await financeDb.agentFinanceLedger.findMany({
+          where: ledgerWhere,
+          orderBy: { occurredAt: 'desc' },
+          take: limit,
+        })
+        for (const l of ledgers) {
+          txs.push({
+            occurredAt: l.occurredAt,
+            type: 'ledger',
+            id: l.id,
+            label: l.personName,
+            amount: l.amount,
+            currency: l.currency,
+            direction: l.direction,
+          })
+        }
+      }
+
+      txs.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+      const sliced = txs.slice(0, limit)
+
+      const transactions = sliced.map((t, i) => ({
+        number: i + 1,
+        type: t.type,
+        id: t.id,
+        date: t.occurredAt.toISOString().slice(0, 10),
+        dateDhaka: formatDhakaShort(t.occurredAt),
+        personOrCategory: t.label,
+        amount: t.amount,
+        currency: t.currency,
+        direction: t.direction ?? null,
+        directionLabel: t.direction ? (DIRECTION_BN[t.direction] ?? t.direction) : null,
+        display: t.type === 'ledger'
+          ? `#${i + 1} [ledger] ${t.id.slice(0, 8)} — ${formatDhakaShort(t.occurredAt)} — ${t.label} — ${formatAmount(t.amount, t.currency)} (${DIRECTION_BN[t.direction!]})`
+          : `#${i + 1} [expense] ${t.id.slice(0, 8)} — ${formatDhakaShort(t.occurredAt)} — ${t.label} — ${formatAmount(t.amount, t.currency)}`,
+      }))
+
+      return { success: true, data: { transactions, count: transactions.length } }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── delete_finance_entry ──────────────────────────────────────────────────────
+
+const delete_finance_entry: AgentTool = {
+  name: 'delete_finance_entry',
+  description:
+    'Soft-deletes a finance record (confirm card required). Use list_recent_transactions first to get id/number.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      type: { type: 'string', enum: ['expense', 'ledger'] },
+      id: { type: 'string', description: 'Record UUID from list_recent_transactions' },
+      conversationId: { type: 'string' },
+    },
+    required: ['type', 'id'],
+  },
+  handler: async (input) => {
+    try {
+      const entryType = String(input.type) as 'expense' | 'ledger'
+      const id = String(input.id)
+
+      if (entryType === 'expense') {
+        const row = await financeDb.agentFinanceExpense.findUnique({ where: { id } })
+        if (!row || row.deleted) return { success: false, error: 'expense not found' }
+        const summary = formatExpenseDeleteSummary(row)
+        const action = await financeDb.agentPendingAction.create({
+          data: {
+            conversationId: input.conversationId ? String(input.conversationId) : null,
+            type: 'delete_finance_entry',
+            payload: { type: 'expense', id, snapshot: row },
+            summary,
+            costEstimate: 0,
+            status: 'pending',
+          },
+        })
+        return {
+          success: true,
+          data: { pendingActionId: action.id as string, summary, ...pendingMeta('delete_finance_entry') },
+        }
+      }
+
+      const row = await financeDb.agentFinanceLedger.findUnique({ where: { id } })
+      if (!row || row.deleted) return { success: false, error: 'ledger entry not found' }
+      const summary = formatLedgerDeleteSummary(row)
+      const action = await financeDb.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'delete_finance_entry',
+          payload: { type: 'ledger', id, personName: row.personName, snapshot: row },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: { pendingActionId: action.id as string, summary, ...pendingMeta('delete_finance_entry') },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── edit_finance_entry ────────────────────────────────────────────────────────
+
+const EDITABLE_LEDGER = new Set(['amount', 'currency', 'note', 'personName', 'direction'])
+const EDITABLE_EXPENSE = new Set(['amount', 'currency', 'note', 'category'])
+
+const edit_finance_entry: AgentTool = {
+  name: 'edit_finance_entry',
+  description:
+    'Edits one field on an existing finance record (confirm card with before/after). ' +
+    'Use list_recent_transactions to identify the record.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      type: { type: 'string', enum: ['expense', 'ledger'] },
+      id: { type: 'string' },
+      field: { type: 'string', description: 'amount | currency | note | personName | category | direction' },
+      newValue: { description: 'New value for the field' },
+      conversationId: { type: 'string' },
+    },
+    required: ['type', 'id', 'field', 'newValue'],
+  },
+  handler: async (input) => {
+    try {
+      const entryType = String(input.type) as 'expense' | 'ledger'
+      const id = String(input.id)
+      const field = String(input.field)
+      let newValue: unknown = input.newValue
+
+      if (entryType === 'ledger') {
+        if (!EDITABLE_LEDGER.has(field)) return { success: false, error: `cannot edit ledger field: ${field}` }
+        const row = await financeDb.agentFinanceLedger.findUnique({ where: { id } })
+        if (!row || row.deleted) return { success: false, error: 'ledger entry not found' }
+        if (field === 'amount') newValue = Math.round(Number(newValue))
+        if (field === 'direction' && !['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'].includes(String(newValue))) {
+          return { success: false, error: 'invalid direction' }
+        }
+        const before = { ...row, amount: row.amount, personName: row.personName, direction: row.direction, currency: row.currency, note: row.note }
+        const after = { ...before, [field]: newValue }
+        const summary = formatEditSummary('ledger', before, after)
+        const action = await financeDb.agentPendingAction.create({
+          data: {
+            conversationId: input.conversationId ? String(input.conversationId) : null,
+            type: 'edit_finance_entry',
+            payload: { type: 'ledger', id, field, newValue, before, after, personName: row.personName },
+            summary,
+            costEstimate: 0,
+            status: 'pending',
+          },
+        })
+        return {
+          success: true,
+          data: { pendingActionId: action.id as string, summary, ...pendingMeta('edit_finance_entry') },
+        }
+      }
+
+      if (!EDITABLE_EXPENSE.has(field)) return { success: false, error: `cannot edit expense field: ${field}` }
+      const row = await financeDb.agentFinanceExpense.findUnique({ where: { id } })
+      if (!row || row.deleted) return { success: false, error: 'expense not found' }
+      if (field === 'amount') newValue = Math.round(Number(newValue))
+      const before = { amount: row.amount, currency: row.currency, note: row.note, category: row.category }
+      const after = { ...before, [field]: newValue }
+      const summary = formatEditSummary('expense', before, after)
+      const action = await financeDb.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'edit_finance_entry',
+          payload: { type: 'expense', id, field, newValue, before, after },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: { pendingActionId: action.id as string, summary, ...pendingMeta('edit_finance_entry') },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -579,4 +719,7 @@ export const FINANCE_TOOLS: AgentTool[] = [
   log_ledger_entries_batch,
   get_expense_summary,
   get_ledger_balances,
+  list_recent_transactions,
+  delete_finance_entry,
+  edit_finance_entry,
 ]

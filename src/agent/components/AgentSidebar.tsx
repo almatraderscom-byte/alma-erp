@@ -394,6 +394,10 @@ interface MemoryRow {
 
 function MemoryView() {
   const [memories, setMemories] = useState<MemoryRow[]>([])
+  const [financeSummary, setFinanceSummary] = useState<{
+    balances: Array<{ person: string; display: string; balances: Record<string, number> }>
+    monthExpensesByCategory: Array<{ display: string; total: number; currency: string; category: string }>
+  } | null>(null)
   const [scopeFilter, setScopeFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [deleteMemId, setDeleteMemId] = useState<string | null>(null)
@@ -402,12 +406,20 @@ function MemoryView() {
     setLoading(true)
     try {
       const url = scopeFilter !== 'all' ? `/api/assistant/memory?scope=${scopeFilter}` : '/api/assistant/memory'
-      const res = await fetch(url)
-      if (res.ok) {
-        setMemories(await res.json())
+      const [memRes, finRes] = await Promise.all([
+        fetch(url),
+        fetch('/api/assistant/memory/finance-summary'),
+      ])
+      if (memRes.ok) {
+        setMemories(await memRes.json())
       } else {
-        console.error('[memory] load failed', res.status)
+        console.error('[memory] load failed', memRes.status)
         setMemories([])
+      }
+      if (finRes.ok) {
+        setFinanceSummary(await finRes.json())
+      } else {
+        setFinanceSummary(null)
       }
     } finally {
       setLoading(false)
@@ -451,6 +463,33 @@ function MemoryView() {
 
       {/* Memory list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {financeSummary && (financeSummary.balances.length > 0 || financeSummary.monthExpensesByCategory.length > 0) && (
+          <div className="mb-3 rounded-xl border border-gold-dim/30 bg-gold/5 p-3 text-[11px]">
+            <p className="mb-2 font-semibold text-gold-lt">💰 আর্থিক সারসংক্ষেপ</p>
+            {financeSummary.balances.length > 0 && (
+              <div className="mb-2">
+                <p className="mb-1 text-[10px] text-muted">পাওনা/দেনা (ব্যক্তি অনুযায়ী)</p>
+                <ul className="space-y-1">
+                  {financeSummary.balances.slice(0, 8).map((b) => (
+                    <li key={b.person} className="text-muted-hi leading-snug">{b.display || b.person}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {financeSummary.monthExpensesByCategory.length > 0 && (
+              <div>
+                <p className="mb-1 text-[10px] text-muted">এই মাসের খরচ (ক্যাটাগরি)</p>
+                <ul className="space-y-1">
+                  {financeSummary.monthExpensesByCategory.slice(0, 6).map((e) => (
+                    <li key={`${e.currency}-${e.category}`} className="text-muted-hi">{e.display}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="mt-2 text-[9px] text-zinc-600">সংশোধন শুধু চ্যাটে — এখানে শুধু দেখা</p>
+          </div>
+        )}
+
         {loading && <p className="py-6 text-center text-[11px] text-zinc-600">লোড হচ্ছে…</p>}
         {!loading && memories.length === 0 && (
           <p className="py-8 text-center text-[11px] text-zinc-600">কোনো স্মৃতি নেই</p>

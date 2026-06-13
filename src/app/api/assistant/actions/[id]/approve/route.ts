@@ -564,5 +564,80 @@ export async function POST(
     return Response.json({ success: true, ledgerId: entry.id })
   }
 
+  if (action.type === 'delete_finance_entry') {
+    const { type, id, personName } = payload as {
+      type: 'expense' | 'ledger'; id: string; personName?: string
+    }
+    if (type === 'expense') {
+      const row = await db.agentFinanceExpense.findUnique({ where: { id } })
+      if (!row || row.deleted) return Response.json({ error: 'expense_not_found' }, { status: 404 })
+      await db.agentFinanceExpense.update({ where: { id }, data: { deleted: true } })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { deleted: true, type, id } },
+      })
+      return Response.json({ success: true, message: 'খরচ মুছে ফেলা হয়েছে (soft-delete)।' })
+    }
+
+    const row = await db.agentFinanceLedger.findUnique({ where: { id } })
+    if (!row || row.deleted) return Response.json({ error: 'ledger_not_found' }, { status: 404 })
+    await db.agentFinanceLedger.update({ where: { id }, data: { deleted: true } })
+    const { getPersonBalance } = await import('@/agent/lib/finance-shared')
+    const balance = await getPersonBalance(personName || row.personName)
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: {
+        status: 'executed',
+        resolvedAt: new Date(),
+        result: { deleted: true, type, id, updatedBalance: balance },
+      },
+    })
+    const balStr = Object.entries(balance.balances)
+      .map(([c, v]) => `${c}: ${v}`)
+      .join(', ')
+    return Response.json({
+      success: true,
+      message: `${row.personName}-এর ব্যালেন্স আপডেট: ${balStr || '০'}`,
+      updatedBalance: balance,
+    })
+  }
+
+  if (action.type === 'edit_finance_entry') {
+    const { type, id, field, newValue, personName } = payload as {
+      type: 'expense' | 'ledger'; id: string; field: string; newValue: unknown; personName?: string
+    }
+    const data: Record<string, unknown> = { [field]: newValue }
+    if (field === 'amount') data.amount = Math.round(Number(newValue))
+
+    if (type === 'expense') {
+      await db.agentFinanceExpense.update({ where: { id }, data })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { type, id, field } },
+      })
+      return Response.json({ success: true, message: 'খরচ আপডেট হয়েছে।' })
+    }
+
+    const row = await db.agentFinanceLedger.update({ where: { id }, data })
+    const { getPersonBalance } = await import('@/agent/lib/finance-shared')
+    const balance = await getPersonBalance(personName || row.personName)
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: {
+        status: 'executed',
+        resolvedAt: new Date(),
+        result: { type, id, field, updatedBalance: balance },
+      },
+    })
+    const balStr = Object.entries(balance.balances)
+      .map(([c, v]) => `${c}: ${v}`)
+      .join(', ')
+    return Response.json({
+      success: true,
+      message: `${row.personName}-এর ব্যালেন্স আপডেট: ${balStr || '০'}`,
+      updatedBalance: balance,
+    })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }
