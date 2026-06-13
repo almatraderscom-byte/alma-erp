@@ -20,6 +20,9 @@ function dhakaDateStr(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
+const APP_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
+const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
+
 // ── prepare_staff_task_proposal ───────────────────────────────────────────────
 
 const prepare_staff_task_proposal: AgentTool = {
@@ -361,6 +364,98 @@ const add_staff_task_now: AgentTool = {
   },
 }
 
+// ── send_staff_announcement ───────────────────────────────────────────────────
+
+const send_staff_announcement: AgentTool = {
+  name: 'send_staff_announcement',
+  description:
+    'Send an announcement/news/notice to staff via Telegram (text + voice note). ' +
+    'NOT a task — no Done buttons, no completion tracking. ' +
+    'Use for: rule changes, policy updates, office notices, reminders, news. ' +
+    'Do NOT use this for work assignments — use propose_staff_tasks or add_staff_task_now for those.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      message: {
+        type: 'string',
+        description: 'The announcement message in Bangla. Will be sent as text AND voice note.',
+      },
+      staffIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Specific staff IDs to send to (optional — if empty, sends to ALL active staff with Telegram linked)',
+      },
+      sendVoice: {
+        type: 'boolean',
+        description: 'Also send as voice note via TTS (default: true)',
+      },
+    },
+    required: ['message'],
+  },
+  handler: async (input) => {
+    try {
+      const message = String(input.message ?? '').trim()
+      if (!message) return { success: false, error: 'message is required' }
+
+      const sendVoice = input.sendVoice !== false
+      const staffIds = input.staffIds as string[] | undefined
+
+      const where: Record<string, unknown> = {
+        active: true,
+        telegramChatId: { not: null },
+      }
+      if (staffIds?.length) {
+        where.id = { in: staffIds }
+      }
+
+      const staff = await db.agentStaff.findMany({
+        where,
+        select: { id: true, name: true, telegramChatId: true },
+      })
+
+      if (!staff.length) {
+        return { success: true, data: { status: 'no_staff', message: 'No active staff with Telegram linked found.' } }
+      }
+
+      const res = await fetch(`${APP_URL}/api/assistant/internal/staff-announcement`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${INTERNAL_TOKEN}`,
+        },
+        body: JSON.stringify({
+          message,
+          staffChatIds: staff.map((s: { id: string; name: string; telegramChatId: string | null }) => ({
+            id: s.id,
+            name: s.name,
+            chatId: s.telegramChatId,
+          })),
+          sendVoice,
+        }),
+      })
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        return { success: false, error: `Failed to queue announcement: HTTP ${res.status} ${body.slice(0, 120)}` }
+      }
+
+      const queued = await res.json()
+      return {
+        success: true,
+        data: {
+          status: 'sent',
+          actionId: queued.actionId,
+          sentTo: staff.map((s: { name: string }) => s.name),
+          count: staff.length,
+          voiceIncluded: sendVoice,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── update_staff_task_status ──────────────────────────────────────────────────
 
 const update_staff_task_status: AgentTool = {
@@ -498,6 +593,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   propose_staff_tasks,
   approve_and_dispatch_tasks,
   add_staff_task_now,
+  send_staff_announcement,
   update_staff_task_status,
   get_marketing_history,
   update_staff_task_profile,

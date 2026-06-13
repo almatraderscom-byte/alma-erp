@@ -25,6 +25,7 @@ import { GoogleGenAI } from '@google/genai'
 import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
+import { sendStaffAnnouncement } from './staff/announcement.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
 import { startTwilioHttpServer } from './twilio-http.mjs'
 
@@ -108,7 +109,7 @@ async function pollPendingJobs() {
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
-      } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now') {
+      } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
         console.log(`[worker] enqueued staff dispatch for action ${job.id}`)
       } else if (job.type === 'urgent_notify') {
@@ -291,6 +292,10 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
       console.warn('[worker] add_staff_task_now: no approved task found to dispatch', payload)
     }
     await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds.length })
+
+  } else if (type === 'staff_announcement') {
+    const result = await sendStaffAnnouncement({ bot, payload })
+    await callJobResult(job.data.pendingActionId, 'success', result)
   }
 }, { connection, concurrency: 1 })
 
