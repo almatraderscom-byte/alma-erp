@@ -297,6 +297,22 @@ export function OneSignalPushManager() {
   }, [appId, nativeApp])
 
   useEffect(() => {
+    function registerNativeSilently() {
+      if (!nativeApp || !appId || status !== 'authenticated' || !userId) return
+      void registerNativePushSubscription({
+        appId,
+        userId,
+        role,
+        businessId,
+        businessName: business.name,
+        employeeIdGas,
+      }).catch(() => {})
+    }
+    window.addEventListener('focus', registerNativeSilently)
+    return () => window.removeEventListener('focus', registerNativeSilently)
+  }, [appId, business.name, businessId, employeeIdGas, nativeApp, role, status, userId])
+
+  useEffect(() => {
     if (status !== 'authenticated' || !pushReady || !userId) return
     if (!nativeApp && Notification.permission === 'denied') return
     const dismissedAt = Number(localStorage.getItem(PROMPT_DISMISSED_KEY) || 0)

@@ -69,44 +69,48 @@ async function sendOneSignal(
   const apiKey = process.env.ONESIGNAL_REST_API_KEY
   if (!appId || !apiKey || !userIds.length) return { configured: false, ok: false }
 
-  const subscriptions = await prisma.pushSubscription.findMany({
-    where: { userId: { in: userIds }, provider: 'onesignal', enabled: true, playerId: { not: null } },
-    select: { playerId: true },
-  })
-  const playerIds = subscriptions.map(s => s.playerId).filter(Boolean) as string[]
-  if (!playerIds.length) return { configured: true, ok: false, reason: 'no_player_ids' }
   const url = absoluteActionUrl(actionUrl)
-
   const usesV2Key = apiKey.startsWith('os_v2_')
+
+  const payload: Record<string, unknown> = {
+    app_id: appId,
+    target_channel: 'push',
+    headings: { en: title },
+    contents: { en: message },
+    subtitle: meta.businessId ? { en: meta.businessId.replace(/_/g, ' ') } : undefined,
+    web_url: url,
+    app_url: url,
+    priority: priority === 'LOW' ? 5 : 10,
+    ios_sound: priority === 'LOW' ? undefined : 'default',
+    android_sound: priority === 'LOW' ? undefined : 'default',
+    android_channel_id: process.env.ONESIGNAL_ANDROID_CHANNEL_ID || undefined,
+    chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
+    chrome_web_badge: `${absoluteActionUrl('/maskable-icon.svg')}`,
+    small_icon: 'ic_stat_onesignal_default',
+    collapse_id: meta.notificationId,
+    data: {
+      priority,
+      notificationId: meta.notificationId,
+      businessId: meta.businessId || null,
+      type: meta.type,
+      actionUrl: url,
+    },
+  }
+
+  // Target all push subscriptions (web + native APK) tied to ERP user ids via OneSignal.login().
+  if (usesV2Key) {
+    payload.include_aliases = { external_id: userIds }
+  } else {
+    payload.include_external_user_ids = userIds
+  }
+
   const res = await fetch(usesV2Key ? 'https://api.onesignal.com/notifications?c=push' : 'https://onesignal.com/api/v1/notifications', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `${usesV2Key ? 'Key' : 'Basic'} ${apiKey}`,
     },
-    body: JSON.stringify({
-      app_id: appId,
-      [usesV2Key ? 'include_subscription_ids' : 'include_player_ids']: playerIds,
-      headings: { en: title },
-      contents: { en: message },
-      subtitle: meta.businessId ? { en: meta.businessId.replace(/_/g, ' ') } : undefined,
-      web_url: url,
-      priority: priority === 'LOW' ? 5 : 10,
-      ios_sound: priority === 'LOW' ? undefined : 'default',
-      android_sound: priority === 'LOW' ? undefined : 'default',
-      android_channel_id: process.env.ONESIGNAL_ANDROID_CHANNEL_ID || undefined,
-      chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
-      chrome_web_badge: `${absoluteActionUrl('/maskable-icon.svg')}`,
-      small_icon: 'ic_stat_onesignal_default',
-      collapse_id: meta.notificationId,
-      data: {
-        priority,
-        notificationId: meta.notificationId,
-        businessId: meta.businessId || null,
-        type: meta.type,
-        actionUrl: url,
-      },
-    }),
+    body: JSON.stringify(payload),
   })
   const raw = await res.text()
   if (!res.ok) {
