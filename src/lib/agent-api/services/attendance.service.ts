@@ -24,7 +24,7 @@ export async function getAttendanceToday() {
     where: { businessId: BIZ },
   })
   const grace = ops?.gracePeriodMinutes ?? 15
-  const officeStart = ops?.officeStartMinutes ?? 540
+  const officeStart = ops?.officeStartMinutes ?? 570
 
   const present = dash.records
     .filter(r => r.lateMinutes <= grace)

@@ -7,8 +7,8 @@ import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 
-export const OFFICE_START_MINUTES = 9 * 60
-export const OFFICE_END_MINUTES = 21 * 60
+export const OFFICE_START_MINUTES = 9 * 60 + 30 // 570 = 9:30 AM
+export const OFFICE_END_MINUTES = 20 * 60 // 1200 = 8:00 PM
 export const ATTENDANCE_TIMEZONE = 'Asia/Dhaka'
 export const LATE_PENALTY_SOURCE = 'attendance_late_penalty'
 export const LATE_PENALTY_REVERSAL_SOURCE = 'attendance_late_penalty_reversal'
@@ -77,13 +77,42 @@ export function calculateLatePenalty(checkInAt = new Date()) {
   const lateMinutes = Math.max(0, checkInMinutes - OFFICE_START_MINUTES)
   let penaltyAmount = 0
 
-  if (lateMinutes > 0 && checkInMinutes < 10 * 60) {
+  if (lateMinutes <= 0) {
+    // On time (9:30 or before) — no penalty
+  } else if (checkInMinutes < 10 * 60) {
+    // 9:31 – 9:59 → ৳50
     penaltyAmount = 50
-  } else if (checkInMinutes >= 10 * 60) {
+  } else {
+    // 10:00+ → ৳100 per hour slot past 9:00
     penaltyAmount = Math.max(100, (Math.floor(checkInMinutes / 60) - 9) * 100)
   }
 
   return { lateMinutes, penaltyAmount }
+}
+
+export function calculateEarlyCheckoutPenalty(checkOutAt = new Date()) {
+  const checkOutMinutes = localMinutesFor(checkOutAt)
+  const earlyMinutes = Math.max(0, OFFICE_END_MINUTES - checkOutMinutes)
+  let earlyPenaltyAmount = 0
+
+  if (earlyMinutes <= 0) {
+    // On time or after — no penalty
+  } else if (earlyMinutes <= 60) {
+    // Left 1–60 min early → ৳50
+    earlyPenaltyAmount = 50
+  } else {
+    // Left >1 hour early → escalating: ৳100 per hour
+    const hoursEarly = Math.floor(earlyMinutes / 60)
+    earlyPenaltyAmount = Math.max(100, hoursEarly * 100)
+  }
+
+  return { earlyMinutes, earlyPenaltyAmount }
+}
+
+export const EARLY_LEAVE_PENALTY_SOURCE = 'attendance_early_leave_penalty'
+
+export function earlyLeaveSourceRef(businessId: string, employeeId: string, attendanceDate: Date) {
+  return `attendance-early:${businessId}:${employeeId}:${attendanceDate.toISOString().slice(0, 10)}`
 }
 
 export function attendanceSourceRef(businessId: string, employeeId: string, attendanceDate: Date) {
@@ -371,6 +400,67 @@ export async function notifyAttendancePenalty(record: AttendanceRecord, userId?:
   ])
 }
 
+export async function postEarlyLeavePenalty(
+  record: Pick<AttendanceRecord, 'id' | 'businessId' | 'employeeId' | 'attendanceDate'> & { earlyLeavePenaltyAmount?: unknown },
+  actorUserId?: string | null,
+) {
+  const amount = Number(record.earlyLeavePenaltyAmount || 0)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  try {
+    const entry = await createCompensationLedgerEntry({
+      employeeId: record.employeeId,
+      businessId: record.businessId,
+      type: 'PENALTY',
+      amount,
+      effectiveDate: record.attendanceDate,
+      createdById: actorUserId || null,
+      approvedById: actorUserId || null,
+      source: EARLY_LEAVE_PENALTY_SOURCE,
+      sourceRef: earlyLeaveSourceRef(record.businessId, record.employeeId, record.attendanceDate),
+      note: `Early checkout penalty · ${record.attendanceDate.toISOString().slice(0, 10)}`,
+    })
+    await prisma.attendanceRecord.update({
+      where: { id: record.id },
+      data: { earlyLeavePenaltyLedgerEntryId: entry.id },
+    })
+    return entry
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return null
+    }
+    throw e
+  }
+}
+
+export async function notifyEarlyLeavePenalty(
+  record: AttendanceRecord & { earlyLeaveMinutes?: number | null; earlyLeavePenaltyAmount?: unknown },
+  userId?: string | null,
+) {
+  const amount = Number(record.earlyLeavePenaltyAmount || 0)
+  if (amount <= 0) return
+  await Promise.all([
+    notifyUser({
+      userId,
+      businessId: record.businessId,
+      type: 'PAYROLL_ALERT',
+      priority: 'HIGH',
+      title: 'Early checkout penalty applied',
+      message: `Left ${record.earlyLeaveMinutes || 0} minutes early. Penalty: ৳ ${amount.toLocaleString('en-BD')}.`,
+      actionUrl: '/portal',
+    }),
+    notifyRole({
+      role: 'SUPER_ADMIN',
+      businessId: record.businessId,
+      type: 'PAYROLL_ALERT',
+      priority: 'HIGH',
+      title: 'Early checkout detected',
+      message: `${record.employeeId} left ${record.earlyLeaveMinutes || 0} minutes early. Penalty: ৳ ${amount.toLocaleString('en-BD')}.`,
+      actionUrl: '/attendance',
+    }),
+  ])
+}
+
 export function attendanceRecordDto(
   record: AttendanceRecord & {
     waiverRequests?: AttendanceWaiverRequest[]
@@ -391,6 +481,9 @@ export function attendanceRecordDto(
     lateMinutes: record.lateMinutes,
     penaltyAmount: Number(record.penaltyAmount || 0),
     penaltyLedgerEntryId: record.penaltyLedgerEntryId,
+    earlyLeaveMinutes: record.earlyLeaveMinutes,
+    earlyLeavePenaltyAmount: record.earlyLeavePenaltyAmount == null ? null : Number(record.earlyLeavePenaltyAmount),
+    earlyLeavePenaltyLedgerEntryId: record.earlyLeavePenaltyLedgerEntryId,
     browserFingerprint: record.browserFingerprint,
     deviceKey: record.deviceKey,
     sessionId: record.sessionId,

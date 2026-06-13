@@ -26,6 +26,7 @@ import {
   logAttendanceCheckinTransactionCommitted,
   logAttendanceCheckinTransactionFailed,
   logAttendanceCheckinTransactionStarted,
+  logAttendanceCheckinValidationFailed,
 } from '@/lib/attendance-checkin-log'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import type { PreparedCheckInFaceAssets } from '@/lib/attendance-photo-storage'
@@ -182,6 +183,35 @@ export async function commitAttendanceCheckIn(
   const longitude = input.metadata.location?.longitude
   const accuracy = input.metadata.location?.accuracy
   const needsAdminSelfie = trust.suspiciousReasons.includes('ADMIN_REQUEST')
+
+  if (trust.suspiciousReasons.includes('LOCATION_MISMATCH')) {
+    const distanceKm = trust.distanceFromOfficeM != null ? (trust.distanceFromOfficeM / 1000).toFixed(1) : '?'
+    logAttendanceCheckinValidationFailed({
+      ...logBase,
+      reason: 'location_mismatch',
+      latencyMs: Date.now() - started,
+    })
+    return {
+      ok: false,
+      code: 'location_mismatch',
+      message: `আপনি অফিস থেকে ${distanceKm} কিমি দূরে আছেন। অফিসে এসে check-in করুন। GPS accuracy চেক করুন।`,
+      status: 403,
+    }
+  }
+
+  if (!input.metadata.location?.latitude || !input.metadata.location?.longitude) {
+    logAttendanceCheckinValidationFailed({
+      ...logBase,
+      reason: 'no_gps',
+      latencyMs: Date.now() - started,
+    })
+    return {
+      ok: false,
+      code: 'location_required',
+      message: 'Location access দিন — অফিসে থাকার proof ছাড়া attendance হবে না। Browser/App settings এ Location → Allow করুন।',
+      status: 403,
+    }
+  }
 
   logAttendanceCheckinTransactionStarted(logBase)
 

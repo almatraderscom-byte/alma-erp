@@ -1,6 +1,14 @@
 import { NextRequest } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { attendanceDateFor, attendanceRecordDto, workDurationMinutes } from '@/lib/attendance'
+import {
+  attendanceDateFor,
+  attendanceRecordDto,
+  calculateEarlyCheckoutPenalty,
+  notifyEarlyLeavePenalty,
+  postEarlyLeavePenalty,
+  workDurationMinutes,
+} from '@/lib/attendance'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
@@ -42,15 +50,26 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
 
   const now = new Date()
   const totalWorkMinutes = workDurationMinutes(existing.checkInAt, now)
+
+  const { earlyMinutes, earlyPenaltyAmount } = calculateEarlyCheckoutPenalty(now)
+  const finalStatus = earlyPenaltyAmount > 0 ? 'EARLY_LEAVE' : 'COMPLETED'
+
   const record = await prisma.attendanceRecord.update({
     where: { id: existing.id },
     data: {
       checkOutAt: now,
       totalWorkMinutes,
-      status: 'COMPLETED',
+      status: finalStatus,
+      earlyLeaveMinutes: earlyMinutes > 0 ? earlyMinutes : null,
+      earlyLeavePenaltyAmount: earlyPenaltyAmount > 0 ? new Prisma.Decimal(earlyPenaltyAmount.toFixed(2)) : null,
     },
     include: { waiverRequests: true },
   })
+
+  if (earlyPenaltyAmount > 0) {
+    await postEarlyLeavePenalty(record, ctx.userId)
+    void notifyEarlyLeavePenalty(record, ctx.userId).catch(() => {})
+  }
 
   const setting = await getTelegramOpsSetting(ctx.businessIds[0])
   const isEarly = totalWorkMinutes < setting.earlyLeaveMinutes

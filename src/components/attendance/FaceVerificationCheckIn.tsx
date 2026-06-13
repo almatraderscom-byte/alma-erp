@@ -63,6 +63,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   const [processingPhoto, setProcessingPhoto] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [gpsError, setGpsError] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [capture, setCapture] = useState<{ imageDataUrl: string; thumbDataUrl: string } | null>(null)
   const [nudgeConfirm, setNudgeConfirm] = useState(false)
@@ -98,6 +99,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     setProcessingPhoto(false)
     setSubmitting(false)
     setSubmitError(null)
+    setGpsError(null)
     setPreview(null)
     setCapture(null)
     setNudgeConfirm(false)
@@ -171,6 +173,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       inFlightRef.current = requestId
       setSubmitting(true)
       setSubmitError(null)
+    setGpsError(null)
       setNudgeConfirm(false)
 
       if (isRetry) {
@@ -186,6 +189,11 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       const started = Date.now()
       try {
         const metadata = await attendanceMetadata()
+        if (!metadata.location?.latitude || !metadata.location?.longitude) {
+          const message = 'Location access required — please enable GPS in your phone settings.'
+          setGpsError(message)
+          throw new Error(message)
+        }
         const result = await safeFetchJson<CheckInPayload>(
           '/api/attendance/check-in',
           {
@@ -314,12 +322,26 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     [businessId, open, resetState],
   )
 
+  async function openCameraWithGps() {
+    if (processingPhoto || submitting) return
+    setGpsError(null)
+    const location = await requireHighAccuracyLocation()
+    if (!location) {
+      const message = 'Location access required — please enable GPS in your phone settings.'
+      setGpsError(message)
+      toast.error(message)
+      return
+    }
+    inputRef.current?.click()
+  }
+
   if (!mounted || !open) return null
 
   async function handleFile(file: File | undefined) {
     if (!file || processingPhoto || submitting) return
     setProcessingPhoto(true)
     setSubmitError(null)
+    setGpsError(null)
     setNudgeConfirm(false)
     try {
       const result = await captureFaceFromFile(file)
@@ -418,10 +440,17 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               )}
             </div>
           ) : (
-            <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/30 px-4 text-center">
-              <span className="text-3xl opacity-60">📷</span>
-              <p className="text-xs font-bold text-zinc-500">Front camera required</p>
-              <p className="text-[11px] text-zinc-600">After capture, a large Confirm button appears at the bottom</p>
+            <div className="space-y-3">
+              {gpsError && (
+                <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-center text-xs font-bold text-red-200">
+                  {gpsError}
+                </p>
+              )}
+              <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/30 px-4 text-center">
+                <span className="text-3xl opacity-60">📷</span>
+                <p className="text-xs font-bold text-zinc-500">Front camera required</p>
+                <p className="text-[11px] text-zinc-600">After capture, a large Confirm button appears at the bottom</p>
+              </div>
             </div>
           )}
         </div>
@@ -517,7 +546,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 variant="gold"
                 className="h-[56px] w-full justify-center text-base font-black"
                 disabled={busy}
-                onClick={() => inputRef.current?.click()}
+                onClick={() => void openCameraWithGps()}
               >
                 {processingPhoto ? (
                   <>
@@ -565,7 +594,7 @@ async function attendanceMetadata() {
     language: navigator.language,
     platform: nav.userAgentData?.platform || navigator.platform,
     screen: screenText,
-    location: await quietLocation(),
+    location: await requireHighAccuracyLocation(),
   }
 }
 
@@ -578,7 +607,7 @@ function stableSessionId() {
   return id
 }
 
-async function quietLocation(): Promise<{ latitude: number; longitude: number; accuracy: number } | null> {
+async function requireHighAccuracyLocation(): Promise<{ latitude: number; longitude: number; accuracy: number } | null> {
   if (!navigator.geolocation) return null
   return new Promise(resolve => {
     navigator.geolocation.getCurrentPosition(
@@ -589,7 +618,7 @@ async function quietLocation(): Promise<{ latitude: number; longitude: number; a
           accuracy: pos.coords.accuracy,
         }),
       () => resolve(null),
-      { enableHighAccuracy: false, maximumAge: 10 * 60_000, timeout: 1200 },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
     )
   })
 }
