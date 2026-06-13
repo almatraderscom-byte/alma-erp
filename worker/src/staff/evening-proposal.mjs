@@ -399,7 +399,8 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       created_at: new Date().toISOString(),
     }))
 
-    await supabase.from('staff_tasks').insert(taskData)
+    const { error: insertErr } = await supabase.from('staff_tasks').insert(taskData)
+    if (insertErr) throw new Error(`task insert: ${insertErr.message}`)
     console.log(`[${label}] inserted ${taskData.length} proposed tasks for ${targetDate}`)
 
     const { data: insertedTasks } = await supabase
