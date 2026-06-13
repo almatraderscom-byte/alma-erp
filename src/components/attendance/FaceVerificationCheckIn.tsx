@@ -466,9 +466,15 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           type="file"
           accept="image/*"
           capture="user"
-          className="hidden"
+          className="absolute left-0 top-0 h-0 w-0 opacity-0"
+          tabIndex={-1}
+          aria-hidden="true"
           disabled={busy}
-          onChange={e => void handleFile(e.target.files?.[0])}
+          onChange={e => {
+            void handleFile(e.target.files?.[0])
+            // Reset value so same photo can be retaken (iOS keeps last value)
+            if (e.target) e.target.value = ''
+          }}
         />
 
         <footer className="mobile-modal-footer px-4 pt-3">
