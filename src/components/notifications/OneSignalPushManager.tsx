@@ -72,7 +72,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
   })
 }
 
+import { isCapacitorNative } from '@/lib/capacitor-native'
+
 function pushSupported() {
+  if (isCapacitorNative()) return false
   return typeof window !== 'undefined'
     && 'serviceWorker' in navigator
     && 'PushManager' in window
@@ -146,6 +149,8 @@ export function OneSignalPushManager() {
   const employeeIdGas = session?.user?.employeeIdGas || null
 
   const supported = useMemo(() => Boolean(appId) && pushSupported(), [appId])
+  const nativeApp = useMemo(() => isCapacitorNative(), [])
+  const [showNativeNotice, setShowNativeNotice] = useState(false)
 
   const initializeOneSignal = useCallback((sdk: OneSignalSdk) => {
     if (!appId) return Promise.resolve()
@@ -244,6 +249,22 @@ export function OneSignalPushManager() {
   }, [busy, getOneSignalSdk, initializeOneSignal, registerSubscription, supported])
 
   useEffect(() => {
+    if (status !== 'authenticated' || !nativeApp || !appId) return
+    const dismissedAt = Number(localStorage.getItem(PROMPT_DISMISSED_KEY) || 0)
+    if (dismissedAt && Date.now() - dismissedAt < PROMPT_COOLDOWN_MS) return
+    const timer = window.setTimeout(() => setShowNativeNotice(true), 7_000)
+    return () => window.clearTimeout(timer)
+  }, [appId, nativeApp, status])
+
+  useEffect(() => {
+    function openNativeNotice() {
+      if (nativeApp && appId) setShowNativeNotice(true)
+    }
+    window.addEventListener('alma-enable-push', openNativeNotice)
+    return () => window.removeEventListener('alma-enable-push', openNativeNotice)
+  }, [appId, nativeApp])
+
+  useEffect(() => {
     if (status !== 'authenticated' || !supported || !userId) return
     if (Notification.permission === 'denied') return
     const dismissedAt = Number(localStorage.getItem(PROMPT_DISMISSED_KEY) || 0)
@@ -272,6 +293,47 @@ export function OneSignalPushManager() {
       window.removeEventListener('focus', registerSilently)
     }
   }, [registerSubscription, supported])
+
+  if (showNativeNotice && nativeApp && !registered) {
+    return (
+      <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[215] mx-auto max-w-md rounded-[26px] border border-amber-300/35 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 backdrop-blur-2xl md:bottom-5">
+        <div className="flex items-start gap-3">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-amber-300/40 bg-amber-500/10 text-lg font-black text-amber-200">
+            !
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-black text-amber-100">APK app-এ lock-screen alert এখনো চালু নয়</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+              Download করা Alma app দিয়ে phone notification এখন কাজ করে না — এটা আপনার বা wife-এর phone block নয়।
+              Lock-screen alert চাইলে <strong className="text-zinc-200">Chrome browser</strong> দিয়ে Alma ERP খুলে notification allow করুন।
+              APK দিয়ে ERP ব্যবহার চালিয়ে যেতে পারবেন; app খোলা থাকলে in-app alert আসবে।
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  window.open('https://alma-erp-six.vercel.app/login', '_system')
+                }}
+                className="rounded-xl border border-gold-dim/50 bg-gold/15 px-3 py-2 text-[11px] font-black text-gold-lt active:scale-[0.98]"
+              >
+                Chrome-এ খুলুন
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem(PROMPT_DISMISSED_KEY, String(Date.now()))
+                  setShowNativeNotice(false)
+                }}
+                className="rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px] font-bold text-zinc-400 active:scale-[0.98]"
+              >
+                বুঝেছি
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!showPrompt || registered || !supported) return null
 

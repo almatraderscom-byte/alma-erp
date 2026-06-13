@@ -46,6 +46,12 @@ npm run mobile:apk:release
 
 Output: `mobile/dist/alma-erp-release.apk`
 
+## Notifications (important)
+
+- **Downloaded APK:** ERP works, but **lock-screen push alerts do not** yet (Android WebView limitation).
+- **For lock-screen alerts:** open Alma in **Chrome** on the phone → login → allow notifications.
+- **Permanent APK push** needs Firebase + OneSignal Android setup (`google-services.json`) and a new APK build.
+
 ## Distribute to staff
 
 1. Upload APK to `public/releases/alma-erp.apk` **or** Google Drive
