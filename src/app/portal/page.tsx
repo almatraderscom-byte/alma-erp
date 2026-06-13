@@ -18,6 +18,7 @@ import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
 import { useMyAttendance } from '@/hooks/useMyAttendance'
+import { requireHighAccuracyLocation } from '@/lib/attendance-gps'
 import { attendanceErrorLabel } from '@/lib/attendance-client'
 import { OperationalTaskHero } from '@/components/operations/OperationalTaskHero'
 import { OperationalTaskDock } from '@/components/operations/OperationalTaskDock'
@@ -762,7 +763,7 @@ async function attendanceMetadata() {
     language: navigator.language,
     platform: nav.userAgentData?.platform || navigator.platform,
     screen: screenText,
-    location: await quietLocation(),
+    location: await requireHighAccuracyLocation(),
   }
 }
 
@@ -773,27 +774,6 @@ function stableSessionId() {
   const id = crypto.randomUUID()
   window.localStorage.setItem(key, id)
   return id
-}
-
-async function quietLocation(): Promise<{ latitude: number; longitude: number; accuracy: number } | null> {
-  if (!navigator.geolocation) return null
-  try {
-    const permissions = navigator.permissions ? await navigator.permissions.query({ name: 'geolocation' as PermissionName }) : null
-    if (permissions && permissions.state !== 'granted') return null
-  } catch {
-    return null
-  }
-  return new Promise(resolve => {
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({
-        latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-      }),
-      () => resolve(null),
-      { enableHighAccuracy: false, maximumAge: 10 * 60_000, timeout: 1200 },
-    )
-  })
 }
 
 function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: EmployeeWalletResponse | null }) {

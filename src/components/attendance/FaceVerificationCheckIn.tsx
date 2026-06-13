@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
+import { requireHighAccuracyLocation } from '@/lib/attendance-gps'
 import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
 import { logAttendanceMobileSubmitFailed } from '@/lib/mobile-runtime-log'
 import { logEvent } from '@/lib/logger'
@@ -62,6 +63,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   const [phase, setPhase] = useState<Phase>('capture')
   const [processingPhoto, setProcessingPhoto] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [acquiringLocation, setAcquiringLocation] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [gpsError, setGpsError] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -98,6 +100,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     setPhase('capture')
     setProcessingPhoto(false)
     setSubmitting(false)
+    setAcquiringLocation(false)
     setSubmitError(null)
     setGpsError(null)
     setPreview(null)
@@ -188,7 +191,9 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
 
       const started = Date.now()
       try {
+        setAcquiringLocation(true)
         const metadata = await attendanceMetadata()
+        setAcquiringLocation(false)
         if (!metadata.location?.latitude || !metadata.location?.longitude) {
           const message = 'Location access required — please enable GPS in your phone settings.'
           setGpsError(message)
@@ -313,6 +318,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         })
       } finally {
         if (inFlightRef.current === requestId) inFlightRef.current = null
+        setAcquiringLocation(false)
         setSubmitting(false)
       }
     },
@@ -367,7 +373,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     }
   }
 
-  const busy = processingPhoto || submitting
+  const busy = processingPhoto || submitting || acquiringLocation
 
   return (
     <MobileModalPortal
@@ -511,7 +517,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   {submitting ? (
                     <>
                       <Spinner />
-                      Confirming…
+                      {acquiringLocation ? 'GPS লোড হচ্ছে…' : 'Confirming…'}
                     </>
                   ) : (
                     '✅ Confirm check-in'
@@ -605,20 +611,4 @@ function stableSessionId() {
   const id = crypto.randomUUID()
   window.localStorage.setItem(key, id)
   return id
-}
-
-async function requireHighAccuracyLocation(): Promise<{ latitude: number; longitude: number; accuracy: number } | null> {
-  if (!navigator.geolocation) return null
-  return new Promise(resolve => {
-    navigator.geolocation.getCurrentPosition(
-      pos =>
-        resolve({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
-    )
-  })
 }
