@@ -33,8 +33,15 @@ export function buildProgressiveSummary(staffName, tasks) {
   const pending = active.filter((t) => t.status !== 'done')
   const doneCount = done.length
 
+  const iconFor = (t) => {
+    if (t.status === 'done') return '☑️'
+    if (t.status === 'awaiting_proof' || ['proof_submitted', 'auto_verified'].includes(t.verification_status ?? t.verificationStatus)) return '🔍'
+    if (t.verification_status === 'redo_requested' || t.verificationStatus === 'redo_requested') return '🔄'
+    return '⏳'
+  }
+
   const doneLines = done.map((t, i) => `☑️ ${i + 1}. ${t.title}`).join('\n')
-  const pendingLines = pending.map((t, i) => `⏳ ${doneCount + i + 1}. ${t.title}`).join('\n')
+  const pendingLines = pending.map((t, i) => `${iconFor(t)} ${doneCount + i + 1}. ${t.title}`).join('\n')
 
   let msg = `✅ *${staffName}* — ${bnNum(total)} এর মধ্যে ${bnNum(doneCount)} সম্পন্ন`
   if (doneCount > 0) {

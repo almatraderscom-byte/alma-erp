@@ -14,7 +14,7 @@ const update_setting: AgentTool = {
   name: 'update_setting',
   description:
     'Writes a key-value setting to the database. ' +
-    'Use when the owner changes behavior (escalation level, grief context, scheduler times, etc.). ' +
+    'Use when the owner changes behavior (escalation level, grief context, scheduler times, task_verification_enabled, task_verification_skip_types, etc.). ' +
     'Requires a confirm card — always call this, never keep owner instructions only in chat context.',
   input_schema: {
     type: 'object' as const,

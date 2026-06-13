@@ -191,6 +191,17 @@ async function autoMarkSalahFromText(text) {
 
 async function handleOwnerText(ctx, text) {
   const chatId = ctx.chat?.id
+  const { awaitingRedoNote, applyOwnerRedoNote } = await import('../staff/task-verification.mjs')
+  const redoTaskId = awaitingRedoNote.get(String(chatId))
+  if (redoTaskId) {
+    awaitingRedoNote.delete(String(chatId))
+    const supabase = createSupabase()
+    const note = String(text ?? '').trim().toLowerCase() === 'skip' ? '' : String(text ?? '').trim()
+    await applyOwnerRedoNote(ctx, supabase, redoTaskId, note)
+    await ctx.reply('🔄 স্টাফকে পুনরায় করতে বলা হয়েছে।')
+    return
+  }
+
   if (chatId && !checkFlood(chatId)) {
     await ctx.reply('অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।')
     return
@@ -580,6 +591,8 @@ export function createTelegramBot() {
         || cbData.startsWith('salah_')
         || cbData.startsWith('reminder_')
         || cbData.startsWith('ask_pick:')
+        || cbData.startsWith('task_vfy_ok:')
+        || cbData.startsWith('task_vfy_redo:')
         || cbData.startsWith('switch:')
         || cbData.startsWith('cat_del_')
         || cbData.startsWith('csg_')
@@ -819,6 +832,9 @@ export function createTelegramBot() {
     const staff = await resolveStaffByChatId(supabase, chatId)
     if (!staff) return
     try {
+      const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
+      const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { photo: ctx.message.photo })
+      if (proofHandled) return
       await handleCatalogPhotoMessage(ctx, { isOwner: false })
     } catch (err) {
       console.error('[telegram] catalog photo (staff) error:', err.message)
@@ -840,6 +856,10 @@ export function createTelegramBot() {
         await ctx.reply('⚠️ লোকেশন শেয়ার *বাধ্যতামূলক*। 📍 বাটন চাপুন বা Attachment → Location শেয়ার করুন।', { parse_mode: 'Markdown' })
         return
       }
+
+      const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
+      const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { text })
+      if (proofHandled) return
 
       if (text.startsWith('/catalog') || text.startsWith('/group')) {
         if (text.startsWith('/catalog')) {
@@ -976,17 +996,16 @@ export function createTelegramBot() {
         return
       }
       try {
-        const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
-          body: JSON.stringify({ taskId, staffId: staff.id, action: 'done' }),
-        })
-        const result = await res.json()
-        if (!res.ok) {
-          await ctx.answerCbQuery(result.error ?? 'সমস্যা হয়েছে')
-          return
+        const { handleStaffTaskDone } = await import('../staff/task-verification.mjs')
+        const outcome = await handleStaffTaskDone(ctx, supabase, taskId, staff)
+
+        if (outcome.instant) {
+          await ctx.answerCbQuery('✅ Done!')
+        } else if (outcome.autoVerified) {
+          await ctx.answerCbQuery('✅ যাচাই হয়েছে — Boss অনুমোদনের অপেক্ষায়')
+        } else {
+          await ctx.answerCbQuery('📸 প্রমাণ পাঠান')
         }
-        await ctx.answerCbQuery('✅ Done!')
 
         try {
           const origMsg = ctx.callbackQuery?.message
@@ -1010,11 +1029,11 @@ export function createTelegramBot() {
           await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
         }
 
-        if (OWNER_ID && result.staffName) {
+        if (outcome.instant && OWNER_ID && outcome.result?.staffName) {
           const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
           const { data: todayTasks } = await supabase
             .from('staff_tasks')
-            .select('id, title, status, type')
+            .select('id, title, status, type, verification_status')
             .eq('staff_id', staff.id)
             .eq('proposed_for', today)
             .not('status', 'eq', 'cancelled')
@@ -1026,7 +1045,7 @@ export function createTelegramBot() {
             supabase,
             OWNER_ID,
             staff.id,
-            result.staffName,
+            outcome.result.staffName,
             todayTasks ?? [],
             today,
           ).catch((err) => console.warn('[telegram] task progress notify failed:', err.message))
@@ -1047,6 +1066,63 @@ export function createTelegramBot() {
       } catch (err) {
         await ctx.answerCbQuery('সমস্যা হয়েছে')
         console.error('[telegram] task_done callback error:', err.message)
+      }
+
+    } else if (data.startsWith('task_vfy_ok:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const taskId = parseTaskIdFromCallback(data.slice('task_vfy_ok:'.length))
+      const supabase = createSupabase()
+      try {
+        const { finalizeOwnerApprove } = await import('../staff/task-verification.mjs')
+        const result = await finalizeOwnerApprove(ctx, supabase, taskId)
+
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+        const { data: todayTasks } = await supabase
+          .from('staff_tasks')
+          .select('id, title, status, type')
+          .eq('staff_id', result.staffId)
+          .eq('proposed_for', today)
+          .not('status', 'eq', 'cancelled')
+
+        const active = (todayTasks ?? []).filter((t) => t.status !== 'cancelled')
+        const allTasksDone = active.length > 0 && active.every((t) => t.status === 'done')
+        if (allTasksDone) {
+          const { data: staffRow } = await supabase
+            .from('agent_staff')
+            .select('*')
+            .eq('id', result.staffId)
+            .single()
+          if (staffRow) {
+            const { suggestBonusTasks } = await import('../staff/bonus-task-suggest.mjs')
+            await suggestBonusTasks({
+              supabase,
+              telegram: ctx.telegram,
+              staff: staffRow,
+              today,
+              existingTasks: active,
+            }).catch(() => {})
+          }
+        }
+      } catch (err) {
+        await ctx.answerCbQuery('সমস্যা হয়েছে')
+        console.error('[telegram] task_vfy_ok error:', err.message)
+      }
+
+    } else if (data.startsWith('task_vfy_redo:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const taskId = parseTaskIdFromCallback(data.slice('task_vfy_redo:'.length))
+      try {
+        const { startOwnerRedo } = await import('../staff/task-verification.mjs')
+        await startOwnerRedo(ctx, taskId)
+      } catch (err) {
+        await ctx.answerCbQuery('সমস্যা হয়েছে')
+        console.error('[telegram] task_vfy_redo error:', err.message)
       }
 
     } else if (data.startsWith('ask_pick:')) {

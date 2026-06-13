@@ -1885,6 +1885,11 @@ model AgentStaffTask {
   carriedFrom      AgentStaffTask?  @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
   carriedTasks     AgentStaffTask[] @relation("CarryForward")
   source           String    @default("agent")
+  verificationStatus String  @default("not_required") @map("verification_status")
+  proofType        String?   @map("proof_type")
+  proofData        Json?     @map("proof_data")
+  reviewerNote     String?   @map("reviewer_note") @db.Text
+  redoCount        Int       @default(0) @map("redo_count")
   createdAt        DateTime  @default(now()) @map("created_at")
   marketingHistory AgentProductMarketingHistory[]
 

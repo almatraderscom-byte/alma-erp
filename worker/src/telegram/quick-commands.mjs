@@ -84,7 +84,7 @@ function buildStaffBlocks(tasks) {
       return aDone - bDone
     })
     const lines = sorted.map((t) => {
-      const icon = t.status === 'done' ? '✅' : '⏳'
+      const icon = taskDisplayIcon(t)
       return `  ${icon} ${shortenTaskTitle(t.title)}`
     })
     blocks.push([header, ...lines].join('\n'))
@@ -146,11 +146,22 @@ function dhakaTomorrowYmd(today) {
 async function fetchActiveTasksForDate(supabase, date) {
   const { data } = await supabase
     .from('staff_tasks')
-    .select('status, title, staff_id, agent_staff(name)')
+    .select('status, title, staff_id, verification_status, agent_staff(name)')
     .eq('proposed_for', date)
-    .in('status', ['sent', 'approved', 'done'])
+    .in('status', ['sent', 'approved', 'done', 'awaiting_proof', 'done_unverified'])
     .order('created_at', { ascending: true })
   return data ?? []
+}
+
+function taskDisplayIcon(task) {
+  if (task.verification_status === 'redo_requested') return '🔄'
+  if (
+    task.status === 'awaiting_proof'
+    || ['awaiting_proof', 'proof_submitted', 'auto_verified'].includes(task.verification_status)
+  ) return '🔍'
+  if (task.status === 'done') return '✅'
+  if (task.status === 'done_unverified') return '⚠️'
+  return '⏳'
 }
 
 export async function handleTodayCommand(ctx, supabase) {
