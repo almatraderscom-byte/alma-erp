@@ -36,8 +36,58 @@ type ScoredProduct = {
   taskType: string
 }
 
+type StaffProfile = {
+  skills: string[]
+  dailyTargetTasks: number
+  notes: string
+}
+
+const DEFAULT_PROFILES: Record<string, StaffProfile> = {
+  'Mohammad Eyafi': {
+    skills: ['ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update', 'order_followup', 'customer_reply', 'page_management'],
+    dailyTargetTasks: 8,
+    notes: 'Handles all creative, content, social media, customer comms',
+  },
+  'Mustahid': {
+    skills: ['product_photo', 'video_reel', 'listing_update', 'office_task', 'page_management', 'content_support'],
+    dailyTargetTasks: 6,
+    notes: 'Office work, photography, video, page support — NO delivery/packaging/COD',
+  },
+}
+
+let _profileCache: Record<string, StaffProfile> | null = null
+
+export function _resetProfileCache() { _profileCache = null }
+
+async function getStaffProfiles(): Promise<Record<string, StaffProfile>> {
+  if (_profileCache) return _profileCache
+  try {
+    const setting = await db.agentKvSetting.findUnique({ where: { key: 'staff_task_profiles' } })
+    if (setting?.value && typeof setting.value === 'object') {
+      _profileCache = { ...DEFAULT_PROFILES, ...(setting.value as Record<string, StaffProfile>) }
+      return _profileCache
+    }
+  } catch { /* use defaults */ }
+  _profileCache = DEFAULT_PROFILES
+  return _profileCache
+}
+
+function getProfileForStaff(profiles: Record<string, StaffProfile>, staffName: string): StaffProfile | null {
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (staffName.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(staffName.toLowerCase())) {
+      return profile
+    }
+  }
+  return null
+}
+
 function isContentStaff(staff: { name: string; role: string }) {
   return staff.role === 'content' || /eyafi/i.test(staff.name)
+}
+
+function staffHasSkill(profile: StaffProfile | null, skill: string): boolean {
+  if (!profile) return true
+  return profile.skills.includes(skill)
 }
 
 function scoreProduct(
@@ -107,10 +157,14 @@ function buildTasksForStaff(
   picks: ScoredProduct[],
   carryForward: Array<{ staffId: string; title: string; detail: string | null; type: string; productRef: string | null }>,
   pendingOrders: number,
+  profile: StaffProfile | null,
 ) {
   const tasks: Omit<ProposedTaskInput, 'staffName'>[] = []
+  const targetCount = profile?.dailyTargetTasks ?? 5
 
+  // Carry-forward tasks first
   for (const carried of carryForward.filter((t) => t.staffId === staff.id)) {
+    if (!staffHasSkill(profile, carried.type)) continue
     tasks.push({
       staffId: staff.id,
       title: `↩ ${carried.title} (গতকালের কাজ)`,
@@ -122,8 +176,10 @@ function buildTasksForStaff(
   }
 
   if (isContentStaff(staff)) {
-    for (const pick of picks.slice(0, 2)) {
+    // Content staff: ad creatives, product content, order followup
+    for (const pick of picks.slice(0, 3)) {
       const type = pick.taskType || 'product_content'
+      if (!staffHasSkill(profile, type)) continue
       tasks.push({
         staffId: staff.id,
         title:
@@ -136,7 +192,7 @@ function buildTasksForStaff(
         source: 'rotation',
       })
     }
-    if (pendingOrders > 0) {
+    if (pendingOrders > 0 && staffHasSkill(profile, 'order_followup')) {
       tasks.push({
         staffId: staff.id,
         title: `${pendingOrders}টি পেন্ডিং অর্ডার ফলো-আপ করুন`,
@@ -145,35 +201,124 @@ function buildTasksForStaff(
         source: 'pattern',
       })
     }
-  } else {
-    for (const pick of picks.slice(2, 4)) {
+    // Video reel task
+    if (staffHasSkill(profile, 'video_reel') && picks.length > 0) {
+      const reelPick = picks.find((p) => p.sales30d >= 5) ?? picks[0]
       tasks.push({
         staffId: staff.id,
-        title: `${pick.name} — স্টক ও প্যাকিং চেক করুন`,
-        detail: `বর্তমান স্টক: ${pick.stock}. ${pick.reasons[0] ?? ''}`,
-        type: 'stock_check',
-        productRef: pick.productRef,
+        title: `${reelPick.name} — ৩০-সেকেন্ড ভিডিও রিল বানান`,
+        detail: `FB/Insta-তে পোস্ট করুন। ${reelPick.reasons[0] ?? 'বেশি বিক্রির পণ্য'} হাইলাইট করুন`,
+        type: 'video_reel',
+        productRef: reelPick.productRef,
         source: 'rotation',
       })
     }
-    tasks.push({
-      staffId: staff.id,
-      title: 'COD অর্ডার কনফার্ম ও ডেলিভারি আপডেট করুন',
-      detail: 'পেন্ডিং COD লিস্ট চেক করে কুরিয়ার/কাস্টমার আপডেট',
-      type: 'order_followup',
-      source: 'agent',
-    })
-    const lowStock = picks.find((p) => p.stock > 0 && p.stock <= 5)
-    if (lowStock) {
+    // Page management task
+    if (staffHasSkill(profile, 'page_management')) {
       tasks.push({
         staffId: staff.id,
-        title: `${lowStock.name} — লো স্টক রিপ্লেনিশ (${lowStock.stock} পিস বাকি)`,
-        detail: 'ইনভেন্টরি আপডেট + মালিককে জানান',
-        type: 'stock_check',
-        productRef: lowStock.productRef,
-        source: 'pattern',
+        title: 'পেজ ম্যানেজমেন্ট — কভার/পিন পোস্ট/স্টোরি আপডেট',
+        detail: 'FB + Insta story, pinned post চেক ও আপডেট করুন',
+        type: 'page_management',
+        source: 'agent',
       })
     }
+    // Customer reply task
+    if (staffHasSkill(profile, 'customer_reply')) {
+      tasks.push({
+        staffId: staff.id,
+        title: 'কাস্টমার মেসেজ/কমেন্ট রিপ্লাই — সব পেজ চেক',
+        detail: 'Messenger + FB comment — আনরিড মেসেজ রিপ্লাই দিন',
+        type: 'customer_reply',
+        source: 'agent',
+      })
+    }
+  } else {
+    // Non-content staff: use profile skills, skip stock_check/COD if not in profile
+    for (const pick of picks.slice(0, 2)) {
+      if (staffHasSkill(profile, 'product_photo')) {
+        tasks.push({
+          staffId: staff.id,
+          title: `${pick.name} — প্রোডাক্ট ফটো শুট`,
+          detail: `নতুন ছবি তুলুন, ক্যাটালগে যোগ করুন। স্টক: ${pick.stock}`,
+          type: 'product_photo',
+          productRef: pick.productRef,
+          source: 'rotation',
+        })
+      }
+    }
+    if (staffHasSkill(profile, 'video_reel') && picks.length > 0) {
+      const reelPick = picks.find((p) => p.sales30d >= 3) ?? picks[0]
+      tasks.push({
+        staffId: staff.id,
+        title: `${reelPick.name} — প্রোডাক্ট ভিডিও/রিল তৈরি`,
+        detail: `ছোট ভিডিও বানান — পণ্যের ফিচার দেখান`,
+        type: 'video_reel',
+        productRef: reelPick.productRef,
+        source: 'rotation',
+      })
+    }
+    if (staffHasSkill(profile, 'listing_update')) {
+      const listingPick = picks.find((p) => p.taskType === 'listing_update' && p.stock > 0)
+      if (listingPick) {
+        tasks.push({
+          staffId: staff.id,
+          title: `${listingPick.name} — লিস্টিং আপডেট (ছবি/বর্ণনা)`,
+          detail: `${listingPick.reasons[0] ?? 'বিক্রি বাড়াতে লিস্টিং উন্নত করুন'}`,
+          type: 'listing_update',
+          productRef: listingPick.productRef,
+          source: 'rotation',
+        })
+      }
+    }
+    if (staffHasSkill(profile, 'page_management')) {
+      tasks.push({
+        staffId: staff.id,
+        title: 'পেজ সাপোর্ট — কমেন্ট রিপ্লাই ও পোস্ট শিডিউল চেক',
+        detail: 'FB/Insta পেজে আনরিড কমেন্ট রিপ্লাই দিন',
+        type: 'page_management',
+        source: 'agent',
+      })
+    }
+    if (staffHasSkill(profile, 'content_support')) {
+      tasks.push({
+        staffId: staff.id,
+        title: 'কন্টেন্ট সাপোর্ট — Eyafi ভাইকে শুটে সাহায্য',
+        detail: 'প্রোডাক্ট সাজানো, লাইটিং সেটআপ, ব্যাকগ্রাউন্ড প্রস্তুত',
+        type: 'content_support',
+        source: 'agent',
+      })
+    }
+    if (staffHasSkill(profile, 'office_task')) {
+      tasks.push({
+        staffId: staff.id,
+        title: 'অফিস ক্লিন-আপ ও প্রোডাক্ট অর্গানাইজ',
+        detail: 'শোরুম/গোডাউন গুছিয়ে রাখুন, নতুন স্টক সাজান',
+        type: 'office_task',
+        source: 'agent',
+      })
+    }
+    // Only add stock_check if the profile allows it
+    if (staffHasSkill(profile, 'stock_check')) {
+      for (const pick of picks.slice(2, 4)) {
+        tasks.push({
+          staffId: staff.id,
+          title: `${pick.name} — স্টক চেক করুন`,
+          detail: `বর্তমান স্টক: ${pick.stock}. ${pick.reasons[0] ?? ''}`,
+          type: 'stock_check',
+          productRef: pick.productRef,
+          source: 'rotation',
+        })
+      }
+    }
+  }
+
+  // Trim to target count (carry-forwards always kept)
+  const carryCount = tasks.filter((t) => t.source === 'pattern' && t.title.startsWith('↩')).length
+  if (tasks.length > targetCount + carryCount) {
+    const carries = tasks.filter((t) => t.title.startsWith('↩'))
+    const rest = tasks.filter((t) => !t.title.startsWith('↩')).slice(0, targetCount)
+    return [...carries, ...rest].map((t) => ({ ...t, staffName: staff.name }))
   }
 
   return tasks.map((t) => ({ ...t, staffName: staff.name }))
@@ -373,10 +518,12 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const pendingOrders = pendingRes.meta.count
 
   const patterns = await detectPatterns(dateYmd, staffList, inv, historyRows)
+  const profiles = await getStaffProfiles()
 
   const allTasks: ProposedTaskInput[] = []
   for (const staff of staffList) {
-    allTasks.push(...buildTasksForStaff(staff, picks, carryRows, pendingOrders))
+    const profile = getProfileForStaff(profiles, staff.name)
+    allTasks.push(...buildTasksForStaff(staff, picks, carryRows, pendingOrders, profile))
   }
   for (const pt of patterns.staleProductTasks) {
     if (!allTasks.some((t) => t.productRef === pt.productRef && t.type === pt.type)) {

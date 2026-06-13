@@ -80,6 +80,13 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
 
     const taskIds = insertedTasks?.map((t) => t.id) ?? []
 
+    // Supersede any stale pending dispatch actions
+    await supabase
+      .from('agent_pending_actions')
+      .update({ status: 'superseded', resolvedAt: new Date().toISOString() })
+      .eq('type', 'dispatch_staff_tasks')
+      .eq('status', 'pending')
+
     await supabase.from('agent_pending_actions').insert({
       id:           crypto.randomUUID(),
       type:         'dispatch_staff_tasks',

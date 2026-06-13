@@ -201,8 +201,23 @@ export async function POST(
   // ── Phase 6 action types ───────────────────────────────────────────────────
 
   if (action.type === 'dispatch_staff_tasks') {
-    // Mark proposed tasks as 'approved'; worker picks up and dispatches via Telegram
     const { date, taskIds } = payload as { date: string; taskIds: string[] }
+
+    // Check if tasks are already dispatched (approved by another path)
+    const alreadySent = await db.agentStaffTask.count({
+      where: { id: { in: taskIds ?? [] }, status: { in: ['sent', 'done'] } },
+    })
+    if (alreadySent > 0) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
+      })
+      return Response.json({
+        success: true, alreadyDispatched: true,
+        message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — আবার পাঠানোর দরকার নেই।',
+      })
+    }
+
     await db.agentStaffTask.updateMany({
       where: { id: { in: taskIds ?? [] }, status: 'proposed' },
       data:  { status: 'approved' },
@@ -211,6 +226,17 @@ export async function POST(
       where: { id: actionId },
       data:  { status: 'approved', resolvedAt: new Date() },
     })
+
+    // Auto-resolve any other pending dispatch actions for the same date
+    await db.agentPendingAction.updateMany({
+      where: {
+        id: { not: actionId },
+        type: 'dispatch_staff_tasks',
+        status: 'pending',
+      },
+      data: { status: 'executed', resolvedAt: new Date() },
+    })
+
     await appendConversationNote(
       db,
       action,

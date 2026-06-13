@@ -4,7 +4,7 @@
  * The agent proposes/approves tasks; the worker handles dispatch timing.
  */
 import { prisma } from '@/lib/prisma'
-import { buildStaffTaskProposal } from '@/agent/lib/staff-task-proposal'
+import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,6 +71,12 @@ const prepare_staff_task_proposal: AgentTool = {
 
       let pendingActionId: string | undefined
       if (createCard && save) {
+        // Resolve any stale pending dispatch actions before creating a new one
+        await db.agentPendingAction.updateMany({
+          where: { type: 'dispatch_staff_tasks', status: 'pending' },
+          data: { status: 'superseded', resolvedAt: new Date() },
+        })
+
         const proposed = await db.agentStaffTask.findMany({
           where: { proposedFor: new Date(date), status: 'proposed' },
           include: { staff: { select: { name: true } } },
@@ -197,7 +203,7 @@ const propose_staff_tasks: AgentTool = {
             staffId:    { type: 'string' },
             title:      { type: 'string' },
             detail:     { type: 'string' },
-            type:       { type: 'string', enum: ['ad_creative','product_content','stock_check','listing_update','order_followup','misc'] },
+            type:       { type: 'string', enum: ['ad_creative','product_content','product_photo','video_reel','listing_update','order_followup','page_management','customer_reply','content_support','office_task','stock_check','misc'] },
             productRef: { type: 'string' },
             source:     { type: 'string', enum: ['rotation','pattern','owner','agent'] },
           },
@@ -264,6 +270,12 @@ const approve_and_dispatch_tasks: AgentTool = {
         include: { staff: { select: { name: true } } },
       })
       if (!proposed.length) return { success: false, error: `No proposed tasks found for ${date}` }
+
+      // Resolve any stale pending dispatch actions
+      await db.agentPendingAction.updateMany({
+        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        data: { status: 'superseded', resolvedAt: new Date() },
+      })
 
       const summary = proposed
         .map((t: { staff: { name: string }; title: string; type: string }) =>
@@ -414,6 +426,71 @@ const get_marketing_history: AgentTool = {
   },
 }
 
+// ── update_staff_task_profile ────────────────────────────────────────────────
+
+const update_staff_task_profile: AgentTool = {
+  name: 'update_staff_task_profile',
+  description:
+    'Updates a staff member\'s task profile — what tasks they should or should not get. ' +
+    'Owner says things like "Mustahid কে delivery task দিবি না" → remove that skill. ' +
+    'Changes take immediate effect on the next proposal.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      staffName:      { type: 'string', description: 'Staff member name (fuzzy match)' },
+      addSkills:      { type: 'array', items: { type: 'string' }, description: 'Skills to add' },
+      removeSkills:   { type: 'array', items: { type: 'string' }, description: 'Skills to remove' },
+      dailyTargetTasks: { type: 'number', description: 'New daily task target count' },
+      notes:          { type: 'string', description: 'Updated notes about the staff member' },
+    },
+    required: ['staffName'],
+  },
+  handler: async (input) => {
+    try {
+      const staffName = String(input.staffName).trim()
+      const existing = await db.agentKvSetting.findUnique({ where: { key: 'staff_task_profiles' } })
+      const profiles = (existing?.value as Record<string, { skills: string[]; dailyTargetTasks: number; notes: string }>) ?? {}
+
+      let matchedKey: string | null = null
+      for (const key of Object.keys(profiles)) {
+        if (key.toLowerCase().includes(staffName.toLowerCase()) || staffName.toLowerCase().includes(key.toLowerCase())) {
+          matchedKey = key
+          break
+        }
+      }
+      if (!matchedKey) matchedKey = staffName
+
+      const current = profiles[matchedKey] ?? { skills: [], dailyTargetTasks: 6, notes: '' }
+
+      const addSkills = (input.addSkills as string[]) ?? []
+      const removeSkills = (input.removeSkills as string[]) ?? []
+      const newSkills = [...new Set([...current.skills, ...addSkills].filter((s) => !removeSkills.includes(s)))]
+
+      profiles[matchedKey] = {
+        skills: newSkills,
+        dailyTargetTasks: (input.dailyTargetTasks as number) ?? current.dailyTargetTasks,
+        notes: (input.notes as string) ?? current.notes,
+      }
+
+      await db.agentKvSetting.upsert({
+        where: { key: 'staff_task_profiles' },
+        create: { key: 'staff_task_profiles', value: profiles },
+        update: { value: profiles },
+      })
+
+      _resetProfileCache()
+
+      return {
+        success: true,
+        data: { staffName: matchedKey, profile: profiles[matchedKey] },
+        message: `${matchedKey}-এর প্রোফাইল আপডেট হয়েছে। পরবর্তী টাস্ক প্রস্তাবে এই পরিবর্তন কার্যকর হবে।`,
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -423,4 +500,5 @@ export const STAFF_TOOLS: AgentTool[] = [
   add_staff_task_now,
   update_staff_task_status,
   get_marketing_history,
+  update_staff_task_profile,
 ]
