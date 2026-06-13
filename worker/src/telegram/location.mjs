@@ -12,6 +12,7 @@ export const LOCATION_TIMEOUT_MS = 3 * 60 * 1000
 
 const pendingLocationRequest = new Map() // chatId → { staffId, staffName, taskId?, at, reason }
 const locationTimeouts = new Map() // chatId → timeoutId
+const liveOwnerNotified = new Set() // chatId — owner notified once per live session
 
 function clearLocationTimeout(chatId) {
   const key = String(chatId)
@@ -117,7 +118,14 @@ export async function handleStaffLocation(ctx, supabase, location, source = 'liv
   pendingLocationRequest.delete(pendingKey)
   clearLocationTimeout(chatId)
 
-  if (inserted && lat !== 0 && lng !== 0) {
+  const isLiveShare = source === 'live' || livePeriod != null
+  const shouldNotifyOwner =
+    wasPending
+    || (!isLiveShare)
+    || !liveOwnerNotified.has(pendingKey)
+
+  if (inserted && lat !== 0 && lng !== 0 && shouldNotifyOwner) {
+    if (isLiveShare) liveOwnerNotified.add(pendingKey)
     const time = formatDhakaTime()
     const maps = `https://www.google.com/maps?q=${lat},${lng}`
     let context = 'লোকেশন শেয়ার করেছে'
@@ -143,7 +151,10 @@ export async function handleStaffLocation(ctx, supabase, location, source = 'liv
  * Live location stopped — live_period becomes 0 or message has no live_period on final update.
  */
 export async function handleLiveLocationStopped(ctx, supabase, staffName) {
-  const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+  const chatId = ctx.chat?.id
+  if (chatId) liveOwnerNotified.delete(String(chatId))
+
+  const staff = await resolveStaffByChatId(supabase, chatId)
   if (!staff) return
 
   await insertLocation(supabase, {

@@ -3,7 +3,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
-import { checkUrgentRateLimit } from '@/agent/lib/urgent-rate-limit'
+import { checkUrgentRateLimit, checkOutboundCallRateLimit } from '@/agent/lib/urgent-rate-limit'
 import { summarizeOutboundAction, outboundWasDialed } from '@/agent/lib/outbound-call-tracking'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import type { AgentTool } from './registry'
@@ -197,7 +197,7 @@ const send_urgent_alert: AgentTool = {
   name: 'send_urgent_alert',
   description:
     'Sends an immediate urgent alert via notify (ntfy + Telegram + optional voice/call). ' +
-    'tier 2=critical ntfy (5/hour limit). tier 3=phone call — requires confirm card (2/day limit). ' +
+    'tier 2=critical ntfy (5/hour limit). tier 3=phone call — requires confirm card (5/24h limit, salah excluded). ' +
     'Use when Sir says urgent/জরুরি or explicitly asks for a call.',
   input_schema: {
     type: 'object' as const,
@@ -323,7 +323,7 @@ const outbound_phone_call: AgentTool = {
         return { success: false, error: 'Only Bangladesh numbers (+880) are supported for outbound calls.' }
       }
 
-      const rate = await checkUrgentRateLimit(3)
+      const rate = await checkOutboundCallRateLimit()
       if (!rate.ok) return { success: false, error: rate.error }
 
       const conversationId = input.conversationId ? String(input.conversationId) : null
