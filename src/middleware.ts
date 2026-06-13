@@ -109,6 +109,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Staff APK files in public/releases/
+  if (pathname.startsWith('/releases/')) {
+    return NextResponse.next()
+  }
+
   if (pathname.startsWith('/api/')) {
     const isAuthApi = pathname.startsWith('/api/auth')
     const isSessionProbe = pathname === '/api/auth/session'
