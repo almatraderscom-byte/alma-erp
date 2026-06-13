@@ -23,7 +23,30 @@ const nextConfig = {
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app',
   },
   async redirects() {
-    return [{ source: '/digital/finance', destination: '/finance', permanent: false }]
+    return [
+      { source: '/digital/finance', destination: '/finance', permanent: false },
+      { source: '/app/download', destination: '/download.html', permanent: false },
+    ]
+  },
+  async headers() {
+    return [
+      {
+        source: '/releases/:file*.apk',
+        headers: [
+          {
+            key: 'Content-Disposition',
+            value: 'attachment; filename="alma-erp.apk"',
+          },
+          { key: 'Cache-Control', value: 'public, max-age=3600' },
+        ],
+      },
+      {
+        source: '/download.html',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=300' },
+        ],
+      },
+    ]
   },
 }
 
