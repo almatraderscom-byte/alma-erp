@@ -1,5 +1,5 @@
 /**
- * Alma ERP service worker — v6
+ * Alma ERP service worker — v7
  * IMPORTANT: Do NOT cache /_next/static/* — stale chunks cause blank screens after deploy.
  *
  * OneSignal web push SDK: used only when PwaBootstrap registers this SW (browser/PWA).
@@ -11,7 +11,7 @@ try {
   // Push CDN optional — offline shell still works.
 }
 
-const SW_VERSION = 'v6'
+const SW_VERSION = 'v7'
 const SHELL_CACHE = `alma-erp-shell-${SW_VERSION}`
 const ICON_CACHE = `alma-erp-icons-${SW_VERSION}`
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']

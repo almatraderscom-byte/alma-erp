@@ -31,6 +31,12 @@ const nextConfig = {
   async headers() {
     return [
       {
+        source: '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|OneSignalSDKWorker.js|OneSignalSDKUpdaterWorker.js|offline.html|download.html|fonts/|releases/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|apk|html)$).*)',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, must-revalidate' },
+        ],
+      },
+      {
         source: '/releases/:file*.apk',
         headers: [
           {

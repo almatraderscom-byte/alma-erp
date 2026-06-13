@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { clearStaleRuntimeCaches } from '@/components/providers/PwaBootstrap'
+import { clearAppCaches } from '@/lib/app-update'
 import { isAuthPath } from '@/lib/auth-paths'
 
 const RECOVERY_COOLDOWN_MS = 15_000
@@ -36,7 +36,7 @@ async function recoverApp(reason: string): Promise<boolean> {
     sessionStorage.setItem(RECOVERY_COUNT_KEY, String(count + 1))
     sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()))
     console.warn('[alma] boot recovery:', reason)
-    await clearStaleRuntimeCaches()
+    await clearAppCaches()
   } catch {
     // still reload
   }
@@ -103,7 +103,7 @@ export function AppBootRecovery() {
         type="button"
         className="rounded-xl border border-gold-dim/50 bg-gold/15 px-4 py-2 text-sm font-semibold text-gold-lt"
         onClick={() => {
-          void clearStaleRuntimeCaches().finally(() => {
+          void clearAppCaches().finally(() => {
             try {
               sessionStorage.removeItem(RECOVERY_COUNT_KEY)
               sessionStorage.removeItem(RECOVERY_STORAGE_KEY)

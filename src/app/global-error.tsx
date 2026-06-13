@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { captureHydrationError, captureException } from '@/lib/sentry/capture'
-import { clearStaleRuntimeCaches } from '@/components/providers/PwaBootstrap'
+import { clearAppCaches } from '@/lib/app-update'
 
 export default function GlobalError({
   error,
@@ -32,7 +32,7 @@ export default function GlobalError({
 
   async function hardRefresh() {
     try {
-      await clearStaleRuntimeCaches()
+      await clearAppCaches()
     } catch {
       // reload anyway
     }

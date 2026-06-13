@@ -1,8 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { APP_BUILD_ID, RUNTIME_BUILD_STORAGE_KEY } from '@/lib/runtime-build'
+import { APP_BUILD_ID } from '@/lib/runtime-build'
+import {
+  checkForAppUpdate,
+  clearAppCaches,
+  hardRefreshApp,
+  isCapacitorNative,
+  isMeaningfulBuildId,
+  markBuildSynced,
+  readStoredBuildId,
+  subscribeAppUpdateChecks,
+} from '@/lib/app-update'
 import { subscribeIosVisualViewport } from '@/lib/ios-modal-viewport'
+
+export { clearAppCaches as clearStaleRuntimeCaches } from '@/lib/app-update'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -20,27 +32,10 @@ function isStandaloneDisplay() {
     || (window.navigator as Navigator & { standalone?: boolean }).standalone === true
 }
 
-function isCapacitorNative() {
-  if (typeof window === 'undefined') return false
-  const cap = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
-  return Boolean(cap?.isNativePlatform?.())
-}
-
 function isIosSafari() {
   if (typeof navigator === 'undefined') return false
   const ua = navigator.userAgent
   return /iphone|ipad|ipod/i.test(ua) && /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua)
-}
-
-export async function clearStaleRuntimeCaches() {
-  if ('serviceWorker' in navigator) {
-    const regs = await navigator.serviceWorker.getRegistrations()
-    await Promise.all(regs.map(reg => reg.unregister()))
-  }
-  if ('caches' in window) {
-    const keys = await caches.keys()
-    await Promise.all(keys.map(key => caches.delete(key)))
-  }
 }
 
 export function PwaBootstrap() {
@@ -50,31 +45,33 @@ export function PwaBootstrap() {
   const [serverSlow, setServerSlow] = useState(false)
   const [staleBuild, setStaleBuild] = useState(false)
   const ios = useMemo(() => isIosSafari(), [])
+  const nativeShell = useMemo(() => isCapacitorNative(), [])
 
   const forceRefresh = useCallback(async () => {
-    try {
-      await clearStaleRuntimeCaches()
-    } catch {
-      // reload still attempts to pick up the new bundle
-    }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(RUNTIME_BUILD_STORAGE_KEY, APP_BUILD_ID)
-    }
-    window.location.reload()
+    await hardRefreshApp()
   }, [])
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') return
-    if (isCapacitorNative()) return
+    if (nativeShell) return
     if (!('serviceWorker' in navigator)) return
     navigator.serviceWorker.register('/sw.js').then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing
+        if (!worker) return
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            setStaleBuild(true)
+          }
+        })
+      })
       void reg.update()
     }).catch(() => {})
-  }, [])
+  }, [nativeShell])
 
   useEffect(() => {
     function onForceRelogin() {
-      void clearStaleRuntimeCaches()
+      void clearAppCaches()
     }
     window.addEventListener('alma:force-relogin', onForceRelogin)
     return () => {
@@ -143,7 +140,7 @@ export function PwaBootstrap() {
   }, [offline])
 
   useEffect(() => {
-    if (isCapacitorNative() || isStandaloneDisplay()) return
+    if (nativeShell || isStandaloneDisplay()) return
     const dismissedAt = Number(localStorage.getItem(INSTALL_DISMISSED_KEY) || 0)
     if (dismissedAt && Date.now() - dismissedAt < INSTALL_REMINDER_MS) return
 
@@ -170,38 +167,23 @@ export function PwaBootstrap() {
       window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
       window.removeEventListener('appinstalled', onInstalled)
     }
-  }, [ios])
+  }, [ios, nativeShell])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const stored = localStorage.getItem(RUNTIME_BUILD_STORAGE_KEY)
-    if (!stored) {
-      localStorage.setItem(RUNTIME_BUILD_STORAGE_KEY, APP_BUILD_ID)
-    } else if (stored !== APP_BUILD_ID && APP_BUILD_ID !== 'dev' && APP_BUILD_ID !== 'local') {
+
+    const stored = readStoredBuildId()
+    if (!stored && isMeaningfulBuildId(APP_BUILD_ID)) {
+      markBuildSynced(APP_BUILD_ID)
+    } else if (stored && isMeaningfulBuildId(APP_BUILD_ID) && stored !== APP_BUILD_ID) {
       setStaleBuild(true)
     }
 
-    let cancelled = false
-    async function pollBuild() {
-      try {
-        const res = await fetch('/api/health', { cache: 'no-store' })
-        const json = await res.json().catch(() => ({}))
-        const remote = String(json?.frontend?.git_commit || '').trim()
-        if (!remote || cancelled) return
-        const local = localStorage.getItem(RUNTIME_BUILD_STORAGE_KEY) || APP_BUILD_ID
-        if (local && remote !== local && remote !== APP_BUILD_ID) {
-          setStaleBuild(true)
-        }
-      } catch {
-        // ignore transient health failures
-      }
-    }
-    void pollBuild()
-    const timer = window.setInterval(() => void pollBuild(), 5 * 60_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+    void checkForAppUpdate().then(({ updateAvailable }) => {
+      if (updateAvailable) setStaleBuild(true)
+    })
+
+    return subscribeAppUpdateChecks(() => setStaleBuild(true))
   }, [])
 
   async function install() {
@@ -223,9 +205,11 @@ export function PwaBootstrap() {
     <>
       {staleBuild && (
         <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[225] mx-auto max-w-md rounded-2xl border border-gold-dim/45 bg-[#101014]/95 px-4 py-3 text-xs text-cream shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <p className="font-black text-gold-lt">অ্যাপ আপডেট দরকার</p>
+          <p className="font-black text-gold-lt">নতুন আপডেট পাওয়া গেছে</p>
           <p className="mt-1 text-zinc-400">
-            আপনার ফোনে পুরনো ভার্সন আছে। একবার রিফ্রেশ করলেই নতুন ভার্সন চলবে — আনইনস্টল করতে হবে না।
+            {nativeShell
+              ? 'সার্ভারে নতুন ভার্সন আছে। একবার রিফ্রেশ করলেই চলবে — APK আনইনস্টল করতে হবে না।'
+              : 'আপনার ফোনে পুরনো ভার্সন আছে। একবার রিফ্রেশ করলেই নতুন ভার্সন চলবে — আনইনস্টল করতে হবে না।'}
           </p>
           <button
             type="button"
