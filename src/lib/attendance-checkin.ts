@@ -14,8 +14,7 @@ import {
   hashAttendanceIp,
   LATE_PENALTY_SOURCE,
   normalizeClientMetadata,
-  OFFICE_END_MINUTES,
-  OFFICE_START_MINUTES,
+  officeHoursFor,
   sessionInfoFromRequest,
   type AttendanceClientMetadata,
 } from '@/lib/attendance'
@@ -171,7 +170,7 @@ export async function commitAttendanceCheckIn(
     }
   }
 
-  const { lateMinutes, penaltyAmount } = calculateLatePenalty(now)
+  const { lateMinutes, penaltyAmount } = calculateLatePenalty(now, input.businessId)
   const deviceKey = deviceKeyFor(input.req, input.metadata)
   const trust = await assessAttendanceTrust({
     businessId: input.businessId,
@@ -226,8 +225,8 @@ export async function commitAttendanceCheckIn(
             employeeId: input.employeeId,
             attendanceDate,
             status: penaltyAmount > 0 ? 'LATE' : 'PRESENT',
-            officeStartMinutes: OFFICE_START_MINUTES,
-            officeEndMinutes: OFFICE_END_MINUTES,
+            officeStartMinutes: officeHoursFor(input.businessId).startMinutes,
+            officeEndMinutes: officeHoursFor(input.businessId).endMinutes,
             checkInAt: now,
             lateMinutes,
             penaltyAmount: new PrismaNs.Decimal(penaltyAmount.toFixed(2)),

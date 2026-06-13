@@ -112,7 +112,7 @@ async function fetchDayAttendance(businessId: BusinessId, ymd: string) {
       status: f.status,
     })),
     meta: {
-      officeStartMinutes: ops?.officeStartMinutes ?? 570,
+      officeStartMinutes: ops?.officeStartMinutes ?? 540,
       gracePeriodMinutes: grace,
     },
   }

@@ -7,13 +7,25 @@ import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 
-export const OFFICE_START_MINUTES = 9 * 60 + 30 // 570 = 9:30 AM
-export const OFFICE_END_MINUTES = 20 * 60 // 1200 = 8:00 PM
+export const OFFICE_START_MINUTES = 9 * 60 // 540 = 9:00 AM
+export const OFFICE_END_MINUTES = 21 * 60 // 1260 = 9:00 PM
 export const ATTENDANCE_TIMEZONE = 'Asia/Dhaka'
 export const LATE_PENALTY_SOURCE = 'attendance_late_penalty'
 export const LATE_PENALTY_REVERSAL_SOURCE = 'attendance_late_penalty_reversal'
 export const DEFAULT_OFFICE_RADIUS_M = 500
 export const LOCATION_CHANGE_ALERT_M = 20_000
+
+const BUSINESS_OFFICE_HOURS: Record<string, { start: number; end: number }> = {
+  ALMA_LIFESTYLE: { start: 9 * 60 + 30, end: 20 * 60 }, // 9:30 AM – 8:00 PM
+}
+
+export function officeHoursFor(businessId: string) {
+  const custom = BUSINESS_OFFICE_HOURS[businessId]
+  return {
+    startMinutes: custom?.start ?? OFFICE_START_MINUTES,
+    endMinutes: custom?.end ?? OFFICE_END_MINUTES,
+  }
+}
 
 export type AttendanceClientMetadata = {
   browserFingerprint?: string | null
@@ -72,15 +84,16 @@ export function localMinutesFor(date = new Date()) {
   return p.hour * 60 + p.minute
 }
 
-export function calculateLatePenalty(checkInAt = new Date()) {
+export function calculateLatePenalty(checkInAt = new Date(), businessId?: string) {
+  const { startMinutes } = officeHoursFor(businessId || '')
   const checkInMinutes = localMinutesFor(checkInAt)
-  const lateMinutes = Math.max(0, checkInMinutes - OFFICE_START_MINUTES)
+  const lateMinutes = Math.max(0, checkInMinutes - startMinutes)
   let penaltyAmount = 0
 
   if (lateMinutes <= 0) {
-    // On time (9:30 or before) — no penalty
+    // On time — no penalty
   } else if (checkInMinutes < 10 * 60) {
-    // 9:31 – 9:59 → ৳50
+    // Late but before 10:00 AM → ৳50
     penaltyAmount = 50
   } else {
     // 10:00+ → ৳100 per hour slot past 9:00
@@ -90,9 +103,10 @@ export function calculateLatePenalty(checkInAt = new Date()) {
   return { lateMinutes, penaltyAmount }
 }
 
-export function calculateEarlyCheckoutPenalty(checkOutAt = new Date()) {
+export function calculateEarlyCheckoutPenalty(checkOutAt = new Date(), businessId?: string) {
+  const { endMinutes } = officeHoursFor(businessId || '')
   const checkOutMinutes = localMinutesFor(checkOutAt)
-  const earlyMinutes = Math.max(0, OFFICE_END_MINUTES - checkOutMinutes)
+  const earlyMinutes = Math.max(0, endMinutes - checkOutMinutes)
   let earlyPenaltyAmount = 0
 
   if (earlyMinutes <= 0) {
@@ -101,7 +115,7 @@ export function calculateEarlyCheckoutPenalty(checkOutAt = new Date()) {
     // Left 1–60 min early → ৳50
     earlyPenaltyAmount = 50
   } else {
-    // Left >1 hour early → escalating: ৳100 per hour
+    // Left >1 hour early → ৳100 per hour
     const hoursEarly = Math.floor(earlyMinutes / 60)
     earlyPenaltyAmount = Math.max(100, hoursEarly * 100)
   }

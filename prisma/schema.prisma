@@ -411,8 +411,8 @@ model AttendanceRecord {
   employeeId                String
   attendanceDate            DateTime
   status                    AttendanceRecordStatus         @default(PRESENT)
-  officeStartMinutes        Int                            @default(570)
-  officeEndMinutes          Int                            @default(1200)
+  officeStartMinutes        Int                            @default(540)
+  officeEndMinutes          Int                            @default(1260)
   checkInAt                 DateTime
   checkOutAt                DateTime?
   totalWorkMinutes          Int                            @default(0)
@@ -1479,7 +1479,7 @@ model TelegramOpsSetting {
   enabled                 Boolean  @default(true)
   /// Comma-separated Telegram chat IDs (owner/admin private chats or ops groups).
   ownerChatIds            String   @default("")
-  officeStartMinutes      Int      @default(570)
+  officeStartMinutes      Int      @default(540)
   gracePeriodMinutes      Int      @default(15)
   checkoutCutoffMinutes   Int      @default(1320)
   earlyLeaveMinutes       Int      @default(360)

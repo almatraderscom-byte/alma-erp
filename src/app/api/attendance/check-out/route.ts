@@ -51,7 +51,7 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
   const now = new Date()
   const totalWorkMinutes = workDurationMinutes(existing.checkInAt, now)
 
-  const { earlyMinutes, earlyPenaltyAmount } = calculateEarlyCheckoutPenalty(now)
+  const { earlyMinutes, earlyPenaltyAmount } = calculateEarlyCheckoutPenalty(now, ctx.businessIds[0])
   const finalStatus = earlyPenaltyAmount > 0 ? 'EARLY_LEAVE' : 'COMPLETED'
 
   const record = await prisma.attendanceRecord.update({

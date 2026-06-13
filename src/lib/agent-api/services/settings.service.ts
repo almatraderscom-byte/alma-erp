@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
-import { OFFICE_END_MINUTES } from '@/lib/attendance'
 import type { Prisma } from '@prisma/client'
 
 async function getOrCreateSettings() {
@@ -28,8 +27,8 @@ export async function getSettings() {
   return {
     settingsVersion: agent.settingsVersion,
     businessHours: agent.businessHours ?? {
-      officeStartMinutes: ops?.officeStartMinutes ?? 570,
-      officeEndMinutes: OFFICE_END_MINUTES,
+      officeStartMinutes: ops?.officeStartMinutes ?? 540,
+      officeEndMinutes: 1260,
     },
     holidays: agent.holidays ?? [],
     lateThresholdMinutes: agent.lateThresholdMinutes ?? ops?.gracePeriodMinutes ?? 15,
