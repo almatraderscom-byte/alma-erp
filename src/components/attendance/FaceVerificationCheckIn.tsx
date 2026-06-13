@@ -63,7 +63,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   const [phase, setPhase] = useState<Phase>('capture')
   const [processingPhoto, setProcessingPhoto] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [acquiringLocation, setAcquiringLocation] = useState(false)
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'fetching' | 'done' | 'failed'>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [gpsError, setGpsError] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -100,7 +100,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     setPhase('capture')
     setProcessingPhoto(false)
     setSubmitting(false)
-    setAcquiringLocation(false)
+    setLocationStatus('idle')
     setSubmitError(null)
     setGpsError(null)
     setPreview(null)
@@ -176,7 +176,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
       inFlightRef.current = requestId
       setSubmitting(true)
       setSubmitError(null)
-    setGpsError(null)
+      setGpsError(null)
       setNudgeConfirm(false)
 
       if (isRetry) {
@@ -191,9 +191,9 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
 
       const started = Date.now()
       try {
-        setAcquiringLocation(true)
+        setLocationStatus('fetching')
         const metadata = await attendanceMetadata()
-        setAcquiringLocation(false)
+        setLocationStatus(metadata.location ? 'done' : 'failed')
         if (!metadata.location?.latitude || !metadata.location?.longitude) {
           const message = 'Location access required — please enable GPS in your phone settings.'
           setGpsError(message)
@@ -318,8 +318,8 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         })
       } finally {
         if (inFlightRef.current === requestId) inFlightRef.current = null
-        setAcquiringLocation(false)
         setSubmitting(false)
+        setLocationStatus('idle')
       }
     },
     // captureRef/onCloseRef/onSuccessRef are mutable refs — deliberately excluded;
@@ -373,7 +373,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     }
   }
 
-  const busy = processingPhoto || submitting || acquiringLocation
+  const busy = processingPhoto || submitting || locationStatus === 'fetching'
 
   return (
     <MobileModalPortal
@@ -487,7 +487,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 {submitting ? (
                   <>
                     <Spinner />
-                    Retrying…
+                    {locationStatus === 'fetching' ? '📍 Location নিচ্ছে...' : 'Retrying…'}
                   </>
                 ) : (
                   'Retry check-in'
@@ -517,7 +517,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   {submitting ? (
                     <>
                       <Spinner />
-                      {acquiringLocation ? 'GPS লোড হচ্ছে…' : 'Confirming…'}
+                      {locationStatus === 'fetching' ? '📍 Location নিচ্ছে...' : 'Confirming…'}
                     </>
                   ) : (
                     '✅ Confirm check-in'
