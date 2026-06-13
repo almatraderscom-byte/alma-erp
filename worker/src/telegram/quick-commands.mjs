@@ -17,8 +17,182 @@ function monthStart(today) {
   return today.slice(0, 8) + '01'
 }
 
+const WAQT_ORDER = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
+
 const WAQT_BN = {
   fajr: 'ফজর', dhuhr: 'যোহর', asr: 'আসর', maghrib: 'মাগরিব', isha: 'ইশা',
+}
+
+const SECTION_RULE = '━━━━━━━━━━━━━━━━━━━━'
+const TELEGRAM_LIMIT = 4096
+
+function formatBanglaDateHeader(ymd) {
+  const d = dhakaMidnightUtc(ymd)
+  d.setHours(12)
+  const formatted = new Intl.DateTimeFormat('bn-BD', {
+    timeZone: 'Asia/Dhaka',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    weekday: 'long',
+  }).format(d)
+  return `📅 ${formatted}`
+}
+
+function salahWaqtIcon(status) {
+  if (status === 'prayed_on_time') return '✅'
+  if (status === 'missed') return '❌'
+  if (status === 'prayed_late' || status === 'qaza') return '⏰'
+  return '⏳'
+}
+
+function buildSalahBlock(salahRecords) {
+  const byWaqt = Object.fromEntries((salahRecords ?? []).map((r) => [r.waqt, r.status]))
+  const onTime = (salahRecords ?? []).filter((r) => r.status === 'prayed_on_time').length
+  const inline = WAQT_ORDER.map((w) => `${WAQT_BN[w]} ${salahWaqtIcon(byWaqt[w] ?? 'pending')}`).join(' | ')
+  return `🕌 নামাজ: ${bnNum(onTime)}/৫ ✅\n  ${inline}`
+}
+
+function shortenTaskTitle(title) {
+  let s = String(title ?? '').trim()
+  s = s.replace(/\s*\([^)]*\)/g, '')
+  s = s.replace(/\s*[—–-]\s*কল\/মেসেজ.*$/i, '')
+  s = s.replace(/\s*(করুন|তৈরি করুন)\s*\.?$/gi, '')
+  s = s.replace(/\s+/g, ' ').trim()
+  if (s.length > 58) s = `${s.slice(0, 55)}…`
+  return s
+}
+
+function buildStaffBlocks(tasks) {
+  const byStaff = {}
+  for (const t of tasks) {
+    const staffId = t.staff_id ?? 'unknown'
+    if (!byStaff[staffId]) {
+      byStaff[staffId] = { name: t.agent_staff?.name ?? 'অজানা', tasks: [] }
+    }
+    byStaff[staffId].tasks.push(t)
+  }
+
+  const blocks = []
+  for (const { name, tasks: staffTasks } of Object.values(byStaff)) {
+    const doneCount = staffTasks.filter((t) => t.status === 'done').length
+    const allDone = doneCount === staffTasks.length && staffTasks.length > 0
+    const header = `👤 ${name} — ${bnNum(doneCount)}/${bnNum(staffTasks.length)}${allDone ? ' ✅' : ''}`
+    const sorted = [...staffTasks].sort((a, b) => {
+      const aDone = a.status === 'done' ? 0 : 1
+      const bDone = b.status === 'done' ? 0 : 1
+      return aDone - bDone
+    })
+    const lines = sorted.map((t) => {
+      const icon = t.status === 'done' ? '✅' : '⏳'
+      return `  ${icon} ${shortenTaskTitle(t.title)}`
+    })
+    blocks.push([header, ...lines].join('\n'))
+  }
+  return blocks.join('\n\n')
+}
+
+function formatUsdBn(amount) {
+  const n = Number(amount) || 0
+  const [whole, frac] = n.toFixed(2).split('.')
+  return `$${bnNum(whole)}.${bnNum(frac)}`
+}
+
+async function fetchTodayAiCost(supabase, today) {
+  const dayStart = `${today}T00:00:00+06:00`
+  const dayEnd = `${today}T23:59:59.999+06:00`
+  const { data, error } = await supabase
+    .from('agent_cost_events')
+    .select('cost_usd')
+    .gte('occurred_at', dayStart)
+    .lte('occurred_at', dayEnd)
+  if (error || !data?.length) return 0
+  return data.reduce((sum, row) => sum + Number(row.cost_usd ?? 0), 0)
+}
+
+function splitTodayMessage(text) {
+  if (text.length <= TELEGRAM_LIMIT) return [text]
+  const parts = text.split(`\n${SECTION_RULE}\n`)
+  if (parts.length < 2) {
+    return [text.slice(0, TELEGRAM_LIMIT - 1), text.slice(TELEGRAM_LIMIT - 1)]
+  }
+  const chunks = []
+  let current = parts[0]
+  for (let i = 1; i < parts.length; i++) {
+    const segment = `${SECTION_RULE}\n${parts[i]}`
+    const candidate = current ? `${current}\n${segment}` : segment
+    if (candidate.length > TELEGRAM_LIMIT) {
+      if (current) chunks.push(current)
+      current = segment
+    } else {
+      current = candidate
+    }
+  }
+  if (current) chunks.push(current)
+  return chunks.length ? chunks : [text.slice(0, TELEGRAM_LIMIT)]
+}
+
+function dhakaTomorrowYmd(today) {
+  const d = dhakaMidnightUtc(today)
+  d.setDate(d.getDate() + 1)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Dhaka',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
+async function fetchActiveTasksForDate(supabase, date) {
+  const { data } = await supabase
+    .from('staff_tasks')
+    .select('status, title, staff_id, agent_staff(name)')
+    .eq('proposed_for', date)
+    .in('status', ['sent', 'approved', 'done'])
+    .order('created_at', { ascending: true })
+  return data ?? []
+}
+
+export async function handleTodayCommand(ctx, supabase) {
+  const today = dhakaToday()
+
+  const [{ data: salahRecords }, aiCost] = await Promise.all([
+    supabase
+      .from('salah_records')
+      .select('waqt, status')
+      .eq('date', salahDateFilter(today)),
+    fetchTodayAiCost(supabase, today),
+  ])
+
+  let tasks = await fetchActiveTasksForDate(supabase, today)
+  if (!tasks.length) {
+    tasks = await fetchActiveTasksForDate(supabase, dhakaTomorrowYmd(today))
+  }
+
+  const done = tasks.filter((t) => t.status === 'done').length
+  const total = tasks.length
+
+  const sections = [
+    formatBanglaDateHeader(today),
+    '',
+    buildSalahBlock(salahRecords),
+    '',
+    SECTION_RULE,
+    '',
+    `📋 টাস্ক: ${bnNum(done)}/${bnNum(total)} সম্পন্ন`,
+    '',
+    tasks.length ? buildStaffBlocks(tasks) : '  কোনো active টাস্ক নেই',
+    '',
+    SECTION_RULE,
+    '',
+    `💰 আজকের AI খরচ: ${formatUsdBn(aiCost)}`,
+  ]
+
+  const msg = sections.join('\n')
+  const chunks = splitTodayMessage(msg)
+  for (const chunk of chunks) {
+    await ctx.reply(chunk)
+  }
 }
 
 export async function handleSalahTodayCommand(ctx, supabase) {
@@ -45,107 +219,6 @@ export async function handleSalahTodayCommand(ctx, supabase) {
 
   const on = salahRecords.filter((r) => r.status === 'prayed_on_time').length
   await replyMarkdownSafe(ctx, `🕌 *আজকের নামাজ — ${today}*\n${on}/5 সময়মতো\n\n${lines}`)
-}
-
-function dhakaTomorrowYmd(today) {
-  const d = dhakaMidnightUtc(today)
-  d.setDate(d.getDate() + 1)
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Dhaka',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d)
-}
-
-async function fetchActiveTasksForDate(supabase, date) {
-  const { data } = await supabase
-    .from('staff_tasks')
-    .select('status, title, staff_id, agent_staff(name)')
-    .eq('proposed_for', date)
-    .in('status', ['sent', 'approved', 'done'])
-    .order('created_at', { ascending: true })
-  return data ?? []
-}
-
-function buildStaffTaskSections(tasks) {
-  const byStaff = {}
-  for (const t of tasks) {
-    const staffId = t.staff_id ?? t.agent_staff?.name ?? 'unknown'
-    if (!byStaff[staffId]) {
-      byStaff[staffId] = { name: t.agent_staff?.name ?? 'অজানা', tasks: [] }
-    }
-    byStaff[staffId].tasks.push(t)
-  }
-
-  const sections = []
-  for (const { name, tasks: staffTasks } of Object.values(byStaff)) {
-    const doneCount = staffTasks.filter((t) => t.status === 'done').length
-    const sorted = [...staffTasks].sort((a, b) => {
-      const aDone = a.status === 'done' ? 0 : 1
-      const bDone = b.status === 'done' ? 0 : 1
-      return aDone - bDone || 0
-    })
-    const lines = sorted.map((t) => {
-      const icon = t.status === 'done' ? '☑️' : '⏳'
-      return `${icon} ${t.title}`
-    })
-    sections.push(`👤 ${name} (${bnNum(doneCount)}/${bnNum(staffTasks.length)}):\n${lines.join('\n')}`)
-  }
-  return sections.join('\n')
-}
-
-function buildSalahLine(salahRecords) {
-  const salahOn = salahRecords?.filter((r) => r.status === 'prayed_on_time').length ?? 0
-  const salahMiss = salahRecords?.filter((r) => r.status === 'missed').length ?? 0
-  const notYet = (salahRecords ?? [])
-    .filter((r) => r.status === 'pending' && (r.waqt === 'maghrib' || r.waqt === 'isha'))
-    .map((r) => WAQT_BN[r.waqt] ?? r.waqt)
-  let line = `🕌 নামাজ: ${bnNum(salahOn)}/৫ সময়মতো`
-  if (salahMiss > 0) line += `, ${bnNum(salahMiss)} মিস`
-  if (notYet.length > 0) line += ` (${notYet.join(' ও ')} এখনো সময় হয়নি)`
-  return line
-}
-
-export async function handleTodayCommand(ctx, supabase) {
-  const today = dhakaToday()
-
-  const { data: salahRecords } = await supabase
-    .from('salah_records')
-    .select('waqt, status')
-    .eq('date', salahDateFilter(today))
-
-  const salahLine = buildSalahLine(salahRecords)
-
-  let tasks = await fetchActiveTasksForDate(supabase, today)
-  if (!tasks.length) {
-    tasks = await fetchActiveTasksForDate(supabase, dhakaTomorrowYmd(today))
-  }
-
-  const done = tasks.filter((t) => t.status === 'done').length
-  const total = tasks.length
-  const taskLine = `📋 টাস্ক: ${bnNum(done)}/${bnNum(total)} সম্পন্ন`
-  const staffSection = tasks.length ? `\n${buildStaffTaskSections(tasks)}` : ''
-
-  let salesLine = ''
-  try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=today_sales_summary`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
-    })
-    if (res.ok) {
-      const data = await res.json()
-      if (data.today_sales_summary) salesLine = `\n📊 ${data.today_sales_summary}`
-    }
-  } catch { /* non-fatal */ }
-
-  const msg =
-    `📅 *আজকের স্ন্যাপশট — ${today}*\n` +
-    taskLine +
-    staffSection +
-    `\n${salahLine}` +
-    salesLine
-
-  await replyMarkdownSafe(ctx, msg)
 }
 
 export async function handleKhorochCommand(ctx, supabase) {
