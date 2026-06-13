@@ -2,6 +2,13 @@
 
 import { Button, Card } from '@/components/ui'
 
+const SAMSUNG_PUSH_STEPS = [
+  'Settings → Apps → Alma ERP → Battery → Unrestricted',
+  'Settings → Battery → Background usage limits → Never sleeping apps → Alma ERP যোগ করুন',
+  'Settings → Apps → Google Play services → Battery → Unrestricted',
+  'Settings → Battery → Battery optimization → Google Play services → Don\'t optimize',
+]
+
 const STEPS = [
   'নিচের বাটনে ক্লিক করে APK ডাউনলোড করুন',
   'ডাউনলোড শেষে ফাইলে ট্যাপ করুন — Install',
@@ -40,6 +47,18 @@ export function DownloadAppClient({ apkUrl }: Props) {
           <h2 className="text-sm font-semibold text-gold-lt">ইনস্টল করার নিয়ম</h2>
           <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-zinc-300">
             {STEPS.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </Card>
+
+        <Card className="p-5">
+          <h2 className="text-sm font-semibold text-gold-lt">Samsung ফোন (S24/S25 ইত্যাদি)</h2>
+          <p className="mt-2 text-xs text-zinc-400">
+            Push notification পেতে নিচের সেটিংস অবশ্যই করুন — One UI battery optimization push বন্ধ করে দেয়।
+          </p>
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-zinc-300">
+            {SAMSUNG_PUSH_STEPS.map((step) => (
               <li key={step}>{step}</li>
             ))}
           </ol>

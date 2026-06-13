@@ -39,8 +39,10 @@ run(gradlew, [gradleTask], { cwd: androidDir })
 
 const googleServices = path.join(androidDir, 'app/google-services.json')
 if (!existsSync(googleServices)) {
-  console.warn('\n⚠️  android/app/google-services.json not found — native push will NOT work until Firebase file is added.')
-  console.warn('   See mobile/FIREBASE_SETUP.md for steps.\n')
+  console.error('\n❌ FATAL: android/app/google-services.json not found — push will NOT work.')
+  console.error('   Download from Firebase Console → Project Settings → Android app')
+  console.error('   Place at: android/app/google-services.json\n')
+  process.exit(1)
 }
 
 const apkName = isRelease ? 'app-release-unsigned.apk' : 'app-debug.apk'

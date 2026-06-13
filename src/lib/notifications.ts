@@ -83,7 +83,11 @@ async function sendOneSignal(
     priority: priority === 'LOW' ? 5 : 10,
     ios_sound: priority === 'LOW' ? undefined : 'default',
     android_sound: priority === 'LOW' ? undefined : 'default',
+    // Android 8+ requires a channel. OneSignal creates a default "Miscellaneous" channel
+    // but explicitly setting one ensures HIGH importance (sound + heads-up display).
     android_channel_id: process.env.ONESIGNAL_ANDROID_CHANNEL_ID || undefined,
+    android_visibility: 1, // PUBLIC — show on lock screen
+    android_led_color: 'FFC9A84C', // gold LED
     chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
     chrome_web_badge: `${absoluteActionUrl('/maskable-icon.svg')}`,
     small_icon: 'ic_stat_onesignal_default',
@@ -131,6 +135,8 @@ async function sendOneSignal(
       errors: responseBody.errors,
       recipients: responseBody.recipients,
       notificationId: responseBody.id,
+      targetedUserIds: userIds,
+      invalidAliases: (responseBody as Record<string, unknown>).invalid_aliases || null,
     })
     return { configured: true, ok: Boolean(responseBody.id), partialFailure: true }
   }

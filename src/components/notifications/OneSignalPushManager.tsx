@@ -167,7 +167,7 @@ export function OneSignalPushManager() {
   }, [userId])
 
   const initializeOneSignal = useCallback((sdk: OneSignalSdk) => {
-    if (!appId) return Promise.resolve()
+    if (!appId || nativeApp) return Promise.resolve() // Native uses OneSignal Android SDK, not web
     initPromiseRef.current ||= sdk.init({
       appId,
       allowLocalhostAsSecureOrigin: false,
@@ -177,7 +177,7 @@ export function OneSignalPushManager() {
       autoResubscribe: true,
     })
     return initPromiseRef.current
-  }, [appId])
+  }, [appId, nativeApp])
 
   const getOneSignalSdk = useCallback(async () => {
     if (window.OneSignal) return window.OneSignal
@@ -253,6 +253,9 @@ export function OneSignalPushManager() {
         if (connected) {
           markRegistered()
           setShowPrompt(false)
+          void import('@/lib/native-push').then(m =>
+            m.listenForTokenChanges({ appId, userId, role, businessId, businessName: business.name, employeeIdGas }),
+          ).catch(() => {})
         } else {
           setPromptError('Permission দেওয়া হয়েছে, কিন্তু device register হয়নি। Firebase setup শেষ হয়েছে কিনা চেক করুন, তারপর আবার চেষ্টা করুন।')
         }
@@ -360,9 +363,14 @@ export function OneSignalPushManager() {
               : `Get order, payroll, inventory, and admin alerts on your lock screen for ${business.shortName}.`}
           </p>
           {promptError && (
-            <p className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] font-semibold text-red-200">
-              {promptError}
-            </p>
+            <div className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] font-semibold text-red-200">
+              <p>{promptError}</p>
+              {/samsung/i.test(navigator.userAgent) && (
+                <p className="mt-1 text-[10px] text-red-300/80">
+                  Samsung: Settings → Apps → Alma ERP → Battery → &quot;Unrestricted&quot; সিলেক্ট করুন।
+                </p>
+              )}
+            </div>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
             <button

@@ -1,6 +1,9 @@
 /**
- * Alma ERP service worker — v5
+ * Alma ERP service worker — v6
  * IMPORTANT: Do NOT cache /_next/static/* — stale chunks cause blank screens after deploy.
+ *
+ * OneSignal web push SDK: used only when PwaBootstrap registers this SW (browser/PWA).
+ * Capacitor native shell skips SW registration — native push uses @onesignal/capacitor-plugin.
  */
 try {
   importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js')

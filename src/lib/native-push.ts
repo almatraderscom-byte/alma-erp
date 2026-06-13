@@ -74,3 +74,19 @@ export async function registerNativePushSubscription(input: NativePushRegisterIn
   })
   return res.ok
 }
+
+/** Re-register whenever OneSignal detects a push token change (FCM rotation). */
+export async function listenForTokenChanges(input: NativePushRegisterInput): Promise<void> {
+  if (!nativePushAvailable(input.appId)) return
+  try {
+    const OneSignal = await getOneSignal()
+    const sub = OneSignal.User?.pushSubscription as {
+      addEventListener?: (event: 'change', listener: () => void) => void
+    } | undefined
+    sub?.addEventListener?.('change', () => {
+      void registerNativePushSubscription(input).catch(() => {})
+    })
+  } catch {
+    // Non-critical — next focus event will re-register anyway
+  }
+}
