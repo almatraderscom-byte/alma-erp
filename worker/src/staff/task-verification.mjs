@@ -9,7 +9,7 @@ import { sendOrUpdateTaskProgress } from './task-progress.mjs'
 const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 const OWNER_ID = String(process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
-const PROOF_BUCKET = 'task-proofs'
+import { uploadTaskProofPhoto } from './task-proof-storage.mjs'
 
 /** staffChatId → taskId */
 export const awaitingProof = new Map()
@@ -133,20 +133,7 @@ export async function handleStaffTaskDone(ctx, supabase, taskId, staff) {
 }
 
 export async function storeProofPhoto(supabase, taskId, fileBuffer, contentType = 'image/jpeg') {
-  const path = `${taskId}.jpg`
-  const { error } = await supabase.storage
-    .from(PROOF_BUCKET)
-    .upload(path, fileBuffer, { upsert: true, contentType })
-  if (error) {
-    const alt = await supabase.storage
-      .from('agent-files')
-      .upload(`task-proofs/${path}`, fileBuffer, { upsert: true, contentType })
-    if (alt.error) throw new Error(alt.error.message)
-    const { data } = supabase.storage.from('agent-files').getPublicUrl(`task-proofs/${path}`)
-    return data.publicUrl
-  }
-  const { data } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(path)
-  return data.publicUrl
+  return uploadTaskProofPhoto(supabase, taskId, fileBuffer, contentType)
 }
 
 export async function handleStaffProofMessage(ctx, supabase, staff, { photo, text }) {
