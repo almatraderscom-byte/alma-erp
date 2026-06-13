@@ -37,6 +37,12 @@ const gradlew = path.join(androidDir, isWin ? 'gradlew.bat' : 'gradlew')
 
 run(gradlew, [gradleTask], { cwd: androidDir })
 
+const googleServices = path.join(androidDir, 'app/google-services.json')
+if (!existsSync(googleServices)) {
+  console.warn('\n⚠️  android/app/google-services.json not found — native push will NOT work until Firebase file is added.')
+  console.warn('   See mobile/FIREBASE_SETUP.md for steps.\n')
+}
+
 const apkName = isRelease ? 'app-release-unsigned.apk' : 'app-debug.apk'
 const built = path.join(androidDir, 'app/build/outputs/apk', isRelease ? 'release' : 'debug', apkName)
 const outDir = path.join(ROOT, 'mobile/dist')

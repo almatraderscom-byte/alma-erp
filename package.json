@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.104.1",
+    "@onesignal/capacitor-plugin": "^1.1.0",
     "@prisma/client": "5.22.0",
     "@react-pdf/renderer": "^4.5.1",
     "@sentry/nextjs": "^8.55.2",
@@ -62,12 +63,12 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@capacitor/android": "^6.2.1",
-    "@capacitor/app": "^6.0.3",
-    "@capacitor/cli": "^6.2.1",
-    "@capacitor/core": "^6.2.1",
-    "@capacitor/splash-screen": "^6.0.4",
-    "@capacitor/status-bar": "^6.0.3",
+    "@capacitor/android": "^7.6.6",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/cli": "^7.6.6",
+    "@capacitor/core": "^7.6.6",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "20.13.0",
     "@types/qrcode": "^1.5.6",

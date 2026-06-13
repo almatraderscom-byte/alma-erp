@@ -18,6 +18,9 @@ const config: CapacitorConfig = {
     cleartext: false,
     androidScheme: 'https',
   },
+  ios: {
+    handleApplicationNotifications: false,
+  },
   android: {
     allowMixedContent: false,
     backgroundColor: '#08080A',

@@ -4,6 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useActor } from '@/contexts/ActorContext'
 import { useBusiness } from '@/contexts/BusinessContext'
+import { isCapacitorNative } from '@/lib/capacitor-native'
+import {
+  ensureNativeOneSignalInitialized,
+  nativePushAvailable,
+  registerNativePushSubscription,
+  requestNativePushPermission,
+} from '@/lib/native-push'
 
 type OneSignalSdk = {
   init: (input: {
@@ -72,9 +79,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
   })
 }
 
-import { isCapacitorNative } from '@/lib/capacitor-native'
-
-function pushSupported() {
+function webPushSupported() {
   if (isCapacitorNative()) return false
   return typeof window !== 'undefined'
     && 'serviceWorker' in navigator
@@ -148,9 +153,18 @@ export function OneSignalPushManager() {
   const userId = session?.user?.id || ''
   const employeeIdGas = session?.user?.employeeIdGas || null
 
-  const supported = useMemo(() => Boolean(appId) && pushSupported(), [appId])
-  const nativeApp = useMemo(() => isCapacitorNative(), [])
-  const [showNativeNotice, setShowNativeNotice] = useState(false)
+  const nativeApp = useMemo(() => nativePushAvailable(appId), [appId])
+  const webSupported = useMemo(() => Boolean(appId) && webPushSupported(), [appId])
+  const pushReady = nativeApp || webSupported
+
+  const markRegistered = useCallback(() => {
+    if (userId) {
+      localStorage.setItem(`${REGISTERED_KEY_PREFIX}${userId}`, String(Date.now()))
+    }
+    localStorage.setItem('alma_push_enabled', '1')
+    setRegistered(true)
+    window.dispatchEvent(new Event('alma-push-enabled'))
+  }, [userId])
 
   const initializeOneSignal = useCallback((sdk: OneSignalSdk) => {
     if (!appId) return Promise.resolve()
@@ -174,7 +188,7 @@ export function OneSignalPushManager() {
     }), SDK_LOAD_TIMEOUT_MS, 'OneSignal SDK did not load')
   }, [])
 
-  const registerSubscription = useCallback(async (sdk: OneSignalSdk) => {
+  const registerWebSubscription = useCallback(async (sdk: OneSignalSdk) => {
     if (!appId || !userId) return false
     await initializeOneSignal(sdk)
     await sdk.login?.(userId)
@@ -208,18 +222,43 @@ export function OneSignalPushManager() {
       }),
     })
     if (!res.ok) throw new Error(`Subscription registration failed with ${res.status}`)
-    localStorage.setItem(`${REGISTERED_KEY_PREFIX}${userId}`, String(Date.now()))
-    localStorage.setItem('alma_push_enabled', '1')
-    setRegistered(true)
-    window.dispatchEvent(new Event('alma-push-enabled'))
+    markRegistered()
     return true
-  }, [appId, business.name, businessId, employeeIdGas, initializeOneSignal, role, userId])
+  }, [appId, business.name, businessId, employeeIdGas, initializeOneSignal, markRegistered, role, userId])
 
   const enablePush = useCallback(async () => {
-    if (!supported || busy) return
+    if (!pushReady || busy || !appId || !userId) return
     setBusy(true)
     setPromptError(null)
     try {
+      if (nativeApp) {
+        await withTimeout(ensureNativeOneSignalInitialized(appId), PUSH_ENABLE_TIMEOUT_MS, 'Native push could not initialize')
+        const granted = await withTimeout(requestNativePushPermission(), PUSH_ENABLE_TIMEOUT_MS, 'Notification permission request timed out')
+        if (!granted) {
+          setPromptError('Phone Settings → Apps → Alma ERP → Notifications → Allow all চালু করুন, তারপর আবার চেষ্টা করুন।')
+          return
+        }
+        const connected = await withTimeout(
+          registerNativePushSubscription({
+            appId,
+            userId,
+            role,
+            businessId,
+            businessName: business.name,
+            employeeIdGas,
+          }),
+          PUSH_ENABLE_TIMEOUT_MS,
+          'Native push subscription registration timed out',
+        )
+        if (connected) {
+          markRegistered()
+          setShowPrompt(false)
+        } else {
+          setPromptError('Permission দেওয়া হয়েছে, কিন্তু device register হয়নি। Firebase setup শেষ হয়েছে কিনা চেক করুন, তারপর আবার চেষ্টা করুন।')
+        }
+        return
+      }
+
       const sdk = await getOneSignalSdk()
       await withTimeout(initializeOneSignal(sdk), SDK_LOAD_TIMEOUT_MS, 'OneSignal could not initialize')
       if (!notificationPermissionGranted()) {
@@ -234,7 +273,7 @@ export function OneSignalPushManager() {
           return
         }
       }
-      const connected = await withTimeout(registerSubscription(sdk), PUSH_ENABLE_TIMEOUT_MS, 'Push subscription registration timed out')
+      const connected = await withTimeout(registerWebSubscription(sdk), PUSH_ENABLE_TIMEOUT_MS, 'Push subscription registration timed out')
       if (connected) {
         setShowPrompt(false)
       } else {
@@ -242,31 +281,24 @@ export function OneSignalPushManager() {
       }
     } catch (error) {
       console.warn('[OneSignal] push enable failed', error)
-      setPromptError('Could not connect push alerts. Please try again.')
+      setPromptError(nativeApp
+        ? 'Native alert চালু হয়নি। Firebase + OneSignal Android setup শেষ হয়েছে কিনা দেখুন।'
+        : 'Could not connect push alerts. Please try again.')
     } finally {
       setBusy(false)
     }
-  }, [busy, getOneSignalSdk, initializeOneSignal, registerSubscription, supported])
+  }, [appId, busy, business.name, businessId, employeeIdGas, getOneSignalSdk, initializeOneSignal, markRegistered, nativeApp, pushReady, registerWebSubscription, role, userId])
 
   useEffect(() => {
-    if (status !== 'authenticated' || !nativeApp || !appId) return
-    const dismissedAt = Number(localStorage.getItem(PROMPT_DISMISSED_KEY) || 0)
-    if (dismissedAt && Date.now() - dismissedAt < PROMPT_COOLDOWN_MS) return
-    const timer = window.setTimeout(() => setShowNativeNotice(true), 7_000)
-    return () => window.clearTimeout(timer)
-  }, [appId, nativeApp, status])
-
-  useEffect(() => {
-    function openNativeNotice() {
-      if (nativeApp && appId) setShowNativeNotice(true)
-    }
-    window.addEventListener('alma-enable-push', openNativeNotice)
-    return () => window.removeEventListener('alma-enable-push', openNativeNotice)
+    if (!nativeApp || !appId) return
+    void ensureNativeOneSignalInitialized(appId).catch(error => {
+      console.warn('[native-push] init failed', error)
+    })
   }, [appId, nativeApp])
 
   useEffect(() => {
-    if (status !== 'authenticated' || !supported || !userId) return
-    if (Notification.permission === 'denied') return
+    if (status !== 'authenticated' || !pushReady || !userId) return
+    if (!nativeApp && Notification.permission === 'denied') return
     const dismissedAt = Number(localStorage.getItem(PROMPT_DISMISSED_KEY) || 0)
     const registeredAt = Number(localStorage.getItem(`${REGISTERED_KEY_PREFIX}${userId}`) || 0)
     if (registeredAt && Date.now() - registeredAt < PROMPT_COOLDOWN_MS) {
@@ -276,15 +308,15 @@ export function OneSignalPushManager() {
     if (dismissedAt && Date.now() - dismissedAt < PROMPT_COOLDOWN_MS) return
     const timer = window.setTimeout(() => setShowPrompt(true), 7_000)
     return () => window.clearTimeout(timer)
-  }, [status, supported, userId])
+  }, [nativeApp, pushReady, status, userId])
 
   useEffect(() => {
     function openPrompt() {
-      if (supported) setShowPrompt(true)
+      if (pushReady) setShowPrompt(true)
     }
     function registerSilently() {
-      if (!supported || Notification.permission !== 'granted' || !window.OneSignal) return
-      void registerSubscription(window.OneSignal)
+      if (!webSupported || Notification.permission !== 'granted' || !window.OneSignal) return
+      void registerWebSubscription(window.OneSignal)
     }
     window.addEventListener('alma-enable-push', openPrompt)
     window.addEventListener('focus', registerSilently)
@@ -292,50 +324,9 @@ export function OneSignalPushManager() {
       window.removeEventListener('alma-enable-push', openPrompt)
       window.removeEventListener('focus', registerSilently)
     }
-  }, [registerSubscription, supported])
+  }, [pushReady, registerWebSubscription, webSupported])
 
-  if (showNativeNotice && nativeApp && !registered) {
-    return (
-      <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[215] mx-auto max-w-md rounded-[26px] border border-amber-300/35 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 backdrop-blur-2xl md:bottom-5">
-        <div className="flex items-start gap-3">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-amber-300/40 bg-amber-500/10 text-lg font-black text-amber-200">
-            !
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-black text-amber-100">APK app-এ lock-screen alert এখনো চালু নয়</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-              Download করা Alma app দিয়ে phone notification এখন কাজ করে না — এটা আপনার বা wife-এর phone block নয়।
-              Lock-screen alert চাইলে <strong className="text-zinc-200">Chrome browser</strong> দিয়ে Alma ERP খুলে notification allow করুন।
-              APK দিয়ে ERP ব্যবহার চালিয়ে যেতে পারবেন; app খোলা থাকলে in-app alert আসবে।
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  window.open('https://alma-erp-six.vercel.app/login', '_system')
-                }}
-                className="rounded-xl border border-gold-dim/50 bg-gold/15 px-3 py-2 text-[11px] font-black text-gold-lt active:scale-[0.98]"
-              >
-                Chrome-এ খুলুন
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.setItem(PROMPT_DISMISSED_KEY, String(Date.now()))
-                  setShowNativeNotice(false)
-                }}
-                className="rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px] font-bold text-zinc-400 active:scale-[0.98]"
-              >
-                বুঝেছি
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!showPrompt || registered || !supported) return null
+  if (!showPrompt || registered || !pushReady) return null
 
   return (
     <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[215] mx-auto max-w-md rounded-[26px] border border-gold-dim/40 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 backdrop-blur-2xl md:bottom-5">
@@ -344,9 +335,13 @@ export function OneSignalPushManager() {
           A
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-black">Enable Alma alerts</p>
+          <p className="text-sm font-black">
+            {nativeApp ? 'Phone alert চালু করুন' : 'Enable Alma alerts'}
+          </p>
           <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-            Get order, payroll, inventory, and admin alerts on your lock screen for {business.shortName}.
+            {nativeApp
+              ? `Alma ERP app থেকে lock-screen alert পাবেন — order, payroll, inventory alert ${business.shortName}-এর জন্য।`
+              : `Get order, payroll, inventory, and admin alerts on your lock screen for ${business.shortName}.`}
           </p>
           {promptError && (
             <p className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] font-semibold text-red-200">
@@ -360,7 +355,7 @@ export function OneSignalPushManager() {
               onClick={() => void enablePush()}
               className="rounded-xl border border-gold-dim/50 bg-gold/15 px-3 py-2 text-[11px] font-black text-gold-lt active:scale-[0.98] disabled:opacity-60"
             >
-              {busy ? 'Connecting…' : 'Enable alerts'}
+              {busy ? 'Connecting…' : nativeApp ? 'Allow notifications' : 'Enable alerts'}
             </button>
             <button
               type="button"
