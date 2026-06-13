@@ -1,6 +1,6 @@
 /**
  * Rate limits for send_urgent_alert / outbound calls.
- * tier 2: 5/hour | tier 3 urgent (excl. salah): 5/24h | outbound_call actions: 5/24h
+ * tier 2: 5/hour | tier 3 urgent (excl. salah): 5/24h | outbound_call actions: 10/24h
  */
 import { prisma } from '@/lib/prisma'
 
@@ -9,7 +9,7 @@ const db = prisma as any
 
 const WINDOW_24H_MS = 24 * 60 * 60 * 1000
 const TIER3_URGENT_LIMIT = 5
-const OUTBOUND_CALL_LIMIT = 5
+const OUTBOUND_CALL_LIMIT = 10
 
 export async function checkUrgentRateLimit(tier: 2 | 3): Promise<{ ok: boolean; error?: string; remaining?: number }> {
   const windowMs = tier === 2 ? 60 * 60 * 1000 : WINDOW_24H_MS

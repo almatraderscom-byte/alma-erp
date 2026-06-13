@@ -11,7 +11,7 @@ const checks = [
   { name: 'tier 2 limit 5/hour', ok: /tier === 2 \? 5 : TIER3_URGENT_LIMIT/.test(src) },
   { name: 'tier 3 limit 5/24h', ok: /TIER3_URGENT_LIMIT = 5/.test(src) },
   { name: 'tier 3 excludes salah', ok: /NOT: \{ category: 'salah' \}/.test(src) },
-  { name: 'outbound call limit 5/24h', ok: /OUTBOUND_CALL_LIMIT = 5/.test(src) },
+  { name: 'outbound call limit 10/24h', ok: /OUTBOUND_CALL_LIMIT = 10/.test(src) },
   { name: 'uses agentNotification count', ok: /agentNotification\.count/.test(src) },
 ]
 
