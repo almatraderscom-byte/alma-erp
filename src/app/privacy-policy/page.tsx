@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy',
-  description: 'Privacy Policy for ALMA Lifestyle — how we handle customer data and Facebook Messenger communications.',
+  description:
+    'Privacy Policy for ALMA Lifestyle and ALMA Online Shop — customer data, Facebook Messenger, and our business operations.',
   robots: { index: true, follow: true },
 }
 
@@ -13,7 +14,9 @@ export default function PrivacyPolicyPage() {
     <main className="min-h-[100dvh] bg-zinc-50 text-zinc-900">
       <div className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
         <header className="mb-10 border-b border-zinc-200 pb-8">
-          <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">ALMA Lifestyle</p>
+          <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+            ALMA Lifestyle &amp; ALMA Online Shop
+          </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Privacy Policy
           </h1>
@@ -24,21 +27,51 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-3 text-lg font-semibold text-zinc-900">1. Who we are</h2>
             <p>
-              This Privacy Policy describes how <strong>ALMA Lifestyle</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;, or
-              &ldquo;our&rdquo;) collects, uses, and protects personal information. ALMA Lifestyle is operated by{' '}
-              <strong>Maruf Billah</strong>, based in <strong>Dhaka, Bangladesh</strong>.
+              This Privacy Policy describes how <strong>ALMA Lifestyle</strong> and{' '}
+              <strong>ALMA Online Shop</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;, or &ldquo;our&rdquo;) collect,
+              use, and protect personal information. Both businesses are owned and operated by{' '}
+              <strong>Md. Maruf Billah</strong>, based in <strong>Dhaka, Bangladesh</strong>.
             </p>
             <p className="mt-3">
-              We use this policy for our customer-facing services, including communications through our Facebook
-              Pages and related order support channels.
+              Our public website is{' '}
+              <a
+                href="https://www.almatraders.com"
+                className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
+              >
+                www.almatraders.com
+              </a>
+              , where customers can browse products and learn about our brands.
+            </p>
+            <p className="mt-3">
+              We operate two Facebook Pages for customer communication and sales support:
+            </p>
+            <ul className="mt-3 list-disc space-y-1 pl-6">
+              <li>
+                <strong>ALMA Lifestyle</strong> — lifestyle and apparel products
+              </li>
+              <li>
+                <strong>ALMA Online Shop</strong> — online retail orders and enquiries
+              </li>
+            </ul>
+            <p className="mt-3">
+              <strong>About our internal management application:</strong> We use a private business management
+              application hosted at{' '}
+              <span className="font-medium text-zinc-900">alma-erp-six.vercel.app</span> solely for internal
+              company operations. This system is <strong>not</strong> a public customer website. Access is restricted
+              to authorised staff and management. It is used to run day-to-day business functions, including staff
+              management, payroll, orders, inventory, finance, and customer-support workflows connected to our
+              Facebook Pages. Customer Messenger data processed through this application is limited to the support
+              and order-processing purposes described in this policy.
             </p>
           </section>
 
           <section>
             <h2 className="mb-3 text-lg font-semibold text-zinc-900">2. Facebook Messenger</h2>
             <p>
-              When you send a message to our Facebook Pages, we receive the content of your message through the
-              Facebook Messenger platform. We use these messages solely to:
+              When you send a message to our Facebook Pages — <strong>ALMA Lifestyle</strong> or{' '}
+              <strong>ALMA Online Shop</strong> — we receive the content of your message through the Facebook
+              Messenger platform. Our authorised team may process these messages using our internal management
+              application to provide customer support. We use Messenger communications solely to:
             </p>
             <ul className="mt-3 list-disc space-y-1 pl-6">
               <li>Provide product information and pricing</li>
@@ -126,7 +159,15 @@ export default function PrivacyPolicyPage() {
               deletion of your conversation records where applicable.
             </p>
             <p className="mt-3">
-              <strong>Contact:</strong>{' '}
+              <strong>Website:</strong>{' '}
+              <a
+                href="https://www.almatraders.com"
+                className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
+              >
+                www.almatraders.com
+              </a>
+              <br />
+              <strong>Email:</strong>{' '}
               <a
                 href="mailto:almatraders.com@gmail.com"
                 className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
@@ -135,8 +176,8 @@ export default function PrivacyPolicyPage() {
               </a>
             </p>
             <p className="mt-3">
-              <strong>Business:</strong> ALMA Lifestyle<br />
-              <strong>Owner:</strong> Maruf Billah<br />
+              <strong>Businesses:</strong> ALMA Lifestyle &amp; ALMA Online Shop<br />
+              <strong>Owner:</strong> Md. Maruf Billah<br />
               <strong>Location:</strong> Dhaka, Bangladesh
             </p>
           </section>
@@ -152,7 +193,7 @@ export default function PrivacyPolicyPage() {
         </article>
 
         <footer className="mt-12 border-t border-zinc-200 pt-6 text-sm text-zinc-500">
-          &copy; {new Date().getFullYear()} ALMA Lifestyle. All rights reserved.
+          &copy; {new Date().getFullYear()} ALMA Lifestyle &amp; ALMA Online Shop. All rights reserved.
         </footer>
       </div>
     </main>
