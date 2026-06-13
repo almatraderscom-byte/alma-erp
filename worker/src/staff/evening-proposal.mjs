@@ -292,7 +292,7 @@ function formatSummary(date, staffList, tasks, picks, carryCount, pendingOrders)
  */
 export async function buildWorkerTaskProposal(supabase, targetDate) {
   const [{ data: staffRows, error: staffErr }, profiles, apiData] = await Promise.all([
-    supabase.from('agent_staff').select('id, name, role, telegram_chat_id').eq('active', true).order('name'),
+    supabase.from('agent_staff').select('id, name, role, telegramChatId').eq('active', true).order('name'),
     loadStaffProfiles(supabase),
     callInternal(`/api/assistant/internal/staff-task-proposal?date=${targetDate}`),
   ])
@@ -302,7 +302,7 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
     id: s.id,
     name: s.name,
     role: s.role,
-    telegramChatId: s.telegram_chat_id,
+    telegramChatId: s.telegramChatId,
   }))
   if (!staffList.length) return { success: false, error: 'কোনো active staff পাওয়া যায়নি' }
 
