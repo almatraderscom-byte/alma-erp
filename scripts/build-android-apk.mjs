@@ -22,8 +22,13 @@ function run(cmd, args, opts = {}) {
   if (res.status !== 0) process.exit(res.status ?? 1)
 }
 
+// Disable Capacitor telemetry prompt (blocks non-interactive builds).
+spawnSync('npx', ['cap', 'telemetry', 'off'], { cwd: ROOT, stdio: 'ignore' })
+
 run('node', ['scripts/generate-mobile-icons.mjs'])
-run('npx', ['cap', 'sync', 'android'])
+run('npx', ['cap', 'sync', 'android'], {
+  env: { ...process.env, CI: 'true' },
+})
 
 const gradleTask = isRelease ? 'assembleRelease' : 'assembleDebug'
 const androidDir = path.join(ROOT, 'android')
