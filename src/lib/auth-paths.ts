@@ -1,7 +1,7 @@
 /** Routes that must never be used as post-login redirect targets (avoids /login loops). */
 const AUTH_PATH_PREFIXES = ['/login', '/forgot-password', '/reset-password'] as const
 
-const PUBLIC_APP_PREFIXES = ['/app/download'] as const
+const PUBLIC_APP_PREFIXES = ['/app/download', '/privacy-policy'] as const
 
 export function isAuthPath(pathname: string): boolean {
   const path = pathname.split('?')[0] || '/'
