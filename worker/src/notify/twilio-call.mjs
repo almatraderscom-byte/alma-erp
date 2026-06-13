@@ -52,8 +52,10 @@ async function placeCall({ accountSid, authToken, fromNumber, toNumber, twimlUrl
     Timeout:             '45',
     StatusCallback:      statusCallbackUrl,
     StatusCallbackMethod:'POST',
-    StatusCallbackEvent: 'completed no-answer busy failed',
   })
+  for (const event of ['completed', 'no-answer', 'busy', 'failed']) {
+    body.append('StatusCallbackEvent', event)
+  }
 
   const res = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls.json`,
@@ -196,4 +198,38 @@ export async function makeTwilioCall(text, opts = {}) {
   } catch (err) {
     return { ok: false, error: err.message }
   }
+}
+
+const TERMINAL_CALL_STATUSES = new Set(['completed', 'no-answer', 'busy', 'failed', 'canceled'])
+
+/**
+ * Poll Twilio until call ends, then POST status to app (fallback if StatusCallback fails).
+ */
+export async function pollAndReportCallResult(callSid, toNumber) {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID
+  const authToken = process.env.TWILIO_AUTH_TOKEN
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '')
+  if (!accountSid || !authToken || !appUrl || !callSid) return
+
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise((r) => setTimeout(r, 3000))
+    try {
+      const call = await fetchCall(accountSid, authToken, callSid)
+      if (!TERMINAL_CALL_STATUSES.has(call.status)) continue
+
+      const body = new URLSearchParams({
+        CallStatus: call.status,
+        CallDuration: String(call.duration ?? 0),
+        CallSid: callSid,
+        To: toNumber,
+      })
+      const res = await fetch(`${appUrl}/api/twilio/call-status`, { method: 'POST', body })
+      console.log(`[twilio] polled call result ${callSid} → ${call.status} (${call.duration ?? 0}s) HTTP ${res.status}`)
+      return
+    } catch (err) {
+      console.warn('[twilio] poll call result failed:', err.message)
+      return
+    }
+  }
+  console.warn(`[twilio] poll timeout for call ${callSid}`)
 }
