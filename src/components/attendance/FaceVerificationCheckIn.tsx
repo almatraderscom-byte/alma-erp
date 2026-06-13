@@ -56,7 +56,6 @@ type CheckInPayload = {
 }
 
 export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }: Props) {
-  const inputRef = useRef<HTMLInputElement>(null)
   const confirmAnchorRef = useRef<HTMLDivElement>(null)
   const inFlightRef = useRef<string | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -328,19 +327,6 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
     [businessId, open, resetState],
   )
 
-  async function openCameraWithGps() {
-    if (processingPhoto || submitting) return
-    setGpsError(null)
-    const location = await requireHighAccuracyLocation()
-    if (!location) {
-      const message = 'Location access required — please enable GPS in your phone settings.'
-      setGpsError(message)
-      toast.error(message)
-      return
-    }
-    inputRef.current?.click()
-  }
-
   if (!mounted || !open) return null
 
   async function handleFile(file: File | undefined) {
@@ -462,17 +448,15 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         </div>
 
         <input
-          ref={inputRef}
+          id="attendance-face-input"
           type="file"
           accept="image/*"
           capture="user"
-          className="absolute left-0 top-0 h-0 w-0 opacity-0"
+          className="sr-only"
           tabIndex={-1}
-          aria-hidden="true"
           disabled={busy}
           onChange={e => {
             void handleFile(e.target.files?.[0])
-            // Reset value so same photo can be retaken (iOS keeps last value)
             if (e.target) e.target.value = ''
           }}
         />
@@ -531,14 +515,13 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 </Button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="ghost"
-                  className="h-11 w-full justify-center text-xs"
-                  disabled={busy}
-                  onClick={() => inputRef.current?.click()}
+                <label
+                  htmlFor="attendance-face-input"
+                  className={`inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-border bg-transparent text-xs font-semibold text-zinc-400 transition-all hover:bg-white/[0.04] hover:text-cream active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
+                  aria-disabled={busy}
                 >
                   Retake
-                </Button>
+                </label>
                 <Button
                   variant="ghost"
                   className="h-11 w-full justify-center text-xs"
@@ -554,11 +537,10 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
             </div>
           ) : (
             <div className="grid gap-2">
-              <Button
-                variant="gold"
-                className="h-[56px] w-full justify-center text-base font-black"
-                disabled={busy}
-                onClick={() => void openCameraWithGps()}
+              <label
+                htmlFor="attendance-face-input"
+                className={`inline-flex h-[56px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-gold-dim/50 bg-gold/10 text-base font-black text-gold-lt transition-all duration-150 hover:bg-gold/20 active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
+                aria-disabled={busy}
               >
                 {processingPhoto ? (
                   <>
@@ -568,7 +550,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                 ) : (
                   'Open front camera'
                 )}
-              </Button>
+              </label>
               <Button
                 variant="ghost"
                 className="h-11 w-full justify-center"
