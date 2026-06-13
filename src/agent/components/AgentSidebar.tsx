@@ -403,7 +403,12 @@ function MemoryView() {
     try {
       const url = scopeFilter !== 'all' ? `/api/assistant/memory?scope=${scopeFilter}` : '/api/assistant/memory'
       const res = await fetch(url)
-      if (res.ok) setMemories(await res.json())
+      if (res.ok) {
+        setMemories(await res.json())
+      } else {
+        console.error('[memory] load failed', res.status)
+        setMemories([])
+      }
     } finally {
       setLoading(false)
     }

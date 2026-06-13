@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
       title: title ?? null,
       projectId: projectId ?? null,
       model: 'claude-sonnet-4-6',
+      source: 'web',
     },
     select: { id: true, title: true, projectId: true, model: true, createdAt: true, updatedAt: true },
   })

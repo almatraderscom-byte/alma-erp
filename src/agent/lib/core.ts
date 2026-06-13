@@ -14,6 +14,7 @@ import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhaus
 import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { logCost } from '@/agent/lib/cost-events'
+import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -271,6 +272,7 @@ export async function* runAgentTurn(
     durationMs: number; error: string | null
   }
   const toolRecords: ToolRecord[] = []
+  let memoryNudgeSent = false
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -353,7 +355,23 @@ export async function* runAgentTurn(
         (b): b is Extract<CollectedBlock, { type: 'tool_use' }> => b.type === 'tool_use',
       )
 
-      if (toolUseBlocks.length === 0 || signal?.aborted) break
+      if (toolUseBlocks.length === 0 || signal?.aborted) {
+        if (
+          !signal?.aborted
+          && !memoryNudgeSent
+          && lastUserText
+          && looksLikeDurableFact(lastUserText)
+          && !toolRecords.some((r) => r.toolName === 'save_memory')
+        ) {
+          memoryNudgeSent = true
+          messages = [
+            ...messages,
+            { role: 'user', content: [{ type: 'text', text: MEMORY_SAVE_NUDGE }] },
+          ]
+          continue
+        }
+        break
+      }
 
       messages = [
         ...messages,

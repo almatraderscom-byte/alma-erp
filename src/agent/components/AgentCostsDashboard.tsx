@@ -15,6 +15,10 @@ type DashboardData = {
   dailyLast30: Array<Record<string, number | string>>
   byProvider: Array<{ provider: string; totalUsd: number }>
   topConversations: Array<{ conversationId: string; title: string | null; totalUsd: number }>
+  telegramTodayUsd: number
+  telegramMonthUsd: number
+  telegramDailyLast30: Array<{ date: string; totalUsd: number }>
+  topTelegramDays: Array<{ date: string; totalUsd: number; conversations: number }>
   subscriptions: Array<{
     id: string; name: string; amount: number; currency: string
     billingCycle: string; nextRenewalAt: string; category: string | null
@@ -362,25 +366,66 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* Top conversations */}
-      <div className="rounded-2xl border border-border bg-surface p-4">
-        <p className="text-xs font-semibold text-muted-hi mb-3">সবচেয়ে ব্যয়বহুল কথোপকথন</p>
-        {data.topConversations.length === 0 ? (
-          <p className="text-[11px] text-zinc-600 py-4 text-center">এখনো নেই</p>
-        ) : (
-          <ul className="space-y-2">
-            {data.topConversations.map((c) => (
-              <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs">
-                <Link href="/agent" className="truncate text-muted-hi hover:text-gold-lt">
-                  {c.title ?? c.conversationId.slice(0, 8)}
-                </Link>
-                <span className="shrink-0 text-gold">{fmtUsd(c.totalUsd)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <p className="text-xs font-semibold text-muted-hi mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
+          {data.topConversations.length === 0 ? (
+            <p className="text-[11px] text-zinc-600 py-4 text-center">এখনো নেই</p>
+          ) : (
+            <ul className="space-y-2">
+              {data.topConversations.map((c) => (
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs">
+                  <Link href="/agent" className="truncate text-muted-hi hover:text-gold-lt">
+                    {c.title ?? c.conversationId.slice(0, 8)}
+                  </Link>
+                  <span className="shrink-0 text-gold">{fmtUsd(c.totalUsd)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <p className="text-xs font-semibold text-muted-hi mb-1">📱 Telegram — দৈনিক খরচ (শীর্ষ দিন)</p>
+          <p className="text-[10px] text-muted mb-3">
+            আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
+          </p>
+          {data.topTelegramDays.length === 0 ? (
+            <p className="text-[11px] text-zinc-600 py-4 text-center">
+              এখনো Telegram ট্যাগ করা কথোপকথন নেই — নতুন মেসেজ থেকে ট্র্যাক হবে
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {data.topTelegramDays.map((d) => (
+                <li key={d.date} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-hi">{d.date}</span>
+                  <span className="shrink-0 text-gold">{fmtUsd(d.totalUsd)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
-      {/* Subscriptions */}
+      {/* Telegram daily chart */}
+      {(data.telegramDailyLast30?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <p className="text-xs font-semibold text-muted-hi mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={data.telegramDailyLast30.map((d) => ({
+              date: d.date.slice(5),
+              total: d.totalUsd,
+            }))}>
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#71717a' }} />
+              <YAxis tick={{ fontSize: 9, fill: '#71717a' }} tickFormatter={(v) => `$${v}`} />
+              <Tooltip formatter={(v: number) => fmtUsd(v)} />
+              <Bar dataKey="total" fill="#3B82F6" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Subscriptions — moved below telegram section */}
       <div className="rounded-2xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-muted-hi mb-3">সাবস্ক্রিপশন</p>
         {data.subscriptions.length === 0 ? (

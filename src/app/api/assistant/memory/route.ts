@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
       orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
       select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true, updatedAt: true },
     })
+    console.log('[assistant/memory GET]', { scope: scope ?? 'all', pinned: pinned ?? 'any', count: rows.length })
     return Response.json(rows)
   } catch (err) {
     return Response.json({ error: String(err) }, { status: 500 })

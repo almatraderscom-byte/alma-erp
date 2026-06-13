@@ -88,18 +88,70 @@ export async function getCostDashboardData() {
     totalUsd: parseFloat(r.total) || 0,
   }))
 
-  const topConvRows = await prisma.$queryRaw<Array<{ conversation_id: string; total: string; title: string | null }>>(
+  const topConvRows = await prisma.$queryRaw<Array<{ conversation_id: string; total: string; title: string | null; source: string | null }>>(
     Prisma.sql`SELECT e.conversation_id,
                       SUM(e.cost_usd)::text AS total,
-                      c.title
+                      c.title,
+                      c.source
                FROM agent_cost_events e
                LEFT JOIN agent_conversations c ON c.id::text = e.conversation_id
                WHERE e.conversation_id IS NOT NULL
                  AND e.occurred_at >= ${monthB.start} AND e.occurred_at < ${monthB.end}
-               GROUP BY e.conversation_id, c.title
+               GROUP BY e.conversation_id, c.title, c.source
+               ORDER BY SUM(e.cost_usd) DESC
+               LIMIT 20`,
+  )
+
+  const topWebConversations = topConvRows
+    .filter((r) => r.source !== 'telegram')
+    .slice(0, 10)
+    .map((r) => ({
+      conversationId: r.conversation_id,
+      title: r.title,
+      totalUsd: parseFloat(r.total) || 0,
+    }))
+
+  const telegramDailyRows = await prisma.$queryRaw<Array<{ day: string; total: string }>>(
+    Prisma.sql`SELECT to_char((e.occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
+                      SUM(e.cost_usd)::text AS total
+               FROM agent_cost_events e
+               INNER JOIN agent_conversations c ON c.id::text = e.conversation_id
+               WHERE c.source = 'telegram'
+                 AND e.occurred_at >= NOW() - INTERVAL '30 days'
+               GROUP BY 1
+               ORDER BY 1 ASC`,
+  ).catch(() => [] as Array<{ day: string; total: string }>)
+
+  const topTelegramDays = await prisma.$queryRaw<Array<{ day: string; total: string; conversations: number }>>(
+    Prisma.sql`SELECT to_char((e.occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
+                      SUM(e.cost_usd)::text AS total,
+                      COUNT(DISTINCT e.conversation_id)::int AS conversations
+               FROM agent_cost_events e
+               INNER JOIN agent_conversations c ON c.id::text = e.conversation_id
+               WHERE c.source = 'telegram'
+                 AND e.occurred_at >= ${monthB.start} AND e.occurred_at < ${monthB.end}
+               GROUP BY 1
                ORDER BY SUM(e.cost_usd) DESC
                LIMIT 10`,
-  )
+  ).catch(() => [] as Array<{ day: string; total: string; conversations: number }>)
+
+  const telegramTodayRow = await prisma.$queryRaw<Array<{ total: string }>>(
+    Prisma.sql`SELECT COALESCE(SUM(e.cost_usd), 0)::text AS total
+               FROM agent_cost_events e
+               INNER JOIN agent_conversations c ON c.id::text = e.conversation_id
+               WHERE c.source = 'telegram'
+                 AND e.occurred_at >= ${todayBounds.start} AND e.occurred_at < ${todayBounds.end}`,
+  ).catch(() => [{ total: '0' }])
+
+  const telegramMonthRow = await prisma.$queryRaw<Array<{ total: string }>>(
+    Prisma.sql`SELECT COALESCE(SUM(e.cost_usd), 0)::text AS total
+               FROM agent_cost_events e
+               INNER JOIN agent_conversations c ON c.id::text = e.conversation_id
+               WHERE c.source = 'telegram'
+                 AND e.occurred_at >= ${monthB.start} AND e.occurred_at < ${monthB.end}`,
+  ).catch(() => [{ total: '0' }])
+
+  const telegramMonthUsd = parseFloat(telegramMonthRow[0]?.total ?? '0') || 0
 
   const subscriptions = await prisma.agentSubscription.findMany({
     where: { active: true },
@@ -124,10 +176,17 @@ export async function getCostDashboardData() {
     subscriptionAmortMonthUsd: Math.round(subMonthlyUsd * 1_000_000) / 1_000_000,
     dailyLast30,
     byProvider,
-    topConversations: topConvRows.map((r) => ({
-      conversationId: r.conversation_id,
-      title: r.title,
+    topConversations: topWebConversations,
+    telegramTodayUsd: parseFloat(telegramTodayRow[0]?.total ?? '0') || 0,
+    telegramMonthUsd: Math.round(telegramMonthUsd * 1_000_000) / 1_000_000,
+    telegramDailyLast30: telegramDailyRows.map((r) => ({
+      date: r.day,
       totalUsd: parseFloat(r.total) || 0,
+    })),
+    topTelegramDays: topTelegramDays.map((r) => ({
+      date: r.day,
+      totalUsd: parseFloat(r.total) || 0,
+      conversations: r.conversations,
     })),
     subscriptions: subscriptions.map((s) => ({
       id: s.id,

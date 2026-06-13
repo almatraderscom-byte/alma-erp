@@ -1717,6 +1717,7 @@ model AgentConversation {
   project   AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   title     String?
   model     String?
+  source    String          @default("web")
   archived  Boolean         @default(false)
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
@@ -1724,6 +1725,7 @@ model AgentConversation {
   artifacts AgentArtifact[]
 
   @@index([projectId])
+  @@index([source])
   @@index([updatedAt(sort: Desc)])
   @@map("agent_conversations")
 }

@@ -5,6 +5,7 @@ import { requireAgentEnabled, requireAnthropicApiKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
+import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
@@ -84,11 +85,30 @@ export async function POST(req: NextRequest) {
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
       projectSystemInstructions = conv.project?.systemInstructions ?? null
     } else {
-      const conv = await prisma.agentConversation.create({
-        data: { title: message.slice(0, 60) || null, model: 'claude-sonnet-4-6' },
-        select: { id: true },
-      })
-      conversationId = conv.id
+      const source = isInternalCall ? 'telegram' : 'web'
+      const title = isInternalCall
+        ? `Telegram ${todayYmdDhaka()}`
+        : (message.slice(0, 60) || null)
+
+      if (isInternalCall) {
+        const existing = await prisma.agentConversation.findFirst({
+          where: { title, source: 'telegram' },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, projectId: true, project: { select: { systemInstructions: true } } },
+        })
+        if (existing) {
+          conversationId = existing.id
+          projectSystemInstructions = existing.project?.systemInstructions ?? null
+        }
+      }
+
+      if (!conversationId) {
+        const conv = await prisma.agentConversation.create({
+          data: { title, model: 'claude-sonnet-4-6', source },
+          select: { id: true },
+        })
+        conversationId = conv.id
+      }
     }
 
     // Build user message content blocks.

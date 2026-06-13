@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   const title = `Telegram ${date}`
   const conv = await prisma.agentConversation.findFirst({
-    where: { title },
+    where: { title, source: 'telegram' },
     select: { id: true },
     orderBy: { createdAt: 'desc' },
   })
