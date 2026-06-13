@@ -57,6 +57,14 @@ function oneSignalResponseHasErrors(errors: unknown) {
   return true
 }
 
+/** OneSignal dashboard channel UUID vs native Android channel id (see AlmaPushChannels.java). */
+function resolveAndroidChannelFields(channelId?: string | null): Record<string, string> | null {
+  const id = channelId?.trim()
+  if (!id) return null
+  const isDashboardUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  return isDashboardUuid ? { android_channel_id: id } : { existing_android_channel_id: id }
+}
+
 async function sendOneSignal(
   userIds: string[],
   title: string,
@@ -83,9 +91,8 @@ async function sendOneSignal(
     priority: priority === 'LOW' ? 5 : 10,
     ios_sound: priority === 'LOW' ? undefined : 'default',
     android_sound: priority === 'LOW' ? undefined : 'default',
-    // Android 8+ requires a channel. OneSignal creates a default "Miscellaneous" channel
-    // but explicitly setting one ensures HIGH importance (sound + heads-up display).
-    android_channel_id: process.env.ONESIGNAL_ANDROID_CHANNEL_ID || undefined,
+    // Android 8+ requires a channel. Dashboard UUID → android_channel_id; app channel id → existing_android_channel_id.
+    ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || {}),
     android_visibility: 1, // PUBLIC — show on lock screen
     android_led_color: 'FFC9A84C', // gold LED
     chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
