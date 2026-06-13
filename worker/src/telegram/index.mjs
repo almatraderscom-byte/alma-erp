@@ -887,9 +887,15 @@ export function createTelegramBot() {
   bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data ?? ''
 
-    if (data.startsWith('approve:') || data.startsWith('reject:')) {
+    if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
-      await handleActionCallback(ctx, action, actionId)
+      if (action === 'edit') {
+        await ctx.answerCbQuery('✏️')
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+        await ctx.reply('✏️ টাস্ক লিস্ট এডিট করতে চাইলে লিখুন কোন টাস্ক বাদ দিতে বা যোগ করতে চান।\n\nযেমন: "টাস্ক ৩ বাদ দাও" বা "নতুন টাস্ক যোগ করো: গোডাউন চেক"')
+      } else {
+        await handleActionCallback(ctx, action, actionId)
+      }
 
     } else if (data.startsWith('switch:')) {
       const convId = data.slice(7)

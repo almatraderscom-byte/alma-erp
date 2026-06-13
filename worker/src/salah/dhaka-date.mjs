@@ -27,9 +27,9 @@ export function dhakaNoonUtc(ymd) {
   return new Date(`${ymd}T12:00:00+06:00`)
 }
 
-/** UTC date string matching what PostgreSQL stores for a Dhaka calendar day. */
+/** Date string matching what PostgreSQL stores for a Dhaka calendar day. */
 export function salahDateFilter(ymd) {
-  return dhakaMidnightUtc(ymd).toISOString().slice(0, 10)
+  return ymd
 }
 
 export function dhakaYesterdayYmd(now = new Date()) {

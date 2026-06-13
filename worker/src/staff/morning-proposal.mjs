@@ -87,9 +87,9 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       summary:      targetOffsetDays === 1
         ? `🌙 *আগামীকাল (${targetDate}) স্টাফ টাস্ক*\n\n${proposal.summaryBangla}`
         : proposal.summaryBangla,
-      cost_estimate: 0,
+      costEstimate: 0,
       status:       'pending',
-      created_at:   new Date().toISOString(),
+      createdAt:    new Date().toISOString(),
     })
 
     const { sendTelegramApprovalCard } = await import('../telegram/dispatcher.mjs')
@@ -98,15 +98,19 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       .select('id')
       .eq('status', 'pending')
       .eq('type', 'dispatch_staff_tasks')
-      .order('created_at', { ascending: false })
+      .order('createdAt', { ascending: false })
       .limit(1)
       .single()
 
+    if (!pendingAction?.id) {
+      console.error('[' + label + '] pending action not found — approval buttons will be missing')
+    }
     await sendTelegramApprovalCard({
       message:       proposal.summaryBangla,
       pendingActionId: pendingAction?.id,
       approveLabel:  '✅ সব Approve',
-      rejectLabel:   '❌ Cancel',
+      editLabel:     '✏️ সম্পাদনা',
+      rejectLabel:   '❌ বাতিল',
     })
 
     console.log(`[${label}] approval card sent for ${taskData.length} tasks`)
