@@ -6,6 +6,7 @@ import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
 import { COMPETITOR_ROLE_PROMPT } from '@/agent/tools/competitor-tools'
 import { ADVISOR_ROLE_PROMPT } from '@/agent/tools/advisor-tools'
 import { OWNER_TODO_ROLE_PROMPT } from '@/agent/tools/owner-todo-tools'
+import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
 ## নামাজ
@@ -159,6 +160,7 @@ const STATIC_CACHED_PROMPT =
   + `\n${COMPETITOR_ROLE_PROMPT}\n`
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${TRYON_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE

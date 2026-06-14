@@ -22,6 +22,7 @@ import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS } from './personal-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
+import { TRYON_TOOLS } from './tryon-tools'
 
 export interface ToolResult {
   success: boolean
@@ -343,6 +344,7 @@ export const TOOLS: AgentTool[] = [
   ...COMPETITOR_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,
+  ...TRYON_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

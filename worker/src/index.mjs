@@ -193,29 +193,31 @@ async function processImageGen(job) {
     return
   }
 
-  const { prompt, quality, referenceImageId, conversationId } = payload
+  const { prompt, quality, referenceImageId, secondReferenceImageId, conversationId } = payload
 
   const modelName = quality === 'standard'
     ? 'gemini-3.1-flash-image-preview'
     : 'gemini-3-pro-image-preview'
 
-  let contents = [{ text: prompt }]
-
-  if (referenceImageId) {
-    const { data: fileData, error: dlErr } = await supabase
-      .storage
-      .from('agent-files')
-      .download(referenceImageId)
-
-    if (!dlErr && fileData) {
-      const arrayBuffer = await fileData.arrayBuffer()
-      const base64 = Buffer.from(arrayBuffer).toString('base64')
-      contents = [
-        { inlineData: { mimeType: fileData.type || 'image/jpeg', data: base64 } },
-        { text: prompt },
-      ]
-    }
+  async function toInlinePart(path) {
+    const { data: fileData, error: dlErr } = await supabase.storage.from('agent-files').download(path)
+    if (dlErr || !fileData) return null
+    const arrayBuffer = await fileData.arrayBuffer()
+    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    return { inlineData: { mimeType: fileData.type || 'image/jpeg', data: base64 } }
   }
+
+  const imageParts = []
+  if (referenceImageId) {
+    const p1 = await toInlinePart(referenceImageId)
+    if (p1) imageParts.push(p1)
+  }
+  if (secondReferenceImageId) {
+    const p2 = await toInlinePart(secondReferenceImageId)
+    if (p2) imageParts.push(p2)
+  }
+
+  const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
 
   const response = await genai.models.generateContent({
     model: modelName,
