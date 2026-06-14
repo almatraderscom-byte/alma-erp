@@ -121,7 +121,8 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
 }
 
 const AUTH_LOADING_TIMEOUT_MS = 18_000
-const AUTH_SESSION_PROBE_MS = 10_000
+/** Session API is fast (~400ms); probing sooner avoids a false “stuck loading” UX on cold starts. */
+const AUTH_SESSION_PROBE_MS = 1_500
 const AUTH_SESSION_FETCH_MS = 8_000
 const AUTH_REDIRECT_GUARD_KEY = 'alma_auth_redirect_guard'
 const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
@@ -178,6 +179,9 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   useEffect(() => {
     if (status !== 'loading' || isPublic || typeof window === 'undefined') return
     let cancelled = false
+
+    // Middleware already validated the cookie; nudge SessionProvider immediately.
+    void getSession()
 
     const probe = async () => {
       try {

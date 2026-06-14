@@ -14,7 +14,7 @@ export function ConnectionStatus() {
 
     const check = () => {
       const t0 = Date.now()
-      fetch('/api/dashboard', { cache: 'no-store' })
+      fetch('/api/health', { cache: 'no-store' })
         .then(r => {
           if (cancelled) return
           setLatency(Date.now() - t0)

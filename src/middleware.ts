@@ -22,6 +22,8 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/telegram/webhook') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
+  // Sentry browser tunnel (POST) — must not redirect to /login (see docs/SENTRY.md).
+  if (pathname === '/monitoring') return true
   if (pathname === '/api/orders/website') return true
   // Hermes agent read-only orders API — uses X-ALMA-API-KEY in route handler
   if (pathname.startsWith('/api/agent/')) return true

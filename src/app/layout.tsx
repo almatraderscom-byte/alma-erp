@@ -45,7 +45,8 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 }
 
-const SERVER_SESSION_TIMEOUT_MS = 3_500
+/** Cold Vercel + Prisma can exceed 3.5s; null session forces a full-screen client auth spinner. */
+const SERVER_SESSION_TIMEOUT_MS = 7_000
 
 async function loadServerSession() {
   try {
