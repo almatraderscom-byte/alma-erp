@@ -14,6 +14,7 @@ import { ASK_TOOLS } from './ask-tools'
 import { ADS_TOOLS } from './ads-tools'
 import { LOCATION_TOOLS } from './location-tools'
 import { CATALOG_TOOLS } from './catalog-tools'
+import { FAMILY_TOOLS } from './personal-tools'
 
 export interface ToolResult {
   success: boolean
@@ -263,6 +264,50 @@ const delete_memory: AgentTool = {
       return { success: false, error: String(err) }
     }
   },
+}
+
+/** Personal reminders only — no business urgent/outbound tools (use call_family_member). */
+const PERSONAL_REMINDER_TOOLS: AgentTool[] = REMINDER_TOOLS.filter(
+  (t) => !['send_urgent_alert', 'get_outbound_call_status', 'outbound_phone_call'].includes(t.name),
+)
+
+export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
+  get_current_datetime,
+  save_memory,
+  search_memory,
+  update_memory,
+  delete_memory,
+  ...PERSONAL_REMINDER_TOOLS,
+  ...FAMILY_TOOLS,
+]
+
+export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
+
+export const PERSONAL_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = PERSONAL_SAFE_TOOLS.map((t) => ({
+  name: t.name,
+  description: t.description,
+  input_schema: t.input_schema,
+}))
+
+if (PERSONAL_TOOL_DEFINITIONS.length > 0) {
+  PERSONAL_TOOL_DEFINITIONS[PERSONAL_TOOL_DEFINITIONS.length - 1] = {
+    ...PERSONAL_TOOL_DEFINITIONS[PERSONAL_TOOL_DEFINITIONS.length - 1],
+    cache_control: { type: 'ephemeral' },
+  } as Anthropic.Messages.Tool
+}
+
+export async function executePersonalTool(
+  name: string,
+  input: Record<string, unknown>,
+  serverContext: Record<string, unknown> = {},
+): Promise<ToolResult> {
+  const tool = PERSONAL_SAFE_TOOLS.find((t) => t.name === name)
+  if (!tool) return { success: false, error: `Unknown personal tool: ${name}` }
+  try {
+    return await tool.handler({ ...input, ...serverContext })
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
 }
 
 export const TOOLS: AgentTool[] = [

@@ -1824,6 +1824,18 @@ model AgentPendingAction {
   @@map("agent_pending_actions")
 }
 
+model FamilyContact {
+  id        String   @id @default(uuid())
+  ownerId   String?  @map("owner_id")
+  name      String
+  relation  String
+  phone     String
+  notes     String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("family_contacts")
+}
+
 model AgentNotification {
   id         String   @id @default(uuid())
   tier       Int

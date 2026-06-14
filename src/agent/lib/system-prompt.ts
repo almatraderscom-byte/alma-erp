@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
+import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 
 // Salah accountability block — injected per-turn when there are pending/missed waqts.
 // This is NOT a reminder: it's an accountability checkpoint the agent MUST raise
@@ -383,7 +384,44 @@ export function buildSystemPrompt(
   staffTaskPlanningTurn = false,
   crossSurface?: CrossSurfaceSnippet[],
   salahStatusTurn = false,
+  personalMode = false,
 ): Anthropic.Messages.TextBlockParam[] {
+  if (personalMode) {
+    const blocks: Anthropic.Messages.TextBlockParam[] = [
+      {
+        type: 'text',
+        text: PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE,
+        cache_control: { type: 'ephemeral' },
+      },
+    ]
+    if (pinnedMemories && pinnedMemories.length > 0) {
+      const pinned = pinnedMemories
+        .slice(0, 30)
+        .map((m) => `[${m.scope}] ${m.content}`)
+        .join('\n')
+      blocks.push({
+        type: 'text',
+        text: `\n## স্থায়ী ব্যক্তিগত তথ্য (Pinned)\n${pinned}`,
+      })
+    }
+    if (relevantMemories && relevantMemories.length > 0) {
+      const relevant = relevantMemories
+        .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
+        .join('\n')
+      blocks.push({
+        type: 'text',
+        text: `\n## প্রাসঙ্গিক ব্যক্তিগত স্মৃতি\n${relevant}`,
+      })
+    }
+    if (projectInstructions?.trim()) {
+      blocks.push({
+        type: 'text',
+        text: `\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`,
+      })
+    }
+    return blocks
+  }
+
   const blocks: Anthropic.Messages.TextBlockParam[] = [
     { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE, cache_control: { type: 'ephemeral' } },
   ]

@@ -53,6 +53,7 @@ const lazy = {
   approvalTracker:    () => import('../approvals/tracker.mjs'),
   orderWatch:         () => import('../orders/watch.mjs'),
   ackEscalation:      () => import('../staff/ack-escalation.mjs'),
+  personalCheckin:    () => import('../personal/checkin.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
   { name: 'proof-timeout',          cronUtc: '*/5 * * * *',    description: 'Task proof reminder + 2h unverified flag' },
   { name: 'ack-escalation',         cronUtc: '*/5 * * * *',    description: 'Escalate unseen staff messages (every 5 min)' },
+  { name: 'personal-checkin',       cronUtc: '0 15 * * *',     description: 'Evening personal/family check-in (21:00 Dhaka)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
   { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
   { name: 'cs-index-products',      cronUtc: '30 18 * * *',  description: 'Nightly product visual index (00:30 Dhaka)' },
@@ -244,6 +246,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'ack-escalation': {
           const { runAckEscalation } = await lazy.ackEscalation()
           await runAckEscalation(context)
+          break
+        }
+        case 'personal-checkin': {
+          const { runPersonalCheckin } = await lazy.personalCheckin()
+          await runPersonalCheckin(context)
           break
         }
         case 'cost-reconcile': {

@@ -10,6 +10,7 @@ import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
+import { resolvePersonalMode, stripPersonalCommand } from '@/agent/lib/personal-mode'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -58,6 +59,8 @@ export async function POST(req: NextRequest) {
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
 
+  const { text: effectiveMessage, forcePersonal } = stripPersonalCommand(message)
+
   const rateKey = isInternalCall
     ? `internal:${bearerToken.slice(0, 8)}`
     : `session:${typeof body.conversationId === 'string' ? body.conversationId : req.headers.get('x-forwarded-for') ?? 'anon'}`
@@ -76,30 +79,34 @@ export async function POST(req: NextRequest) {
   // Resolve or create conversation.
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
   let projectSystemInstructions: string | null = null
+  let projectName: string | null = null
+  let personalMode = false
 
   try {
     if (conversationId) {
       const conv = await prisma.agentConversation.findUnique({
         where: { id: conversationId },
-        select: { id: true, projectId: true, project: { select: { systemInstructions: true } } },
+        select: { id: true, projectId: true, project: { select: { name: true, systemInstructions: true } } },
       })
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
       projectSystemInstructions = conv.project?.systemInstructions ?? null
+      projectName = conv.project?.name ?? null
     } else {
       const source = isInternalCall ? 'telegram' : 'web'
       const title = isInternalCall
         ? `Telegram ${todayYmdDhaka()}`
-        : (message.slice(0, 60) || null)
+        : (effectiveMessage.slice(0, 60) || null)
 
       if (isInternalCall) {
         const existing = await prisma.agentConversation.findFirst({
           where: { title, source: 'telegram' },
           orderBy: { createdAt: 'desc' },
-          select: { id: true, projectId: true, project: { select: { systemInstructions: true } } },
+          select: { id: true, projectId: true, project: { select: { name: true, systemInstructions: true } } },
         })
         if (existing) {
           conversationId = existing.id
           projectSystemInstructions = existing.project?.systemInstructions ?? null
+          projectName = existing.project?.name ?? null
         }
       }
 
@@ -111,6 +118,8 @@ export async function POST(req: NextRequest) {
         conversationId = conv.id
       }
     }
+
+    personalMode = resolvePersonalMode({ projectName, forcePersonal, message: effectiveMessage })
 
     // Build user message content blocks.
     // File refs come before the text block so Claude sees the attachment context first.
@@ -125,7 +134,7 @@ export async function POST(req: NextRequest) {
               .join('\n'),
           }]
         : []),
-      { type: 'text', text: message },
+      { type: 'text', text: effectiveMessage },
     ]
 
     await prisma.agentMessage.create({
@@ -165,7 +174,7 @@ export async function POST(req: NextRequest) {
     }> = []
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     try {
-      for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions })) {
+      for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions, personalMode })) {
         if (event.type === 'text_delta') finalText += event.delta
         else if (event.type === 'confirm_card') {
           pendingCards.push({
@@ -198,6 +207,7 @@ export async function POST(req: NextRequest) {
       try {
         for await (const event of runAgentTurn(conversationId!, {
           projectSystemInstructions,
+          personalMode,
           signal: req.signal,
         })) {
           enqueue(event)

@@ -7,7 +7,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { TOOL_DEFINITIONS, executeTool } from '@/agent/tools/registry'
+import { TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
@@ -171,11 +171,11 @@ function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
 
 // ── Memory helpers ─────────────────────────────────────────────────────────
 
-async function loadPinnedMemories(): Promise<PinnedMemory[]> {
+async function loadPinnedMemories(scope?: string): Promise<PinnedMemory[]> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (prisma as any).agentMemory.findMany({
-      where: { pinned: true },
+      where: { pinned: true, ...(scope ? { scope } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 30,
       select: { id: true, content: true, scope: true },
@@ -188,19 +188,20 @@ async function loadPinnedMemories(): Promise<PinnedMemory[]> {
 
 const SIMILARITY_THRESHOLD = 0.45
 
-async function retrieveRelevantMemories(userMessage: string): Promise<RelevantMemory[]> {
+async function retrieveRelevantMemories(userMessage: string, scope?: string): Promise<RelevantMemory[]> {
   try {
     const embedResult = await embed(userMessage)
     if (!embedResult.success) return []
 
     const vec = vectorLiteral(embedResult.data)
+    const scopeClause = scope ? `AND scope = '${scope.replace(/'/g, "''")}'` : ''
     const rows: Array<{ id: string; content: string; scope: string; score: number }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).$queryRawUnsafe(
         `SELECT id, content, scope,
                 1 - (embedding <=> $1::vector) AS score
          FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false
+         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause}
          ORDER BY embedding <=> $1::vector
          LIMIT 3`,
         vec,
@@ -219,6 +220,8 @@ async function retrieveRelevantMemories(userMessage: string): Promise<RelevantMe
 export interface RunAgentTurnOptions {
   /** System instructions from the conversation's project (appended to base system prompt). */
   projectSystemInstructions?: string | null
+  /** Personal Advisor mode — separate brain, personal tools + memory only. */
+  personalMode?: boolean
   /** AbortSignal from the HTTP request — cancels the stream early if client disconnects. */
   signal?: AbortSignal
 }
@@ -230,7 +233,7 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, signal } = options
+  const { projectSystemInstructions, personalMode = false, signal } = options
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
@@ -256,15 +259,18 @@ export async function* runAgentTurn(
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
 
   const now = new Date()
-  // Persist prayer confirmations before accountability injection (fixes missed re-reminders)
-  await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
+  if (!personalMode) {
+    await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
+  }
+
+  const memoryScope = personalMode ? 'personal' : undefined
 
   // Load pinned memories and retrieve relevant memories in parallel
   const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
-    loadPinnedMemories(),
-    lastUserText ? retrieveRelevantMemories(lastUserText) : Promise.resolve([]),
-    loadSalahAccountabilityContext(now, lastUserText),
-    loadRecentOtherConversations(conversationId, 5),
+    loadPinnedMemories(memoryScope),
+    lastUserText ? retrieveRelevantMemories(lastUserText, memoryScope) : Promise.resolve([]),
+    personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
+    personalMode ? Promise.resolve([]) : loadRecentOtherConversations(conversationId, 5),
   ])
 
   type ToolRecord = {
@@ -290,13 +296,16 @@ export async function* runAgentTurn(
             projectSystemInstructions,
             pinnedMemories,
             relevantMemories,
-            salahContext,
-            !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
-            isStaffTaskPlanningInquiry(lastUserText),
+            salahContext ?? undefined,
+            personalMode
+              ? false
+              : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
+            personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
             crossSurface,
-            isSalahStatusInquiry(lastUserText),
+            personalMode ? false : isSalahStatusInquiry(lastUserText),
+            personalMode,
           ),
-          tools: TOOL_DEFINITIONS,
+          tools: personalMode ? PERSONAL_TOOL_DEFINITIONS : TOOL_DEFINITIONS,
           messages: apiMessages,
         },
         { signal: signal ?? undefined },
@@ -382,7 +391,9 @@ export async function* runAgentTurn(
       const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
       for (const tb of toolUseBlocks) {
         const started = Date.now()
-        const result = await executeTool(tb.name, tb.input, { conversationId })
+        const result = personalMode
+          ? await executePersonalTool(tb.name, tb.input, { conversationId })
+          : await executeTool(tb.name, tb.input, { conversationId })
         const durationMs = Date.now() - started
 
         if (!result.success) {
