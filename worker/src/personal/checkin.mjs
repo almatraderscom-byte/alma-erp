@@ -13,11 +13,13 @@ const FALLBACK = {
 
 async function sendPersonalCheckin({ bot, supabase, kind }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-  if (!ownerChatId || !bot) return
+  if (!ownerChatId || !bot) {
+    return { dutyStatus: 'skipped', dutyDetail: 'Telegram bot/owner chat নেই' }
+  }
 
   if (supabase && (await isPersonalSnoozedToday(supabase))) {
     console.log(`[personal-checkin] skipped ${kind} — snoozed today`)
-    return
+    return { dutyStatus: 'skipped', dutyDetail: 'owner ব্যস্ত বলেছেন — আজ আর পাঠানো হবে না' }
   }
 
   try {
@@ -26,21 +28,26 @@ async function sendPersonalCheckin({ bot, supabase, kind }) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT()}` },
       body: JSON.stringify({ kind }),
     })
+    if (!res.ok) {
+      throw new Error(`personal-checkin API HTTP ${res.status}`)
+    }
     const data = await res.json().catch(() => ({}))
     const text = data.message || FALLBACK[kind] || FALLBACK.evening
     await sendMarkdownSafe(bot.telegram, ownerChatId, text)
     console.log(`[personal-checkin] sent ${kind} check-in`)
+    return { dutyStatus: 'done' }
   } catch (e) {
     console.error(`[personal-checkin] ${kind} failed:`, e.message)
+    return { dutyStatus: 'failed', dutyDetail: e.message }
   }
 }
 
 /** Gentle evening personal check-in (21:00 Dhaka). */
 export async function runPersonalCheckin({ bot, supabase }) {
-  await sendPersonalCheckin({ bot, supabase, kind: 'evening' })
+  return sendPersonalCheckin({ bot, supabase, kind: 'evening' })
 }
 
 /** Brief midday personal touch (14:00 Dhaka). */
 export async function runPersonalMidday({ bot, supabase }) {
-  await sendPersonalCheckin({ bot, supabase, kind: 'midday' })
+  return sendPersonalCheckin({ bot, supabase, kind: 'midday' })
 }

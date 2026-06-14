@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync'
+import { DAILY_DUTIES, type AgentDutyRow } from '@/agent/lib/agent-duties'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -40,6 +41,7 @@ export type StaffSummary = {
 
 export type StaffMonitorData = {
   today: string
+  agentDuties: AgentDutyRow[]
   feed: StaffMonitorRow[]
   failures: StaffMonitorRow[]
   staffSummaries: StaffSummary[]
@@ -88,11 +90,52 @@ function mapOutbox(row: {
   }
 }
 
+async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
+  const rows = await db.agentDutyLog.findMany({
+    where: { dutyDate: today },
+  }) as Array<{
+    id: string
+    duty: string
+    label: string
+    dutyDate: string
+    status: string
+    detail: string | null
+    ranAt: Date | null
+    createdAt: Date
+  }>
+  const byDuty = new Map(rows.map((r) => [r.duty, r]))
+  return DAILY_DUTIES.map((d) => {
+    const row = byDuty.get(d.duty)
+    if (row) {
+      return {
+        id: row.id,
+        duty: row.duty,
+        label: row.label,
+        dutyDate: row.dutyDate,
+        status: row.status as AgentDutyRow['status'],
+        detail: row.detail,
+        ranAt: row.ranAt?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+      }
+    }
+    return {
+      id: `pending-${d.duty}`,
+      duty: d.duty,
+      label: d.label,
+      dutyDate: today,
+      status: 'pending' as const,
+      detail: null,
+      ranAt: null,
+      createdAt: new Date().toISOString(),
+    }
+  })
+}
+
 export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   const today = todayYmdDhaka()
   const todayStart = new Date(`${today}T00:00:00+06:00`)
 
-  const [todayTasks, todayOutbox, dispatchTaskIds] = await Promise.all([
+  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -107,6 +150,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
       take: 200,
     }),
     getActiveDispatchTaskIdsForDate(today),
+    getAgentDutiesForToday(today),
   ])
 
   const scopedTasks = dispatchTaskIds?.length
@@ -203,6 +247,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
 
   return {
     today,
+    agentDuties,
     feed,
     failures,
     staffSummaries,

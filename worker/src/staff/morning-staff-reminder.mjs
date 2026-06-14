@@ -52,15 +52,17 @@ export async function runMorningStaffReminder({ supabase, bot }) {
           },
         ).catch(() => {})
       }
-    } else {
-      console.error('[morning-staff-reminder] NO proposal found for today — generation may have failed')
-      await notify({
-        tier: 2,
-        title: '⚠️ আজকের কোনো task proposal নেই',
-        message: 'গতরাতে proposal তৈরি হয়নি। Evening-proposal scheduler চেক করুন।',
-        category: 'urgent',
-      })
+      return { dutyStatus: 'skipped', dutyDetail: `${proposedCount}টি কাজ approve হয়নি` }
     }
+
+    console.error('[morning-staff-reminder] NO proposal found for today — generation may have failed')
+    await notify({
+      tier: 2,
+      title: '⚠️ আজকের কোনো task proposal নেই',
+      message: 'গতরাতে proposal তৈরি হয়নি। Evening-proposal scheduler চেক করুন।',
+      category: 'urgent',
+    })
+    return { dutyStatus: 'skipped', dutyDetail: 'গতরাতে proposal তৈরি হয়নি' }
   }
 
   const { data: sentTasks } = await supabase
@@ -71,7 +73,7 @@ export async function runMorningStaffReminder({ supabase, bot }) {
 
   if (!sentTasks?.length) {
     console.log('[morning-staff-reminder] no sent tasks to remind')
-    return
+    return { dutyStatus: 'done', dutyDetail: 'ডিসপ্যাচ সম্পন্ন — রিমাইন্ডারের মতো কিছু নেই' }
   }
 
   const byStaff = {}
@@ -124,4 +126,5 @@ export async function runMorningStaffReminder({ supabase, bot }) {
   }
 
   console.log(`[morning-staff-reminder] reminded ${Object.keys(byStaff).length} staff`)
+  return { dutyStatus: 'done' }
 }

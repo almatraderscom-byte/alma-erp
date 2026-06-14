@@ -2041,6 +2041,21 @@ model AgentHeartbeat {
   @@map("agent_heartbeats")
 }
 
+model AgentDutyLog {
+  id        String    @id @default(uuid())
+  duty      String
+  label     String
+  dutyDate  String    @map("duty_date")
+  status    String    @default("pending")
+  detail    String?   @db.Text
+  ranAt     DateTime? @map("ran_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@unique([duty, dutyDate])
+  @@index([dutyDate])
+  @@map("agent_duty_log")
+}
+
 // ─── PHASE 8: Cost dashboard ─────────────────────────────────────────────────
 
 model AgentCostEvent {

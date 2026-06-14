@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { StaffMonitorData, StaffSummary } from '@/agent/lib/staff-monitor-data'
+import type { AgentDutyRow } from '@/agent/lib/agent-duties'
 
 const FEED_PREVIEW_LEN = 120
 
@@ -63,6 +64,13 @@ function fmtTime(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function dutyIcon(status: AgentDutyRow['status']) {
+  if (status === 'done') return '✅'
+  if (status === 'failed') return '❌'
+  if (status === 'skipped') return '⏭️'
+  return '⏳'
 }
 
 export default function AgentStaffMonitor() {
@@ -141,6 +149,32 @@ export default function AgentStaffMonitor() {
             ← Agent
           </Link>
         </div>
+      </div>
+
+      <div className="space-y-1">
+        <h2 className="text-sm font-bold text-zinc-300">🤖 এজেন্টের আজকের কাজ (লাইভ)</h2>
+        {(data.agentDuties ?? []).map((d) => {
+          const icon = dutyIcon(d.status)
+          const time = d.ranAt
+            ? fmtTime(d.ranAt)
+            : ''
+          return (
+            <div
+              key={d.id}
+              className={cn(
+                'flex items-center justify-between rounded-lg border px-3 py-2 text-xs',
+                d.status === 'failed'
+                  ? 'border-red-500/30 bg-red-500/5'
+                  : 'border-white/10 bg-white/[0.02]',
+              )}
+            >
+              <span className="text-zinc-200">{icon} {d.label}</span>
+              <span className="max-w-[45%] truncate text-right text-zinc-500">
+                {d.status === 'skipped' && d.detail ? d.detail : time}
+              </span>
+            </div>
+          )
+        })}
       </div>
 
       {Object.keys(data.typeCounts ?? {}).length > 0 && (

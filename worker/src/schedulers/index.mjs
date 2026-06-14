@@ -21,6 +21,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
+import { logDuty, seedDailyDuties, isTrackedDuty } from './duty-log.mjs'
 
 // ── Lazy imports (only load when job runs) ─────────────────────────────────
 
@@ -136,12 +137,15 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     console.log(`[schedulers] ▶ ${job.name} starting...`)
 
     const context = { supabase, bot }
+    let dutyResult = null
 
     try {
       switch (job.name) {
         case 'salah-init': {
           const { initializeDailySalahRecords } = await lazy.salahScheduler()
           await initializeDailySalahRecords(supabase)
+          await seedDailyDuties(supabase)
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'approval-escalation': {
@@ -157,21 +161,24 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'evening-proposal': {
           const { runEveningProposal } = await lazy.eveningProposal()
           await runEveningProposal(supabase)
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'owner-briefing': {
           const { runOwnerBriefing } = await lazy.ownerBriefing()
           await runOwnerBriefing({ supabase, bot })
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'order-watch': {
           const { runOrderWatch } = await lazy.orderWatch()
           await runOrderWatch({ bot })
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'morning-staff-reminder': {
           const { runMorningStaffReminder } = await lazy.morningStaffReminder()
-          await runMorningStaffReminder({ supabase, bot })
+          dutyResult = await runMorningStaffReminder(context)
           break
         }
         case 'ads-monitor': {
@@ -182,6 +189,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'midday-checkin': {
           const { runMiddayCheckin } = await lazy.middayCheckin()
           await runMiddayCheckin(context)
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'staff-presence': {
@@ -197,6 +205,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'messenger-scan': {
           const { runMessengerScan } = await lazy.messengerScan()
           await runMessengerScan(context)
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'session-summarizer': {
@@ -207,6 +216,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'night-report': {
           const { runNightReport } = await lazy.nightReport()
           await runNightReport(context)
+          dutyResult = { dutyStatus: 'done' }
           break
         }
         case 'weekly-review': {
@@ -251,12 +261,12 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         }
         case 'personal-checkin': {
           const { runPersonalCheckin } = await lazy.personalCheckin()
-          await runPersonalCheckin(context)
+          dutyResult = await runPersonalCheckin(context)
           break
         }
         case 'personal-midday': {
           const { runPersonalMidday } = await lazy.personalCheckin()
-          await runPersonalMidday(context)
+          dutyResult = await runPersonalMidday(context)
           break
         }
         case 'cost-reconcile': {
@@ -298,9 +308,21 @@ export async function setupSchedulers({ connection, supabase, bot }) {
           console.warn(`[schedulers] unknown job: ${job.name}`)
       }
 
+      if (isTrackedDuty(job.name)) {
+        await logDuty(
+          supabase,
+          job.name,
+          dutyResult?.dutyStatus ?? 'done',
+          dutyResult?.dutyDetail ?? null,
+        )
+      }
+
       const elapsed = ((Date.now() - started) / 1000).toFixed(1)
       console.log(`[schedulers] ✓ ${job.name} done (${elapsed}s)`)
     } catch (err) {
+      if (isTrackedDuty(job.name)) {
+        await logDuty(supabase, job.name, 'failed', err.message)
+      }
       const elapsed = ((Date.now() - started) / 1000).toFixed(1)
       console.error(`[schedulers] ✗ ${job.name} FAILED (${elapsed}s):`, err.message, err.stack)
       throw err  // BullMQ will retry based on job options
@@ -315,5 +337,13 @@ export async function setupSchedulers({ connection, supabase, bot }) {
   })
 
   console.log(`[schedulers] ${SCHEDULER_REGISTRY.length} jobs registered`)
+
+  // Ensure today's duty roster exists (idempotent — mid-day deploys still show pending duties)
+  try {
+    await seedDailyDuties(supabase)
+  } catch (e) {
+    console.warn('[schedulers] seedDailyDuties failed:', e.message)
+  }
+
   return schedulerQueue
 }
