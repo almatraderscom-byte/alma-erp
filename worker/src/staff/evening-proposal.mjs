@@ -5,6 +5,7 @@
 import { dhakaTodayYmd } from '../salah/dhaka-date.mjs'
 import { formatDhakaDateLabel } from './bn-format.mjs'
 import { fetchOwnerDecisions } from '../memory/owner-decisions.mjs'
+import { normalizeStaffTaskSource } from './task-source.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -263,7 +264,7 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
       detail: carried.detail ?? undefined,
       type,
       productRef: carried.product_ref ?? carried.productRef ?? undefined,
-      source: carried.source === 'carry_forward' ? 'carry_forward' : 'pattern',
+      source: normalizeStaffTaskSource(carried.source === 'carry_forward' ? 'carry_forward' : 'pattern'),
     })
     usedTypes.add(type)
   }
@@ -375,7 +376,7 @@ function adjustTasksForOwnerDecisions(staff, tasks, hints) {
           type: 'video_reel',
           title: t.title.replace(/ফটো|photo/gi, 'ভিডিও রিল'),
           detail: `${t.detail || ''} [Owner directive: video focus]`.trim(),
-          source: 'owner_decision',
+          source: normalizeStaffTaskSource('owner_decision'),
         }
       }
     }
@@ -562,7 +563,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       product_ref: t.productRef ?? null,
       status: 'proposed',
       proposed_for: targetDate,
-      source: t.source,
+      source: normalizeStaffTaskSource(t.source),
       created_at: new Date().toISOString(),
     }))
 

@@ -363,7 +363,7 @@ function buildTasksForStaff(
       title: `📚 ${learning.title}`,
       detail: learning.detail,
       type: 'learning',
-      source: 'curriculum',
+      source: 'pattern',
     })
   }
 

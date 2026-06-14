@@ -70,6 +70,7 @@ export async function runNightReport({ supabase, bot }) {
   const compactParts = []
 
   for (const { staff, done, pending } of Object.values(byStaff)) {
+    const staffId = staff?.id
     const staffName = staff?.name || 'অজানা'
     const workPending = pending.filter((t) => t.type !== 'learning')
     const learningPending = pending.filter((t) => t.type === 'learning')
