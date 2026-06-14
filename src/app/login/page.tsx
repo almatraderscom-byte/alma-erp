@@ -27,14 +27,24 @@ function LoginForm() {
   useEffect(() => {
     let alive = true
     const timer = window.setTimeout(() => {
-      void fetchWithTimeout('/api/auth/session', { cache: 'no-store', credentials: 'same-origin' }, 5_000)
+      void fetchWithTimeout('/api/auth/session', { cache: 'no-store', credentials: 'same-origin' }, 8_000)
         .then(async res => {
           if (!alive || !res.ok) return
           const body = await res.json().catch(() => null)
-          if (body?.user) window.location.href = callbackUrl
+          if (!body?.user) return
+          try {
+            const guard = sessionStorage.getItem('alma_auth_redirect_guard')
+            if (guard) {
+              const parsed = JSON.parse(guard) as { count: number; at: number }
+              if (parsed.count >= 2 && Date.now() - parsed.at < 30_000) return
+            }
+          } catch {
+            /* ignore */
+          }
+          window.location.href = callbackUrl
         })
         .catch(() => {})
-    }, 0)
+    }, 800)
     return () => {
       alive = false
       window.clearTimeout(timer)
@@ -70,6 +80,11 @@ function LoginForm() {
       }
 
       if (session?.user) {
+        try {
+          sessionStorage.removeItem('alma_auth_redirect_guard')
+        } catch {
+          /* ignore */
+        }
         window.location.href = callbackUrl
         return
       }
@@ -98,7 +113,7 @@ function LoginForm() {
         <h1 className="text-xl font-bold text-cream text-center mb-1">Sign in</h1>
         <p className="text-[11px] text-zinc-500 text-center mb-8">Secure multi-business workspace</p>
 
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} className="space-y-4" data-login-form>
           <label className="block space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">Phone or Email</span>
             <Input

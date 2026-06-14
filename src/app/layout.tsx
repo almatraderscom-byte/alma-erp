@@ -45,7 +45,7 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 }
 
-const SERVER_SESSION_TIMEOUT_MS = 1_500
+const SERVER_SESSION_TIMEOUT_MS = 3_500
 
 async function loadServerSession() {
   try {

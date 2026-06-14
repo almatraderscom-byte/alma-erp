@@ -7,14 +7,21 @@ type LoadingOverlayProps = {
   label?: string
   mode?: 'screen' | 'panel'
   className?: string
+  'data-auth-gate'?: boolean
 }
 
-export function LoadingOverlay({ label = 'Loading secure workspace', mode = 'screen', className = '' }: LoadingOverlayProps) {
+export function LoadingOverlay({
+  label = 'Loading secure workspace',
+  mode = 'screen',
+  className = '',
+  'data-auth-gate': dataAuthGate,
+}: LoadingOverlayProps) {
   const reduceMotion = useReducedMotion()
   const screen = mode === 'screen'
 
   return (
     <motion.div
+      data-auth-gate={dataAuthGate ? true : undefined}
       className={[
         screen ? 'fixed inset-0 z-[240] min-h-[100dvh]' : 'min-h-[18rem] w-full',
         'flex items-center justify-center overflow-hidden bg-black text-cream',

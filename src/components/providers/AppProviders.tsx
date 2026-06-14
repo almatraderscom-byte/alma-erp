@@ -120,10 +120,10 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
   )
 }
 
-const AUTH_LOADING_TIMEOUT_MS = 8_000
-const AUTH_SESSION_STUCK_MS = 4_000
-const AUTH_SESSION_PROBE_MS = 2_500
-const AUTH_SESSION_FETCH_MS = 6_000
+const AUTH_LOADING_TIMEOUT_MS = 18_000
+const AUTH_SESSION_PROBE_MS = 10_000
+const AUTH_SESSION_FETCH_MS = 8_000
+const AUTH_REDIRECT_GUARD_KEY = 'alma_auth_redirect_guard'
 const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
 
 async function forceRelogin() {
@@ -157,6 +157,7 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
     if (status === 'authenticated') {
       try {
         sessionStorage.removeItem(AUTH_RETRY_STORAGE_KEY)
+        sessionStorage.removeItem(AUTH_REDIRECT_GUARD_KEY)
       } catch {
         /* ignore */
       }
@@ -177,18 +178,37 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
   useEffect(() => {
     if (status !== 'loading' || isPublic || typeof window === 'undefined') return
     let cancelled = false
-    const timer = window.setTimeout(() => {
-      void fetchWithTimeout('/api/auth/session', { cache: 'no-store', credentials: 'same-origin' }, AUTH_SESSION_FETCH_MS)
-        .then(res => {
-          if (!cancelled && !res.ok) setSessionStuck(true)
-        })
-        .catch(() => {
-          if (!cancelled) setSessionStuck(true)
-        })
-    }, AUTH_SESSION_PROBE_MS)
+
+    const probe = async () => {
+      try {
+        const res = await fetchWithTimeout(
+          '/api/auth/session',
+          { cache: 'no-store', credentials: 'same-origin' },
+          AUTH_SESSION_FETCH_MS,
+        )
+        if (cancelled) return
+        if (!res.ok) {
+          setSessionStuck(true)
+          return
+        }
+        const body = await res.json().catch(() => null) as { user?: unknown } | null
+        if (body?.user) {
+          // Cookie session exists — client SessionProvider is slow; do not bounce to login.
+          void getSession()
+          return
+        }
+        setSessionStuck(true)
+      } catch {
+        if (!cancelled) setSessionStuck(true)
+      }
+    }
+
+    const timer = window.setTimeout(() => void probe(), AUTH_SESSION_PROBE_MS)
+    const timeoutTimer = window.setTimeout(() => setLoadingTimedOut(true), AUTH_LOADING_TIMEOUT_MS)
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      window.clearTimeout(timeoutTimer)
     }
   }, [status, isPublic])
 
@@ -198,16 +218,25 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
       setSessionStuck(false)
       return
     }
-    const stuckTimer = window.setTimeout(() => setSessionStuck(true), AUTH_SESSION_STUCK_MS)
-    const timer = window.setTimeout(() => setLoadingTimedOut(true), AUTH_LOADING_TIMEOUT_MS)
-    return () => {
-      window.clearTimeout(stuckTimer)
-      window.clearTimeout(timer)
-    }
   }, [status])
 
   useEffect(() => {
     if (!sessionStuck || isPublic || isAuthed || typeof window === 'undefined') return
+    try {
+      const raw = sessionStorage.getItem(AUTH_REDIRECT_GUARD_KEY)
+      const guard = raw ? JSON.parse(raw) as { count: number; at: number } : { count: 0, at: 0 }
+      if (guard.count >= 2 && Date.now() - guard.at < 30_000) {
+        setLoadingTimedOut(true)
+        setSessionStuck(false)
+        return
+      }
+      sessionStorage.setItem(
+        AUTH_REDIRECT_GUARD_KEY,
+        JSON.stringify({ count: guard.count + 1, at: Date.now() }),
+      )
+    } catch {
+      /* ignore */
+    }
     const returnTo = `${pathname}${window.location.search}`
     const loginUrl = `/login?callbackUrl=${encodeURIComponent(returnTo)}`
     window.location.replace(loginUrl)
@@ -248,7 +277,7 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
 
   if (isBooting) {
     if (sessionStuck) {
-      return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." />
+      return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." data-auth-gate />
     }
     if (loadingTimedOut) {
       const showForceRelogin = retryCount >= 3
@@ -286,11 +315,11 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
         </div>
       )
     }
-    return <LoadingOverlay label="Alma ERP খুলছে..." />
+    return <LoadingOverlay label="Alma ERP খুলছে..." data-auth-gate />
   }
 
   if (!isAuthed) {
-    return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." />
+    return <LoadingOverlay label="লগইন পেজে যাচ্ছি..." data-auth-gate />
   }
 
   const businessAccess = session?.user?.businessAccess ?? initialSession?.user?.businessAccess
