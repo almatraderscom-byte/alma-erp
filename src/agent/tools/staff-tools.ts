@@ -537,7 +537,7 @@ const approve_pending_dispatch: AgentTool = {
         success: true,
         data: {
           status: 'approved_queued',
-          pendingActionId: pending.id as string,
+          approvedActionId: pending.id as string,
           date: actionDate,
           taskCount: taskIds.length,
           message:

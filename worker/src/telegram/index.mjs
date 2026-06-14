@@ -256,10 +256,19 @@ async function handleOwnerText(ctx, text) {
       }
     }
 
-    // Send confirm cards as inline keyboard buttons
+    // Send confirm cards as inline keyboard buttons (only if still pending)
     for (const card of result.pendingCards ?? []) {
+      const supabase = createSupabase()
+      const { data: row } = await supabase
+        .from('agent_pending_actions')
+        .select('status, summary')
+        .eq('id', card.pendingActionId)
+        .maybeSingle()
+      if (row?.status !== 'pending') continue
+      const summary = card.summary || row.summary || ''
+      if (!summary.trim()) continue
       const keyboard = await buildConfirmCardKeyboard(card)
-      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
+      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${summary}`, {
         reply_markup: { inline_keyboard: keyboard },
       })
     }
@@ -351,7 +360,7 @@ async function handleActionCallback(ctx, action, actionId) {
     await ctx.answerCbQuery('⏳ প্রক্রিয়া চলছে…')
     await ctx.sendChatAction('typing').catch(() => {})
 
-    // Pre-check dispatch_staff_tasks — skip if tasks already sent
+    // Pre-check dispatch_staff_tasks — skip if already resolved or tasks already sent
     if (action === 'approve') {
       const supabase = createSupabase()
       const { data: pendingAction } = await supabase
@@ -359,20 +368,25 @@ async function handleActionCallback(ctx, action, actionId) {
         .select('type, payload, status')
         .eq('id', actionId)
         .maybeSingle()
-      if (pendingAction?.type === 'dispatch_staff_tasks' && pendingAction.payload?.date) {
-        const { count } = await supabase
-          .from('staff_tasks')
-          .select('id', { count: 'exact', head: true })
-          .eq('proposed_for', pendingAction.payload.date)
-          .in('status', ['sent', 'done'])
-        if ((count ?? 0) > 0) {
+      if (pendingAction?.type === 'dispatch_staff_tasks') {
+        if (pendingAction.status !== 'pending') {
           await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-          await ctx.reply('✅ ইতিমধ্যে স্টাফকে পাঠানো হয়েছে — আবার approve করার দরকার নেই।')
-          await supabase
-            .from('agent_pending_actions')
-            .update({ status: 'executed', resolvedAt: new Date().toISOString() })
-            .eq('id', actionId)
           return
+        }
+        if (pendingAction.payload?.date) {
+          const { count } = await supabase
+            .from('staff_tasks')
+            .select('id', { count: 'exact', head: true })
+            .eq('proposed_for', pendingAction.payload.date)
+            .in('status', ['sent', 'done'])
+          if ((count ?? 0) > 0) {
+            await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+            await supabase
+              .from('agent_pending_actions')
+              .update({ status: 'executed', resolvedAt: new Date().toISOString() })
+              .eq('id', actionId)
+            return
+          }
         }
       }
     }

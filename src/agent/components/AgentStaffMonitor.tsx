@@ -5,6 +5,35 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { StaffMonitorData, StaffSummary } from '@/agent/lib/staff-monitor-data'
 
+const FEED_PREVIEW_LEN = 120
+
+function FeedMessage({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const text = content ?? ''
+  const needsMore = text.length > FEED_PREVIEW_LEN
+
+  return (
+    <div className="mt-1 text-zinc-200">
+      <div className={cn(!expanded && needsMore && 'line-clamp-2')}>
+        {expanded || !needsMore ? (
+          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">{text}</pre>
+        ) : (
+          <span>{text.slice(0, FEED_PREVIEW_LEN)}…</span>
+        )}
+      </div>
+      {needsMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="mt-1 text-[10px] font-semibold text-gold hover:text-gold-lt"
+        >
+          {expanded ? 'কম দেখুন' : 'আরও'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function statusDot(summary: StaffSummary) {
   if (summary.failed > 0) return '🔴'
   if (summary.dispatched > 0 && summary.delivered < summary.dispatched) return '🟡'
@@ -141,7 +170,9 @@ export default function AgentStaffMonitor() {
                   <span>{dot} {m.staffName ?? '—'} · {m.type}</span>
                   <span>{fmtTime(m.createdAt)}</span>
                 </div>
-                <div className="mt-1 text-zinc-200">{(m.content ?? '').slice(0, 120)}</div>
+                <div className="mt-1 text-zinc-200">
+                  <FeedMessage content={m.content ?? ''} />
+                </div>
                 {m.errorReason && (
                   <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>
                 )}
