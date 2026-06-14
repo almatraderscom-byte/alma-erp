@@ -20,8 +20,31 @@ const PAGES = [
 ]
 
 const ALERT_THRESHOLD_MS = 30 * 60 * 1000 // 30 min
+const MAX_INDIVIDUAL_CARDS = 8
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
+
+function dhakaToday() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+function dhakaDayStartUtc(dhakaDate) {
+  return new Date(`${dhakaDate}T00:00:00+06:00`).toISOString()
+}
+
+async function getCsMode() {
+  if (!APP_URL() || !INT_TOKEN()) return 'off'
+  try {
+    const res = await fetch(`${APP_URL()}/api/assistant/internal/agent-settings?keys=cs_mode`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+    })
+    if (!res.ok) return 'off'
+    const data = await res.json()
+    return data.cs_mode ?? 'off'
+  } catch {
+    return 'off'
+  }
+}
 
 async function isCsHandledConversation(fbConversationId) {
   if (!APP_URL() || !INT_TOKEN()) return false
@@ -153,6 +176,16 @@ export async function runMessengerScan({ supabase, bot }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId) return
 
+  const csMode = await getCsMode()
+  // When CS is OFF: do not generate drafts or flood per-message cards.
+  // Still run reply-stats tracking + a SINGLE digest of how many are waiting.
+  const draftsEnabled = csMode !== 'off'
+  let offDigestCount = 0
+  const offDigestSamples = []
+  let overflowCount = 0
+  const overflowSamples = []
+  let individualSent = 0
+
   let totalAlerts = 0
   let pagesScanned = 0
 
@@ -203,14 +236,15 @@ export async function runMessengerScan({ supabase, bot }) {
         }
 
         for (const alert of alerts) {
-          // Deduplicate: check if we already sent this alert today
-          const today = new Date().toISOString().slice(0, 10)
+          // Deduplicate: check if we already sent this alert today (Dhaka business day)
+          const today = dhakaToday()
+          const dayStart = dhakaDayStartUtc(today)
           const { data: existing } = await supabase
             .from('messenger_alerts')
             .select('id')
             .eq('conversation_id', conv.id)
             .eq('alert_type', alert.type)
-            .gte('detected_at', today + 'T00:00:00Z')
+            .gte('detected_at', dayStart)
             .eq('resolved', false)
             .limit(1)
 
@@ -231,6 +265,26 @@ export async function runMessengerScan({ supabase, bot }) {
             .filter(m => m.from?.id !== page.id)
             .sort((a, b) => new Date(b.created_time) - new Date(a.created_time))[0]
 
+          const preview = (lastCustomerMsg?.message ?? '').slice(0, 40)
+
+          if (!draftsEnabled) {
+            offDigestCount++
+            if (offDigestSamples.length < 5) {
+              offDigestSamples.push(`• ${page.name}: "${preview}"`)
+            }
+            totalAlerts++
+            continue
+          }
+
+          if (individualSent >= MAX_INDIVIDUAL_CARDS) {
+            overflowCount++
+            if (overflowSamples.length < 5) {
+              overflowSamples.push(`• ${page.name}: "${preview}"`)
+            }
+            totalAlerts++
+            continue
+          }
+
           const draft = draftReply(lastCustomerMsg?.message)
 
           const alertTypes = {
@@ -240,7 +294,6 @@ export async function runMessengerScan({ supabase, bot }) {
           }
 
           const alertMsg = alertTypes[alert.type] || `Alert: ${alert.type}`
-          const tier = alert.urgency === 'critical' ? 2 : 1
 
           // Send to owner with inline buttons
           const draftCb = buildCallbackData('msg_draft', conv.id)
@@ -259,6 +312,7 @@ export async function runMessengerScan({ supabase, bot }) {
             },
           )
 
+          individualSent++
           totalAlerts++
           console.log(`[messenger] alert ${alert.type} for conv ${conv.id} on ${page.name}`)
         }
@@ -269,5 +323,24 @@ export async function runMessengerScan({ supabase, bot }) {
     }
   }
 
-  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts`)
+  if (!draftsEnabled && offDigestCount > 0) {
+    await sendMarkdownSafe(
+      bot.telegram,
+      ownerChatId,
+      `🔕 CS mode *off* — ${offDigestCount}টি unreplied কাস্টমার মেসেজ আছে (draft পাঠানো হয়নি)।\n\n` +
+        offDigestSamples.join('\n') +
+        `\n\nReply চালু করতে: /csshadow বা /csauto`,
+      { parse_mode: 'Markdown' },
+    )
+  } else if (overflowCount > 0) {
+    await sendMarkdownSafe(
+      bot.telegram,
+      ownerChatId,
+      `📨 এই scan-এ আরও ${overflowCount}টি unreplied মেসেজ আছে (${MAX_INDIVIDUAL_CARDS}টির বেশি card পাঠানো হয়নি)।\n\n` +
+        overflowSamples.join('\n'),
+      { parse_mode: 'Markdown' },
+    )
+  }
+
+  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts (cs_mode=${csMode})`)
 }
