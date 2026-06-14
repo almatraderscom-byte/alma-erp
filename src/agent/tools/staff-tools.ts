@@ -339,9 +339,9 @@ const propose_staff_tasks: AgentTool = {
 const merge_into_proposal: AgentTool = {
   name: 'merge_into_proposal',
   description:
-    'Add or edit tasks within the CURRENTLY pending (unapproved) staff proposal, preserving existing tasks. ' +
-    'Use when the owner requests changes/additions while a proposal is active. ' +
-    'Re-shows the full updated proposal for approval. Do NOT use add_staff_task_now or propose_staff_tasks for this.',
+    'Add/edit/remove tasks in the ACTIVE unapproved proposal — never discard existing tasks. ' +
+    'MUST persist via this tool (not text-only lists). Re-show full updated list for approval. ' +
+    'Before approve: get_current_proposal to verify DB matches what owner saw. Use add_staff_task_now only when NO active proposal.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -630,8 +630,8 @@ const get_dispatch_status: AgentTool = {
 const get_lunch_status: AgentTool = {
   name: 'get_lunch_status',
   description:
-    'Show who is currently on lunch today (Dhaka) and for how many minutes. ' +
-    'Also returns today\'s completed lunch records. Use when owner asks "ke lunch e ache?" or similar.',
+    'Who is on lunch today (45min allowance) and completed records. Flag repeated overruns in staff reports — occasional overrun kindly. ' +
+    'Use when owner asks "ke lunch e ache?" or lunch patterns.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -1309,8 +1309,8 @@ const approve_pending_staff_message: AgentTool = {
 const set_staff_leave: AgentTool = {
   name: 'set_staff_leave',
   description:
-    'Record approved leave/sick days for a staff member so the system does not mark them absent, fine, ' +
-    'or assign tasks on those days. Use when the owner says "Mustahid kal chhuti", "Eyafi 3 din sick", etc.',
+    'Record leave/sick days — on leave: NOT absent, fined, coached, tasked, or in completion stats. ' +
+    'Use for "Mustahid kal chhuti", "3 din sick". Check list_staff_leave before assigning tasks.',
   input_schema: {
     type: 'object' as const,
     properties: {

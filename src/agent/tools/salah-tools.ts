@@ -57,9 +57,9 @@ const get_prayer_times: AgentTool = {
 const get_salah_status: AgentTool = {
   name: 'get_salah_status',
   description:
-    'Returns today\'s salah record for all 5 waqts plus accountable carryover from yesterday. ' +
-    'Only waqts whose window has STARTED (or yesterday still pending) require accountability. ' +
-    'CALL at the start of every turn before answering.',
+    'Returns today\'s salah for 5 waqts + yesterday carryover. Follow answerBangla and allDone — never invent "all 5 done". ' +
+    'notYetDue/upcomingToday ≠ prayed. Only accountable waqts (window started or missed) need "পড়েছেন কি?" — carryover first. ' +
+    'CALL before business answers each turn (except pure prayer-time schedule asks → get_prayer_times).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -131,9 +131,8 @@ const get_salah_status: AgentTool = {
 const mark_salah: AgentTool = {
   name: 'mark_salah',
   description:
-    'Marks a specific waqt with its final status. ' +
-    'Use when the owner confirms ("পড়েছি") → prayed_on_time or prayed_late; ' +
-    'or acknowledges a missed prayer as qaza/missed.',
+    'Mark waqt status after owner confirms. MANDATORY before saying "পড়েছেন/আলহামদুলিল্লাহ" — without this DB stays pending. ' +
+    'Confirmed "পড়েছি" → prayed_on_time or prayed_late; missed → qaza/missed. Cannot mark future waqt before windowStart.',
   input_schema: {
     type: 'object' as const,
     properties: {

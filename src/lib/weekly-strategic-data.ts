@@ -538,7 +538,8 @@ export async function narrateWeeklyStrategic(data: WeeklyStrategicData): Promise
 
   const res = await client.messages.create({
     model: AGENT_MODEL,
-    max_tokens: 1100,
+    max_tokens: 900,
+    system: 'ALMA weekly analyst. Bangla Telegram markdown. Use ONLY provided numbers; correlation not causation; include misses. All 4 sections required.',
     messages: [{
       role: 'user',
       content:

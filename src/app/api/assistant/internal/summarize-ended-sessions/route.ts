@@ -47,6 +47,7 @@ async function summarizeConversation(messages: Array<{ role: string; content: un
   const res = await client.messages.create({
     model: AGENT_MODEL,
     max_tokens: 500,
+    system: 'Extract durable owner decisions/preferences/facts only. 2-5 Bangla bullets or exactly SKIP.',
     messages: [{
       role: 'user',
       content:

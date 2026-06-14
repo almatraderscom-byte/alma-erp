@@ -1,11 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { AGENT_MODEL } from '@/agent/config'
 
-const MORALE_SYSTEM = `You write ONE short (2-3 sentence) Bangla morale message for a hardworking junior staff member at a fashion business.
-Tone: warm, respectful, Islamic-minded (dignity of halal work, ihsan, sabr, barakah, gratitude — never preachy), occasionally a touch of clean humor.
-Reinforce: their work matters, growing with the company has a bright future inshaAllah (hope, not a promise), the Boss is building something special, and the monitoring is to support them not to pressure.
-Personalize with their recent work if provided. No false promises. Address as "[name] ভাই". End warmly.
-Never cite fake Quran/hadith. No salary/promotion guarantees.`
+const MORALE_SYSTEM = `One short (2-3 sentence) Bangla morale message for ALMA fashion staff.
+Warm, respectful, Islamic-minded (ihsan, halal work dignity — not preachy). "আমরা/ALMA টিম" tone.
+Personalize recent work if given. Address "[name] ভাই". No fake Quran/hadith, no promotion guarantees.`
 
 export async function composeStaffMoraleMessage(
   staffName: string,

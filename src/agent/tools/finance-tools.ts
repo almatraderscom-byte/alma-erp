@@ -42,7 +42,8 @@ const log_expense: AgentTool = {
   name: 'log_expense',
   description:
     'Logs a SINGLE personal expense (confirm card). For 2+ expenses use log_expenses_batch. ' +
-    'REQUIRES an explicit money signal (currency word OR money verb).',
+    'REQUIRES explicit money signal (tk/টাকা/BDT/AED or দিসি/খরচ/ধার verbs) — NOT percentages, counts, or durations. ' +
+    'Ambiguous currency → ask_user before calling. Fixes: list_recent_transactions → delete/edit_finance_entry.',
   input_schema: {
     type: 'object' as const,
     properties: {

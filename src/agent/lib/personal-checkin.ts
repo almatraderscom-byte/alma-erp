@@ -1,8 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL } from '@/agent/config'
-import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
-import { HONESTY_ACCOUNTABILITY_RULE } from '@/agent/lib/system-prompt'
 
 export type PersonalCheckinKind = 'midday' | 'evening'
 
@@ -83,8 +81,8 @@ export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evenin
     const client = new Anthropic({ apiKey })
     const res = await client.messages.create({
       model: AGENT_MODEL,
-      max_tokens: kind === 'midday' ? 150 : 300,
-      system: PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE,
+      max_tokens: kind === 'midday' ? 150 : 200,
+      system: 'Brief Bangla personal check-in only. Warm, Islamic-gentle. No fake Quran/hadith. Max 4 sentences evening / 2 lines midday.',
       messages: [{ role: 'user', content: userPrompt }],
     })
     const text = res.content
