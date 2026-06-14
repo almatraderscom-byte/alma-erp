@@ -50,6 +50,7 @@ const lazy = {
   customerIntel:      () => import('../reports/customer-intel.mjs'),
   approvalEscalation: () => import('../staff/approval-escalation.mjs'),
   staffPresence:      () => import('../staff/presence-nudge.mjs'),
+  approvalTracker:    () => import('../approvals/tracker.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'salah-init',             cronUtc: '0 18 * * *',   description: 'Midnight Dhaka — create today salah records' },
   { name: 'night-report',           cronUtc: '0 15 * * *',   description: 'Night staff report (21:00 Dhaka)' },
   { name: 'approval-escalation',  cronUtc: '30 16,17 * * *', description: 'Chase unapproved task proposal (22:30/23:30 Dhaka)' },
+  { name: 'approval-tracker',     cronUtc: '0 4,8,13 * * *', description: 'Re-surface unresolved approvals (10:00, 14:00, 19:00 Dhaka)' },
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
   { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
@@ -138,6 +140,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'approval-escalation': {
           const { runApprovalEscalation } = await lazy.approvalEscalation()
           await runApprovalEscalation({ supabase, bot })
+          break
+        }
+        case 'approval-tracker': {
+          const { runApprovalTracker } = await lazy.approvalTracker()
+          await runApprovalTracker({ supabase, bot })
           break
         }
         case 'evening-proposal': {

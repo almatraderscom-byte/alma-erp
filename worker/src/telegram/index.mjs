@@ -1030,6 +1030,30 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('approvals_show_all:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const supabase = createSupabase()
+      const { resendAllPendingApprovalCards } = await import('../approvals/resend-card.mjs')
+      await resendAllPendingApprovalCards(ctx, supabase)
+      return
+    }
+
+    if (data.startsWith('approvals_mute_today:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const supabase = createSupabase()
+      const { muteApprovalsForToday } = await import('../approvals/resend-card.mjs')
+      await muteApprovalsForToday(supabase)
+      await ctx.answerCbQuery('আজ চুপ')
+      await ctx.reply('🔕 আজকের জন্য approval reminder বন্ধ। কাল থেকে আবার চালু হবে।')
+      return
+    }
+
     if (data.startsWith('fin_rm:')) {
       const [, actionId, idxStr] = data.split(':')
       const { handleFinanceRemove } = await import('../finance/confirm-cards.mjs')

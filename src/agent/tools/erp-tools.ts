@@ -723,6 +723,39 @@ const generate_owner_briefing: AgentTool = {
   },
 }
 
+const get_pending_approvals: AgentTool = {
+  name: 'get_pending_approvals',
+  description:
+    'List all approvals currently waiting on the owner (across staff, ads, finance, alerts, personal). ' +
+    'Use after the owner approves some items to remind them what is still pending, or when the owner asks ' +
+    '"ki ki baki", "kichu pending ache?", or at the end of a multi-approval interaction.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const rows = await prisma.agentPendingAction.findMany({
+        where: { status: 'pending' },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, type: true, summary: true, createdAt: true },
+      })
+      return {
+        success: true,
+        data: {
+          count: rows.length,
+          pending: rows.map((r) => ({
+            id: r.id,
+            type: r.type,
+            summary: r.summary.replace(/\n/g, ' ').slice(0, 200),
+            createdAt: r.createdAt.toISOString(),
+            ageMinutes: Math.round((Date.now() - r.createdAt.getTime()) / 60000),
+          })),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
@@ -737,4 +770,5 @@ export const ERP_TOOLS: AgentTool[] = [
   get_customer_segments,
   get_reorder_suggestions,
   generate_owner_briefing,
+  get_pending_approvals,
 ]
