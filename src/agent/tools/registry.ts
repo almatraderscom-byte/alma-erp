@@ -15,6 +15,7 @@ import { ASK_TOOLS } from './ask-tools'
 import { ADS_TOOLS } from './ads-tools'
 import { LOCATION_TOOLS } from './location-tools'
 import { CATALOG_TOOLS } from './catalog-tools'
+import { WEBSITE_TOOLS } from './website-tools'
 import { FAMILY_TOOLS } from './personal-tools'
 
 export interface ToolResult {
@@ -331,6 +332,7 @@ export const TOOLS: AgentTool[] = [
   ...ADS_TOOLS,
   ...LOCATION_TOOLS,
   ...CATALOG_TOOLS,
+  ...WEBSITE_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
+import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
 ## নামাজ
@@ -27,7 +28,7 @@ const STAFF_AND_APPROVALS_RULE = `
 ## স্টাফ ও অনুমোদন
 **Privacy:** স্টাফ Telegram-এ ফাইন্যান্স/নামাজ/ব্যক্তিগত মেমরি নয়।
 
-**টাস্ক প্ল্যান:** মালিক কাজ জিজ্ঞেস করলে আগে "স্যার, আগে ERP, Facebook, মার্কেটিং — সব চেক করে দেখি" বলে relevant read tools চালান, তারপর prepare_staff_task_proposal (generic "কি দিব" নিষিদ্ধ)। রাত ২১:০৫ আগামীকালের প্রস্তাব; সকাল ৯:০০ dispatch/ট্র্যাকিং। স্ট্যাটাস → get_staff_tasks।
+**টাস্ক প্ল্যান:** মালিক কাজ জিজ্ঞেস করলে আগে "স্যার, আগে ERP, Facebook, website, মার্কেটিং — সব চেক করে দেখি" বলে relevant read tools চালান, তারপর prepare_staff_task_proposal (generic "কি দিব" নিষিদ্ধ)। রাত ২১:০৫ আগামীকালের প্রস্তাব; সকাল ৯:০০ dispatch/ট্র্যাকিং। স্ট্যাটাস → get_staff_tasks।
 
 **টাস্ক vs ঘোষণা:** completion tracking → propose/merge/add_staff_task_now; inform/জানাও → send_staff_announcement (ড্রাফ্ট+Approve)। Voice শুধু স্টাফ।
 
@@ -135,9 +136,9 @@ pause_campaign/update_campaign_budget = confirm card; full create out of scope�
 const CHECK_SOURCES_RULE = `
 ## CHECK SOURCES BEFORE BUSINESS WORK
 টাস্ক প্রপোজাল, ব্রিফিং, স্টাফ প্ল্যান, বা "কী করা উচিত" — memory থেকে সরাসরি উত্তর নয়। আগে বলুন চেক করছেন, তারপর read tools দিয়ে বর্তমান অবস্থা নিন, তারপর synthesize:
-- "স্যার, আগে ERP, Facebook আর মার্কেটিং — সব চেক করে দেখি।"
-- প্রাসঙ্গিক tools: get_orders/check_order_issues, get_inventory_status/get_reorder_suggestions, get_sales_summary, get_fb_recent_posts/get_marketing_history/get_marketing_intel, recall_business_knowledge/search_memory।
-- তারপর gap/opportunity diagnose করুন (যেমন "৭ দিনে পোস্ট হয়নি", pending pile-up, bestseller low stock) — তারপর প্রপোজাল/উত্তর, কী চেক করেছিলেন সংক্ষেপে বলুন।
+- "স্যার, আগে ERP, Facebook, website আর মার্কেটিং — সব চেক করে দেখি।"
+- প্রাসঙ্গিক tools: get_orders/check_order_issues, get_inventory_status/get_reorder_suggestions, get_sales_summary, get_website_health/get_website_catalog, get_fb_recent_posts/get_marketing_history/get_marketing_intel, recall_business_knowledge/search_memory।
+- তারপর gap/opportunity diagnose করুন (যেমন "৭ দিনে পোস্ট হয়নি", pending pile-up, bestseller low stock, website-এ publish হয়নি) — তারপর প্রপোজাল/উত্তর, কী চেক করেছিলেন সংক্ষেপে বলুন।
 - Trivial প্রশ্নে সব tool নয় — relevant গুলোই; full proposal/review-এ broadly check। Owner live checking sequence দেখেন — purposeful রাখুন।
 `
 
@@ -147,6 +148,7 @@ const STATIC_CACHED_PROMPT =
   + FINANCE_INTENT_RULE
   + HONESTY_ACCOUNTABILITY_RULE
   + CHECK_SOURCES_RULE
+  + `\n${WEBSITE_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE
