@@ -734,3 +734,66 @@ export async function fetchOrderGasShape(id: string) {
   if (!row) return null
   return prismaOrderToGas(row)
 }
+
+function crmDedupeKey(phone: string, name: string): string {
+  const digits = String(phone || '').replace(/\D/g, '').slice(-11)
+  if (digits.length >= 10) return `p:${digits}`
+  const n = String(name || '').trim().toLowerCase()
+  return n ? `n:${n}` : ''
+}
+
+/** Sync customer profiles from Postgres orders (replaces GAS admin_backfill_crm). */
+export async function backfillCustomersFromOrdersInPostgres(businessId = 'ALMA_LIFESTYLE') {
+  const [orders, customers] = await Promise.all([
+    prisma.lifestyleOrder.findMany({
+      where: { businessId },
+      select: { customer: true, phone: true, address: true, source: true },
+      orderBy: { date: 'asc' },
+    }),
+    prisma.lifestyleCustomer.findMany({
+      where: { businessId },
+      select: { phone: true, name: true },
+    }),
+  ])
+
+  const existingKeys = new Set(customers.map(c => crmDedupeKey(c.phone, c.name)).filter(Boolean))
+  const orderSeen = new Set<string>()
+  let processed = 0
+  let created = 0
+  let skipped = 0
+  let errors = 0
+
+  for (const order of orders) {
+    const name = String(order.customer || '').trim()
+    const phone = String(order.phone || '').trim()
+    if (!name && !phone) continue
+
+    const key = crmDedupeKey(phone, name)
+    if (!key) continue
+    if (orderSeen.has(key)) {
+      skipped += 1
+      continue
+    }
+    orderSeen.add(key)
+
+    const hadProfile = existingKeys.has(key)
+    const result = await createCustomerInPostgres({
+      name: name || phone,
+      phone: phone || name,
+      address: order.address || '',
+      source: order.source || 'backfill',
+      business_id: businessId,
+    })
+    if (result && typeof result === 'object' && 'error' in result && result.error) {
+      errors += 1
+      continue
+    }
+    processed += 1
+    if (!hadProfile) {
+      created += 1
+      existingKeys.add(key)
+    }
+  }
+
+  return { ok: true, processed, created, skipped, errors }
+}

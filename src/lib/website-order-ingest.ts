@@ -1,4 +1,4 @@
-import { serverPost } from '@/lib/server-api'
+import { dispatchCreateOrder } from '@/lib/lifestyle/write-dispatch'
 import { notifyRole } from '@/lib/notifications'
 import { sendOrderAlert } from '@/lib/resend'
 import { errorMeta, logEvent } from '@/lib/logger'
@@ -79,12 +79,7 @@ function buildErpPayload(input: WebsiteOrderPayload): Record<string, unknown> {
 
 export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
   const gasPayload = buildErpPayload(input)
-  const result = await serverPost<{
-    order_id?: string
-    invoice_num?: string
-    invoice_number?: string
-    error?: string
-  }>('create_order', gasPayload)
+  const result = await dispatchCreateOrder(gasPayload)
 
   const erpOrderId = String(
     result.order_id || result.invoice_num || result.invoice_number || '',

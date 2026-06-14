@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { InvoiceEventType, InvoicePaymentStatus } from '@prisma/client'
 import { Prisma } from '@prisma/client'
+import { peekNextInvoiceNumber, reserveNextInvoiceNumber } from '@/lib/lifestyle/invoice-sequence'
 import { serverGet, serverPost, INVOICE_SERVER_TIMEOUT_MS } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { notifyRole } from '@/lib/notifications'
@@ -39,8 +40,8 @@ export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url)
     if (url.searchParams.get('next') === '1') {
-      const data = await serverGet<{ next?: string; invoice_number?: string }>('next_invoice_num', {}, 0)
-      return NextResponse.json(data)
+      const next = await peekNextInvoiceNumber()
+      return NextResponse.json({ next, invoice_number: next })
     }
 
     const ctx = await invoiceContext(req, url.searchParams.get('business_id'))
@@ -217,8 +218,8 @@ async function prepareInvoicePdf(
   const prepStarted = Date.now()
   const [invoiceNumber, branding] = await Promise.all([
     existingInvoiceNumber || order.invoice_num
-      ? Promise.resolve(existingInvoiceNumber || order.invoice_num)
-      : peekInvoiceNumber(),
+      ? Promise.resolve(String(existingInvoiceNumber || order.invoice_num))
+      : allocateInvoiceNumber(businessId),
     resolveInvoiceBranding(businessId),
   ])
   const logoDataUrl = await resolveInvoiceLogoDataUrl(branding, order.id)
@@ -323,9 +324,8 @@ function resolveAppOrigin(req: NextRequest) {
   return `${proto}://${host}`.replace(/\/$/, '')
 }
 
-async function peekInvoiceNumber() {
-  const next = await serverGet<{ next?: string; invoice_number?: string }>('next_invoice_num', {}, 0)
-  return String(next.next || next.invoice_number || '').trim()
+async function allocateInvoiceNumber(businessId: string) {
+  return reserveNextInvoiceNumber(businessId)
 }
 
 async function resolveInvoiceBranding(businessId: string): Promise<BusinessBranding> {

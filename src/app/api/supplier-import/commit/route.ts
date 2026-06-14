@@ -1,15 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverPost } from '@/lib/server-api'
+import { prisma } from '@/lib/prisma'
+import { dispatchCreateProduct } from '@/lib/lifestyle/write-dispatch'
 import { SUPPLIER_IMPORT_CHUNK } from '@/lib/supplier-import'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 
-const BATCH_TIMEOUT_MS = 120_000
-
 export type SupplierImportItem = Record<string, unknown>
 
+function mapImportItem(item: SupplierImportItem) {
+  const name = String(item.name ?? item.product ?? '').trim()
+  return {
+    name,
+    category: String(item.category ?? ''),
+    default_price: Number(item.default_price ?? item.price ?? 0),
+    default_cogs: Number(item.default_cogs ?? item.cogs ?? 0),
+    image_url: item.image_url ?? item.image,
+    description: item.description,
+    notes: item.notes,
+    sku: item.sku ? String(item.sku).trim() : undefined,
+    supplier: item.supplier ? String(item.supplier) : 'SmartChinaHub',
+    supplier_product_id: item.supplier_product_id ? String(item.supplier_product_id) : undefined,
+    variants_json: item.variants_json
+      ? String(item.variants_json)
+      : item.variants
+        ? JSON.stringify(item.variants)
+        : undefined,
+    active: item.active !== false,
+    sync_to_stock: true,
+  }
+}
+
 /**
- * Proxies chunked writes to GAS `batch_import_product_master`.
- * Never sends credentials to the browser — uses server-side API_SECRET only.
+ * Bulk supplier import — Postgres product master (Phase 4 close-out).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -25,38 +46,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Max 500 items per run — split into multiple imports.' }, { status: 400 })
     }
 
-    const skip_duplicate_names = body.skip_duplicate_names !== false
+    const skipDuplicateNames = body.skip_duplicate_names !== false
+    await mergeActorPayload(req, body as Record<string, unknown>)
+
+    const existingProducts = await prisma.lifestyleProduct.findMany({
+      select: { sku: true, name: true, supplierProductId: true },
+    })
+    const skus = new Set(existingProducts.map(p => p.sku.toLowerCase()))
+    const names = new Set(existingProducts.map(p => p.name.trim().toLowerCase()))
+    const supplierIds = new Set(
+      existingProducts.map(p => String(p.supplierProductId || '').trim().toLowerCase()).filter(Boolean),
+    )
+
     const created: string[] = []
     const skipped: Array<{ sku: string; reason: string }> = []
     const errors: Array<{ index?: number; sku?: string; message: string }> = []
 
-    for (let i = 0; i < items.length; i += SUPPLIER_IMPORT_CHUNK) {
-      const chunk = items.slice(i, i + SUPPLIER_IMPORT_CHUNK)
-      const res = await serverPost<{
-        ok?: boolean
-        error?: string
-        created?: string[]
-        skipped?: Array<{ sku: string; reason: string }>
-        errors?: Array<{ index?: number; sku?: string; message: string }>
-      }>(
-        'batch_import_product_master',
-        await mergeActorPayload(req, {
-          items: chunk,
-          skip_duplicate_names,
-        }),
-        { timeoutMs: BATCH_TIMEOUT_MS },
-      )
-      if (res.error) throw new Error(res.error)
-      if (res.created?.length) created.push(...res.created)
-      if (res.skipped?.length) skipped.push(...res.skipped)
-      if (res.errors?.length) {
-        for (const e of res.errors) {
-          errors.push({
-            index: e.index !== undefined ? i + (e.index as number) : i,
-            sku: e.sku,
-            message: e.message,
-          })
-        }
+    for (let i = 0; i < items.length; i++) {
+      const mapped = mapImportItem(items[i])
+      if (!mapped.name) {
+        errors.push({ index: i, message: 'Missing product name' })
+        continue
+      }
+
+      const skuKey = String(mapped.sku || '').trim().toLowerCase()
+      const nameKey = mapped.name.toLowerCase()
+      const sidKey = String(mapped.supplier_product_id || '').trim().toLowerCase()
+
+      if (skuKey && skus.has(skuKey)) {
+        skipped.push({ sku: mapped.sku || mapped.name, reason: 'duplicate_sku' })
+        continue
+      }
+      if (sidKey && supplierIds.has(sidKey)) {
+        skipped.push({ sku: mapped.sku || mapped.name, reason: 'duplicate_supplier_id' })
+        continue
+      }
+      if (skipDuplicateNames && names.has(nameKey)) {
+        skipped.push({ sku: mapped.sku || mapped.name, reason: 'duplicate_name' })
+        continue
+      }
+
+      try {
+        const res = await dispatchCreateProduct(mapped as Record<string, unknown>)
+        const productId = String(res.product_id || mapped.sku || mapped.name)
+        created.push(productId)
+        if (skuKey) skus.add(skuKey)
+        names.add(nameKey)
+        if (sidKey) supplierIds.add(sidKey)
+      } catch (e) {
+        errors.push({
+          index: i,
+          sku: mapped.sku,
+          message: (e as Error).message,
+        })
+      }
+
+      if ((i + 1) % SUPPLIER_IMPORT_CHUNK === 0) {
+        await new Promise(r => setTimeout(r, 0))
       }
     }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrder } from '@/lib/lifestyle/read'
 import { parseShareSlug } from '@/lib/pdf/format'
-import type { Order } from '@/types'
 import type { CditInvoice, CditPayment } from '@/types/cdit'
 import type { BusinessBranding } from '@/types/branding'
 import { prisma } from '@/lib/prisma'
@@ -15,8 +15,11 @@ export async function GET(
 
   try {
     if (parsed.type === 'alma') {
-      const orderRes = await serverGet<{ order?: Order; error?: string }>('order', { id: parsed.id }, 0)
-      if ((orderRes as { error?: string }).error || !(orderRes as { order?: Order }).order) {
+      const orderRes = await getLifestyleOrder(parsed.id, { business_id: 'ALMA_LIFESTYLE' })
+      if ('error' in orderRes && orderRes.error) {
+        return NextResponse.json({ error: 'order not found' }, { status: 404 })
+      }
+      if (!orderRes.order) {
         return NextResponse.json({ error: 'order not found' }, { status: 404 })
       }
       const branding = await serverGet<{ branding: BusinessBranding }>(
@@ -26,7 +29,7 @@ export async function GET(
       )
       return NextResponse.json({
         type: 'alma',
-        order: (orderRes as { order: Order }).order,
+        order: orderRes.order,
         invoice: await prisma.invoiceRecord.findFirst({
           where: { orderId: parsed.id, businessId: 'ALMA_LIFESTYLE', deletedAt: null },
           select: { invoiceNumber: true, paymentStatus: true },
