@@ -124,6 +124,13 @@ pm2 logs agent-worker --lines 30   # verify heartbeats + Telegram started
 
 ## 8b. Phase 7 — nightly backups (cron 03:00 UTC / 09:00 BD)
 
+Dumps **agent + finance + lifestyle operational tables** (Postgres source of truth
+since GAS migration) to `/opt/agent-backups/agent_finance_*.sql.gz` (14-day retention).
+
+Included lifestyle tables: `lifestyle_orders`, `lifestyle_order_items`,
+`lifestyle_products`, `lifestyle_stock_items`, `lifestyle_customers`,
+`lifestyle_promos`, `lifestyle_invoice_sequences`.
+
 ```bash
 sudo mkdir -p /opt/agent-backups
 sudo chown "$USER:$USER" /opt/agent-backups

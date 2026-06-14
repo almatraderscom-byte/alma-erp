@@ -35,6 +35,9 @@ TABLES=(
   agent_finance_expenses agent_finance_ledger agent_heartbeats
   agent_cost_events agent_subscriptions
   messenger_alerts
+  lifestyle_orders lifestyle_order_items lifestyle_products
+  lifestyle_stock_items lifestyle_customers lifestyle_promos
+  lifestyle_invoice_sequences
 )
 
 TABLE_ARGS=""
@@ -48,7 +51,7 @@ if [ -x /usr/lib/postgresql/17/bin/pg_dump ]; then
 fi
 
 if ! "$PG_DUMP" "$DATABASE_URL" $TABLE_ARGS | gzip -9 > "$OUT"; then
-  notify_tier1 "pg_dump failed for agent/finance tables"
+  notify_tier1 "pg_dump failed for agent/finance/lifestyle tables"
   rm -f "$OUT"
   exit 1
 fi
