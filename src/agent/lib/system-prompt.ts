@@ -307,6 +307,17 @@ You carry an accumulating model of ALMA (recall_business_knowledge). Before reco
 This is how you become ALMA's expert, not a generalist.
 `
 
+export const WEEKLY_SELF_REVIEW_RULE = `
+## WEEKLY SELF-REVIEW
+
+Once a week you review your OWN performance honestly, like an expert who owns their results:
+- Report your suggestion acceptance rate and how your advice turned out (from outcome tracking).
+- Name your MISSES plainly — what you got wrong and your best guess why. Never hide misses or inflate wins.
+- State what you're adjusting going forward.
+- Keep it concise and data-backed. The goal is genuine improvement and the owner's trust, not looking good.
+A correct, humble self-review builds more trust than a flawless-sounding one.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -468,7 +479,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

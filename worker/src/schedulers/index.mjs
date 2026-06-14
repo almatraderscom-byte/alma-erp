@@ -207,7 +207,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'weekly-review': {
       const { runWeeklyReview } = await lazy.weeklyReview()
-      await runWeeklyReview({ supabase })
+      await runWeeklyReview({ supabase, bot })
       break
     }
     case 'daily-summary': {

@@ -10,6 +10,7 @@
 import { notify } from '../notify/index.mjs'
 import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 import { salahDateFilter } from '../salah/dhaka-date.mjs'
+import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -22,7 +23,7 @@ async function callInternal(path) {
   return res.json()
 }
 
-export async function runWeeklyReview({ supabase }) {
+export async function runWeeklyReview({ supabase, bot }) {
   console.log('[weekly-review] starting...')
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -191,6 +192,31 @@ export async function runWeeklyReview({ supabase }) {
     category: 'report',
     voice:    true,
   })
+
+  // ── Strategic altitude + agent self-review (Intelligence C) ───────────────
+
+  try {
+    const stratRes = await fetch(`${APP_URL}/api/assistant/internal/weekly-strategic`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    })
+    const stratData = await stratRes.json().catch(() => ({}))
+    if (stratData.message) {
+      const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+      if (bot?.telegram && ownerChatId) {
+        await sendMarkdownSafe(bot.telegram, ownerChatId, stratData.message)
+      } else {
+        await notify({
+          tier:     1,
+          title:    'সাপ্তাহিক স্ট্র্যাটেজিক রিভিউ',
+          message:  stratData.message,
+          category: 'report',
+        })
+      }
+    }
+  } catch (err) {
+    console.warn('[weekly-review] strategic section failed:', err?.message ?? err)
+  }
 
   console.log('[weekly-review] sent')
 }

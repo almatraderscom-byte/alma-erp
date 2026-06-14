@@ -73,7 +73,7 @@ const handlers = {
   'salah-escalation':  async () => { const { checkAndEscalateSalah } = await import('../src/salah/scheduler.mjs'); await checkAndEscalateSalah(context) },
   'messenger-scan':    async () => { const { runMessengerScan } = await import('../src/messenger/scan.mjs'); await runMessengerScan(context) },
   'night-report':      async () => { const { runNightReport } = await import('../src/staff/night-report.mjs'); await runNightReport(context) },
-  'weekly-review':     async () => { const { runWeeklyReview } = await import('../src/staff/weekly-review.mjs'); await runWeeklyReview({ supabase }) },
+  'weekly-review':     async () => { const { runWeeklyReview } = await import('../src/staff/weekly-review.mjs'); await runWeeklyReview({ supabase, bot }) },
   'daily-summary':     async () => { const { runDailySummary } = await import('../src/schedulers/daily-summary.mjs'); await runDailySummary(context) },
   'salah-init':        async () => { const { initializeDailySalahRecords } = await import('../src/salah/scheduler.mjs'); await initializeDailySalahRecords(supabase) },
   'reminder-ticker':   async () => { const { runReminderTicker } = await import('../src/reminders/ticker.mjs'); await runReminderTicker(context) },

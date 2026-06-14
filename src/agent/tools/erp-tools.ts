@@ -839,6 +839,36 @@ const get_pending_approvals: AgentTool = {
   },
 }
 
+const get_strategic_review: AgentTool = {
+  name: 'get_strategic_review',
+  description:
+    'Weekly strategic business review: week-over-week sales, growing/stalling products, return trends, ' +
+    'new vs repeat customers, ad spend vs results, plus the agent\'s honest self-review (acceptance rate, ' +
+    'outcome results, misses, adjustments) and data-backed focus for next week. Use when the owner asks ' +
+    '"ei soptaher strategy ki", "business kemon cholche", "weekly strategic review", or wants altitude thinking.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const { message, data } = await import('@/lib/weekly-strategic-data').then((m) => m.buildWeeklyStrategicReview())
+      return {
+        success: true,
+        data: {
+          message,
+          period: data.period,
+          highlights: {
+            wowRevenuePct: data.business.wowRevenuePct,
+            suggestionsMade: data.selfReview.suggestionsMade,
+            acceptanceRatePct: data.selfReview.acceptanceRatePct,
+            focusCount: data.focusCandidates.length,
+          },
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
@@ -855,5 +885,6 @@ export const ERP_TOOLS: AgentTool[] = [
   check_order_issues,
   generate_owner_briefing,
   recall_business_knowledge,
+  get_strategic_review,
   get_pending_approvals,
 ]
