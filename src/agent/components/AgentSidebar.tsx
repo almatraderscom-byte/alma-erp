@@ -246,6 +246,20 @@ export default function AgentSidebar({
         {filtered.map((c) => (
           <div
             key={c.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (renameId === c.id) return
+              onSelectConv(c)
+              if (isMobile) onClose()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onSelectConv(c)
+                if (isMobile) onClose()
+              }
+            }}
             className={cn(
               'group relative rounded-xl px-3 py-2.5 cursor-pointer transition-colors',
               c.id === activeConvId
@@ -268,7 +282,7 @@ export default function AgentSidebar({
               </form>
             ) : (
               <>
-                <div onClick={() => { onSelectConv(c); if (isMobile) onClose() }} className="min-w-0">
+                <div className="min-w-0 pr-6">
                   <p className={cn('truncate text-xs font-medium', c.id === activeConvId ? 'text-gold-lt' : 'text-muted-hi group-hover:text-cream')}>
                     {c.title ?? '(শিরোনাম নেই)'}
                   </p>

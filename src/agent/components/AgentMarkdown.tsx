@@ -31,22 +31,19 @@ function CopyButton({ text }: { text: string }) {
 
 export default function AgentMarkdown({ content, className }: AgentMarkdownProps) {
   return (
-    <div className={cn('prose-agent', className)}>
+    <div className={cn('prose-agent select-text text-white', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          // Paragraphs
           p({ children }) {
-            return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
+            return <p className="mb-3 last:mb-0 leading-relaxed text-white">{children}</p>
           },
-          // Headings
-          h1({ children }) { return <h1 className="mb-3 mt-5 text-base font-bold text-cream first:mt-0">{children}</h1> },
-          h2({ children }) { return <h2 className="mb-2 mt-4 text-sm font-bold text-cream first:mt-0">{children}</h2> },
-          h3({ children }) { return <h3 className="mb-2 mt-3 text-sm font-semibold text-cream first:mt-0">{children}</h3> },
-          // Lists
-          ul({ children }) { return <ul className="mb-3 ml-4 list-disc space-y-1">{children}</ul> },
-          ol({ children }) { return <ol className="mb-3 ml-4 list-decimal space-y-1">{children}</ol> },
-          li({ children }) { return <li className="leading-relaxed">{children}</li> },
+          h1({ children }) { return <h1 className="mb-3 mt-5 text-base font-bold text-gold-lt first:mt-0">{children}</h1> },
+          h2({ children }) { return <h2 className="mb-2 mt-4 text-sm font-bold text-gold-lt first:mt-0">{children}</h2> },
+          h3({ children }) { return <h3 className="mb-2 mt-3 text-sm font-semibold text-amber-200 first:mt-0">{children}</h3> },
+          ul({ children }) { return <ul className="mb-3 ml-4 list-disc space-y-1 text-white">{children}</ul> },
+          ol({ children }) { return <ol className="mb-3 ml-4 list-decimal space-y-1 text-white">{children}</ol> },
+          li({ children }) { return <li className="leading-relaxed text-white">{children}</li> },
           // Code blocks
           code({ className: cls, children, ...props }) {
             const isBlock = cls?.startsWith('language-')
@@ -90,11 +87,10 @@ export default function AgentMarkdown({ content, className }: AgentMarkdownProps
           th({ children }) {
             return <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gold">{children}</th>
           },
-          td({ children }) { return <td className="px-4 py-2.5 text-[13px] text-muted-hi">{children}</td> },
-          // Blockquote
+          td({ children }) { return <td className="px-4 py-2.5 text-[13px] text-white">{children}</td> },
           blockquote({ children }) {
             return (
-              <blockquote className="my-3 border-l-2 border-gold-dim pl-4 italic text-muted-hi">
+              <blockquote className="my-3 border-l-2 border-gold-dim pl-4 italic text-zinc-300">
                 {children}
               </blockquote>
             )
@@ -109,9 +105,8 @@ export default function AgentMarkdown({ content, className }: AgentMarkdownProps
               </a>
             )
           },
-          // Strong/em
-          strong({ children }) { return <strong className="font-bold text-cream">{children}</strong> },
-          em({ children }) { return <em className="italic text-muted-hi">{children}</em> },
+          strong({ children }) { return <strong className="font-bold text-amber-300">{children}</strong> },
+          em({ children }) { return <em className="italic text-zinc-300">{children}</em> },
         }}
       >
         {content}

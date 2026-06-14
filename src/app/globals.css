@@ -259,9 +259,37 @@ a,
   }
 }
 
+/* Agent chat — always allow text selection for copy */
+.agent-chat-root .prose-agent,
+.agent-chat-root .prose-agent p,
+.agent-chat-root .prose-agent li,
+.agent-chat-root .prose-agent td,
+.agent-chat-root .prose-agent th,
+.agent-chat-root .prose-agent blockquote,
+.agent-chat-root .prose-agent h1,
+.agent-chat-root .prose-agent h2,
+.agent-chat-root .prose-agent h3 {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 @media (display-mode: standalone) {
   body {
     user-select: none;
+  }
+
+  .agent-chat-root,
+  .agent-chat-root .prose-agent,
+  .agent-chat-root .prose-agent * {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .agent-chat-root button,
+  .agent-chat-root summary,
+  .agent-chat-root [role='button'] {
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   input,

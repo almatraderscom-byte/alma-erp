@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
@@ -141,19 +141,23 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   const [showJumpBtn, setShowJumpBtn] = useState(false)
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
 
-  // Auto-scroll with jump-to-bottom awareness
-  useEffect(() => {
+  const checkScrollPosition = useCallback(() => {
     const container = containerRef.current
     if (!container) return
-    const onScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container
-      setShowJumpBtn(scrollHeight - scrollTop - clientHeight > 100)
-    }
-    container.addEventListener('scroll', onScroll)
-    return () => container.removeEventListener('scroll', onScroll)
+    const { scrollTop, scrollHeight, clientHeight } = container
+    setShowJumpBtn(scrollHeight - scrollTop - clientHeight > 80)
   }, [])
 
   useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    container.addEventListener('scroll', checkScrollPosition, { passive: true })
+    checkScrollPosition()
+    return () => container.removeEventListener('scroll', checkScrollPosition)
+  }, [checkScrollPosition])
+
+  useEffect(() => {
+    checkScrollPosition()
     const last = messages[messages.length - 1]
     if (last?.streaming || last?.role === 'user') {
       bottomRef.current?.scrollIntoView({
@@ -161,7 +165,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         block: 'end',
       })
     }
-  }, [messages])
+  }, [messages, checkScrollPosition])
 
   function saveArtifact(msg: ChatMessage) {
     const detected = detectArtifact(msg.text)
@@ -213,23 +217,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     </div>
                   )}
                   {msg.text && (
-                    <div className="rounded-2xl rounded-br-md bg-gold/10 border border-gold-dim/30 px-4 py-3 text-sm text-cream whitespace-pre-wrap break-words">
+                    <div className="rounded-2xl rounded-br-md bg-gold/10 border border-gold-dim/30 px-4 py-3 text-sm text-white whitespace-pre-wrap break-words select-text">
                       {msg.text}
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="min-w-0 max-w-[85%]">
-                  {(msg.streaming || streamMode === 'settled') && streamStatus && msg.id === messages[messages.length - 1]?.id && (
+                  {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id ? (
                     <AgentThinkingIndicator
                       label={streamStatus}
                       mode={streamMode ?? 'writing'}
                       className="mb-1.5"
                     />
+                  ) : (
+                    <AgentThinkingIndicator mode="settled" className="mb-1.5" />
                   )}
 
                   {(!msg.streaming || msg.text) && (
-                    <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-muted-hi">
+                    <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-white select-text">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />
@@ -335,10 +341,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
-            className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/[0.1] bg-zinc-900/95 px-4 py-2 text-xs font-semibold text-muted-hi shadow-xl backdrop-blur-md transition-colors hover:text-cream"
+            onClick={() => {
+              bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+              setTimeout(checkScrollPosition, 400)
+            }}
+            className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-gold-dim/50 bg-zinc-900/95 px-5 py-2.5 text-xs font-semibold text-gold-lt shadow-2xl backdrop-blur-md transition-colors hover:border-gold/60 hover:text-cream"
           >
-            ↓ নিচে যান
+            <span aria-hidden>↓</span>
+            <span>নিচে যান</span>
           </motion.button>
         )}
       </AnimatePresence>

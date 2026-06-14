@@ -364,8 +364,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
-          setStreamMode('settled')
-          setTimeout(() => setStreamStatus(null), 1200)
+          setStreamStatus(null)
+          setStreamMode('writing')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {
@@ -522,7 +522,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-black">
+    <div className="agent-chat-root flex h-full min-h-0 overflow-hidden bg-black select-text">
       {/* Sidebar */}
       <AgentSidebar
         open={sidebarOpen}
