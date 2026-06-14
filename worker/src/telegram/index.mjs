@@ -317,6 +317,26 @@ async function handleOwnerText(ctx, text) {
     for (const ask of result.askCards ?? []) {
       await sendAskCardTelegram(ctx, ask)
     }
+
+    // Auto-compact when cumulative cost exceeds threshold
+    if (result.compactSuggested && result.conversationId) {
+      try {
+        await ctx.reply('💬 কথোপকথন কম্প্যাক্ট করছি — যাতে আরও সাহায্য করতে পারি…')
+        const compactRes = await fetch(`${APP_URL}/api/assistant/internal/compact-conversation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+          body: JSON.stringify({ conversationId: result.conversationId }),
+        })
+        if (compactRes.ok) {
+          const compactData = await compactRes.json()
+          if (personalMode) ownerState.personalConversationId = compactData.newConversationId
+          else ownerState.conversationId = compactData.newConversationId
+          await ctx.reply('✅ রেডি — বলুন স্যার।')
+        }
+      } catch (compactErr) {
+        console.warn('[telegram] compaction failed:', compactErr.message)
+      }
+    }
   } catch (err) {
     clearInterval(typingInterval)
     captureWorkerError(err, 'worker.telegram.agent_call')

@@ -17,6 +17,8 @@ import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
+const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '1')
+
 interface FileRef { bucket: string; path: string; mediaType: string }
 
 interface ChatBody {
@@ -217,6 +219,7 @@ export async function POST(req: NextRequest) {
       isBatch?: boolean
     }> = []
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
+    let compactSuggested = false
     try {
       for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions, personalMode })) {
         if (event.type === 'text_delta') finalText += event.delta
@@ -232,13 +235,26 @@ export async function POST(req: NextRequest) {
         }
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
-        else if (event.type === 'done') break
+        else if (event.type === 'done') {
+          const turnCost = (event as { costUsd?: number }).costUsd ?? 0
+          if (turnCost > 0 && conversationId) {
+            try {
+              const updated = await prisma.agentConversation.update({
+                where: { id: conversationId },
+                data: { totalCostUsd: { increment: turnCost } },
+                select: { totalCostUsd: true },
+              })
+              if (updated.totalCostUsd >= COMPACT_THRESHOLD_USD) compactSuggested = true
+            } catch { /* non-critical */ }
+          }
+          break
+        }
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
-    return Response.json({ conversationId, text: finalText, pendingCards, askCards, personalMode })
+    return Response.json({ conversationId, text: finalText, pendingCards, askCards, personalMode, compactSuggested })
   }
 
   const encoder = new TextEncoder()
@@ -256,7 +272,23 @@ export async function POST(req: NextRequest) {
           signal: req.signal,
         })) {
           enqueue(event)
-          if (event.type === 'done' || event.type === 'error') break
+          if (event.type === 'done') {
+            const turnCost = (event as { costUsd?: number }).costUsd ?? 0
+            if (turnCost > 0 && conversationId) {
+              try {
+                const updated = await prisma.agentConversation.update({
+                  where: { id: conversationId },
+                  data: { totalCostUsd: { increment: turnCost } },
+                  select: { totalCostUsd: true },
+                })
+                if (updated.totalCostUsd >= COMPACT_THRESHOLD_USD) {
+                  enqueue({ type: 'compact_suggested', conversationId, convoCost: updated.totalCostUsd })
+                }
+              } catch { /* non-critical */ }
+            }
+            break
+          }
+          if (event.type === 'error') break
         }
       } catch (err) {
         if (!req.signal.aborted) {

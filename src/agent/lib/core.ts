@@ -245,6 +245,23 @@ export async function* runAgentTurn(
   let totalCacheReadTokens = 0
 
   let messages: ApiMessage[] = await loadHistory(conversationId)
+
+  // If this conversation was seeded from a compaction, prepend the context summary
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conv = await (prisma as any).agentConversation.findUnique({
+      where: { id: conversationId },
+      select: { contextSummary: true },
+    })
+    if (conv?.contextSummary && messages.length <= 2) {
+      messages = [
+        { role: 'user', content: `[পূর্ববর্তী কথোপকথনের সারাংশ]\n${conv.contextSummary}` },
+        { role: 'assistant', content: 'বুঝেছি, আগের কথোপকথনের সব প্রসঙ্গ মনে আছে। বলুন স্যার।' },
+        ...messages,
+      ]
+    }
+  } catch { /* contextSummary column might not exist yet */ }
+
   const assistantTurns: CollectedBlock[][] = []
 
   // Extract recent owner messages for salah auto-mark + RAG

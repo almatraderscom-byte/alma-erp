@@ -1716,19 +1716,22 @@ model AgentProject {
 
 /// A single conversation thread, optionally scoped to a project.
 model AgentConversation {
-  id        String          @id @default(uuid())
-  projectId String?
-  project   AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  title     String?
-  model     String?
-  source    String          @default("web")
-  archived  Boolean         @default(false)
-  summarizedAt  DateTime?   @map("summarized_at")
-  lastMessageAt DateTime?   @map("last_message_at")
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  messages  AgentMessage[]
-  artifacts AgentArtifact[]
+  id             String          @id @default(uuid())
+  projectId      String?
+  project        AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title          String?
+  model          String?
+  source         String          @default("web")
+  archived       Boolean         @default(false)
+  summarizedAt   DateTime?       @map("summarized_at")
+  lastMessageAt  DateTime?       @map("last_message_at")
+  totalCostUsd   Float           @default(0) @map("total_cost_usd")
+  contextSummary String?         @map("context_summary")
+  compactedToId  String?         @map("compacted_to_id")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  messages       AgentMessage[]
+  artifacts      AgentArtifact[]
 
   @@index([projectId])
   @@index([source])

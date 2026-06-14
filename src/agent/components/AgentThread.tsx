@@ -38,6 +38,7 @@ interface AgentThreadProps {
   onQuickSend?: (text: string) => void
   streamStatus?: string | null
   streamMode?: 'fetching' | 'writing'
+  compacting?: boolean
 }
 
 // Detect artifact-worthy content: code block ≥ 15 lines OR markdown doc ≥ 800 chars
@@ -134,7 +135,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, streamStatus, streamMode }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, streamStatus, streamMode, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
@@ -303,6 +304,27 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
             </motion.div>
           ))}
         </AnimatePresence>
+
+        {compacting && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mx-auto my-4 max-w-md rounded-xl border border-white/10 bg-white/[0.03] p-3"
+          >
+            <div className="mb-2 text-[13px] font-medium text-zinc-300">
+              💬 কথোপকথন কম্প্যাক্ট করছি — যাতে আরও চ্যাট করতে পারি…
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-blue-400"
+                initial={{ width: '0%' }}
+                animate={{ width: '100%' }}
+                transition={{ duration: 2.2, ease: 'easeInOut' }}
+              />
+            </div>
+          </motion.div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 

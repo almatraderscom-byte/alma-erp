@@ -106,6 +106,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [personalProjectId, setPersonalProjectId] = useState<string | null>(null)
   const [activePersonalMode, setActivePersonalMode] = useState(false)
   const [activeConvProjectId, setActiveConvProjectId] = useState<string | null>(null)
+  const [compacting, setCompacting] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -265,6 +266,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     ])
 
     let finalConvId = convIdForUpload ?? activeConvId
+    let compactAfterStream: string | null = null
 
     try {
       const body: Record<string, unknown> = { message: text }
@@ -376,6 +378,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'compact_suggested') {
+          compactAfterStream = evt.conversationId as string
         } else if (evt.type === 'error') {
           gotStreamDone = true
           const errText = evt.message as string
@@ -437,13 +441,36 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       setStreaming(false)
       setStreamStatus(null)
       abortRef.current = null
-      // Clean up file preview URLs
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
+
+      if (compactAfterStream) {
+        void runCompaction(compactAfterStream)
+      }
     }
   }, [streaming, activeConvId])
 
   function stopGeneration() {
     abortRef.current?.abort()
+  }
+
+  async function runCompaction(convId: string) {
+    setCompacting(true)
+    try {
+      const res = await fetch('/api/assistant/internal/compact-conversation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { newConversationId: string }
+        await new Promise((r) => setTimeout(r, 2400))
+        setActiveConvId(data.newConversationId)
+        setMessages([])
+        setArtifacts([])
+      }
+    } catch { /* non-critical */ } finally {
+      setCompacting(false)
+    }
   }
 
   // Poll for new messages after a confirm-card action is approved.
@@ -593,6 +620,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
             streamStatus={streamStatus}
             streamMode={streamMode}
+            compacting={compacting}
           />
           )}
           <AgentArtifactsPanel
