@@ -99,7 +99,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [streamStatus, setStreamStatus] = useState<string | null>(null)
-  const [streamMode, setStreamMode] = useState<'fetching' | 'writing'>('writing')
+  const [streamMode, setStreamMode] = useState<'fetching' | 'writing' | 'settled'>('writing')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
@@ -364,7 +364,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
-          setStreamStatus(null)
+          setStreamMode('settled')
+          setTimeout(() => setStreamStatus(null), 1200)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {

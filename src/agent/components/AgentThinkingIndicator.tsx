@@ -3,41 +3,81 @@
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
+const SPOKES = 12
 const PALETTE = ['#e1306c', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4']
 
 interface AgentThinkingIndicatorProps {
   label?: string
-  mode?: 'fetching' | 'writing'
+  mode?: 'fetching' | 'writing' | 'settled'
   className?: string
 }
 
-/** Colorful Claude-style thinking indicator — faster while fetching, slower while writing. */
+/** Claude-style starburst spinner — spins while working, settles with "ALMA" when done. */
 export function AgentThinkingIndicator({
   label = 'চিন্তা করছি',
   mode = 'writing',
   className,
 }: AgentThinkingIndicatorProps) {
-  const dur = mode === 'fetching' ? 0.7 : 1.3
+  const isSettled = mode === 'settled'
+  const spinDur = mode === 'fetching' ? 1.4 : 2.6
+
   return (
     <div className={cn('flex items-center gap-2.5 py-1', className)}>
-      <div className="flex items-center gap-1" aria-hidden>
-        {PALETTE.map((c, i) => (
-          <motion.span
-            key={i}
-            className="h-2 w-2 rounded-full"
-            style={{ background: c }}
-            animate={{ y: [0, -6, 0], opacity: [0.3, 1, 0.3], scale: [0.8, 1.15, 0.8] }}
-            transition={{ duration: dur, repeat: Infinity, ease: 'easeInOut', delay: i * (dur / PALETTE.length) }}
-          />
-        ))}
-      </div>
-      <motion.span
-        className="text-[13px] font-medium text-zinc-400"
-        animate={{ opacity: [0.55, 1, 0.55] }}
-        transition={{ duration: dur * 1.6, repeat: Infinity, ease: 'easeInOut' }}
+      {/* Starburst */}
+      <motion.div
+        className="relative h-6 w-6 shrink-0"
+        animate={isSettled ? { rotate: 0 } : { rotate: 360 }}
+        transition={isSettled
+          ? { duration: 0.4, ease: 'easeOut' }
+          : { duration: spinDur, repeat: Infinity, ease: 'linear' }
+        }
+        aria-hidden
       >
-        {label}
-      </motion.span>
+        {Array.from({ length: SPOKES }).map((_, i) => {
+          const angle = (360 / SPOKES) * i
+          const color = PALETTE[i % PALETTE.length]
+          return (
+            <motion.span
+              key={i}
+              className="absolute left-1/2 top-1/2 h-[9px] w-[2.5px] origin-bottom rounded-full"
+              style={{
+                background: color,
+                transform: `translate(-50%, -100%) rotate(${angle}deg)`,
+                transformOrigin: '50% 100%',
+              }}
+              animate={isSettled
+                ? { opacity: 0.85, scaleY: 1 }
+                : { opacity: [0.3, 1, 0.3], scaleY: [0.7, 1.1, 0.7] }
+              }
+              transition={isSettled
+                ? { duration: 0.3 }
+                : { duration: spinDur * 0.7, repeat: Infinity, ease: 'easeInOut', delay: i * (spinDur * 0.7 / SPOKES) }
+              }
+            />
+          )
+        })}
+      </motion.div>
+
+      {/* Label or "ALMA" text on settle */}
+      {isSettled ? (
+        <motion.span
+          className="text-[14px] font-bold tracking-wide"
+          style={{ color: PALETTE[0] }}
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
+          ALMA
+        </motion.span>
+      ) : (
+        <motion.span
+          className="text-[13px] font-medium text-zinc-400"
+          animate={{ opacity: [0.55, 1, 0.55] }}
+          transition={{ duration: spinDur * 0.8, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          {label}
+        </motion.span>
+      )}
     </div>
   )
 }

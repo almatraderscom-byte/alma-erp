@@ -37,7 +37,7 @@ interface AgentThreadProps {
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
   streamStatus?: string | null
-  streamMode?: 'fetching' | 'writing'
+  streamMode?: 'fetching' | 'writing' | 'settled'
   compacting?: boolean
 }
 
@@ -220,7 +220,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 </div>
               ) : (
                 <div className="min-w-0 max-w-[85%]">
-                  {msg.streaming && streamStatus && (
+                  {(msg.streaming || streamMode === 'settled') && streamStatus && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
                       label={streamStatus}
                       mode={streamMode ?? 'writing'}
