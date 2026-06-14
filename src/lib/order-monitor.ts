@@ -1,4 +1,4 @@
-import { listAgentOrders } from '@/lib/agent-api/orders.service'
+import { listAgentOrders, crossCheckPendingCounts } from '@/lib/agent-api/orders.service'
 import type { AgentOrder } from '@/lib/agent-api/orders.schema'
 import { daysAgoYmd, todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
@@ -27,11 +27,12 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
   const weekStart = daysAgoYmd(6)
   const today = todayYmdDhaka()
 
-  const [pending, recent, cancelled, returned] = await Promise.all([
+  const [pending, recent, cancelled, returned, pendingCheck] = await Promise.all([
     listAgentOrders({ status: 'pending', limit: 100 }),
     listAgentOrders({ startDate: weekStart, endDate: today, limit: 100 }),
     listAgentOrders({ status: 'cancelled', startDate: weekStart, endDate: today, limit: 100 }),
     listAgentOrders({ status: 'refunded', startDate: weekStart, endDate: today, limit: 100 }),
+    crossCheckPendingCounts(),
   ])
 
   const stuck = (pending.orders ?? []).filter((order) => {
@@ -48,7 +49,16 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
     })
   }
 
-  const pendingCount = pending.meta?.count ?? pending.orders?.length ?? 0
+  const pendingCount = pendingCheck.pendingCount
+  if (pendingCheck.mismatch && pendingCheck.note) {
+    issues.push({
+      type: 'mismatch',
+      severity: 'normal',
+      detail: pendingCheck.note,
+      count: pendingCount,
+    })
+  }
+
   if (pendingCount >= PILE_UP_THRESHOLD) {
     issues.push({
       type: 'pile_up',

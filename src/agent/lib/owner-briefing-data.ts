@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import {
   getAgentOrdersSummary,
   listAgentOrders,
+  crossCheckPendingCounts,
 } from '@/lib/agent-api/orders.service'
 import { getMessengerInbox, resolvePageId } from '@/agent/lib/meta'
 import { searchAgentMemory } from '@/agent/lib/memory-search'
@@ -40,7 +41,14 @@ export type OwnerBriefingData = {
     sevenDayAvg: number
     sevenDayOrderAvg: number
   } | null
-  pendingOrders: { count: number; sheetSyncedAt: string | null } | null
+  pendingOrders: {
+    count: number
+    gasPendingCount?: number
+    sheetSyncedAt: string | null
+    mismatch?: boolean
+    note?: string | null
+    unknownCount?: number
+  } | null
   inventory: { items: Array<{ name: string; currentStock: number; reorderLevel: number; sku: string }> } | null
   reorderSuggestions: ReorderSuggestion[]
   csWaiting: { unrepliedCount: number; nearWindowCount: number; openAlerts: number } | null
@@ -84,8 +92,15 @@ async function gatherSalesSignals() {
 
 async function gatherPendingOrders() {
   try {
-    const { meta } = await listAgentOrders({ status: 'pending', limit: 100 })
-    return { count: meta.count, sheetSyncedAt: meta.sheetSyncedAt ?? null }
+    const check = await crossCheckPendingCounts()
+    return {
+      count: check.pendingCount,
+      gasPendingCount: check.gasPendingCount,
+      sheetSyncedAt: check.sheetSyncedAt,
+      mismatch: check.mismatch,
+      note: check.note,
+      unknownCount: check.unknownCount,
+    }
   } catch {
     return null
   }
@@ -361,7 +376,9 @@ export function deriveBriefingDecisions(sig: {
         ? 'pending অর্ডারগুলো আজ confirm/deliver করুন — স্টাফকে push করতে বলুন'
         : issue.type === 'pile_up'
           ? 'pending queue clear করুন — অগ্রাধিকার অনুযায়ী confirm করুন'
-          : issue.type === 'high_cancel'
+          : issue.type === 'mismatch'
+            ? 'sheet sync refresh করুন বা ERP-তে সরাসরি verify করুন — count mismatch হতে পারে'
+            : issue.type === 'high_cancel'
             ? 'cancel কারণ খুঁজুন (CS/quality/pricing) — corrective action approve করার আগে জিজ্ঞেস করুন'
             : issue.type === 'high_return'
               ? 'analyze_returns চালিয়ে return কারণ দেখুন'

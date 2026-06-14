@@ -27,15 +27,18 @@ type GasOrderResponse = {
 }
 
 const ALMA_TO_AGENT: Record<string, AgentStatus> = {
-  Pending: 'pending',
-  Confirmed: 'confirmed',
-  Packed: 'processing',
-  Shipped: 'shipped',
-  Delivered: 'delivered',
-  CANCELLED: 'cancelled',
-  RETURNED: 'refunded',
-  RETURNED_PAID: 'refunded',
-  RETURNED_UNPAID: 'refunded',
+  pending: 'pending',
+  confirmed: 'confirmed',
+  packed: 'processing',
+  processing: 'processing',
+  shipped: 'shipped',
+  delivered: 'delivered',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+  returned: 'refunded',
+  returned_paid: 'refunded',
+  returned_unpaid: 'refunded',
+  refunded: 'refunded',
 }
 
 const AGENT_TO_ALMA: Partial<Record<AgentStatus, string>> = {
@@ -48,8 +51,21 @@ const AGENT_TO_ALMA: Partial<Record<AgentStatus, string>> = {
   refunded: 'RETURNED',
 }
 
+function normalizeStatus(s: string): string {
+  return String(s ?? '').trim().toLowerCase().replace(/\s+/g, '_')
+}
+
 function mapStatus(almaStatus: string): AgentStatus {
-  return ALMA_TO_AGENT[almaStatus] ?? 'pending'
+  const norm = normalizeStatus(almaStatus)
+  if (!norm) return 'unknown'
+  const mapped = ALMA_TO_AGENT[norm]
+  if (!mapped) {
+    console.warn(
+      `[orders] unmapped status "${almaStatus}" (normalized "${norm}") — treating as 'unknown', NOT pending`,
+    )
+    return 'unknown'
+  }
+  return mapped
 }
 
 function orderDateToIso(dateStr: string): string {
@@ -91,7 +107,7 @@ export function mapOrderToAgent(order: Order): AgentOrder {
     customerPhone: order.phone || null,
     totalAmount: Number(order.sell_price || 0),
     currency: 'BDT',
-    status: mapStatus(String(order.status || 'Pending')),
+    status: mapStatus(String(order.status ?? '')),
     placedAt: orderDateToIso(order.date),
     itemCount: itemCount(order),
     paymentMethod: order.payment || null,
@@ -115,17 +131,67 @@ export interface ListAgentOrdersInput {
   toIso?: string | null
 }
 
+export interface ListAgentOrdersMeta {
+  count: number
+  limit: number
+  from: string | null
+  to: string | null
+  dataSource: 'gas_sheet'
+  fetchedAt: string
+  sheetSyncedAt: string | null
+  unknownCount?: number
+  pendingCrossCheck?: {
+    gasFilteredCount: number
+    mappedPendingCount: number
+    mismatch: boolean
+    note: string | null
+  }
+}
+
+export async function crossCheckPendingCounts(): Promise<{
+  pendingCount: number
+  gasPendingCount: number
+  unknownCount: number
+  sheetSyncedAt: string | null
+  fetchedAt: string
+  mismatch: boolean
+  note: string | null
+}> {
+  const [gasPending, allRecent] = await Promise.all([
+    listAgentOrders({ status: 'pending', limit: 500 }),
+    listAgentOrders({ limit: 500 }),
+  ])
+
+  const mappedPending = allRecent.orders.filter((o) => o.status === 'pending').length
+  const unknownCount = allRecent.orders.filter((o) => o.status === 'unknown').length
+  const gasCount = gasPending.meta.count
+  const mismatch = gasCount !== mappedPending
+
+  let note: string | null = null
+  if (mismatch) {
+    note =
+      `GAS অনুযায়ী ${gasCount}টি pending, mapped count ${mappedPending} — sync delay বা status mismatch হতে পারে; refresh করুন।`
+  }
+  if (unknownCount > 0) {
+    const unk =
+      `${unknownCount}টি অর্ডার unmapped status (unknown) — worker log-এ "[orders] unmapped status" দেখুন।`
+    note = note ? `${note} ${unk}` : unk
+  }
+
+  return {
+    pendingCount: mappedPending,
+    gasPendingCount: gasCount,
+    unknownCount,
+    sheetSyncedAt: gasPending.meta.sheetSyncedAt ?? allRecent.meta.sheetSyncedAt,
+    fetchedAt: new Date().toISOString(),
+    mismatch,
+    note,
+  }
+}
+
 export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
   orders: AgentOrder[]
-  meta: {
-    count: number
-    limit: number
-    from: string | null
-    to: string | null
-    dataSource: 'gas_sheet'
-    fetchedAt: string
-    sheetSyncedAt: string | null
-  }
+  meta: ListAgentOrdersMeta
 }> {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 100)
   const params: Record<string, string> = {
@@ -156,25 +222,45 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
     })
   }
 
-  if (input.status && input.status !== 'all' && !almaStatus) {
+  if (input.status && input.status !== 'all') {
     const want = input.status.toLowerCase()
-    orders = orders.filter(o => o.status === want)
+    orders = orders.filter((o) => o.status === want)
   }
 
   const total = orders.length
   const slice = orders.slice(0, limit)
+  const unknownCount = orders.filter((o) => o.status === 'unknown').length
+
+  const meta: ListAgentOrdersMeta = {
+    count: total,
+    limit,
+    from: input.fromIso ?? null,
+    to: input.toIso ?? null,
+    dataSource: 'gas_sheet',
+    fetchedAt: new Date().toISOString(),
+    sheetSyncedAt: data.syncedAt ?? null,
+    unknownCount,
+  }
+
+  if (input.status === 'pending' || !input.status || input.status === 'all') {
+    const mappedPending = orders.filter((o) => o.status === 'pending').length
+    if (input.status === 'pending') {
+      const gasFiltered = total
+      const mismatch = gasFiltered !== mappedPending
+      meta.pendingCrossCheck = {
+        gasFilteredCount: gasFiltered,
+        mappedPendingCount: mappedPending,
+        mismatch,
+        note: mismatch
+          ? `GAS filter returned ${gasFiltered} rows but only ${mappedPending} map to pending — stale sync or bad status strings.`
+          : null,
+      }
+    }
+  }
 
   return {
     orders: slice,
-    meta: {
-      count: total,
-      limit,
-      from: input.fromIso ?? null,
-      to: input.toIso ?? null,
-      dataSource: 'gas_sheet',
-      fetchedAt: new Date().toISOString(),
-      sheetSyncedAt: data.syncedAt ?? null,
-    },
+    meta,
   }
 }
 

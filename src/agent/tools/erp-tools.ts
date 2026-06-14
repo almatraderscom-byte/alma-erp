@@ -3,6 +3,7 @@ import {
   listAgentOrders,
   getAgentOrdersSummary,
   buildOrdersSummary,
+  crossCheckPendingCounts,
 } from '@/lib/agent-api/orders.service'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listLowStock, listProducts } from '@/lib/agent-api/services/products.service'
@@ -250,7 +251,8 @@ const get_orders: AgentTool = {
   name: 'get_orders',
   description:
     'Lists individual orders with optional status and date filters. ' +
-    'status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded". ' +
+    'status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded" | "unknown". ' +
+    'Counts use mapped status from the synced sheet (meta.sheetSyncedAt). If meta.pendingCrossCheck.mismatch is true, mention sync delay — do not assert pending count as ERP fact. ' +
     'from/to: YYYY-MM-DD. limit: max 100 (default 20).',
   input_schema: {
     type: 'object' as const,
@@ -530,8 +532,8 @@ const get_dashboard_snapshot: AgentTool = {
     try {
       const todaySummary = await getAgentOrdersSummary('today')
 
-      const [pendingOrders, refundedOrders] = await Promise.all([
-        listAgentOrders({ status: 'pending', limit: 100 }),
+      const [pendingCheck, refundedOrders] = await Promise.all([
+        crossCheckPendingCounts(),
         listAgentOrders({ status: 'refunded', limit: 50 }),
       ])
 
@@ -561,11 +563,19 @@ const get_dashboard_snapshot: AgentTool = {
           date: todayYmd,
           todayOrders: todaySummary.totalOrders,
           todayRevenue: roundMoney(todaySummary.totalRevenue),
-          pendingOrdersCount: pendingOrders.meta.count,
-          pendingOrdersCountSource: 'gas_sheet',
-          pendingOrdersFetchedAt: pendingOrders.meta.fetchedAt,
-          sheetSyncedAt: pendingOrders.meta.sheetSyncedAt,
-          pendingCountMismatch: null,
+          pendingOrdersCount: pendingCheck.pendingCount,
+          gasPendingCount: pendingCheck.gasPendingCount,
+          pendingOrdersCountSource: 'gas_sheet_mapped',
+          pendingOrdersFetchedAt: pendingCheck.fetchedAt,
+          sheetSyncedAt: pendingCheck.sheetSyncedAt,
+          pendingCountMismatch: pendingCheck.mismatch
+            ? {
+                note: pendingCheck.note,
+                gasPendingCount: pendingCheck.gasPendingCount,
+                mappedPendingCount: pendingCheck.pendingCount,
+              }
+            : null,
+          unknownOrderCount: pendingCheck.unknownCount,
           pendingReturnsCount: refundedOrders.meta.count,
           checkedInEmployees: checkedInToday,
           currency: 'BDT',

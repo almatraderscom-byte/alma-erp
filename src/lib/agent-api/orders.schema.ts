@@ -8,6 +8,7 @@ export const OrderStatusSchema = z.enum([
   'delivered',
   'cancelled',
   'refunded',
+  'unknown',
 ])
 
 export const AgentOrderSchema = z.object({
