@@ -29,6 +29,26 @@ export function buildDispatchSummary(date: string, proposed: ProposedTaskRow[]):
   return `স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${lines.join('\n')}`
 }
 
+type DispatchPayload = { date?: string; taskIds?: string[] }
+
+/** Latest executed/approved dispatch for a date — authoritative task scope for monitor/progress. */
+export async function getActiveDispatchTaskIdsForDate(date: string): Promise<string[] | null> {
+  const rows = await db.agentPendingAction.findMany({
+    where: {
+      type: 'dispatch_staff_tasks',
+      status: { in: ['executed', 'approved'] },
+    },
+    orderBy: { resolvedAt: 'desc' },
+    select: { payload: true },
+    take: 30,
+  })
+  const match = rows.find((r: { payload: DispatchPayload }) => {
+    const p = r.payload as DispatchPayload
+    return p?.date === date && Array.isArray(p.taskIds) && p.taskIds.length > 0
+  })
+  return match ? ((match.payload as DispatchPayload).taskIds ?? null) : null
+}
+
 /** Rebuild pending action payload + summary from current proposed tasks in DB. */
 export async function syncPendingDispatchAction(date: string): Promise<string | null> {
   const proposed = await loadProposedTasksForDate(date)
@@ -174,10 +194,11 @@ export async function prepareCorrectedDispatchPending(date: string): Promise<Pre
   const proposed = await loadProposedTasksForDate(date)
   if (!proposed.length) return { ok: false, reason: 'no_proposed' }
 
+  // Cancel ALL superseded work (including done/awaiting_proof from wrong dispatch).
   const cancelled = await db.agentStaffTask.updateMany({
     where: {
       proposedFor: new Date(date),
-      status: { in: ['sent', 'approved'] },
+      status: { notIn: ['proposed', 'cancelled'] },
     },
     data: { status: 'cancelled' },
   })

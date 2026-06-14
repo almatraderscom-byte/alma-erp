@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -85,7 +86,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   const today = todayYmdDhaka()
   const todayStart = new Date(`${today}T00:00:00+06:00`)
 
-  const [todayTasks, todayOutbox] = await Promise.all([
+  const [todayTasks, todayOutbox, dispatchTaskIds] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -99,7 +100,12 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
       orderBy: { createdAt: 'desc' },
       take: 200,
     }),
+    getActiveDispatchTaskIdsForDate(today),
   ])
+
+  const scopedTasks = dispatchTaskIds?.length
+    ? (todayTasks as Array<{ id: string }>).filter((t) => dispatchTaskIds.includes(t.id))
+    : todayTasks
 
   const feed = todayOutbox.map(mapOutbox)
   const failures = feed.filter((f) => f.status === 'failed')
@@ -110,7 +116,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
 
   const staffMap = new Map<string, StaffSummary>()
 
-  for (const t of todayTasks as Array<{
+  for (const t of scopedTasks as Array<{
     staffId: string
     status: string
     staff: { name: string }
@@ -175,7 +181,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     const taskIds = Array.isArray(row.relatedTaskIds)
       ? (row.relatedTaskIds as string[])
       : []
-    const hasSentTasks = (todayTasks as Array<{ staffId: string; id: string; status: string }>).some(
+    const hasSentTasks = (scopedTasks as Array<{ staffId: string; id: string; status: string }>).some(
       (t) => t.staffId === row.staffId && t.status === 'sent' && (taskIds.length === 0 || taskIds.includes(t.id)),
     )
     if (hasSentTasks) {

@@ -4,6 +4,7 @@
  */
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { bnNum } from './bn-format.mjs'
+import { fetchActiveDispatchTaskIds, filterTasksToActiveDispatch } from './dispatch-scope.mjs'
 
 function progressKvKey(staffId, date) {
   return `staff_task_progress:${staffId}:${date}`
@@ -30,7 +31,7 @@ export function dhakaTodayYmd() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
-/** All non-cancelled tasks for one staff member on a calendar day. */
+/** All non-cancelled tasks for one staff member on a calendar day (scoped to latest dispatch). */
 export async function fetchStaffTasksForDay(supabase, staffId, dateYmd) {
   const { data, error } = await supabase
     .from('staff_tasks')
@@ -40,7 +41,9 @@ export async function fetchStaffTasksForDay(supabase, staffId, dateYmd) {
     .neq('status', 'cancelled')
     .order('created_at', { ascending: true })
   if (error) throw new Error(error.message)
-  return data ?? []
+  const rows = data ?? []
+  const dispatchIds = await fetchActiveDispatchTaskIds(supabase, dateYmd)
+  return filterTasksToActiveDispatch(rows, dispatchIds)
 }
 
 export async function resolveTaskProgressContext(supabase, taskId) {
