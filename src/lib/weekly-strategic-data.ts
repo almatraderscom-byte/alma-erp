@@ -491,6 +491,45 @@ function fallbackMessage(data: WeeklyStrategicData): string {
   return lines.join('\n')
 }
 
+function selfReviewSection(data: WeeklyStrategicData): string {
+  const sr = data.selfReview
+  const lines = [
+    '🤖 *আমার নিজের রিভিউ:*',
+    `• এই সপ্তাহে ${sr.suggestionsMade}টি পরামর্শ — approve ${sr.approved}, reject ${sr.rejected}${sr.stillPending ? `, pending ${sr.stillPending}` : ''}${sr.acceptanceRatePct != null ? ` (acceptance ${sr.acceptanceRatePct}%)` : ''}।`,
+    `• ফলাফল: ${sr.outcomes.worked} worked, ${sr.outcomes.noEffect} no-effect, ${sr.outcomes.worse} worse, ${sr.outcomes.stillMeasuring} measuring।`,
+  ]
+  if (sr.misses.length) {
+    for (const m of sr.misses.slice(0, 2)) {
+      lines.push(`• ভুল: "${m.suggestion.slice(0, 60)}" — ${m.learning}`)
+    }
+  } else if (!sr.suggestionsMade) {
+    lines.push('• এখনো পর্যাপ্ত outcome data নেই — পরামর্শ track শুরু হয়েছে।')
+  } else {
+    lines.push('• এখনো পরিমাপ matured হয়নি — সতর্ক থাকব।')
+  }
+  return lines.join('\n')
+}
+
+function focusSection(data: WeeklyStrategicData): string {
+  if (!data.focusCandidates.length) {
+    return '🎯 *আগামী সপ্তাহের ফোকাস:*\n• ডেটা থেকে স্পষ্ট priority এখনো কম — সেল ট্রেন্ড মনিটর করুন।'
+  }
+  const lines = ['🎯 *আগামী সপ্তাহের ফোকাস:*']
+  data.focusCandidates.forEach((f, i) => lines.push(`${i + 1}. ${f.action} — ${f.reason}`))
+  return lines.join('\n')
+}
+
+function ensureCompleteNarrative(text: string, data: WeeklyStrategicData): string {
+  let out = text.trim()
+  if (!/নিজের রিভিউ|আমার নিজের|🤖/i.test(out)) {
+    out += `\n\n${selfReviewSection(data)}`
+  }
+  if (!/আগামী সপ্তাহের ফোকাস|🎯/i.test(out)) {
+    out += `\n\n${focusSection(data)}`
+  }
+  return out
+}
+
 export async function narrateWeeklyStrategic(data: WeeklyStrategicData): Promise<string> {
   if (!isAnthropicConfigured()) return fallbackMessage(data)
 
@@ -499,12 +538,12 @@ export async function narrateWeeklyStrategic(data: WeeklyStrategicData): Promise
 
   const res = await client.messages.create({
     model: AGENT_MODEL,
-    max_tokens: 700,
+    max_tokens: 1100,
     messages: [{
       role: 'user',
       content:
         'আপনি ALMA Lifestyle-এর সিনিয়র বিজনেস অ্যানালিস্ট। নিচের REAL ডেটা থেকে সাপ্তাহিক স্ট্র্যাটেজিক রিভিউ লিখুন — শুধু বাংলায়, Telegram markdown (*bold*).\n\n' +
-        'ফরম্যাট (সংক্ষিপ্ত):\n' +
+        'ফরম্যাট (সব ৪টি সেকশন অবশ্যই শেষ করুন):\n' +
         '📊 *সাপ্তাহিক স্ট্র্যাটেজিক রিভিউ*\n' +
         'বিজনেস altitude (WoW সেল, টপ/বটম, রিটার্ন, নতুন vs রিপিট, ad spend যদি থাকে)\n' +
         'বাড়ছে / আটকে — ২-৩ clearest mover + সম্ভাব্য driver\n' +
@@ -514,7 +553,7 @@ export async function narrateWeeklyStrategic(data: WeeklyStrategicData): Promise
         '- শুধু দেওয়া সংখ্যা ব্যবহার করুন; অনুমান করবেন না।\n' +
         '- Misses অবশ্যই উল্লেখ করুন — শুধু win দেখাবেন না।\n' +
         '- Causation দাবি করবেন না; correlation ভাষা।\n' +
-        '- সর্বোচ্চ ~৪০০ শব্দ।\n\n' +
+        '- সংক্ষিপ্ত রাখুন কিন্তু ৪টি সেকশন incomplete রেখে শেষ করবেন না।\n\n' +
         `DATA:\n${factsJson}`,
     }],
   })
@@ -538,7 +577,7 @@ export async function narrateWeeklyStrategic(data: WeeklyStrategicData): Promise
     dedupKey: `weekly-strategic:${data.period.thisWeekEnd}`,
   })
 
-  return text
+  return ensureCompleteNarrative(text, data)
 }
 
 export async function buildWeeklyStrategicReview(): Promise<{ message: string; data: WeeklyStrategicData }> {
