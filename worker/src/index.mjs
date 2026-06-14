@@ -398,17 +398,34 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
 // ── Phase 6: Schedulers ────────────────────────────────────────────────────
 
 let schedulerQueue = null
+let runSchedulerJobFn = null
 try {
-  schedulerQueue = await setupSchedulers({
+  const schedulerSetup = await setupSchedulers({
     connection,
     supabase,
     bot: telegramBot,
   })
+  schedulerQueue = schedulerSetup?.schedulerQueue ?? null
+  runSchedulerJobFn = schedulerSetup?.runSchedulerJob ?? null
   if (schedulerQueue) {
     // Initialize today's salah records on startup (idempotent)
     await initializeDailySalahRecords(supabase).catch(err =>
       console.error('[salah] init failed:', err.message)
     )
+    // Catch-up missed critical duties after worker was down
+    if (runSchedulerJobFn) {
+      setTimeout(() => {
+        import('./schedulers/catchup.mjs')
+          .then(({ runCatchup }) =>
+            runCatchup({
+              supabase,
+              bot: telegramBot,
+              runJob: (name, opts) => runSchedulerJobFn(name, opts),
+            }),
+          )
+          .catch((e) => console.error('[catchup] startup:', e.message))
+      }, 15_000)
+    }
   }
 } catch (err) {
   console.error('[schedulers] setup error:', err.message)

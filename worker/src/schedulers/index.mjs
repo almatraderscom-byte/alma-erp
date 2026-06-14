@@ -67,6 +67,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'night-report',           cronUtc: '0 15 * * *',   description: 'Night staff report (21:00 Dhaka)' },
   { name: 'approval-escalation',  cronUtc: '30 16,17 * * *', description: 'Chase unapproved task proposal (22:30/23:30 Dhaka)' },
   { name: 'approval-tracker',     cronUtc: '0 4,8,13 * * *', description: 'Re-surface unresolved approvals (10:00, 14:00, 19:00 Dhaka)' },
+  { name: 'catchup-scan',         cronUtc: '0 4 * * *',    description: 'Catch-up missed duties (10:00 Dhaka)' },
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
   { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
   { name: 'order-watch',            cronUtc: '0 6,12 * * *', description: 'Order issue scan (12:00, 18:00 Dhaka)' },
@@ -98,6 +99,214 @@ export const SCHEDULER_REGISTRY = [
   { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
 ]
 
+// ── Shared job runner (cron worker + catch-up) ───────────────────────────────
+
+/**
+ * @param {string} jobName
+ * @param {{ supabase: import('@supabase/supabase-js').SupabaseClient, bot: import('telegraf').Telegraf }} context
+ * @param {{ catchUp?: boolean }} [opts]
+ */
+export async function runSchedulerJob(jobName, context, opts = {}) {
+  const { supabase, bot } = context
+  let dutyResult = null
+
+  switch (jobName) {
+    case 'salah-init': {
+      const { initializeDailySalahRecords } = await lazy.salahScheduler()
+      await initializeDailySalahRecords(supabase)
+      await seedDailyDuties(supabase)
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'approval-escalation': {
+      const { runApprovalEscalation } = await lazy.approvalEscalation()
+      await runApprovalEscalation({ supabase, bot })
+      break
+    }
+    case 'approval-tracker': {
+      const { runApprovalTracker } = await lazy.approvalTracker()
+      await runApprovalTracker({ supabase, bot })
+      break
+    }
+    case 'catchup-scan': {
+      const { runCatchup } = await import('./catchup.mjs')
+      await runCatchup({
+        supabase,
+        bot,
+        runJob: (name, catchOpts) => runSchedulerJob(name, context, catchOpts ?? {}),
+      })
+      break
+    }
+    case 'evening-proposal': {
+      const { runEveningProposal } = await lazy.eveningProposal()
+      await runEveningProposal(supabase)
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'owner-briefing': {
+      const { runOwnerBriefing } = await lazy.ownerBriefing()
+      await runOwnerBriefing({ supabase, bot })
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'order-watch': {
+      const { runOrderWatch } = await lazy.orderWatch()
+      await runOrderWatch({ bot })
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'morning-staff-reminder': {
+      const { runMorningStaffReminder } = await lazy.morningStaffReminder()
+      dutyResult = await runMorningStaffReminder(context)
+      break
+    }
+    case 'ads-monitor': {
+      const { runAdsMonitor } = await lazy.adsMonitor()
+      await runAdsMonitor({ supabase })
+      break
+    }
+    case 'midday-checkin': {
+      const { runMiddayCheckin } = await lazy.middayCheckin()
+      await runMiddayCheckin(context)
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'staff-morale': {
+      const { runStaffMorale } = await lazy.staffMorale()
+      dutyResult = await runStaffMorale(context)
+      break
+    }
+    case 'staff-presence': {
+      const { runStaffPresence } = await lazy.staffPresence()
+      await runStaffPresence(context)
+      break
+    }
+    case 'salah-escalation': {
+      const { checkAndEscalateSalah } = await lazy.salahScheduler()
+      await checkAndEscalateSalah(context)
+      break
+    }
+    case 'messenger-scan': {
+      const { runMessengerScan } = await lazy.messengerScan()
+      await runMessengerScan(context)
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'session-summarizer': {
+      const { runSessionSummarizer } = await lazy.sessionSummarizer()
+      await runSessionSummarizer()
+      break
+    }
+    case 'night-report': {
+      const { runNightReport } = await lazy.nightReport()
+      await runNightReport(context)
+      dutyResult = { dutyStatus: 'done' }
+      break
+    }
+    case 'weekly-review': {
+      const { runWeeklyReview } = await lazy.weeklyReview()
+      await runWeeklyReview({ supabase })
+      break
+    }
+    case 'daily-summary': {
+      const { runDailySummary } = await lazy.dailySummary()
+      await runDailySummary(context)
+      break
+    }
+    case 'customer-intel': {
+      const { runCustomerIntel } = await lazy.customerIntel()
+      await runCustomerIntel({ bot })
+      break
+    }
+    case 'subscription-renewal': {
+      const { runSubscriptionRenewalCheck } = await lazy.subscriptionRenewal()
+      await runSubscriptionRenewalCheck(context)
+      break
+    }
+    case 'budget-check': {
+      const { runBudgetCheck } = await lazy.budgetCheck()
+      await runBudgetCheck()
+      break
+    }
+    case 'balance-check': {
+      const { runBalanceCheck } = await lazy.balanceCheck()
+      await runBalanceCheck()
+      break
+    }
+    case 'proof-timeout': {
+      const { runProofTimeoutCheck } = await lazy.proofTimeout()
+      await runProofTimeoutCheck(context)
+      break
+    }
+    case 'ack-escalation': {
+      const { runAckEscalation } = await lazy.ackEscalation()
+      await runAckEscalation(context)
+      break
+    }
+    case 'lunch-watch': {
+      const { runLunchWatch } = await lazy.lunchWatch()
+      await runLunchWatch(context)
+      break
+    }
+    case 'personal-checkin': {
+      const { runPersonalCheckin } = await lazy.personalCheckin()
+      dutyResult = await runPersonalCheckin(context)
+      break
+    }
+    case 'personal-midday': {
+      const { runPersonalMidday } = await lazy.personalCheckin()
+      dutyResult = await runPersonalMidday(context)
+      break
+    }
+    case 'cost-reconcile': {
+      const { runCostReconciliation } = await lazy.costReconcile()
+      await runCostReconciliation()
+      break
+    }
+    case 'reminder-ticker': {
+      const { runReminderTicker } = await lazy.reminderTicker()
+      await runReminderTicker(context)
+      break
+    }
+    case 'cs-index-products': {
+      const { runCsIndexProducts } = await lazy.csIndexProducts()
+      await runCsIndexProducts()
+      break
+    }
+    case 'cs-escalation': {
+      const { runCsEscalation } = await lazy.csEscalation()
+      await runCsEscalation(bot)
+      break
+    }
+    case 'cs-followups': {
+      const { runCsFollowups } = await lazy.csFollowups()
+      await runCsFollowups()
+      break
+    }
+    case 'cs-messenger-poll': {
+      const { pollMessengerInbox } = await lazy.csMessengerPoll()
+      await pollMessengerInbox()
+      break
+    }
+    case 'token-health': {
+      const { checkPageTokenHealth } = await lazy.tokenHealth()
+      await checkPageTokenHealth()
+      break
+    }
+    default:
+      console.warn(`[schedulers] unknown job: ${jobName}`)
+  }
+
+  if (isTrackedDuty(jobName)) {
+    const detail = opts.catchUp
+      ? `(catch-up — worker had been down)${dutyResult?.dutyDetail ? ` — ${dutyResult.dutyDetail}` : ''}`
+      : (dutyResult?.dutyDetail ?? null)
+    await logDuty(supabase, jobName, dutyResult?.dutyStatus ?? 'done', detail)
+  }
+
+  return dutyResult
+}
+
 // ── Setup function (called from worker/src/index.mjs) ─────────────────────────
 
 export async function setupSchedulers({ connection, supabase, bot }) {
@@ -105,6 +314,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     console.log('[schedulers] SCHEDULERS_ENABLED != true — all scheduled jobs disabled')
     return null
   }
+
+  const context = { supabase, bot }
 
   const schedulerQueue = new Queue('schedulers', {
     connection,
@@ -140,197 +351,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     const started = Date.now()
     console.log(`[schedulers] ▶ ${job.name} starting...`)
 
-    const context = { supabase, bot }
-    let dutyResult = null
-
     try {
-      switch (job.name) {
-        case 'salah-init': {
-          const { initializeDailySalahRecords } = await lazy.salahScheduler()
-          await initializeDailySalahRecords(supabase)
-          await seedDailyDuties(supabase)
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'approval-escalation': {
-          const { runApprovalEscalation } = await lazy.approvalEscalation()
-          await runApprovalEscalation({ supabase, bot })
-          break
-        }
-        case 'approval-tracker': {
-          const { runApprovalTracker } = await lazy.approvalTracker()
-          await runApprovalTracker({ supabase, bot })
-          break
-        }
-        case 'evening-proposal': {
-          const { runEveningProposal } = await lazy.eveningProposal()
-          await runEveningProposal(supabase)
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'owner-briefing': {
-          const { runOwnerBriefing } = await lazy.ownerBriefing()
-          await runOwnerBriefing({ supabase, bot })
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'order-watch': {
-          const { runOrderWatch } = await lazy.orderWatch()
-          await runOrderWatch({ bot })
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'morning-staff-reminder': {
-          const { runMorningStaffReminder } = await lazy.morningStaffReminder()
-          dutyResult = await runMorningStaffReminder(context)
-          break
-        }
-        case 'ads-monitor': {
-          const { runAdsMonitor } = await lazy.adsMonitor()
-          await runAdsMonitor({ supabase })
-          break
-        }
-        case 'midday-checkin': {
-          const { runMiddayCheckin } = await lazy.middayCheckin()
-          await runMiddayCheckin(context)
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'staff-morale': {
-          const { runStaffMorale } = await lazy.staffMorale()
-          dutyResult = await runStaffMorale(context)
-          break
-        }
-        case 'staff-presence': {
-          const { runStaffPresence } = await lazy.staffPresence()
-          await runStaffPresence(context)
-          break
-        }
-        case 'salah-escalation': {
-          const { checkAndEscalateSalah } = await lazy.salahScheduler()
-          await checkAndEscalateSalah(context)
-          break
-        }
-        case 'messenger-scan': {
-          const { runMessengerScan } = await lazy.messengerScan()
-          await runMessengerScan(context)
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'session-summarizer': {
-          const { runSessionSummarizer } = await lazy.sessionSummarizer()
-          await runSessionSummarizer()
-          break
-        }
-        case 'night-report': {
-          const { runNightReport } = await lazy.nightReport()
-          await runNightReport(context)
-          dutyResult = { dutyStatus: 'done' }
-          break
-        }
-        case 'weekly-review': {
-          const { runWeeklyReview } = await lazy.weeklyReview()
-          await runWeeklyReview({ supabase })
-          break
-        }
-        case 'daily-summary': {
-          const { runDailySummary } = await lazy.dailySummary()
-          await runDailySummary(context)
-          break
-        }
-        case 'customer-intel': {
-          const { runCustomerIntel } = await lazy.customerIntel()
-          await runCustomerIntel({ bot })
-          break
-        }
-        case 'subscription-renewal': {
-          const { runSubscriptionRenewalCheck } = await lazy.subscriptionRenewal()
-          await runSubscriptionRenewalCheck(context)
-          break
-        }
-        case 'budget-check': {
-          const { runBudgetCheck } = await lazy.budgetCheck()
-          await runBudgetCheck()
-          break
-        }
-        case 'balance-check': {
-          const { runBalanceCheck } = await lazy.balanceCheck()
-          await runBalanceCheck()
-          break
-        }
-        case 'proof-timeout': {
-          const { runProofTimeoutCheck } = await lazy.proofTimeout()
-          await runProofTimeoutCheck(context)
-          break
-        }
-        case 'ack-escalation': {
-          const { runAckEscalation } = await lazy.ackEscalation()
-          await runAckEscalation(context)
-          break
-        }
-        case 'lunch-watch': {
-          const { runLunchWatch } = await lazy.lunchWatch()
-          await runLunchWatch(context)
-          break
-        }
-        case 'personal-checkin': {
-          const { runPersonalCheckin } = await lazy.personalCheckin()
-          dutyResult = await runPersonalCheckin(context)
-          break
-        }
-        case 'personal-midday': {
-          const { runPersonalMidday } = await lazy.personalCheckin()
-          dutyResult = await runPersonalMidday(context)
-          break
-        }
-        case 'cost-reconcile': {
-          const { runCostReconciliation } = await lazy.costReconcile()
-          await runCostReconciliation()
-          break
-        }
-        case 'reminder-ticker': {
-          const { runReminderTicker } = await lazy.reminderTicker()
-          await runReminderTicker(context)
-          break
-        }
-        case 'cs-index-products': {
-          const { runCsIndexProducts } = await lazy.csIndexProducts()
-          await runCsIndexProducts()
-          break
-        }
-        case 'cs-escalation': {
-          const { runCsEscalation } = await lazy.csEscalation()
-          await runCsEscalation(bot)
-          break
-        }
-        case 'cs-followups': {
-          const { runCsFollowups } = await lazy.csFollowups()
-          await runCsFollowups()
-          break
-        }
-        case 'cs-messenger-poll': {
-          const { pollMessengerInbox } = await lazy.csMessengerPoll()
-          await pollMessengerInbox()
-          break
-        }
-        case 'token-health': {
-          const { checkPageTokenHealth } = await lazy.tokenHealth()
-          await checkPageTokenHealth()
-          break
-        }
-        default:
-          console.warn(`[schedulers] unknown job: ${job.name}`)
-      }
-
-      if (isTrackedDuty(job.name)) {
-        await logDuty(
-          supabase,
-          job.name,
-          dutyResult?.dutyStatus ?? 'done',
-          dutyResult?.dutyDetail ?? null,
-        )
-      }
-
+      await runSchedulerJob(job.name, context)
       const elapsed = ((Date.now() - started) / 1000).toFixed(1)
       console.log(`[schedulers] ✓ ${job.name} done (${elapsed}s)`)
     } catch (err) {
@@ -339,7 +361,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
       }
       const elapsed = ((Date.now() - started) / 1000).toFixed(1)
       console.error(`[schedulers] ✗ ${job.name} FAILED (${elapsed}s):`, err.message, err.stack)
-      throw err  // BullMQ will retry based on job options
+      throw err
     }
   }, {
     connection,
@@ -359,5 +381,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     console.warn('[schedulers] seedDailyDuties failed:', e.message)
   }
 
-  return schedulerQueue
+  return {
+    schedulerQueue,
+    runSchedulerJob: (jobName, opts) => runSchedulerJob(jobName, context, opts),
+  }
 }

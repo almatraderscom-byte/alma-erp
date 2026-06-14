@@ -69,6 +69,7 @@ function fmtTime(iso: string) {
 function dutyIcon(status: AgentDutyRow['status']) {
   if (status === 'done') return '✅'
   if (status === 'failed') return '❌'
+  if (status === 'missed') return '🔴'
   if (status === 'skipped') return '⏭️'
   return '⏳'
 }
@@ -165,12 +166,18 @@ export default function AgentStaffMonitor() {
                 'flex items-center justify-between rounded-lg border px-3 py-2 text-xs',
                 d.status === 'failed'
                   ? 'border-red-500/30 bg-red-500/5'
-                  : 'border-white/10 bg-white/[0.02]',
+                  : d.status === 'missed'
+                    ? 'border-orange-500/40 bg-orange-500/10'
+                    : 'border-white/10 bg-white/[0.02]',
               )}
             >
               <span className="text-zinc-200">{icon} {d.label}</span>
               <span className="max-w-[45%] truncate text-right text-zinc-500">
-                {d.status === 'skipped' && d.detail ? d.detail : time}
+                {d.status === 'missed'
+                  ? (d.detail ?? 'মিস হয়েছে')
+                  : d.status === 'skipped' && d.detail
+                    ? d.detail
+                    : time}
               </span>
             </div>
           )

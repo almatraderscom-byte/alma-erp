@@ -28,3 +28,17 @@ export const JOB_TO_DUTY = {
   'night-report': 'night_report',
   'personal-checkin': 'personal_checkin',
 }
+
+/**
+ * Catch-up policy (Dhaka minutes-of-day):
+ *  - scheduledAfterMin: normal window start — don't catch up before this.
+ *  - catchUpUntilMin: too late to run safely — mark missed + alert.
+ *  - critical: owner alert on miss.
+ */
+export const DUTY_CATCHUP = {
+  morning_dispatch: { scheduledAfterMin: 9 * 60, catchUpUntilMin: 14 * 60, critical: true },
+  owner_briefing: { scheduledAfterMin: 7 * 60 + 30, catchUpUntilMin: 12 * 60, critical: true },
+  evening_proposal: { scheduledAfterMin: 21 * 60 + 5, catchUpUntilMin: 23 * 60 + 30, critical: true },
+  night_report: { scheduledAfterMin: 21 * 60, catchUpUntilMin: 23 * 60 + 59, critical: false },
+  order_watch: { scheduledAfterMin: 12 * 60, catchUpUntilMin: 20 * 60, critical: false },
+}

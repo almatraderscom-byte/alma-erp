@@ -14,7 +14,7 @@ export const DAILY_DUTIES = [
   { duty: 'personal_checkin', label: '🤲 সন্ধ্যার খোঁজখবর' },
 ] as const
 
-export type AgentDutyStatus = 'pending' | 'done' | 'failed' | 'skipped'
+export type AgentDutyStatus = 'pending' | 'done' | 'failed' | 'skipped' | 'missed'
 
 export type AgentDutyRow = {
   id: string
