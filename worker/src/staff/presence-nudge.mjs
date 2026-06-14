@@ -1,4 +1,4 @@
-import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
 const DONE_STATUSES = new Set(['done', 'done_unverified', 'verified'])
 
@@ -43,11 +43,20 @@ export async function runStaffPresence({ supabase, bot }) {
       msg = `📊 ${staff.name} ভাই, ${done}/${total} শেষ (${pct}%)। এগিয়ে যান — track করছি।`
     }
 
-    await sendMarkdownSafe(bot.telegram, staff.telegramChatId, msg, {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` },
-        ]],
+    await loggedSendToStaff(bot.telegram, {
+      supabase,
+      staffId: staff.id,
+      staffName: staff.name,
+      businessId: 'ALMA_LIFESTYLE',
+      type: 'presence',
+      content: msg,
+      chatId: staff.telegramChatId,
+      extra: {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` },
+          ]],
+        },
       },
     }).catch(() => {})
   }

@@ -5,6 +5,7 @@
 
 import { dispatchTasksToStaff } from './dispatch.mjs'
 import { notify } from '../notify/index.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
 export async function runMorningStaffReminder({ supabase, bot }) {
   console.log('[morning-staff-reminder] starting...')
@@ -86,20 +87,28 @@ export async function runMorningStaffReminder({ supabase, bot }) {
     if (!chatId || !bot) continue
 
     const taskList = tasks.map((t, i) => `${i + 1}. ${t.title}`).join('\n')
-    await bot.telegram.sendMessage(
-      chatId,
+    const reminderMsg =
       `🌅 সুপ্রভাত ${staffName} ভাই!\n\n` +
-        `📋 *আজকের কাজের তালিকা:*\n\n${taskList}\n\n` +
-        `শেষ হলে ✅ Done বাটন চাপুন।`,
-      {
-        parse_mode: 'Markdown',
+      `📋 *আজকের কাজের তালিকা:*\n\n${taskList}\n\n` +
+      `শেষ হলে ✅ Done বাটন চাপুন।`
+
+    await loggedSendToStaff(bot.telegram, {
+      supabase,
+      staffId: staff.id,
+      staffName,
+      businessId: 'ALMA_LIFESTYLE',
+      type: 'reminder',
+      content: reminderMsg,
+      chatId,
+      relatedTaskIds: tasks.map((t) => t.id),
+      extra: {
         reply_markup: {
           inline_keyboard: [[
             { text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` },
           ]],
         },
       },
-    ).catch((err) => console.warn(`[morning-staff-reminder] ${staffName}:`, err.message))
+    }).catch((err) => console.warn(`[morning-staff-reminder] ${staffName}:`, err.message))
   }
 
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID

@@ -4,7 +4,7 @@
  * Sends each staff member their Bangla task list via Telegram with [✅ Done] buttons.
  */
 
-import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
@@ -192,7 +192,19 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
   }
 
-  await sendMarkdownSafe(bot.telegram, chatId, msg, {
-    reply_markup: { inline_keyboard: rows },
+  const sendResult = await loggedSendToStaff(bot.telegram, {
+    supabase,
+    staffId,
+    staffName,
+    businessId: 'ALMA_LIFESTYLE',
+    type: 'task_dispatch',
+    content: msg,
+    chatId,
+    relatedTaskIds: staffTasks.map((t) => t.id),
+    extra: { reply_markup: { inline_keyboard: rows } },
   })
+
+  if (!sendResult.ok) {
+    throw new Error(sendResult.error ?? 'task dispatch send failed')
+  }
 }

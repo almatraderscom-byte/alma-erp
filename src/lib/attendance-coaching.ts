@@ -2,6 +2,11 @@ import type { AttendanceRecord } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { countRecentLateDays } from '@/lib/attendance'
 import { notifyRole } from '@/lib/notifications'
+import {
+  queueAgentOutbox,
+  markAgentOutboxDelivered,
+  markAgentOutboxFailed,
+} from '@/lib/agent-outbox'
 import { scheduleTelegramNotification, processTelegramNotificationQueue } from '@/lib/telegram-notification/queue'
 import { logEvent } from '@/lib/logger'
 
@@ -76,7 +81,21 @@ export async function coachLateCheckIn(args: {
   )
 
   if (telegramChatId) {
+    let outboxId: string | undefined
     try {
+      const agentStaff = await prisma.agentStaff.findFirst({
+        where: { telegramChatId, active: true },
+        select: { id: true },
+      })
+      const row = await queueAgentOutbox({
+        staffId: agentStaff?.id ?? null,
+        staffName,
+        businessId: args.businessId,
+        type: 'coaching',
+        content: staffMsg,
+      })
+      outboxId = row.id
+
       const enqueue = await scheduleTelegramNotification({
         businessId: args.businessId,
         eventType: 'ATTENDANCE_CHECK_IN',
@@ -88,6 +107,7 @@ export async function coachLateCheckIn(args: {
           employeeId: args.employeeId,
           kind: 'late_coaching',
           lateDays,
+          outboxId,
         },
       })
       if (enqueue.ok && enqueue.ids?.length) {
@@ -95,8 +115,14 @@ export async function coachLateCheckIn(args: {
           ids: enqueue.ids,
           limit: enqueue.ids.length,
         })
+        if (outboxId) await markAgentOutboxDelivered(outboxId)
+      } else if (outboxId) {
+        await markAgentOutboxFailed(outboxId, enqueue.skipped ?? 'telegram_enqueue_failed')
       }
     } catch (err) {
+      if (outboxId) {
+        await markAgentOutboxFailed(outboxId, (err as Error).message).catch(() => {})
+      }
       logEvent('warn', 'attendance.coaching.staff_telegram_failed', {
         employeeId: args.employeeId,
         businessId: args.businessId,

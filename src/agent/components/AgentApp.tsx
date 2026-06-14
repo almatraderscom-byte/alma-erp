@@ -481,6 +481,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           >
             খরচ
           </a>
+          <a
+            href="/agent/staff-monitor"
+            className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-gold-lt active:scale-[0.98] md:px-2.5"
+          >
+            স্টাফ
+          </a>
           {artifacts.length > 0 && (
             <button
               type="button"

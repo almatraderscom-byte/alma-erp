@@ -1,3 +1,5 @@
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+
 /** staffChatId → staffId */
 export const awaitingStaffFeedback = new Map()
 
@@ -31,6 +33,18 @@ export async function captureStaffFeedback(ctx, supabase, staff, text) {
     ).catch(() => {})
   }
 
-  await ctx.reply('✅ জানানো হয়েছে — owner দেখবেন।')
+  const ack = '✅ জানানো হয়েছে — owner দেখবেন।'
+  await loggedSendToStaff(ctx.telegram, {
+    supabase,
+    staffId: staff.id,
+    staffName: staff.name,
+    businessId: 'ALMA_LIFESTYLE',
+    type: 'feedback_ack',
+    content: ack,
+    chatId,
+  }).catch(() => {
+    return ctx.reply(ack)
+  })
+
   return true
 }

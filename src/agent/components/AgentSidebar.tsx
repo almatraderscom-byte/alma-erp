@@ -134,6 +134,9 @@ export default function AgentSidebar({
           <a href="/agent/costs" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="খরচ ড্যাশবোর্ড">
             $
           </a>
+          <a href="/agent/staff-monitor" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="স্টাফ মনিটর">
+            👥
+          </a>
         </div>
         {isMobile && (
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-cream">✕</button>

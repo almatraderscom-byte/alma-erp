@@ -2,8 +2,13 @@
  * Staff announcement dispatcher — text + optional voice, no task tracking.
  */
 
-import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { sendVoiceMessage } from '../telegram/voice.mjs'
+import { createClient } from '@supabase/supabase-js'
+
+function sb() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+}
 
 /**
  * @param {object} params
@@ -16,13 +21,26 @@ export async function sendStaffAnnouncement({ bot, payload }) {
     throw new Error('message and staffChatIds required')
   }
 
+  const supabase = sb()
   const voice = sendVoice !== false
   let sentCount = 0
 
-  for (const { name, chatId } of staffChatIds) {
+  for (const { id, name, chatId } of staffChatIds) {
     if (!chatId) continue
     try {
-      await sendMarkdownSafe(bot.telegram, chatId, message)
+      const result = await loggedSendToStaff(bot.telegram, {
+        supabase,
+        staffId: id,
+        staffName: name,
+        businessId: 'ALMA_LIFESTYLE',
+        type: 'announcement',
+        content: message,
+        chatId,
+      })
+      if (!result.ok) {
+        console.warn(`[announcement] Failed to send to ${name} (${chatId}):`, result.error)
+        continue
+      }
 
       if (voice) {
         try {

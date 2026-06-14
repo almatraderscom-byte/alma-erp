@@ -4,6 +4,8 @@
  * - One-line update to owner only if something is stuck
  */
 
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+
 export async function runMiddayCheckin({ supabase, bot }) {
   console.log('[midday-checkin] starting...')
 
@@ -37,11 +39,18 @@ export async function runMiddayCheckin({ supabase, bot }) {
 
     if (chatId) {
       const taskList = tasks.map(t => `• ${t.title}`).join('\n')
-      await bot.telegram.sendMessage(
+      const msg =
+        `🌤 ${staffName} ভাই, এগুলো এখনো পেন্ডিং:\n\n${taskList}\n\nপ্রতিটি কাজ শেষ হলে ✅ Done বাটন চাপুন।`
+      await loggedSendToStaff(bot.telegram, {
+        supabase,
+        staffId: staff?.id,
+        staffName,
+        businessId: 'ALMA_LIFESTYLE',
+        type: 'reminder',
+        content: msg,
         chatId,
-        `🌤 ${staffName} ভাই, এগুলো এখনো পেন্ডিং:\n\n${taskList}\n\nপ্রতিটি কাজ শেষ হলে ✅ Done বাটন চাপুন।`,
-        { parse_mode: 'Markdown' },
-      ).catch(err => console.warn(`[midday] reminder to ${staffName} failed:`, err.message))
+        relatedTaskIds: tasks.map((t) => t.id),
+      }).catch(err => console.warn(`[midday] reminder to ${staffName} failed:`, err.message))
     }
 
     stuckStaff.push(`${staffName} (${tasks.length}টি বাকি)`)

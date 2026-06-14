@@ -2126,6 +2126,26 @@ model StaffFeedback {
   @@map("staff_feedback")
 }
 
+model AgentOutbox {
+  id                String    @id @default(uuid())
+  staffId           String?   @map("staff_id")
+  staffName         String?   @map("staff_name")
+  businessId        String?   @map("business_id")
+  type              String
+  content           String    @db.Text
+  status            String    @default("queued")
+  telegramMessageId String?   @map("telegram_message_id")
+  errorReason       String?   @map("error_reason") @db.Text
+  relatedTaskIds    Json?     @map("related_task_ids")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  sentAt            DateTime? @map("sent_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([staffId])
+  @@index([status])
+  @@map("agent_outbox")
+}
+
 // ─── CS-0: Customer-sales catalog foundation (additive) ─────────────────────
 
 model ProductImage {
