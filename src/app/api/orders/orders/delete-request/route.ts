@@ -4,7 +4,7 @@ import { createApprovalRequest } from '@/lib/approvals'
 import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { canRequestOrderDelete, orderSnapshotForApproval } from '@/lib/order-access'
 import { normalizeAlmaRole } from '@/lib/roles'
-import { serverGet } from '@/lib/server-api'
+import { fetchOrderById } from '@/lib/lifestyle/read'
 import type { Order } from '@/types'
 import { prisma } from '@/lib/prisma'
 import { getArchivedRegistryIds } from '@/lib/business-archive/registry-filter'
@@ -57,9 +57,9 @@ export async function POST(req: NextRequest) {
 
   let order: Order
   try {
-    const data = await serverGet<{ order?: Order } | Order>('order', { id: orderId, business_id: businessId }, 0)
-    order = ('order' in (data as object) ? (data as { order?: Order }).order : data) as Order
-    if (!order?.id) throw new Error('Order not found')
+    const found = await fetchOrderById(orderId, businessId)
+    if (!found?.id) throw new Error('Order not found')
+    order = found
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message || 'Order not found' }, { status: 404 })
   }

@@ -4,7 +4,7 @@ import { exportLifestyleSnapshotToGas } from '@/lib/lifestyle/gas-export'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 180
 
 function cronAuthorized(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''

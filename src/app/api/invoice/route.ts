@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { getJwt } from '@/lib/api-guards'
 import { parseBusinessAccess, businessAllowed } from '@/lib/business-access'
 import { moneyDecimal } from '@/lib/payroll-wallet'
+import { fetchOrderById } from '@/lib/lifestyle/read'
 import type { Order } from '@/types'
 import type { BusinessBranding } from '@/types/branding'
 import { resolveBusinessId } from '@/lib/businesses'
@@ -99,11 +100,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required field: id', ok: false }, { status: 400 })
     }
     const allowRegenerate = Boolean(body.allow_regenerate)
-    const orderRes = await serverGet<{ order?: Order; error?: string }>('order', { id }, 0)
-    if (orderRes.error || !orderRes.order) {
-      return NextResponse.json({ error: orderRes.error || 'Order not found', ok: false }, { status: 404 })
+    const order = await fetchOrderById(id, String(body.business_id || 'ALMA_LIFESTYLE'))
+    if (!order) {
+      return NextResponse.json({ error: 'Order not found', ok: false }, { status: 404 })
     }
-    const order = orderRes.order
     const businessId = String(order.business_id || body.business_id || 'ALMA_LIFESTYLE')
     const ctx = await invoiceContext(req, businessId)
     if ('error' in ctx) return ctx.error

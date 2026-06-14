@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
-import type { Customer, Order } from '@/types'
+import type { Order } from '@/types'
 import {
   customerSummary,
   ordersSummaryFromSlice,
@@ -14,14 +14,49 @@ import {
 
 type QueryParams = Record<string, string>
 
+type ReadOrdersOpts = {
+  includeItems?: boolean
+  /** Metrics/dashboard need full filtered set, not paginated slice. */
+  allMatching?: boolean
+}
+
+function buildOrderWhere(p: QueryParams): Prisma.LifestyleOrderWhereInput {
+  const businessId = p.business_id || 'ALMA_LIFESTYLE'
+  const where: Prisma.LifestyleOrderWhereInput = { businessId }
+  if (p.startDate || p.endDate) {
+    where.date = {}
+    if (p.startDate) where.date.gte = new Date(p.startDate)
+    if (p.endDate) where.date.lte = new Date(p.endDate)
+  }
+  if (p.status) where.status = p.status
+  if (p.source) where.source = p.source
+  if (p.payment) where.payment = p.payment
+  return where
+}
+
+function applyOrderSearch(orders: Order[], search: string): Order[] {
+  const q = search.toLowerCase()
+  if (!q) return orders
+  return orders.filter(o =>
+    [o.id, o.customer, o.phone, o.product, o.tracking_id]
+      .some(v => String(v).toLowerCase().includes(q)),
+  )
+}
+
 async function readStockFromSupabase() {
-  const rows = await prisma.lifestyleStockItem.findMany({ orderBy: [{ sku: 'asc' }, { size: 'asc' }] })
+  const rows = await prisma.lifestyleStockItem.findMany({
+    where: { archived: false },
+    orderBy: [{ sku: 'asc' }, { size: 'asc' }],
+  })
   const items = rows.map(prismaStockToGas)
   return { items, summary: stockSummaryFromItems(items) }
 }
 
 async function readProductsFromSupabase() {
-  const rows = await prisma.lifestyleProduct.findMany({ orderBy: { sku: 'asc' } })
+  const rows = await prisma.lifestyleProduct.findMany({
+    where: { active: true },
+    orderBy: { sku: 'asc' },
+  })
   const products = rows.map(prismaProductToGas)
   return { products, total: products.length }
 }
@@ -48,48 +83,45 @@ async function readCustomersFromSupabase(p: QueryParams) {
 
 async function readPromosFromSupabase() {
   const rows = await prisma.lifestylePromo.findMany({
-    where: { businessId: 'ALMA_LIFESTYLE' },
+    where: { businessId: 'ALMA_LIFESTYLE', active: true },
     orderBy: { code: 'asc' },
   })
   return { promos: rows.map(prismaPromoToGas) }
 }
 
-async function readOrdersFromSupabase(p: QueryParams) {
-  const statusF = p.status || ''
-  const sourceF = p.source || ''
-  const paymentF = p.payment || ''
+async function readOrdersFromSupabase(p: QueryParams, opts: ReadOrdersOpts = {}) {
+  const includeItems = opts.includeItems === true
   const search = (p.search || '').toLowerCase()
   const limit = parseInt(p.limit || '500', 10)
   const offset = parseInt(p.offset || '0', 10)
-  const businessId = p.business_id || 'ALMA_LIFESTYLE'
+  const where = buildOrderWhere(p)
 
-  const where: Prisma.LifestyleOrderWhereInput = { businessId }
-  if (p.startDate || p.endDate) {
-    where.date = {}
-    if (p.startDate) where.date.gte = new Date(p.startDate)
-    if (p.endDate) where.date.lte = new Date(p.endDate)
+  if (!search && !opts.allMatching) {
+    const [rows, total] = await Promise.all([
+      prisma.lifestyleOrder.findMany({
+        where,
+        include: includeItems ? { items: { orderBy: { lineNo: 'asc' } } } : undefined,
+        orderBy: { date: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
+      prisma.lifestyleOrder.count({ where }),
+    ])
+    const orders = rows.map(row => prismaOrderToGas(includeItems ? row : { ...row, items: [] }))
+    return { orders, summary: ordersSummaryFromSlice(orders), total }
   }
 
   const rows = await prisma.lifestyleOrder.findMany({
     where,
-    include: { items: { orderBy: { lineNo: 'asc' } } },
+    include: includeItems ? { items: { orderBy: { lineNo: 'asc' } } } : undefined,
     orderBy: { date: 'desc' },
   })
 
-  let orders: Order[] = rows.map(prismaOrderToGas)
-  orders = orders.filter(o => {
-    if (statusF && o.status !== statusF) return false
-    if (sourceF && o.source !== sourceF) return false
-    if (paymentF && o.payment !== paymentF) return false
-    if (search) {
-      return [o.id, o.customer, o.phone, o.product, o.tracking_id]
-        .some(v => String(v).toLowerCase().includes(search))
-    }
-    return true
-  })
+  let orders: Order[] = rows.map(row => prismaOrderToGas(includeItems ? row : { ...row, items: [] }))
+  orders = applyOrderSearch(orders, search)
 
   const total = orders.length
-  const slice = orders.slice(offset, offset + limit)
+  const slice = opts.allMatching ? orders : orders.slice(offset, offset + limit)
   return { orders: slice, summary: ordersSummaryFromSlice(slice), total }
 }
 
@@ -127,7 +159,7 @@ export async function getLifestylePromos(_p: QueryParams = {}) {
 }
 
 export async function getLifestyleOrders(p: QueryParams = {}) {
-  const data = await readOrdersFromSupabase(p)
+  const data = await readOrdersFromSupabase(p, { includeItems: false })
   return {
     orders: data.orders,
     summary: { ...data.summary, total: data.total },
@@ -138,19 +170,17 @@ export async function getLifestyleOrder(id: string, p: QueryParams = {}) {
   return readOrderFromSupabase(id, p)
 }
 
-/** Resolve order for routes that accept `{ order }` or bare Order. */
 export async function fetchOrderById(id: string, businessId = 'ALMA_LIFESTYLE'): Promise<Order | null> {
   const data = await getLifestyleOrder(id, { business_id: businessId })
   if ('error' in data && data.error) return null
   return data.order ?? null
 }
 
-/** All orders in range for dashboard/analytics aggregation. */
+/** All orders in range for dashboard/analytics — no line items (fast aggregate). */
 export async function fetchLifestyleOrdersForMetrics(p: QueryParams = {}): Promise<Order[]> {
-  const data = await readOrdersFromSupabase({
-    ...p,
-    limit: String(p.limit || '10000'),
-    offset: '0',
-  })
+  const data = await readOrdersFromSupabase(
+    { ...p, limit: String(p.limit || '10000'), offset: '0' },
+    { includeItems: false, allMatching: true },
+  )
   return data.orders
 }

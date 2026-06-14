@@ -1,6 +1,5 @@
 /**
- * Domain-specific hooks — one per data resource.
- * All hooks fetch exclusively from the live Google Sheets API.
+ * Domain-specific hooks — Postgres-backed lifestyle APIs (fast path).
  */
 'use client'
 import { useCallback } from 'react'

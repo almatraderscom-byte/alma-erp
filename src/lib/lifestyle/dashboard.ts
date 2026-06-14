@@ -52,29 +52,26 @@ export async function getLifestyleDashboard(p: QueryParams = {}): Promise<Dashbo
 }
 
 export async function getLifestyleAnalytics(p: QueryParams = {}): Promise<DashboardData> {
-  const dash = await getLifestyleDashboard(p)
-  try {
-    const [finance, hrDash] = await Promise.all([
-      serverGet<{
-        by_category?: Record<string, number>
-        total_expenses?: number
-        cash_balance?: number
-      }>('finance', p, 0),
-      serverGet<{ kpis?: Record<string, number> }>('hr_dashboard', p, 0).catch(() => ({ kpis: {} })),
-    ])
-    const hrKpis = (hrDash.kpis ?? {}) as Record<string, number | undefined>
-    return {
-      ...dash,
-      expense_by_cat: finance.by_category,
-      total_expenses: finance.total_expenses,
-      cash_balance: finance.cash_balance,
-      employee_cost_roll: hrKpis.monthly_payroll_budget ?? hrKpis.total_monthly_salary,
-      net_business_after_opex: hrKpis.net_business_profit_hint,
-      payroll_kpis: Object.fromEntries(
-        Object.entries(hrKpis).filter(([, v]) => v != null) as Array<[string, number]>,
-      ),
-    }
-  } catch {
-    return dash
+  const [dash, financeRaw, hrDash] = await Promise.all([
+    getLifestyleDashboard(p),
+    serverGet<{
+      by_category?: Record<string, number>
+      total_expenses?: number
+      cash_balance?: number
+    }>('finance', p, 60).catch(() => null),
+    serverGet<{ kpis?: Record<string, number> }>('hr_dashboard', p, 60).catch(() => ({ kpis: {} })),
+  ])
+  const finance = financeRaw ?? {}
+  const hrKpis = (hrDash.kpis ?? {}) as Record<string, number | undefined>
+  return {
+    ...dash,
+    expense_by_cat: finance.by_category,
+    total_expenses: finance.total_expenses,
+    cash_balance: finance.cash_balance,
+    employee_cost_roll: hrKpis.monthly_payroll_budget ?? hrKpis.total_monthly_salary,
+    net_business_after_opex: hrKpis.net_business_profit_hint,
+    payroll_kpis: Object.fromEntries(
+      Object.entries(hrKpis).filter(([, v]) => v != null) as Array<[string, number]>,
+    ),
   }
 }

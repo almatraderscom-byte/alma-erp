@@ -33,7 +33,11 @@ export async function GET(req: NextRequest) {
         payload.orders = payload.orders.filter(o => archivedIds.has(String(o.id || o.order_id || '')))
       }
     }
-    return NextResponse.json(data, { headers: { 'Cache-Control': 'private, no-store, must-revalidate' } })
+    return NextResponse.json(data, {
+      headers: p.id
+        ? { 'Cache-Control': 'private, no-store, must-revalidate' }
+        : { 'Cache-Control': 'private, max-age=10, stale-while-revalidate=20' },
+    })
   } catch (e) {
     logEvent('error', 'orders.list_failed', errorMeta(e))
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

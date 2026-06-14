@@ -20,7 +20,7 @@ export type GasExportResult = {
 
 export async function buildLifestyleGasSnapshot() {
   const [orders, stock, products, customers] = await Promise.all([
-    prisma.lifestyleOrder.findMany({ include: { items: true }, orderBy: { date: 'asc' } }),
+    prisma.lifestyleOrder.findMany({ orderBy: { date: 'asc' } }),
     prisma.lifestyleStockItem.findMany({ orderBy: { sku: 'asc' } }),
     prisma.lifestyleProduct.findMany({ orderBy: { sku: 'asc' } }),
     prisma.lifestyleCustomer.findMany({ orderBy: { id: 'asc' } }),
@@ -44,7 +44,7 @@ export async function exportLifestyleSnapshotToGas(): Promise<GasExportResult> {
   }
   try {
     const gas = await serverPost<Record<string, unknown>>('postgres_snapshot_sync', snapshot, {
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     })
     if (gas?.error) {
       logEvent('error', 'migration.gas_nightly_export_failed', { error: String(gas.error), counts })

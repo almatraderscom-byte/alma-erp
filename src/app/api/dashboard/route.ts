@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   try {
     const data = await getLifestyleDashboard(p)
     return NextResponse.json(data, {
-      headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
+      headers: { 'Cache-Control': 'private, max-age=15, stale-while-revalidate=30' },
     })
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

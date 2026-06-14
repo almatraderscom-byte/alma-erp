@@ -9,7 +9,7 @@ export async function GET() {
   try {
     const data = await getLifestyleProducts()
     return NextResponse.json(data, {
-      headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
+      headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=120' },
     })
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

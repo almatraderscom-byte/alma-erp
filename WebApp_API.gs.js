@@ -3732,6 +3732,7 @@ function testGetDashboard() {
 
 /**
  * Phase 3 nightly export — upsert Postgres snapshot rows into lifestyle sheets (values, not formulas).
+ * Bulk index build once per sheet (avoids O(n²) findOrderRow_ scans).
  */
 function syncPostgresSnapshot_(body) {
   var orders = body.orders || [];
@@ -3746,7 +3747,7 @@ function syncPostgresSnapshot_(body) {
     return isNaN(d.getTime()) ? new Date() : d;
   }
 
-  function writeOrderRow_(sh, rowIndex, o) {
+  function buildOrderRowArray_(o) {
     var row = [];
     for (var c = 0; c < TOTAL_COLS; c++) row.push('');
     row[OC.ORDER_ID - 1] = String(o.id || '');
@@ -3778,36 +3779,67 @@ function syncPostgresSnapshot_(body) {
     row[OC.NOTES - 1] = String(o.notes || '');
     row[OC.SKU - 1] = String(o.sku || '');
     row[OC.HANDLED_BY - 1] = String(o.handled_by || '');
-    sh.getRange(rowIndex, 1, 1, TOTAL_COLS).setValues([row]);
-    sh.getRange(rowIndex, OC.DATE).setNumberFormat('DD-MMM-YYYY');
+    return row;
+  }
+
+  function writeOrderUpdates_(sh, updates) {
+    for (var u = 0; u < updates.length; u++) {
+      sh.getRange(updates[u].rowIndex, 1, 1, TOTAL_COLS).setValues([updates[u].row]);
+    }
   }
 
   try {
     var orderSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ORDERS);
     if (orderSh) {
+      var olast = orderSh.getLastRow();
+      var idToRow = {};
+      if (olast >= ORDERS_DATA_START) {
+        var oidVals = orderSh.getRange(ORDERS_DATA_START, OC.ORDER_ID, olast - ORDERS_DATA_START + 1, 1).getValues();
+        for (var oi = 0; oi < oidVals.length; oi++) {
+          var oid = String(oidVals[oi][0] || '').trim();
+          if (oid) idToRow[oid] = ORDERS_DATA_START + oi;
+        }
+      }
+      var orderUpdates = [];
+      var orderAppends = [];
       for (var i = 0; i < orders.length; i++) {
         var o = orders[i] || {};
         if (!o.id) continue;
-        var found = findOrderRow_(o.id);
-        if (found) {
-          writeOrderRow_(found.sh, found.rowIndex, o);
+        var orow = buildOrderRowArray_(o);
+        var key = String(o.id);
+        if (idToRow[key]) {
+          orderUpdates.push({ rowIndex: idToRow[key], row: orow });
           stats.orders_upserted++;
         } else {
-          var newRow = orderSh.getLastRow() + 1;
-          if (newRow < ORDERS_DATA_START) newRow = ORDERS_DATA_START;
-          writeOrderRow_(orderSh, newRow, o);
+          orderAppends.push(orow);
           stats.orders_appended++;
         }
+      }
+      writeOrderUpdates_(orderSh, orderUpdates);
+      if (orderAppends.length) {
+        var onew = Math.max(orderSh.getLastRow() + 1, ORDERS_DATA_START);
+        orderSh.getRange(onew, 1, orderAppends.length, TOTAL_COLS).setValues(orderAppends);
+        orderSh.getRange(onew, OC.DATE, orderAppends.length, 1).setNumberFormat('DD-MMM-YYYY');
       }
     }
 
     var stockSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
     if (stockSh) {
+      var slast = stockSh.getLastRow();
+      var skuToRow = {};
+      if (slast >= 3) {
+        var svals = stockSh.getRange(3, 1, slast - 2, 20).getValues();
+        for (var si = 0; si < svals.length; si++) {
+          var sk = String(svals[si][0] || '').trim().toLowerCase();
+          if (sk) skuToRow[sk] = 3 + si;
+        }
+      }
+      var stockUpdates = [];
+      var stockAppends = [];
       for (var s = 0; s < stock.length; s++) {
         var st = stock[s] || {};
         var sku = String(st.sku || '').trim();
         if (!sku) continue;
-        var sref = findStockRowBySku_(sku);
         var status = String(st.status || '');
         if (!status) {
           var cur = Number(st.current_stock || 0);
@@ -3836,15 +3868,21 @@ function syncPostgresSnapshot_(body) {
           new Date(),
           ''
         ];
-        if (sref) {
-          stockSh.getRange(sref.row, 1, 1, 20).setValues([srow]);
+        var skey = sku.toLowerCase();
+        if (skuToRow[skey]) {
+          stockUpdates.push({ row: skuToRow[skey], data: srow });
           stats.stock_upserted++;
         } else {
-          var snew = stockSh.getLastRow() + 1;
-          if (snew < 3) snew = 3;
-          stockSh.getRange(snew, 1, 1, 20).setValues([srow]);
+          stockAppends.push(srow);
           stats.stock_appended++;
         }
+      }
+      for (var su = 0; su < stockUpdates.length; su++) {
+        stockSh.getRange(stockUpdates[su].row, 1, 1, 20).setValues([stockUpdates[su].data]);
+      }
+      if (stockAppends.length) {
+        var snew = Math.max(stockSh.getLastRow() + 1, 3);
+        stockSh.getRange(snew, 1, stockAppends.length, 20).setValues(stockAppends);
       }
     }
 
@@ -3854,23 +3892,24 @@ function syncPostgresSnapshot_(body) {
       if (pmSh) break;
     }
     if (pmSh) {
+      var plast = pmSh.getLastRow();
+      var skuToPmRow = {};
+      if (plast >= PM_DATA_START) {
+        var pvals = pmSh.getRange(PM_DATA_START, 1, plast - PM_DATA_START + 1, 8).getValues();
+        for (var pi = 0; pi < pvals.length; pi++) {
+          var psk = String(pvals[pi][0] || '').trim().toLowerCase();
+          if (psk) skuToPmRow[psk] = PM_DATA_START + pi;
+        }
+      }
+      var productRows = [];
+      var productRowNums = [];
       for (var p = 0; p < products.length; p++) {
         var pr = products[p] || {};
         var psku = String(pr.sku || pr.id || '').trim();
         if (!psku) continue;
-        var plast = pmSh.getLastRow();
-        var prow = null;
-        if (plast >= PM_DATA_START) {
-          var pvals = pmSh.getRange(PM_DATA_START, 1, plast - PM_DATA_START + 1, 8).getValues();
-          for (var pi = 0; pi < pvals.length; pi++) {
-            if (String(pvals[pi][0] || '').trim().toLowerCase() === psku.toLowerCase()) {
-              prow = PM_DATA_START + pi;
-              break;
-            }
-          }
-        }
-        if (!prow) prow = pmSh.getLastRow() + 1;
-        pmSh.getRange(prow, 1, 1, 8).setValues([[
+        var prow = skuToPmRow[psku.toLowerCase()] || pmSh.getLastRow() + 1 + productRows.length;
+        productRowNums.push(prow);
+        productRows.push([
           psku,
           String(pr.name || ''),
           String(pr.category || ''),
@@ -3879,38 +3918,53 @@ function syncPostgresSnapshot_(body) {
           pr.active === false ? 'No' : 'Yes',
           String(pr.notes || ''),
           String(pr.updated_at || '')
-        ]]);
+        ]);
         stats.products_upserted++;
+      }
+      for (var pru = 0; pru < productRows.length; pru++) {
+        pmSh.getRange(productRowNums[pru], 1, 1, 8).setValues([productRows[pru]]);
       }
     }
 
     var custSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.CUSTOMERS);
     if (custSh && customers.length) {
+      var clast = custSh.getLastRow();
+      var cidToRow = {};
+      if (clast >= 3) {
+        var cvals = custSh.getRange(3, 1, clast - 2, 6).getValues();
+        for (var ci = 0; ci < cvals.length; ci++) {
+          var cid = String(cvals[ci][0] || '').trim();
+          if (cid) cidToRow[cid] = 3 + ci;
+        }
+      }
+      var custUpdates = [];
+      var custAppends = [];
       for (var c = 0; c < customers.length; c++) {
         var cu = customers[c] || {};
-        var cid = String(cu.id || '').trim();
-        if (!cid) continue;
-        var clast = custSh.getLastRow();
-        var crow = null;
-        if (clast >= 3) {
-          var cvals = custSh.getRange(3, 1, clast - 2, 6).getValues();
-          for (var ci = 0; ci < cvals.length; ci++) {
-            if (String(cvals[ci][0] || '').trim() === cid) {
-              crow = 3 + ci;
-              break;
-            }
-          }
-        }
-        if (!crow) crow = custSh.getLastRow() + 1;
-        custSh.getRange(crow, 1, 1, 6).setValues([[
-          cid,
+        var cuid = String(cu.id || '').trim();
+        if (!cuid) continue;
+        var crow = [
+          cuid,
           String(cu.name || ''),
           String(cu.phone || ''),
           String(cu.district || ''),
           String(cu.address || ''),
           String(cu.source || '')
-        ]]);
-        stats.customers_upserted++;
+        ];
+        if (cidToRow[cuid]) {
+          custUpdates.push({ row: cidToRow[cuid], data: crow });
+          stats.customers_upserted++;
+        } else {
+          custAppends.push(crow);
+          stats.customers_upserted++;
+        }
+      }
+      for (var cuu = 0; cuu < custUpdates.length; cuu++) {
+        custSh.getRange(custUpdates[cuu].row, 1, 1, 6).setValues([custUpdates[cuu].data]);
+      }
+      if (custAppends.length) {
+        var cnew = Math.max(custSh.getLastRow() + 1, 3);
+        custSh.getRange(cnew, 1, custAppends.length, 6).setValues(custAppends);
       }
     }
   } catch (e) {
