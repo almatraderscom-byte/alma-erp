@@ -10,12 +10,21 @@ import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { resolvePersonalMode, stripPersonalCommand } from '@/agent/lib/personal-mode'
+import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
+import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 interface FileRef { bucket: string; path: string; mediaType: string }
+
+interface ChatBody {
+  conversationId?: string
+  message?: string
+  files?: FileRef[]
+  projectId?: string
+  personalMode?: boolean
+}
 
 function isAgentDbError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
@@ -42,7 +51,6 @@ export async function POST(req: NextRequest) {
   const keyMissing = requireAnthropicApiKey()
   if (keyMissing) return keyMissing
 
-  // Accept either NextAuth session (web UI) or internal token (worker / Telegram bridge)
   const authHeader = req.headers.get('authorization') ?? ''
   const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
   const isInternalCall = verifyInternalToken(bearerToken)
@@ -53,13 +61,11 @@ export async function POST(req: NextRequest) {
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 
-  let body: { conversationId?: string; message?: string; files?: FileRef[] }
+  let body: ChatBody
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
-
-  const { text: effectiveMessage, forcePersonal } = stripPersonalCommand(message)
 
   const rateKey = isInternalCall
     ? `internal:${bearerToken.slice(0, 8)}`
@@ -76,11 +82,22 @@ export async function POST(req: NextRequest) {
     ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
     : []
 
-  // Resolve or create conversation.
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
   let projectSystemInstructions: string | null = null
-  let projectName: string | null = null
-  let personalMode = false
+  let personalMode = body.personalMode === true
+  let requestedProjectId = typeof body.projectId === 'string' ? body.projectId : null
+
+  if (requestedProjectId && !personalMode) {
+    const proj = await prisma.agentProject.findUnique({
+      where: { id: requestedProjectId },
+      select: { name: true, systemInstructions: true },
+    })
+    if (isPersonalProject(proj)) personalMode = true
+  }
+
+  if (personalMode && !requestedProjectId) {
+    requestedProjectId = await ensurePersonalProject()
+  }
 
   try {
     if (conversationId) {
@@ -89,13 +106,24 @@ export async function POST(req: NextRequest) {
         select: { id: true, projectId: true, project: { select: { name: true, systemInstructions: true } } },
       })
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
-      projectSystemInstructions = conv.project?.systemInstructions ?? null
-      projectName = conv.project?.name ?? null
+      personalMode = isPersonalProject(conv.project) || personalMode
+      projectSystemInstructions = personalMode
+        ? null
+        : (conv.project?.systemInstructions ?? null)
+      if (personalMode && conv.projectId !== requestedProjectId && requestedProjectId) {
+        await prisma.agentConversation.update({
+          where: { id: conversationId },
+          data: { projectId: requestedProjectId },
+        })
+      }
     } else {
       const source = isInternalCall ? 'telegram' : 'web'
-      const title = isInternalCall
-        ? `Telegram ${todayYmdDhaka()}`
-        : (effectiveMessage.slice(0, 60) || null)
+      const today = todayYmdDhaka()
+      const title = personalMode
+        ? `Telegram ব্যক্তিগত ${today}`
+        : isInternalCall
+          ? `Telegram ${today}`
+          : (message.slice(0, 60) || null)
 
       if (isInternalCall) {
         const existing = await prisma.agentConversation.findFirst({
@@ -105,24 +133,32 @@ export async function POST(req: NextRequest) {
         })
         if (existing) {
           conversationId = existing.id
-          projectSystemInstructions = existing.project?.systemInstructions ?? null
-          projectName = existing.project?.name ?? null
+          personalMode = isPersonalProject(existing.project) || personalMode
+          projectSystemInstructions = personalMode ? null : (existing.project?.systemInstructions ?? null)
         }
       }
 
       if (!conversationId) {
         const conv = await prisma.agentConversation.create({
-          data: { title, model: 'claude-sonnet-4-6', source },
+          data: {
+            title,
+            model: 'claude-sonnet-4-6',
+            source,
+            projectId: personalMode ? requestedProjectId : (requestedProjectId ?? null),
+          },
           select: { id: true },
         })
         conversationId = conv.id
+        if (personalMode) projectSystemInstructions = null
       }
     }
 
-    personalMode = resolvePersonalMode({ projectName, forcePersonal, message: effectiveMessage })
+    if (personalMode) {
+      projectSystemInstructions = null
+    } else if (projectSystemInstructions === PERSONAL_MODE_SENTINEL) {
+      projectSystemInstructions = null
+    }
 
-    // Build user message content blocks.
-    // File refs come before the text block so Claude sees the attachment context first.
     type StoredBlock = { type: string; [k: string]: unknown }
     const userContent: StoredBlock[] = [
       ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
@@ -134,7 +170,7 @@ export async function POST(req: NextRequest) {
               .join('\n'),
           }]
         : []),
-      { type: 'text', text: effectiveMessage },
+      { type: 'text', text: message },
     ]
 
     await prisma.agentMessage.create({
@@ -159,7 +195,6 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 
-  // Non-streaming mode for internal callers (Telegram bridge, worker).
   const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'
   if (!streamMode) {
     let finalText = ''
@@ -194,7 +229,7 @@ export async function POST(req: NextRequest) {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
-    return Response.json({ conversationId, text: finalText, pendingCards, askCards })
+    return Response.json({ conversationId, text: finalText, pendingCards, askCards, personalMode })
   }
 
   const encoder = new TextEncoder()
@@ -204,6 +239,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
 
       enqueue({ type: 'conversation_id', id: conversationId })
+      enqueue({ type: 'personal_mode', active: personalMode })
       try {
         for await (const event of runAgentTurn(conversationId!, {
           projectSystemInstructions,
@@ -230,6 +266,7 @@ export async function POST(req: NextRequest) {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'X-Conversation-Id': conversationId!,
+      'X-Personal-Mode': personalMode ? 'true' : 'false',
     },
   })
 }

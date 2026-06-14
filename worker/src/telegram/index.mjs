@@ -78,6 +78,7 @@ function createSupabase() {
 // Per-owner conversation state (in-memory — resets on worker restart, which is fine)
 const ownerState = {
   conversationId: null,
+  personalConversationId: null,
   financeEdit: null, // { actionId, field } while awaiting new value
 }
 
@@ -102,9 +103,9 @@ function isOwner(chatId) {
 
 // ── Daily conversation helper ──────────────────────────────────────────────
 
-async function getDailyConversationId() {
+async function getDailyConversationId(personalMode = false) {
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-  const title = `Telegram ${today}`
+  const title = personalMode ? `Telegram ব্যক্তিগত ${today}` : `Telegram ${today}`
 
   // Try to find an existing conversation for today
   const listRes = await fetch(`${APP_URL}/api/assistant/internal/telegram-conversation?date=${today}`, {
@@ -122,14 +123,18 @@ async function getDailyConversationId() {
 
 // ── Send a message to the agent backend ───────────────────────────────────
 
-async function sendToAgent(userMessage, conversationId) {
+async function sendToAgent(userMessage, conversationId, { personalMode = false } = {}) {
   const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${INT_TOKEN}`,
     },
-    body: JSON.stringify({ message: userMessage, conversationId: conversationId ?? undefined }),
+    body: JSON.stringify({
+      message: userMessage,
+      conversationId: conversationId ?? undefined,
+      personalMode: personalMode || undefined,
+    }),
   })
   if (!res.ok) {
     const err = await res.text()
@@ -243,8 +248,12 @@ async function handleOwnerText(ctx, text) {
   await autoMarkSalahFromText(text)
 
   // Use current conversation or get/create daily one
-  let convId = ownerState.conversationId
-  if (!convId) convId = await getDailyConversationId()
+  const supabase = createSupabase()
+  const { getTelegramPersonalMode } = await import('./personal-mode.mjs')
+  const personalMode = await getTelegramPersonalMode(supabase, String(chatId))
+
+  let convId = personalMode ? ownerState.personalConversationId : ownerState.conversationId
+  if (!convId) convId = await getDailyConversationId(personalMode)
 
   let typingInterval
   try {
@@ -253,13 +262,14 @@ async function handleOwnerText(ctx, text) {
     }, 4000)
     await ctx.sendChatAction('typing')
 
-    const result = await sendToAgent(text, convId)
+    const result = await sendToAgent(text, convId, { personalMode })
 
     clearInterval(typingInterval)
 
     // Cache the conversation id from the response
     if (result.conversationId) {
-      ownerState.conversationId = result.conversationId
+      if (personalMode) ownerState.personalConversationId = result.conversationId
+      else ownerState.conversationId = result.conversationId
     }
 
     const replyText = result.text || '(কোনো উত্তর নেই)'
@@ -732,7 +742,34 @@ export function createTelegramBot() {
 
   bot.command('new', async (ctx) => {
     ownerState.conversationId = null
+    ownerState.personalConversationId = null
     await ctx.reply('✅ নতুন কথোপকথন শুরু হয়েছে।')
+  })
+
+  bot.command('personal', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    const supabase = createSupabase()
+    const { setTelegramPersonalMode } = await import('./personal-mode.mjs')
+    await setTelegramPersonalMode(supabase, String(ctx.chat.id), true)
+    ownerState.personalConversationId = null
+    await ctx.reply(
+      '🤲 ব্যক্তিগত মোড চালু। শুধু আপনার ব্যক্তিগত/পারিবারিক বিষয়ে কথা হবে। বের হতে /work লিখুন।',
+    )
+  })
+
+  bot.command('work', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    const supabase = createSupabase()
+    const { setTelegramPersonalMode } = await import('./personal-mode.mjs')
+    await setTelegramPersonalMode(supabase, String(ctx.chat.id), false)
+    ownerState.conversationId = null
+    await ctx.reply('কাজের মোডে ফিরে এলাম।')
   })
 
   bot.command('chats', showRecentChats)

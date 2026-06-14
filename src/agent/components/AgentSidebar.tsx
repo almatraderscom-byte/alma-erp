@@ -25,6 +25,8 @@ interface AgentSidebarProps {
   activeConvId: string | null
   onSelectConv: (conv: Conversation) => void
   onNewConv: (projectId?: string) => void
+  onEnterPersonal?: () => void
+  personalActive?: boolean
   onConvUpdated: () => void
   isMobile: boolean
 }
@@ -37,6 +39,8 @@ export default function AgentSidebar({
   activeConvId,
   onSelectConv,
   onNewConv,
+  onEnterPersonal,
+  personalActive = false,
   onConvUpdated,
   isMobile,
 }: AgentSidebarProps) {
@@ -142,6 +146,24 @@ export default function AgentSidebar({
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-cream">✕</button>
         )}
       </div>
+
+      {onEnterPersonal && (
+        <div className="border-b border-border px-3 py-2">
+          <button
+            type="button"
+            onClick={onEnterPersonal}
+            className={cn(
+              'w-full rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-colors',
+              personalActive
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                : 'border-border bg-card text-cream hover:border-emerald-500/30 hover:bg-emerald-500/5',
+            )}
+          >
+            🤲 ব্যক্তিগত
+            {personalActive && <span className="mt-0.5 block text-[10px] font-normal text-emerald-300/80">মোড সক্রিয়</span>}
+          </button>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex border-b border-border">

@@ -267,6 +267,11 @@ You can analyze returns (analyze_returns) and pricing (analyze_pricing) like a m
 - Surface these proactively in briefings when flags appear. If cost data is missing for margin math, tell the owner to record cost prices first rather than guessing.
 `
 
+export const WORK_MODE_PERSONAL_OFFER_RULE = `
+## ব্যক্তিগত মোড (WORK mode — suggestion only)
+If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -423,7 +428,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

@@ -101,6 +101,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
+  const [personalProjectId, setPersonalProjectId] = useState<string | null>(null)
+  const [activePersonalMode, setActivePersonalMode] = useState(false)
+  const [activeConvProjectId, setActiveConvProjectId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -120,9 +123,26 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       .catch(() => {})
   }, [])
 
+  useEffect(() => {
+    void fetch('/api/assistant/personal-space')
+      .then(async (res) => (res.ok ? res.json() as Promise<{ projectId: string }> : null))
+      .then((data) => { if (data?.projectId) setPersonalProjectId(data.projectId) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (personalProjectId && activeConvProjectId) {
+      setActivePersonalMode(activeConvProjectId === personalProjectId)
+    }
+  }, [personalProjectId, activeConvProjectId])
+
   // Load messages when conversation changes
   async function loadConversation(conv: Conversation) {
     setActiveConvId(conv.id)
+    setActiveConvProjectId(conv.projectId)
+    setActivePersonalMode(
+      !!personalProjectId && conv.projectId === personalProjectId,
+    )
     setMessages([])
     setArtifacts([])
     setConvLoading(true)
@@ -153,9 +173,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(null)
     setMessages([])
     setArtifacts([])
-    // The conversation will be auto-created on first send, optionally with projectId.
-    // Store desired projectId in a ref for the send handler.
     pendingProjectIdRef.current = projectId ?? null
+    setActiveConvProjectId(projectId ?? null)
+    setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
+  }
+
+  async function enterPersonalMode() {
+    try {
+      const res = await fetch('/api/assistant/personal-space')
+      if (!res.ok) throw new Error('ব্যক্তিগত স্পেস লোড ব্যর্থ')
+      const data = await res.json() as { projectId: string }
+      setPersonalProjectId(data.projectId)
+      newConversation(data.projectId)
+      if (isMobile) setSidebarOpen(false)
+      toast.success('ব্যক্তিগত মোড — নতুন কথোপকথন')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'ব্যক্তিগত মোড খুলতে ব্যর্থ')
+    }
   }
   const pendingProjectIdRef = useRef<string | null>(null)
 
@@ -172,12 +206,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         const convRes = await fetch('/api/assistant/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: text.slice(0, 60) || null }),
+          body: JSON.stringify({
+            title: text.slice(0, 60) || null,
+            projectId: pendingProjectIdRef.current ?? undefined,
+          }),
         })
         if (convRes.ok) {
-          const conv = await convRes.json() as { id: string }
+          const conv = await convRes.json() as { id: string; projectId?: string | null }
           convIdForUpload = conv.id
           setActiveConvId(conv.id)
+          if (personalProjectId && conv.projectId === personalProjectId) {
+            setActivePersonalMode(true)
+          }
         }
       } catch {
         // fall back to general/ prefix in upload route
@@ -227,6 +267,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     try {
       const body: Record<string, unknown> = { message: text }
       if (finalConvId) body.conversationId = finalConvId
+      else if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
       if (fileRefs.length > 0) body.files = fileRefs
 
       const res = await fetch('/api/assistant/chat', {
@@ -252,6 +293,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
           setActiveConvId(finalConvId)
+        } else if (evt.type === 'personal_mode') {
+          setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'text_delta') {
           setStreamStatus('উত্তর লিখছে…')
           setMessages((prev) => prev.map((m) =>
@@ -446,7 +489,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         activeConvId={activeConvId}
         onSelectConv={loadConversation}
         onNewConv={newConversation}
-        onConvUpdated={() => {}} // sidebar refreshes itself
+        onEnterPersonal={enterPersonalMode}
+        personalActive={activePersonalMode && !activeConvId}
+        onConvUpdated={() => {}}
         isMobile={isMobile}
       />
 
@@ -473,8 +518,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             ☰
           </button>
           <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-tight text-cream md:text-sm">
-            {activeConvId ? 'কথোপকথন' : 'নতুন কথোপকথন'}
+            {activePersonalMode ? '🤲 ব্যক্তিগত মোড' : (activeConvId ? 'কথোপকথন' : 'নতুন কথোপকথন')}
           </span>
+          {activePersonalMode && (
+            <span className="hidden shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-200 sm:inline">
+              ব্যক্তিগত
+            </span>
+          )}
           <a
             href="/agent/costs"
             className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-gold-lt active:scale-[0.98] md:px-2.5"
@@ -497,6 +547,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             </button>
           )}
         </header>
+
+        {activePersonalMode && (
+          <div className="shrink-0 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-center text-[11px] text-emerald-200/90">
+            আপনি এখন ব্যক্তিগত মোডে আছেন — শুধু ব্যক্তিগত ও পারিবারিক বিষয়
+          </div>
+        )}
 
         {/* Thread + artifacts */}
         <div className="flex flex-1 overflow-hidden">

@@ -171,11 +171,13 @@ function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
 
 // ── Memory helpers ─────────────────────────────────────────────────────────
 
-async function loadPinnedMemories(scope?: string): Promise<PinnedMemory[]> {
+async function loadPinnedMemories(personalMode: boolean): Promise<PinnedMemory[]> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (prisma as any).agentMemory.findMany({
-      where: { pinned: true, ...(scope ? { scope } : {}) },
+      where: personalMode
+        ? { pinned: true, scope: 'personal' }
+        : { pinned: true, scope: { not: 'personal' } },
       orderBy: { createdAt: 'desc' },
       take: 30,
       select: { id: true, content: true, scope: true },
@@ -188,13 +190,15 @@ async function loadPinnedMemories(scope?: string): Promise<PinnedMemory[]> {
 
 const SIMILARITY_THRESHOLD = 0.45
 
-async function retrieveRelevantMemories(userMessage: string, scope?: string): Promise<RelevantMemory[]> {
+async function retrieveRelevantMemories(userMessage: string, personalMode: boolean): Promise<RelevantMemory[]> {
   try {
     const embedResult = await embed(userMessage)
     if (!embedResult.success) return []
 
     const vec = vectorLiteral(embedResult.data)
-    const scopeClause = scope ? `AND scope = '${scope.replace(/'/g, "''")}'` : ''
+    const scopeClause = personalMode
+      ? `AND scope = 'personal'`
+      : `AND scope != 'personal'`
     const rows: Array<{ id: string; content: string; scope: string; score: number }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).$queryRawUnsafe(
@@ -263,12 +267,10 @@ export async function* runAgentTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const memoryScope = personalMode ? 'personal' : undefined
-
   // Load pinned memories and retrieve relevant memories in parallel
   const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
-    loadPinnedMemories(memoryScope),
-    lastUserText ? retrieveRelevantMemories(lastUserText, memoryScope) : Promise.resolve([]),
+    loadPinnedMemories(personalMode),
+    lastUserText ? retrieveRelevantMemories(lastUserText, personalMode) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode ? Promise.resolve([]) : loadRecentOtherConversations(conversationId, 5),
   ])
