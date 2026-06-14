@@ -18,6 +18,13 @@ export const CUSTOMER_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = CUSTOMER_SAF
   input_schema: t.input_schema,
 }))
 
+if (CUSTOMER_TOOL_DEFINITIONS.length > 0) {
+  CUSTOMER_TOOL_DEFINITIONS[CUSTOMER_TOOL_DEFINITIONS.length - 1] = {
+    ...CUSTOMER_TOOL_DEFINITIONS[CUSTOMER_TOOL_DEFINITIONS.length - 1],
+    cache_control: { type: 'ephemeral' },
+  } as Anthropic.Messages.Tool
+}
+
 export async function executeCsTool(
   name: string,
   input: Record<string, unknown>,

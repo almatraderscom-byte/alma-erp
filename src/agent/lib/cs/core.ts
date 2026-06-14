@@ -100,10 +100,23 @@ export async function runCsTurn(input: {
   }
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    if (messages.length > 0) {
+      const lastMsg = messages[messages.length - 1]
+      if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
+        const lb = lastMsg.content[lastMsg.content.length - 1]
+        lastMsg.content[lastMsg.content.length - 1] = {
+          ...lb,
+          cache_control: { type: 'ephemeral' },
+        }
+      }
+    }
+
     const res = await client.messages.create({
       model: AGENT_MODEL,
       max_tokens: 1024,
-      system,
+      system: Array.isArray(system)
+        ? system
+        : [{ type: 'text' as const, text: String(system), cache_control: { type: 'ephemeral' } }],
       tools: CUSTOMER_TOOL_DEFINITIONS,
       messages,
     })

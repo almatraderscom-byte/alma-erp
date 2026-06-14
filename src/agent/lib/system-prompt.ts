@@ -196,7 +196,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)
@@ -290,12 +290,6 @@ export function buildSystemPrompt(
       type: 'text',
       text: `\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`,
     })
-  }
-
-  // cache_control on the last block for prompt caching.
-  blocks[blocks.length - 1] = {
-    ...blocks[blocks.length - 1],
-    cache_control: { type: 'ephemeral' },
   }
 
   return blocks

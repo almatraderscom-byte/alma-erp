@@ -297,6 +297,13 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
   input_schema: t.input_schema,
 }))
 
+if (TOOL_DEFINITIONS.length > 0) {
+  TOOL_DEFINITIONS[TOOL_DEFINITIONS.length - 1] = {
+    ...TOOL_DEFINITIONS[TOOL_DEFINITIONS.length - 1],
+    cache_control: { type: 'ephemeral' },
+  } as Anthropic.Messages.Tool
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
