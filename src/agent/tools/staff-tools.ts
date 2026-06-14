@@ -5,6 +5,12 @@
  */
 import { prisma } from '@/lib/prisma'
 import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
+import {
+  syncPendingDispatchAction,
+  refreshAndApproveDispatch,
+  loadProposedTasksForDate,
+  buildDispatchSummary,
+} from '@/agent/lib/staff-dispatch-sync'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,51 +35,6 @@ async function resolveActiveProposalDate(explicit?: string): Promise<string> {
   })
   const payloadDate = (pending?.payload as { date?: string } | null)?.date
   return payloadDate || dhakaToday()
-}
-
-async function syncPendingDispatchAction(date: string): Promise<string | null> {
-  const proposed = await db.agentStaffTask.findMany({
-    where: { proposedFor: new Date(date), status: 'proposed' },
-    include: { staff: { select: { name: true } } },
-    orderBy: { createdAt: 'asc' },
-  })
-  if (!proposed.length) return null
-
-  const summary = proposed
-    .map((t: { staff: { name: string }; title: string; type: string }) =>
-      `• ${t.staff.name}: ${t.title} (${t.type})`)
-    .join('\n')
-
-  const existing = await db.agentPendingAction.findFirst({
-    where: { type: 'dispatch_staff_tasks', status: 'pending' },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true, payload: true },
-  })
-
-  const taskIds = proposed.map((t: { id: string }) => t.id)
-  const summaryText = `স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${summary}`
-
-  if (existing) {
-    await db.agentPendingAction.update({
-      where: { id: existing.id },
-      data: {
-        payload: { ...(existing.payload as object), date, taskIds },
-        summary: summaryText,
-      },
-    })
-    return existing.id as string
-  }
-
-  const action = await db.agentPendingAction.create({
-    data: {
-      type: 'dispatch_staff_tasks',
-      payload: { date, taskIds },
-      summary: summaryText,
-      costEstimate: 0,
-      status: 'pending',
-    },
-  })
-  return action.id as string
 }
 
 async function findStaffByName(staffName: string) {
@@ -144,27 +105,11 @@ const prepare_staff_task_proposal: AgentTool = {
 
       let pendingActionId: string | undefined
       if (createCard && save) {
-        // Resolve any stale pending dispatch actions before creating a new one
         await db.agentPendingAction.updateMany({
           where: { type: 'dispatch_staff_tasks', status: 'pending' },
           data: { status: 'superseded', resolvedAt: new Date() },
         })
-
-        const proposed = await db.agentStaffTask.findMany({
-          where: { proposedFor: new Date(date), status: 'proposed' },
-          include: { staff: { select: { name: true } } },
-        })
-        const action = await db.agentPendingAction.create({
-          data: {
-            conversationId: input.conversationId ? String(input.conversationId) : null,
-            type: 'dispatch_staff_tasks',
-            payload: { date, taskIds: proposed.map((t: { id: string }) => t.id) },
-            summary: proposal.summaryBangla,
-            costEstimate: 0,
-            status: 'pending',
-          },
-        })
-        pendingActionId = action.id as string
+        pendingActionId = (await syncPendingDispatchAction(date)) ?? undefined
       }
 
       return {
@@ -313,7 +258,19 @@ const propose_staff_tasks: AgentTool = {
         })),
       })
 
-      return { success: true, data: { date, tasksCreated: created.count } }
+      const pendingActionId = await syncPendingDispatchAction(date)
+
+      return {
+        success: true,
+        data: {
+          date,
+          tasksCreated: created.count,
+          pendingActionId: pendingActionId ?? undefined,
+          message: pendingActionId
+            ? 'Tasks saved and pending dispatch card synced from DB.'
+            : 'Tasks saved (no pending card — call approve_and_dispatch_tasks if needed).',
+        },
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -489,60 +446,40 @@ const approve_pending_dispatch: AgentTool = {
       const pending = await db.agentPendingAction.findFirst({
         where: { type: 'dispatch_staff_tasks', status: 'pending' },
         orderBy: { createdAt: 'desc' },
+        select: { payload: true },
       })
-      if (!pending) {
-        return {
-          success: true,
-          data: {
-            status: 'none_pending',
-            message: 'কোনো pending dispatch নেই। আগে proposal তৈরি করুন (propose_staff_tasks)।',
-          },
-        }
-      }
+      const payload = pending?.payload as { date?: string } | undefined
+      const actionDate = date || payload?.date || dhakaToday()
 
-      const payload = pending.payload as { date?: string; taskIds?: string[] }
-      const actionDate = date || payload.date || dhakaToday()
-
-      if (payload.date && date && payload.date !== date) {
+      if (payload?.date && date && payload.date !== date) {
         return {
           success: false,
           error: `Pending dispatch is for ${payload.date}, not ${date}. Approve that date or omit date.`,
         }
       }
 
-      const taskIds = payload.taskIds ?? []
-      if (taskIds.length) {
-        await db.agentStaffTask.updateMany({
-          where: { id: { in: taskIds }, status: 'proposed' },
-          data: { status: 'approved' },
-        })
+      const result = await refreshAndApproveDispatch(actionDate)
+      if (!result.ok) {
+        return {
+          success: true,
+          data: {
+            status: 'none_pending',
+            message: 'কোনো proposed টাস্ক নেই। আগে merge_into_proposal বা propose_staff_tasks চালান।',
+          },
+        }
       }
-
-      // Supersede other pending cards for the same date
-      await db.agentPendingAction.updateMany({
-        where: {
-          id: { not: pending.id },
-          type: 'dispatch_staff_tasks',
-          status: 'pending',
-        },
-        data: { status: 'superseded', resolvedAt: new Date() },
-      })
-
-      await db.agentPendingAction.update({
-        where: { id: pending.id },
-        data: { status: 'approved', resolvedAt: new Date() },
-      })
 
       return {
         success: true,
         data: {
           status: 'approved_queued',
-          approvedActionId: pending.id as string,
-          date: actionDate,
-          taskCount: taskIds.length,
+          approvedActionId: result.pendingActionId,
+          date: result.date,
+          taskCount: result.taskCount,
+          taskIds: result.taskIds,
           message:
-            'Approve করা হয়েছে — worker এখন dispatch করবে। নিশ্চিত হওয়ার আগে "পাঠানো হয়েছে" বলবেন না; ' +
-            'get_dispatch_status দিয়ে verify করুন বা monitor-এ delivered দেখুন।',
+            `Approve করা হয়েছে (${result.taskCount}টি টাস্ক DB থেকে sync করে) — worker dispatch করবে। ` +
+            'নিশ্চিত হওয়ার আগে "পাঠানো হয়েছে" বলবেন না; get_dispatch_status দিয়ে verify করুন।',
         },
       }
     } catch (err) {
@@ -617,6 +554,124 @@ const get_dispatch_status: AgentTool = {
           note: deliveryByStaff === null
             ? 'Outbox not available — rely on task sent-count; Staff Monitor (Prompt D) for delivery proof.'
             : 'deliveryByStaff is the source of truth for actual delivery.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── get_current_proposal ──────────────────────────────────────────────────────
+
+const get_current_proposal: AgentTool = {
+  name: 'get_current_proposal',
+  description:
+    'Returns the ACTUAL proposed tasks saved in DB for a date — this is what will be dispatched on approve. ' +
+    'Call after merge_into_proposal and BEFORE approve_pending_dispatch to verify the list matches what you showed the owner.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const proposed = await loadProposedTasksForDate(date)
+      const byStaff: Record<string, Array<{ id: string; title: string; type: string }>> = {}
+      for (const t of proposed) {
+        const name = t.staff.name
+        byStaff[name] ??= []
+        byStaff[name].push({ id: t.id, title: t.title, type: t.type })
+      }
+      return {
+        success: true,
+        data: {
+          date,
+          totalTasks: proposed.length,
+          byStaff,
+          summaryBangla: buildDispatchSummary(date, proposed),
+          note: 'This DB snapshot is dispatched on approve — never show the owner a list you have not saved via merge_into_proposal / propose_staff_tasks.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── correct_and_redispatch_staff_tasks ────────────────────────────────────────
+
+const correct_and_redispatch_staff_tasks: AgentTool = {
+  name: 'correct_and_redispatch_staff_tasks',
+  description:
+    'Wrong tasks were already sent. Cancels sent/approved tasks for the date, then dispatches the CURRENT proposed list from DB. ' +
+    'Use when owner says "ভুল টাস্ক গেছে", "আগেরটা বাদ দিয়ে ঠিকটা পাঠাও", "correct task পাঠাও". ' +
+    'Correct proposed tasks MUST already be in DB (merge_into_proposal / propose_staff_tasks) before calling this.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const proposed = await loadProposedTasksForDate(date)
+      if (!proposed.length) {
+        return {
+          success: false,
+          error: 'DB-তে proposed টাস্ক নেই। আগে merge_into_proposal দিয়ে সঠিক তালিকা সেভ করুন।',
+        }
+      }
+
+      const cancelled = await db.agentStaffTask.updateMany({
+        where: {
+          proposedFor: new Date(date),
+          status: { in: ['sent', 'approved'] },
+        },
+        data: { status: 'cancelled' },
+      })
+
+      const openActions = await db.agentPendingAction.findMany({
+        where: {
+          type: 'dispatch_staff_tasks',
+          status: { in: ['pending', 'approved'] },
+        },
+        select: { id: true, payload: true },
+      })
+      for (const a of openActions) {
+        const p = a.payload as { date?: string }
+        if (p.date === date) {
+          await db.agentPendingAction.update({
+            where: { id: a.id },
+            data: {
+              status: 'superseded',
+              resolvedAt: new Date(),
+              result: { reason: 'corrected_redispatch' },
+            },
+          })
+        }
+      }
+
+      const result = await refreshAndApproveDispatch(date)
+      if (!result.ok) {
+        return { success: false, error: 'Redispatch failed — no proposed tasks after cancel.' }
+      }
+
+      return {
+        success: true,
+        data: {
+          status: 'corrected_redispatch_queued',
+          date,
+          cancelledWrongTasks: cancelled.count,
+          redispatchTaskCount: result.taskCount,
+          taskIds: result.taskIds,
+          summaryBangla: buildDispatchSummary(date, proposed),
+          message:
+            `${cancelled.count}টি ভুল টাস্ক cancelled, ${result.taskCount}টি সঠিক টাস্ক dispatch queue-তে। ` +
+            'স্টাফকে send_staff_announcement দিয়ে জানান আগের মেসেজ বাতিল — নিচের নতুন তালিকা সঠিক।',
         },
       }
     } catch (err) {
@@ -986,6 +1041,8 @@ export const STAFF_TOOLS: AgentTool[] = [
   merge_into_proposal,
   approve_pending_dispatch,
   get_dispatch_status,
+  get_current_proposal,
+  correct_and_redispatch_staff_tasks,
   approve_and_dispatch_tasks,
   add_staff_task_now,
   send_staff_announcement,

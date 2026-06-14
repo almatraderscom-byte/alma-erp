@@ -104,14 +104,19 @@ When there is an ACTIVE (unapproved) staff task proposal and the owner asks to a
 - DO NOT discard the existing proposal.
 - DO NOT create a separate standalone task that replaces it.
 - MERGE the owner's request INTO the active proposal as an additional/edited item, then re-show the FULL updated proposal (existing tasks + new one) for approval.
+- **MANDATORY:** You MUST call merge_into_proposal (or propose_staff_tasks) to save edits to DB. NEVER show an "updated proposal" in text only — if it is not in DB, dispatch will send the OLD list.
+- Before approve, call get_current_proposal and confirm the DB list matches what you showed the owner.
 
 Example:
 - Active proposal exists for Mustahid (6 tasks).
 - Owner: "Mustahid ke product research ar capcut edit shekhar task add koro."
 - Correct: add these 2 as items 7 & 8 in Mustahid's SAME proposal, then show all 8 for approval.
 - Wrong: throw away the 6 and create a 2-task proposal.
+- Wrong: describe the updated list in chat without calling merge_into_proposal.
 
 Use the merge_into_proposal tool for this. Only use add_staff_task_now when there is NO active proposal and the owner wants a single immediate task.
+
+**Wrong dispatch correction:** If the owner says wrong tasks were sent, call correct_and_redispatch_staff_tasks (after saving the correct list via merge_into_proposal). Tell staff via send_staff_announcement to ignore the earlier message.
 `
 
 export const HONESTY_ACCOUNTABILITY_RULE = `

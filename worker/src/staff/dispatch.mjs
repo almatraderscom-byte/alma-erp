@@ -54,19 +54,22 @@ export async function sendDispatchOwnerReport({ bot, result }) {
 export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   console.log(`[dispatch] dispatching tasks for ${date}`)
 
+  // Source of truth: ALL approved tasks for the date (payload taskIds may be stale after merges).
   const query = supabase
     .from('staff_tasks')
     .select(`*, agent_staff(id, name, role, telegramChatId)`)
     .eq('status', 'approved')
     .eq('proposed_for', date)
 
-  if (taskIds?.length) {
-    query.in('id', taskIds)
-  }
-
   const { data: tasks, error } = await query
   if (error) throw new Error(`DB error: ${error.message}`)
   const pending = (tasks ?? []).filter((t) => t.status === 'approved')
+
+  if (taskIds?.length && pending.length !== taskIds.length) {
+    console.warn(
+      `[dispatch] payload taskIds (${taskIds.length}) != approved rows (${pending.length}) — using all approved for ${date}`,
+    )
+  }
   if (!pending.length) {
     console.warn('[dispatch] no approved tasks to dispatch for', date)
     return {

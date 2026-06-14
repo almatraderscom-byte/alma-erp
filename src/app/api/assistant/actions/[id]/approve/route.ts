@@ -201,15 +201,15 @@ export async function POST(
   // ── Phase 6 action types ───────────────────────────────────────────────────
 
   if (action.type === 'dispatch_staff_tasks') {
-    const { date, taskIds } = payload as { date: string; taskIds: string[] }
+    const { date } = payload as { date: string }
+    const actionDate = date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
-    // Already dispatched (sent/done) — idempotent
+    const { refreshAndApproveDispatch } = await import('@/agent/lib/staff-dispatch-sync')
+
     const alreadySent = await db.agentStaffTask.count({
       where: {
-        OR: [
-          { id: { in: taskIds ?? [] }, status: { in: ['sent', 'done'] } },
-          ...(date ? [{ proposedFor: new Date(date), status: { in: ['sent', 'done'] } }] : []),
-        ],
+        proposedFor: new Date(actionDate),
+        status: { in: ['sent', 'done'] },
       },
     })
     if (alreadySent > 0) {
@@ -219,7 +219,7 @@ export async function POST(
       })
       for (const a of sameDateActions) {
         const p = a.payload as { date?: string }
-        if (!date || p.date === date) {
+        if (!actionDate || p.date === actionDate) {
           await db.agentPendingAction.update({
             where: { id: a.id },
             data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
@@ -228,46 +228,28 @@ export async function POST(
       }
       return Response.json({
         success: true, alreadyDispatched: true,
-        message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — আবার পাঠানোর দরকার নেই।',
+        message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — ভুল টাস্ক গেলে correct_and_redispatch_staff_tasks ব্যবহার করুন।',
       })
     }
 
-    await db.agentStaffTask.updateMany({
-      where: { id: { in: taskIds ?? [] }, status: 'proposed' },
-      data:  { status: 'approved' },
-    })
-
-    // Supersede other pending cards for the same date before approving this one
-    const otherPending = await db.agentPendingAction.findMany({
-      where: {
-        id: { not: actionId },
-        type: 'dispatch_staff_tasks',
-        status: 'pending',
-      },
-      select: { id: true, payload: true },
-    })
-    for (const other of otherPending) {
-      const p = other.payload as { date?: string }
-      if (!date || p.date === date) {
-        await db.agentPendingAction.update({
-          where: { id: other.id },
-          data: { status: 'executed', resolvedAt: new Date(), result: { supersededBy: actionId } },
-        })
-      }
+    const refreshed = await refreshAndApproveDispatch(actionDate, actionId)
+    if (!refreshed.ok) {
+      return Response.json({ error: 'no_proposed_tasks', message: 'কোনো proposed টাস্ক নেই।' }, { status: 400 })
     }
-
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data:  { status: 'approved', resolvedAt: new Date() },
-    })
 
     await appendConversationNote(
       db,
       action,
-      `✅ মালিক ${date}-এর স্টাফ টাস্ক অনুমোদন করেছেন। Worker Telegram-এ পাঠাবে — আবার অনুমোদন চাইবেন না।`,
+      `✅ মালিক ${actionDate}-এর স্টাফ টাস্ক অনুমোদন করেছেন (${refreshed.taskCount}টি, DB sync)। Worker Telegram-এ পাঠাবে।`,
     )
-    return Response.json({ success: true, queued: true, date, taskCount: (taskIds ?? []).length,
-      message: 'Tasks approved. Worker will dispatch to staff via Telegram.' })
+    return Response.json({
+      success: true,
+      queued: true,
+      date: actionDate,
+      taskCount: refreshed.taskCount,
+      taskIds: refreshed.taskIds,
+      message: 'Tasks approved from current DB proposal. Worker will dispatch to staff via Telegram.',
+    })
   }
 
   if (action.type === 'send_customer_message') {
