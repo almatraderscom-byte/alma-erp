@@ -21,7 +21,7 @@ const web_research: AgentTool = {
   },
   handler: async (input) => {
     if (!oxylabsConfigured()) {
-      return { success: false, error: 'Oxylabs not configured (OXYLABS_USERNAME/OXYLABS_PASSWORD missing).' }
+      return { success: false, error: 'Oxylabs not configured (OXYLABS_API_KEY missing — copy from Hostinger Docker Manager).' }
     }
     const mode = String(input.mode ?? '')
     const conversationId = input.conversationId ? String(input.conversationId) : null
