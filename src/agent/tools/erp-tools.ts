@@ -20,6 +20,8 @@ import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
 import { buildReorderSuggestions } from '@/lib/inventory-forecast'
 import { segmentCustomers, type CustomerSegmentResult } from '@/lib/customer-intelligence'
+import { analyzeReturns } from '@/lib/return-analysis'
+import { analyzePricing } from '@/lib/pricing-insight'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -576,6 +578,45 @@ const get_dashboard_snapshot: AgentTool = {
   },
 }
 
+const analyze_returns: AgentTool = {
+  name: 'analyze_returns',
+  description:
+    'Analyze returns over a period: which products are returned most, return reasons, return rate, ' +
+    'and revenue impact (paid vs unpaid returns). Use when owner asks about returns, "keno return baড়che", ' +
+    'refund patterns, or product quality concerns.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Lookback window in days (default 30)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const days = typeof input.days === 'number' ? input.days : 30
+      const data = await analyzeReturns({ days })
+      return { success: true, data }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const analyze_pricing: AgentTool = {
+  name: 'analyze_pricing',
+  description:
+    'Find products with thin margins or high-volume-low-profit, with price-review suggestions. ' +
+    'Use when owner asks about profit, margins, pricing, "kon product e labh kom", or pricing strategy.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const data = await analyzePricing()
+      return { success: true, data }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const get_customer_segments: AgentTool = {
   name: 'get_customer_segments',
   description:
@@ -691,6 +732,8 @@ export const ERP_TOOLS: AgentTool[] = [
   get_employee_overview,
   get_attendance,
   get_dashboard_snapshot,
+  analyze_returns,
+  analyze_pricing,
   get_customer_segments,
   get_reorder_suggestions,
   generate_owner_briefing,

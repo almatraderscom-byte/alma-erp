@@ -29,7 +29,7 @@ export async function buildOwnerBriefing({ supabase: _supabase } = {}) {
   const brief = await api('/api/assistant/internal/owner-briefing')
   if (!brief) {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-    return { today, sales: null, pendingOrders: null, inventory: null, reorderSuggestions: [], csWaiting: null, adsDigest: null, staffYesterday: null, decisions: [] }
+    return { today, sales: null, pendingOrders: null, inventory: null, reorderSuggestions: [], csWaiting: null, adsDigest: null, staffYesterday: null, returns: null, pricing: null, decisions: [] }
   }
   return brief
 }
@@ -116,6 +116,13 @@ export function renderBriefing(brief) {
 
   if (brief.staffYesterday?.summary) {
     L.push(`👥 গতকাল স্টাফ: ${brief.staffYesterday.summary}`)
+  }
+
+  if (brief.returns?.flags?.length) {
+    L.push(`↩️ রিটার্ন: ${brief.returns.flags[0]}`)
+  }
+  if (brief.pricing?.flags?.length) {
+    L.push(`💹 প্রাইসিং: ${brief.pricing.flags[0]}`)
   }
 
   return L.join('\n')

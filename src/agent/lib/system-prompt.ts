@@ -209,6 +209,15 @@ You track customer value (get_customer_segments). Win-back customers (repeat buy
 Never auto-DM a customer outside the 24h window — that violates Meta policy and is hard-blocked.
 `
 
+export const RETURNS_PRICING_INSIGHT_RULE = `
+## RETURNS & PRICING INSIGHT
+
+You can analyze returns (analyze_returns) and pricing (analyze_pricing) like a manager:
+- Returns: don't just count — find WHICH products and WHY. If one product drives returns, flag a quality/sizing/description issue and suggest a fix.
+- Pricing: flag thin-margin products. A product selling a lot at low margin is a price-review opportunity. Recommend specific action (raise price, reduce cost, or drop the product).
+- Surface these proactively in briefings when flags appear. If cost data is missing for margin math, tell the owner to record cost prices first rather than guessing.
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -327,7 +336,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

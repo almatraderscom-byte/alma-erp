@@ -12,6 +12,8 @@ import { todayYmdDhaka, daysAgoYmd } from '@/lib/agent-api/dhaka-date'
 import { roundMoney } from '@/lib/money'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
 import { buildReorderSuggestions, type ReorderSuggestion } from '@/lib/inventory-forecast'
+import { analyzeReturns } from '@/lib/return-analysis'
+import { analyzePricing } from '@/lib/pricing-insight'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -45,6 +47,8 @@ export type OwnerBriefingData = {
     total: number
     lowPerformers: Array<{ name: string; pct: number; daysLow: number }>
   } | null
+  returns: { flags: string[]; totalReturns: number; returnRatePct: number | null } | null
+  pricing: { flags: string[]; costDataMissing: boolean } | null
   decisions: BriefingDecision[]
   ownerDecisionMemoryCount: number
   generatedAt: string
@@ -226,6 +230,34 @@ async function gatherStaffYesterday() {
   }
 }
 
+async function gatherReturnPricingInsights() {
+  try {
+    const weekday = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', weekday: 'long' })
+    const weeklyRun = weekday === 'Saturday'
+    const [returns, pricing] = await Promise.all([
+      analyzeReturns({ days: 30 }),
+      analyzePricing(),
+    ])
+    const hasFlags = returns.flags.length > 0 || pricing.flags.length > 0
+    if (!weeklyRun && !hasFlags) {
+      return { returns: null, pricing: null }
+    }
+    return {
+      returns: {
+        flags: returns.flags,
+        totalReturns: returns.totalReturns,
+        returnRatePct: returns.returnRatePct,
+      },
+      pricing: {
+        flags: pricing.flags,
+        costDataMissing: pricing.costDataMissing,
+      },
+    }
+  } catch {
+    return { returns: null, pricing: null }
+  }
+}
+
 export function deriveBriefingDecisions(sig: {
   sales: OwnerBriefingData['sales']
   pendingOrders: OwnerBriefingData['pendingOrders']
@@ -234,6 +266,8 @@ export function deriveBriefingDecisions(sig: {
   csWaiting: OwnerBriefingData['csWaiting']
   adsDigest: OwnerBriefingData['adsDigest']
   staffYesterday: OwnerBriefingData['staffYesterday']
+  returns: OwnerBriefingData['returns']
+  pricing: OwnerBriefingData['pricing']
 }): BriefingDecision[] {
   const decisions: BriefingDecision[] = []
 
@@ -306,6 +340,26 @@ export function deriveBriefingDecisions(sig: {
     })
   }
 
+  if (sig.returns?.flags?.length) {
+    decisions.push({
+      area: 'returns',
+      urgency: 'normal',
+      text: sig.returns.flags[0],
+      recommend: 'product quality/sizing/description চেক করুন',
+    })
+  }
+
+  if (sig.pricing?.flags?.length) {
+    decisions.push({
+      area: 'pricing',
+      urgency: 'normal',
+      text: sig.pricing.flags[0],
+      recommend: sig.pricing.costDataMissing
+        ? 'inventory তে buying price রেকর্ড করুন'
+        : 'দাম রিভিউ করুন',
+    })
+  }
+
   return decisions
 }
 
@@ -338,7 +392,7 @@ export function filterVetoedDecisions(
 
 export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   const today = todayYmdDhaka()
-  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, ownerMemories] =
+  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, returnPricing, ownerMemories] =
     await Promise.all([
       gatherSalesSignals(),
       gatherPendingOrders(),
@@ -346,6 +400,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
       gatherCsWaiting(),
       gatherAdsDigest(),
       gatherStaffYesterday(),
+      gatherReturnPricingInsights(),
       searchAgentMemory({
         query: 'owner decision preference veto briefing',
         scope: 'business',
@@ -356,7 +411,19 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
 
   const inventory = inventoryBundle.inventory
   const reorderSuggestions = inventoryBundle.reorderSuggestions
-  const signals = { sales, pendingOrders, inventory, reorderSuggestions, csWaiting, adsDigest, staffYesterday }
+  const returns = returnPricing.returns
+  const pricing = returnPricing.pricing
+  const signals = {
+    sales,
+    pendingOrders,
+    inventory,
+    reorderSuggestions,
+    csWaiting,
+    adsDigest,
+    staffYesterday,
+    returns,
+    pricing,
+  }
   let decisions = deriveBriefingDecisions(signals)
   decisions = filterVetoedDecisions(decisions, ownerMemories)
 
