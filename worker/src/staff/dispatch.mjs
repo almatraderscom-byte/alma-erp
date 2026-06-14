@@ -6,6 +6,7 @@
 
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
+import { sendNtfyToTopic } from '../notify/ntfy.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -109,6 +110,20 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     try {
       await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId: staff.id })
       sentIds.push(...staffTasks.map((t) => t.id))
+
+      const { data: staffRow } = await supabase
+        .from('agent_staff')
+        .select('ntfyTopic, name')
+        .eq('id', staff.id)
+        .maybeSingle()
+      if (staffRow?.ntfyTopic) {
+        await sendNtfyToTopic(
+          staffRow.ntfyTopic,
+          'আজকের কাজ',
+          `${staffRow.name ?? staffName}, ${staffTasks.length}টি নতুন কাজ — Telegram দেখুন।`,
+          'task',
+        ).catch((err) => console.warn(`[dispatch] ntfy failed for ${staffName}:`, err.message))
+      }
     } catch (err) {
       console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)
       failures.push({
@@ -204,6 +219,7 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     content: msg,
     chatId,
     relatedTaskIds: staffTasks.map((t) => t.id),
+    requiresAck: true,
     extra: { reply_markup: { inline_keyboard: rows } },
   })
 

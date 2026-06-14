@@ -58,3 +58,35 @@ export async function sendNtfy(topic, title, message, category) {
     return { ok: false, error: err.message }
   }
 }
+
+/**
+ * Send to a specific named topic (e.g. a staff member's topic).
+ * @param {string} topicName
+ * @param {string} title
+ * @param {string} message
+ * @param {string|undefined} category
+ * @returns {Promise<{ok:boolean, error?:string}>}
+ */
+export async function sendNtfyToTopic(topicName, title, message, category) {
+  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
+  const tags = CATEGORY_TAGS[category ?? ''] ?? []
+  try {
+    const res = await fetch(`${server}/${topicName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Title': ntfyTitleHeader(title),
+        'Priority': category === 'urgent' ? '5' : '4',
+        ...(tags.length > 0 ? { 'Tags': tags.join(',') } : {}),
+      },
+      body: message,
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      return { ok: false, error: `ntfy HTTP ${res.status}: ${body}` }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}

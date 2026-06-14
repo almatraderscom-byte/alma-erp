@@ -1866,6 +1866,7 @@ model AgentStaff {
   name           String
   role           String
   telegramChatId String?
+  ntfyTopic      String?      @map("ntfy_topic")
   active         Boolean      @default(true)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -2137,12 +2138,17 @@ model AgentOutbox {
   telegramMessageId String?   @map("telegram_message_id")
   errorReason       String?   @map("error_reason") @db.Text
   relatedTaskIds    Json?     @map("related_task_ids")
+  shortId           String?   @map("short_id")
+  requiresAck       Boolean   @default(false) @map("requires_ack")
+  acknowledgedAt    DateTime? @map("acknowledged_at")
+  ackEscalatedAt    DateTime? @map("ack_escalated_at")
   createdAt         DateTime  @default(now()) @map("created_at")
   sentAt            DateTime? @map("sent_at")
 
   @@index([createdAt(sort: Desc)])
   @@index([staffId])
   @@index([status])
+  @@index([shortId])
   @@map("agent_outbox")
 }
 

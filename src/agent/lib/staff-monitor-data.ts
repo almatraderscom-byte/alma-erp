@@ -19,6 +19,8 @@ export type StaffMonitorRow = {
   telegramMessageId: string | null
   errorReason: string | null
   relatedTaskIds: unknown
+  requiresAck: boolean
+  acknowledgedAt: string | null
   createdAt: string
   sentAt: string | null
 }
@@ -63,6 +65,8 @@ function mapOutbox(row: {
   telegramMessageId: string | null
   errorReason: string | null
   relatedTaskIds: unknown
+  requiresAck: boolean
+  acknowledgedAt: Date | null
   createdAt: Date
   sentAt: Date | null
 }): StaffMonitorRow {
@@ -77,6 +81,8 @@ function mapOutbox(row: {
     telegramMessageId: row.telegramMessageId,
     errorReason: row.errorReason,
     relatedTaskIds: row.relatedTaskIds,
+    requiresAck: row.requiresAck,
+    acknowledgedAt: row.acknowledgedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     sentAt: row.sentAt?.toISOString() ?? null,
   }

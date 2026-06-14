@@ -1060,6 +1060,11 @@ export function createTelegramBot() {
   bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data ?? ''
 
+    if (data === 'msg_ack_done') {
+      await ctx.answerCbQuery('✅ ইতিমধ্যে নিশ্চিত')
+      return
+    }
+
     if (data.startsWith('bonus_approve:') || data.startsWith('bonus_edit:') || data.startsWith('bonus_dismiss:')) {
       const [action, actionId] = data.split(':')
       const { handleBonusCallback } = await import('./dispatcher.mjs')
@@ -1231,6 +1236,55 @@ export function createTelegramBot() {
       }
       const { handleStaffFeedbackOpen } = await import('../staff/staff-feedback.mjs')
       await handleStaffFeedbackOpen(ctx, staffId)
+
+    } else if (data.startsWith('msg_ack:')) {
+      const shortId = data.slice('msg_ack:'.length)
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+
+      const fullId = parseTaskIdFromCallback(shortId)
+      const { data: row } = await supabase
+        .from('agent_outbox')
+        .select('id, staff_id, acknowledged_at, requires_ack, telegram_message_id')
+        .or(`short_id.eq.${shortId},id.eq.${fullId}`)
+        .maybeSingle()
+
+      if (!row || row.staff_id !== staff.id) {
+        await ctx.answerCbQuery('মেসেজ পাওয়া যায়নি')
+        return
+      }
+      if (!row.acknowledged_at) {
+        await supabase
+          .from('agent_outbox')
+          .update({ acknowledged_at: new Date().toISOString() })
+          .eq('id', row.id)
+      }
+
+      await ctx.answerCbQuery('✅ ধন্যবাদ! দেখেছেন বলে নিশ্চিত করা হলো।')
+
+      if (row.telegram_message_id && ctx.chat?.id) {
+        try {
+          const msg = ctx.callbackQuery.message
+          const existing = msg?.reply_markup?.inline_keyboard ?? []
+          const filtered = existing
+            .map((r) => r.filter((b) => !String(b.callback_data ?? '').startsWith('msg_ack:')))
+            .filter((r) => r.length > 0)
+          filtered.push([{ text: '✅ দেখেছেন', callback_data: 'msg_ack_done' }])
+          await ctx.telegram.editMessageReplyMarkup(
+            ctx.chat.id,
+            Number(row.telegram_message_id),
+            undefined,
+            { inline_keyboard: filtered },
+          )
+        } catch {
+          /* non-fatal */
+        }
+      }
+      return
 
     } else if (data.startsWith('task_done:')) {
       const taskId = parseTaskIdFromCallback(data.slice('task_done:'.length))

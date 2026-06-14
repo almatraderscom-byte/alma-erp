@@ -71,6 +71,7 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
         content: reminderMsg,
         chatId: staffChat,
         relatedTaskIds: [task.id],
+        requiresAck: true,
       }).catch(() => bot.telegram.sendMessage(staffChat, reminderMsg).catch(() => {}))
 
       await supabase.from('staff_tasks').update({

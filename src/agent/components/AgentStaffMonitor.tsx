@@ -227,6 +227,17 @@ export default function AgentStaffMonitor() {
                 {m.errorReason && (
                   <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>
                 )}
+                {m.requiresAck && (
+                  m.acknowledgedAt
+                    ? (
+                      <div className="mt-1 text-green-400">
+                        ✅ দেখেছে · {fmtTime(m.acknowledgedAt)}
+                      </div>
+                    )
+                    : (
+                      <div className="mt-1 text-yellow-400">⏳ এখনো দেখেনি</div>
+                    )
+                )}
               </div>
             )
           })

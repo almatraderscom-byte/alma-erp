@@ -285,6 +285,7 @@ export async function applyOwnerRedoNote(ctx, supabase, taskId, note) {
       content: msg,
       chatId: staffChatId,
       relatedTaskIds: [taskId],
+      requiresAck: true,
       extra: { reply_markup: keyboard },
     }).catch(() => ctx.telegram.sendMessage(staffChatId, msg, { reply_markup: keyboard }))
   }
@@ -312,6 +313,7 @@ export async function sendRedoToStaff(telegram, supabase, result) {
     content: msg,
     chatId: staffChatId,
     relatedTaskIds: [result.taskId],
+    requiresAck: true,
     extra: { reply_markup: keyboard },
   }).catch(() => telegram.sendMessage(staffChatId, msg, { reply_markup: keyboard }))
 }

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
 import { prepareStaffOutboundMessage } from '../staff/alma-team-voice.mjs'
+import { compactUuid, msgAckCallbackData } from './callback-data.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -20,13 +21,16 @@ export async function loggedSendToStaff(telegram, {
   chatId,
   relatedTaskIds,
   extra,
+  requiresAck = false,
 }) {
   const supabase = extSupabase ?? sb()
   const outboxId = crypto.randomUUID()
+  const shortId = compactUuid(outboxId)
   const safeContent = prepareStaffOutboundMessage(content)
 
   const { error: insertErr } = await supabase.from('agent_outbox').insert({
     id: outboxId,
+    short_id: shortId,
     staff_id: staffId ?? null,
     staff_name: staffName ?? null,
     business_id: businessId ?? null,
@@ -34,6 +38,7 @@ export async function loggedSendToStaff(telegram, {
     content: safeContent,
     status: 'queued',
     related_task_ids: relatedTaskIds ?? null,
+    requires_ack: requiresAck,
     created_at: new Date().toISOString(),
   })
 
@@ -52,8 +57,20 @@ export async function loggedSendToStaff(telegram, {
     return { ok: false, outboxId, error: 'no_chat_id' }
   }
 
+  let replyMarkup = extra?.reply_markup
+  if (requiresAck && outboxId) {
+    const ackBtn = { text: '👀 দেখেছি', callback_data: msgAckCallbackData(outboxId) }
+    const existing = replyMarkup?.inline_keyboard ?? []
+    replyMarkup = { inline_keyboard: [...existing, [ackBtn]] }
+    if (!insertErr) {
+      await supabase.from('agent_outbox').update({ requires_ack: true }).eq('id', outboxId)
+    }
+  }
+
+  const sendExtra = { ...(extra ?? {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }
+
   try {
-    const sent = await sendMarkdownSafe(telegram, chatId, safeContent, extra ?? {})
+    const sent = await sendMarkdownSafe(telegram, chatId, safeContent, sendExtra)
     if (!insertErr) {
       await supabase.from('agent_outbox').update({
         status: 'delivered',

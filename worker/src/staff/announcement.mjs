@@ -37,6 +37,7 @@ export async function sendStaffAnnouncement({ bot, payload }) {
         type: 'announcement',
         content: message,
         chatId,
+        requiresAck: true,
       })
       if (!result.ok) {
         console.warn(`[announcement] Failed to send to ${name} (${chatId}):`, result.error)
