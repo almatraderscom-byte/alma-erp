@@ -2,6 +2,10 @@ import type { NotificationPriority, NotificationType, User, UserRole } from '@pr
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
 import { sendEmail } from '@/lib/resend'
+import {
+  ANDROID_NOTIFICATION_SOUND_RAW,
+  notificationSoundUrl,
+} from '@/lib/notification-sound'
 
 type NotifyInput = {
   userId?: string | null
@@ -89,9 +93,7 @@ async function sendOneSignal(
     web_url: url,
     app_url: url,
     priority: priority === 'LOW' ? 5 : 10,
-    ios_sound: priority === 'LOW' ? undefined : 'default',
-    android_sound: priority === 'LOW' ? undefined : 'default',
-    // Android 8+ requires a channel. Dashboard UUID → android_channel_id; app channel id → existing_android_channel_id.
+    // Android 8+: sound comes from alma_alerts channel (res/raw/alma_alert). android_sound API is deprecated.
     ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || { existing_android_channel_id: 'alma_alerts' }),
     android_visibility: 1, // PUBLIC — show on lock screen
     android_led_color: 'FFC9A84C', // gold LED
@@ -105,6 +107,8 @@ async function sendOneSignal(
       businessId: meta.businessId || null,
       type: meta.type,
       actionUrl: url,
+      soundUrl: notificationSoundUrl(),
+      androidSoundRaw: ANDROID_NOTIFICATION_SOUND_RAW,
     },
   }
 

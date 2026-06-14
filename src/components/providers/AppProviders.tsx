@@ -36,6 +36,10 @@ const OneSignalPushManager = dynamic(
   () => import('@/components/notifications/OneSignalPushManager').then(mod => mod.OneSignalPushManager),
   { ssr: false, loading: () => null },
 )
+const NotificationSoundBridge = dynamic(
+  () => import('@/components/notifications/NotificationSoundBridge').then(mod => mod.NotificationSoundBridge),
+  { ssr: false, loading: () => null },
+)
 
 function RoutePrefetcher() {
   const router = useRouter()
@@ -106,6 +110,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
         <RouteTransitionLoader />
         <RoutePrefetcher />
         <OneSignalPushManager />
+        <NotificationSoundBridge />
       </NotificationShellProvider>
     </ApprovalCountProvider>
   )

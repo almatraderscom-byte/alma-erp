@@ -24,9 +24,11 @@ public final class AlmaPushChannels {
         if (manager == null) return;
 
         NotificationChannel existing = manager.getNotificationChannel(ALMA_ALERTS_ID);
+        Uri expectedSound = resolveNotificationSound(context);
         if (existing != null) {
-            // Recreate if an older build left the channel without sound.
-            if (existing.getSound() != null) return;
+            // Recreate when an older build used default/missing sound so updates pick up alma_alert.mp3.
+            Uri currentSound = existing.getSound();
+            if (currentSound != null && currentSound.equals(expectedSound)) return;
             manager.deleteNotificationChannel(ALMA_ALERTS_ID);
         }
 
@@ -41,7 +43,7 @@ public final class AlmaPushChannels {
         channel.enableVibration(true);
         channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
 
-        Uri soundUri = resolveNotificationSound(context);
+        Uri soundUri = expectedSound;
         channel.setSound(
                 soundUri,
                 new AudioAttributes.Builder()

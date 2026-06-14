@@ -11,6 +11,7 @@ import {
   registerNativePushSubscription,
   requestNativePushPermission,
 } from '@/lib/native-push'
+import { playAlmaNotificationSound } from '@/lib/notification-sound'
 
 type OneSignalSdk = {
   init: (input: {
@@ -36,6 +37,8 @@ type OneSignalSdk = {
   Notifications?: {
     permission?: boolean
     requestPermission?: () => Promise<boolean>
+    addEventListener?: (event: 'foregroundWillDisplay' | 'click', listener: () => void) => void
+    removeEventListener?: (event: 'foregroundWillDisplay' | 'click', listener: () => void) => void
   }
 }
 
@@ -291,6 +294,27 @@ export function OneSignalPushManager() {
       setBusy(false)
     }
   }, [appId, busy, business.name, businessId, employeeIdGas, getOneSignalSdk, initializeOneSignal, markRegistered, nativeApp, pushReady, registerWebSubscription, role, userId])
+
+  useEffect(() => {
+    if (nativeApp || !webSupported) return
+    let cancelled = false
+    const onDisplay = () => playAlmaNotificationSound()
+    void getOneSignalSdk()
+      .then(sdk => initializeOneSignal(sdk))
+      .then(() => {
+        if (cancelled) return
+        const notifications = window.OneSignal?.Notifications
+        notifications?.addEventListener?.('foregroundWillDisplay', onDisplay)
+        notifications?.addEventListener?.('click', onDisplay)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      const notifications = window.OneSignal?.Notifications
+      notifications?.removeEventListener?.('foregroundWillDisplay', onDisplay)
+      notifications?.removeEventListener?.('click', onDisplay)
+    }
+  }, [getOneSignalSdk, initializeOneSignal, nativeApp, webSupported])
 
   useEffect(() => {
     if (!nativeApp || !appId) return
