@@ -6,11 +6,12 @@ import {
   getAgentOrdersSummary,
   listAgentOrders,
 } from '@/lib/agent-api/orders.service'
-import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { getMessengerInbox, resolvePageId } from '@/agent/lib/meta'
 import { searchAgentMemory } from '@/agent/lib/memory-search'
 import { todayYmdDhaka, daysAgoYmd } from '@/lib/agent-api/dhaka-date'
 import { roundMoney } from '@/lib/money'
+import { getInventoryWithSales } from '@/lib/inventory-with-sales'
+import { buildReorderSuggestions, type ReorderSuggestion } from '@/lib/inventory-forecast'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -32,6 +33,7 @@ export type OwnerBriefingData = {
   } | null
   pendingOrders: { count: number; sheetSyncedAt: string | null } | null
   inventory: { items: Array<{ name: string; currentStock: number; reorderLevel: number; sku: string }> } | null
+  reorderSuggestions: ReorderSuggestion[]
   csWaiting: { unrepliedCount: number; nearWindowCount: number; openAlerts: number } | null
   adsDigest: {
     campaigns: Array<{ name: string; spend: number; ctr: number; cpc: number }>
@@ -74,21 +76,28 @@ async function gatherPendingOrders() {
   }
 }
 
-async function gatherLowStock() {
+async function gatherInventoryAndReorder() {
   try {
-    const inv = await listInventory()
-    const items = inv.items
-      .filter((i) => i.currentStock <= (i.reorderLevel || 1) || i.currentStock === 0)
+    const products = await getInventoryWithSales()
+    const reorderSuggestions = buildReorderSuggestions(products, { leadDays: 7 })
+    const urgentSkus = new Set(reorderSuggestions.map((r) => r.id))
+    const items = products
+      .filter(
+        (i) =>
+          urgentSkus.has(i.id) ||
+          i.currentStock <= (i.reorderLevel || 1) ||
+          i.currentStock === 0,
+      )
       .slice(0, 10)
       .map((i) => ({
         name: i.name,
         currentStock: i.currentStock,
         reorderLevel: i.reorderLevel ?? 0,
-        sku: i.sku,
+        sku: i.id,
       }))
-    return { items }
+    return { inventory: { items }, reorderSuggestions }
   } catch {
-    return null
+    return { inventory: null, reorderSuggestions: [] as ReorderSuggestion[] }
   }
 }
 
@@ -221,21 +230,19 @@ export function deriveBriefingDecisions(sig: {
   sales: OwnerBriefingData['sales']
   pendingOrders: OwnerBriefingData['pendingOrders']
   inventory: OwnerBriefingData['inventory']
+  reorderSuggestions: ReorderSuggestion[]
   csWaiting: OwnerBriefingData['csWaiting']
   adsDigest: OwnerBriefingData['adsDigest']
   staffYesterday: OwnerBriefingData['staffYesterday']
 }): BriefingDecision[] {
   const decisions: BriefingDecision[] = []
 
-  const lowBest = (sig.inventory?.items ?? []).filter(
-    (i) => i.currentStock <= i.reorderLevel || i.currentStock === 0,
-  )
-  for (const item of lowBest.slice(0, 3)) {
+  for (const r of (sig.reorderSuggestions ?? []).slice(0, 3)) {
     decisions.push({
       area: 'stock',
-      urgency: item.currentStock === 0 ? 'high' : 'normal',
-      text: `${item.name} স্টক কম (${item.currentStock}টি) — রিঅর্ডার করবেন?`,
-      recommend: 'সাপ্লায়ারকে আজ অর্ডার দিন',
+      urgency: r.urgency,
+      text: `${r.name}: ${r.reason}।`,
+      recommend: `আজ ~${r.suggestedQty}টি রিঅর্ডার করুন`,
     })
   }
 
@@ -331,11 +338,11 @@ export function filterVetoedDecisions(
 
 export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   const today = todayYmdDhaka()
-  const [sales, pendingOrders, inventory, csWaiting, adsDigest, staffYesterday, ownerMemories] =
+  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, ownerMemories] =
     await Promise.all([
       gatherSalesSignals(),
       gatherPendingOrders(),
-      gatherLowStock(),
+      gatherInventoryAndReorder(),
       gatherCsWaiting(),
       gatherAdsDigest(),
       gatherStaffYesterday(),
@@ -347,7 +354,9 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
       }).catch(() => []),
     ])
 
-  const signals = { sales, pendingOrders, inventory, csWaiting, adsDigest, staffYesterday }
+  const inventory = inventoryBundle.inventory
+  const reorderSuggestions = inventoryBundle.reorderSuggestions
+  const signals = { sales, pendingOrders, inventory, reorderSuggestions, csWaiting, adsDigest, staffYesterday }
   let decisions = deriveBriefingDecisions(signals)
   decisions = filterVetoedDecisions(decisions, ownerMemories)
 

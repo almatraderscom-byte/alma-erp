@@ -29,7 +29,7 @@ export async function buildOwnerBriefing({ supabase: _supabase } = {}) {
   const brief = await api('/api/assistant/internal/owner-briefing')
   if (!brief) {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-    return { today, sales: null, pendingOrders: null, inventory: null, csWaiting: null, adsDigest: null, staffYesterday: null, decisions: [] }
+    return { today, sales: null, pendingOrders: null, inventory: null, reorderSuggestions: [], csWaiting: null, adsDigest: null, staffYesterday: null, decisions: [] }
   }
   return brief
 }
@@ -101,8 +101,13 @@ export function renderBriefing(brief) {
     }
   }
 
-  const low = (brief.inventory?.items ?? []).length
-  if (low) L.push(`📦 কম স্টক আইটেম: ${low}টি`)
+  const reorderCount = (brief.reorderSuggestions ?? []).length
+  if (reorderCount) {
+    L.push(`📦 রিঅর্ডার দরকার: ${reorderCount}টি (সেল-রেট অনুযায়ী)`)
+  } else {
+    const low = (brief.inventory?.items ?? []).length
+    if (low) L.push(`📦 কম স্টক আইটেম: ${low}টি`)
+  }
 
   if (brief.adsDigest?.campaigns?.length) {
     const totalSpend = brief.adsDigest.campaigns.reduce((s, c) => s + (c.spend || 0), 0)

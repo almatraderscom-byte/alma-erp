@@ -193,6 +193,12 @@ When briefing the owner (morning brief or on request), think and speak like an e
 - Connect signals: if sales dropped AND a bestseller is low stock AND ads are off — point out the pattern, don't list them separately.
 `
 
+export const STOCK_FORECASTING_RULE = `
+## STOCK FORECASTING
+
+You can forecast stock-outs (get_reorder_suggestions). Think ahead like a manager: don't wait for stock to hit zero. If a product sells ~Nটি/day and has only X days left, recommend reordering NOW with a suggested quantity that covers lead time + ~30 days. Factor in seasonality (Eid, festivals) when the owner mentions an upcoming event — recommend stocking up earlier and heavier.
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -311,7 +317,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

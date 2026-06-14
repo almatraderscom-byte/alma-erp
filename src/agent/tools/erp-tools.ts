@@ -17,6 +17,8 @@ import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { BusinessId } from '@/lib/businesses'
 import type { AgentTool } from './registry'
 import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
+import { getInventoryWithSales } from '@/lib/inventory-with-sales'
+import { buildReorderSuggestions } from '@/lib/inventory-forecast'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -573,6 +575,37 @@ const get_dashboard_snapshot: AgentTool = {
   },
 }
 
+const get_reorder_suggestions: AgentTool = {
+  name: 'get_reorder_suggestions',
+  description:
+    'Forecast which products need reordering based on sell-rate vs stock. Returns items running low soon, ' +
+    'with daily sell rate, days of stock left, and suggested reorder quantity. Use when owner asks ' +
+    '"ki reorder korbo", "kon product shesh hocche", stock planning, or restock questions.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      leadDays: { type: 'number', description: 'Supplier lead time in days (default 7)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const leadDays = typeof input.leadDays === 'number' ? input.leadDays : 7
+      const products = await getInventoryWithSales()
+      const suggestions = buildReorderSuggestions(products, { leadDays })
+      return {
+        success: true,
+        data: {
+          count: suggestions.length,
+          leadDays,
+          suggestions,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const generate_owner_briefing: AgentTool = {
   name: 'generate_owner_briefing',
   description:
@@ -599,5 +632,6 @@ export const ERP_TOOLS: AgentTool[] = [
   get_employee_overview,
   get_attendance,
   get_dashboard_snapshot,
+  get_reorder_suggestions,
   generate_owner_briefing,
 ]
