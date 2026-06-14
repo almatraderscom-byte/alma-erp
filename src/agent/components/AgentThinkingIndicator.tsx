@@ -5,6 +5,9 @@ import { cn } from '@/lib/utils'
 
 const SPOKES = 12
 const PALETTE = ['#e1306c', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4']
+const SIZE = 28
+const SPOKE_LEN = 9
+const SPOKE_W = 2.4
 
 interface AgentThinkingIndicatorProps {
   label?: string
@@ -23,9 +26,9 @@ export function AgentThinkingIndicator({
 
   return (
     <div className={cn('flex items-center gap-2.5 py-1', className)}>
-      {/* Starburst */}
       <motion.div
-        className="relative h-6 w-6 shrink-0"
+        className="relative shrink-0"
+        style={{ width: SIZE, height: SIZE }}
         animate={isSettled ? { rotate: 0 } : { rotate: 360 }}
         transition={isSettled
           ? { duration: 0.4, ease: 'easeOut' }
@@ -37,35 +40,47 @@ export function AgentThinkingIndicator({
           const angle = (360 / SPOKES) * i
           const color = PALETTE[i % PALETTE.length]
           return (
-            <motion.span
+            <div
               key={i}
-              className="absolute left-1/2 top-1/2 h-[9px] w-[2.5px] origin-bottom rounded-full"
-              style={{
-                background: color,
-                transform: `translate(-50%, -100%) rotate(${angle}deg)`,
-                transformOrigin: '50% 100%',
-              }}
-              animate={isSettled
-                ? { opacity: 0.85, scaleY: 1 }
-                : { opacity: [0.3, 1, 0.3], scaleY: [0.7, 1.1, 0.7] }
-              }
-              transition={isSettled
-                ? { duration: 0.3 }
-                : { duration: spinDur * 0.7, repeat: Infinity, ease: 'easeInOut', delay: i * (spinDur * 0.7 / SPOKES) }
-              }
-            />
+              className="absolute inset-0"
+              style={{ transform: `rotate(${angle}deg)` }}
+            >
+              <motion.span
+                className="absolute rounded-full"
+                style={{
+                  left: `calc(50% - ${SPOKE_W / 2}px)`,
+                  top: 0,
+                  width: SPOKE_W,
+                  height: SPOKE_LEN,
+                  background: color,
+                  transformOrigin: '50% 100%',
+                }}
+                animate={isSettled
+                  ? { opacity: 0.9, scaleY: 1 }
+                  : { opacity: [0.25, 1, 0.25], scaleY: [0.6, 1.15, 0.6] }
+                }
+                transition={isSettled
+                  ? { duration: 0.3 }
+                  : {
+                      duration: spinDur * 0.7,
+                      repeat: Infinity,
+                      ease: 'easeInOut',
+                      delay: i * (spinDur * 0.7 / SPOKES),
+                    }
+                }
+              />
+            </div>
           )
         })}
       </motion.div>
 
-      {/* Label or "ALMA" text on settle */}
       {isSettled ? (
         <motion.span
           className="text-[14px] font-bold tracking-wide"
           style={{ color: PALETTE[0] }}
           initial={{ opacity: 0, x: -6 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
+          transition={{ duration: 0.45, ease: 'easeOut' }}
         >
           ALMA
         </motion.span>
