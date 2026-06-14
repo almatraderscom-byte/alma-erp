@@ -56,9 +56,12 @@ function telegramApi(botOrApi) {
  * @param {import('telegraf').Telegraf|import('telegraf').Telegram} botOrApi
  * @param {string|number} chatId
  * @param {string} text
+ * @param {{ caption?: string }} [options]
  */
-export async function sendVoiceMessage(botOrApi, chatId, text) {
+export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
   const api = telegramApi(botOrApi)
   const mp3Buffer = await synthesizeSpeech(text, 600)
-  await api.sendVoice(chatId, { source: mp3Buffer }, { caption: text.slice(0, 200) })
+  // No caption by default — the voice already speaks the content; a caption just duplicates it.
+  const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
+  await api.sendVoice(chatId, { source: mp3Buffer }, extra)
 }

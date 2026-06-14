@@ -10,6 +10,11 @@ const SENTENCE_ENDS = ['।', '?', '!', '.']
 
 function stripMarkdown(text) {
   return text
+    // Islamic honorific ligatures → clear Bangla for natural TTS
+    .replace(/\uFDFA/g, ' সাল্লাল্লাহু আলাইহি ওয়াসাল্লাম ')
+    .replace(/\uFDFB/g, ' জাল্লা জালালুহু ')
+    .replace(/\u0639\u0644\u064A\u0647\u0020\u0627\u0644\u0633\u0644\u0627\u0645/g, ' আলাইহিস সালাম ')
+    .replace(/\u0631\u0636\u064A\u0020\u0627\u0644\u0644\u0647\u0020\u0639\u0646\u0647/g, ' রাদিয়াল্লাহু আনহু ')
     .replace(/#{1,6}\s+/g, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
