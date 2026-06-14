@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
+import { enforceIslamicGreeting } from '../staff/greeting-sanitize.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -22,6 +23,7 @@ export async function loggedSendToStaff(telegram, {
 }) {
   const supabase = extSupabase ?? sb()
   const outboxId = crypto.randomUUID()
+  const safeContent = enforceIslamicGreeting(content)
 
   const { error: insertErr } = await supabase.from('agent_outbox').insert({
     id: outboxId,
@@ -29,7 +31,7 @@ export async function loggedSendToStaff(telegram, {
     staff_name: staffName ?? null,
     business_id: businessId ?? null,
     type,
-    content,
+    content: safeContent,
     status: 'queued',
     related_task_ids: relatedTaskIds ?? null,
     created_at: new Date().toISOString(),
@@ -51,7 +53,7 @@ export async function loggedSendToStaff(telegram, {
   }
 
   try {
-    const sent = await sendMarkdownSafe(telegram, chatId, content, extra ?? {})
+    const sent = await sendMarkdownSafe(telegram, chatId, safeContent, extra ?? {})
     if (!insertErr) {
       await supabase.from('agent_outbox').update({
         status: 'delivered',

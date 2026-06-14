@@ -8,9 +8,11 @@ import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-ta
 import {
   syncPendingDispatchAction,
   refreshAndApproveDispatch,
+  prepareCorrectedDispatchPending,
   loadProposedTasksForDate,
   buildDispatchSummary,
 } from '@/agent/lib/staff-dispatch-sync'
+import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -606,9 +608,11 @@ const get_current_proposal: AgentTool = {
 const correct_and_redispatch_staff_tasks: AgentTool = {
   name: 'correct_and_redispatch_staff_tasks',
   description:
-    'Wrong tasks were already sent. Cancels sent/approved tasks for the date, then dispatches the CURRENT proposed list from DB. ' +
-    'Use when owner says "ভুল টাস্ক গেছে", "আগেরটা বাদ দিয়ে ঠিকটা পাঠাও", "correct task পাঠাও". ' +
-    'Correct proposed tasks MUST already be in DB (merge_into_proposal / propose_staff_tasks) before calling this.',
+    'Wrong tasks were already sent. Cancels sent/approved tasks for the date and creates a PENDING dispatch approval card ' +
+    'from the CURRENT proposed list in DB — does NOT send to staff until the owner explicitly approves. ' +
+    'Use when owner says "ভুল টাস্ক গেছে", "আগেরটা বাদ দিয়ে ঠিকটা পাঠাও". ' +
+    'Correct proposed tasks MUST already be in DB (merge_into_proposal / propose_staff_tasks) before calling. ' +
+    'After calling, show the full list and wait for approve_pending_dispatch — never auto-dispatch.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -626,52 +630,25 @@ const correct_and_redispatch_staff_tasks: AgentTool = {
         }
       }
 
-      const cancelled = await db.agentStaffTask.updateMany({
-        where: {
-          proposedFor: new Date(date),
-          status: { in: ['sent', 'approved'] },
-        },
-        data: { status: 'cancelled' },
-      })
-
-      const openActions = await db.agentPendingAction.findMany({
-        where: {
-          type: 'dispatch_staff_tasks',
-          status: { in: ['pending', 'approved'] },
-        },
-        select: { id: true, payload: true },
-      })
-      for (const a of openActions) {
-        const p = a.payload as { date?: string }
-        if (p.date === date) {
-          await db.agentPendingAction.update({
-            where: { id: a.id },
-            data: {
-              status: 'superseded',
-              resolvedAt: new Date(),
-              result: { reason: 'corrected_redispatch' },
-            },
-          })
-        }
-      }
-
-      const result = await refreshAndApproveDispatch(date)
+      const result = await prepareCorrectedDispatchPending(date)
       if (!result.ok) {
-        return { success: false, error: 'Redispatch failed — no proposed tasks after cancel.' }
+        return { success: false, error: 'Redispatch prep failed — no proposed tasks after cancel.' }
       }
 
       return {
         success: true,
         data: {
-          status: 'corrected_redispatch_queued',
+          status: 'correction_pending_approval',
           date,
-          cancelledWrongTasks: cancelled.count,
-          redispatchTaskCount: result.taskCount,
+          pendingActionId: result.pendingActionId,
+          cancelledWrongTasks: result.cancelledCount,
+          proposedTaskCount: result.proposedCount,
           taskIds: result.taskIds,
-          summaryBangla: buildDispatchSummary(date, proposed),
+          summaryBangla: result.summaryBangla,
           message:
-            `${cancelled.count}টি ভুল টাস্ক cancelled, ${result.taskCount}টি সঠিক টাস্ক dispatch queue-তে। ` +
-            'স্টাফকে send_staff_announcement দিয়ে জানান আগের মেসেজ বাতিল — নিচের নতুন তালিকা সঠিক।',
+            `${result.cancelledCount}টি ভুল টাস্ক cancelled। ${result.proposedCount}টি সঠিক টাস্ক approval card-এ তৈরি — ` +
+            'এখনো পাঠানো হয়নি। মালিক Approve/পাঠাও বললে approve_pending_dispatch চালান। ' +
+            '"পাঠানো হয়েছে" বলবেন না — get_dispatch_status দিয়ে verify করুন।',
         },
       }
     } catch (err) {
@@ -841,7 +818,7 @@ const send_staff_announcement: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const message = String(input.message ?? '').trim()
+      const message = enforceIslamicGreeting(String(input.message ?? '').trim())
       if (!message) return { success: false, error: 'message is required' }
 
       const sendVoice = input.sendVoice !== false

@@ -153,3 +153,67 @@ export async function refreshAndApproveDispatch(
 
   return { ok: true, pendingActionId: actionId, date, taskCount: count, taskIds }
 }
+
+export type PrepareCorrectedResult =
+  | {
+      ok: true
+      pendingActionId: string
+      date: string
+      cancelledCount: number
+      proposedCount: number
+      taskIds: string[]
+      summaryBangla: string
+    }
+  | { ok: false; reason: 'no_proposed' }
+
+/**
+ * Cancel wrong sent/approved tasks and create a PENDING dispatch card from DB proposed rows.
+ * Does NOT approve or dispatch — owner must approve explicitly.
+ */
+export async function prepareCorrectedDispatchPending(date: string): Promise<PrepareCorrectedResult> {
+  const proposed = await loadProposedTasksForDate(date)
+  if (!proposed.length) return { ok: false, reason: 'no_proposed' }
+
+  const cancelled = await db.agentStaffTask.updateMany({
+    where: {
+      proposedFor: new Date(date),
+      status: { in: ['sent', 'approved'] },
+    },
+    data: { status: 'cancelled' },
+  })
+
+  const openActions = await db.agentPendingAction.findMany({
+    where: {
+      type: 'dispatch_staff_tasks',
+      status: { in: ['pending', 'approved'] },
+    },
+    select: { id: true, payload: true },
+  })
+  for (const a of openActions) {
+    const p = a.payload as { date?: string }
+    if (p.date === date) {
+      await db.agentPendingAction.update({
+        where: { id: a.id },
+        data: {
+          status: 'superseded',
+          resolvedAt: new Date(),
+          result: { reason: 'corrected_redispatch_pending' },
+        },
+      })
+    }
+  }
+
+  const pendingActionId = await syncPendingDispatchAction(date)
+  if (!pendingActionId) return { ok: false, reason: 'no_proposed' }
+
+  const taskIds = proposed.map((t) => t.id)
+  return {
+    ok: true,
+    pendingActionId,
+    date,
+    cancelledCount: cancelled.count as number,
+    proposedCount: proposed.length,
+    taskIds,
+    summaryBangla: buildDispatchSummary(date, proposed),
+  }
+}
