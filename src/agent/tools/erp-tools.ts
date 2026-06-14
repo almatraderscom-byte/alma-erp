@@ -19,6 +19,7 @@ import type { AgentTool } from './registry'
 import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
 import { buildReorderSuggestions } from '@/lib/inventory-forecast'
+import { segmentCustomers, type CustomerSegmentResult } from '@/lib/customer-intelligence'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -575,6 +576,64 @@ const get_dashboard_snapshot: AgentTool = {
   },
 }
 
+const get_customer_segments: AgentTool = {
+  name: 'get_customer_segments',
+  description:
+    'Segment customers into win-back (repeat buyers gone quiet 45+ days), loyal (top repeat buyers), ' +
+    'at-risk (slowing down), and new. Use when owner asks about customer retention, win-back, loyal ' +
+    'customers, "ke fire ashe ni", or marketing/offer planning. Note: win-back customers are outside ' +
+    'the 24h window so they CANNOT be auto-messaged — surface them to the owner with a suggested offer.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      segment: {
+        type: 'string',
+        enum: ['winBack', 'loyal', 'atRisk', 'newRecent', 'all'],
+        description: 'Which segment to return (default all summary)',
+      },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const seg = await segmentCustomers()
+      const segment = input.segment ? String(input.segment) : 'all'
+
+      if (segment && segment !== 'all') {
+        const key = segment as keyof CustomerSegmentResult
+        if (!(key in seg)) {
+          return { success: false, error: `Unknown segment: ${segment}` }
+        }
+        return {
+          success: true,
+          data: {
+            segment,
+            count: seg[key].length,
+            customers: seg[key],
+            note: 'Win-back customers are outside the 24h Meta window — do NOT auto-DM them.',
+          },
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          winBackCount: seg.winBack.length,
+          loyalCount: seg.loyal.length,
+          atRiskCount: seg.atRisk.length,
+          newRecentCount: seg.newRecent.length,
+          winBack: seg.winBack.slice(0, 20),
+          loyal: seg.loyal.slice(0, 10),
+          atRisk: seg.atRisk.slice(0, 10),
+          newRecent: seg.newRecent.slice(0, 10),
+          note: 'Win-back customers are outside the 24h Meta window — surface to owner with offer draft only.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const get_reorder_suggestions: AgentTool = {
   name: 'get_reorder_suggestions',
   description:
@@ -632,6 +691,7 @@ export const ERP_TOOLS: AgentTool[] = [
   get_employee_overview,
   get_attendance,
   get_dashboard_snapshot,
+  get_customer_segments,
   get_reorder_suggestions,
   generate_owner_briefing,
 ]

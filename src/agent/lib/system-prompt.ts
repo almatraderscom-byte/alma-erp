@@ -199,6 +199,16 @@ export const STOCK_FORECASTING_RULE = `
 You can forecast stock-outs (get_reorder_suggestions). Think ahead like a manager: don't wait for stock to hit zero. If a product sells ~Nটি/day and has only X days left, recommend reordering NOW with a suggested quantity that covers lead time + ~30 days. Factor in seasonality (Eid, festivals) when the owner mentions an upcoming event — recommend stocking up earlier and heavier.
 `
 
+export const CUSTOMER_WIN_BACK_RULE = `
+## CUSTOMER WIN-BACK
+
+You track customer value (get_customer_segments). Win-back customers (repeat buyers quiet 45+ days) are OUTSIDE the 24h Meta window — you CANNOT message them automatically. Instead:
+- Surface them to the owner with their order count and how long they've been gone.
+- Offer to draft a win-back message/offer the owner can send or boost.
+- For loyal customers, suggest recognition (thank-you, early access, small perk) to keep them.
+Never auto-DM a customer outside the 24h window — that violates Meta policy and is hard-blocked.
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -317,7 +327,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

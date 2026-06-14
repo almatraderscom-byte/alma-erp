@@ -47,6 +47,7 @@ const lazy = {
   tokenHealth:        () => import('../cs/token-health.mjs'),
   sessionSummarizer:  () => import('../memory/session-summarizer.mjs'),
   ownerBriefing:      () => import('../reports/owner-briefing-run.mjs'),
+  customerIntel:      () => import('../reports/customer-intel.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'session-summarizer',     cronUtc: '*/15 * * * *', description: 'Summarize ended owner chats into memory (every 15 min)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
+  { name: 'customer-intel',         cronUtc: '0 4 * * 6',    description: 'Weekly customer win-back + loyalty digest (Sat 10:00 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
   { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
@@ -182,6 +184,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'daily-summary': {
           const { runDailySummary } = await lazy.dailySummary()
           await runDailySummary(context)
+          break
+        }
+        case 'customer-intel': {
+          const { runCustomerIntel } = await lazy.customerIntel()
+          await runCustomerIntel({ bot })
           break
         }
         case 'subscription-renewal': {
