@@ -40,6 +40,7 @@ export type StaffMonitorData = {
   feed: StaffMonitorRow[]
   failures: StaffMonitorRow[]
   staffSummaries: StaffSummary[]
+  typeCounts: Record<string, number>
   mismatches: Array<{
     staffId: string
     staffName: string
@@ -84,11 +85,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   const today = todayYmdDhaka()
   const todayStart = new Date(`${today}T00:00:00+06:00`)
 
-  const [feedRows, todayTasks, todayOutbox] = await Promise.all([
-    prisma.agentOutbox.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    }),
+  const [todayTasks, todayOutbox] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -100,11 +97,16 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     prisma.agentOutbox.findMany({
       where: { createdAt: { gte: todayStart } },
       orderBy: { createdAt: 'desc' },
+      take: 200,
     }),
   ])
 
-  const feed = feedRows.map(mapOutbox)
+  const feed = todayOutbox.map(mapOutbox)
   const failures = feed.filter((f) => f.status === 'failed')
+  const typeCounts: Record<string, number> = {}
+  for (const row of feed) {
+    typeCounts[row.type] = (typeCounts[row.type] ?? 0) + 1
+  }
 
   const staffMap = new Map<string, StaffSummary>()
 
@@ -153,11 +155,9 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
       })
     }
     const s = staffMap.get(sid)!
-    if (row.type === 'task_dispatch' || row.type === 'reminder' || row.type === 'presence') {
-      s.dispatched++
-      if (row.status === 'delivered') s.delivered++
-      if (row.status === 'failed') s.failed++
-    }
+    s.dispatched++
+    if (row.status === 'delivered') s.delivered++
+    if (row.status === 'failed') s.failed++
     const activityAt = (row.sentAt ?? row.createdAt).toISOString()
     if (!s.lastActivityAt || activityAt > s.lastActivityAt) {
       s.lastActivityAt = activityAt
@@ -194,6 +194,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     feed,
     failures,
     staffSummaries,
+    typeCounts,
     mismatches,
     generatedAt: new Date().toISOString(),
   }

@@ -10,6 +10,7 @@ const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 const OWNER_ID = String(process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
 import { uploadTaskProofPhoto } from './task-proof-storage.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
 /** staffChatId → taskId */
 export const awaitingProof = new Map()
@@ -275,25 +276,42 @@ export async function applyOwnerRedoNote(ctx, supabase, taskId, note) {
         { text: '✅ Done', callback_data: taskDoneCallbackData(taskId) },
       ]],
     }
-    await ctx.telegram.sendMessage(staffChatId, msg, { reply_markup: keyboard })
+    await loggedSendToStaff(ctx.telegram, {
+      supabase,
+      staffId: result.staffId,
+      staffName: result.staffName,
+      businessId: 'ALMA_LIFESTYLE',
+      type: 'task_redo',
+      content: msg,
+      chatId: staffChatId,
+      relatedTaskIds: [taskId],
+      extra: { reply_markup: keyboard },
+    }).catch(() => ctx.telegram.sendMessage(staffChatId, msg, { reply_markup: keyboard }))
   }
 
   return result
 }
 
-export async function sendRedoToStaff(telegram, result) {
+export async function sendRedoToStaff(telegram, supabase, result) {
   const staffChatId = result.staffChatId
   if (!staffChatId) return
   const noteLine = result.reviewerNote ? `\nমন্তব্য: ${result.reviewerNote}` : ''
-  await telegram.sendMessage(
-    staffChatId,
-    `🔄 Boss বলেছেন আবার করতে — ${result.taskTitle}।${noteLine}`,
-    {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '✅ Done', callback_data: taskDoneCallbackData(result.taskId) },
-        ]],
-      },
-    },
-  )
+  const msg =
+    `🔄 Boss বলেছেন আবার করতে — ${result.taskTitle}।${noteLine}`
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '✅ Done', callback_data: taskDoneCallbackData(result.taskId) },
+    ]],
+  }
+  await loggedSendToStaff(telegram, {
+    supabase,
+    staffId: result.staffId,
+    staffName: result.staffName,
+    businessId: 'ALMA_LIFESTYLE',
+    type: 'task_redo',
+    content: msg,
+    chatId: staffChatId,
+    relatedTaskIds: [result.taskId],
+    extra: { reply_markup: keyboard },
+  }).catch(() => telegram.sendMessage(staffChatId, msg, { reply_markup: keyboard }))
 }

@@ -2,6 +2,7 @@
  * Proof timeout — 30 min reminder, 2h unverified flag.
  */
 import { notify } from '../notify/index.mjs'
+import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
 const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -60,10 +61,17 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
     }
 
     if (elapsed >= REMINDER_MS && !proofData.reminderSentAt && staffChat && bot) {
-      await bot.telegram.sendMessage(
-        staffChat,
-        `📸 ${label} এর প্রমাণ পাঠাননি — ফটো পাঠান`,
-      ).catch(() => {})
+      const reminderMsg = `📸 ${label} এর প্রমাণ পাঠাননি — ফটো পাঠান`
+      await loggedSendToStaff(bot.telegram, {
+        supabase,
+        staffId: task.staff_id,
+        staffName: task.agent_staff?.name ?? 'স্টাফ',
+        businessId: 'ALMA_LIFESTYLE',
+        type: 'proof_reminder',
+        content: reminderMsg,
+        chatId: staffChat,
+        relatedTaskIds: [task.id],
+      }).catch(() => bot.telegram.sendMessage(staffChat, reminderMsg).catch(() => {}))
 
       await supabase.from('staff_tasks').update({
         proof_data: { ...proofData, reminderSentAt: new Date().toISOString() },

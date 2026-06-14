@@ -7,6 +7,8 @@ export type AgentOutboxType =
   | 'presence'
   | 'announcement'
   | 'feedback_ack'
+  | 'task_redo'
+  | 'proof_reminder'
 
 export async function queueAgentOutbox(args: {
   staffId?: string | null
