@@ -6,7 +6,7 @@
  *  4. Place call with Url → /api/twilio/twiml/salah-call (double Play + Say fallback)
  *  5. StatusCallback + auto Say-only retry when handset likely never rang
  *
- * Inline TwiML + direct Supabase signed URLs caused "completed 9s" ghost calls on BD networks.
+ * Salah calls use a separate retry policy: 3m / 5m / 5m retries, cooldown bypassed.
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -20,8 +20,10 @@ import {
 } from '../twilio-http.mjs'
 
 const CALL_TEXT_LIMIT = 200
-/** Min gap between outbound calls — reduces carrier spam-blocking after back-to-back tests */
+/** Min gap between general outbound calls — reduces carrier spam-blocking */
 const MIN_CALL_GAP_MS = 90 * 1000
+/** Salah retries: wait after failed connect, then call again (owner may be on another line) */
+const SALAH_RETRY_DELAYS_MS = [180_000, 300_000, 300_000]
 /** Completed shorter than this ≈ ghost connect (Twilio played audio, phone never rang) */
 const GHOST_CONNECT_MAX_SEC = 12
 
@@ -75,6 +77,68 @@ async function placeCall({ accountSid, authToken, fromNumber, toNumber, twimlUrl
   return { ok: true, callSid: data.sid }
 }
 
+const TERMINAL_CALL_STATUSES = new Set(['completed', 'no-answer', 'busy', 'failed', 'canceled'])
+
+function callNeedsRetry(call) {
+  if (!call) return true
+  const dur = Number(call.duration ?? 0)
+  if (call.status === 'busy' || call.status === 'no-answer' || call.status === 'failed') return true
+  if (call.status === 'completed' && dur > 0 && dur < GHOST_CONNECT_MAX_SEC) return true
+  return false
+}
+
+async function waitForTerminalCall(callSid, accountSid, authToken, maxWaitMs = 50_000) {
+  const deadline = Date.now() + maxWaitMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000))
+    try {
+      const call = await fetchCall(accountSid, authToken, callSid)
+      if (TERMINAL_CALL_STATUSES.has(call.status)) return call
+    } catch (err) {
+      console.warn('[twilio] poll failed:', err.message)
+      return null
+    }
+  }
+  return null
+}
+
+async function placeSayOnlyRetry({
+  sayText,
+  accountSid,
+  authToken,
+  fromNumber,
+  toNumber,
+  appUrl,
+  statusCallbackUrl,
+  skipCooldown = false,
+}) {
+  if (!skipCooldown && Date.now() - lastCallPlacedAt < MIN_CALL_GAP_MS) {
+    return { ok: false, error: 'call_cooldown', skipped: true }
+  }
+
+  const twimlUrl = buildTwimlSayOnlyUrl(appUrl, sayText)
+  const retry = await placeCall({
+    accountSid,
+    authToken,
+    fromNumber,
+    toNumber,
+    twimlUrl,
+    statusCallbackUrl,
+  })
+  if (retry.ok) {
+    lastCallPlacedAt = Date.now()
+    void logCost({
+      provider: 'twilio',
+      kind: 'call',
+      units: { callSid: retry.callSid, estimated_seconds: 60, retry: true },
+      costUsd: calcTwilioCostUsd(60),
+      jobId: retry.callSid,
+      dedupKey: `twilio:${retry.callSid}`,
+    })
+  }
+  return retry
+}
+
 async function maybeRetrySayOnly({
   callSid,
   sayText,
@@ -88,42 +152,104 @@ async function maybeRetrySayOnly({
   await new Promise((r) => setTimeout(r, 18_000))
   try {
     const call = await fetchCall(accountSid, authToken, callSid)
-    const dur = Number(call.duration ?? 0)
-    const ghost = call.status === 'completed' && dur > 0 && dur < GHOST_CONNECT_MAX_SEC
-    const missed = call.status === 'no-answer' || call.status === 'busy' || call.status === 'failed'
-    if (!ghost && !missed) return
+    if (!callNeedsRetry(call)) return
 
-    console.warn(`[twilio] retry say-only (${call.status}, ${dur}s) after ghost/missed call ${callSid}`)
-
-    if (Date.now() - lastCallPlacedAt < MIN_CALL_GAP_MS) {
-      console.warn('[twilio] retry skipped — call cooldown')
-      return
-    }
-
-    const twimlUrl = buildTwimlSayOnlyUrl(appUrl, sayText)
-    const retry = await placeCall({
+    console.warn(`[twilio] retry say-only (${call.status}, ${call.duration ?? 0}s) after ghost/missed call ${callSid}`)
+    const retry = await placeSayOnlyRetry({
+      sayText,
       accountSid,
       authToken,
       fromNumber,
       toNumber,
-      twimlUrl,
+      appUrl,
       statusCallbackUrl,
     })
     if (retry.ok) {
-      lastCallPlacedAt = Date.now()
       console.log('[twilio] say-only retry placed:', retry.callSid)
+    } else if (retry.skipped) {
+      console.warn('[twilio] retry skipped — call cooldown')
     }
   } catch (err) {
     console.warn('[twilio] retry check failed:', err.message)
   }
 }
 
+/** Salah-only: retry 3m / 5m / 5m after busy, no-answer, or ghost connect — bypasses global cooldown. */
+async function scheduleSalahCallRetries({
+  initialCallSid,
+  sayText,
+  accountSid,
+  authToken,
+  fromNumber,
+  toNumber,
+  appUrl,
+  statusCallbackUrl,
+}) {
+  let call = await waitForTerminalCall(initialCallSid, accountSid, authToken, 50_000)
+  if (!call) {
+    try {
+      call = await fetchCall(accountSid, authToken, initialCallSid)
+    } catch {
+      call = null
+    }
+  }
+
+  if (!callNeedsRetry(call)) {
+    console.log(`[twilio/salah] initial call ok (${call?.status}, ${call?.duration ?? 0}s)`)
+    return
+  }
+
+  console.warn(`[twilio/salah] initial call needs retry (${call?.status}, ${call?.duration ?? 0}s) — ${SALAH_RETRY_DELAYS_MS.length} attempts scheduled`)
+
+  let lastSid = initialCallSid
+  for (let i = 0; i < SALAH_RETRY_DELAYS_MS.length; i++) {
+    const delayMs = SALAH_RETRY_DELAYS_MS[i]
+    console.log(`[twilio/salah] retry ${i + 1} in ${Math.round(delayMs / 1000)}s`)
+    await new Promise((r) => setTimeout(r, delayMs))
+
+    const retry = await placeSayOnlyRetry({
+      sayText,
+      accountSid,
+      authToken,
+      fromNumber,
+      toNumber,
+      appUrl,
+      statusCallbackUrl,
+      skipCooldown: true,
+    })
+    if (!retry.ok) {
+      console.warn(`[twilio/salah] retry ${i + 1} place failed:`, retry.error)
+      continue
+    }
+
+    lastSid = retry.callSid
+    console.log(`[twilio/salah] retry ${i + 1} placed:`, lastSid)
+
+    call = await waitForTerminalCall(lastSid, accountSid, authToken, 50_000)
+    if (!call) {
+      try {
+        call = await fetchCall(accountSid, authToken, lastSid)
+      } catch {
+        call = null
+      }
+    }
+
+    if (!callNeedsRetry(call)) {
+      console.log(`[twilio/salah] retry ${i + 1} connected (${call?.status}, ${call?.duration ?? 0}s)`)
+      return
+    }
+    console.warn(`[twilio/salah] retry ${i + 1} still missed (${call?.status}, ${call?.duration ?? 0}s)`)
+  }
+}
+
 /**
  * @param {string} text
+ * @param {{ force?: boolean, salah?: boolean, skipAutoRetry?: boolean, toNumber?: string }} opts
  * @returns {Promise<{ok:boolean, callSid?:string, error?:string, skipped?:boolean}>}
  */
 export async function makeTwilioCall(text, opts = {}) {
   const force = Boolean(opts.force)
+  const salah = Boolean(opts.salah)
   const accountSid  = process.env.TWILIO_ACCOUNT_SID
   const authToken   = process.env.TWILIO_AUTH_TOKEN
   const fromNumber  = process.env.TWILIO_FROM_NUMBER
@@ -136,7 +262,8 @@ export async function makeTwilioCall(text, opts = {}) {
   }
 
   const now = Date.now()
-  if (!force && now - lastCallPlacedAt < MIN_CALL_GAP_MS) {
+  const bypassCooldown = salah || force
+  if (!bypassCooldown && now - lastCallPlacedAt < MIN_CALL_GAP_MS) {
     return { ok: false, error: 'call_cooldown', skipped: true }
   }
 
@@ -175,14 +302,14 @@ export async function makeTwilioCall(text, opts = {}) {
     void logCost({
       provider: 'twilio',
       kind: 'call',
-      units: { callSid: result.callSid, estimated_seconds: 60 },
+      units: { callSid: result.callSid, estimated_seconds: 60, salah },
       costUsd: calcTwilioCostUsd(60),
       jobId: result.callSid,
       dedupKey: `twilio:${result.callSid}`,
     })
 
     if (!opts.skipAutoRetry) {
-      void maybeRetrySayOnly({
+      const retryCtx = {
         callSid: result.callSid,
         sayText: speechText,
         accountSid,
@@ -191,7 +318,12 @@ export async function makeTwilioCall(text, opts = {}) {
         toNumber,
         appUrl: publicBase,
         statusCallbackUrl,
-      })
+      }
+      if (salah) {
+        void scheduleSalahCallRetries({ initialCallSid: result.callSid, ...retryCtx })
+      } else {
+        void maybeRetrySayOnly(retryCtx)
+      }
     }
 
     return { ok: true, callSid: result.callSid, publicBase }
@@ -199,8 +331,6 @@ export async function makeTwilioCall(text, opts = {}) {
     return { ok: false, error: err.message }
   }
 }
-
-const TERMINAL_CALL_STATUSES = new Set(['completed', 'no-answer', 'busy', 'failed', 'canceled'])
 
 /**
  * Poll Twilio until call ends, then POST status to app (fallback if StatusCallback fails).

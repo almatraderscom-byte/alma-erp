@@ -60,9 +60,10 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-  const { date, waqt, windowStart, windowEnd, status, incrementReminders, resetDay, reopen } = body as {
+  const { date, waqt, windowStart, windowEnd, status, incrementReminders, incrementRemindersIf, resetDay, reopen } = body as {
     date?: string; waqt?: string; windowStart?: string; windowEnd?: string;
-    status?: string; incrementReminders?: boolean; resetDay?: boolean; reopen?: boolean;
+    status?: string; incrementReminders?: boolean; incrementRemindersIf?: number;
+    resetDay?: boolean; reopen?: boolean;
   }
 
   if (!date || !waqt) return NextResponse.json({ error: 'date and waqt required' }, { status: 400 })
@@ -77,6 +78,33 @@ export async function POST(req: NextRequest) {
     const existing = await db.agentSalahRecord.findUnique({
       where: { date_waqt: { date: dateObj, waqt } },
     })
+
+    // Atomic claim before sending a reminder — prevents duplicate azan pushes from parallel ticks.
+    if (typeof incrementRemindersIf === 'number') {
+      if (!existing) {
+        return NextResponse.json({ ok: false, skipped: 'no_record' }, { status: 409 })
+      }
+      if (isOwnerConfirmed(existing)) {
+        return NextResponse.json({ ok: false, skipped: 'owner_confirmed' }, { status: 409 })
+      }
+      const claimed = await db.agentSalahRecord.updateMany({
+        where: {
+          date: dateObj,
+          waqt,
+          remindersSent: incrementRemindersIf,
+          status: 'pending',
+          confirmedAt: null,
+        },
+        data: { remindersSent: { increment: 1 } },
+      })
+      if (claimed.count === 0) {
+        return NextResponse.json({ ok: false, skipped: 'reminder_claim_race' }, { status: 409 })
+      }
+      const record = await db.agentSalahRecord.findUnique({
+        where: { date_waqt: { date: dateObj, waqt } },
+      })
+      return NextResponse.json({ ok: true, record, claimed: true })
+    }
 
     if (reopen && existing) {
       const record = await db.agentSalahRecord.update({

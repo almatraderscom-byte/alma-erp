@@ -85,6 +85,22 @@ async function upsertSalahRecord(data) {
   return res.json()
 }
 
+/** Atomically claim a reminder step before sending — prevents duplicate azan from parallel ticks. */
+async function claimReminderStep(date, waqt, expectedRemindersSent) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/salah-record`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    body: JSON.stringify({ date, waqt, incrementRemindersIf: expectedRemindersSent }),
+  })
+  if (res.status === 409) return false
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '(no body)')
+    console.warn(`[salah] claim ${waqt} step ${expectedRemindersSent} failed ${res.status}: ${errText}`)
+    return false
+  }
+  return true
+}
+
 async function getSalahRecords(date) {
   const res = await fetch(`${APP_URL}/api/assistant/internal/salah-record?date=${date}`, {
     headers: { Authorization: `Bearer ${INT_TOKEN}` },
@@ -349,6 +365,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 
     // Step 0: Azan — Quran/Hadith reminder
     if (msSinceAzan >= 0 && remindersSent === 0 && now < windowEnd) {
+      if (!(await claimReminderStep(today, waqt, 0))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 1,
@@ -385,12 +403,13 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         }
       }
 
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
     // Step 1: Prayer start — direct phone call + NTFY + Telegram (no SMS)
     if (msSincePrayerStart >= 0 && remindersSent === 1 && now < windowEnd) {
+      if (!(await claimReminderStep(today, waqt, 1))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 2,
@@ -409,7 +428,6 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         waqt,
         ntfyMode: 'critical',
       })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
@@ -421,6 +439,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       && now < windowEnd
       && remindersSent === 2
     ) {
+      if (!(await claimReminderStep(today, waqt, 2))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 2,
@@ -439,7 +459,6 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         waqt,
         ntfyMode: 'critical',
       })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
@@ -450,6 +469,8 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       && now < windowEnd
       && !(waqt === 'dhuhr' && isFridayDhaka(today))
     ) {
+      if (!(await claimReminderStep(today, waqt, 2))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 2,
@@ -469,12 +490,13 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         withVoice: false,
         ntfyMode: 'critical',
       })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
     // Step 3: Emotional voice call
     if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent === 3 && now < windowEnd) {
+      if (!(await claimReminderStep(today, waqt, 3))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 3,
@@ -494,12 +516,13 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         waqt,
         ntfyMode: 'critical',
       })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 
     // Step 4+: Grave / kabir azab — personal, until window ends
     if (msSincePrayerStart >= PRAYER_NUDGE_MS && remindersSent >= 4 && remindersSent <= 8 && now < windowEnd) {
+      if (!(await claimReminderStep(today, waqt, remindersSent))) continue
+
       const name = waqtName(waqt)
       const msgs = salahChannelMessages({
         tier: 3,
@@ -519,7 +542,6 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         waqt,
         ntfyMode: 'critical',
       })
-      await upsertSalahRecord({ date: today, waqt, incrementReminders: true })
       continue
     }
 

@@ -120,7 +120,10 @@ export async function notify({
   if (tier >= 3) {
     channels.push('twilio_call')
     const callText = voiceMessage ?? `${title}. ${message}`
-    const callResult = await makeTwilioCall(callText, { force: true })
+    const callResult = await makeTwilioCall(callText, {
+      force: true,
+      salah: category === 'salah',
+    })
     statuses.twilio_call = callResult.ok ? `sent:${callResult.callSid}` : `error: ${callResult.error}`
   }
 
