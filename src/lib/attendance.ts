@@ -103,6 +103,23 @@ export function calculateLatePenalty(checkInAt = new Date(), businessId?: string
   return { lateMinutes, penaltyAmount }
 }
 
+/** Count LATE check-ins for an employee in the last 7 calendar days. */
+export async function countRecentLateDays(employeeId: string, businessId: string): Promise<number> {
+  const since = new Date(Date.now() - 7 * 86_400_000)
+  try {
+    return await prisma.attendanceRecord.count({
+      where: {
+        employeeId,
+        businessId,
+        lateMinutes: { gt: 0 },
+        attendanceDate: { gte: since },
+      },
+    })
+  } catch {
+    return 0
+  }
+}
+
 export function calculateEarlyCheckoutPenalty(checkOutAt = new Date(), businessId?: string) {
   const { endMinutes } = officeHoursFor(businessId || '')
   const checkOutMinutes = localMinutesFor(checkOutAt)
@@ -390,9 +407,13 @@ export async function reverseAttendancePenalty(waiver: Pick<AttendanceWaiverRequ
   }
 }
 
-export async function notifyAttendancePenalty(record: AttendanceRecord, userId?: string | null) {
+export async function notifyAttendancePenalty(
+  record: AttendanceRecord,
+  userId?: string | null,
+  options?: { skipOwnerNotify?: boolean },
+) {
   if (Number(record.penaltyAmount || 0) <= 0) return
-  await Promise.all([
+  const tasks = [
     notifyUser({
       userId,
       businessId: record.businessId,
@@ -402,16 +423,21 @@ export async function notifyAttendancePenalty(record: AttendanceRecord, userId?:
       message: `Late by ${record.lateMinutes} minutes. Penalty: ৳ ${Number(record.penaltyAmount).toLocaleString('en-BD')}.`,
       actionUrl: '/portal',
     }),
-    notifyRole({
-      role: 'SUPER_ADMIN',
-      businessId: record.businessId,
-      type: 'PAYROLL_ALERT',
-      priority: 'HIGH',
-      title: 'Late attendance detected',
-      message: `${record.employeeId} was late by ${record.lateMinutes} minutes. Penalty: ৳ ${Number(record.penaltyAmount).toLocaleString('en-BD')}.`,
-      actionUrl: '/attendance',
-    }),
-  ])
+  ]
+  if (!options?.skipOwnerNotify) {
+    tasks.push(
+      notifyRole({
+        role: 'SUPER_ADMIN',
+        businessId: record.businessId,
+        type: 'PAYROLL_ALERT',
+        priority: 'HIGH',
+        title: 'Late attendance detected',
+        message: `${record.employeeId} was late by ${record.lateMinutes} minutes. Penalty: ৳ ${Number(record.penaltyAmount).toLocaleString('en-BD')}.`,
+        actionUrl: '/attendance',
+      }),
+    )
+  }
+  await Promise.all(tasks)
 }
 
 export async function postEarlyLeavePenalty(

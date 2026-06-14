@@ -484,7 +484,9 @@ export function queueAttendanceCheckInSideEffects(input: {
 
   void (async () => {
     try {
-      await notifyAttendancePenalty(record, userId)
+      const skipOwnerNotify =
+        record.businessId === 'ALMA_LIFESTYLE' && record.lateMinutes > 0
+      await notifyAttendancePenalty(record, userId, { skipOwnerNotify })
     } catch (err) {
       logAttendanceCheckinSideEffectFailed({
         ...logBase,
@@ -493,4 +495,19 @@ export function queueAttendanceCheckInSideEffects(input: {
       })
     }
   })()
+
+  if (record.businessId === 'ALMA_LIFESTYLE' && record.lateMinutes > 0) {
+    void (async () => {
+      try {
+        const { coachLateCheckInFromRecord } = await import('@/lib/attendance-coaching')
+        await coachLateCheckInFromRecord(record, userId)
+      } catch (err) {
+        logAttendanceCheckinSideEffectFailed({
+          ...logBase,
+          sideEffect: 'late_coaching',
+          message: (err as Error).message,
+        })
+      }
+    })()
+  }
 }
