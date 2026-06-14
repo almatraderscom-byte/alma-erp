@@ -16,44 +16,44 @@ enum UserRole {
 }
 
 model User {
-  id                      String                         @id @default(cuid())
-  email                   String?                        @unique
-  passwordHash            String
-  name                    String
-  phone                   String?                        @unique
-  role                    UserRole                       @default(STAFF)
-  active                  Boolean                        @default(true)
+  id                            String                           @id @default(cuid())
+  email                         String?                          @unique
+  passwordHash                  String
+  name                          String
+  phone                         String?                          @unique
+  role                          UserRole                         @default(STAFF)
+  active                        Boolean                          @default(true)
   /// Comma-separated BusinessId: ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING
-  businessAccess          String                         @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING")
-  employeeIdGas           String?
-  joiningDate             DateTime?
-  salaryHint              Decimal?                       @db.Decimal(12, 2)
-  profileImageUrl         String?
-  createdAt               DateTime                       @default(now())
-  updatedAt               DateTime                       @updatedAt
-  advanceRequests         SalaryAdvanceRequest[]
-  mealAllowanceProfiles   MealAllowanceProfile[]
-  mealAllowanceRequests   MealAllowanceRequest[]
-  passwordResetTokens     PasswordResetToken[]
-  assignedTradingAccounts TradingAccount[]               @relation("TradingAccountAssignedUser")
-  tradingTrades           TradingTrade[]                 @relation("TradingTradeUser")
-  tradingExpensesCreated  TradingExpense[]               @relation("TradingExpenseCreatedBy")
-  tradingPartnershipSettlements TradingPartnershipSettlement[] @relation("TradingPartnershipSettledBy")
-  tradingCapitalCreated   TradingCapitalEntry[]          @relation("TradingCapitalCreatedBy")
-  tradingBkashCreated     TradingBkashDailySummary[]     @relation("TradingBkashSummaryCreatedBy")
-  tradingPerformanceShots TradingPerformanceScreenshot[] @relation("TradingPerformanceUploadedBy")
-  tradingEmployeeProfile  TradingEmployeeProfile?        @relation("TradingEmployeeProfileUser")
-  tradingDailyReports     TradingEmployeeDailyReport[]   @relation("TradingEmployeeDailyReportUser")
-  attendanceRecords       AttendanceRecord[]             @relation("AttendanceRecordUser")
-  attendanceWaivers       AttendanceWaiverRequest[]      @relation("AttendanceWaiverRequester")
-  attendanceReviews       AttendanceWaiverRequest[]      @relation("AttendanceWaiverReviewer")
-  attendanceSelfies       AttendanceSelfieVerification[] @relation("AttendanceSelfieUser")
-  tradingTelegramLinks    TradingTelegramUser[]          @relation("TradingTelegramErpUser")
-  tradingTelegramDrafts   TradingTelegramDraft[]         @relation("TradingTelegramDraftErpUser")
-  operationalTasksCreated OperationalTask[]              @relation("OperationalTaskCreator")
-  operationalTaskAssignments OperationalTaskAssignment[] @relation("OperationalTaskAssignee")
-  operationalTaskAcks     OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
-  paymentMethods          EmployeePaymentMethod[]        @relation("UserPaymentMethods")
+  businessAccess                String                           @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING")
+  employeeIdGas                 String?
+  joiningDate                   DateTime?
+  salaryHint                    Decimal?                         @db.Decimal(12, 2)
+  profileImageUrl               String?
+  createdAt                     DateTime                         @default(now())
+  updatedAt                     DateTime                         @updatedAt
+  advanceRequests               SalaryAdvanceRequest[]
+  mealAllowanceProfiles         MealAllowanceProfile[]
+  mealAllowanceRequests         MealAllowanceRequest[]
+  passwordResetTokens           PasswordResetToken[]
+  assignedTradingAccounts       TradingAccount[]                 @relation("TradingAccountAssignedUser")
+  tradingTrades                 TradingTrade[]                   @relation("TradingTradeUser")
+  tradingExpensesCreated        TradingExpense[]                 @relation("TradingExpenseCreatedBy")
+  tradingPartnershipSettlements TradingPartnershipSettlement[]   @relation("TradingPartnershipSettledBy")
+  tradingCapitalCreated         TradingCapitalEntry[]            @relation("TradingCapitalCreatedBy")
+  tradingBkashCreated           TradingBkashDailySummary[]       @relation("TradingBkashSummaryCreatedBy")
+  tradingPerformanceShots       TradingPerformanceScreenshot[]   @relation("TradingPerformanceUploadedBy")
+  tradingEmployeeProfile        TradingEmployeeProfile?          @relation("TradingEmployeeProfileUser")
+  tradingDailyReports           TradingEmployeeDailyReport[]     @relation("TradingEmployeeDailyReportUser")
+  attendanceRecords             AttendanceRecord[]               @relation("AttendanceRecordUser")
+  attendanceWaivers             AttendanceWaiverRequest[]        @relation("AttendanceWaiverRequester")
+  attendanceReviews             AttendanceWaiverRequest[]        @relation("AttendanceWaiverReviewer")
+  attendanceSelfies             AttendanceSelfieVerification[]   @relation("AttendanceSelfieUser")
+  tradingTelegramLinks          TradingTelegramUser[]            @relation("TradingTelegramErpUser")
+  tradingTelegramDrafts         TradingTelegramDraft[]           @relation("TradingTelegramDraftErpUser")
+  operationalTasksCreated       OperationalTask[]                @relation("OperationalTaskCreator")
+  operationalTaskAssignments    OperationalTaskAssignment[]      @relation("OperationalTaskAssignee")
+  operationalTaskAcks           OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
+  paymentMethods                EmployeePaymentMethod[]          @relation("UserPaymentMethods")
 
   @@index([active, role])
   @@index([active, createdAt])
@@ -253,9 +253,9 @@ model EmployeeLedgerEntry {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
-  @@index([businessId, isArchived, createdAt])
   @@unique([employeeId, businessId, periodYm, type])
   @@unique([source, sourceRef])
+  @@index([businessId, isArchived, createdAt])
   @@index([employeeId, businessId, date])
   @@index([employeeId, businessId, periodYm])
   @@index([businessId, type])
@@ -290,9 +290,9 @@ enum PaymentMethodStatus {
 }
 
 model EmployeePaymentMethod {
-  id                String                    @id @default(cuid())
+  id                String                          @id @default(cuid())
   userId            String
-  user              User                      @relation("UserPaymentMethods", fields: [userId], references: [id], onDelete: Cascade)
+  user              User                            @relation("UserPaymentMethods", fields: [userId], references: [id], onDelete: Cascade)
   businessId        String
   type              EmployeePaymentMethodType
   provider          MobileMoneyProvider?
@@ -302,17 +302,17 @@ model EmployeePaymentMethod {
   bankName          String?
   branchName        String?
   routingNumber     String?
-  qrImageUrl        String?                   @db.Text
-  isPrimary         Boolean                   @default(false)
-  isVerified        Boolean                   @default(false)
+  qrImageUrl        String?                         @db.Text
+  isPrimary         Boolean                         @default(false)
+  isVerified        Boolean                         @default(false)
   verifiedAt        DateTime?
   verifiedById      String?
-  status            PaymentMethodStatus       @default(ACTIVE)
-  suspiciousNote    String?                   @db.Text
-  isArchived        Boolean                   @default(false)
+  status            PaymentMethodStatus             @default(ACTIVE)
+  suspiciousNote    String?                         @db.Text
+  isArchived        Boolean                         @default(false)
   archivedAt        DateTime?
-  createdAt         DateTime                  @default(now())
-  updatedAt         DateTime                  @updatedAt
+  createdAt         DateTime                        @default(now())
+  updatedAt         DateTime                        @updatedAt
   auditLogs         EmployeePaymentMethodAuditLog[]
 
   @@index([userId, businessId, isArchived])
@@ -321,15 +321,15 @@ model EmployeePaymentMethod {
 }
 
 model EmployeePaymentMethodAuditLog {
-  id              String   @id @default(cuid())
+  id              String                 @id @default(cuid())
   paymentMethodId String?
   paymentMethod   EmployeePaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   userId          String
   businessId      String
   actorUserId     String
   action          String
-  detailJson      String?  @db.Text
-  createdAt       DateTime @default(now())
+  detailJson      String?                @db.Text
+  createdAt       DateTime               @default(now())
 
   @@index([userId, createdAt])
   @@index([paymentMethodId, createdAt])
@@ -404,50 +404,50 @@ model MealAllowanceRequest {
 }
 
 model AttendanceRecord {
-  id                        String                         @id @default(cuid())
-  businessId                String
-  userId                    String
-  user                      User                           @relation("AttendanceRecordUser", fields: [userId], references: [id], onDelete: Cascade)
-  employeeId                String
-  attendanceDate            DateTime
-  status                    AttendanceRecordStatus         @default(PRESENT)
-  officeStartMinutes        Int                            @default(540)
-  officeEndMinutes          Int                            @default(1260)
-  checkInAt                 DateTime
-  checkOutAt                DateTime?
-  totalWorkMinutes          Int                            @default(0)
-  lateMinutes               Int                            @default(0)
-  penaltyAmount             Decimal                        @default(0) @db.Decimal(12, 2)
-  penaltyLedgerEntryId      String?
-  earlyLeaveMinutes         Int?
-  earlyLeavePenaltyAmount   Decimal?                       @db.Decimal(12, 2)
+  id                             String                         @id @default(cuid())
+  businessId                     String
+  userId                         String
+  user                           User                           @relation("AttendanceRecordUser", fields: [userId], references: [id], onDelete: Cascade)
+  employeeId                     String
+  attendanceDate                 DateTime
+  status                         AttendanceRecordStatus         @default(PRESENT)
+  officeStartMinutes             Int                            @default(540)
+  officeEndMinutes               Int                            @default(1260)
+  checkInAt                      DateTime
+  checkOutAt                     DateTime?
+  totalWorkMinutes               Int                            @default(0)
+  lateMinutes                    Int                            @default(0)
+  penaltyAmount                  Decimal                        @default(0) @db.Decimal(12, 2)
+  penaltyLedgerEntryId           String?
+  earlyLeaveMinutes              Int?
+  earlyLeavePenaltyAmount        Decimal?                       @db.Decimal(12, 2)
   earlyLeavePenaltyLedgerEntryId String?
-  deviceInfo                String?                        @db.Text
-  sessionInfo               String?                        @db.Text
-  ipHash                    String?
-  browserFingerprint        String?
-  deviceKey                 String?
-  sessionId                 String?
-  latitude                  Decimal?                       @db.Decimal(10, 7)
-  longitude                 Decimal?                       @db.Decimal(10, 7)
-  locationAccuracyM         Int?
-  distanceFromOfficeM       Int?
-  trustStatus               AttendanceTrustStatus          @default(TRUSTED)
-  suspiciousReasons         String[]
-  verificationRequired      Boolean                        @default(false)
-  verificationRequestedById String?
+  deviceInfo                     String?                        @db.Text
+  sessionInfo                    String?                        @db.Text
+  ipHash                         String?
+  browserFingerprint             String?
+  deviceKey                      String?
+  sessionId                      String?
+  latitude                       Decimal?                       @db.Decimal(10, 7)
+  longitude                      Decimal?                       @db.Decimal(10, 7)
+  locationAccuracyM              Int?
+  distanceFromOfficeM            Int?
+  trustStatus                    AttendanceTrustStatus          @default(TRUSTED)
+  suspiciousReasons              String[]
+  verificationRequired           Boolean                        @default(false)
+  verificationRequestedById      String?
   /// Front-camera face verification at check-in (lightweight thumb only stored).
-  faceVerified              Boolean                        @default(false)
-  faceVerifiedAt            DateTime?
-  faceThumbDataUrl          String?                        @db.Text
-  isArchived                Boolean                        @default(false)
-  archivedAt                DateTime?
-  archivedById              String?
-  archiveBatchId            String?
-  createdAt                 DateTime                       @default(now())
-  updatedAt                 DateTime                       @updatedAt
-  waiverRequests            AttendanceWaiverRequest[]
-  selfieVerifications       AttendanceSelfieVerification[]
+  faceVerified                   Boolean                        @default(false)
+  faceVerifiedAt                 DateTime?
+  faceThumbDataUrl               String?                        @db.Text
+  isArchived                     Boolean                        @default(false)
+  archivedAt                     DateTime?
+  archivedById                   String?
+  archiveBatchId                 String?
+  createdAt                      DateTime                       @default(now())
+  updatedAt                      DateTime                       @updatedAt
+  waiverRequests                 AttendanceWaiverRequest[]
+  selfieVerifications            AttendanceSelfieVerification[]
 
   @@unique([businessId, employeeId, attendanceDate])
   @@index([businessId, isArchived, attendanceDate])
@@ -488,31 +488,31 @@ model AttendanceSelfieVerification {
 }
 
 model AttendanceWaiverRequest {
-  id                       String                 @id @default(cuid())
+  id                       String                      @id @default(cuid())
   attendanceRecordId       String
-  attendanceRecord         AttendanceRecord       @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  attendanceRecord         AttendanceRecord            @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
   businessId               String
   userId                   String
-  requester                User                   @relation("AttendanceWaiverRequester", fields: [userId], references: [id], onDelete: Cascade)
+  requester                User                        @relation("AttendanceWaiverRequester", fields: [userId], references: [id], onDelete: Cascade)
   employeeId               String
-  status                   AttendanceWaiverStatus @default(PENDING)
+  status                   AttendanceWaiverStatus      @default(PENDING)
   requestType              AttendanceWaiverRequestType @default(FULL_WAIVE)
-  originalPenaltyAmount    Decimal                @default(0) @db.Decimal(12, 2)
-  requestedReductionAmount Decimal?               @db.Decimal(12, 2)
-  approvedReductionAmount  Decimal?               @db.Decimal(12, 2)
-  reason                   String                 @db.Text
-  attachmentDataUrl        String?                @db.Text
-  adminNote                String?                @db.Text
+  originalPenaltyAmount    Decimal                     @default(0) @db.Decimal(12, 2)
+  requestedReductionAmount Decimal?                    @db.Decimal(12, 2)
+  approvedReductionAmount  Decimal?                    @db.Decimal(12, 2)
+  reason                   String                      @db.Text
+  attachmentDataUrl        String?                     @db.Text
+  adminNote                String?                     @db.Text
   reviewedById             String?
-  reviewer                 User?                  @relation("AttendanceWaiverReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewer                 User?                       @relation("AttendanceWaiverReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt               DateTime?
   reversalLedgerEntryId    String?
-  isArchived               Boolean                @default(false)
+  isArchived               Boolean                     @default(false)
   archivedAt               DateTime?
   archivedById             String?
   archiveBatchId           String?
-  createdAt                DateTime               @default(now())
-  updatedAt                DateTime               @updatedAt
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
 
   @@unique([attendanceRecordId, userId])
   @@index([businessId, isArchived, createdAt])
@@ -595,9 +595,9 @@ model InvoiceRecord {
   deletedAt       DateTime?
   events          InvoiceEvent[]
 
-  @@index([businessId, isArchived, createdAt])
   @@unique([businessId, orderId])
   @@unique([businessId, invoiceNumber])
+  @@index([businessId, isArchived, createdAt])
   @@index([businessId, createdAt])
   @@index([businessId, paymentStatus])
   @@index([businessId, customerPhone])
@@ -671,7 +671,7 @@ model Notification {
 }
 
 model ApprovalRequest {
-  id              String         @id @default(cuid())
+  id              String               @id @default(cuid())
   module          String
   type            String
   businessId      String?
@@ -679,18 +679,18 @@ model ApprovalRequest {
   requestedBy     String
   approvedBy      String?
   rejectedBy      String?
-  reason          String         @db.Text
+  reason          String               @db.Text
   payloadSnapshot Json?
-  status          ApprovalStatus @default(PENDING)
+  status          ApprovalStatus       @default(PENDING)
   priority        NotificationPriority @default(NORMAL)
   actionUrl       String?
   auditHistory    Json?
-  isArchived      Boolean        @default(false)
+  isArchived      Boolean              @default(false)
   archivedAt      DateTime?
   archivedById    String?
   archiveBatchId  String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
   approvedAt      DateTime?
   rejectedAt      DateTime?
 
@@ -785,23 +785,23 @@ model PushSubscription {
 }
 
 model SmsLog {
-  id           String    @id @default(cuid())
-  businessId   String?
-  phone        String
-  message      String    @db.Text
-  type         String
-  provider     String    @default("sms.net.bd")
-  requestId    String?
-  status       String    @default("QUEUED")
-  errorCode    String?
-  errorMessage String?   @db.Text
-  attempts     Int       @default(0)
+  id            String    @id @default(cuid())
+  businessId    String?
+  phone         String
+  message       String    @db.Text
+  type          String
+  provider      String    @default("sms.net.bd")
+  requestId     String?
+  status        String    @default("QUEUED")
+  errorCode     String?
+  errorMessage  String?   @db.Text
+  attempts      Int       @default(0)
   nextAttemptAt DateTime?
-  sentAt       DateTime?
-  deliveredAt  DateTime?
-  metadataJson String?   @db.Text
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  metadataJson  String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([createdAt])
   @@index([phone])
@@ -825,57 +825,57 @@ model SmsSetting {
 }
 
 model TradingAccount {
-  id               String                         @id @default(cuid())
-  businessId       String
-  assignedUserId   String?
-  assignedUser     User?                          @relation("TradingAccountAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  accountTitle     String
-  binanceUid       String?
-  accountType      TradingAccountType             @default(BINANCE_P2P)
-  status           TradingAccountStatus           @default(ACTIVE)
-  startingCapital  Decimal                        @default(0) @db.Decimal(14, 2)
-  currentBalance   Decimal                        @default(0) @db.Decimal(14, 2)
-  totalProfit      Decimal                        @default(0) @db.Decimal(14, 2)
-  totalLoss        Decimal                        @default(0) @db.Decimal(14, 2)
-  totalFees        Decimal                        @default(0) @db.Decimal(14, 2)
-  totalExpenses    Decimal                        @default(0) @db.Decimal(14, 2)
-  totalWithdrawals Decimal                        @default(0) @db.Decimal(14, 2)
-  netRoi           Decimal                        @default(0) @db.Decimal(8, 2)
-  totalBuyUsdt     Decimal                        @default(0) @db.Decimal(18, 8)
-  totalSellUsdt    Decimal                        @default(0) @db.Decimal(18, 8)
-  totalBuyBdt      Decimal                        @default(0) @db.Decimal(14, 2)
-  totalSellBdt     Decimal                        @default(0) @db.Decimal(14, 2)
-  usdtBalance      Decimal                        @default(0) @db.Decimal(18, 8)
-  inventoryCostBdt Decimal                        @default(0) @db.Decimal(14, 2)
-  commissionType   TradingCommissionType          @default(NONE)
-  commissionRate   Decimal                        @default(0) @db.Decimal(8, 4)
-  fixedCommission  Decimal                        @default(0) @db.Decimal(12, 2)
-  completionBonus  Decimal                        @default(0) @db.Decimal(12, 2)
-  merchantTarget   Decimal?                       @db.Decimal(14, 2)
-  merchantProgress Decimal                        @default(0) @db.Decimal(14, 2)
-  partnershipEnabled       Boolean                @default(false)
-  staffSharePercent        Decimal                @default(50) @db.Decimal(8, 4)
-  lastPartnershipSettledAt DateTime?
-  partnershipBaselineProfit      Decimal          @default(0) @db.Decimal(14, 2)
-  partnershipBaselineLoss        Decimal        @default(0) @db.Decimal(14, 2)
-  partnershipBaselineOwnerExpenses Decimal      @default(0) @db.Decimal(14, 2)
-  partnershipBaselineStaffExpenses Decimal      @default(0) @db.Decimal(14, 2)
-  startDate        DateTime
-  completedDate    DateTime?
-  notes            String?                        @db.Text
-  deletedAt        DateTime?
-  createdAt        DateTime                       @default(now())
-  updatedAt        DateTime                       @updatedAt
-  trades           TradingTrade[]
-  expenses         TradingExpense[]
-  partnershipSettlements TradingPartnershipSettlement[]
-  capitalEntries   TradingCapitalEntry[]
-  dailySnapshots   TradingDailySnapshot[]
-  volumeTargets    TradingDailyVolumeTarget[]
-  bkashSummaries   TradingBkashDailySummary[]
-  performanceShots TradingPerformanceScreenshot[]
-  telegramAliases  TradingAccountAlias[]
-  telegramDrafts   TradingTelegramDraft[]
+  id                               String                         @id @default(cuid())
+  businessId                       String
+  assignedUserId                   String?
+  assignedUser                     User?                          @relation("TradingAccountAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  accountTitle                     String
+  binanceUid                       String?
+  accountType                      TradingAccountType             @default(BINANCE_P2P)
+  status                           TradingAccountStatus           @default(ACTIVE)
+  startingCapital                  Decimal                        @default(0) @db.Decimal(14, 2)
+  currentBalance                   Decimal                        @default(0) @db.Decimal(14, 2)
+  totalProfit                      Decimal                        @default(0) @db.Decimal(14, 2)
+  totalLoss                        Decimal                        @default(0) @db.Decimal(14, 2)
+  totalFees                        Decimal                        @default(0) @db.Decimal(14, 2)
+  totalExpenses                    Decimal                        @default(0) @db.Decimal(14, 2)
+  totalWithdrawals                 Decimal                        @default(0) @db.Decimal(14, 2)
+  netRoi                           Decimal                        @default(0) @db.Decimal(8, 2)
+  totalBuyUsdt                     Decimal                        @default(0) @db.Decimal(18, 8)
+  totalSellUsdt                    Decimal                        @default(0) @db.Decimal(18, 8)
+  totalBuyBdt                      Decimal                        @default(0) @db.Decimal(14, 2)
+  totalSellBdt                     Decimal                        @default(0) @db.Decimal(14, 2)
+  usdtBalance                      Decimal                        @default(0) @db.Decimal(18, 8)
+  inventoryCostBdt                 Decimal                        @default(0) @db.Decimal(14, 2)
+  commissionType                   TradingCommissionType          @default(NONE)
+  commissionRate                   Decimal                        @default(0) @db.Decimal(8, 4)
+  fixedCommission                  Decimal                        @default(0) @db.Decimal(12, 2)
+  completionBonus                  Decimal                        @default(0) @db.Decimal(12, 2)
+  merchantTarget                   Decimal?                       @db.Decimal(14, 2)
+  merchantProgress                 Decimal                        @default(0) @db.Decimal(14, 2)
+  partnershipEnabled               Boolean                        @default(false)
+  staffSharePercent                Decimal                        @default(50) @db.Decimal(8, 4)
+  lastPartnershipSettledAt         DateTime?
+  partnershipBaselineProfit        Decimal                        @default(0) @db.Decimal(14, 2)
+  partnershipBaselineLoss          Decimal                        @default(0) @db.Decimal(14, 2)
+  partnershipBaselineOwnerExpenses Decimal                        @default(0) @db.Decimal(14, 2)
+  partnershipBaselineStaffExpenses Decimal                        @default(0) @db.Decimal(14, 2)
+  startDate                        DateTime
+  completedDate                    DateTime?
+  notes                            String?                        @db.Text
+  deletedAt                        DateTime?
+  createdAt                        DateTime                       @default(now())
+  updatedAt                        DateTime                       @updatedAt
+  trades                           TradingTrade[]
+  expenses                         TradingExpense[]
+  partnershipSettlements           TradingPartnershipSettlement[]
+  capitalEntries                   TradingCapitalEntry[]
+  dailySnapshots                   TradingDailySnapshot[]
+  volumeTargets                    TradingDailyVolumeTarget[]
+  bkashSummaries                   TradingBkashDailySummary[]
+  performanceShots                 TradingPerformanceScreenshot[]
+  telegramAliases                  TradingAccountAlias[]
+  telegramDrafts                   TradingTelegramDraft[]
 
   @@index([businessId, status])
   @@index([businessId, assignedUserId])
@@ -967,26 +967,26 @@ model TradingDailySnapshot {
 }
 
 model TradingExpense {
-  id               String         @id @default(cuid())
+  id               String                        @id @default(cuid())
   tradingAccountId String
-  tradingAccount   TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  tradingAccount   TradingAccount                @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
   businessId       String
   expenseType      String
-  amount           Decimal        @db.Decimal(14, 2)
+  amount           Decimal                       @db.Decimal(14, 2)
   paidBy           TradingExpensePaidBy?
   settlementId     String?
   settlement       TradingPartnershipSettlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
-  notes            String?        @db.Text
-  attachmentUrl    String?        @db.Text
+  notes            String?                       @db.Text
+  attachmentUrl    String?                       @db.Text
   expenseDate      DateTime
   createdBy        String
-  creator          User           @relation("TradingExpenseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  creator          User                          @relation("TradingExpenseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   deletedAt        DateTime?
-  isArchived       Boolean        @default(false)
+  isArchived       Boolean                       @default(false)
   archivedAt       DateTime?
   archivedById     String?
   archiveBatchId   String?
-  createdAt        DateTime       @default(now())
+  createdAt        DateTime                      @default(now())
 
   @@index([businessId, isArchived, expenseDate])
   @@index([businessId, expenseDate])
@@ -999,28 +999,28 @@ model TradingExpense {
 }
 
 model TradingPartnershipSettlement {
-  id                      String         @id @default(cuid())
-  tradingAccountId        String
-  tradingAccount            TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
-  businessId                String
-  periodStart               DateTime
-  periodEnd                 DateTime
-  deltaProfitBdt            Decimal        @default(0) @db.Decimal(14, 2)
-  deltaLossBdt              Decimal        @default(0) @db.Decimal(14, 2)
-  netTradingDeltaBdt        Decimal        @default(0) @db.Decimal(14, 2)
-  ownerPaidExpensesBdt      Decimal        @default(0) @db.Decimal(14, 2)
-  staffPaidExpensesBdt      Decimal        @default(0) @db.Decimal(14, 2)
-  staffSharePercent         Decimal        @default(50) @db.Decimal(8, 4)
-  staffTradingShareBdt      Decimal        @default(0) @db.Decimal(14, 2)
-  expenseAdjustmentBdt      Decimal        @default(0) @db.Decimal(14, 2)
-  netStaffOwesBdt           Decimal        @default(0) @db.Decimal(14, 2)
-  adminOverrideBdt          Decimal?       @db.Decimal(14, 2)
-  notes                     String?        @db.Text
-  settledByUserId           String
-  settledBy                 User           @relation("TradingPartnershipSettledBy", fields: [settledByUserId], references: [id], onDelete: Restrict)
-  ledgerEntryId             String?
-  expenses                  TradingExpense[]
-  createdAt                 DateTime       @default(now())
+  id                   String           @id @default(cuid())
+  tradingAccountId     String
+  tradingAccount       TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  businessId           String
+  periodStart          DateTime
+  periodEnd            DateTime
+  deltaProfitBdt       Decimal          @default(0) @db.Decimal(14, 2)
+  deltaLossBdt         Decimal          @default(0) @db.Decimal(14, 2)
+  netTradingDeltaBdt   Decimal          @default(0) @db.Decimal(14, 2)
+  ownerPaidExpensesBdt Decimal          @default(0) @db.Decimal(14, 2)
+  staffPaidExpensesBdt Decimal          @default(0) @db.Decimal(14, 2)
+  staffSharePercent    Decimal          @default(50) @db.Decimal(8, 4)
+  staffTradingShareBdt Decimal          @default(0) @db.Decimal(14, 2)
+  expenseAdjustmentBdt Decimal          @default(0) @db.Decimal(14, 2)
+  netStaffOwesBdt      Decimal          @default(0) @db.Decimal(14, 2)
+  adminOverrideBdt     Decimal?         @db.Decimal(14, 2)
+  notes                String?          @db.Text
+  settledByUserId      String
+  settledBy            User             @relation("TradingPartnershipSettledBy", fields: [settledByUserId], references: [id], onDelete: Restrict)
+  ledgerEntryId        String?
+  expenses             TradingExpense[]
+  createdAt            DateTime         @default(now())
 
   @@index([tradingAccountId, createdAt])
   @@index([businessId, createdAt])
@@ -1188,20 +1188,20 @@ enum TradingTelegramInputChannel {
 
 /// Maps Telegram identities to ERP users for Alma Trading bot.
 model TradingTelegramUser {
-  id                  String   @id @default(cuid())
-  businessId          String
-  telegramUserId      String
-  telegramUsername    String?
-  telegramFirstName   String?
-  telegramLastName    String?
-  userId              String?
-  user                User?    @relation("TradingTelegramErpUser", fields: [userId], references: [id], onDelete: SetNull)
-  approved               Boolean  @default(false)
-  defaultAccountAlias    String?
+  id                      String    @id @default(cuid())
+  businessId              String
+  telegramUserId          String
+  telegramUsername        String?
+  telegramFirstName       String?
+  telegramLastName        String?
+  userId                  String?
+  user                    User?     @relation("TradingTelegramErpUser", fields: [userId], references: [id], onDelete: SetNull)
+  approved                Boolean   @default(false)
+  defaultAccountAlias     String?
   defaultTradingAccountId String?
-  lastSeenAt             DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  lastSeenAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   @@unique([businessId, telegramUserId])
   @@index([businessId, approved])
@@ -1241,49 +1241,49 @@ model TradingAccountAlias {
 
 /// Telegram-submitted trade drafts awaiting ERP review (or auto-post).
 model TradingTelegramDraft {
-  id                String                     @id @default(cuid())
+  id                String                      @id @default(cuid())
   businessId        String
-  status            TradingTelegramDraftStatus @default(PENDING)
+  status            TradingTelegramDraftStatus  @default(PENDING)
   telegramUserId    String
   telegramUsername  String?
   telegramFirstName String?
   userId            String?
-  user              User?                      @relation("TradingTelegramDraftErpUser", fields: [userId], references: [id], onDelete: SetNull)
+  user              User?                       @relation("TradingTelegramDraftErpUser", fields: [userId], references: [id], onDelete: SetNull)
   tradingAccountId  String?
-  tradingAccount    TradingAccount?            @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+  tradingAccount    TradingAccount?             @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
   accountAlias      String?
   accountTitle      String?
-  rawMessage        String                     @db.Text
+  rawMessage        String                      @db.Text
   telegramMessageId String?
   telegramChatId    String
   tradeType         TradingTradeType?
-  usdtAmount        Decimal?                   @db.Decimal(18, 8)
-  bdtRate           Decimal?                   @db.Decimal(12, 4)
-  feeUsdt           Decimal?                   @db.Decimal(18, 8)
-  parseError        String?                    @db.Text
+  usdtAmount        Decimal?                    @db.Decimal(18, 8)
+  bdtRate           Decimal?                    @db.Decimal(12, 4)
+  feeUsdt           Decimal?                    @db.Decimal(18, 8)
+  parseError        String?                     @db.Text
   tradingTradeId    String?
   postedAt          DateTime?
   reviewedBy        String?
   reviewedAt        DateTime?
   lastEditedBy      String?
   lastEditedAt      DateTime?
-  rejectReason      String?                    @db.Text
+  rejectReason      String?                     @db.Text
   /// Per-user daily sequence (resets each BD calendar day), not shared across staff.
   tradeNumber       Int?
   /// Hash for duplicate detection scoped to telegramUserId + account + day.
   draftFingerprint  String?
   undoneAt          DateTime?
   lockedAt          DateTime?
-  lockedReason      String?                    @db.Text
+  lockedReason      String?                     @db.Text
   inputChannel      TradingTelegramInputChannel @default(TEXT_COMMAND)
   /// Reserved for future OCR/voice/screenshot parsers (raw payload, confidence, etc.)
   futurePayload     Json?
-  isArchived        Boolean                    @default(false)
+  isArchived        Boolean                     @default(false)
   archivedAt        DateTime?
   archivedById      String?
   archiveBatchId    String?
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
 
   @@index([businessId, isArchived, createdAt])
   @@index([businessId, status, createdAt])
@@ -1388,21 +1388,21 @@ enum OperationalTaskAckAction {
 }
 
 model OperationalTask {
-  id                     String                   @id @default(cuid())
+  id                     String                      @id @default(cuid())
   businessId             String?
   title                  String
-  description            String                   @db.Text
-  priority               OperationalTaskPriority  @default(NORMAL)
+  description            String                      @db.Text
+  priority               OperationalTaskPriority     @default(NORMAL)
   bannerImageUrl         String?
   deadline               DateTime?
-  acknowledgmentRequired Boolean                  @default(true)
-  allowDismiss           Boolean                  @default(false)
-  showOnCheckIn          Boolean                  @default(true)
-  status                 OperationalTaskStatus    @default(ACTIVE)
+  acknowledgmentRequired Boolean                     @default(true)
+  allowDismiss           Boolean                     @default(false)
+  showOnCheckIn          Boolean                     @default(true)
+  status                 OperationalTaskStatus       @default(ACTIVE)
   createdById            String
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
-  createdBy              User                     @relation("OperationalTaskCreator", fields: [createdById], references: [id])
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+  createdBy              User                        @relation("OperationalTaskCreator", fields: [createdById], references: [id])
   assignments            OperationalTaskAssignment[]
 
   @@index([status, createdAt])
@@ -1410,20 +1410,20 @@ model OperationalTask {
 }
 
 model OperationalTaskAssignment {
-  id              String                     @id @default(cuid())
-  taskId          String
-  userId          String
-  employeeIdGas   String?
-  status          OperationalAssignmentStatus  @default(ACTIVE)
-  acknowledgedAt  DateTime?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  archivedAt      DateTime?
-  lastSpotlightAt DateTime?
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
-  task            OperationalTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user            User                       @relation("OperationalTaskAssignee", fields: [userId], references: [id])
+  id               String                           @id @default(cuid())
+  taskId           String
+  userId           String
+  employeeIdGas    String?
+  status           OperationalAssignmentStatus      @default(ACTIVE)
+  acknowledgedAt   DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  archivedAt       DateTime?
+  lastSpotlightAt  DateTime?
+  createdAt        DateTime                         @default(now())
+  updatedAt        DateTime                         @updatedAt
+  task             OperationalTask                  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user             User                             @relation("OperationalTaskAssignee", fields: [userId], references: [id])
   acknowledgements OperationalTaskAcknowledgement[]
 
   @@unique([taskId, userId])
@@ -1432,36 +1432,36 @@ model OperationalTaskAssignment {
 }
 
 model OperationalTaskAcknowledgement {
-  id           String                   @id @default(cuid())
+  id           String                    @id @default(cuid())
   assignmentId String
   userId       String
   action       OperationalTaskAckAction
   note         String?
-  createdAt    DateTime                 @default(now())
+  createdAt    DateTime                  @default(now())
   assignment   OperationalTaskAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  user         User                     @relation("OperationalTaskAckUser", fields: [userId], references: [id])
+  user         User                      @relation("OperationalTaskAckUser", fields: [userId], references: [id])
 
   @@index([assignmentId, createdAt])
 }
 
 /// Async outbound Telegram ops alerts (owner control center). Processed by cron worker.
 model TelegramNotificationQueue {
-  id           String                       @id @default(cuid())
-  businessId   String
-  chatId       String
-  eventType    TelegramNotificationEventType
-  dedupeKey    String?
-  message      String                       @db.Text
-  status       TelegramNotificationStatus   @default(QUEUED)
-  attempts     Int                          @default(0)
-  maxAttempts  Int                          @default(4)
-  nextAttemptAt DateTime?
+  id                  String                        @id @default(cuid())
+  businessId          String
+  chatId              String
+  eventType           TelegramNotificationEventType
+  dedupeKey           String?
+  message             String                        @db.Text
+  status              TelegramNotificationStatus    @default(QUEUED)
+  attempts            Int                           @default(0)
+  maxAttempts         Int                           @default(4)
+  nextAttemptAt       DateTime?
   processingStartedAt DateTime?
-  sentAt       DateTime?
-  errorMessage String?                      @db.Text
-  metadataJson String?                      @db.Text
-  createdAt    DateTime                     @default(now())
-  updatedAt    DateTime                     @updatedAt
+  sentAt              DateTime?
+  errorMessage        String?                       @db.Text
+  metadataJson        String?                       @db.Text
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
 
   @@unique([dedupeKey])
   @@index([status, nextAttemptAt, createdAt])
@@ -1474,44 +1474,44 @@ model TelegramNotificationQueue {
 
 /// Per-business owner Telegram ops settings (attendance monitor + alert toggles).
 model TelegramOpsSetting {
-  id                      String   @id @default(cuid())
-  businessId              String   @unique
-  enabled                 Boolean  @default(true)
+  id                        String   @id @default(cuid())
+  businessId                String   @unique
+  enabled                   Boolean  @default(true)
   /// Comma-separated Telegram chat IDs (owner/admin private chats or ops groups).
-  ownerChatIds            String   @default("")
-  officeStartMinutes      Int      @default(540)
-  gracePeriodMinutes      Int      @default(15)
-  checkoutCutoffMinutes   Int      @default(1320)
-  earlyLeaveMinutes       Int      @default(360)
-  alertAttendanceCheckIn  Boolean  @default(true)
-  alertAttendanceLate     Boolean  @default(true)
-  alertAttendanceAbsent   Boolean  @default(true)
-  alertAttendanceCheckOut Boolean  @default(true)
-  alertAttendanceNoCheckout Boolean @default(true)
-  alertAttendanceEarlyLeave Boolean @default(true)
-  alertAttendanceSuspicious Boolean @default(true)
-  alertTradingScreenshot  Boolean  @default(true)
-  alertTradingDeleteRequest Boolean @default(true)
-  alertWorkflowLifecycle  Boolean  @default(true)
-  alertOpsDailySummary    Boolean  @default(true)
-  updatedById             String?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  ownerChatIds              String   @default("")
+  officeStartMinutes        Int      @default(540)
+  gracePeriodMinutes        Int      @default(15)
+  checkoutCutoffMinutes     Int      @default(1320)
+  earlyLeaveMinutes         Int      @default(360)
+  alertAttendanceCheckIn    Boolean  @default(true)
+  alertAttendanceLate       Boolean  @default(true)
+  alertAttendanceAbsent     Boolean  @default(true)
+  alertAttendanceCheckOut   Boolean  @default(true)
+  alertAttendanceNoCheckout Boolean  @default(true)
+  alertAttendanceEarlyLeave Boolean  @default(true)
+  alertAttendanceSuspicious Boolean  @default(true)
+  alertTradingScreenshot    Boolean  @default(true)
+  alertTradingDeleteRequest Boolean  @default(true)
+  alertWorkflowLifecycle    Boolean  @default(true)
+  alertOpsDailySummary      Boolean  @default(true)
+  updatedById               String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 
   @@index([enabled])
 }
 
 /// Audit trail for attendance Telegram ops and manual overrides.
 model TelegramOpsAuditLog {
-  id           String   @id @default(cuid())
-  businessId   String
-  eventType    String
-  actorUserId  String?
-  employeeId   String?
+  id                 String   @id @default(cuid())
+  businessId         String
+  eventType          String
+  actorUserId        String?
+  employeeId         String?
   attendanceRecordId String?
-  detail       String?  @db.Text
-  metadataJson String?  @db.Text
-  createdAt    DateTime @default(now())
+  detail             String?  @db.Text
+  metadataJson       String?  @db.Text
+  createdAt          DateTime @default(now())
 
   @@index([businessId, eventType, createdAt])
   @@index([employeeId, createdAt])
@@ -1534,21 +1534,21 @@ enum TradingVolumeTargetPenaltyStatus {
 }
 
 model TradingDailyVolumeTarget {
-  id               String                   @id @default(cuid())
+  id               String                       @id @default(cuid())
   businessId       String
   tradingAccountId String
-  tradingAccount   TradingAccount           @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  tradingAccount   TradingAccount               @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
   targetDate       DateTime
-  targetUsdt       Decimal                  @db.Decimal(18, 8)
-  actualUsdt       Decimal                  @default(0) @db.Decimal(18, 8)
-  status           TradingVolumeTargetStatus @default(PENDING)
-  penaltyAmountBdt Decimal?               @db.Decimal(12, 2)
+  targetUsdt       Decimal                      @db.Decimal(18, 8)
+  actualUsdt       Decimal                      @default(0) @db.Decimal(18, 8)
+  status           TradingVolumeTargetStatus    @default(PENDING)
+  penaltyAmountBdt Decimal?                     @db.Decimal(12, 2)
   setById          String
-  notes            String?                  @db.Text
+  notes            String?                      @db.Text
   ignoredById      String?
   ignoredAt        DateTime?
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
   penalties        TradingVolumeTargetPenalty[]
   audits           TradingVolumeTargetAudit[]
 
@@ -1559,25 +1559,25 @@ model TradingDailyVolumeTarget {
 }
 
 model TradingVolumeTargetPenalty {
-  id                    String                         @id @default(cuid())
+  id                    String                           @id @default(cuid())
   targetId              String
-  target                TradingDailyVolumeTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  target                TradingDailyVolumeTarget         @relation(fields: [targetId], references: [id], onDelete: Cascade)
   businessId            String
   employeeId            String
   userId                String?
   status                TradingVolumeTargetPenaltyStatus @default(PENDING)
-  originalAmountBdt     Decimal                        @default(0) @db.Decimal(12, 2)
-  appliedAmountBdt      Decimal?                       @db.Decimal(12, 2)
-  waivedAmountBdt       Decimal?                       @db.Decimal(12, 2)
+  originalAmountBdt     Decimal                          @default(0) @db.Decimal(12, 2)
+  appliedAmountBdt      Decimal?                         @db.Decimal(12, 2)
+  waivedAmountBdt       Decimal?                         @db.Decimal(12, 2)
   penaltyLedgerEntryId  String?
   reversalLedgerEntryId String?
   appliedById           String?
   waivedById            String?
-  adminNote             String?                        @db.Text
+  adminNote             String?                          @db.Text
   appliedAt             DateTime?
   waivedAt              DateTime?
-  createdAt             DateTime                       @default(now())
-  updatedAt             DateTime                       @updatedAt
+  createdAt             DateTime                         @default(now())
+  updatedAt             DateTime                         @updatedAt
 
   @@index([businessId, status, createdAt])
   @@index([targetId])
@@ -1587,15 +1587,15 @@ model TradingVolumeTargetPenalty {
 }
 
 model TradingVolumeTargetAudit {
-  id           String                 @id @default(cuid())
+  id           String                   @id @default(cuid())
   targetId     String
   target       TradingDailyVolumeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
   businessId   String
   action       String
   actorUserId  String?
-  detail       String?                @db.Text
-  metadataJson String?                @db.Text
-  createdAt    DateTime               @default(now())
+  detail       String?                  @db.Text
+  metadataJson String?                  @db.Text
+  createdAt    DateTime                 @default(now())
 
   @@index([businessId, action, createdAt])
   @@index([targetId, createdAt])
@@ -1603,12 +1603,12 @@ model TradingVolumeTargetAudit {
 }
 
 model TradingVolumeTargetSettings {
-  businessId            String   @id
-  autoPenaltyEnabled    Boolean  @default(false)
-  defaultPenaltyBdt     Decimal  @default(500) @db.Decimal(12, 2)
-  updatedById           String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  businessId         String   @id
+  autoPenaltyEnabled Boolean  @default(false)
+  defaultPenaltyBdt  Decimal  @default(500) @db.Decimal(12, 2)
+  updatedById        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 enum BusinessArchiveBatchStatus {
@@ -1687,14 +1687,14 @@ model AgentAuditLog {
 
 /// Agent-readable settings cache with version bump on PATCH.
 model AgentSettings {
-  id              String   @id @default("global")
-  settingsVersion Int      @default(1)
-  businessHours   Json?
-  holidays        Json?
-  lateThresholdMinutes Int @default(15)
-  finePolicy      Json?
-  updatedAt       DateTime @updatedAt
-  createdAt       DateTime @default(now())
+  id                   String   @id @default("global")
+  settingsVersion      Int      @default(1)
+  businessHours        Json?
+  holidays             Json?
+  lateThresholdMinutes Int      @default(15)
+  finePolicy           Json?
+  updatedAt            DateTime @updatedAt
+  createdAt            DateTime @default(now())
 }
 
 // ─── AGENT MODULE (Phase 0+) ────────────────────────────────────────────────
@@ -1778,15 +1778,15 @@ model AgentArtifact {
 
 /// Owner's memory store. pgvector embedding column added in Phase 3.
 model AgentMemory {
-  id        String   @id @default(uuid())
+  id        String                       @id @default(uuid())
   scope     String
   key       String?
-  content   String   @db.Text
-  pinned    Boolean  @default(false)
+  content   String                       @db.Text
+  pinned    Boolean                      @default(false)
   metadata  Json?
   embedding Unsupported("vector(1536)")?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime                     @default(now())
+  updatedAt DateTime                     @updatedAt
 
   @@index([scope])
   @@map("agent_memory")
@@ -1840,14 +1840,14 @@ model FamilyContact {
 }
 
 model AgentNotification {
-  id         String   @id @default(uuid())
-  tier       Int
-  category   String?
-  title      String   @db.Text
-  message    String   @db.Text
-  channels   Json
-  statuses   Json
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  tier      Int
+  category  String?
+  title     String   @db.Text
+  message   String   @db.Text
+  channels  Json
+  statuses  Json
+  createdAt DateTime @default(now())
 
   @@index([tier])
   @@index([createdAt])
@@ -1877,14 +1877,14 @@ model AgentReminder {
 }
 
 model AgentStaff {
-  id             String       @id @default(uuid())
+  id             String                @id @default(uuid())
   name           String
   role           String
   telegramChatId String?
-  ntfyTopic      String?      @map("ntfy_topic")
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  ntfyTopic      String?               @map("ntfy_topic")
+  active         Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
   tasks          AgentStaffTask[]
   replyStats     AgentStaffReplyStat[]
   locations      AgentStaffLocation[]
@@ -1929,27 +1929,27 @@ model StaffLeave {
 // ─── PHASE 6: Staff Tasks ───────────────────────────────────────────────────
 
 model AgentStaffTask {
-  id               String    @id @default(uuid())
-  staffId          String    @map("staff_id")
-  staff            AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  title            String
-  detail           String?   @db.Text
-  type             String    @default("misc")
-  productRef       String?   @map("product_ref")
-  status           String    @default("proposed")
-  proposedFor      DateTime  @map("proposed_for") @db.Date
-  completedAt      DateTime? @map("completed_at")
-  carriedFromTaskId String?  @map("carried_from_task_id")
-  carriedFrom      AgentStaffTask?  @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
-  carriedTasks     AgentStaffTask[] @relation("CarryForward")
-  source           String    @default("agent")
-  verificationStatus String  @default("not_required") @map("verification_status")
-  proofType        String?   @map("proof_type")
-  proofData        Json?     @map("proof_data")
-  reviewerNote     String?   @map("reviewer_note") @db.Text
-  redoCount        Int       @default(0) @map("redo_count")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  marketingHistory AgentProductMarketingHistory[]
+  id                 String                         @id @default(uuid())
+  staffId            String                         @map("staff_id")
+  staff              AgentStaff                     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  title              String
+  detail             String?                        @db.Text
+  type               String                         @default("misc")
+  productRef         String?                        @map("product_ref")
+  status             String                         @default("proposed")
+  proposedFor        DateTime                       @map("proposed_for") @db.Date
+  completedAt        DateTime?                      @map("completed_at")
+  carriedFromTaskId  String?                        @map("carried_from_task_id")
+  carriedFrom        AgentStaffTask?                @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
+  carriedTasks       AgentStaffTask[]               @relation("CarryForward")
+  source             String                         @default("agent")
+  verificationStatus String                         @default("not_required") @map("verification_status")
+  proofType          String?                        @map("proof_type")
+  proofData          Json?                          @map("proof_data")
+  reviewerNote       String?                        @map("reviewer_note") @db.Text
+  redoCount          Int                            @default(0) @map("redo_count")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  marketingHistory   AgentProductMarketingHistory[]
 
   @@index([staffId])
   @@index([proposedFor, status])
@@ -1958,15 +1958,15 @@ model AgentStaffTask {
 }
 
 model AgentProductMarketingHistory {
-  id             String    @id @default(uuid())
-  productRef     String    @map("product_ref")
+  id             String          @id @default(uuid())
+  productRef     String          @map("product_ref")
   business       String
-  lastPromotedAt DateTime  @default(now()) @map("last_promoted_at")
-  contentType    String?   @map("content_type")
-  taskId         String?   @map("task_id")
+  lastPromotedAt DateTime        @default(now()) @map("last_promoted_at")
+  contentType    String?         @map("content_type")
+  taskId         String?         @map("task_id")
   task           AgentStaffTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  notes          String?   @db.Text
-  createdAt      DateTime  @default(now()) @map("created_at")
+  notes          String?         @db.Text
+  createdAt      DateTime        @default(now()) @map("created_at")
 
   @@index([productRef, lastPromotedAt(sort: Desc)])
   @@index([business, lastPromotedAt(sort: Desc)])
@@ -2189,16 +2189,16 @@ model AgentAskCard {
 }
 
 model AgentStaffReplyStat {
-  id             String    @id @default(uuid())
-  staffId        String?   @map("staff_id")
+  id             String      @id @default(uuid())
+  staffId        String?     @map("staff_id")
   staff          AgentStaff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
-  pageId         String    @map("page_id")
-  conversationId String    @map("conversation_id")
-  customerMsgAt  DateTime  @map("customer_msg_at")
-  firstReplyAt   DateTime  @map("first_reply_at")
-  replyMinutes   Int       @map("reply_minutes")
-  date           DateTime  @db.Date
-  createdAt      DateTime  @default(now()) @map("created_at")
+  pageId         String      @map("page_id")
+  conversationId String      @map("conversation_id")
+  customerMsgAt  DateTime    @map("customer_msg_at")
+  firstReplyAt   DateTime    @map("first_reply_at")
+  replyMinutes   Int         @map("reply_minutes")
+  date           DateTime    @db.Date
+  createdAt      DateTime    @default(now()) @map("created_at")
 
   @@index([staffId, date])
   @@index([date])
@@ -2206,16 +2206,16 @@ model AgentStaffReplyStat {
 }
 
 model AgentStaffLocation {
-  id         String   @id @default(uuid())
-  staffId    String   @map("staff_id")
+  id         String     @id @default(uuid())
+  staffId    String     @map("staff_id")
   staff      AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
   lat        Float
   lng        Float
   accuracy   Float?
-  recordedAt DateTime @map("recorded_at")
+  recordedAt DateTime   @map("recorded_at")
   source     String
-  metadata   String?  @db.Text
-  createdAt  DateTime @default(now()) @map("created_at")
+  metadata   String?    @db.Text
+  createdAt  DateTime   @default(now()) @map("created_at")
 
   @@index([staffId, recordedAt(sort: Desc)])
   @@map("staff_locations")
@@ -2364,17 +2364,17 @@ model CsMessage {
 }
 
 model ProductVisualIndex {
-  id          String                               @id @default(uuid())
-  productCode String                               @map("product_code")
+  id          String                       @id @default(uuid())
+  productCode String                       @map("product_code")
   business    String
-  imageUrl    String?                              @map("image_url") @db.Text
-  storagePath String?                            @map("storage_path")
-  description String                               @db.Text
-  tags        Json                                 @default("{}")
+  imageUrl    String?                      @map("image_url") @db.Text
+  storagePath String?                      @map("storage_path")
+  description String                       @db.Text
+  tags        Json                         @default("{}")
   embedding   Unsupported("vector(1536)")?
-  indexedAt   DateTime                             @default(now()) @map("indexed_at")
-  createdAt   DateTime                             @default(now()) @map("created_at")
-  updatedAt   DateTime                             @updatedAt @map("updated_at")
+  indexedAt   DateTime                     @default(now()) @map("indexed_at")
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
 
   @@unique([productCode, business])
   @@index([business])
@@ -2407,20 +2407,20 @@ model CsOrderDraft {
 }
 
 model CsShadowDraft {
-  id               String         @id @default(uuid())
-  conversationId   String         @map("conversation_id")
-  conversation     CsConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  pageId           String         @map("page_id")
-  psid             String         @map("psid")
-  draftText        String         @map("draft_text") @db.Text
-  attachments      Json           @default("[]")
-  status           String         @default("pending")
-  escalationStage  String         @default("none") @map("escalation_stage")
-  assignedStaffId  String?        @map("assigned_staff_id")
-  sentAt           DateTime?      @map("sent_at")
-  acknowledgedAt   DateTime?      @map("acknowledged_at")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
+  id              String         @id @default(uuid())
+  conversationId  String         @map("conversation_id")
+  conversation    CsConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pageId          String         @map("page_id")
+  psid            String         @map("psid")
+  draftText       String         @map("draft_text") @db.Text
+  attachments     Json           @default("[]")
+  status          String         @default("pending")
+  escalationStage String         @default("none") @map("escalation_stage")
+  assignedStaffId String?        @map("assigned_staff_id")
+  sentAt          DateTime?      @map("sent_at")
+  acknowledgedAt  DateTime?      @map("acknowledged_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   @@index([status, createdAt])
   @@index([escalationStage])
@@ -2493,13 +2493,13 @@ model CsFollowup {
 }
 
 model CsCommentReply {
-  id              String   @id @default(uuid())
-  commentId       String   @unique @map("comment_id")
-  postId          String   @map("post_id")
-  pageId          String   @map("page_id")
-  psid            String   @map("psid")
+  id               String   @id @default(uuid())
+  commentId        String   @unique @map("comment_id")
+  postId           String   @map("post_id")
+  pageId           String   @map("page_id")
+  psid             String   @map("psid")
   privateRepliedAt DateTime @default(now()) @map("private_replied_at")
-  publicReplied   Boolean  @default(false) @map("public_replied")
+  publicReplied    Boolean  @default(false) @map("public_replied")
 
   @@index([postId, psid])
   @@map("cs_comment_replies")
@@ -2526,4 +2526,237 @@ model CsAnalyticsEvent {
 
   @@index([kind, createdAt])
   @@map("cs_analytics_events")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALMA Lifestyle core (GAS → Postgres migration, Phase 1+)
+// Money: Int whole BDT taka (roundMoney). IDs preserved from Sheets on import.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model LifestyleOrder {
+  id             String    @id
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
+  date           DateTime  @db.Date
+  customer       String
+  phone          String
+  address        String    @db.Text
+  payment        String
+  source         String
+  status         String
+  product        String
+  category       String
+  size           String
+  qty            Int       @default(1)
+  unitPrice      Int       @default(0) @map("unit_price")
+  discount       Int       @default(0)
+  addDiscount    Int       @default(0) @map("add_discount")
+  advCost        Int       @default(0) @map("adv_cost")
+  advPlatform    String    @default("") @map("adv_platform")
+  sellPrice      Int       @default(0) @map("sell_price")
+  shippingFee    Int       @default(0) @map("shipping_fee")
+  cogs           Int       @default(0)
+  courierCharge  Int       @default(0) @map("courier_charge")
+  otherCosts     Int       @default(0) @map("other_costs")
+  profit         Int       @default(0)
+  courier        String    @default("")
+  trackingId     String    @default("") @map("tracking_id")
+  trackingStatus String    @default("") @map("tracking_status")
+  estDelivery    DateTime? @map("est_delivery") @db.Date
+  actualDelivery DateTime? @map("actual_delivery") @db.Date
+  returnReason   String    @default("") @map("return_reason") @db.Text
+  returnDate     DateTime? @map("return_date") @db.Date
+  returnStatus   String    @default("") @map("return_status")
+  notes          String    @default("") @db.Text
+  sku            String    @default("")
+  handledBy      String    @default("") @map("handled_by")
+  invoiceNum     String    @default("") @map("invoice_num")
+  autoFlag       String    @default("") @map("auto_flag")
+
+  paidAmount         Int?      @map("paid_amount")
+  dueAmount          Int?      @map("due_amount")
+  estimatedProfit    Int?      @map("estimated_profit")
+  realizedProfit     Int?      @map("realized_profit")
+  reversedProfit     Int?      @map("reversed_profit")
+  netProfit          Int?      @map("net_profit")
+  returnNetProfit    Int?      @map("return_net_profit")
+  shippingMargin     Int?      @map("shipping_margin")
+  merchandiseProfit  Int?      @map("merchandise_profit")
+  returnType         String?   @map("return_type")
+  courierCost        Int?      @map("courier_cost")
+  inventoryCost      Int?      @map("inventory_cost")
+  stockRestored      Boolean   @default(false) @map("stock_restored")
+  stockRestoredAt    DateTime? @map("stock_restored_at")
+  stockRestoreReason String?   @map("stock_restore_reason") @db.Text
+  notesMetaJson      String?   @map("notes_meta_json") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items LifestyleOrderItem[]
+
+  @@index([businessId, status])
+  @@index([businessId, date])
+  @@index([businessId, customer])
+  @@index([phone])
+  @@index([status, date])
+  @@map("lifestyle_orders")
+}
+
+model LifestyleOrderItem {
+  id             String         @id @default(cuid())
+  orderId        String         @map("order_id")
+  order          LifestyleOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lineNo         Int            @map("line_no")
+  sku            String
+  productCode    String         @default("") @map("product_code")
+  product        String
+  category       String         @default("")
+  size           String         @default("")
+  variant        String         @default("")
+  qty            Int            @default(1)
+  unitPrice      Int            @default(0) @map("unit_price")
+  sellPrice      Int            @default(0) @map("sell_price")
+  subtotal       Int            @default(0)
+  cogs           Int            @default(0)
+  stockSku       String         @default("") @map("stock_sku")
+  collectionCode String         @default("") @map("collection_code")
+  collectionType String         @default("") @map("collection_type")
+  sizeGroup      String         @default("") @map("size_group")
+  variantGroup   String         @default("") @map("variant_group")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@unique([orderId, lineNo])
+  @@index([sku])
+  @@index([orderId])
+  @@map("lifestyle_order_items")
+}
+
+model LifestyleProduct {
+  sku               String   @id
+  name              String
+  category          String   @default("")
+  defaultCogs       Int      @default(0) @map("default_cogs")
+  defaultPrice      Int      @default(0) @map("default_price")
+  active            Boolean  @default(true)
+  notes             String   @default("") @db.Text
+  imageUrl          String?  @map("image_url") @db.Text
+  supplier          String?  @default("manual")
+  supplierProductId String?  @map("supplier_product_id")
+  description       String?  @db.Text
+  variantsJson      String?  @map("variants_json") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([category])
+  @@index([active])
+  @@map("lifestyle_products")
+}
+
+model LifestyleStockItem {
+  id              String   @id @default(cuid())
+  sku             String
+  product         String
+  category        String   @default("")
+  color           String   @default("")
+  size            String   @default("")
+  opening         Int      @default(0)
+  purchased       Int      @default(0)
+  sold            Int      @default(0)
+  returned        Int      @default(0)
+  damaged         Int      @default(0)
+  reserved        Int      @default(0)
+  currentStock    Int      @default(0) @map("current_stock")
+  available       Int      @default(0)
+  reorderLevel    Int      @default(5) @map("reorder_level")
+  status          String   @default("")
+  stockValue      Int      @default(0) @map("stock_value")
+  sellValue       Int      @default(0) @map("sell_value")
+  potentialProfit Int      @default(0) @map("potential_profit")
+  metaJson        String?  @map("meta_json") @db.Text
+  collectionCode  String?  @map("collection_code")
+  collectionType  String?  @map("collection_type")
+  sizeGroup       String?  @map("size_group")
+  variantGroup    String?  @map("variant_group")
+  buyingPrice     Int?     @map("buying_price")
+  barcode         String?  @default("")
+  archived        Boolean  @default(false)
+  imageUrl        String?  @map("image_url") @db.Text
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([sku, size])
+  @@index([sku])
+  @@index([category])
+  @@index([archived, active])
+  @@index([available])
+  @@map("lifestyle_stock_items")
+}
+
+model LifestyleCustomer {
+  id           String    @id
+  businessId   String    @default("ALMA_LIFESTYLE") @map("business_id")
+  name         String
+  phone        String
+  district     String    @default("")
+  address      String    @default("") @db.Text
+  whatsapp     String    @default("")
+  totalOrders  Int       @default(0) @map("total_orders")
+  delivered    Int       @default(0)
+  returned     Int       @default(0)
+  cancelled    Int       @default(0)
+  pending      Int       @default(0)
+  totalSpent   Int       @default(0) @map("total_spent")
+  avgOrder     Int       @default(0) @map("avg_order")
+  totalProfit  Int       @default(0) @map("total_profit")
+  codOrders    Int       @default(0) @map("cod_orders")
+  codFails     Int       @default(0) @map("cod_fails")
+  codFailPct   Float     @default(0) @map("cod_fail_pct")
+  returnRate   Float     @default(0) @map("return_rate")
+  lastOrder    DateTime? @map("last_order") @db.Date
+  daysInactive Float     @default(0) @map("days_inactive")
+  favCategory  String    @default("") @map("fav_category")
+  clvScore     Int       @default(0) @map("clv_score")
+  riskScore    Int       @default(0) @map("risk_score")
+  riskLevel    String    @default("LOW") @map("risk_level")
+  segment      String    @default("NEW")
+  loyaltyPts   Int       @default(0) @map("loyalty_pts")
+  source       String    @default("")
+  waOptin      String    @default("Yes") @map("wa_optin")
+  notes        String    @default("") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([businessId, phone])
+  @@index([businessId, segment])
+  @@index([businessId, riskLevel])
+  @@index([name])
+  @@index([phone])
+  @@map("lifestyle_customers")
+}
+
+model LifestylePromo {
+  id             String    @id @default(cuid())
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
+  code           String
+  discountPct    Int?      @map("discount_pct")
+  discountAmount Int?      @map("discount_amount")
+  active         Boolean   @default(true)
+  expiresAt      DateTime? @map("expires_at")
+  usageCount     Int       @default(0) @map("usage_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([businessId, code])
+  @@index([active])
+  @@map("lifestyle_promos")
+}
+
+model LifestyleInvoiceSequence {
+  businessId String @map("business_id")
+  year       Int
+  lastNumber Int    @default(0) @map("last_number")
+
+  @@id([businessId, year])
+  @@map("lifestyle_invoice_sequences")
 }
