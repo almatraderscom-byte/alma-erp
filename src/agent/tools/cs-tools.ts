@@ -548,6 +548,61 @@ const handoff_to_human: AgentTool = {
   },
 }
 
+const get_customer_intelligence: AgentTool = {
+  name: 'get_customer_intelligence',
+  description:
+    'Deep customer view: tiers (VIP/regular/occasional/new), churn risk, days since last order, estimated CLV ' +
+    '(when order data available), and personalized engagement suggestions. Use for loyalty/retention planning, ' +
+    '"VIP ke ke", "ke churn hote pare". Win-back actions are owner-facing (Meta 24h rule — never auto-DM).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      filter: {
+        type: 'string',
+        enum: ['vip', 'high_churn', 'all'],
+        description: 'Filter profiles (default all)',
+      },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const { buildCustomerProfiles, filterProfiles } = await import('@/lib/customer-lifetime')
+      const filter = input.filter as 'vip' | 'high_churn' | 'all' | undefined
+      const profiles = await buildCustomerProfiles()
+      const filtered = filterProfiles(profiles, filter ?? 'all')
+      const withoutClv = filtered.filter((p) => p.ordersCount >= 2 && !p.estimatedClv).length
+      return {
+        success: true,
+        data: {
+          count: filtered.length,
+          filter: filter ?? 'all',
+          customers: filtered.slice(0, 30).map((p) => ({
+            id: p.id,
+            name: p.name,
+            phone: p.phone,
+            ordersCount: p.ordersCount,
+            tier: p.tier,
+            churnRisk: p.churnRisk,
+            daysSinceLast: p.daysSinceLast,
+            avgGapDays: p.avgGapDays,
+            avgOrderValue: p.avgOrderValue ?? null,
+            estimatedClv: p.estimatedClv ?? null,
+            engagementSuggestion: p.engagementSuggestion,
+            clvNote: p.clvNote ?? null,
+          })),
+          notes: withoutClv
+            ? [`${withoutClv} জনের CLV হিসাব করা যায়নি — per-order amount+date capture করুন।`]
+            : [],
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const OWNER_CUSTOMER_INTEL_TOOLS: AgentTool[] = [get_customer_intelligence]
+
 export const CS_CUSTOMER_TOOLS: AgentTool[] = [
   match_product_by_image,
   search_products,

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { segmentCustomersForApi } from '@/lib/customer-intelligence'
+import { buildCustomerLifetimeDigest, persistCustomerLifetimeKnowledge } from '@/lib/customer-lifetime'
 import { trackWinbackCohort } from '@/lib/outcome-wiring'
 
 export const runtime = 'nodejs'
@@ -25,11 +26,15 @@ export async function GET(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    const segments = await segmentCustomersForApi()
+    const [segments, lifetime] = await Promise.all([
+      segmentCustomersForApi(),
+      buildCustomerLifetimeDigest(),
+    ])
     if (segments.winBack?.length) {
       void trackWinbackCohort(segments.winBack).catch(() => {})
     }
-    return NextResponse.json(segments)
+    void persistCustomerLifetimeKnowledge().catch(() => {})
+    return NextResponse.json({ ...segments, lifetime })
   } catch (err) {
     console.error('[customer-segments] internal API failed:', err)
     return NextResponse.json({ error: 'Failed to segment customers' }, { status: 500 })

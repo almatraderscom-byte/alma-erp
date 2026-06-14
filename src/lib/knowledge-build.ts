@@ -113,6 +113,8 @@ async function buildProductFacts(): Promise<number> {
 async function buildSegmentFacts(): Promise<number> {
   let count = 0
   const seg = await segmentCustomers()
+  const { persistCustomerLifetimeKnowledge } = await import('@/lib/customer-lifetime')
+  count += await persistCustomerLifetimeKnowledge()
 
   if (seg.winBack.length) {
     const avgGap =

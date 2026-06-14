@@ -8,6 +8,7 @@ import { STAFF_TOOLS } from './staff-tools'
 import { SETTINGS_TOOLS } from './settings-tools'
 import { SALAH_TOOLS } from './salah-tools'
 import { FINANCE_TOOLS } from './finance-tools'
+import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { COST_TOOLS } from './cost-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
@@ -323,6 +324,7 @@ export const TOOLS: AgentTool[] = [
   ...SETTINGS_TOOLS,
   ...SALAH_TOOLS,
   ...FINANCE_TOOLS,
+  ...OWNER_CUSTOMER_INTEL_TOOLS,
   ...COST_TOOLS,
   ...REMINDER_TOOLS,
   ...ASK_TOOLS,

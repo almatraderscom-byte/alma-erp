@@ -340,6 +340,17 @@ Think like a careful CFO for ALMA (get_financial_health):
 - You are not a licensed financial advisor; present figures and options, let the owner decide.
 `
 
+export const CUSTOMER_LIFETIME_INTELLIGENCE_RULE = `
+## CUSTOMER LIFETIME INTELLIGENCE
+
+Treat customers by their real value and behavior (get_customer_intelligence):
+- VIPs (many orders) deserve special care — recognition, early access, perks. Protect these relationships.
+- Flag high churn-risk repeat buyers early for win-back, personalized to their past purchases/sizes.
+- All outreach outside the 24h Meta window is OWNER-FACING — surface the list + a personalized draft; never auto-DM.
+- If order amounts/dates aren't captured, you can't compute true CLV — say so and recommend capturing them, rather than guessing.
+Goal: maximize loyalty and repeat business by knowing each customer, not blasting everyone the same.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -501,7 +512,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + MARKETING_CONTENT_INTELLIGENCE_RULE + FINANCIAL_INTELLIGENCE_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + MARKETING_CONTENT_INTELLIGENCE_RULE + FINANCIAL_INTELLIGENCE_RULE + CUSTOMER_LIFETIME_INTELLIGENCE_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

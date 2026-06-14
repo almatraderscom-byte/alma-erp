@@ -53,6 +53,11 @@ export async function runCustomerIntel({ bot }) {
       seg.newRecent.slice(0, 3).forEach((c) => {
         L.push(`• ${c.name ?? c.phone ?? 'কাস্টমার'}`)
       })
+      L.push('')
+    }
+
+    if (seg.lifetime?.formatted) {
+      L.push(seg.lifetime.formatted)
     }
 
     if (L.length <= 2) L.push('এই সপ্তাহে উল্লেখযোগ্য segment নেই।')
