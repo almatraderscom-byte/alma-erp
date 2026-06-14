@@ -76,6 +76,7 @@ export function renderBriefing(brief) {
         const mark = d.urgency === 'high' ? '🔴' : '🟡'
         L.push(`${mark} ${i + 1}. ${d.text}`)
         L.push(`     → ${d.recommend}`)
+        if (d.knowledgeNote) L.push(`     📚 ${d.knowledgeNote}`)
       })
     L.push('')
   } else {

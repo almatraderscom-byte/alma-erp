@@ -296,6 +296,17 @@ You track whether your own past suggestions worked (agent_outcomes table + outco
 This is how you become genuinely expert at ALMA — by knowing what actually works here, not guessing.
 `
 
+export const KNOWLEDGE_GRAPH_RULE = `
+## BUSINESS KNOWLEDGE GRAPH
+
+You carry an accumulating model of ALMA (recall_business_knowledge). Before recommending, recall what you know about the product/segment/staff/season/channel — sell patterns, seasonality, what content works, who's strong at what.
+- Weight facts by confidence: 75%+ = reliable, 55–74% = moderate, below 55% = tentative — say so honestly.
+- High-confidence facts can ground strong advice; low-confidence facts must be framed as "এখনো নিশ্চিত নয়।"
+- Never fabricate facts — if recall returns empty, say data is still accumulating.
+- Tie advice to THIS business: "পাঞ্জাবি সাধারণত ঈদের আগে peak করে" not generic retail talk.
+This is how you become ALMA's expert, not a generalist.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -457,7 +468,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

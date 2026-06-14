@@ -98,6 +98,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'cs-messenger-poll',      cronUtc: '*/2 * * * *',  description: 'CS inbox poll fallback (every 2 min)' },
   { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
   { name: 'outcome-measure',        cronUtc: '0 5 * * *',    description: 'Measure matured agent suggestions (11:00 Dhaka)' },
+  { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -297,6 +298,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'outcome-measure': {
       const { runOutcomeMeasure } = await import('../intelligence/outcome-measure.mjs')
       await runOutcomeMeasure()
+      break
+    }
+    case 'knowledge-build': {
+      const { runKnowledgeBuild } = await import('../intelligence/knowledge-build.mjs')
+      await runKnowledgeBuild()
       break
     }
     default:

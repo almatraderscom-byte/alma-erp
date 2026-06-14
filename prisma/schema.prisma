@@ -2114,6 +2114,24 @@ model AgentOutcome {
   @@map("agent_outcomes")
 }
 
+model AgentKnowledge {
+  id            String   @id @default(uuid())
+  entityType    String   @map("entity_type")
+  entityId      String?  @map("entity_id")
+  entityName    String?  @map("entity_name")
+  attribute     String
+  value         String   @db.Text
+  confidence    Float    @default(0.5)
+  evidenceCount Int      @default(1) @map("evidence_count")
+  source        String?
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([entityType, entityId, attribute])
+  @@index([entityType])
+  @@map("agent_knowledge")
+}
+
 // ─── PHASE 8: Cost dashboard ─────────────────────────────────────────────────
 
 model AgentCostEvent {

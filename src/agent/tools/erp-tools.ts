@@ -751,6 +751,61 @@ const generate_owner_briefing: AgentTool = {
   },
 }
 
+const recall_business_knowledge: AgentTool = {
+  name: 'recall_business_knowledge',
+  description:
+    'Recall what the agent has learned about a product, customer segment, staff member, channel, season, or the business — ' +
+    'sell patterns, seasonality, best content, strengths, margin bands, etc. Use BEFORE making recommendations ' +
+    'to ground advice in accumulated ALMA-specific knowledge. Confidence-weighted facts only.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      entityType: {
+        type: 'string',
+        enum: ['product', 'customer_segment', 'staff', 'channel', 'season', 'business'],
+        description: 'What kind of entity to recall knowledge about',
+      },
+      entityName: {
+        type: 'string',
+        description: 'Optional name filter (e.g. product name "পাঞ্জাবি", staff name)',
+      },
+    },
+    required: ['entityType'],
+  },
+  handler: async (input) => {
+    try {
+      const entityType = String(input.entityType ?? '')
+      const entityName = typeof input.entityName === 'string' ? input.entityName : undefined
+      const { recallFacts, searchFactsByName } = await import('@/lib/knowledge-graph')
+      const facts = entityName
+        ? await searchFactsByName(entityType, entityName)
+        : await recallFacts(entityType)
+      return {
+        success: true,
+        data: {
+          entityType,
+          entityName: entityName ?? null,
+          count: facts.length,
+          facts: facts.map((f) => ({
+            entityId: f.entityId,
+            entityName: f.entityName,
+            attribute: f.attribute,
+            value: f.value,
+            confidence: Math.round(f.confidence * 100) / 100,
+            evidenceCount: f.evidenceCount,
+            source: f.source,
+          })),
+          note: facts.length
+            ? 'Confidence 0.75+ = reliable, 0.55–0.74 = moderate, below 0.55 = tentative.'
+            : 'এখনো এই বিষয়ে structured knowledge নেই — ডেটা জমা হচ্ছে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const get_pending_approvals: AgentTool = {
   name: 'get_pending_approvals',
   description:
@@ -799,5 +854,6 @@ export const ERP_TOOLS: AgentTool[] = [
   get_reorder_suggestions,
   check_order_issues,
   generate_owner_briefing,
+  recall_business_knowledge,
   get_pending_approvals,
 ]

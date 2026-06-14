@@ -16,6 +16,7 @@ import { analyzeReturns } from '@/lib/return-analysis'
 import { analyzePricing } from '@/lib/pricing-insight'
 import { detectOrderIssues, type OrderIssue } from '@/lib/order-monitor'
 import { trackReorderOutcomes, trackBriefingDecisionOutcomes } from '@/lib/outcome-wiring'
+import { getKnowledgeNoteForProduct } from '@/lib/knowledge-graph'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -25,6 +26,7 @@ export type BriefingDecision = {
   urgency: 'high' | 'normal'
   text: string
   recommend: string
+  knowledgeNote?: string
 }
 
 export type OwnerBriefingData = {
@@ -444,6 +446,23 @@ export function deriveBriefingDecisions(sig: {
   return decisions
 }
 
+/** Attach knowledge graph facts to stock/reorder decisions for grounded recommendations. */
+export async function enrichDecisionsWithKnowledge(
+  decisions: BriefingDecision[],
+  reorderSuggestions: ReorderSuggestion[],
+): Promise<BriefingDecision[]> {
+  const enriched = [...decisions]
+  for (let i = 0; i < enriched.length; i++) {
+    const d = enriched[i]
+    if (d.area !== 'stock') continue
+    const match = reorderSuggestions.find((r) => d.text.includes(r.name) || d.recommend.includes(r.name))
+    if (!match) continue
+    const note = await getKnowledgeNoteForProduct(match.id, match.name).catch(() => null)
+    if (note) enriched[i] = { ...d, knowledgeNote: note }
+  }
+  return enriched
+}
+
 /** Remove decisions the owner previously vetoed via saved memory. */
 export function filterVetoedDecisions(
   decisions: BriefingDecision[],
@@ -511,6 +530,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   }
   let decisions = deriveBriefingDecisions(signals)
   decisions = filterVetoedDecisions(decisions, ownerMemories)
+  decisions = await enrichDecisionsWithKnowledge(decisions, reorderSuggestions)
 
   void trackReorderOutcomes(reorderSuggestions).catch(() => {})
   void trackBriefingDecisionOutcomes(decisions, sales).catch(() => {})
