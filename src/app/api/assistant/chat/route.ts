@@ -5,6 +5,7 @@ import { requireAgentEnabled, requireAnthropicApiKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
+import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
@@ -134,6 +135,7 @@ export async function POST(req: NextRequest) {
         content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
       },
     })
+    await touchConversationActivity(conversationId)
   } catch (err) {
     console.error('[assistant/chat] persistence failed', err)
     if (isAgentDbError(err)) {

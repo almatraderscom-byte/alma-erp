@@ -15,6 +15,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
+import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -462,7 +463,7 @@ export async function* runAgentTurn(
       })
     }
 
-    await prisma.agentConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+    await touchConversationActivity(conversationId)
 
     void logCost({
       provider: 'anthropic',

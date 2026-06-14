@@ -90,6 +90,10 @@ const save_memory: AgentTool = {
       key: { type: 'string', description: 'Optional short identifier for the fact' },
       content: { type: 'string', description: 'The fact to remember (clear, self-contained text)' },
       pinned: { type: 'boolean', description: 'If true, this fact is injected into every conversation system prompt (use for critical standing facts, cap 30)' },
+      metadata: {
+        type: 'object',
+        description: 'Optional metadata e.g. { type: "owner_decision", context: "task_proposal", date: "YYYY-MM-DD" }',
+      },
     },
     required: ['scope', 'content'],
   },
@@ -98,12 +102,15 @@ const save_memory: AgentTool = {
     const content = String(input.content ?? '')
     const key = input.key ? String(input.key) : null
     const pinned = input.pinned === true
+    const metadata = input.metadata && typeof input.metadata === 'object'
+      ? (input.metadata as Record<string, unknown>)
+      : undefined
 
     if (!content.trim()) return { success: false, error: 'content is empty' }
     if (!MEMORY_SCOPES.includes(scope)) return { success: false, error: `invalid scope: ${scope}` }
 
     try {
-      const mem = await createOrUpdateAgentMemory({ scope, key, content, pinned })
+      const mem = await createOrUpdateAgentMemory({ scope, key, content, pinned, metadata })
       return {
         success: true,
         data: {

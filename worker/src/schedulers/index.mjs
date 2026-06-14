@@ -45,6 +45,7 @@ const lazy = {
   csFollowups:        () => import('../cs/followups.mjs'),
   csMessengerPoll:    () => import('../cs/messenger-poll.mjs'),
   tokenHealth:        () => import('../cs/token-health.mjs'),
+  sessionSummarizer:  () => import('../memory/session-summarizer.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
   { name: 'salah-escalation',       cronUtc: '*/5 * * * *',  description: 'Salah escalation check (every 5 min)' },
   { name: 'messenger-scan',         cronUtc: '*/15 * * * *', description: 'Messenger unanswered scan (every 15 min)' },
+  { name: 'session-summarizer',     cronUtc: '*/15 * * * *', description: 'Summarize ended owner chats into memory (every 15 min)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
@@ -153,6 +155,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'messenger-scan': {
           const { runMessengerScan } = await lazy.messengerScan()
           await runMessengerScan(context)
+          break
+        }
+        case 'session-summarizer': {
+          const { runSessionSummarizer } = await lazy.sessionSummarizer()
+          await runSessionSummarizer()
           break
         }
         case 'night-report': {

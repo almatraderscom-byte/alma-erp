@@ -4,6 +4,7 @@
  */
 import { dhakaTodayYmd } from '../salah/dhaka-date.mjs'
 import { formatDhakaDateLabel } from './bn-format.mjs'
+import { fetchOwnerDecisions } from '../memory/owner-decisions.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -330,6 +331,76 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
   return result
 }
 
+function staffMatches(staffName, key) {
+  const n = String(staffName).toLowerCase()
+  const k = String(key).toLowerCase()
+  return n.includes(k) || k.includes(n)
+}
+
+function analyzeOwnerDecisions(decisions) {
+  const hints = {
+    boostVideoStaff: new Set(),
+    skipTypes: [],
+    vetoAdProducts: [],
+  }
+  for (const m of decisions ?? []) {
+    const text = (m.content || '').toLowerCase()
+    if (/mustahid/.test(text) && /(video|ভিডিও|রিল|capcut)/.test(text) && /(বেশি|more|extra|বাড়)/.test(text)) {
+      hints.boostVideoStaff.add('mustahid')
+    }
+    if (/eyafi/.test(text) && /(customer|chat|মেসেজ|messenger)/.test(text) && /(না|no|skip|দিও না|avoid)/.test(text)) {
+      hints.skipTypes.push({ staffPattern: 'eyafi', types: ['customer_reply'] })
+    }
+    if (/ad boost/.test(text) && /(না|no|avoid|করো না)/.test(text)) {
+      const prod = text.match(/(fm[-\w\d]+)/i)?.[1]
+      if (prod) hints.vetoAdProducts.push(prod.toLowerCase())
+    }
+  }
+  return hints
+}
+
+function adjustTasksForOwnerDecisions(staff, tasks, hints) {
+  let out = [...tasks]
+  const notes = []
+  const name = staff.name
+
+  if ([...hints.boostVideoStaff].some((k) => staffMatches(name, k))) {
+    const videoCount = out.filter((t) => t.type === 'video_reel').length
+    if (videoCount < 2) {
+      const photoIdx = out.findIndex((t) => t.type === 'product_photo' && !t.title.startsWith('🔄'))
+      if (photoIdx >= 0) {
+        const t = out[photoIdx]
+        out[photoIdx] = {
+          ...t,
+          type: 'video_reel',
+          title: t.title.replace(/ফটো|photo/gi, 'ভিডিও রিল'),
+          detail: `${t.detail || ''} [Owner directive: video focus]`.trim(),
+          source: 'owner_decision',
+        }
+      }
+    }
+    notes.push(`গত নির্দেশ অনুযায়ী ${name} এর video task বাড়ানো হয়েছে`)
+  }
+
+  for (const skip of hints.skipTypes) {
+    if (staffMatches(name, skip.staffPattern)) {
+      const before = out.length
+      out = out.filter((t) => !skip.types.includes(t.type))
+      if (out.length < before) notes.push(`${name}: ${skip.types.join(', ')} বাদ (owner directive)`)
+    }
+  }
+
+  if (hints.vetoAdProducts.length) {
+    out = out.filter((t) => {
+      if (t.type !== 'ad_creative') return true
+      const ref = `${t.productRef || ''} ${t.title || ''}`.toLowerCase()
+      return !hints.vetoAdProducts.some((p) => ref.includes(p))
+    })
+  }
+
+  return { tasks: out, note: notes.length ? notes.join('; ') : null }
+}
+
 function formatStaffTaskBlock(staffName, staffTasks) {
   const carries = staffTasks.filter((t) => t.title.startsWith('🔄'))
   const fresh = staffTasks.filter((t) => !t.title.startsWith('🔄'))
@@ -405,9 +476,16 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
   }
 
   const allTasks = []
+  const ownerDecisions = await fetchOwnerDecisions()
+  const decisionHints = analyzeOwnerDecisions(ownerDecisions)
+  const decisionNotes = []
+
   for (const staff of staffList) {
     const profile = getProfileForStaff(profiles, staff.name)
-    const staffTasks = buildTasksForStaff(staff, profile, picks, carryRows ?? [], pendingOrders)
+    let staffTasks = buildTasksForStaff(staff, profile, picks, carryRows ?? [], pendingOrders)
+    const adjusted = adjustTasksForOwnerDecisions(staff, staffTasks, decisionHints)
+    staffTasks = adjusted.tasks
+    if (adjusted.note) decisionNotes.push(adjusted.note)
     console.log(
       `[evening-proposal] ${staff.name}: profile target=${profile?.dailyTargetTasks ?? 6} ` +
       `skills=[${(profile?.skills ?? []).join(',')}] → ${staffTasks.length} tasks ` +
@@ -417,7 +495,12 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
     allTasks.push(...staffTasks)
   }
 
-  const summaryBangla = formatSummary(targetDate, staffList, allTasks, picks, (carryRows ?? []).length, pendingOrders)
+  let summaryBangla = formatSummary(targetDate, staffList, allTasks, picks, (carryRows ?? []).length, pendingOrders)
+  if (decisionNotes.length) {
+    summaryBangla += `\n\n📝 *গত নির্দেশ অনুযায়ী:* ${decisionNotes.join('; ')}`
+  } else if (ownerDecisions.length) {
+    summaryBangla += `\n\n📝 ${ownerDecisions.length}টি owner decision memory পড়া হয়েছে।`
+  }
 
   return {
     success: true,
@@ -429,6 +512,7 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
     pendingOrders,
     summaryBangla,
     profilesLoaded: Object.keys(profiles),
+    ownerDecisionCount: ownerDecisions.length,
   }
 }
 
