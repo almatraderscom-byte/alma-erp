@@ -55,6 +55,8 @@ ok('NotificationSoundBridge wired', providers.includes('NotificationSoundBridge'
 const oneSignal = readText('src/components/notifications/OneSignalPushManager.tsx')
 ok('OneSignal plays custom sound', oneSignal.includes('playAlmaNotificationSound'))
 
+ok('middleware allows sounds', readText('src/middleware.ts').includes('sounds/'))
+
 const failed = checks.filter(c => !c.pass)
 if (failed.length) {
   console.error(`\n${failed.length} check(s) failed`)
