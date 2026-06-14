@@ -158,8 +158,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'proof') {
-    await db.agentStaffTask.update({
-      where: { id: taskId },
+    const claimed = await db.agentStaffTask.updateMany({
+      where: { id: taskId, verificationStatus: 'awaiting_proof' },
       data: {
         verificationStatus: 'proof_submitted',
         proofType: proofType ?? 'photo',
@@ -170,6 +170,25 @@ export async function POST(req: NextRequest) {
         },
       },
     })
+    if (claimed.count === 0) {
+      const current = await db.agentStaffTask.findUnique({
+        where: { id: taskId },
+        include: { staff: { select: { id: true, name: true } } },
+      })
+      return NextResponse.json({
+        ok: true,
+        idempotent: true,
+        alreadySubmitted: true,
+        needsOwnerReview: false,
+        taskId,
+        verificationStatus: current?.verificationStatus ?? 'unknown',
+        staffName: current?.staff?.name ?? task.staff.name,
+        taskTitle: current?.title ?? task.title,
+        proofType: current?.proofType ?? proofType,
+        proofData: (current?.proofData as Record<string, unknown>) ?? proofData ?? {},
+      })
+    }
+
     const updated = await db.agentStaffTask.findUnique({
       where: { id: taskId },
       include: { staff: { select: { id: true, name: true } } },

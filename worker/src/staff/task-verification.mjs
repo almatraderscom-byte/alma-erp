@@ -14,6 +14,9 @@ import { uploadTaskProofPhoto } from './task-proof-storage.mjs'
 /** staffChatId → taskId */
 export const awaitingProof = new Map()
 
+/** taskId currently being processed — prevents duplicate owner cards */
+const proofInFlight = new Set()
+
 /** ownerChatId → taskId (awaiting redo note) */
 export const awaitingRedoNote = new Map()
 
@@ -49,6 +52,7 @@ function verifyRedoCb(taskId) {
 
 export async function notifyOwnerForReview(telegram, taskRow, result) {
   if (!OWNER_ID) return
+  if (result.needsOwnerReview === false || result.alreadySubmitted || result.idempotent) return
 
   const staffName = result.staffName ?? 'স্টাফ'
   const title = result.taskTitle ?? taskRow?.title ?? 'টাস্ক'
@@ -159,6 +163,8 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
   const taskId = awaitingProof.get(chatId)
   if (!taskId) return false
 
+  if (proofInFlight.has(taskId)) return true
+
   const { data: task } = await supabase
     .from('staff_tasks')
     .select('id, title, detail, type, status, verification_status')
@@ -166,50 +172,61 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
     .eq('staff_id', staff.id)
     .maybeSingle()
 
-  if (!task || task.status !== 'awaiting_proof') {
+  const vStatus = task?.verification_status ?? task?.verificationStatus
+  if (!task || task.status !== 'awaiting_proof' || vStatus !== 'awaiting_proof') {
     awaitingProof.delete(chatId)
-    return false
+    return vStatus === 'proof_submitted'
   }
 
-  let proofType = 'photo'
-  let proofData = {}
-
-  if (photo) {
-    const best = photo[photo.length - 1]
-    const fileLink = await ctx.telegram.getFileLink(best.file_id)
-    const res = await fetch(fileLink.href ?? fileLink)
-    const buf = Buffer.from(await res.arrayBuffer())
-    const imageUrl = await storeProofPhoto(supabase, taskId, buf)
-    proofType = 'screenshot'
-    proofData = { imageUrl }
-  } else if (text?.trim()) {
-    proofType = 'text'
-    proofData = { text: text.trim().slice(0, 2000) }
-  } else {
-    return true
-  }
-
-  let proofQuality = null
-  if (CONTENT_TYPES.has(task.type)) {
-    proofQuality = await assessProofQuality({
-      task,
-      proofImageUrl: proofData.imageUrl,
-      proofText: proofData.text,
-    })
-  }
-
-  const result = await callTaskCallback({
-    taskId,
-    staffId: staff.id,
-    action: 'proof',
-    proofType,
-    proofData,
-  })
-
+  proofInFlight.add(taskId)
   awaitingProof.delete(chatId)
-  await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
-  await notifyOwnerForReview(ctx.telegram, task, { ...result, proofQuality })
-  return true
+
+  try {
+    let proofType = 'photo'
+    let proofData = {}
+
+    if (photo) {
+      const best = photo[photo.length - 1]
+      const fileLink = await ctx.telegram.getFileLink(best.file_id)
+      const res = await fetch(fileLink.href ?? fileLink)
+      const buf = Buffer.from(await res.arrayBuffer())
+      const imageUrl = await storeProofPhoto(supabase, taskId, buf)
+      proofType = 'screenshot'
+      proofData = { imageUrl }
+    } else if (text?.trim()) {
+      proofType = 'text'
+      proofData = { text: text.trim().slice(0, 2000) }
+    } else {
+      return true
+    }
+
+    let proofQuality = null
+    if (CONTENT_TYPES.has(task.type)) {
+      proofQuality = await assessProofQuality({
+        task,
+        proofImageUrl: proofData.imageUrl,
+        proofText: proofData.text,
+      })
+    }
+
+    const result = await callTaskCallback({
+      taskId,
+      staffId: staff.id,
+      action: 'proof',
+      proofType,
+      proofData,
+    })
+
+    if (result.alreadySubmitted || result.idempotent) {
+      return true
+    }
+
+    await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
+    await notifyOwnerForReview(ctx.telegram, task, { ...result, proofQuality })
+    return true
+  } finally {
+    proofInFlight.delete(taskId)
+  }
 }
 
 export async function finalizeOwnerApprove(ctx, supabase, taskId) {
