@@ -13,6 +13,7 @@ import {
   buildDispatchSummary,
 } from '@/agent/lib/staff-dispatch-sync'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
+import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
 import {
   announcementContradictsRecentDispatch,
   buildCorrectionNoticeMessage,
@@ -58,35 +59,56 @@ async function findStaffByName(staffName: string) {
   })
 }
 
-const APP_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
-const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
-
-async function queueStaffAnnouncement(
-  staff: Array<{ id: string; name: string; telegramChatId: string | null }>,
+function buildStaffMessageDraftSummary(
+  staff: Array<{ name: string }>,
   message: string,
   sendVoice: boolean,
-) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/staff-announcement`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INTERNAL_TOKEN}`,
+  label = 'স্টাফ মেসেজ',
+): string {
+  const names = staff.map((s) => s.name).join(', ')
+  const voiceLine = sendVoice ? 'হ্যাঁ (শুধু স্টাফ)' : 'না'
+  const preview = message.length > 1200 ? `${message.slice(0, 1200)}…` : message
+  return (
+    `📢 ${label} — অনুমোদন প্রয়োজন\n\n` +
+    `প্রাপক: ${names}\n` +
+    `ভয়েস নোট: ${voiceLine}\n\n` +
+    `--- ড্রাফ্ট ---\n${preview}\n---`
+  )
+}
+
+async function createStaffAnnouncementPending(opts: {
+  staff: Array<{ id: string; name: string; telegramChatId: string | null }>
+  message: string
+  sendVoice: boolean
+  conversationId?: string
+  label?: string
+}) {
+  const prepared = prepareStaffOutboundMessage(opts.message)
+  const summary = buildStaffMessageDraftSummary(
+    opts.staff,
+    prepared,
+    opts.sendVoice,
+    opts.label,
+  )
+  const action = await db.agentPendingAction.create({
+    data: {
+      conversationId: opts.conversationId ? String(opts.conversationId) : null,
+      type: 'staff_announcement',
+      payload: {
+        message: prepared,
+        staffChatIds: opts.staff.map((s) => ({
+          id: s.id,
+          name: s.name,
+          chatId: s.telegramChatId,
+        })),
+        sendVoice: opts.sendVoice,
+      },
+      summary,
+      costEstimate: 0,
+      status: 'pending',
     },
-    body: JSON.stringify({
-      message,
-      staffChatIds: staff.map((s) => ({
-        id: s.id,
-        name: s.name,
-        chatId: s.telegramChatId,
-      })),
-      sendVoice,
-    }),
   })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Failed to queue announcement: HTTP ${res.status} ${body.slice(0, 120)}`)
-  }
-  return res.json() as Promise<{ actionId: string }>
+  return { pendingActionId: action.id as string, summary, preparedMessage: prepared }
 }
 
 // ── prepare_staff_task_proposal ───────────────────────────────────────────────
@@ -832,10 +854,11 @@ const add_staff_task_now: AgentTool = {
 const send_dispatch_correction_notice: AgentTool = {
   name: 'send_dispatch_correction_notice',
   description:
-    'After wrong-task correction: notify staff that the OLD task list is void. ' +
+    'After wrong-task correction: prepare correction notice DRAFT for staff (pending Approve). ' +
     'Reads agent_outbox — if a new task_dispatch was ALREADY delivered (even 1 min ago), ' +
     'tells staff to follow THAT list (never "coming soon"). ' +
     'Call AFTER approve_pending_dispatch + get_dispatch_status confirms delivery. ' +
+    'Does NOT send until owner approves via approve_pending_staff_message. ' +
     'Do NOT use send_staff_announcement for this — this tool verifies outbox first.',
   input_schema: {
     type: 'object' as const,
@@ -891,26 +914,36 @@ const send_dispatch_correction_notice: AgentTool = {
         return { success: false, error: 'No Telegram-linked staff found for correction notice.' }
       }
 
-      const sent: Array<{ messagePreview: string; staff: string[]; situation: string }> = []
+      const sent: Array<{ messagePreview: string; staff: string[]; situation: string; pendingActionId: string }> = []
       for (const [message, group] of messageGroups) {
-        await queueStaffAnnouncement(group, message, sendVoice)
+        const { pendingActionId, summary } = await createStaffAnnouncementPending({
+          staff: group,
+          message,
+          sendVoice,
+          conversationId: input.conversationId as string | undefined,
+          label: 'ডিসপ্যাচ সংশোধন নোটিশ',
+        })
         const sample = ctx.find((c) => c.staffId === group[0]?.id)
         sent.push({
           messagePreview: message.slice(0, 80),
           staff: group.map((s: { name: string }) => s.name),
           situation: sample?.situation ?? 'unknown',
+          pendingActionId,
         })
       }
 
       return {
         success: true,
         data: {
-          status: 'correction_notice_queued',
+          status: 'pending_approval',
+          pendingActionId: sent[0]?.pendingActionId,
+          pendingActionIds: sent.map((s) => s.pendingActionId),
           date,
-          sent,
+          drafts: sent,
           correctionContext: ctx,
           message:
-            'Correction notice queued from outbox facts. new_already_sent = staff must use the list already in Telegram.',
+            `${sent.length}টি correction notice draft তৈরি — এখনো পাঠানো হয়নি। ` +
+            'মালিক প্রতিটি Approve করলে পাঠানো হবে (approve_pending_staff_message বা Approve বাটন)।',
         },
       }
     } catch (err) {
@@ -924,10 +957,12 @@ const send_dispatch_correction_notice: AgentTool = {
 const send_staff_announcement: AgentTool = {
   name: 'send_staff_announcement',
   description:
-    'Send an announcement/news/notice to staff via Telegram (text + optional voice note to STAFF only). ' +
+    'Prepare a staff announcement/news/notice DRAFT (text + optional voice to STAFF only). ' +
+    'Creates a PENDING confirm card — does NOT send until owner approves. ' +
     'NOT a task — no Done buttons, no completion tracking. ' +
-    'Use for: rule changes, policy updates, office notices, reminders, news. ' +
-    'After success, tell the owner a SHORT text confirmation only — never repeat the full message or send voice to the owner. ' +
+    'Use for: rule changes, policy updates, office notices, reminders, personal messages to staff. ' +
+    'Write from ALMA team voice ("আমরা/ALMA টিম"), never as owner proxy. ' +
+    'After draft, wait for Approve — never say "পাঠানো হয়েছে" before approval + outbox proof. ' +
     'Do NOT use for wrong-task correction notices — use send_dispatch_correction_notice instead. ' +
     'Do NOT use this for work assignments — use propose_staff_tasks or add_staff_task_now for those.',
   input_schema: {
@@ -951,7 +986,7 @@ const send_staff_announcement: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const message = enforceIslamicGreeting(String(input.message ?? '').trim())
+      const message = String(input.message ?? '').trim()
       if (!message) return { success: false, error: 'message is required' }
 
       const sendVoice = input.sendVoice !== false
@@ -980,15 +1015,24 @@ const send_staff_announcement: AgentTool = {
         return { success: true, data: { status: 'no_staff', message: 'No active staff with Telegram linked found.' } }
       }
 
-      const queued = await queueStaffAnnouncement(staff, message, sendVoice)
+      const { pendingActionId, summary } = await createStaffAnnouncementPending({
+        staff,
+        message,
+        sendVoice,
+        conversationId: input.conversationId as string | undefined,
+      })
+
       return {
         success: true,
         data: {
-          status: 'sent',
-          actionId: queued.actionId,
-          sentTo: staff.map((s: { name: string }) => s.name),
+          status: 'pending_approval',
+          pendingActionId,
+          summary,
+          recipients: staff.map((s: { name: string }) => s.name),
           count: staff.length,
           voiceIncluded: sendVoice,
+          message:
+            'ড্রাফ্ট তৈরি হয়েছে — মালিক Approve করলে পাঠানো হবে। "পাঠানো হয়েছে" বলবেন না।',
         },
       }
     } catch (err) {
@@ -1127,6 +1171,65 @@ const update_staff_task_profile: AgentTool = {
   },
 }
 
+// ── approve_pending_staff_message ─────────────────────────────────────────────
+
+const approve_pending_staff_message: AgentTool = {
+  name: 'approve_pending_staff_message',
+  description:
+    'Owner approved a pending staff_announcement draft (message/notice to staff). ' +
+    'Flips pending → approved so the worker sends via Telegram. ' +
+    'Use when owner says approve/পাঠাও/হ্যাঁ for a staff message draft — NOT for task dispatch (use approve_pending_dispatch).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      pendingActionId: { type: 'string', description: 'Specific pending action id (optional — uses latest staff_announcement)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const explicitId = input.pendingActionId as string | undefined
+      const row = explicitId
+        ? await db.agentPendingAction.findUnique({ where: { id: explicitId } })
+        : await db.agentPendingAction.findFirst({
+            where: { type: 'staff_announcement', status: 'pending' },
+            orderBy: { createdAt: 'desc' },
+          })
+
+      if (!row || row.type !== 'staff_announcement') {
+        return { success: false, error: 'কোনো pending staff message draft পাওয়া যায়নি।' }
+      }
+      if (row.status !== 'pending') {
+        return {
+          success: true,
+          data: {
+            status: 'already_resolved',
+            pendingActionId: row.id,
+            currentStatus: row.status,
+            message: `ইতিমধ্যে ${row.status} — নতুন draft লাগলে send_staff_announcement আবার চালান।`,
+          },
+        }
+      }
+
+      await db.agentPendingAction.update({
+        where: { id: row.id },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+
+      return {
+        success: true,
+        data: {
+          status: 'approved_queued',
+          pendingActionId: row.id as string,
+          message:
+            'Approve হয়েছে — worker স্টাফকে পাঠাবে। নিশ্চিত হওয়ার আগে "পাঠানো হয়েছে" বলবেন না; Staff Monitor দেখুন।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -1134,6 +1237,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   propose_staff_tasks,
   merge_into_proposal,
   approve_pending_dispatch,
+  approve_pending_staff_message,
   get_dispatch_status,
   get_current_proposal,
   correct_and_redispatch_staff_tasks,

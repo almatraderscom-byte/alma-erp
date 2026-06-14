@@ -3,6 +3,7 @@
  */
 
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+import { prepareStaffOutboundMessage } from '../staff/alma-team-voice.mjs'
 import { sendVoiceMessage } from '../telegram/voice.mjs'
 import { createClient } from '@supabase/supabase-js'
 
@@ -44,7 +45,7 @@ export async function sendStaffAnnouncement({ bot, payload }) {
 
       if (voice) {
         try {
-          await sendVoiceMessage(bot, chatId, message)
+          await sendVoiceMessage(bot, chatId, prepareStaffOutboundMessage(message))
         } catch (ttsErr) {
           console.warn(`[announcement] TTS failed for ${name}:`, ttsErr.message)
         }

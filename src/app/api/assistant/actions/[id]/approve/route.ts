@@ -252,6 +252,36 @@ export async function POST(
     })
   }
 
+  if (action.type === 'staff_announcement') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      const current = await db.agentPendingAction.findUnique({
+        where: { id: actionId },
+        select: { status: true },
+      })
+      return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+    }
+
+    const staffNames = ((payload as { staffChatIds?: Array<{ name?: string }> }).staffChatIds ?? [])
+      .map((s) => s.name)
+      .filter(Boolean)
+      .join(', ')
+
+    await appendConversationNote(
+      db,
+      action,
+      `✅ মালিক স্টাফ মেসেজ ড্রাফ্ট অনুমোদন করেছেন${staffNames ? ` (${staffNames})` : ''}। Worker Telegram-এ পাঠাবে।`,
+    )
+    return Response.json({
+      success: true,
+      queued: true,
+      message: 'Staff message approved. Worker will send to staff via Telegram.',
+    })
+  }
+
   if (action.type === 'send_customer_message') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

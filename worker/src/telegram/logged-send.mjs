@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
-import { enforceIslamicGreeting } from '../staff/greeting-sanitize.mjs'
+import { prepareStaffOutboundMessage } from '../staff/alma-team-voice.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -23,7 +23,7 @@ export async function loggedSendToStaff(telegram, {
 }) {
   const supabase = extSupabase ?? sb()
   const outboxId = crypto.randomUUID()
-  const safeContent = enforceIslamicGreeting(content)
+  const safeContent = prepareStaffOutboundMessage(content)
 
   const { error: insertErr } = await supabase.from('agent_outbox').insert({
     id: outboxId,

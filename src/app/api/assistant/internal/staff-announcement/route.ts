@@ -57,13 +57,13 @@ export async function POST(req: NextRequest) {
           staffChatIds,
           sendVoice: body.sendVoice !== false,
         },
-        summary: `📢 স্টাফ ঘোষণা (${staffChatIds.length} জন)`,
+        summary: `📢 স্টাফ ঘোষণা (${staffChatIds.length} জন) — অনুমোদন প্রয়োজন`,
         costEstimate: 0,
-        status: 'approved',
+        status: 'pending',
       },
     })
 
-    return NextResponse.json({ status: 'queued', actionId: action.id })
+    return NextResponse.json({ status: 'pending', actionId: action.id })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
