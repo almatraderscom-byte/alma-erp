@@ -1,7 +1,7 @@
 /**
  * Task verification orchestration — Done flow, proof, owner review cards.
  */
-import { autoVerifyTask } from './verify-task.mjs'
+import { autoVerifyTask, assessProofQuality } from './verify-task.mjs'
 import { taskDoneCallbackData, compactUuid, buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { notifyStaffTaskProgress, resolveTaskProgressContext } from './task-progress.mjs'
@@ -68,6 +68,12 @@ export async function notifyOwnerForReview(telegram, taskRow, result) {
     body += `📸 প্রমাণ সংযুক্ত\n`
   } else if (evidence) {
     body += `🤖 ${evidence}\n`
+  }
+
+  if (result.proofQuality && !result.proofQuality.matches && result.proofQuality.confidence === 'high') {
+    body += `⚠️ প্রমাণ টাস্কের সাথে মিলছে না বলে মনে হচ্ছে।`
+    if (result.proofQuality.note) body += ` (${result.proofQuality.note})`
+    body += '\n'
   }
 
   const keyboard = {
@@ -155,7 +161,7 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
 
   const { data: task } = await supabase
     .from('staff_tasks')
-    .select('id, title, status, verification_status')
+    .select('id, title, detail, type, status, verification_status')
     .eq('id', taskId)
     .eq('staff_id', staff.id)
     .maybeSingle()
@@ -183,6 +189,15 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
     return true
   }
 
+  let proofQuality = null
+  if (CONTENT_TYPES.has(task.type)) {
+    proofQuality = await assessProofQuality({
+      task,
+      proofImageUrl: proofData.imageUrl,
+      proofText: proofData.text,
+    })
+  }
+
   const result = await callTaskCallback({
     taskId,
     staffId: staff.id,
@@ -193,7 +208,7 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
 
   awaitingProof.delete(chatId)
   await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
-  await notifyOwnerForReview(ctx.telegram, task, result)
+  await notifyOwnerForReview(ctx.telegram, task, { ...result, proofQuality })
   return true
 }
 

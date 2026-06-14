@@ -1872,6 +1872,7 @@ model AgentStaff {
   tasks          AgentStaffTask[]
   replyStats     AgentStaffReplyStat[]
   locations      AgentStaffLocation[]
+  feedback       StaffFeedback[]
 
   @@map("agent_staff")
 }
@@ -2111,6 +2112,18 @@ model AgentStaffLocation {
 
   @@index([staffId, recordedAt(sort: Desc)])
   @@map("staff_locations")
+}
+
+model StaffFeedback {
+  id          String     @id @default(uuid())
+  staffId     String     @map("staff_id")
+  staff       AgentStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  message     String     @db.Text
+  createdAt   DateTime   @default(now()) @map("created_at")
+  seenByOwner Boolean    @default(false) @map("seen_by_owner")
+
+  @@index([staffId, createdAt(sort: Desc)])
+  @@map("staff_feedback")
 }
 
 // ─── CS-0: Customer-sales catalog foundation (additive) ─────────────────────

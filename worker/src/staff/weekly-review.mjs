@@ -148,12 +148,24 @@ export async function runWeeklyReview({ supabase }) {
     }
   } catch { /* non-fatal */ }
 
+  let patternSection = ''
+  try {
+    const { detectStaffPatterns } = await import('./pattern-detect.mjs')
+    const flags = await detectStaffPatterns({ supabase })
+    if (flags.length) {
+      patternSection =
+        '\n\n⚠️ *প্যাটার্ন সতর্কতা:*\n' +
+        flags.map((f) => `• ${f.name}: ${f.detail}`).join('\n')
+    }
+  } catch { /* non-fatal */ }
+
   // ── Final report ──────────────────────────────────────────────────────────
 
   const report =
     `📊 *সাপ্তাহিক রিভিউ — ${today}*\n\n` +
     salahSection + '\n\n' +
     `👥 *স্টাফ কমপ্লিশন (৭ দিন):*\n${staffSection || 'কোনো ডেটা নেই'}` +
+    patternSection +
     replySection +
     csSection +
     growthIdeas

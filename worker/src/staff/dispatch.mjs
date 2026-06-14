@@ -104,7 +104,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     }
 
     try {
-      await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase })
+      await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId: staff.id })
       sentIds.push(...staffTasks.map((t) => t.id))
     } catch (err) {
       console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)
@@ -164,7 +164,7 @@ export async function markDispatchActionsExecuted(supabase, date) {
   }
 }
 
-async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }) {
+async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId }) {
   const numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
   const taskLines = staffTasks.map((t, i) => {
@@ -187,6 +187,9 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }
   const rows = []
   for (let i = 0; i < buttons.length; i += 2) {
     rows.push(buttons.slice(i, i + 2))
+  }
+  if (staffId) {
+    rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
   }
 
   await sendMarkdownSafe(bot.telegram, chatId, msg, {

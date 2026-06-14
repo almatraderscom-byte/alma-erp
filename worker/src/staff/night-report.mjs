@@ -204,6 +204,17 @@ export async function runNightReport({ supabase, bot }) {
     }
   } catch { /* non-fatal */ }
 
+  let patternSummary = ''
+  try {
+    const { detectStaffPatterns } = await import('./pattern-detect.mjs')
+    const flags = await detectStaffPatterns({ supabase })
+    if (flags.length) {
+      patternSummary =
+        '\n\n⚠️ *প্যাটার্ন সতর্কতা (৭ দিন):*\n' +
+        flags.map((f) => `• ${f.name}: ${f.detail}`).join('\n')
+    }
+  } catch { /* non-fatal */ }
+
   const dateLabel = formatDhakaDateLabel(today)
   const carryLine = tasksToCarry.length > 0
     ? `, ${bnNum(tasksToCarry.length)}টি carry-forward`
@@ -219,6 +230,7 @@ export async function runNightReport({ supabase, bot }) {
     csSummary +
     aiCostSummary +
     gpsGapLine +
+    patternSummary +
     (tasksToCarry.length > 0 ? `\n\n↩ ${tasksToCarry.length}টি কাজ আগামীকালের জন্য নিয়ে যাওয়া হয়েছে।` : '')
 
   await notify({

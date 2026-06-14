@@ -932,6 +932,10 @@ export function createTelegramBot() {
         return
       }
 
+      const { captureStaffFeedback } = await import('../staff/staff-feedback.mjs')
+      const feedbackHandled = await captureStaffFeedback(ctx, supabase, staff, text)
+      if (feedbackHandled) return
+
       const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
       const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { text })
       if (proofHandled) return
@@ -1155,6 +1159,17 @@ export function createTelegramBot() {
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
       await handleReminderCallback(ctx, data)
+
+    } else if (data.startsWith('staff_feedback_open:')) {
+      const staffId = data.slice('staff_feedback_open:'.length)
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff || staff.id !== staffId) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const { handleStaffFeedbackOpen } = await import('../staff/staff-feedback.mjs')
+      await handleStaffFeedbackOpen(ctx, staffId)
 
     } else if (data.startsWith('task_done:')) {
       const taskId = parseTaskIdFromCallback(data.slice('task_done:'.length))

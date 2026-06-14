@@ -47,6 +47,7 @@ export type OwnerBriefingData = {
     total: number
     lowPerformers: Array<{ name: string; pct: number; daysLow: number }>
   } | null
+  staffPatterns: Array<{ name: string; type: string; detail: string }>
   returns: { flags: string[]; totalReturns: number; returnRatePct: number | null } | null
   pricing: { flags: string[]; costDataMissing: boolean } | null
   decisions: BriefingDecision[]
@@ -230,6 +231,50 @@ async function gatherStaffYesterday() {
   }
 }
 
+const DONE_STATUSES = new Set(['done', 'verified', 'done_unverified'])
+
+async function gatherStaffPatterns(): Promise<Array<{ name: string; type: string; detail: string }>> {
+  try {
+    const since = daysAgoYmd(7)
+    const rows = await db.agentStaffTask.findMany({
+      where: {
+        proposedFor: { gte: new Date(since) },
+        status: { notIn: ['cancelled'] },
+        type: { not: 'learning' },
+      },
+      include: { staff: { select: { name: true } } },
+    })
+
+    const byStaff: Record<string, { name: string; days: Record<string, { total: number; done: number }>; total: number; done: number }> = {}
+    for (const r of rows) {
+      const name = r.staff?.name ?? 'স্টাফ'
+      const sid = r.staffId
+      byStaff[sid] ??= { name, days: {}, total: 0, done: 0 }
+      byStaff[sid].total++
+      if (DONE_STATUSES.has(r.status)) byStaff[sid].done++
+      const day = r.proposedFor.toISOString().slice(0, 10)
+      byStaff[sid].days[day] ??= { total: 0, done: 0 }
+      byStaff[sid].days[day].total++
+      if (DONE_STATUSES.has(r.status)) byStaff[sid].days[day].done++
+    }
+
+    const flags: Array<{ name: string; type: string; detail: string }> = []
+    for (const s of Object.values(byStaff)) {
+      const weekPct = s.total ? Math.round((s.done / s.total) * 100) : 0
+      const lowDays = Object.values(s.days).filter((d) => d.total && d.done / d.total < 0.5).length
+      if (weekPct < 60) {
+        flags.push({ name: s.name, type: 'low_week', detail: `সপ্তাহে ${weekPct}% completion` })
+      }
+      if (lowDays >= 3) {
+        flags.push({ name: s.name, type: 'repeated_low', detail: `${lowDays} দিন ৫০% এর নিচে` })
+      }
+    }
+    return flags
+  } catch {
+    return []
+  }
+}
+
 async function gatherReturnPricingInsights() {
   try {
     const weekday = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', weekday: 'long' })
@@ -266,6 +311,7 @@ export function deriveBriefingDecisions(sig: {
   csWaiting: OwnerBriefingData['csWaiting']
   adsDigest: OwnerBriefingData['adsDigest']
   staffYesterday: OwnerBriefingData['staffYesterday']
+  staffPatterns: OwnerBriefingData['staffPatterns']
   returns: OwnerBriefingData['returns']
   pricing: OwnerBriefingData['pricing']
 }): BriefingDecision[] {
@@ -340,6 +386,15 @@ export function deriveBriefingDecisions(sig: {
     })
   }
 
+  for (const f of (sig.staffPatterns ?? []).filter((p) => p.type === 'repeated_low').slice(0, 2)) {
+    decisions.push({
+      area: 'staff',
+      urgency: 'normal',
+      text: `${f.name} ${f.detail} — কথা বলবেন?`,
+      recommend: 'সরাসরি ফলো-আপ করুন বা টাস্ক সরল করুন',
+    })
+  }
+
   if (sig.returns?.flags?.length) {
     decisions.push({
       area: 'returns',
@@ -392,7 +447,7 @@ export function filterVetoedDecisions(
 
 export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   const today = todayYmdDhaka()
-  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, returnPricing, ownerMemories] =
+  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, staffPatterns, returnPricing, ownerMemories] =
     await Promise.all([
       gatherSalesSignals(),
       gatherPendingOrders(),
@@ -400,6 +455,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
       gatherCsWaiting(),
       gatherAdsDigest(),
       gatherStaffYesterday(),
+      gatherStaffPatterns(),
       gatherReturnPricingInsights(),
       searchAgentMemory({
         query: 'owner decision preference veto briefing',
@@ -421,6 +477,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     csWaiting,
     adsDigest,
     staffYesterday,
+    staffPatterns,
     returns,
     pricing,
   }

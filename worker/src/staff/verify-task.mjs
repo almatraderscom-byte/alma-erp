@@ -123,6 +123,43 @@ async function checkErpOrderUpdates(task) {
   }
 }
 
+const CONTENT_TYPES = new Set(['ad_creative', 'product_content', 'product_photo', 'video_reel'])
+
+/**
+ * Assess whether submitted proof matches the task.
+ * Returns { matches, confidence, note }. On error, never blocks submission.
+ */
+export async function assessProofQuality({ task, proofImageUrl, proofText }) {
+  const fallback = { matches: true, confidence: 'low', note: '' }
+  if (!task?.type || !CONTENT_TYPES.has(task.type)) return fallback
+  if (!APP_URL || !INT_TOKEN) return fallback
+
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/assess-task-proof`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${INT_TOKEN}`,
+      },
+      body: JSON.stringify({
+        taskTitle: task.title,
+        taskDetail: task.detail ?? '',
+        taskType: task.type,
+        proofImageUrl: proofImageUrl ?? '',
+        proofText: proofText ?? '',
+      }),
+    })
+    const data = await res.json()
+    return {
+      matches: data.matches !== false,
+      confidence: data.confidence === 'high' ? 'high' : 'low',
+      note: typeof data.note === 'string' ? data.note : '',
+    }
+  } catch {
+    return fallback
+  }
+}
+
 export async function autoVerifyTask(task, supabase) {
   switch (task.type) {
     case 'page_management':

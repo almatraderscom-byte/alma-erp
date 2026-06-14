@@ -91,7 +91,14 @@ export async function runMorningStaffReminder({ supabase, bot }) {
       `🌅 সুপ্রভাত ${staffName} ভাই!\n\n` +
         `📋 *আজকের কাজের তালিকা:*\n\n${taskList}\n\n` +
         `শেষ হলে ✅ Done বাটন চাপুন।`,
-      { parse_mode: 'Markdown' },
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` },
+          ]],
+        },
+      },
     ).catch((err) => console.warn(`[morning-staff-reminder] ${staffName}:`, err.message))
   }
 
