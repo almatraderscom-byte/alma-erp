@@ -9,6 +9,7 @@ import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listAgentOrders } from '@/lib/agent-api/orders.service'
 import { addDaysYmd, todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { getRecentPosts, resolvePageId } from '@/agent/lib/meta'
+import { trackContentTaskOutcomes } from '@/lib/outcome-wiring'
 import type { Order } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -583,6 +584,8 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   if (patterns.messengerAlertLine) {
     summaryBangla += `\n\n${patterns.messengerAlertLine}`
   }
+
+  void trackContentTaskOutcomes(allTasks).catch(() => {})
 
   const fbRecent = Array.isArray(fbPosts)
     ? fbPosts.slice(0, 3).map((p: { message?: string; created_time?: string }) => ({

@@ -159,6 +159,19 @@ export async function runWeeklyReview({ supabase }) {
     }
   } catch { /* non-fatal */ }
 
+  // ── Outcome scorecard (Intelligence A) ─────────────────────────────────────
+
+  let outcomeSection = ''
+  try {
+    const scoreRes = await fetch(`${APP_URL}/api/assistant/internal/outcome-scorecard?days=7`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    })
+    if (scoreRes.ok) {
+      const { text } = await scoreRes.json()
+      if (text) outcomeSection = `\n\n${text}`
+    }
+  } catch { /* non-fatal */ }
+
   // ── Final report ──────────────────────────────────────────────────────────
 
   const report =
@@ -168,7 +181,8 @@ export async function runWeeklyReview({ supabase }) {
     patternSection +
     replySection +
     csSection +
-    growthIdeas
+    growthIdeas +
+    outcomeSection
 
   await notify({
     tier:     1,

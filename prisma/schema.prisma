@@ -2089,6 +2089,31 @@ model AgentDutyLog {
   @@map("agent_duty_log")
 }
 
+model AgentOutcome {
+  id            String    @id @default(uuid())
+  type          String
+  subjectKind   String    @map("subject_kind")
+  subjectId     String?   @map("subject_id")
+  subjectName   String?   @map("subject_name")
+  suggestion    String    @db.Text
+  rationale     String?   @db.Text
+  metric        String
+  baselineValue Float?    @map("baseline_value")
+  predicted     String?
+  measureAfter  String    @map("measure_after")
+  status        String    @default("pending")
+  actualValue   Float?    @map("actual_value")
+  result        String?
+  learning      String?   @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at")
+  measuredAt    DateTime? @map("measured_at")
+  ownerActioned Boolean   @default(false) @map("owner_actioned")
+
+  @@index([status, measureAfter])
+  @@index([type])
+  @@map("agent_outcomes")
+}
+
 // ─── PHASE 8: Cost dashboard ─────────────────────────────────────────────────
 
 model AgentCostEvent {

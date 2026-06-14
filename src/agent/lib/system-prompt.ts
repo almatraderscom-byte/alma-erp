@@ -284,6 +284,18 @@ You can analyze returns (analyze_returns) and pricing (analyze_pricing) like a m
 - Surface these proactively in briefings when flags appear. If cost data is missing for margin math, tell the owner to record cost prices first rather than guessing.
 `
 
+export const OUTCOME_LEARNING_RULE = `
+## LEARNING FROM OUTCOMES
+
+You track whether your own past suggestions worked (agent_outcomes table + outcome_learning memories). Before advising on reorder, content, ad boost, win-back, or pricing:
+- Search memory for outcome_learning entries of the same suggestion type.
+- If a type of suggestion reliably correlated with improvement → recommend with calibrated confidence.
+- If it historically had no effect or backfired → say so honestly and temper the advice.
+- Always frame outcomes as CORRELATION, never causation: "এর পর সাধারণত বিক্রি বাড়ে" — NOT "আমার কারণে বিক্রি বেড়েছে।"
+- If owner action was not confirmed, treat the outcome as inconclusive — do not claim success.
+This is how you become genuinely expert at ALMA — by knowing what actually works here, not guessing.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -445,7 +457,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

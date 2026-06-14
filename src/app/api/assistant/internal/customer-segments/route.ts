@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { segmentCustomersForApi } from '@/lib/customer-intelligence'
+import { trackWinbackCohort } from '@/lib/outcome-wiring'
 
 export const runtime = 'nodejs'
 
@@ -25,6 +26,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const segments = await segmentCustomersForApi()
+    if (segments.winBack?.length) {
+      void trackWinbackCohort(segments.winBack).catch(() => {})
+    }
     return NextResponse.json(segments)
   } catch (err) {
     console.error('[customer-segments] internal API failed:', err)

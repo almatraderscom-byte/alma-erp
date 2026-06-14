@@ -15,6 +15,7 @@ import { buildReorderSuggestions, type ReorderSuggestion } from '@/lib/inventory
 import { analyzeReturns } from '@/lib/return-analysis'
 import { analyzePricing } from '@/lib/pricing-insight'
 import { detectOrderIssues, type OrderIssue } from '@/lib/order-monitor'
+import { trackReorderOutcomes, trackBriefingDecisionOutcomes } from '@/lib/outcome-wiring'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -510,6 +511,9 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   }
   let decisions = deriveBriefingDecisions(signals)
   decisions = filterVetoedDecisions(decisions, ownerMemories)
+
+  void trackReorderOutcomes(reorderSuggestions).catch(() => {})
+  void trackBriefingDecisionOutcomes(decisions, sales).catch(() => {})
 
   return {
     today,

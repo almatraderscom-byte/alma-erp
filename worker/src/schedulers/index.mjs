@@ -97,6 +97,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'cs-followups',           cronUtc: '*/15 * * * *', description: 'CS follow-up recovery (every 15 min)' },
   { name: 'cs-messenger-poll',      cronUtc: '*/2 * * * *',  description: 'CS inbox poll fallback (every 2 min)' },
   { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
+  { name: 'outcome-measure',        cronUtc: '0 5 * * *',    description: 'Measure matured agent suggestions (11:00 Dhaka)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -291,6 +292,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'token-health': {
       const { checkPageTokenHealth } = await lazy.tokenHealth()
       await checkPageTokenHealth()
+      break
+    }
+    case 'outcome-measure': {
+      const { runOutcomeMeasure } = await import('../intelligence/outcome-measure.mjs')
+      await runOutcomeMeasure()
       break
     }
     default:
