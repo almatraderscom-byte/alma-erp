@@ -17,6 +17,8 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   fb_photo: 'Facebook ফটো পোস্ট',
   fb_text: 'Facebook টেক্সট পোস্ট',
   product_photo: 'প্রোডাক্ট ফটো',
+  organic_marketing: 'ওয়েবসাইট/অর্গানিক মার্কেটিং',
+  offer_idea: 'অফার আইডিয়া',
 }
 
 export type StaleProduct = {

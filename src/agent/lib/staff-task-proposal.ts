@@ -8,6 +8,9 @@ import { aggregateDashboardMetrics, filterOrdersByDateRange } from '@/lib/order-
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listAgentOrders } from '@/lib/agent-api/orders.service'
 import { addDaysYmd, todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { listWebsiteProducts } from '@/lib/website/catalog.service'
+import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
+import type { WebsiteProductSummary } from '@/lib/website/types'
 import { getRecentPosts, resolvePageId } from '@/agent/lib/meta'
 import { trackContentTaskOutcomes } from '@/lib/outcome-wiring'
 import type { Order } from '@/types'
@@ -45,12 +48,12 @@ type StaffProfile = {
 
 const DEFAULT_PROFILES: Record<string, StaffProfile> = {
   'Mohammad Eyafi': {
-    skills: ['ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update', 'order_followup', 'customer_reply', 'page_management'],
+    skills: ['ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update', 'order_followup', 'customer_reply', 'page_management', 'offer_idea', 'organic_marketing'],
     dailyTargetTasks: 8,
     notes: 'Handles all creative, content, social media, customer comms',
   },
   'Mustahid': {
-    skills: ['product_photo', 'video_reel', 'listing_update', 'office_task', 'page_management', 'content_support'],
+    skills: ['product_photo', 'video_reel', 'listing_update', 'office_task', 'page_management', 'content_support', 'organic_marketing'],
     dailyTargetTasks: 6,
     notes: 'Office work, photography, video, page support — NO delivery/packaging/COD',
   },
@@ -477,6 +480,97 @@ async function detectPatterns(
   return { staleProductTasks: staleProductTasks.slice(0, 3), lateTypeFlags, messengerAlertLine }
 }
 
+/**
+ * Daily website-driven organic marketing task — rotates 3 styles by day index.
+ * Rule-based, no extra LLM call. Silently returns null if website Supabase isn't
+ * configured or no product qualifies — must never break the evening proposal job.
+ */
+async function detectWebsiteMarketingPattern(
+  dateYmd: string,
+  staffList: Array<{ id: string; name: string; role: string }>,
+): Promise<ProposedTaskInput | null> {
+  if (!websiteSupabaseConfigured()) return null
+
+  let products: WebsiteProductSummary[]
+  try {
+    products = await listWebsiteProducts({ publishedOnly: true, limit: 200 })
+  } catch {
+    return null
+  }
+  if (!products.length) return null
+
+  const mustahid = staffList.find((s) => s.name.toLowerCase().includes('mustahid'))
+  const eyafi = staffList.find((s) => s.name.toLowerCase().includes('eyafi'))
+
+  const dayIndex = Math.floor(new Date(`${dateYmd}T00:00:00+06:00`).getTime() / 86400000)
+  const rotation = dayIndex % 3
+
+  const now = Date.now()
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+
+  // Day A: image/content refresh — published, not updated in 30+ days
+  if (rotation === 0 && mustahid) {
+    const stale = products
+      .filter((p) => now - new Date(p.updatedAt).getTime() >= THIRTY_DAYS_MS)
+      .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime())
+    const target = stale[0]
+    if (target) {
+      const days = Math.floor((now - new Date(target.updatedAt).getTime()) / 86400000)
+      return {
+        staffId: mustahid.id,
+        staffName: mustahid.name,
+        title: `ওয়েবসাইট: ${target.name} — ছবি/কনটেন্ট আপডেট করুন`,
+        detail: `এই প্রোডাক্টের ওয়েবসাইট লিস্টিং ${days} দিন আপডেট হয়নি (slug: ${target.slug})। নতুন ছবি তুলে বা existing ছবি রিফ্রেশ করে owner-কে দিন — Approve হলে website-এ আপডেট হবে।`,
+        type: 'organic_marketing',
+        productRef: target.sku,
+        source: 'website_pattern',
+      }
+    }
+  }
+
+  // Day B: offer idea — published, in-stock, featured preferred
+  if (rotation === 1 && eyafi) {
+    const inStock = products.filter((p) => p.stock > 0)
+    const featured = inStock.filter((p) => p.featured)
+    const target = (featured.length ? featured : inStock).sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )[0]
+    if (target) {
+      return {
+        staffId: eyafi.id,
+        staffName: eyafi.name,
+        title: `অফার আইডিয়া: ${target.name}`,
+        detail: `${target.name} (দাম: ৳${target.price}, স্টক: ${target.stock})${target.featured ? ' — ফিচারড প্রোডাক্ট' : ''} এর জন্য একটা ডিসকাউন্ট/বান্ডেল/কম্বো অফার আইডিয়া বানিয়ে owner-কে দিন।`,
+        type: 'offer_idea',
+        productRef: target.sku,
+        source: 'website_pattern',
+      }
+    }
+  }
+
+  // Day C: organic cross-platform push — recently published/updated
+  if (rotation === 2 && mustahid) {
+    const recent = products
+      .filter((p) => now - new Date(p.updatedAt).getTime() <= SEVEN_DAYS_MS)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    const target = recent[0]
+    if (target) {
+      return {
+        staffId: mustahid.id,
+        staffName: mustahid.name,
+        title: `অর্গানিক প্রমোশন: ${target.name}`,
+        detail: `${target.name} (slug: ${target.slug}) সম্প্রতি ওয়েবসাইটে আপডেট/পাবলিশ হয়েছে। এটা FB গ্রুপ বা অন্য ফ্রি প্ল্যাটফর্মে অর্গানিকভাবে শেয়ার করুন যাতে নতুন কাস্টমার আসে। শেয়ার করার পর owner-কে লিংক/স্ক্রিনশট দিন।`,
+        type: 'organic_marketing',
+        productRef: target.sku,
+        source: 'website_pattern',
+      }
+    }
+  }
+
+  return null
+}
+
 export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const staffList = await db.agentStaff.findMany({
     where: { active: true },
@@ -564,6 +658,7 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const pendingOrders = pendingRes.meta.count
 
   const patterns = await detectPatterns(dateYmd, staffList, inv, historyRows)
+  const websiteTask = await detectWebsiteMarketingPattern(dateYmd, staffList).catch(() => null)
   const profiles = await getStaffProfiles()
 
   const allTasks: ProposedTaskInput[] = []
@@ -576,6 +671,9 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
       allTasks.push(pt)
     }
   }
+  if (websiteTask && !allTasks.some((t) => t.productRef === websiteTask.productRef && t.type === websiteTask.type)) {
+    allTasks.push(websiteTask)
+  }
 
   let summaryBangla = formatSummary(dateYmd, staffList, allTasks, picks, carryRows.length, pendingOrders)
   if (patterns.lateTypeFlags.length > 0) {
@@ -583,6 +681,9 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   }
   if (patterns.messengerAlertLine) {
     summaryBangla += `\n\n${patterns.messengerAlertLine}`
+  }
+  if (websiteTask) {
+    summaryBangla += `\n\n🌐 ওয়েবসাইট থেকে ১টি মার্কেটিং টাস্ক যুক্ত হয়েছে: ${websiteTask.title}`
   }
 
   void trackContentTaskOutcomes(allTasks).catch(() => {})

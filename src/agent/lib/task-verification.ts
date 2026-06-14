@@ -17,7 +17,7 @@ export type VerificationStatus =
 export type ProofType = 'photo' | 'screenshot' | 'link' | 'auto_fb' | 'auto_erp' | 'none' | 'text'
 
 const CONTENT_TYPES = new Set([
-  'ad_creative', 'product_content', 'product_photo', 'video_reel',
+  'ad_creative', 'product_content', 'product_photo', 'video_reel', 'organic_marketing',
 ])
 
 const FB_PAGE_TYPES = new Set(['page_management', 'customer_reply'])

@@ -278,7 +278,7 @@ const propose_staff_tasks: AgentTool = {
             staffId:    { type: 'string' },
             title:      { type: 'string' },
             detail:     { type: 'string' },
-            type:       { type: 'string', enum: ['ad_creative','product_content','product_photo','video_reel','listing_update','order_followup','page_management','customer_reply','content_support','office_task','stock_check','misc'] },
+            type:       { type: 'string', enum: ['ad_creative','product_content','product_photo','video_reel','listing_update','order_followup','page_management','customer_reply','content_support','office_task','stock_check','organic_marketing','offer_idea','misc'] },
             productRef: { type: 'string' },
             source:     { type: 'string', enum: ['rotation','pattern','owner','agent'] },
           },
