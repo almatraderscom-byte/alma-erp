@@ -9,6 +9,7 @@ import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
+import { toolDisplay } from '@/agent/lib/tool-labels'
 
 interface AgentAppProps {
   userName: string
@@ -288,6 +289,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       const decoder = new TextDecoder()
       let buf = ''
       let gotStreamDone = false
+      let toolInFlight = false
 
       const applySseEvent = (evt: Record<string, unknown>) => {
         if (evt.type === 'conversation_id') {
@@ -296,18 +298,22 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'text_delta') {
-          setStreamStatus('উত্তর লিখছে…')
+          if (!toolInFlight) setStreamStatus('✍️ উত্তর লিখছি…')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
           ))
         } else if (evt.type === 'tool_start') {
-          setStreamStatus(`🔧 ${String(evt.name)}`)
+          toolInFlight = true
+          const d = toolDisplay(String(evt.name))
+          setStreamStatus(`${d.icon} ${d.label}`)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
               : m
           ))
         } else if (evt.type === 'tool_end') {
+          toolInFlight = false
+          setStreamStatus('✍️ উত্তর লিখছি…')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {
@@ -350,6 +356,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
+          setStreamStatus(null)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {

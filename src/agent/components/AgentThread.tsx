@@ -8,8 +8,6 @@ import AgentAskCard, { type AskCard } from './AgentAskCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
-import { AgentThinkingIndicator } from './AgentThinkingIndicator'
-import { toolDisplay } from '@/agent/lib/tool-labels'
 
 export interface ChatMessage {
   id: string
@@ -176,13 +174,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     onArtifactOpen()
   }
 
-  const activeTool = messages
-    .filter((m) => m.streaming)
-    .flatMap((m) => m.toolActivity ?? [])
-    .find((t) => !t.done)
-
-  const activeToolLabel = activeTool ? toolDisplay(activeTool.name).label : undefined
-
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <div className="mx-auto max-w-3xl space-y-6 px-4 py-4 pb-6 md:py-6">
@@ -225,55 +216,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 </div>
               ) : (
                 <div className="min-w-0 max-w-[85%]">
-                  {/* Tool activity chips */}
-                  {msg.toolActivity && msg.toolActivity.length > 0 && (
-                    <div className="my-2 space-y-1.5 rounded-xl border border-white/10 bg-white/[0.02] p-2.5">
-                      <div className="text-[11px] font-semibold text-zinc-400">🔎 সোর্স চেক করছি…</div>
-                      {msg.toolActivity.map((t) => {
-                        const d = toolDisplay(t.name)
-                        return (
-                          <div key={t.id} className="flex items-center gap-2 text-[12px]">
-                            <span
-                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]"
-                              style={{ background: `${d.color}22`, border: `1px solid ${d.color}55` }}
-                            >
-                              {t.done ? (t.success === false ? '❌' : '✅') : d.icon}
-                            </span>
-                            <span
-                              className="min-w-0 flex-1 truncate"
-                              style={{ color: t.done ? '#a1a1aa' : d.color }}
-                            >
-                              {d.label}
-                            </span>
-                            {!t.done && (
-                              <span className="flex shrink-0 gap-0.5">
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
-                                  style={{ background: d.color, animationDelay: '0ms' }}
-                                />
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
-                                  style={{ background: d.color, animationDelay: '120ms' }}
-                                />
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
-                                  style={{ background: d.color, animationDelay: '240ms' }}
-                                />
-                              </span>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  {/* Message body */}
-                  {msg.streaming && !msg.text ? (
-                    <AgentThinkingIndicator
-                      label="উত্তর তৈরি হচ্ছে"
-                      toolName={activeToolLabel}
-                    />
-                  ) : (
+                  {(!msg.streaming || msg.text) && (
                     <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-muted-hi">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
@@ -288,15 +231,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       ) : (
                         <AgentMarkdown content={msg.text} />
                       )}
-                    </div>
-                  )}
-
-                  {msg.streaming && msg.text && activeTool && (
-                    <div className="mt-2">
-                      <AgentThinkingIndicator
-                        label="কাজ চলছে"
-                        toolName={activeToolLabel}
-                      />
                     </div>
                   )}
 

@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import AgentSparkleLoader from './AgentSparkleLoader'
 
 export interface PendingFile {
   file: File
@@ -168,9 +167,13 @@ export default function AgentComposer({
       )}
 
       {streaming && streamStatus && (
-        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-gold-dim/35 bg-gold/5 px-3 py-2.5">
-          <AgentSparkleLoader size="sm" />
-          <span className="flex-1 text-xs font-medium text-gold-lt">{streamStatus}</span>
+        <div className="mb-2 flex items-center gap-2 rounded-2xl border border-gold-dim/35 bg-gold/5 px-3 py-1.5">
+          <span className="flex gap-0.5" aria-hidden>
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '0ms' }} />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '120ms' }} />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '240ms' }} />
+          </span>
+          <span className="flex-1 truncate text-xs font-medium text-gold-lt">{streamStatus}</span>
         </div>
       )}
 
