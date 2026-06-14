@@ -10,13 +10,21 @@ export function websiteSupabaseConfigured(): boolean {
   return Boolean(resolveWebsiteSupabaseUrl() && resolveWebsiteServiceRoleKey())
 }
 
+function normalizeWebsiteSupabaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/$/, '')
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) return trimmed
+  const fromPg = trimmed.match(/@db\.([a-z0-9]+)\.supabase\.co/i)
+  if (fromPg) return `https://${fromPg[1]}.supabase.co`
+  return trimmed
+}
+
 function resolveWebsiteSupabaseUrl(): string {
   const url = (
     process.env.WEBSITE_SUPABASE_URL
     || process.env.NEXT_PUBLIC_WEBSITE_SUPABASE_URL
     || ''
-  ).trim().replace(/\/$/, '')
-  return url
+  ).trim()
+  return normalizeWebsiteSupabaseUrl(url)
 }
 
 function resolveWebsiteServiceRoleKey(): string {
