@@ -924,9 +924,10 @@ const send_dispatch_correction_notice: AgentTool = {
 const send_staff_announcement: AgentTool = {
   name: 'send_staff_announcement',
   description:
-    'Send an announcement/news/notice to staff via Telegram (text + voice note). ' +
+    'Send an announcement/news/notice to staff via Telegram (text + optional voice note to STAFF only). ' +
     'NOT a task — no Done buttons, no completion tracking. ' +
     'Use for: rule changes, policy updates, office notices, reminders, news. ' +
+    'After success, tell the owner a SHORT text confirmation only — never repeat the full message or send voice to the owner. ' +
     'Do NOT use for wrong-task correction notices — use send_dispatch_correction_notice instead. ' +
     'Do NOT use this for work assignments — use propose_staff_tasks or add_staff_task_now for those.',
   input_schema: {

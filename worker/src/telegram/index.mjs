@@ -163,12 +163,35 @@ function toTelegramMd(text) {
     .replace(/\\\*(.*?)\\\*/g, '_$1_')           // *italic* → _italic_
 }
 
-/** Voice reply only when owner explicitly asks — not on every message. Reminders use notify({ voice: true }). */
+/**
+ * Voice reply to owner only when they want the AGENT to speak in voice — not when they ask
+ * to send voice to staff/someone else. Reminders use notify({ voice: true }).
+ */
 function userWantsVoiceReply(text) {
-  const t = String(text ?? '').toLowerCase()
+  const raw = String(text ?? '').trim()
+  if (!raw) return false
+
+  const hasVoiceKeyword =
+    /\b(voice|audio|read aloud|voice note|shuniye|shunao)\b/i.test(raw)
+    || /শুনান|শুনতে|শোনাও|শুনিয়ে|কণ্ঠে|কথায় বল|ভয়েস/i.test(raw)
+
+  if (!hasVoiceKeyword) return false
+
+  // "take/staff ke voice dao" — outbound to staff, not a voice reply to owner
+  const outboundVoice =
+    /(?:স্টাফ|staff|তাকে|take|কাউকে|কারো|জনকে|কর্মচারী|কর্মী|মুস্তাহিদ|mustahid|ইয়াফি|eyafi|employee).{0,50}(?:voice|ভয়েস|শুনান|শুনিয়ে|audio)/iu.test(raw)
+    || /(?:voice|ভয়েস|শুনান|শুনিয়ে|audio).{0,50}(?:স্টাফ|staff|তাকে|take|কাউকে|কারো|জনকে|পাঠাও|জানাও|দাও|দিতে|message|মেসেজ|বার্তা)/iu.test(raw)
+    || /(?:message|মেসেজ|বার্তা|নোটিস).{0,40}(?:voice|ভয়েস|শুনান)/iu.test(raw)
+    || /(?:voice|ভয়েস).{0,30}(?:ও\s*)?(?:take|তাকে|জেনো|যেনো).{0,15}(?:দে|দাও|দিতে|পাঠ)/iu.test(raw)
+    || /(?:voice|ভয়েস|শুনিয়ে).{0,20}(?:ও\s*)(?:take|তাকে)/iu.test(raw)
+
+  if (outboundVoice) return false
+
   return (
-    /\b(voice|audio|read aloud|শুনান|শুনতে|শোনাও|শুনিয়ে|কণ্ঠে|কথায় বল|ভয়েস)\b/i.test(t)
-    || /শুনিয়ে দাও|voice note|বলে শোনাও|কথায় উত্তর/i.test(t)
+    /\b(voice|audio|read aloud|voice note|shuniye|shunao)\b/i.test(raw)
+    || /শুনিয়ে দাও|বলে শোনাও|কথায় উত্তর|শুনান|শুনতে|শোনাও|কণ্ঠে|কথায় বল/i.test(raw)
+    || /(?:আমাকে|amake|amk|amke).{0,25}(?:voice|ভয়েস|শুনান|শোনাও)/iu.test(raw)
+    || /(?:voice|ভয়েস).{0,25}(?:এ|e)?\s*(?:বল|bolo|উত্তর|reply|জবাব)/iu.test(raw)
   )
 }
 
