@@ -1,12 +1,14 @@
 import { prisma } from '@/lib/prisma'
-import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
 import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync'
 import {
   dutiesForToday,
   CONTINUOUS_SERVICES,
   type AgentDutyRow,
   type ContinuousServiceHealth,
+  type SalahDutyRow,
 } from '@/agent/lib/agent-duties'
+import { isEffectivelyDone } from '@/agent/lib/salah-resolve'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,6 +50,7 @@ export type StaffSummary = {
 export type StaffMonitorData = {
   today: string
   agentDuties: AgentDutyRow[]
+  salahDuties: SalahDutyRow[]
   continuousServices: ContinuousServiceHealth[]
   feed: StaffMonitorRow[]
   failures: StaffMonitorRow[]
@@ -97,6 +100,58 @@ function mapOutbox(row: {
   }
 }
 
+const WAQT_BN: Record<string, string> = {
+  fajr: 'ফজর',
+  dhuhr: 'যোহর',
+  asr: 'আসর',
+  maghrib: 'মাগরিব',
+  isha: 'ইশা',
+}
+
+function waqtBangla(waqt: string): string {
+  return WAQT_BN[waqt] ?? waqt
+}
+
+function fmtDhakaTime(value: Date | string): string {
+  return new Date(value).toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+async function getSalahDutiesForToday(today: string): Promise<SalahDutyRow[]> {
+  const records = await db.agentSalahRecord.findMany({
+    where: { date: dhakaMidnightUtc(today) },
+    orderBy: { windowStart: 'asc' },
+  }) as Array<{
+    waqt: string
+    status: string
+    windowStart: Date
+    windowEnd: Date
+    confirmedAt: Date | null
+    remindersSent: number
+  }>
+
+  const now = new Date()
+  return records.map((r) => {
+    const done = isEffectivelyDone(
+      { status: r.status, confirmedAt: r.confirmedAt, windowStart: r.windowStart },
+      now,
+    )
+    const missed = !done && (r.status === 'missed' || now > new Date(r.windowEnd))
+    const status: SalahDutyRow['status'] = done ? 'done' : missed ? 'missed' : 'pending'
+    return {
+      waqt: r.waqt,
+      label: waqtBangla(r.waqt),
+      scheduledTime: fmtDhakaTime(r.windowStart),
+      status,
+      doneTime: done && r.confirmedAt ? fmtDhakaTime(r.confirmedAt) : null,
+      reminders: r.remindersSent,
+    }
+  })
+}
+
 async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
   const rows = await db.agentDutyLog.findMany({
     where: { dutyDate: today },
@@ -113,6 +168,7 @@ async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
   const byDuty = new Map(rows.map((r) => [r.duty, r]))
   return dutiesForToday().map((d) => {
     const row = byDuty.get(d.duty)
+    const time = d.time ?? null
     if (row) {
       return {
         id: row.id,
@@ -122,6 +178,7 @@ async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
         status: row.status as AgentDutyRow['status'],
         detail: row.detail,
         ranAt: row.ranAt?.toISOString() ?? null,
+        time,
         createdAt: row.createdAt.toISOString(),
       }
     }
@@ -133,6 +190,7 @@ async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
       status: 'pending' as const,
       detail: null,
       ranAt: null,
+      time,
       createdAt: new Date().toISOString(),
     }
   })
@@ -164,7 +222,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   const today = todayYmdDhaka()
   const todayStart = new Date(`${today}T00:00:00+06:00`)
 
-  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties, continuousServices] = await Promise.all([
+  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties, salahDuties, continuousServices] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -180,6 +238,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     }),
     getActiveDispatchTaskIdsForDate(today),
     getAgentDutiesForToday(today),
+    getSalahDutiesForToday(today),
     getContinuousServicesHealth(),
   ])
 
@@ -278,6 +337,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   return {
     today,
     agentDuties,
+    salahDuties,
     continuousServices,
     feed,
     failures,

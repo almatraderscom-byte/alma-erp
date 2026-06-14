@@ -5,6 +5,8 @@ import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
 
+/** Live monitor: agentDuties + salahDuties from /api/agent/staff-monitor */
+
 export const metadata = { title: 'ALMA Agent — Staff Monitor' }
 
 export default async function StaffMonitorPage() {

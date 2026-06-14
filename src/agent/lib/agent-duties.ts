@@ -2,23 +2,23 @@
  * Daily duty roster — keep in sync with worker/src/schedulers/duties.mjs
  */
 export const DAILY_DUTIES = [
-  { duty: 'salah_init', label: '🕌 সালাহ রিমাইন্ডার সেটআপ' },
-  { duty: 'cs_index_products', label: '🖼️ প্রোডাক্ট ভিজ্যুয়াল ইনডেক্স' },
-  { duty: 'cost_reconcile', label: '🧮 কস্ট রিকনসাইল' },
-  { duty: 'owner_briefing', label: '☀️ সকালের ব্রিফিং' },
-  { duty: 'morning_dispatch', label: '📤 স্টাফ টাস্ক ডিসপ্যাচ' },
-  { duty: 'ads_monitor', label: '📢 অ্যাড মনিটর' },
-  { duty: 'token_health', label: '🔑 টোকেন হেলথ চেক' },
-  { duty: 'subscription_renewal', label: '🔄 সাবস্ক্রিপশন চেক' },
-  { duty: 'midday_checkin', label: '📊 স্টাফ মিড-ডে চেক' },
-  { duty: 'personal_midday', label: '🤲 দুপুরের খোঁজখবর' },
-  { duty: 'staff_morale', label: '💚 স্টাফ উৎসাহ বার্তা' },
-  { duty: 'order_watch', label: '📦 অর্ডার মনিটর' },
-  { duty: 'night_report', label: '🌙 রাতের রিপোর্ট' },
-  { duty: 'evening_proposal', label: '📝 আগামীকালের টাস্ক প্রস্তাব' },
-  { duty: 'personal_checkin', label: '🤲 সন্ধ্যার খোঁজখবর' },
-  { duty: 'daily_summary', label: '📋 দৈনিক সারসংক্ষেপ' },
-  { duty: 'weekly_review', label: '🗓️ সাপ্তাহিক রিভিউ (শুক্র)', weeklyOnly: true as const },
+  { duty: 'salah_init', label: '🕌 সালাহ রিমাইন্ডার সেটআপ', time: '00:00' },
+  { duty: 'cs_index_products', label: '🖼️ প্রোডাক্ট ভিজ্যুয়াল ইনডেক্স', time: '00:30' },
+  { duty: 'cost_reconcile', label: '🧮 কস্ট রিকনসাইল', time: '08:15' },
+  { duty: 'owner_briefing', label: '☀️ সকালের ব্রিফিং', time: '07:30' },
+  { duty: 'morning_dispatch', label: '📤 স্টাফ টাস্ক ডিসপ্যাচ', time: '09:00' },
+  { duty: 'ads_monitor', label: '📢 অ্যাড মনিটর', time: '09:30' },
+  { duty: 'token_health', label: '🔑 টোকেন হেলথ চেক', time: '09:30' },
+  { duty: 'subscription_renewal', label: '🔄 সাবস্ক্রিপশন চেক', time: '10:00' },
+  { duty: 'midday_checkin', label: '📊 স্টাফ মিড-ডে চেক', time: '13:30' },
+  { duty: 'personal_midday', label: '🤲 দুপুরের খোঁজখবর', time: '14:00' },
+  { duty: 'staff_morale', label: '💚 স্টাফ উৎসাহ বার্তা', time: '13:00' },
+  { duty: 'order_watch', label: '📦 অর্ডার মনিটর', time: '12:00' },
+  { duty: 'night_report', label: '🌙 রাতের রিপোর্ট', time: '21:00' },
+  { duty: 'evening_proposal', label: '📝 আগামীকালের টাস্ক প্রস্তাব', time: '21:05' },
+  { duty: 'personal_checkin', label: '🤲 সন্ধ্যার খোঁজখবর', time: '21:00' },
+  { duty: 'daily_summary', label: '📋 দৈনিক সারসংক্ষেপ', time: '23:30' },
+  { duty: 'weekly_review', label: '🗓️ সাপ্তাহিক রিভিউ (শুক্র)', time: '21:30', weeklyOnly: true as const },
 ] as const
 
 export const CONTINUOUS_SERVICES = [
@@ -39,7 +39,17 @@ export type AgentDutyRow = {
   status: AgentDutyStatus
   detail: string | null
   ranAt: string | null
+  time: string | null
   createdAt: string
+}
+
+export type SalahDutyRow = {
+  waqt: string
+  label: string
+  scheduledTime: string
+  status: 'done' | 'pending' | 'missed'
+  doneTime: string | null
+  reminders: number
 }
 
 export type ContinuousServiceHealth = {

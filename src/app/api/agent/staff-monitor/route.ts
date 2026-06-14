@@ -7,6 +7,8 @@ import { isSystemOwner } from '@/lib/roles'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+/** Staff monitor payload: agentDuties (scheduled + completion times) and salahDuties (per-waqt). */
+
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled

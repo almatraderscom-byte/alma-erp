@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { StaffMonitorData, StaffSummary } from '@/agent/lib/staff-monitor-data'
-import type { AgentDutyRow } from '@/agent/lib/agent-duties'
+import type { AgentDutyRow, SalahDutyRow } from '@/agent/lib/agent-duties'
 
 const FEED_PREVIEW_LEN = 120
 
@@ -71,6 +71,26 @@ function dutyIcon(status: AgentDutyRow['status']) {
   if (status === 'failed') return '❌'
   if (status === 'missed') return '🔴'
   if (status === 'skipped') return '⏭️'
+  return '⏳'
+}
+
+function dutyRightText(d: AgentDutyRow): string {
+  if (d.status === 'done' && d.ranAt) return fmtTime(d.ranAt)
+  if (d.status === 'skipped' || d.status === 'missed') {
+    return d.detail || (d.status === 'missed' ? 'মিস হয়েছে' : '')
+  }
+  if (d.time) return `🕒 ${d.time}`
+  return ''
+}
+
+function salahRightText(s: SalahDutyRow): string {
+  if (s.status === 'done' && s.doneTime) return `✓ ${s.doneTime}`
+  return `🕒 ${s.scheduledTime}`
+}
+
+function salahIcon(status: SalahDutyRow['status']) {
+  if (status === 'done') return '✅'
+  if (status === 'missed') return '🔴'
   return '⏳'
 }
 
@@ -156,11 +176,7 @@ export default function AgentStaffMonitor() {
         <h2 className="text-sm font-bold text-zinc-300">🤖 এজেন্টের আজকের কাজ (লাইভ)</h2>
         {(data.agentDuties ?? []).map((d) => {
           const icon = dutyIcon(d.status)
-          const time = d.ranAt ? fmtTime(d.ranAt) : ''
-          const meta =
-            d.status === 'skipped' || d.status === 'missed'
-              ? (d.detail || (d.status === 'missed' ? 'মিস হয়েছে' : ''))
-              : time
+          const rightText = dutyRightText(d)
           return (
             <div
               key={d.id}
@@ -173,10 +189,30 @@ export default function AgentStaffMonitor() {
             >
               <span className="shrink-0 text-base leading-none">{icon}</span>
               <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{d.label}</span>
-              <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{meta}</span>
+              <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{rightText}</span>
             </div>
           )
         })}
+
+        {(data.salahDuties?.length ?? 0) > 0 && (
+          <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] p-2">
+            <div className="mb-1 text-xs font-bold text-zinc-300">🕌 আজকের সালাহ রিমাইন্ডার</div>
+            {data.salahDuties.map((s) => {
+              const ic = salahIcon(s.status)
+              const right = salahRightText(s)
+              return (
+                <div key={s.waqt} className="flex items-center gap-2 px-1 py-1 text-[12px]">
+                  <span className="shrink-0">{ic}</span>
+                  <span className="min-w-0 flex-1 truncate text-zinc-200">
+                    {s.label}
+                    {s.reminders ? ` · ${s.reminders} রিমাইন্ডার` : ''}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{right}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {(data.continuousServices?.length ?? 0) > 0 && (
           <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-[11px] text-zinc-500">
