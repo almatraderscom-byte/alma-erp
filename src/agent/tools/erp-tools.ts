@@ -772,7 +772,7 @@ const recall_business_knowledge: AgentTool = {
     properties: {
       entityType: {
         type: 'string',
-        enum: ['product', 'customer_segment', 'staff', 'channel', 'season', 'business'],
+        enum: ['product', 'customer_segment', 'staff', 'channel', 'season', 'business', 'competitor'],
         description: 'What kind of entity to recall knowledge about',
       },
       entityName: {
