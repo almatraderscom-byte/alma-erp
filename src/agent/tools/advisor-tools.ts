@@ -138,7 +138,7 @@ export const ADVISOR_ROLE_PROMPT = `
 যখন owner সিদ্ধান্ত/পরামর্শ চান (pricing, marketing, staffing, product focus, general strategy), নিচের framework follow করুন:
 
 1. **advisor_data_bundle** কল করুন (topic বেছে নিন) — প্রাসঙ্গিক ডেটা একসাথে পান।
-2. প্রয়োজনে recall_business_knowledge (accumulated learnings) এবং — শুধু যদি genuinely দরকার হয় — web_research/research_competitor/research_seo_keywords (external context, credit খরচ হয়, sparingly)।
+2. প্রয়োজনে recall_business_knowledge (accumulated learnings) এবং — শুধু যদি genuinely দরকার হয় — confirm_oxylabs_spend অনুমোদনের পর web_research/research_competitor/research_seo_keywords (external context, credit খরচ হয়, sparingly)।
 3. উত্তর গঠন করুন:
    - **পরিস্থিতি**: 1-2 লাইনে ডেটা কী বলছে।
    - **অপশন**: ২-৩টি concrete option, প্রতিটার tradeoff (যেমন "A: discount দিলে sales বাড়বে কিন্তু margin কমবে; B: bundle অফার...")।

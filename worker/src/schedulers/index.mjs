@@ -141,8 +141,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'evening-proposal': {
       const { runEveningProposal } = await lazy.eveningProposal()
-      await runEveningProposal(supabase)
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runEveningProposal(supabase)
       break
     }
     case 'owner-briefing': {

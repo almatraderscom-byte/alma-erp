@@ -152,6 +152,13 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       </div>
       <pre className="mb-3 whitespace-pre-wrap font-sans text-xs leading-relaxed text-gray-200">{summary}</pre>
 
+      {meta.actionType === 'oxylabs_spend' && meta.costEstimate != null && (
+        <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+          Oxylabs prepaid credit: আনুমানিক <strong>{meta.costEstimate}</strong> ক্রেডিট খরচ হবে (USD নয়)।
+          Reject করলে কোনো ক্রেডিট খরচ হবে না।
+        </p>
+      )}
+
       {meta.isBatch && (meta.entryCount ?? 0) > 0 && (
         <div className="mb-3 flex flex-wrap gap-1">
           {Array.from({ length: meta.entryCount! }, (_, i) => (

@@ -8,7 +8,9 @@ import {
 import { cn } from '@/lib/utils'
 
 type DashboardData = {
+  todayDhakaDate?: string
   todayUsd: number
+  todayOxylabsCredits?: number
   monthUsd: number
   forecastUsd: number
   subscriptionAmortMonthUsd: number
@@ -72,8 +74,9 @@ function fmtBalanceCell(row: BalanceProviderRow) {
   return fmtUsd(row.balanceUsd)
 }
 
-function fmtSpendCell(n: number | null) {
+function fmtSpendCell(n: number | null, providerId?: string) {
   if (n == null) return '—'
+  if (providerId === 'oxylabs') return `${Math.round(n)} ক্রেডিট`
   return fmtUsd(n)
 }
 
@@ -261,8 +264,8 @@ export default function AgentCostsDashboard() {
                   <tr key={row.id} className="border-b border-border/40 last:border-0">
                     <td className="py-2 pr-3 text-cream">{row.label}</td>
                     <td className="py-2 pr-3 font-medium text-gold-lt">{fmtBalanceCell(row)}</td>
-                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.todayUsd)}</td>
-                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.monthUsd)}</td>
+                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.todayUsd, row.id)}</td>
+                    <td className="py-2 pr-3 text-muted-hi">{fmtSpendCell(row.monthUsd, row.id)}</td>
                     <td className="py-2 text-muted">{row.source}</td>
                   </tr>
                 ))}
@@ -273,15 +276,25 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: 'আজ', value: fmtUsd(data.todayUsd) },
-          { label: 'এই মাস', value: fmtUsd(data.monthUsd) },
-          { label: 'পূর্বাভাস (মাস)', value: fmtUsd(data.forecastUsd) },
+          {
+            label: data.todayDhakaDate ? `আজ (Dhaka ${data.todayDhakaDate})` : 'আজ (USD API)',
+            value: fmtUsd(data.todayUsd),
+            sub: 'Anthropic/Twilio/OpenAI ইত্যাদি — Oxylabs বাদ',
+          },
+          {
+            label: 'Oxylabs আজ',
+            value: `${data.todayOxylabsCredits ?? 0} ক্রেডিট`,
+            sub: 'Prepaid credit — USD নয়',
+          },
+          { label: 'এই মাস', value: fmtUsd(data.monthUsd), sub: null },
+          { label: 'পূর্বাভাস (মাস)', value: fmtUsd(data.forecastUsd), sub: null },
         ].map((c) => (
           <div key={c.label} className="rounded-2xl border border-border bg-surface p-4">
             <p className="text-[10px] uppercase tracking-wider text-muted">{c.label}</p>
             <p className="mt-1 text-2xl font-bold text-cream">{c.value}</p>
+            {c.sub && <p className="mt-1 text-[10px] text-zinc-600">{c.sub}</p>}
           </div>
         ))}
       </div>

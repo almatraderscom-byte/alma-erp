@@ -98,6 +98,7 @@ export default function AgentStaffMonitor() {
   const [data, setData] = useState<StaffMonitorData | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const load = useCallback(async (manual = false) => {
     if (manual) setSyncing(true)
@@ -143,7 +144,7 @@ export default function AgentStaffMonitor() {
         <div className="min-w-0">
           <h1 className="text-lg font-black text-cream">স্টাফ মনিটর (লাইভ)</h1>
           <p className="text-[11px] text-muted">
-            আজ ({data.today}) · প্রতি ১০ সেকেন্ডে আপডেট
+            আজ ({data.today}) · প্রতি ১০ সেকেন্ডে আপডেট · ইতিহাস {data.feedDays ?? 7} দিন
             {data.generatedAt && (
               <> · সর্বশেষ {fmtTime(data.generatedAt)}</>
             )}
@@ -171,6 +172,25 @@ export default function AgentStaffMonitor() {
           </Link>
         </div>
       </div>
+
+      {(data.warnings?.length ?? 0) > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-bold text-red-300">⚠️ সতর্কতা / silent issues</h2>
+          {data.warnings.map((w, i) => (
+            <div
+              key={`${w.kind}-${i}`}
+              className={cn(
+                'rounded-xl border px-3 py-2 text-xs',
+                w.severity === 'critical'
+                  ? 'border-red-500/40 bg-red-500/10 text-red-100'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-100',
+              )}
+            >
+              {w.message}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <h2 className="text-sm font-bold text-zinc-300">🤖 এজেন্টের আজকের কাজ (লাইভ)</h2>
@@ -220,9 +240,40 @@ export default function AgentStaffMonitor() {
             {data.continuousServices
               .map((s) => `${s.label} ${s.healthy ? '🟢' : '🔴'}`)
               .join(' · ')}
+            {data.schedulerHealth?.ackEscalationLastRun && (
+              <> · ack check {fmtTime(data.schedulerHealth.ackEscalationLastRun)}</>
+            )}
           </div>
         )}
       </div>
+
+      {(data.dutyHistory?.length ?? 0) > 1 && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            className="text-sm font-bold text-zinc-300 hover:text-cream"
+          >
+            📅 গত {data.feedDays ?? 7} দিনের duty ইতিহাস {showHistory ? '▲' : '▼'}
+          </button>
+          {showHistory && data.dutyHistory.filter((d) => d.date !== data.today).map((day) => {
+            const issues = day.duties.filter((d) => d.status === 'missed' || d.status === 'failed' || d.status === 'skipped')
+            if (!issues.length && day.duties.length === 0) return null
+            return (
+              <div key={day.date} className="rounded-xl border border-white/10 bg-white/[0.02] p-2">
+                <div className="mb-1 text-xs font-bold text-zinc-400">{day.date}</div>
+                {(issues.length ? issues : day.duties).slice(0, 8).map((d) => (
+                  <div key={d.id} className="flex gap-2 py-0.5 text-[11px] text-zinc-400">
+                    <span>{dutyIcon(d.status)}</span>
+                    <span className="flex-1 truncate">{d.label}</span>
+                    <span>{d.detail ?? d.status}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {Object.keys(data.typeCounts ?? {}).length > 0 && (
         <p className="text-[10px] text-muted-hi">
@@ -282,7 +333,7 @@ export default function AgentStaffMonitor() {
       )}
 
       <div className="space-y-2">
-        <h2 className="text-sm font-bold text-zinc-300">লাইভ মেসেজ ফিড (সব ধরন)</h2>
+        <h2 className="text-sm font-bold text-zinc-300">লাইভ মেসেজ ফিড (আজ)</h2>
         {data.feed.length === 0 ? (
           <p className="text-xs text-muted">এখনো কোনো মেসেজ লগ নেই।</p>
         ) : (
@@ -324,6 +375,21 @@ export default function AgentStaffMonitor() {
           })
         )}
       </div>
+
+      {(data.historyFeed?.length ?? 0) > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-bold text-zinc-300">গত দিনের মেসেজ ইতিহাস ({data.feedDays ?? 7} দিন)</h2>
+          {data.historyFeed.slice(0, 80).map((m) => (
+            <div key={m.id} className="rounded-lg border border-white/5 bg-black/20 p-2 text-xs text-zinc-500">
+              <div className="flex justify-between">
+                <span>{m.staffName ?? '—'} · {typeLabel(m.type)} · {m.status}</span>
+                <span>{new Date(m.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })} {fmtTime(m.createdAt)}</span>
+              </div>
+              {m.errorReason && <div className="mt-1 text-red-400">{m.errorReason}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

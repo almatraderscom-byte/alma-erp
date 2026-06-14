@@ -262,6 +262,25 @@ export async function POST(
     })
   }
 
+  if (action.type === 'oxylabs_spend') {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    const credits = Number((payload as { estimatedCredits?: number }).estimatedCredits ?? action.costEstimate ?? 1)
+    await appendConversationNote(
+      db,
+      action,
+      `✅ Oxylabs research অনুমোদিত (${credits} ক্রেডিট) — এখন spendApprovalId="${actionId}" দিয়ে research tool চালান।`,
+    )
+    return Response.json({
+      success: true,
+      spendApprovalId: actionId,
+      estimatedCredits: credits,
+      message: 'Oxylabs research approved. Agent may now call the research tool with spendApprovalId.',
+    })
+  }
+
   if (action.type === 'staff_announcement') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

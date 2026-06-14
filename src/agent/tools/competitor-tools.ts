@@ -1,6 +1,7 @@
 import { oxylabsConfigured, oxylabsSerpSearch, oxylabsFetchPage, logOxylabsUsage } from '@/lib/oxylabs/client'
 import { learnFact } from '@/lib/knowledge-graph'
 import { getCompetitorWatchlist, setCompetitorWatchlist, findCompetitorByName, type CompetitorEntry } from '@/lib/competitor-watchlist'
+import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
 import type { AgentTool } from './registry'
 
 function productAttribute(product: string): string {
@@ -71,20 +72,33 @@ const research_competitor: AgentTool = {
     'Research a competitor\'s pricing/products for a given item — either by name (must be on the watchlist; ' +
     'use manage_competitor_watchlist to check/add first) or a direct URL. Uses Oxylabs credits (1-2 calls). ' +
     'Saves findings to business knowledge so repeated lookups for the same product+competitor within ~7 days ' +
-    'reuse the stored fact instead of re-researching — check recall_business_knowledge first if unsure.',
+    'reuse the stored fact instead of re-researching — check recall_business_knowledge first if unsure. ' +
+    'REQUIRES confirm_oxylabs_spend approval first, then pass spendApprovalId.',
   input_schema: {
     type: 'object' as const,
     properties: {
       competitorName: { type: 'string', description: 'Name from the watchlist' },
       url: { type: 'string', description: 'Direct competitor URL (alternative to competitorName, for one-off checks)' },
       product: { type: 'string', description: 'Product/keyword to research, e.g. "premium silk panjabi"' },
+      spendApprovalId: { type: 'string', description: 'Required — from confirm_oxylabs_spend after owner approves' },
     },
-    required: ['product'],
+    required: ['product', 'spendApprovalId'],
   },
   handler: async (input) => {
     if (!oxylabsConfigured()) {
       return { success: false, error: 'Oxylabs not configured (OXYLABS_API_KEY missing).' }
     }
+    const conversationId = input.conversationId ? String(input.conversationId) : null
+    const gate = await verifyOxylabsSpendApproval({
+      approvalId: input.spendApprovalId ? String(input.spendApprovalId) : null,
+      tool: 'research_competitor',
+      input,
+      conversationId,
+    })
+    if (!gate.ok) {
+      return { success: false, error: gate.error, data: { needsOxylabsApproval: true, estimatedCredits: gate.estimatedCredits } }
+    }
+
     const product = String(input.product ?? '').trim()
     if (!product) return { success: false, error: 'product is required' }
 
@@ -133,6 +147,8 @@ const research_competitor: AgentTool = {
       confidenceDelta: 0.1,
     })
 
+    await consumeOxylabsApproval(gate.approvalId)
+
     return {
       success: true,
       data: {
@@ -151,7 +167,7 @@ export const COMPETITOR_TOOLS: AgentTool[] = [manage_competitor_watchlist, resea
 export const COMPETITOR_ROLE_PROMPT = `
 ## কম্পিটিটর রিসার্চ
 manage_competitor_watchlist দিয়ে owner-নির্ধারিত কম্পিটিটর লিস্ট দেখুন/manage করুন।
-research_competitor দিয়ে কোনো প্রোডাক্টের কম্পিটিটর price/availability চেক করুন — Oxylabs credit খরচ হয় (1-2 call)।
+research_competitor দিয়ে কোনো প্রোডাক্টের কম্পিটিটর price/availability চেক করুন — **আগে confirm_oxylabs_spend** (১–২ ক্রেডিট), owner Approve ছাড়া research চালাবেন না।
 **আগে recall_business_knowledge (entityType=competitor) চেক করুন** — সম্প্রতি (৭ দিনের মধ্যে) একই product+competitor research করা থাকলে আবার করবেন না।
 শুধু তথ্য দিন — কোনো price/offer/website change নিজে থেকে করবেন না; owner কে জানিয়ে suggestion দিন।
 `

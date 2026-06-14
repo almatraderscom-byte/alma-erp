@@ -1,6 +1,7 @@
 /** Friendly display for each tool while it runs in the "checking" UI. */
 export const TOOL_LABELS: Record<string, { label: string; icon: string; color: string }> = {
-  get_fb_recent_posts: { label: 'Facebook পোস্ট চেক করছি', icon: '📘', color: '#3b5998' },
+  confirm_oxylabs_spend: { label: 'Oxylabs খরচ অনুমোদন চাইছি', icon: '🔍', color: '#f59e0b' },
+  web_research: { label: 'ওয়েব রিসার্চ করছি', icon: '🌐', color: '#3b82f6' },
   get_fb_messenger_inbox: { label: 'Messenger ইনবক্স দেখছি', icon: '💬', color: '#0084ff' },
   get_marketing_history: { label: 'মার্কেটিং হিস্ট্রি দেখছি', icon: '📣', color: '#e1306c' },
   get_marketing_intel: { label: 'মার্কেটিং ইনটেল চেক করছি', icon: '🎯', color: '#e1306c' },

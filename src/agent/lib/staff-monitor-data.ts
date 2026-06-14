@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { todayYmdDhaka, dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd, dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync'
 import {
   dutiesForToday,
@@ -16,6 +16,23 @@ const db = prisma as any
 
 const DONE_STATUSES = new Set(['done', 'verified', 'done_unverified', 'awaiting_proof'])
 const STARTED_STATUSES = new Set(['awaiting_proof', 'done', 'verified', 'done_unverified'])
+
+export type MonitorWarning = {
+  severity: 'critical' | 'warn'
+  kind: string
+  message: string
+}
+
+export type DutyHistoryDay = {
+  date: string
+  duties: AgentDutyRow[]
+}
+
+export type SchedulerHealth = {
+  ackEscalationLastRun: string | null
+  schedulersHeartbeatAt: string | null
+  queueHeartbeatAt: string | null
+}
 
 export type StaffMonitorRow = {
   id: string
@@ -49,10 +66,16 @@ export type StaffSummary = {
 
 export type StaffMonitorData = {
   today: string
+  feedDays: number
   agentDuties: AgentDutyRow[]
+  dutyHistory: DutyHistoryDay[]
   salahDuties: SalahDutyRow[]
   continuousServices: ContinuousServiceHealth[]
+  schedulerHealth: SchedulerHealth
+  warnings: MonitorWarning[]
+  unackedMessages: StaffMonitorRow[]
   feed: StaffMonitorRow[]
+  historyFeed: StaffMonitorRow[]
   failures: StaffMonitorRow[]
   staffSummaries: StaffSummary[]
   typeCounts: Record<string, number>
@@ -110,6 +133,16 @@ const WAQT_BN: Record<string, string> = {
 
 function waqtBangla(waqt: string): string {
   return WAQT_BN[waqt] ?? waqt
+}
+
+const TYPE_LABELS_SHORT: Record<string, string> = {
+  task_dispatch: 'টাস্ক',
+  announcement: 'ঘোষণা',
+  reminder: 'রিমাইন্ডার',
+}
+
+function typeLabelShort(type: string): string {
+  return TYPE_LABELS_SHORT[type] ?? type
 }
 
 function fmtDhakaTime(value: Date | string): string {
@@ -201,28 +234,100 @@ function heartbeatFresh(lastBeatAt: Date | null | undefined, maxMs = HEARTBEAT_S
   return Date.now() - lastBeatAt.getTime() <= maxMs
 }
 
-async function getContinuousServicesHealth(): Promise<ContinuousServiceHealth[]> {
+async function getContinuousServicesHealth(): Promise<{
+  services: ContinuousServiceHealth[]
+  schedulersHeartbeatAt: Date | null
+  queueHeartbeatAt: Date | null
+}> {
   const rows = await db.agentHeartbeat.findMany({
     where: { service: { in: ['schedulers', 'queue-consumer'] } },
     select: { service: true, lastBeatAt: true },
   }) as Array<{ service: string; lastBeatAt: Date }>
 
   const byService = new Map(rows.map((r) => [r.service, r.lastBeatAt]))
-  const schedulersOk = heartbeatFresh(byService.get('schedulers'))
-  const queueOk = heartbeatFresh(byService.get('queue-consumer'), 120_000)
+  const schedulersBeat = byService.get('schedulers') ?? null
+  const queueBeat = byService.get('queue-consumer') ?? null
+  const schedulersOk = heartbeatFresh(schedulersBeat)
+  const queueOk = heartbeatFresh(queueBeat, 120_000)
 
-  return CONTINUOUS_SERVICES.map((s) => ({
+  const services = CONTINUOUS_SERVICES.map((s) => ({
     key: s.key,
     label: s.label,
     healthy: s.key === 'cs_services' ? schedulersOk && queueOk : schedulersOk,
   }))
+
+  return { services, schedulersHeartbeatAt: schedulersBeat, queueHeartbeatAt: queueBeat }
 }
 
-export async function getStaffMonitorData(): Promise<StaffMonitorData> {
-  const today = todayYmdDhaka()
-  const todayStart = new Date(`${today}T00:00:00+06:00`)
+async function getSchedulerHealth(): Promise<SchedulerHealth> {
+  const row = await prisma.agentKvSetting.findUnique({
+    where: { key: 'scheduler:last_run:ack-escalation' },
+  })
+  let ackEscalationLastRun: string | null = null
+  if (row?.value) {
+    try {
+      const parsed = JSON.parse(row.value) as { at?: string }
+      ackEscalationLastRun = parsed.at ?? row.value
+    } catch {
+      ackEscalationLastRun = row.value
+    }
+  }
+  const hb = await getContinuousServicesHealth()
+  return {
+    ackEscalationLastRun,
+    schedulersHeartbeatAt: hb.schedulersHeartbeatAt?.toISOString() ?? null,
+    queueHeartbeatAt: hb.queueHeartbeatAt?.toISOString() ?? null,
+  }
+}
 
-  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties, salahDuties, continuousServices] = await Promise.all([
+async function getDutyHistory(days: number): Promise<DutyHistoryDay[]> {
+  const today = todayYmdDhaka()
+  const dates = Array.from({ length: days }, (_, i) => daysAgoYmd(i))
+  const rows = await db.agentDutyLog.findMany({
+    where: { dutyDate: { in: dates } },
+    orderBy: [{ dutyDate: 'desc' }, { duty: 'asc' }],
+  }) as Array<{
+    id: string
+    duty: string
+    label: string
+    dutyDate: string
+    status: string
+    detail: string | null
+    ranAt: Date | null
+    createdAt: Date
+  }>
+
+  const byDate = new Map<string, AgentDutyRow[]>()
+  for (const date of dates) byDate.set(date, [])
+
+  for (const row of rows) {
+    const list = byDate.get(row.dutyDate) ?? []
+    const def = dutiesForToday().find((d) => d.duty === row.duty)
+    list.push({
+      id: row.id,
+      duty: row.duty,
+      label: row.label,
+      dutyDate: row.dutyDate,
+      status: row.status as AgentDutyRow['status'],
+      detail: row.detail,
+      ranAt: row.ranAt?.toISOString() ?? null,
+      time: def?.time ?? null,
+      createdAt: row.createdAt.toISOString(),
+    })
+    byDate.set(row.dutyDate, list)
+  }
+
+  return dates.map((date) => ({ date, duties: byDate.get(date) ?? [] }))
+}
+
+export async function getStaffMonitorData(opts: { historyDays?: number } = {}): Promise<StaffMonitorData> {
+  const historyDays = Math.min(Math.max(opts.historyDays ?? 7, 1), 14)
+  const today = todayYmdDhaka()
+  const todayStart = dhakaDayBounds(today).start
+  const historyStart = dhakaDayBounds(daysAgoYmd(historyDays - 1)).start
+  const tenMinAgo = new Date(Date.now() - 10 * 60_000)
+
+  const [todayTasks, todayOutbox, historyOutbox, unackedRows, dispatchTaskIds, agentDuties, salahDuties, hbPack, dutyHistory, schedulerHealth] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -236,18 +341,40 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
       orderBy: { createdAt: 'desc' },
       take: 200,
     }),
+    prisma.agentOutbox.findMany({
+      where: { createdAt: { gte: historyStart, lt: todayStart } },
+      orderBy: { createdAt: 'desc' },
+      take: 400,
+    }),
+    prisma.agentOutbox.findMany({
+      where: {
+        requiresAck: true,
+        status: 'delivered',
+        acknowledgedAt: null,
+        sentAt: { lt: tenMinAgo },
+      },
+      orderBy: { sentAt: 'asc' },
+      take: 50,
+    }),
     getActiveDispatchTaskIdsForDate(today),
     getAgentDutiesForToday(today),
     getSalahDutiesForToday(today),
     getContinuousServicesHealth(),
+    getDutyHistory(historyDays),
+    getSchedulerHealth(),
   ])
+
+  const continuousServices = hbPack.services
 
   const scopedTasks = dispatchTaskIds?.length
     ? (todayTasks as Array<{ id: string }>).filter((t) => dispatchTaskIds.includes(t.id))
     : todayTasks
 
   const feed = todayOutbox.map(mapOutbox)
+  const historyFeed = historyOutbox.map(mapOutbox)
+  const unackedMessages = unackedRows.map(mapOutbox)
   const failures = feed.filter((f) => f.status === 'failed')
+  const skippedOffhours = feed.filter((f) => f.status === 'skipped_offhours')
   const typeCounts: Record<string, number> = {}
   for (const row of feed) {
     typeCounts[row.type] = (typeCounts[row.type] ?? 0) + 1
@@ -334,12 +461,69 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     }
   }
 
+  const warnings: MonitorWarning[] = []
+
+  if (!continuousServices.every((s) => s.healthy)) {
+    warnings.push({
+      severity: 'critical',
+      kind: 'worker_heartbeat',
+      message: 'Worker heartbeat stale — schedulers/queue-consumer চেক করুন (pm2 logs agent-worker)',
+    })
+  }
+
+  if (schedulerHealth.ackEscalationLastRun) {
+    const ageMs = Date.now() - new Date(schedulerHealth.ackEscalationLastRun).getTime()
+    if (ageMs > 12 * 60_000) {
+      warnings.push({
+        severity: 'critical',
+        kind: 'ack_escalation_stale',
+        message: `Ack escalation ${Math.round(ageMs / 60_000)} মিনিট ধরে চালেনি — ১০ মিনিট unseen alert কাজ করছে না`,
+      })
+    }
+  } else {
+    warnings.push({
+      severity: 'warn',
+      kind: 'ack_escalation_unknown',
+      message: 'Ack escalation last-run লগ নেই — worker SCHEDULERS_ENABLED চেক করুন',
+    })
+  }
+
+  for (const m of unackedMessages) {
+    warnings.push({
+      severity: 'critical',
+      kind: 'unacked_message',
+      message: `${m.staffName ?? 'স্টাফ'} ১০+ মিনিট মেসেজ দেখেননি (${typeLabelShort(m.type)})`,
+    })
+  }
+
+  for (const d of agentDuties.filter((x) => x.status === 'missed' || x.status === 'failed')) {
+    warnings.push({
+      severity: d.status === 'missed' ? 'critical' : 'warn',
+      kind: 'duty_' + d.status,
+      message: `${d.label} — ${d.detail ?? d.status}`,
+    })
+  }
+
+  if (skippedOffhours.length > 0) {
+    warnings.push({
+      severity: 'warn',
+      kind: 'skipped_offhours',
+      message: `${skippedOffhours.length}টি মেসেজ office hours-এর বাইরে পাঠানো হয়নি (skipped_offhours)`,
+    })
+  }
+
   return {
     today,
+    feedDays: historyDays,
     agentDuties,
+    dutyHistory,
     salahDuties,
     continuousServices,
+    schedulerHealth,
+    warnings,
+    unackedMessages,
     feed,
+    historyFeed,
     failures,
     staffSummaries,
     typeCounts,

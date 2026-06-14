@@ -533,7 +533,10 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
         message: `${targetDate} — কোনো task তৈরি হয়নি।`,
         category: 'task',
       }).catch(() => {})
-      return
+      return {
+        dutyStatus: 'skipped',
+        dutyDetail: proposal.error ?? 'zero tasks generated',
+      }
     }
 
     const carryFrom = (() => {
@@ -660,6 +663,12 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
     }
 
     console.log(`[${label}] approval card sent for ${taskData.length} tasks (verified=${cardSent})`)
+    return {
+      dutyStatus: cardSent ? 'done' : 'failed',
+      dutyDetail: cardSent
+        ? `${taskData.length} tasks proposed, card sent`
+        : 'tasks saved but approval card failed — check Telegram/worker',
+    }
   } catch (err) {
     console.error(`[${label}] error:`, err.message, err.stack)
     throw err

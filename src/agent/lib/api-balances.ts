@@ -3,6 +3,7 @@
  */
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
@@ -84,12 +85,9 @@ export function normalizeBalanceProvider(input: string): BalanceProviderId | nul
 }
 
 export function dhakaSpendBounds() {
-  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-  const dayStart = new Date(`${todayStr}T00:00:00+06:00`)
-  const dayEnd = new Date(dayStart.getTime() + 86400000)
-  const [y, m] = todayStr.split('-').map(Number)
-  const monthStart = new Date(Date.UTC(y, m - 1, 1) - 6 * 60 * 60 * 1000)
-  const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1) - 6 * 60 * 60 * 1000)
+  const todayStr = todayYmdDhaka()
+  const { start: dayStart, end: dayEnd } = dhakaDayBounds(todayStr)
+  const { start: monthStart, end: monthEnd } = dhakaMonthBounds(todayStr)
   return { todayStr, dayStart, dayEnd, monthStart, monthEnd }
 }
 

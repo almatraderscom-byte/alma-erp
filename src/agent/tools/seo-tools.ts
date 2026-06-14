@@ -1,6 +1,7 @@
 import { listWebsiteProducts, getWebsiteProduct } from '@/lib/website/catalog.service'
 import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import { oxylabsSerpSearch, oxylabsConfigured, logOxylabsUsage } from '@/lib/oxylabs/client'
+import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
 import type { WebsiteProductDetail, WebsiteProductSummary } from '@/lib/website/types'
 import type { AgentTool } from './registry'
 
@@ -119,19 +120,32 @@ const research_seo_keywords: AgentTool = {
     'Research search rankings for a product/category keyword on Google (Bangladesh) — see what currently ' +
     'ranks for terms like "premium panjabi Dhaka" or "family matching panjabi set". Uses Oxylabs credits — ' +
     'use sparingly, only for genuine SEO/content-strategy decisions, not casual curiosity. Check if this ' +
-    'exact query was already researched in this conversation before calling again.',
+    'exact query was already researched in this conversation before calling again. ' +
+    'REQUIRES confirm_oxylabs_spend approval first, then pass spendApprovalId.',
   input_schema: {
     type: 'object' as const,
     properties: {
       keyword: { type: 'string', description: 'Search term to check rankings for, e.g. "premium panjabi Dhaka"' },
       productSlug: { type: 'string', description: 'Optional — check if almatraders.com/products/{slug} appears in results for this keyword' },
+      spendApprovalId: { type: 'string', description: 'Required — from confirm_oxylabs_spend after owner approves' },
     },
-    required: ['keyword'],
+    required: ['keyword', 'spendApprovalId'],
   },
   handler: async (input) => {
     if (!oxylabsConfigured()) {
       return { success: false, error: 'Oxylabs not configured (OXYLABS_API_KEY missing).' }
     }
+    const conversationId = input.conversationId ? String(input.conversationId) : null
+    const gate = await verifyOxylabsSpendApproval({
+      approvalId: input.spendApprovalId ? String(input.spendApprovalId) : null,
+      tool: 'research_seo_keywords',
+      input,
+      conversationId,
+    })
+    if (!gate.ok) {
+      return { success: false, error: gate.error, data: { needsOxylabsApproval: true, estimatedCredits: gate.estimatedCredits } }
+    }
+
     const keyword = String(input.keyword ?? '').trim()
     if (!keyword) return { success: false, error: 'keyword is required' }
 
@@ -157,6 +171,8 @@ const research_seo_keywords: AgentTool = {
       productMatch = { found: !!match, rank: match?.pos ?? null }
     }
 
+    await consumeOxylabsApproval(gate.approvalId)
+
     return {
       success: true,
       data: {
@@ -176,7 +192,7 @@ export const SEO_TOOLS: AgentTool[] = [audit_product_seo, research_seo_keywords]
 export const SEO_ROLE_PROMPT = `
 ## SEO
 audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug।
-research_seo_keywords দিয়ে keyword ranking দেখুন (Oxylabs credit খরচ হয় — শুধু genuine SEO সিদ্ধান্তের জন্য)।
+research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না।
 SEO fix proposal করলে update_product_web ব্যবহার করুন (description/shortDescription) — owner Approve প্রয়োজন।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + proposal।
 `

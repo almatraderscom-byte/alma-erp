@@ -6,39 +6,25 @@ import { prisma } from '@/lib/prisma'
 import { getBudgetSettings } from '@/agent/lib/cost-events'
 import { subscriptionDailyUsd } from '@/agent/lib/pricing'
 import { assertAgentCostSchemaReady, queryCostSumBetween } from '@/agent/lib/cost-db'
+import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
 
 const DHAKA_TZ = 'Asia/Dhaka'
-
-function dhakaDateStr(d = new Date()): string {
-  return d.toLocaleDateString('en-CA', { timeZone: DHAKA_TZ })
-}
-
-function dhakaDayBounds(dateStr: string): { start: Date; end: Date } {
-  const start = new Date(`${dateStr}T00:00:00+06:00`)
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
-  return { start, end }
-}
-
-function monthBounds(dateStr: string): { start: Date; end: Date } {
-  const [y, m] = dateStr.split('-').map(Number)
-  const start = new Date(`${y}-${String(m).padStart(2, '0')}-01T00:00:00+06:00`)
-  const nextMonth = m === 12 ? [y + 1, 1] : [y, m + 1]
-  const end = new Date(`${nextMonth[0]}-${String(nextMonth[1]).padStart(2, '0')}-01T00:00:00+06:00`)
-  return { start, end }
-}
 
 export async function getCostDashboardData() {
   await assertAgentCostSchemaReady()
 
-  const todayStr = dhakaDateStr()
+  const todayStr = todayYmdDhaka()
   const todayBounds = dhakaDayBounds(todayStr)
-  const monthB = monthBounds(todayStr)
+  const monthB = dhakaMonthBounds(todayStr)
 
-  const [todayUsd, monthUsd, budgets] = await Promise.all([
+  const [todayUsdAll, monthUsd, budgets, todayByProvider] = await Promise.all([
     queryCostSumBetween(todayBounds.start, todayBounds.end),
     queryCostSumBetween(monthB.start, monthB.end),
     getBudgetSettings(),
+    import('@/agent/lib/api-balances').then((m) => m.querySpendByProviderBetween(todayBounds.start, todayBounds.end)),
   ])
+  const todayOxylabsCredits = todayByProvider.oxylabs ?? 0
+  const todayUsd = Math.round((todayUsdAll - todayOxylabsCredits) * 1_000_000) / 1_000_000
 
   const dailyRows = await prisma.$queryRaw<Array<{ day: string; provider: string; total: string }>>(
     Prisma.sql`SELECT to_char((occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
@@ -170,7 +156,9 @@ export async function getCostDashboardData() {
   const forecastUsd = apiForecast + subMonthlyUsd
 
   return {
+    todayDhakaDate: todayStr,
     todayUsd,
+    todayOxylabsCredits,
     monthUsd,
     forecastUsd: Math.round(forecastUsd * 1_000_000) / 1_000_000,
     subscriptionAmortMonthUsd: Math.round(subMonthlyUsd * 1_000_000) / 1_000_000,

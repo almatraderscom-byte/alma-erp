@@ -1,11 +1,20 @@
 /**
  * Escalate staff messages that required acknowledgement but were not seen within 10 minutes.
- * Owner alerts fire anytime; staff re-pings only during office hours.
+ * Owner alerts fire anytime; staff NTFY fires anytime (office hours only limits Telegram re-ping).
  */
 import { sendNtfy, sendNtfyToTopic } from '../notify/ntfy.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
 import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
+
+async function recordAckEscalationRun(supabase) {
+  const at = new Date().toISOString()
+  await supabase.from('agent_kv_settings').upsert({
+    key: 'scheduler:last_run:ack-escalation',
+    value: JSON.stringify({ at }),
+    updated_at: at,
+  }).catch((err) => console.warn('[ack-escalation] last-run log failed:', err.message))
+}
 
 /**
  * @param {object} params
@@ -13,8 +22,19 @@ import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
  * @param {import('telegraf').Telegraf} params.bot
  */
 export async function runAckEscalation({ supabase, bot }) {
+  await recordAckEscalationRun(supabase)
+
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-  if (!ownerChatId || !bot) return
+  if (!ownerChatId || !bot) {
+    console.error('[ack-escalation] BLOCKED — TELEGRAM_OWNER_CHAT_ID or bot missing')
+    await sendNtfy(
+      'critical',
+      'Ack escalation broken',
+      'TELEGRAM_OWNER_CHAT_ID/bot missing — staff unseen alerts not running',
+      'urgent',
+    ).catch(() => {})
+    return { ok: false, reason: 'missing_owner_chat' }
+  }
 
   const duringOffice = isWithinOfficeHours('ALMA_LIFESTYLE')
   const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString()
@@ -29,9 +49,10 @@ export async function runAckEscalation({ supabase, bot }) {
 
   if (error) {
     console.warn('[ack-escalation] query failed:', error.message)
-    return
+    await sendNtfy('critical', 'Ack escalation query failed', error.message, 'urgent').catch(() => {})
+    return { ok: false, reason: 'query_failed' }
   }
-  if (!unseen?.length) return
+  if (!unseen?.length) return { ok: true, escalated: 0 }
 
   console.log(`[ack-escalation] escalating ${unseen.length} unseen message(s) (office=${duringOffice})`)
 
@@ -44,31 +65,29 @@ export async function runAckEscalation({ supabase, bot }) {
     ).catch(() => {})
     await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch(() => {})
 
-    if (duringOffice) {
-      const today = dhakaToday()
-      const onLeave = m.staff_id && (await isStaffOnLeaveSb(supabase, m.staff_id, today))
-      if (!onLeave) {
-        const { data: staff } = await supabase
-          .from('agent_staff')
-          .select('telegramChatId, ntfyTopic, name')
-          .eq('id', m.staff_id)
-          .maybeSingle()
+    const today = dhakaToday()
+    const onLeave = m.staff_id && (await isStaffOnLeaveSb(supabase, m.staff_id, today))
+    if (!onLeave && m.staff_id) {
+      const { data: staff } = await supabase
+        .from('agent_staff')
+        .select('telegramChatId, ntfyTopic, name')
+        .eq('id', m.staff_id)
+        .maybeSingle()
 
-        if (staff?.ntfyTopic) {
-          await sendNtfyToTopic(
-            staff.ntfyTopic,
-            'নতুন কাজ',
-            `${staff.name}, একটি কাজ অপেক্ষা করছে — দেখুন।`,
-            'task',
-          ).catch(() => {})
-        }
-        if (staff?.telegramChatId) {
-          await sendMarkdownSafe(
-            bot.telegram,
-            staff.telegramChatId,
-            `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
-          ).catch(() => {})
-        }
+      if (staff?.ntfyTopic) {
+        await sendNtfyToTopic(
+          staff.ntfyTopic,
+          'নতুন কাজ',
+          `${staff.name}, একটি মেসেজ অপেক্ষা করছে — দেখুন।`,
+          'task',
+        ).catch(() => {})
+      }
+      if (duringOffice && staff?.telegramChatId) {
+        await sendMarkdownSafe(
+          bot.telegram,
+          staff.telegramChatId,
+          `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
+        ).catch(() => {})
       }
     }
 
@@ -77,4 +96,6 @@ export async function runAckEscalation({ supabase, bot }) {
       .update({ ack_escalated_at: new Date().toISOString() })
       .eq('id', m.id)
   }
+
+  return { ok: true, escalated: unseen.length }
 }
