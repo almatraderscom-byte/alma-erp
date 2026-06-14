@@ -8,6 +8,8 @@ import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
 import { lunchButtonRow } from './lunch.mjs'
+import { isStaffOnLeaveSb } from './leave.mjs'
+import { leaveRequestButton } from './leave.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -27,6 +29,9 @@ export function formatDispatchOwnerReport(result) {
   }
   for (const u of result.unlinked ?? []) {
     lines.push(`• 🔗 ${u.staffName} — Telegram লিঙ্ক নেই`)
+  }
+  for (const o of result.onLeave ?? []) {
+    lines.push(`• 🌿 ${o.staffName} আজ ছুটিতে — টাস্ক পাঠানো হয়নি`)
   }
   return lines.join('\n')
 }
@@ -81,6 +86,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       sentToStaffCount: 0,
       failures: [],
       unlinked: [],
+      onLeave: [],
       fullSuccess: true,
       skipped: true,
     }
@@ -97,10 +103,17 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   const sentIds = []
   const failures = []
   const unlinked = []
+  const onLeave = []
 
   for (const { staff, tasks: staffTasks } of Object.values(byStaff)) {
     const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
+
+    if (staff?.id && (await isStaffOnLeaveSb(supabase, staff.id, date))) {
+      console.log(`[dispatch] ${staffName} on leave — skipping`)
+      onLeave.push({ staffName, taskTitles: staffTasks.map((t) => t.title) })
+      continue
+    }
 
     if (!chatId) {
       console.warn(`[dispatch] ${staffName} has no Telegram ID — owner will get their tasks`)
@@ -154,7 +167,8 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     sentToStaffCount: Object.keys(byStaff).length - failures.length - unlinked.length,
     failures,
     unlinked,
-    fullSuccess: failures.length === 0 && unlinked.length === 0 && verifiedSent === pending.length,
+    onLeave,
+    fullSuccess: failures.length === 0 && unlinked.length === 0 && onLeave.length === 0 && verifiedSent === pending.length,
   }
 
   console.log('[dispatch] result:', JSON.stringify(result))
@@ -210,6 +224,7 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
   if (staffId) {
     rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
     rows.push(lunchButtonRow())
+    rows.push([leaveRequestButton()])
   }
 
   const sendResult = await loggedSendToStaff(bot.telegram, {

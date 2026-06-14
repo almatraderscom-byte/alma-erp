@@ -1906,6 +1906,23 @@ model StaffLunch {
   @@map("staff_lunch")
 }
 
+model StaffLeave {
+  id         String   @id @default(uuid())
+  staffId    String   @map("staff_id")
+  staffName  String?  @map("staff_name")
+  businessId String?  @map("business_id")
+  startDate  String   @map("start_date")
+  endDate    String   @map("end_date")
+  type       String   @default("leave")
+  reason     String?  @db.Text
+  status     String   @default("approved")
+  createdAt  DateTime @default(now()) @map("created_at")
+  approvedBy String?  @map("approved_by")
+
+  @@index([staffId, startDate])
+  @@map("staff_leave")
+}
+
 // ─── PHASE 6: Staff Tasks ───────────────────────────────────────────────────
 
 model AgentStaffTask {

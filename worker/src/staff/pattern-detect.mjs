@@ -2,15 +2,19 @@ const DONE_STATUSES = new Set(['done', 'verified', 'done_unverified'])
 
 /**
  * Looks back 7 days per staff: completion %, repeated low days.
+ * Leave days are excluded from completion math.
  */
 export async function detectStaffPatterns({ supabase }) {
   const since = new Date(Date.now() - 7 * 86_400_000).toLocaleDateString('en-CA', {
     timeZone: 'Asia/Dhaka',
   })
 
+  const { loadLeaveDatesSince } = await import('./leave.mjs')
+  const leaveDatesByStaff = await loadLeaveDatesSince(supabase, since)
+
   const { data: rows } = await supabase
     .from('staff_tasks')
-    .select('status, proposed_for, type, agent_staff(id, name)')
+    .select('status, proposed_for, type, staff_id, agent_staff(id, name)')
     .gte('proposed_for', since)
     .not('status', 'eq', 'cancelled')
 
@@ -19,10 +23,12 @@ export async function detectStaffPatterns({ supabase }) {
     if (r.type === 'learning') continue
     const s = r.agent_staff
     if (!s) continue
+    const day = String(r.proposed_for).slice(0, 10)
+    if (leaveDatesByStaff[s.id]?.has(day)) continue
+
     byStaff[s.id] ??= { name: s.name, days: {}, total: 0, done: 0 }
     byStaff[s.id].total++
     if (DONE_STATUSES.has(r.status)) byStaff[s.id].done++
-    const day = String(r.proposed_for).slice(0, 10)
     byStaff[s.id].days[day] ??= { total: 0, done: 0 }
     byStaff[s.id].days[day].total++
     if (DONE_STATUSES.has(r.status)) byStaff[s.id].days[day].done++

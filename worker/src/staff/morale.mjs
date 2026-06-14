@@ -5,6 +5,7 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { pickMoraleMessage, shouldUseAdaptiveMorale } from './morale-messages.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
+import { isStaffOnLeaveSb } from './leave.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -97,6 +98,10 @@ export async function runStaffMorale({ supabase, bot }) {
       continue
     }
     if (await alreadySentToday(supabase, s.id, today)) {
+      skipped++
+      continue
+    }
+    if (await isStaffOnLeaveSb(supabase, s.id, today)) {
       skipped++
       continue
     }

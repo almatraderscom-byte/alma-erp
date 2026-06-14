@@ -7,6 +7,7 @@
 import { sendNtfyToTopic, sendNtfy } from '../notify/ntfy.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { dhakaLunchDate } from './lunch.mjs'
+import { isStaffOnLeaveSb } from './leave.mjs'
 
 export async function runLunchWatch({ supabase, bot }) {
   if (!bot) return
@@ -24,6 +25,8 @@ export async function runLunchWatch({ supabase, bot }) {
   if (!open?.length) return
 
   for (const l of open) {
+    if (await isStaffOnLeaveSb(supabase, l.staff_id, lunchDate)) continue
+
     const mins = Math.round((now - new Date(l.started_at).getTime()) / 60000)
 
     if (mins > 45 && !l.warned_45) {

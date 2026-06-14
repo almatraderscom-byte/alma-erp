@@ -14,6 +14,7 @@ import {
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { logEvent } from '@/lib/logger'
+import { isStaffOnLeaveByUserName, dhakaDateYmd } from '@/lib/staff-leave'
 
 export type AttendanceMonitorResult = {
   businessId: string
@@ -89,6 +90,19 @@ async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonito
 
     for (const emp of employees) {
       if (!emp.employeeIdGas) continue
+
+      const leave = await isStaffOnLeaveByUserName(emp.name, dhakaDateYmd(now))
+      if (leave.onLeave) {
+        absentBlocked += 1
+        logEvent('info', 'attendance.false_positive_blocked', {
+          businessId,
+          employeeId: emp.employeeIdGas,
+          reason: 'staff_on_leave',
+          leaveType: leave.type,
+          phase: 'monitor_scan',
+        })
+        continue
+      }
 
       const presence = await employeePresentForAbsentMonitor({
         employeeId: emp.employeeIdGas,

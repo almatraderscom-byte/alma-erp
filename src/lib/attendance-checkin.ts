@@ -36,6 +36,7 @@ import {
 } from '@/lib/telegram-notification/face-checkin-notify'
 import { notifyAttendancePenalty } from '@/lib/attendance'
 import { errorMeta, logEvent } from '@/lib/logger'
+import { isStaffOnLeaveByUserId } from '@/lib/staff-leave'
 
 const RECORD_INCLUDE = {
   waiverRequests: true,
@@ -170,7 +171,13 @@ export async function commitAttendanceCheckIn(
     }
   }
 
-  const { lateMinutes, penaltyAmount } = calculateLatePenalty(now, input.businessId)
+  let { lateMinutes, penaltyAmount } = calculateLatePenalty(now, input.businessId)
+
+  const staffLeave = await isStaffOnLeaveByUserId(input.userId, attendanceDateIso)
+  if (staffLeave.onLeave) {
+    penaltyAmount = 0
+  }
+
   const deviceKey = deviceKeyFor(input.req, input.metadata)
   const trust = await assessAttendanceTrust({
     businessId: input.businessId,
@@ -499,6 +506,8 @@ export function queueAttendanceCheckInSideEffects(input: {
   if (record.businessId === 'ALMA_LIFESTYLE' && record.lateMinutes > 0) {
     void (async () => {
       try {
+        const leave = await isStaffOnLeaveByUserId(userId, logBase.attendanceDate)
+        if (leave.onLeave) return
         const { coachLateCheckInFromRecord } = await import('@/lib/attendance-coaching')
         await coachLateCheckInFromRecord(record, userId)
       } catch (err) {

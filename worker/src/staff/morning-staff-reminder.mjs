@@ -7,6 +7,7 @@ import { dispatchTasksToStaff } from './dispatch.mjs'
 import { notify } from '../notify/index.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { lunchButtonRow } from './lunch.mjs'
+import { leaveRequestButton } from './leave.mjs'
 
 export async function runMorningStaffReminder({ supabase, bot }) {
   console.log('[morning-staff-reminder] starting...')
@@ -109,6 +110,7 @@ export async function runMorningStaffReminder({ supabase, bot }) {
           inline_keyboard: [
             [{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` }],
             lunchButtonRow(),
+            [leaveRequestButton()],
           ],
         },
       },

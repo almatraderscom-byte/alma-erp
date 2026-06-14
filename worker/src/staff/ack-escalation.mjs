@@ -5,6 +5,7 @@
 import { sendNtfy, sendNtfyToTopic } from '../notify/ntfy.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
+import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
 
 /**
  * @param {object} params
@@ -44,26 +45,30 @@ export async function runAckEscalation({ supabase, bot }) {
     await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch(() => {})
 
     if (duringOffice) {
-      const { data: staff } = await supabase
-        .from('agent_staff')
-        .select('telegramChatId, ntfyTopic, name')
-        .eq('id', m.staff_id)
-        .maybeSingle()
+      const today = dhakaToday()
+      const onLeave = m.staff_id && (await isStaffOnLeaveSb(supabase, m.staff_id, today))
+      if (!onLeave) {
+        const { data: staff } = await supabase
+          .from('agent_staff')
+          .select('telegramChatId, ntfyTopic, name')
+          .eq('id', m.staff_id)
+          .maybeSingle()
 
-      if (staff?.ntfyTopic) {
-        await sendNtfyToTopic(
-          staff.ntfyTopic,
-          'নতুন কাজ',
-          `${staff.name}, একটি কাজ অপেক্ষা করছে — দেখুন।`,
-          'task',
-        ).catch(() => {})
-      }
-      if (staff?.telegramChatId) {
-        await sendMarkdownSafe(
-          bot.telegram,
-          staff.telegramChatId,
-          `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
-        ).catch(() => {})
+        if (staff?.ntfyTopic) {
+          await sendNtfyToTopic(
+            staff.ntfyTopic,
+            'নতুন কাজ',
+            `${staff.name}, একটি কাজ অপেক্ষা করছে — দেখুন।`,
+            'task',
+          ).catch(() => {})
+        }
+        if (staff?.telegramChatId) {
+          await sendMarkdownSafe(
+            bot.telegram,
+            staff.telegramChatId,
+            `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
+          ).catch(() => {})
+        }
       }
     }
 

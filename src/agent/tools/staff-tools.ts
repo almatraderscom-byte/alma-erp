@@ -1304,6 +1304,96 @@ const approve_pending_staff_message: AgentTool = {
   },
 }
 
+// ── set_staff_leave ───────────────────────────────────────────────────────────
+
+const set_staff_leave: AgentTool = {
+  name: 'set_staff_leave',
+  description:
+    'Record approved leave/sick days for a staff member so the system does not mark them absent, fine, ' +
+    'or assign tasks on those days. Use when the owner says "Mustahid kal chhuti", "Eyafi 3 din sick", etc.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      staffName: { type: 'string' },
+      startDate: { type: 'string', description: 'YYYY-MM-DD' },
+      endDate: { type: 'string', description: 'YYYY-MM-DD (same as start for one day)' },
+      type: { type: 'string', enum: ['leave', 'sick', 'half_day'] },
+      reason: { type: 'string' },
+    },
+    required: ['staffName', 'startDate', 'endDate'],
+  },
+  handler: async (input) => {
+    try {
+      const staff = await findStaffByName(input.staffName as string)
+      if (!staff) {
+        return { success: false, error: `"${input.staffName}" পাওয়া যায়নি।` }
+      }
+      const startDate = input.startDate as string
+      const endDate = input.endDate as string
+      await db.staffLeave.create({
+        data: {
+          staffId: staff.id,
+          staffName: staff.name,
+          businessId: 'ALMA_LIFESTYLE',
+          startDate,
+          endDate,
+          type: (input.type as string) ?? 'leave',
+          reason: (input.reason as string) ?? null,
+          status: 'approved',
+          approvedBy: 'owner',
+        },
+      })
+      return {
+        success: true,
+        data: {
+          status: 'saved',
+          message: `${staff.name} এর ছুটি রেকর্ড হয়েছে (${startDate} – ${endDate})। ঐ দিনগুলোতে absent/fine/task হবে না।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── list_staff_leave ──────────────────────────────────────────────────────────
+
+const list_staff_leave: AgentTool = {
+  name: 'list_staff_leave',
+  description: 'List upcoming/active staff leave. Use when owner asks "ke chhuti te ache", or before planning tasks.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const today = dhakaToday()
+      const rows = await db.staffLeave.findMany({
+        where: { status: 'approved', endDate: { gte: today } },
+        orderBy: { startDate: 'asc' },
+      })
+      return {
+        success: true,
+        data: {
+          count: rows.length,
+          leave: rows.map((r: {
+            staffName: string | null
+            startDate: string
+            endDate: string
+            type: string
+            reason: string | null
+          }) => ({
+            name: r.staffName,
+            startDate: r.startDate,
+            endDate: r.endDate,
+            type: r.type,
+            reason: r.reason,
+          })),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -1314,6 +1404,8 @@ export const STAFF_TOOLS: AgentTool[] = [
   approve_pending_staff_message,
   get_dispatch_status,
   get_lunch_status,
+  set_staff_leave,
+  list_staff_leave,
   get_current_proposal,
   correct_and_redispatch_staff_tasks,
   approve_and_dispatch_tasks,

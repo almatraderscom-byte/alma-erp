@@ -1027,6 +1027,12 @@ export function createTelegramBot() {
         return
       }
 
+      const { isLeaveRequestText, handleLeaveRequest } = await import('../staff/leave-request.mjs')
+      if (isLeaveRequestText(text)) {
+        await handleLeaveRequest(ctx, supabase, staff)
+        return
+      }
+
       const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
       const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { text })
       if (proofHandled) return
@@ -1279,6 +1285,29 @@ export function createTelegramBot() {
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
       await handleReminderCallback(ctx, data)
+
+    } else if (data === 'leave_request') {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const { handleLeaveRequest } = await import('../staff/leave-request.mjs')
+      await handleLeaveRequest(ctx, supabase, staff)
+      await ctx.answerCbQuery()
+
+    } else if (data.startsWith('leave_approve:')) {
+      const leaveId = data.slice('leave_approve:'.length)
+      const supabase = createSupabase()
+      const { handleLeaveApprove } = await import('../staff/leave-request.mjs')
+      await handleLeaveApprove(ctx, supabase, leaveId, isOwner(ctx.chat?.id))
+
+    } else if (data.startsWith('leave_reject:')) {
+      const leaveId = data.slice('leave_reject:'.length)
+      const supabase = createSupabase()
+      const { handleLeaveReject } = await import('../staff/leave-request.mjs')
+      await handleLeaveReject(ctx, supabase, leaveId, isOwner(ctx.chat?.id))
 
     } else if (data === 'lunch_start' || data === 'lunch_end') {
       const supabase = createSupabase()
