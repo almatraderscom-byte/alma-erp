@@ -92,7 +92,7 @@ async function sendOneSignal(
     ios_sound: priority === 'LOW' ? undefined : 'default',
     android_sound: priority === 'LOW' ? undefined : 'default',
     // Android 8+ requires a channel. Dashboard UUID → android_channel_id; app channel id → existing_android_channel_id.
-    ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || {}),
+    ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || { existing_android_channel_id: 'alma_alerts' }),
     android_visibility: 1, // PUBLIC — show on lock screen
     android_led_color: 'FFC9A84C', // gold LED
     chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,

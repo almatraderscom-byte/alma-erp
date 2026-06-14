@@ -27,6 +27,8 @@ type DashboardData = {
     dailyUsd: number
   }>
   budgets: { dailyUsd: number | null; monthlyUsd: number | null }
+  dailyBudgetPct?: number | null
+  monthlyBudgetPct?: number | null
 }
 
 type BalanceProviderRow = {
@@ -333,7 +335,27 @@ export default function AgentCostsDashboard() {
             {savingBudget ? 'সংরক্ষণ…' : 'সংরক্ষণ'}
           </button>
         </div>
-        <p className="mt-2 text-[10px] text-zinc-600">৮০% → Tier 1 | ১০০% → Tier 2 critical</p>
+        <p className="mt-2 text-[10px] text-zinc-600">৮০% → Tier 1 সতর্কতা | ১০০% → Tier 2 critical</p>
+        {(data.dailyBudgetPct != null || data.monthlyBudgetPct != null) && (
+          <div className="mt-3 space-y-1.5 text-[11px]">
+            {data.dailyBudgetPct != null && data.budgets.dailyUsd != null && (
+              <div className="flex items-center justify-between text-muted-hi">
+                <span>আজকের বাজেট ব্যবহার</span>
+                <span className={data.dailyBudgetPct >= 100 ? 'text-red-300' : data.dailyBudgetPct >= 80 ? 'text-amber-200' : 'text-cream'}>
+                  {data.dailyBudgetPct}% ({fmtUsd(data.todayUsd)} / {fmtUsd(data.budgets.dailyUsd)})
+                </span>
+              </div>
+            )}
+            {data.monthlyBudgetPct != null && data.budgets.monthlyUsd != null && (
+              <div className="flex items-center justify-between text-muted-hi">
+                <span>মাসিক বাজেট ব্যবহার</span>
+                <span className={data.monthlyBudgetPct >= 100 ? 'text-red-300' : data.monthlyBudgetPct >= 80 ? 'text-amber-200' : 'text-cream'}>
+                  {data.monthlyBudgetPct}% ({fmtUsd(data.monthUsd)} / {fmtUsd(data.budgets.monthlyUsd)})
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Charts */}

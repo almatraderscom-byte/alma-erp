@@ -1,13 +1,11 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { getStaffMonitorData } from '@/agent/lib/staff-monitor-data'
+import { getStaffMonitorData, getStaffMonitorForDate } from '@/agent/lib/staff-monitor-data'
 import { isSystemOwner } from '@/lib/roles'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-/** Staff monitor payload: agentDuties (scheduled + completion times) and salahDuties (per-waqt). */
 
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -17,8 +15,10 @@ export async function GET(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
+  const date = req.nextUrl.searchParams.get('date')?.trim()
+
   try {
-    const data = await getStaffMonitorData()
+    const data = date ? await getStaffMonitorForDate(date) : await getStaffMonitorData()
     return Response.json(data)
   } catch (err) {
     console.error('[agent/staff-monitor]', err)

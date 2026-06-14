@@ -5,7 +5,8 @@
 import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { getBudgetSettings, sumCostUsdBetween } from '@/agent/lib/cost-events'
+import { getBudgetSettings } from '@/agent/lib/cost-events'
+import { sumBillableCostUsdBetween } from '@/agent/lib/cost-budget'
 
 export const runtime = 'nodejs'
 
@@ -50,10 +51,10 @@ export async function GET(req: NextRequest) {
   }
 
   if (period === 'today' || period === 'both') {
-    result.todayUsd = await sumCostUsdBetween(dayStart, dayEnd)
+    result.todayUsd = await sumBillableCostUsdBetween(dayStart, dayEnd)
   }
   if (period === 'month' || period === 'both') {
-    result.monthUsd = await sumCostUsdBetween(monthStart, monthEnd)
+    result.monthUsd = await sumBillableCostUsdBetween(monthStart, monthEnd)
   }
 
   return Response.json(result)

@@ -67,15 +67,17 @@ export type StaffSummary = {
 export type StaffMonitorData = {
   today: string
   feedDays: number
+  isHistorical?: boolean
+  historyDates?: string[]
   agentDuties: AgentDutyRow[]
-  dutyHistory: DutyHistoryDay[]
+  dutyHistory?: DutyHistoryDay[]
   salahDuties: SalahDutyRow[]
   continuousServices: ContinuousServiceHealth[]
   schedulerHealth: SchedulerHealth
   warnings: MonitorWarning[]
   unackedMessages: StaffMonitorRow[]
   feed: StaffMonitorRow[]
-  historyFeed: StaffMonitorRow[]
+  historyFeed?: StaffMonitorRow[]
   failures: StaffMonitorRow[]
   staffSummaries: StaffSummary[]
   typeCounts: Record<string, number>
@@ -324,10 +326,10 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
   const historyDays = Math.min(Math.max(opts.historyDays ?? 7, 1), 14)
   const today = todayYmdDhaka()
   const todayStart = dhakaDayBounds(today).start
-  const historyStart = dhakaDayBounds(daysAgoYmd(historyDays - 1)).start
   const tenMinAgo = new Date(Date.now() - 10 * 60_000)
+  const historyDates = Array.from({ length: historyDays - 1 }, (_, i) => daysAgoYmd(i + 1))
 
-  const [todayTasks, todayOutbox, historyOutbox, unackedRows, dispatchTaskIds, agentDuties, salahDuties, hbPack, dutyHistory, schedulerHealth] = await Promise.all([
+  const [todayTasks, todayOutbox, unackedRows, dispatchTaskIds, agentDuties, salahDuties, hbPack, schedulerHealth] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -340,11 +342,6 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
       where: { createdAt: { gte: todayStart } },
       orderBy: { createdAt: 'desc' },
       take: 200,
-    }),
-    prisma.agentOutbox.findMany({
-      where: { createdAt: { gte: historyStart, lt: todayStart } },
-      orderBy: { createdAt: 'desc' },
-      take: 400,
     }),
     prisma.agentOutbox.findMany({
       where: {
@@ -360,7 +357,6 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     getAgentDutiesForToday(today),
     getSalahDutiesForToday(today),
     getContinuousServicesHealth(),
-    getDutyHistory(historyDays),
     getSchedulerHealth(),
   ])
 
@@ -371,7 +367,6 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     : todayTasks
 
   const feed = todayOutbox.map(mapOutbox)
-  const historyFeed = historyOutbox.map(mapOutbox)
   const unackedMessages = unackedRows.map(mapOutbox)
   const failures = feed.filter((f) => f.status === 'failed')
   const skippedOffhours = feed.filter((f) => f.status === 'skipped_offhours')
@@ -515,19 +510,128 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
   return {
     today,
     feedDays: historyDays,
+    isHistorical: false,
+    historyDates,
     agentDuties,
-    dutyHistory,
     salahDuties,
     continuousServices,
     schedulerHealth,
     warnings,
     unackedMessages,
     feed,
-    historyFeed,
     failures,
     staffSummaries,
     typeCounts,
     mismatches,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+export async function getStaffMonitorForDate(date: string): Promise<StaffMonitorData> {
+  const bounds = dhakaDayBounds(date)
+  const [dayTasks, dayOutbox, dispatchTaskIds, dutyRows] = await Promise.all([
+    db.agentStaffTask.findMany({
+      where: {
+        proposedFor: new Date(date),
+        status: { notIn: ['cancelled', 'proposed', 'approved'] },
+        type: { not: 'learning' },
+      },
+      include: { staff: { select: { id: true, name: true } } },
+    }),
+    prisma.agentOutbox.findMany({
+      where: { createdAt: { gte: bounds.start, lt: bounds.end } },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+    }),
+    getActiveDispatchTaskIdsForDate(date),
+    db.agentDutyLog.findMany({ where: { dutyDate: date }, orderBy: { duty: 'asc' } }),
+  ])
+
+  const scopedTasks = dispatchTaskIds?.length
+    ? (dayTasks as Array<{ id: string }>).filter((t) => dispatchTaskIds.includes(t.id))
+    : dayTasks
+
+  const feed = dayOutbox.map(mapOutbox)
+  const failures = feed.filter((f) => f.status === 'failed')
+  const typeCounts: Record<string, number> = {}
+  for (const row of feed) typeCounts[row.type] = (typeCounts[row.type] ?? 0) + 1
+
+  const staffMap = new Map<string, StaffSummary>()
+  for (const t of scopedTasks as Array<{ staffId: string; status: string; staff: { name: string } }>) {
+    const sid = t.staffId
+    const name = t.staff?.name ?? 'স্টাফ'
+    staffMap.set(sid, staffMap.get(sid) ?? {
+      staffId: sid, staffName: name, dispatched: 0, delivered: 0, failed: 0,
+      tasksTotal: 0, tasksDone: 0, completionPct: 0, started: false, lastActivityAt: null,
+    })
+    const s = staffMap.get(sid)!
+    s.tasksTotal++
+    if (DONE_STATUSES.has(t.status)) s.tasksDone++
+    if (STARTED_STATUSES.has(t.status)) s.started = true
+  }
+  for (const row of dayOutbox) {
+    if (!row.staffId) continue
+    const sid = row.staffId
+    if (!staffMap.has(sid)) {
+      staffMap.set(sid, {
+        staffId: sid, staffName: row.staffName ?? 'স্টাফ', dispatched: 0, delivered: 0, failed: 0,
+        tasksTotal: 0, tasksDone: 0, completionPct: 0, started: false, lastActivityAt: null,
+      })
+    }
+    const s = staffMap.get(sid)!
+    s.dispatched++
+    if (row.status === 'delivered') s.delivered++
+    if (row.status === 'failed') s.failed++
+    const activityAt = (row.sentAt ?? row.createdAt).toISOString()
+    if (!s.lastActivityAt || activityAt > s.lastActivityAt) s.lastActivityAt = activityAt
+  }
+  const staffSummaries = [...staffMap.values()].map((s) => ({
+    ...s,
+    completionPct: s.tasksTotal ? Math.round((s.tasksDone / s.tasksTotal) * 100) : 0,
+  }))
+
+  const agentDuties: AgentDutyRow[] = (dutyRows as Array<{
+    id: string; duty: string; label: string; dutyDate: string; status: string
+    detail: string | null; ranAt: Date | null; createdAt: Date
+  }>).map((row) => {
+    const def = dutiesForToday().find((d) => d.duty === row.duty)
+    return {
+      id: row.id,
+      duty: row.duty,
+      label: row.label,
+      dutyDate: row.dutyDate,
+      status: row.status as AgentDutyRow['status'],
+      detail: row.detail,
+      ranAt: row.ranAt?.toISOString() ?? null,
+      time: def?.time ?? null,
+      createdAt: row.createdAt.toISOString(),
+    }
+  })
+
+  const warnings: MonitorWarning[] = []
+  if (failures.length) {
+    warnings.push({
+      severity: 'warn',
+      kind: 'historical_failures',
+      message: `${date}: ${failures.length}টি মেসেজ পৌঁছায়নি (আর্কাইভ)`,
+    })
+  }
+
+  return {
+    today: date,
+    feedDays: 1,
+    isHistorical: true,
+    agentDuties,
+    salahDuties: [],
+    continuousServices: [],
+    schedulerHealth: { ackEscalationLastRun: null, schedulersHeartbeatAt: null, queueHeartbeatAt: null },
+    warnings,
+    unackedMessages: [],
+    feed,
+    failures,
+    staffSummaries,
+    typeCounts,
+    mismatches: [],
     generatedAt: new Date().toISOString(),
   }
 }

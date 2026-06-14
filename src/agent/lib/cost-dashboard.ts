@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { getBudgetSettings } from '@/agent/lib/cost-events'
 import { subscriptionDailyUsd } from '@/agent/lib/pricing'
 import { assertAgentCostSchemaReady, queryCostSumBetween } from '@/agent/lib/cost-db'
+import { queryBillableCostSumBetween, formatBudgetPct } from '@/agent/lib/cost-budget'
 import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
 
 const DHAKA_TZ = 'Asia/Dhaka'
@@ -17,14 +18,14 @@ export async function getCostDashboardData() {
   const todayBounds = dhakaDayBounds(todayStr)
   const monthB = dhakaMonthBounds(todayStr)
 
-  const [todayUsdAll, monthUsd, budgets, todayByProvider] = await Promise.all([
+  const [todayUsdAll, budgets, todayByProvider] = await Promise.all([
     queryCostSumBetween(todayBounds.start, todayBounds.end),
-    queryCostSumBetween(monthB.start, monthB.end),
     getBudgetSettings(),
     import('@/agent/lib/api-balances').then((m) => m.querySpendByProviderBetween(todayBounds.start, todayBounds.end)),
   ])
   const todayOxylabsCredits = todayByProvider.oxylabs ?? 0
   const todayUsd = Math.round((todayUsdAll - todayOxylabsCredits) * 1_000_000) / 1_000_000
+  const monthBillable = await queryBillableCostSumBetween(monthB.start, monthB.end)
 
   const dailyRows = await prisma.$queryRaw<Array<{ day: string; provider: string; total: string }>>(
     Prisma.sql`SELECT to_char((occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
@@ -152,14 +153,17 @@ export async function getCostDashboardData() {
 
   const dayOfMonth = parseInt(todayStr.split('-')[2], 10)
   const daysInMonth = new Date(parseInt(todayStr.slice(0, 4), 10), parseInt(todayStr.slice(5, 7), 10), 0).getDate()
-  const apiForecast = dayOfMonth > 0 ? (monthUsd / dayOfMonth) * daysInMonth : monthUsd
+  const apiForecast = dayOfMonth > 0 ? (monthBillable / dayOfMonth) * daysInMonth : monthBillable
   const forecastUsd = apiForecast + subMonthlyUsd
+
+  const dailyBudgetPct = budgets.dailyUsd ? formatBudgetPct(todayUsd, budgets.dailyUsd) : null
+  const monthlyBudgetPct = budgets.monthlyUsd ? formatBudgetPct(monthBillable, budgets.monthlyUsd) : null
 
   return {
     todayDhakaDate: todayStr,
     todayUsd,
     todayOxylabsCredits,
-    monthUsd,
+    monthUsd: monthBillable,
     forecastUsd: Math.round(forecastUsd * 1_000_000) / 1_000_000,
     subscriptionAmortMonthUsd: Math.round(subMonthlyUsd * 1_000_000) / 1_000_000,
     dailyLast30,
@@ -188,6 +192,8 @@ export async function getCostDashboardData() {
       dailyUsd: subscriptionDailyUsd(Number(s.amount), s.billingCycle as 'monthly' | 'yearly'),
     })),
     budgets,
+    dailyBudgetPct,
+    monthlyBudgetPct,
     csByKind: csCostRows.map((r) => ({
       kind: r.kind,
       totalUsd: parseFloat(r.total) || 0,

@@ -13,11 +13,10 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
+import { compactConversationIfNeeded, COMPACT_THRESHOLD_USD } from '@/agent/lib/conversation-compact'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
-
-const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '1')
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
@@ -219,7 +218,8 @@ export async function POST(req: NextRequest) {
       isBatch?: boolean
     }> = []
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
-    let compactSuggested = false
+    let newConversationId: string | null = null
+    let compactedFromCost: number | null = null
     try {
       for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions, personalMode })) {
         if (event.type === 'text_delta') finalText += event.delta
@@ -239,22 +239,41 @@ export async function POST(req: NextRequest) {
           const turnCost = (event as { costUsd?: number }).costUsd ?? 0
           if (turnCost > 0 && conversationId) {
             try {
-              const updated = await prisma.agentConversation.update({
+              await prisma.agentConversation.update({
                 where: { id: conversationId },
                 data: { totalCostUsd: { increment: turnCost } },
-                select: { totalCostUsd: true },
               })
-              if (updated.totalCostUsd >= COMPACT_THRESHOLD_USD) compactSuggested = true
             } catch { /* non-critical */ }
           }
           break
+        }
+      }
+      if (!errorMsg && conversationId) {
+        try {
+          const compacted = await compactConversationIfNeeded(conversationId, COMPACT_THRESHOLD_USD)
+          if (compacted) {
+            newConversationId = compacted.newConversationId
+            compactedFromCost = compacted.costUsd
+            conversationId = compacted.newConversationId
+          }
+        } catch (err) {
+          console.warn('[assistant/chat] auto-compact failed:', err)
         }
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
-    return Response.json({ conversationId, text: finalText, pendingCards, askCards, personalMode, compactSuggested })
+    return Response.json({
+      conversationId,
+      text: finalText,
+      pendingCards,
+      askCards,
+      personalMode,
+      newConversationId,
+      compactedFromCost,
+      compactSuggested: Boolean(newConversationId),
+    })
   }
 
   const encoder = new TextEncoder()
@@ -276,19 +295,32 @@ export async function POST(req: NextRequest) {
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {
-                const updated = await prisma.agentConversation.update({
+                await prisma.agentConversation.update({
                   where: { id: conversationId },
                   data: { totalCostUsd: { increment: turnCost } },
-                  select: { totalCostUsd: true },
                 })
-                if (updated.totalCostUsd >= COMPACT_THRESHOLD_USD) {
-                  enqueue({ type: 'compact_suggested', conversationId, convoCost: updated.totalCostUsd })
-                }
               } catch { /* non-critical */ }
             }
             break
           }
           if (event.type === 'error') break
+        }
+
+        if (conversationId) {
+          try {
+            const compacted = await compactConversationIfNeeded(conversationId, COMPACT_THRESHOLD_USD)
+            if (compacted) {
+              conversationId = compacted.newConversationId
+              enqueue({
+                type: 'conversation_compacted',
+                previousConversationId: compacted.previousConversationId,
+                conversationId: compacted.newConversationId,
+                convoCost: compacted.costUsd,
+              })
+            }
+          } catch (err) {
+            console.warn('[assistant/chat] auto-compact failed:', err)
+          }
         }
       } catch (err) {
         if (!req.signal.aborted) {

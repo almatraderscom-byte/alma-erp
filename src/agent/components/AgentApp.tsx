@@ -267,6 +267,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
     let finalConvId = convIdForUpload ?? activeConvId
     let compactAfterStream: string | null = null
+    let serverCompacted = false
 
     try {
       const body: Record<string, unknown> = { message: text }
@@ -381,6 +382,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'compact_suggested') {
           compactAfterStream = evt.conversationId as string
+        } else if (evt.type === 'conversation_compacted') {
+          finalConvId = evt.conversationId as string
+          setActiveConvId(finalConvId)
+          compactAfterStream = null
+          serverCompacted = true
+          setCompacting(true)
         } else if (evt.type === 'error') {
           gotStreamDone = true
           const errText = evt.message as string
@@ -446,6 +453,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       if (compactAfterStream) {
         void runCompaction(compactAfterStream)
+      } else if (serverCompacted) {
+        await new Promise((r) => setTimeout(r, 1200))
+        setMessages([])
+        setArtifacts([])
+        setCompacting(false)
       }
     }
   }, [streaming, activeConvId])

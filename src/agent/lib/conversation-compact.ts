@@ -1,0 +1,170 @@
+/**
+ * Auto-compact conversations when cumulative cost exceeds threshold.
+ * Uses agent_cost_events as source of truth (falls back to totalCostUsd).
+ */
+import Anthropic from '@anthropic-ai/sdk'
+import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
+import { AGENT_MODEL } from '@/agent/config'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
+
+export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '1')
+
+export async function getConversationCostUsd(conversationId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
+    Prisma.sql`SELECT COALESCE(SUM(cost_usd), 0)::text AS total
+      FROM agent_cost_events
+      WHERE conversation_id = ${conversationId}`,
+  )
+  const fromEvents = parseFloat(rows[0]?.total ?? '0') || 0
+  const conv = await db.agentConversation.findUnique({
+    where: { id: conversationId },
+    select: { totalCostUsd: true },
+  })
+  const tracked = Number(conv?.totalCostUsd ?? 0) || 0
+  return Math.max(fromEvents, tracked)
+}
+
+function extractText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((b): b is { type: string; text?: string } => typeof b === 'object' && b !== null && b.type === 'text')
+    .map((b) => b.text ?? '')
+    .join('\n')
+    .trim()
+}
+
+async function summarizeForCompaction(messages: Array<{ role: string; content: unknown }>): Promise<string> {
+  const transcript = messages
+    .map((m) => `${m.role === 'user' ? 'Owner' : 'Agent'}: ${extractText(m.content)}`)
+    .filter((line) => line.length > 8)
+    .join('\n')
+    .slice(0, 16000)
+
+  if (!transcript.trim()) return ''
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+  const res = await client.messages.create({
+    model: AGENT_MODEL,
+    max_tokens: 400,
+    system:
+      'You are summarizing a conversation for continuity. Extract:\n' +
+      '- The user\'s main goal/topic\n' +
+      '- Key decisions made\n' +
+      '- Important facts/numbers mentioned\n' +
+      '- Any open action items or pending questions\n' +
+      'Output a tight Bangla summary (5-8 bullets). This will be used as context for a fresh conversation so the agent can keep helping seamlessly.',
+    messages: [{
+      role: 'user',
+      content: 'Summarize this owner↔agent conversation for seamless continuation:\n\n' + transcript,
+    }],
+  })
+
+  const block = res.content.find((b) => b.type === 'text')
+  return block && block.type === 'text' ? block.text.trim() : ''
+}
+
+export type CompactResult = {
+  newConversationId: string
+  summary: string
+  previousConversationId: string
+  costUsd: number
+}
+
+export async function compactConversationIfNeeded(
+  conversationId: string,
+  thresholdUsd = COMPACT_THRESHOLD_USD,
+): Promise<CompactResult | null> {
+  const conv = await db.agentConversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, projectId: true, source: true, model: true, title: true, compactedToId: true, archived: true },
+  })
+  if (!conv || conv.compactedToId || conv.archived) return null
+
+  const costUsd = await getConversationCostUsd(conversationId)
+  if (costUsd < thresholdUsd) return null
+
+  const messages = await db.agentMessage.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: 'asc' },
+    select: { role: true, content: true },
+    take: 100,
+  })
+
+  const summary = await summarizeForCompaction(messages)
+  if (!summary) return null
+
+  const newConv = await db.agentConversation.create({
+    data: {
+      title: conv.title ? `${conv.title} (cont.)` : null,
+      model: conv.model,
+      source: conv.source,
+      projectId: conv.projectId,
+      contextSummary: summary,
+    },
+    select: { id: true },
+  })
+
+  await db.agentConversation.update({
+    where: { id: conversationId },
+    data: { compactedToId: newConv.id, archived: true },
+  })
+
+  return {
+    newConversationId: newConv.id,
+    summary,
+    previousConversationId: conversationId,
+    costUsd,
+  }
+}
+
+export async function compactConversationById(conversationId: string): Promise<CompactResult> {
+  const conv = await db.agentConversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, projectId: true, source: true, model: true, title: true, compactedToId: true },
+  })
+  if (!conv) throw new Error('not_found')
+  if (conv.compactedToId) {
+    return {
+      newConversationId: conv.compactedToId,
+      summary: '',
+      previousConversationId: conversationId,
+      costUsd: await getConversationCostUsd(conversationId),
+    }
+  }
+
+  const messages = await db.agentMessage.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: 'asc' },
+    select: { role: true, content: true },
+    take: 100,
+  })
+
+  const summary = await summarizeForCompaction(messages)
+  if (!summary) throw new Error('summary_empty')
+
+  const newConv = await db.agentConversation.create({
+    data: {
+      title: conv.title ? `${conv.title} (cont.)` : null,
+      model: conv.model,
+      source: conv.source,
+      projectId: conv.projectId,
+      contextSummary: summary,
+    },
+    select: { id: true },
+  })
+
+  await db.agentConversation.update({
+    where: { id: conversationId },
+    data: { compactedToId: newConv.id, archived: true },
+  })
+
+  return {
+    newConversationId: newConv.id,
+    summary,
+    previousConversationId: conversationId,
+    costUsd: await getConversationCostUsd(conversationId),
+  }
+}

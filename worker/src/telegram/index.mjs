@@ -318,10 +318,14 @@ async function handleOwnerText(ctx, text) {
       await sendAskCardTelegram(ctx, ask)
     }
 
-    // Auto-compact when cumulative cost exceeds threshold
-    if (result.compactSuggested && result.conversationId) {
+    // Auto-compact when cumulative cost exceeds threshold (server already compacted)
+    if (result.newConversationId) {
+      if (personalMode) ownerState.personalConversationId = result.newConversationId
+      else ownerState.conversationId = result.newConversationId
+      await ctx.reply('💬 কথোপকথন কম্প্যাক্ট — নতুন চ্যাট শুরু। বলুন স্যার।')
+    } else if (result.compactSuggested && result.conversationId) {
+      // Legacy fallback if server only suggested compaction
       try {
-        await ctx.reply('💬 কথোপকথন কম্প্যাক্ট করছি — যাতে আরও সাহায্য করতে পারি…')
         const compactRes = await fetch(`${APP_URL}/api/assistant/internal/compact-conversation`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },

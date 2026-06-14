@@ -34,6 +34,15 @@ async function wasAlerted(key) {
   return Boolean(data?.[key])
 }
 
+function pctOf(spent, budget) {
+  if (!budget || budget <= 0) return 0
+  return Math.round((spent / budget) * 1000) / 10
+}
+
+function fmtUsd(n) {
+  return `$${Number(n).toFixed(2)}`
+}
+
 export async function runBudgetCheck() {
   try {
     const spend = await fetchSpend('both')
@@ -42,21 +51,25 @@ export async function runBudgetCheck() {
 
     if (spend.dailyBudgetUsd && spend.todayUsd != null) {
       const pct = spend.todayUsd / spend.dailyBudgetUsd
+      const pctDisplay = pctOf(spend.todayUsd, spend.dailyBudgetUsd)
       const key80 = `cost.alert.daily80.${todayStr}`
       const key100 = `cost.alert.daily100.${todayStr}`
       if (pct >= 1 && !(await wasAlerted(key100))) {
         await notify({
           tier: 2,
           title: 'Daily AI budget exceeded',
-          message: `আজকের AI খরচ $${spend.todayUsd.toFixed(2)} — দৈনিক বাজেট $${spend.dailyBudgetUsd} অতিক্রম করেছে।`,
+          message:
+            `আজকের AI খরচ ${fmtUsd(spend.todayUsd)} — দৈনিক বাজেট ${fmtUsd(spend.dailyBudgetUsd)} অতিক্রম (${pctDisplay}%)।`,
           category: 'urgent',
         })
         await markAlert(key100)
-      } else if (pct >= 0.8 && !(await wasAlerted(key80))) {
+        if (!(await wasAlerted(key80))) await markAlert(key80)
+      } else if (pct >= 0.8 && pct < 1 && !(await wasAlerted(key80))) {
         await notify({
           tier: 1,
-          title: 'Daily AI budget 80%',
-          message: `আজকের AI খরচ $${spend.todayUsd.toFixed(2)} — দৈনিক বাজেটের ৮০% (${spend.dailyBudgetUsd} USD)।`,
+          title: 'Daily AI budget warning',
+          message:
+            `আজকের AI খরচ ${fmtUsd(spend.todayUsd)} — দৈনিক বাজেট ${fmtUsd(spend.dailyBudgetUsd)}-এর ${pctDisplay}% (সতর্কতা সীমা ৮০%)।`,
           category: 'urgent',
         })
         await markAlert(key80)
@@ -65,21 +78,25 @@ export async function runBudgetCheck() {
 
     if (spend.monthlyBudgetUsd && spend.monthUsd != null) {
       const pct = spend.monthUsd / spend.monthlyBudgetUsd
+      const pctDisplay = pctOf(spend.monthUsd, spend.monthlyBudgetUsd)
       const key80 = `cost.alert.monthly80.${monthStr}`
       const key100 = `cost.alert.monthly100.${monthStr}`
       if (pct >= 1 && !(await wasAlerted(key100))) {
         await notify({
           tier: 2,
           title: 'Monthly AI budget exceeded',
-          message: `মাসের AI খরচ $${spend.monthUsd.toFixed(2)} — মাসিক বাজেট $${spend.monthlyBudgetUsd} অতিক্রম করেছে।`,
+          message:
+            `মাসের AI খরচ ${fmtUsd(spend.monthUsd)} — মাসিক বাজেট ${fmtUsd(spend.monthlyBudgetUsd)} অতিক্রম (${pctDisplay}%)।`,
           category: 'urgent',
         })
         await markAlert(key100)
-      } else if (pct >= 0.8 && !(await wasAlerted(key80))) {
+        if (!(await wasAlerted(key80))) await markAlert(key80)
+      } else if (pct >= 0.8 && pct < 1 && !(await wasAlerted(key80))) {
         await notify({
           tier: 1,
-          title: 'Monthly AI budget 80%',
-          message: `মাসের AI খরচ $${spend.monthUsd.toFixed(2)} — মাসিক বাজেটের ৮০% (${spend.monthlyBudgetUsd} USD)।`,
+          title: 'Monthly AI budget warning',
+          message:
+            `মাসের AI খরচ ${fmtUsd(spend.monthUsd)} — মাসিক বাজেট ${fmtUsd(spend.monthlyBudgetUsd)}-এর ${pctDisplay}% (সতর্কতা সীমা ৮০%)।`,
           category: 'urgent',
         })
         await markAlert(key80)
