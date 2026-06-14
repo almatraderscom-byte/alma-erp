@@ -266,10 +266,9 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
 
   if (type === 'dispatch_staff_tasks') {
     const { date, taskIds } = payload ?? {}
-    await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+    const dispatchResult = await dispatchTasksToStaff({ supabase, bot, date, taskIds })
 
-    // Mark pending action as executed
-    await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds?.length ?? 0 })
+    await callJobResult(job.data.pendingActionId, 'success', dispatchResult ?? { skipped: true })
 
   } else if (type === 'add_staff_task_now') {
     const { staffId, date, taskId } = payload ?? {}
@@ -286,12 +285,13 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
       taskIds = tasks?.map(t => t.id) ?? []
     }
 
+    let dispatchResult = null
     if (taskIds.length) {
-      await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+      dispatchResult = await dispatchTasksToStaff({ supabase, bot, date, taskIds })
     } else {
       console.warn('[worker] add_staff_task_now: no approved task found to dispatch', payload)
     }
-    await callJobResult(job.data.pendingActionId, 'success', { dispatched: taskIds.length })
+    await callJobResult(job.data.pendingActionId, 'success', dispatchResult ?? { dispatched: 0, skipped: true })
 
   } else if (type === 'staff_announcement') {
     const result = await sendStaffAnnouncement({ bot, payload })

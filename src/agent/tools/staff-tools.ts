@@ -302,7 +302,9 @@ const approve_and_dispatch_tasks: AgentTool = {
           pendingActionId: action.id as string,
           summary:  action.summary,
           taskCount: proposed.length,
-          message:  'Dispatch pending owner approval.',
+          status: 'queued_for_dispatch',
+          message:
+            'Tasks queued. Delivery to each staff is confirmed by the worker — do NOT tell the owner "sent" until the worker confirmation arrives. If asked, say tasks are queued and confirmation is pending.',
         },
       }
     } catch (err) {

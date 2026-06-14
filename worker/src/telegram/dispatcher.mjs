@@ -5,7 +5,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
-import { dispatchTasksToStaff } from '../staff/dispatch.mjs'
+import { dispatchTasksToStaff, formatDispatchOwnerReport } from '../staff/dispatch.mjs'
 
 let _bot = null
 let _ownerChatId = null
@@ -147,8 +147,9 @@ export async function handleBonusCallback(ctx, action, actionId) {
       .update({ status: 'approved', resolvedAt: now })
       .eq('id', actionId)
 
+    let dispatchResult = null
     if (_bot && date && taskIds?.length) {
-      await dispatchTasksToStaff({
+      dispatchResult = await dispatchTasksToStaff({
         supabase,
         bot: _bot,
         date,
@@ -162,7 +163,10 @@ export async function handleBonusCallback(ctx, action, actionId) {
       .eq('id', actionId)
 
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-    await ctx.reply(`✅ ${staffName ?? 'স্টাফ'}-কে ${taskIds?.length ?? 0}টি বোনাস কাজ পাঠানো হয়েছে।`)
+    const report = formatDispatchOwnerReport(dispatchResult)
+    await ctx.reply(
+      report ?? `✅ ${staffName ?? 'স্টাফ'}-কে ${taskIds?.length ?? 0}টি বোনাস কাজ পাঠানোর চেষ্টা করা হয়েছে।`,
+    )
     return
   }
 

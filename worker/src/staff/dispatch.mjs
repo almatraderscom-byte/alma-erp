@@ -11,6 +11,39 @@ const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 /**
+ * @param {import('../staff/dispatch.mjs').DispatchResult | null | undefined} result
+ */
+export function formatDispatchOwnerReport(result) {
+  if (!result || result.skipped) return null
+  if (result.fullSuccess) {
+    return `✅ ${result.sentTasks}টি কাজ ${result.sentToStaffCount} জন স্টাফকে পাঠানো হয়েছে — সব নিশ্চিত।`
+  }
+  const lines = ['⚠️ কাজ পাঠানো হয়েছে — তবে সব যায়নি:']
+  lines.push(`• পাঠানো: ${result.sentTasks}/${result.totalTasks}`)
+  for (const f of result.failures ?? []) {
+    lines.push(`• ❌ ${f.staffName} — যায়নি (${f.reason})`)
+  }
+  for (const u of result.unlinked ?? []) {
+    lines.push(`• 🔗 ${u.staffName} — Telegram লিঙ্ক নেই`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * @param {object} params
+ * @param {import('telegraf').Telegraf} params.bot
+ * @param {import('../staff/dispatch.mjs').DispatchResult | null | undefined} params.result
+ */
+export async function sendDispatchOwnerReport({ bot, result }) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  const report = formatDispatchOwnerReport(result)
+  if (!ownerChatId || !report) return
+  await bot.telegram.sendMessage(ownerChatId, report).catch((err) => {
+    console.warn('[dispatch] owner report failed:', err.message)
+  })
+}
+
+/**
  * Dispatches approved tasks for a given date to each staff member.
  * @param {object} params
  * @param {import('@supabase/supabase-js').SupabaseClient} params.supabase
@@ -36,7 +69,16 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   const pending = (tasks ?? []).filter((t) => t.status === 'approved')
   if (!pending.length) {
     console.warn('[dispatch] no approved tasks to dispatch for', date)
-    return
+    return {
+      date,
+      totalTasks: 0,
+      sentTasks: 0,
+      sentToStaffCount: 0,
+      failures: [],
+      unlinked: [],
+      fullSuccess: true,
+      skipped: true,
+    }
   }
 
   // Group by staff member
@@ -48,6 +90,8 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
 
   const sentIds = []
+  const failures = []
+  const unlinked = []
 
   for (const { staff, tasks: staffTasks } of Object.values(byStaff)) {
     const chatId = staff?.telegramChatId
@@ -55,7 +99,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
     if (!chatId) {
       console.warn(`[dispatch] ${staffName} has no Telegram ID — owner will get their tasks`)
-      await notifyOwnerOfUnlinkedStaff(bot, staffName, staffTasks)
+      unlinked.push({ staffName, taskTitles: staffTasks.map((t) => t.title) })
       continue
     }
 
@@ -64,18 +108,41 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       sentIds.push(...staffTasks.map((t) => t.id))
     } catch (err) {
       console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)
-      await notifyOwnerTelegramFailed(bot, staffName, chatId, staffTasks, err.message)
+      failures.push({
+        staffName,
+        chatId,
+        reason: err.message,
+        taskTitles: staffTasks.map((t) => t.title),
+      })
     }
   }
 
+  // READ-BACK VERIFICATION: confirm the rows actually flipped to 'sent'
+  let verifiedSent = 0
   if (sentIds.length) {
     await supabase.from('staff_tasks').update({ status: 'sent' }).in('id', sentIds)
+    const { data: check } = await supabase
+      .from('staff_tasks')
+      .select('id, status')
+      .in('id', sentIds)
+    verifiedSent = (check ?? []).filter((r) => r.status === 'sent').length
   }
 
-  console.log(`[dispatch] sent ${sentIds.length}/${pending.length} tasks to ${Object.keys(byStaff).length} staff`)
+  const result = {
+    date,
+    totalTasks: pending.length,
+    sentTasks: verifiedSent,
+    sentToStaffCount: Object.keys(byStaff).length - failures.length - unlinked.length,
+    failures,
+    unlinked,
+    fullSuccess: failures.length === 0 && unlinked.length === 0 && verifiedSent === pending.length,
+  }
 
-  // Mark all dispatch_staff_tasks pending/approved actions for this date as executed
+  console.log('[dispatch] result:', JSON.stringify(result))
+
   await markDispatchActionsExecuted(supabase, date)
+  await sendDispatchOwnerReport({ bot, result })
+  return result
 }
 
 /** Prevent double-dispatch cards — close all pending/approved dispatch actions for a date. */
@@ -125,32 +192,4 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase }
   await sendMarkdownSafe(bot.telegram, chatId, msg, {
     reply_markup: { inline_keyboard: rows },
   })
-}
-
-async function notifyOwnerTelegramFailed(bot, staffName, chatId, tasks, errorMsg) {
-  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-  if (!ownerChatId) return
-
-  const taskList = tasks.map((t) => `• ${t.title}`).join('\n')
-  await bot.telegram.sendMessage(
-    ownerChatId,
-    `⚠️ *${staffName}*-কে Telegram-এ মেসেজ যায়নি (chat \`${chatId}\`).\n` +
-      `কারণ: ${errorMsg}\n\n` +
-      `কাজ:\n${taskList}\n\n` +
-      `লিঙ্ক ঠিক থাকলেও বাটন ডেটা ভাঙলে মেসেজ যায় না — worker আপডেট করুন।\n` +
-      `${staffName} *ALMA Assistant* বটে /start করুক।`,
-    { parse_mode: 'Markdown' },
-  )
-}
-
-async function notifyOwnerOfUnlinkedStaff(bot, staffName, tasks) {
-  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-  if (!ownerChatId) return
-
-  const taskList = tasks.map(t => `• ${t.title}`).join('\n')
-  await bot.telegram.sendMessage(
-    ownerChatId,
-    `⚠️ *${staffName}*-এর Telegram লিঙ্ক নেই।\n\nতাদের কাজ:\n${taskList}\n\n/staff link ${staffName} <chat_id> দিয়ে লিঙ্ক করুন।`,
-    { parse_mode: 'Markdown' },
-  )
 }

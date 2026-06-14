@@ -18,6 +18,7 @@ type AgentStatus = z.infer<typeof OrderStatusSchema>
 type GasOrdersResponse = {
   orders?: Order[]
   summary?: { total?: number }
+  syncedAt?: string
 }
 
 type GasOrderResponse = {
@@ -116,7 +117,15 @@ export interface ListAgentOrdersInput {
 
 export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
   orders: AgentOrder[]
-  meta: { count: number; limit: number; from: string | null; to: string | null }
+  meta: {
+    count: number
+    limit: number
+    from: string | null
+    to: string | null
+    dataSource: 'gas_sheet'
+    fetchedAt: string
+    sheetSyncedAt: string | null
+  }
 }> {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 100)
   const params: Record<string, string> = {
@@ -162,6 +171,9 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
       limit,
       from: input.fromIso ?? null,
       to: input.toIso ?? null,
+      dataSource: 'gas_sheet',
+      fetchedAt: new Date().toISOString(),
+      sheetSyncedAt: data.syncedAt ?? null,
     },
   }
 }
