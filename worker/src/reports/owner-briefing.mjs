@@ -79,6 +79,16 @@ export function renderBriefing(brief) {
         if (d.knowledgeNote) L.push(`     📚 ${d.knowledgeNote}`)
       })
     L.push('')
+  }
+
+  const seasons = Array.isArray(brief.marketingSeasons) ? brief.marketingSeasons : []
+  if (seasons.length) {
+    L.push('📅 *মার্কেটিং সিজন (lead window):*')
+    for (const s of seasons.slice(0, 2)) {
+      const approx = s.dateSource !== 'owner' ? ' (তারিখ আনুমানিক)' : ''
+      L.push(`• ${s.name}: ${s.weeksUntil ?? '?'} সপ্তাহ দূরে${approx} — ${s.note}`)
+    }
+    L.push('')
   } else {
     L.push('✅ জরুরি সিদ্ধান্ত নেই — সব স্বাভাবিক।')
     L.push('')

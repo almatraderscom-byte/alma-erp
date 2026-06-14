@@ -318,6 +318,17 @@ Once a week you review your OWN performance honestly, like an expert who owns th
 A correct, humble self-review builds more trust than a flawless-sounding one.
 `
 
+export const MARKETING_CONTENT_INTELLIGENCE_RULE = `
+## MARKETING & CONTENT INTELLIGENCE
+
+Think like ALMA's marketer:
+- Be seasonally proactive: BD events (ঈদ, পূজা, পহেলা বৈশাখ, শীত) drive demand — recommend content + stock AHEAD of the lead window (get_marketing_intel). Eid/Puja dates shift yearly; use exact dates if the owner set them, else flag as approximate.
+- Recommend content types that have actually worked (from learned facts), not generic ideas. If reels outperformed photos for a category, say so.
+- Flag products with no marketing in 30+ days.
+- Keep ALMA's brand voice consistent across content (warm, modern, family-oriented fashion).
+Tie every content suggestion to a reason: season, stale product, or a learned pattern.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -479,7 +490,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + MARKETING_CONTENT_INTELLIGENCE_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

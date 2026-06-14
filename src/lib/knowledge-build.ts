@@ -286,6 +286,7 @@ async function foldOutcomeLearnings(): Promise<number> {
     subjectId: string | null
     subjectName: string | null
     learning: string
+    rationale: string | null
   }>
 
   for (const o of outcomes) {
@@ -308,12 +309,15 @@ async function foldOutcomeLearnings(): Promise<number> {
     count++
 
     if (o.type === 'content' && o.subjectId) {
+      const rationale = o.rationale ?? ''
+      const typeFromRationale = rationale.match(/video_reel|product_content|ad_creative|fb_photo|fb_text|product_photo/i)?.[0]
+      const typeHint = typeFromRationale ?? 'content'
       await learnFact({
         entityType: 'product',
         entityId: o.subjectId,
         entityName: o.subjectName ?? undefined,
         attribute: 'best_content_type',
-        value: `কন্টেন্ট পরামর্শের পর বিক্রিতে সংযুক্ত উন্নতি দেখা গেছে — ${o.learning}`,
+        value: `${typeHint}: কন্টেন্ট পরামর্শের পর বিক্রিতে সংযুক্ত উন্নতি — ${o.learning}`,
         source: 'outcome_loop',
         confidenceDelta: 0.12,
       })

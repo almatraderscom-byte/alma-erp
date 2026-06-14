@@ -149,6 +149,16 @@ export async function POST(
         data: { status: 'executed', result },
       })
 
+      const contentType = postedAsPhoto && verified.hasMedia ? 'fb_photo' : 'fb_text'
+      void import('@/lib/content-intelligence').then(({ trackPublishedContent }) =>
+        trackPublishedContent({
+          productRef: typeof payload.productRef === 'string' ? payload.productRef : null,
+          message,
+          contentType,
+          page: String(payload.page ?? 'lifestyle'),
+        }),
+      ).catch(() => {})
+
       // Append result to conversation if present
       if (payload.conversationId) {
         const note = verified.ok

@@ -869,6 +869,51 @@ const get_strategic_review: AgentTool = {
   },
 }
 
+const get_marketing_intel: AgentTool = {
+  name: 'get_marketing_intel',
+  description:
+    'Marketing guidance: upcoming BD seasonal events to prepare for, which products/categories need content, ' +
+    'and what content approach has worked best (learned). Use for content planning, campaign timing, ' +
+    '"ki content banabo", "samne kon season".',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      category: {
+        type: 'string',
+        description: 'Optional category filter (e.g. punjabi, saree, winter)',
+      },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const category = typeof input.category === 'string' ? input.category : undefined
+      const { buildMarketingIntel } = await import('@/lib/content-intelligence')
+      const intel = await buildMarketingIntel(category)
+      return {
+        success: true,
+        data: {
+          upcomingSeasons: intel.upcomingSeasons.map((s) => ({
+            name: s.name,
+            weeksUntil: s.weeksUntil,
+            leadWeeks: s.leadWeeks,
+            categories: s.categories,
+            note: s.note,
+            dateSource: s.dateSource,
+            exactDate: s.exactDate,
+            approximate: s.dateSource !== 'owner',
+          })),
+          staleProducts: intel.staleProducts,
+          bestApproaches: intel.bestApproaches,
+          recommendations: intel.recommendations,
+          notes: intel.notes,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
@@ -886,5 +931,6 @@ export const ERP_TOOLS: AgentTool[] = [
   generate_owner_briefing,
   recall_business_knowledge,
   get_strategic_review,
+  get_marketing_intel,
   get_pending_approvals,
 ]

@@ -17,6 +17,9 @@ import { analyzePricing } from '@/lib/pricing-insight'
 import { detectOrderIssues, type OrderIssue } from '@/lib/order-monitor'
 import { trackReorderOutcomes, trackBriefingDecisionOutcomes } from '@/lib/outcome-wiring'
 import { getKnowledgeNoteForProduct } from '@/lib/knowledge-graph'
+import { buildMarketingIntel } from '@/lib/content-intelligence'
+import type { UpcomingSeason } from '@/lib/marketing-calendar'
+import type { MarketingIntel } from '@/lib/content-intelligence'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -58,6 +61,8 @@ export type OwnerBriefingData = {
   decisions: BriefingDecision[]
   ownerDecisionMemoryCount: number
   generatedAt: string
+  marketingIntel?: MarketingIntel | null
+  marketingSeasons?: UpcomingSeason[]
 }
 
 async function gatherSalesSignals() {
@@ -446,6 +451,41 @@ export function deriveBriefingDecisions(sig: {
   return decisions
 }
 
+function appendMarketingSeasonDecisions(intel: MarketingIntel): BriefingDecision[] {
+  const decisions: BriefingDecision[] = []
+
+  for (const s of intel.upcomingSeasons.slice(0, 2)) {
+    const cats = s.categories.join(', ')
+    const dateNote =
+      s.dateSource === 'owner' && s.exactDate
+        ? `${s.exactDate} (owner-set)`
+        : 'তারিখ আনুমানিক'
+    const learned = intel.bestApproaches[0]
+    const learnedHint = learned
+      ? ` — গতবার এই ধরনের সময়ে ${learned.approach.slice(0, 60)} (সংযুক্তি)`
+      : ''
+
+    decisions.push({
+      area: 'marketing',
+      urgency: (s.weeksUntil ?? 99) <= 3 ? 'high' : 'normal',
+      text: `${s.name} ${s.weeksUntil ?? '?'} সপ্তাহ দূরে (${dateNote}) — ${s.note}`,
+      recommend: `${cats}-এ কন্টেন্ট ও স্টক শুরু করুন${learnedHint}`,
+    })
+  }
+
+  const stale = intel.staleProducts[0]
+  if (stale) {
+    decisions.push({
+      area: 'marketing',
+      urgency: 'normal',
+      text: `${stale.productRef} ${stale.daysSincePromo} দিন ধরে মার্কেট হয়নি।`,
+      recommend: 'এই সপ্তাহে কন্টেন্ট/পোস্ট করুন',
+    })
+  }
+
+  return decisions
+}
+
 /** Attach knowledge graph facts to stock/reorder decisions for grounded recommendations. */
 export async function enrichDecisionsWithKnowledge(
   decisions: BriefingDecision[],
@@ -492,7 +532,7 @@ export function filterVetoedDecisions(
 
 export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   const today = todayYmdDhaka()
-  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, staffPatterns, returnPricing, orderIssues, ownerMemories] =
+  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, staffPatterns, returnPricing, orderIssues, ownerMemories, marketingIntel] =
     await Promise.all([
       gatherSalesSignals(),
       gatherPendingOrders(),
@@ -509,6 +549,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
         limit: 8,
         metadataType: 'owner_decision',
       }).catch(() => []),
+      buildMarketingIntel().catch(() => null),
     ])
 
   const inventory = inventoryBundle.inventory
@@ -529,6 +570,9 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     orderIssues,
   }
   let decisions = deriveBriefingDecisions(signals)
+  if (marketingIntel) {
+    decisions = [...appendMarketingSeasonDecisions(marketingIntel), ...decisions]
+  }
   decisions = filterVetoedDecisions(decisions, ownerMemories)
   decisions = await enrichDecisionsWithKnowledge(decisions, reorderSuggestions)
 
@@ -541,5 +585,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     decisions,
     ownerDecisionMemoryCount: ownerMemories.length,
     generatedAt: new Date().toISOString(),
+    marketingIntel,
+    marketingSeasons: marketingIntel?.upcomingSeasons ?? [],
   }
 }
