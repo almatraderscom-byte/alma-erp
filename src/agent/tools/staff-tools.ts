@@ -625,6 +625,80 @@ const get_dispatch_status: AgentTool = {
   },
 }
 
+// ── get_lunch_status ──────────────────────────────────────────────────────────
+
+const get_lunch_status: AgentTool = {
+  name: 'get_lunch_status',
+  description:
+    'Show who is currently on lunch today (Dhaka) and for how many minutes. ' +
+    'Also returns today\'s completed lunch records. Use when owner asks "ke lunch e ache?" or similar.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const now = Date.now()
+
+      const rows = await db.staffLunch.findMany({
+        where: { lunchDate: date },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          staffId: true,
+          staffName: true,
+          startedAt: true,
+          endedAt: true,
+          durationMin: true,
+          overage: true,
+        },
+      })
+
+      const onLunch = rows
+        .filter((r: { endedAt: Date | null }) => !r.endedAt)
+        .map((r: { staffName: string | null; startedAt: Date }) => {
+          const mins = Math.round((now - new Date(r.startedAt).getTime()) / 60000)
+          return {
+            name: r.staffName ?? '—',
+            minutes: mins,
+            overAllowance: mins > 45,
+            critical: mins >= 60,
+          }
+        })
+
+      const completed = rows
+        .filter((r: { endedAt: Date | null }) => r.endedAt)
+        .map((r: { staffName: string | null; durationMin: number | null; overage: boolean }) => ({
+          name: r.staffName ?? '—',
+          durationMin: r.durationMin,
+          overage: r.overage,
+        }))
+
+      return {
+        success: true,
+        data: {
+          date,
+          currentlyOnLunch: onLunch,
+          completedToday: completed,
+          summaryBangla:
+            onLunch.length === 0
+              ? `আজ (${date}) কেউ লাঞ্চে নেই।`
+              : onLunch
+                  .map(
+                    (s: { name: string; minutes: number; overAllowance: boolean }) =>
+                      `${s.name}: ${s.minutes} মিনিট${s.overAllowance ? ' (৪৫+)' : ''}`,
+                  )
+                  .join('; '),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── get_current_proposal ──────────────────────────────────────────────────────
 
 const get_current_proposal: AgentTool = {
@@ -1239,6 +1313,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   approve_pending_dispatch,
   approve_pending_staff_message,
   get_dispatch_status,
+  get_lunch_status,
   get_current_proposal,
   correct_and_redispatch_staff_tasks,
   approve_and_dispatch_tasks,

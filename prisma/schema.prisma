@@ -1890,6 +1890,22 @@ model AgentStaff {
   @@map("agent_staff")
 }
 
+model StaffLunch {
+  id          String    @id @default(uuid())
+  staffId     String    @map("staff_id")
+  staffName   String?   @map("staff_name")
+  lunchDate   String    @map("lunch_date")
+  startedAt   DateTime  @map("started_at")
+  endedAt     DateTime? @map("ended_at")
+  durationMin Int?      @map("duration_min")
+  overage     Boolean   @default(false)
+  warned45    Boolean   @default(false) @map("warned_45")
+  alerted60   Boolean   @default(false) @map("alerted_60")
+
+  @@index([staffId, lunchDate])
+  @@map("staff_lunch")
+}
+
 // ─── PHASE 6: Staff Tasks ───────────────────────────────────────────────────
 
 model AgentStaffTask {

@@ -1017,6 +1017,16 @@ export function createTelegramBot() {
       const feedbackHandled = await captureStaffFeedback(ctx, supabase, staff, text)
       if (feedbackHandled) return
 
+      const { isLunchStartText, isLunchEndText, handleLunchStart, handleLunchEnd } = await import('../staff/lunch.mjs')
+      if (isLunchStartText(text)) {
+        await handleLunchStart(ctx, supabase, staff)
+        return
+      }
+      if (isLunchEndText(text)) {
+        await handleLunchEnd(ctx, supabase, staff)
+        return
+      }
+
       const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
       const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { text })
       if (proofHandled) return
@@ -1269,6 +1279,18 @@ export function createTelegramBot() {
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
       await handleReminderCallback(ctx, data)
+
+    } else if (data === 'lunch_start' || data === 'lunch_end') {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const { handleLunchStart, handleLunchEnd } = await import('../staff/lunch.mjs')
+      if (data === 'lunch_start') await handleLunchStart(ctx, supabase, staff)
+      else await handleLunchEnd(ctx, supabase, staff)
+      await ctx.answerCbQuery()
 
     } else if (data.startsWith('staff_feedback_open:')) {
       const staffId = data.slice('staff_feedback_open:'.length)

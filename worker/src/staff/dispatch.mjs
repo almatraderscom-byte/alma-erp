@@ -7,6 +7,7 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
+import { lunchButtonRow } from './lunch.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -208,6 +209,7 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
   }
   if (staffId) {
     rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
+    rows.push(lunchButtonRow())
   }
 
   const sendResult = await loggedSendToStaff(bot.telegram, {

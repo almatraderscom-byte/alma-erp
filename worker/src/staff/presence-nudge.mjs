@@ -1,4 +1,5 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+import { lunchButtonRow } from './lunch.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
 
 const DONE_STATUSES = new Set(['done', 'done_unverified', 'verified'])
@@ -56,9 +57,10 @@ export async function runStaffPresence({ supabase, bot }) {
       officeHoursOnly: true,
       extra: {
         reply_markup: {
-          inline_keyboard: [[
-            { text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` },
-          ]],
+          inline_keyboard: [
+            [{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staff.id}` }],
+            lunchButtonRow(),
+          ],
         },
       },
     }).catch(() => {})

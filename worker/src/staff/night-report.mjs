@@ -14,6 +14,32 @@ export async function runNightReport({ supabase, bot }) {
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
+  const { data: todayLunches } = await supabase
+    .from('staff_lunch')
+    .select('staff_id, staff_name, duration_min, overage, ended_at, started_at')
+    .eq('lunch_date', today)
+
+  const lunchByStaff = {}
+  for (const l of todayLunches ?? []) {
+    lunchByStaff[l.staff_id] = l
+  }
+
+  // Repeat overruns in last 7 days (pattern flag)
+  const weekAgo = new Date()
+  weekAgo.setDate(weekAgo.getDate() - 7)
+  const weekAgoStr = weekAgo.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const { data: weekOverruns } = await supabase
+    .from('staff_lunch')
+    .select('staff_id')
+    .eq('overage', true)
+    .gte('lunch_date', weekAgoStr)
+    .lte('lunch_date', today)
+
+  const overrunCountByStaff = {}
+  for (const r of weekOverruns ?? []) {
+    overrunCountByStaff[r.staff_id] = (overrunCountByStaff[r.staff_id] ?? 0) + 1
+  }
+
   const { data: allTasks } = await supabase
     .from('staff_tasks')
     .select(`*, agent_staff(id, name, telegramChatId)`)
@@ -54,12 +80,32 @@ export async function runNightReport({ supabase, bot }) {
     const shortName = staffName.split(' ').pop() ?? staffName
     compactParts.push(`${shortName} ${bnNum(workDone.length)}/${bnNum(workTotal)} সম্পন্ন`)
 
+    let lunchLine = ''
+    const lunch = lunchByStaff[staffId]
+    if (lunch) {
+      if (lunch.ended_at && lunch.duration_min != null) {
+        if (lunch.duration_min > 45) {
+          const extra = lunch.duration_min - 45
+          lunchLine = `   🍽 লাঞ্চ ${bnNum(lunch.duration_min)} মিনিট (${bnNum(extra)} মিনিট বেশি)\n`
+        } else {
+          lunchLine = `   🍽 লাঞ্চ ${bnNum(lunch.duration_min)} মিনিট ✅\n`
+        }
+      } else {
+        const openMins = Math.round((Date.now() - new Date(lunch.started_at).getTime()) / 60000)
+        lunchLine = `   🍽 লাঞ্চে — ${bnNum(openMins)} মিনিট, এখনো ফেরেনি ⚠️\n`
+      }
+      if ((overrunCountByStaff[staffId] ?? 0) >= 2) {
+        lunchLine += `   ⚠️ গত ৭ দিনে বারবার লাঞ্চ বেশি — নজর দরকার\n`
+      }
+    }
+
     reportLines.push(
       `👤 *${staffName}*: ${workDone.length}/${workTotal} (${pct}%)` +
       (learningDone.length + learningPending.length > 0
         ? ` · 📚 শেখা ${learningDone.length}/${learningDone.length + learningPending.length}`
         : '') +
       `\n` +
+      lunchLine +
       (workDone.length > 0 ? `   ✅ ${workDone.map(t => t.title).join(', ')}\n` : '') +
       (workPending.length > 0 ? `   ⏳ ${workPending.map(t => t.title).join(', ')}\n` : '') +
       (learningPending.length > 0 ? `   📚 (ঐচ্ছিক) ${learningPending.map(t => t.title).join(', ')}` : '') +
