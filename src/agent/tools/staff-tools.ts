@@ -468,14 +468,171 @@ const merge_into_proposal: AgentTool = {
   },
 }
 
+// ── approve_pending_dispatch ──────────────────────────────────────────────────
+
+const approve_pending_dispatch: AgentTool = {
+  name: 'approve_pending_dispatch',
+  description:
+    'Approve the CURRENTLY pending staff-task dispatch so the worker actually sends it. ' +
+    'Use when the owner says "approve", "পাঠাও", "approve korlam", "হ্যাঁ পাঠাও" AND a dispatch_staff_tasks ' +
+    'pending action already exists. This flips it to approved so the worker dispatches. ' +
+    'Do NOT create a new proposal/card when one is already pending — approve the existing one.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: from pending action or today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || undefined
+      const pending = await db.agentPendingAction.findFirst({
+        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        orderBy: { createdAt: 'desc' },
+      })
+      if (!pending) {
+        return {
+          success: true,
+          data: {
+            status: 'none_pending',
+            message: 'কোনো pending dispatch নেই। আগে proposal তৈরি করুন (propose_staff_tasks)।',
+          },
+        }
+      }
+
+      const payload = pending.payload as { date?: string; taskIds?: string[] }
+      const actionDate = date || payload.date || dhakaToday()
+
+      if (payload.date && date && payload.date !== date) {
+        return {
+          success: false,
+          error: `Pending dispatch is for ${payload.date}, not ${date}. Approve that date or omit date.`,
+        }
+      }
+
+      const taskIds = payload.taskIds ?? []
+      if (taskIds.length) {
+        await db.agentStaffTask.updateMany({
+          where: { id: { in: taskIds }, status: 'proposed' },
+          data: { status: 'approved' },
+        })
+      }
+
+      // Supersede other pending cards for the same date
+      await db.agentPendingAction.updateMany({
+        where: {
+          id: { not: pending.id },
+          type: 'dispatch_staff_tasks',
+          status: 'pending',
+        },
+        data: { status: 'superseded', resolvedAt: new Date() },
+      })
+
+      await db.agentPendingAction.update({
+        where: { id: pending.id },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+
+      return {
+        success: true,
+        data: {
+          status: 'approved_queued',
+          pendingActionId: pending.id as string,
+          date: actionDate,
+          taskCount: taskIds.length,
+          message:
+            'Approve করা হয়েছে — worker এখন dispatch করবে। নিশ্চিত হওয়ার আগে "পাঠানো হয়েছে" বলবেন না; ' +
+            'get_dispatch_status দিয়ে verify করুন বা monitor-এ delivered দেখুন।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── get_dispatch_status ───────────────────────────────────────────────────────
+
+const get_dispatch_status: AgentTool = {
+  name: 'get_dispatch_status',
+  description:
+    'Check the REAL dispatch/delivery status of staff tasks for a date: how many tasks are proposed/approved/sent, ' +
+    'and (if outbox exists) how many messages were delivered/failed per staff. Use BEFORE telling the owner ' +
+    'whether tasks were sent. Never claim delivery without calling this.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const proposedFor = new Date(date)
+
+      const statusRows = await db.agentStaffTask.groupBy({
+        by: ['status'],
+        where: { proposedFor },
+        _count: { _all: true },
+      })
+
+      const taskCounts: Record<string, number> = {}
+      for (const row of statusRows as Array<{ status: string; _count: { _all: number } }>) {
+        taskCounts[row.status] = row._count._all
+      }
+
+      let deliveryByStaff: Record<string, { delivered: number; failed: number }> | null = null
+      try {
+        const dayStart = new Date(`${date}T00:00:00+06:00`)
+        const rows = await db.agentOutbox.findMany({
+          where: { type: 'task_dispatch', createdAt: { gte: dayStart } },
+          select: { staffName: true, status: true },
+        })
+        const byStaff: Record<string, { delivered: number; failed: number }> = {}
+        for (const r of rows as Array<{ staffName: string | null; status: string }>) {
+          const name = r.staffName ?? '—'
+          byStaff[name] ??= { delivered: 0, failed: 0 }
+          if (r.status === 'delivered') byStaff[name].delivered++
+          if (r.status === 'failed') byStaff[name].failed++
+        }
+        deliveryByStaff = byStaff
+      } catch {
+        deliveryByStaff = null
+      }
+
+      const pendingAction = await db.agentPendingAction.findFirst({
+        where: { type: 'dispatch_staff_tasks' },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true, createdAt: true },
+      })
+
+      return {
+        success: true,
+        data: {
+          date,
+          taskCounts,
+          pendingActionStatus: pendingAction?.status ?? 'none',
+          pendingActionCreatedAt: pendingAction?.createdAt ?? null,
+          deliveryByStaff,
+          note: deliveryByStaff === null
+            ? 'Outbox not available — rely on task sent-count; Staff Monitor (Prompt D) for delivery proof.'
+            : 'deliveryByStaff is the source of truth for actual delivery.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── approve_and_dispatch_tasks ────────────────────────────────────────────────
 
 const approve_and_dispatch_tasks: AgentTool = {
   name: 'approve_and_dispatch_tasks',
   description:
-    'Approves all proposed tasks for a date and queues them for dispatch to staff via Telegram. ' +
-    'Creates a PENDING ACTION (confirm card) — owner must approve before dispatch happens. ' +
-    'Use after propose_staff_tasks to get the approval card.',
+    'Creates a NEW pending approval card for proposed tasks. ' +
+    'If a dispatch_staff_tasks card is ALREADY pending, do NOT use this — use approve_pending_dispatch instead. ' +
+    'Use after propose_staff_tasks when no pending dispatch card exists yet.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -491,6 +648,20 @@ const approve_and_dispatch_tasks: AgentTool = {
         include: { staff: { select: { name: true } } },
       })
       if (!proposed.length) return { success: false, error: `No proposed tasks found for ${date}` }
+
+      const existingPending = await db.agentPendingAction.findFirst({
+        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      })
+      if (existingPending) {
+        return {
+          success: false,
+          error:
+            'A pending dispatch card already exists. Use approve_pending_dispatch when the owner approves in chat — do NOT create another card.',
+          pendingActionId: existingPending.id as string,
+        }
+      }
 
       // Resolve any stale pending dispatch actions
       await db.agentPendingAction.updateMany({
@@ -813,6 +984,8 @@ export const STAFF_TOOLS: AgentTool[] = [
   get_staff_tasks,
   propose_staff_tasks,
   merge_into_proposal,
+  approve_pending_dispatch,
+  get_dispatch_status,
   approve_and_dispatch_tasks,
   add_staff_task_now,
   send_staff_announcement,

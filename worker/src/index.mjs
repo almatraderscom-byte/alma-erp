@@ -77,6 +77,50 @@ const longTaskQueue = new Queue('long-agent-task', {
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 
+const STUCK_APPROVED_MS = 10 * 60 * 1000
+const DISPATCH_JOB_TYPES = new Set(['dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement'])
+
+async function tasksAlreadyDispatchedForJob(supabase, job) {
+  if (job.type !== 'dispatch_staff_tasks' && job.type !== 'add_staff_task_now') return false
+  const date = job.payload?.date
+  if (!date) return false
+  const taskIds = job.payload?.taskIds
+    ?? (job.payload?.taskId ? [job.payload.taskId] : null)
+  let query = supabase
+    .from('staff_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('proposed_for', date)
+    .in('status', ['sent', 'done'])
+  if (Array.isArray(taskIds) && taskIds.length) {
+    query = query.in('id', taskIds)
+  }
+  const { count } = await query
+  return (count ?? 0) > 0
+}
+
+function isStuckApprovedJob(job) {
+  if (job.status !== 'approved' || job.result) return false
+  const resolvedAt = job.resolvedAt ?? job.resolved_at
+  if (!resolvedAt) return false
+  return Date.now() - new Date(resolvedAt).getTime() > STUCK_APPROVED_MS
+}
+
+async function reconcileStuckApprovedJob(supabase, job) {
+  if (!DISPATCH_JOB_TYPES.has(job.type)) return false
+  if (!isStuckApprovedJob(job)) return false
+
+  if (await tasksAlreadyDispatchedForJob(supabase, job)) {
+    console.log(`[worker] stuck job ${job.id} — tasks already sent, marking executed`)
+    await callJobResult(job.id, 'success', { skipped: 'already_dispatched' })
+    enqueuedIds.delete(job.id)
+    return true
+  }
+
+  console.log(`[worker] re-enqueueing stuck approved job ${job.id}`)
+  enqueuedIds.delete(job.id)
+  return true
+}
+
 // ── Phase 6: Staff task dispatch queue ────────────────────────────────────────
 
 const staffDispatchQueue = new Queue('staff-dispatch', {
@@ -102,7 +146,10 @@ async function pollPendingJobs() {
     }
     const { jobs } = await res.json()
     for (const job of jobs ?? []) {
-      if (enqueuedIds.has(job.id)) continue
+      if (enqueuedIds.has(job.id)) {
+        const reconciled = await reconcileStuckApprovedJob(supabase, job)
+        if (!reconciled) continue
+      }
       enqueuedIds.add(job.id)
       if (job.type === 'image_gen') {
         await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
@@ -266,9 +313,20 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
 
   if (type === 'dispatch_staff_tasks') {
     const { date, taskIds } = payload ?? {}
-    const dispatchResult = await dispatchTasksToStaff({ supabase, bot, date, taskIds })
-
-    await callJobResult(job.data.pendingActionId, 'success', dispatchResult ?? { skipped: true })
+    try {
+      const dispatchResult = await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+      await callJobResult(job.data.pendingActionId, 'success', dispatchResult ?? { dispatched: taskIds?.length ?? 0 })
+    } catch (err) {
+      console.error('[worker] dispatch failed:', err.message)
+      await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+      const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+      if (ownerChatId && bot) {
+        await bot.telegram.sendMessage(
+          ownerChatId,
+          `❌ Task dispatch ব্যর্থ: ${err.message?.slice(0, 150)}। আবার চেষ্টা করুন।`,
+        ).catch(() => {})
+      }
+    }
 
   } else if (type === 'add_staff_task_now') {
     const { staffId, date, taskId } = payload ?? {}
@@ -303,7 +361,14 @@ staffDispatchWorker.on('failed', async (job, err) => {
   console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', { error: err.message }).catch(() => {})
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch(() => {})
+    const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+    if (ownerChatId && telegramBot) {
+      await telegramBot.telegram.sendMessage(
+        ownerChatId,
+        `❌ Task dispatch ব্যর্থ: ${err.message?.slice(0, 150)}। আবার চেষ্টা করুন।`,
+      ).catch(() => {})
+    }
   }
 })
 
