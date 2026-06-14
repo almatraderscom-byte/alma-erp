@@ -1,11 +1,11 @@
 /**
  * POST /api/assistant/internal/personal-checkin
- * Composes a warm evening personal check-in for the owner (worker scheduler).
+ * Composes proactive personal check-ins for the owner (worker schedulers).
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { composePersonalCheckin } from '@/agent/lib/personal-checkin'
+import { composePersonalCheckin, type PersonalCheckinKind } from '@/agent/lib/personal-checkin'
 
 export const runtime = 'nodejs'
 
@@ -26,10 +26,10 @@ export async function POST(req: NextRequest) {
   if (disabled) return disabled
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let kind: 'evening' = 'evening'
+  let kind: PersonalCheckinKind = 'evening'
   try {
     const body = await req.json().catch(() => ({}))
-    if (body?.kind === 'evening') kind = 'evening'
+    if (body?.kind === 'midday' || body?.kind === 'evening') kind = body.kind
   } catch {
     // default evening
   }

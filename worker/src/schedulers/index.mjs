@@ -83,6 +83,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'proof-timeout',          cronUtc: '*/5 * * * *',    description: 'Task proof reminder + 2h unverified flag' },
   { name: 'ack-escalation',         cronUtc: '*/5 * * * *',    description: 'Escalate unseen staff messages (every 5 min)' },
   { name: 'personal-checkin',       cronUtc: '0 15 * * *',     description: 'Evening personal/family check-in (21:00 Dhaka)' },
+  { name: 'personal-midday',        cronUtc: '0 8 * * *',      description: 'Brief daytime personal check-in (14:00 Dhaka)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
   { name: 'reminder-ticker',        cronUtc: '* * * * *',    description: 'Personal reminder ticker (every minute)' },
   { name: 'cs-index-products',      cronUtc: '30 18 * * *',  description: 'Nightly product visual index (00:30 Dhaka)' },
@@ -251,6 +252,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'personal-checkin': {
           const { runPersonalCheckin } = await lazy.personalCheckin()
           await runPersonalCheckin(context)
+          break
+        }
+        case 'personal-midday': {
+          const { runPersonalMidday } = await lazy.personalCheckin()
+          await runPersonalMidday(context)
           break
         }
         case 'cost-reconcile': {

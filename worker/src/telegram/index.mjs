@@ -244,11 +244,18 @@ async function handleOwnerText(ctx, text) {
   }
   safeLogMessage('[telegram] owner message', `[len=${String(text ?? '').length}]`)
 
+  const supabase = createSupabase()
+  const { isPersonalSnoozeMessage, setPersonalSnoozeToday } = await import('../personal/snooze.mjs')
+  if (isPersonalSnoozeMessage(text)) {
+    await setPersonalSnoozeToday(supabase).catch((err) => {
+      console.warn('[telegram] personal snooze set failed:', err.message)
+    })
+  }
+
   // Persist prayer confirmations immediately (before agent turn / scheduler race)
   await autoMarkSalahFromText(text)
 
   // Use current conversation or get/create daily one
-  const supabase = createSupabase()
   const { getTelegramPersonalMode } = await import('./personal-mode.mjs')
   const personalMode = await getTelegramPersonalMode(supabase, String(chatId))
 

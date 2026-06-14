@@ -11,6 +11,7 @@ import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
+import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 
 export const runtime = 'nodejs'
@@ -66,6 +67,14 @@ export async function POST(req: NextRequest) {
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
+
+  if (isPersonalSnoozeMessage(message)) {
+    try {
+      await setPersonalSnoozeToday()
+    } catch (err) {
+      console.warn('[assistant/chat] personal snooze set failed:', err)
+    }
+  }
 
   const rateKey = isInternalCall
     ? `internal:${bearerToken.slice(0, 8)}`

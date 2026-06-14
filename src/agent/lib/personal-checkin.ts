@@ -4,6 +4,8 @@ import { AGENT_MODEL } from '@/agent/config'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { HONESTY_ACCOUNTABILITY_RULE } from '@/agent/lib/system-prompt'
 
+export type PersonalCheckinKind = 'midday' | 'evening'
+
 type OpenWorry = { id: string; content: string; createdAt: Date }
 
 async function loadOpenPersonalWorries(): Promise<OpenWorry[]> {
@@ -40,34 +42,48 @@ async function loadFamilyContactsSummary(): Promise<string> {
   return rows.map((c: { relation: string; name: string }) => `${c.relation} (${c.name})`).join(', ')
 }
 
-const FALLBACK =
-  'আসসালামু আলাইকুম স্যার। দিনটা কেমন গেল? পরিবারের সবার সাথে কথা হয়েছে আজ? কোনো কিছু মন খারাপ করছে কি না — বলতে পারেন, আমি আছি।'
+const FALLBACK: Record<PersonalCheckinKind, string> = {
+  midday:
+    'স্যার, দিনটা কেমন যাচ্ছে? সব ঠিক আছে তো? কিছু দরকার হলে বা মন খারাপ থাকলে বলবেন — আমি আছি। 🤲',
+  evening:
+    'আসসালামু আলাইকুম স্যার। দিনটা কেমন গেল? পরিবারের সবার সাথে কথা হয়েছে আজ? কোনো কিছু মন খারাপ করছে কি না — বলতে পারেন, আমি আছি।',
+}
 
-export async function composePersonalCheckin(kind: 'evening' = 'evening'): Promise<string> {
+export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evening'): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return FALLBACK
+  if (!apiKey) return FALLBACK[kind]
 
   const [worries, familySummary] = await Promise.all([
     loadOpenPersonalWorries(),
-    loadFamilyContactsSummary(),
+    kind === 'evening' ? loadFamilyContactsSummary() : Promise.resolve(''),
   ])
 
   const worryLines = worries.length
     ? worries.map((w) => `- ${w.content}`).join('\n')
     : '(কোনো খোলা চিন্তা সেভ নেই)'
 
-  const userPrompt =
-    `Compose ONE short evening personal check-in message in Bangla for the owner (address as স্যার).\n` +
-    `Kind: ${kind}\n` +
-    `Open worries from memory:\n${worryLines}\n` +
-    `Saved family contacts: ${familySummary}\n` +
-    `Rules: max 4 sentences; warm Islamic tone; if an open worry exists, gently follow up; ask if he spoke with family today; offer presence. No fake Quran/hadith citations.`
+  const userPrompt = kind === 'midday'
+    ? (
+      `Compose ONE brief midday personal check-in in Bangla for the owner (address as স্যার).\n` +
+      `Kind: midday (short খোঁজখবর during work hours)\n` +
+      `Open worries from memory:\n${worryLines}\n` +
+      `Rules: MAX 1-2 short lines only; warm, light, Islamic-gentle; if an open worry exists, reference it lightly ("সকালে যে বিষয়টা বলেছিলেন, ঠিক আছে তো?"); otherwise simple caring check. ` +
+      `Do NOT write a long emotional session. Vary wording from day to day. No fake Quran/hadith.`
+    )
+    : (
+      `Compose ONE short evening personal check-in message in Bangla for the owner (address as স্যার).\n` +
+      `Kind: evening (deeper reflection)\n` +
+      `Open worries from memory:\n${worryLines}\n` +
+      `Saved family contacts: ${familySummary}\n` +
+      `Rules: max 4 sentences; warm Islamic tone; if an open worry exists, gently follow up; ask if he spoke with family today; offer presence. ` +
+      `Vary wording from day to day. No fake Quran/hadith citations.`
+    )
 
   try {
     const client = new Anthropic({ apiKey })
     const res = await client.messages.create({
       model: AGENT_MODEL,
-      max_tokens: 300,
+      max_tokens: kind === 'midday' ? 150 : 300,
       system: PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE,
       messages: [{ role: 'user', content: userPrompt }],
     })
@@ -76,9 +92,9 @@ export async function composePersonalCheckin(kind: 'evening' = 'evening'): Promi
       .map((b) => b.text)
       .join('')
       .trim()
-    return text || FALLBACK
+    return text || FALLBACK[kind]
   } catch (err) {
     console.error('[personal-checkin] LLM failed:', err)
-    return FALLBACK
+    return FALLBACK[kind]
   }
 }
