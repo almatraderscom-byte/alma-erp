@@ -56,6 +56,7 @@ const lazy = {
   ackEscalation:      () => import('../staff/ack-escalation.mjs'),
   personalCheckin:    () => import('../personal/checkin.mjs'),
   lunchWatch:         () => import('../staff/lunch-watch.mjs'),
+  staffMorale:        () => import('../staff/morale.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
+  { name: 'staff-morale',           cronUtc: '0 7 * * *',    description: 'Daily staff encouragement (13:00 Dhaka)' },
   { name: 'staff-presence',         cronUtc: '0 5,11 * * *', description: 'Staff presence nudges (11:00, 17:00 Dhaka)' },
   { name: 'salah-escalation',       cronUtc: '*/5 * * * *',  description: 'Salah escalation check (every 5 min)' },
   { name: 'messenger-scan',         cronUtc: '*/15 * * * *', description: 'Messenger unanswered scan (every 15 min)' },
@@ -192,6 +194,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
           const { runMiddayCheckin } = await lazy.middayCheckin()
           await runMiddayCheckin(context)
           dutyResult = { dutyStatus: 'done' }
+          break
+        }
+        case 'staff-morale': {
+          const { runStaffMorale } = await lazy.staffMorale()
+          dutyResult = await runStaffMorale(context)
           break
         }
         case 'staff-presence': {
