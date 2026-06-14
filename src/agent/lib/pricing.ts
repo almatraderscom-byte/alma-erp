@@ -11,6 +11,7 @@ export type CostProvider =
   | 'google_tts'
   | 'twilio'
   | 'elevenlabs'
+  | 'oxylabs'
 
 export type CostKind =
   | 'chat'
@@ -22,6 +23,7 @@ export type CostKind =
   | 'cs_chat'
   | 'cs_vision'
   | 'cs_comment_classify'
+  | 'web_research'
 
 export const PRICING_META = {
   anthropic: {

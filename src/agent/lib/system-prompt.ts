@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
+import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
 ## নামাজ
@@ -149,6 +150,7 @@ const STATIC_CACHED_PROMPT =
   + HONESTY_ACCOUNTABILITY_RULE
   + CHECK_SOURCES_RULE
   + `\n${WEBSITE_ROLE_PROMPT}\n`
+  + `\n${RESEARCH_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE

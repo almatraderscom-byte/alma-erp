@@ -13,17 +13,17 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-const CREDIT_PROVIDERS: BalanceProviderId[] = ['anthropic', 'openai', 'gemini', 'google_tts']
+const CREDIT_PROVIDERS: BalanceProviderId[] = ['anthropic', 'openai', 'gemini', 'google_tts', 'oxylabs']
 
 const set_api_credit: AgentTool = {
   name: 'set_api_credit',
   description:
     'Sets owner-reported API wallet credit for a provider (e.g. "Claude e 50 dollar recharge korlam"). ' +
-    'Balance = credit minus tracked spend since top-up. Providers: anthropic/claude, openai, gemini, google_tts.',
+    'Balance = credit minus tracked spend since top-up. Providers: anthropic/claude, openai, gemini, google_tts, oxylabs.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      provider: { type: 'string', description: 'Provider name or alias (claude, anthropic, gemini, openai, google_tts)' },
+      provider: { type: 'string', description: 'Provider name or alias (claude, anthropic, gemini, openai, google_tts, oxylabs)' },
       amount: { type: 'number', description: 'Current credit balance in USD after recharge' },
       currency: { type: 'string', enum: ['USD'], description: 'Default USD' },
     },

@@ -13,6 +13,7 @@ export type BalanceProviderId =
   | 'gemini'
   | 'google_tts'
   | 'meta_free'
+  | 'oxylabs'
 
 export type ApiBalanceCredit = {
   initialCredit: number
@@ -55,6 +56,8 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   google_tts: 'google_tts',
   'google tts': 'google_tts',
   tts: 'google_tts',
+  oxylabs: 'oxylabs',
+  oxy: 'oxylabs',
 }
 
 const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; free?: boolean }> = {
@@ -64,10 +67,11 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   gemini: { label: 'Gemini', source: 'Input+Track' },
   google_tts: { label: 'Google TTS', source: 'Input+Track' },
   meta_free: { label: 'Meta/ntfy', source: '—', free: true },
+  oxylabs: { label: 'Oxylabs', source: 'Credit track' },
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts',
+  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts', 'oxylabs',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -323,7 +327,7 @@ export async function refreshApiBalanceCache(): Promise<{
   await storeBalanceCache(cache)
 
   const creditFlags: Partial<Record<BalanceProviderId, boolean>> = {}
-  for (const id of ['anthropic', 'openai', 'gemini', 'google_tts'] as BalanceProviderId[]) {
+  for (const id of ['anthropic', 'openai', 'gemini', 'google_tts', 'oxylabs'] as BalanceProviderId[]) {
     creditFlags[id] = Boolean(await getApiBalanceCredit(id))
   }
 
