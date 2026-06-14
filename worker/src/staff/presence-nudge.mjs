@@ -1,4 +1,5 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+import { isWithinOfficeHours } from './office-hours.mjs'
 
 const DONE_STATUSES = new Set(['done', 'done_unverified', 'verified'])
 
@@ -8,6 +9,7 @@ const DONE_STATUSES = new Set(['done', 'done_unverified', 'verified'])
  */
 export async function runStaffPresence({ supabase, bot }) {
   if (!bot) return
+  if (!isWithinOfficeHours('ALMA_LIFESTYLE')) return
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
   const hourDhaka = Number(
@@ -51,6 +53,7 @@ export async function runStaffPresence({ supabase, bot }) {
       type: 'presence',
       content: msg,
       chatId: staff.telegramChatId,
+      officeHoursOnly: true,
       extra: {
         reply_markup: {
           inline_keyboard: [[

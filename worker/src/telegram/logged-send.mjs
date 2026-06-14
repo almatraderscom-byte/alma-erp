@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { sendMarkdownSafe } from './markdown-safe.mjs'
 import { prepareStaffOutboundMessage } from '../staff/alma-team-voice.mjs'
 import { compactUuid, msgAckCallbackData } from './callback-data.mjs'
+import { isWithinOfficeHours } from '../staff/office-hours.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -22,8 +23,32 @@ export async function loggedSendToStaff(telegram, {
   relatedTaskIds,
   extra,
   requiresAck = false,
+  officeHoursOnly = false,
 }) {
   const supabase = extSupabase ?? sb()
+  const biz = businessId ?? 'ALMA_LIFESTYLE'
+
+  if (officeHoursOnly && !isWithinOfficeHours(biz)) {
+    const outboxId = crypto.randomUUID()
+    const shortId = compactUuid(outboxId)
+    await supabase.from('agent_outbox').insert({
+      id: outboxId,
+      short_id: shortId,
+      staff_id: staffId ?? null,
+      staff_name: staffName ?? null,
+      business_id: biz,
+      type,
+      content: prepareStaffOutboundMessage(content),
+      status: 'skipped_offhours',
+      related_task_ids: relatedTaskIds ?? null,
+      requires_ack: requiresAck,
+      error_reason: 'outside office hours',
+      created_at: new Date().toISOString(),
+      sent_at: new Date().toISOString(),
+    }).catch((err) => console.warn('[logged-send] offhours skip log failed:', err.message))
+    return { ok: false, skipped: true, outboxId }
+  }
+
   const outboxId = crypto.randomUUID()
   const shortId = compactUuid(outboxId)
   const safeContent = prepareStaffOutboundMessage(content)
