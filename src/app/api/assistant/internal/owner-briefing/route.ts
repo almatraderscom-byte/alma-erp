@@ -1,10 +1,12 @@
 /**
  * GET /api/assistant/internal/owner-briefing
  * Structured owner morning briefing data for the VPS worker scheduler.
+ * Includes unified digest extras (todos, approvals, website health).
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
-import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
+import type { OwnerBriefingData } from '@/agent/lib/owner-briefing-data'
+import { buildOwnerDailyDigest } from '@/lib/owner-daily-digest'
 
 export const runtime = 'nodejs'
 
@@ -20,12 +22,42 @@ function checkToken(req: NextRequest): boolean {
   }
 }
 
+function emptyBriefing(): OwnerBriefingData {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  return {
+    today,
+    sales: null,
+    pendingOrders: null,
+    inventory: null,
+    reorderSuggestions: [],
+    csWaiting: null,
+    adsDigest: null,
+    staffYesterday: null,
+    staffPatterns: [],
+    returns: null,
+    pricing: null,
+    orderIssues: [],
+    decisions: [],
+    ownerDecisionMemoryCount: 0,
+    generatedAt: new Date().toISOString(),
+    marketingSeasons: [],
+    marketingIntel: null,
+  }
+}
+
 export async function GET(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    const brief = await buildOwnerBriefingData()
-    return NextResponse.json(brief)
+    const digest = await buildOwnerDailyDigest()
+    const business = (digest.business as OwnerBriefingData | null) ?? emptyBriefing()
+    return NextResponse.json({
+      ...business,
+      websiteHealth: digest.websiteHealth,
+      pendingApprovalsCount: digest.pendingApprovalsCount,
+      openTodos: digest.openTodos,
+      lingeringTodos: digest.lingeringTodos,
+    })
   } catch (err) {
     console.error('[owner-briefing] internal API failed:', err)
     return NextResponse.json({ error: 'Failed to build briefing' }, { status: 500 })

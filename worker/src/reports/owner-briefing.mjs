@@ -136,5 +136,40 @@ export function renderBriefing(brief) {
     L.push(`💹 প্রাইসিং: ${brief.pricing.flags[0]}`)
   }
 
+  const pendingApprovals = brief.pendingApprovalsCount ?? 0
+  if (pendingApprovals > 0) {
+    L.push(`✋ অপেক্ষমাণ approval: ${pendingApprovals}টি`)
+  }
+
+  const lingering = Array.isArray(brief.lingeringTodos) ? brief.lingeringTodos : []
+  if (lingering.length) {
+    L.push(`📌 বেশি দিন ধরে open টুডু (${lingering.length}টি):`)
+    for (const t of lingering.slice(0, 5)) {
+      L.push(`   • ${t.title} (${t.ageDays} দিন)`)
+    }
+  } else {
+    const openTodos = Array.isArray(brief.openTodos) ? brief.openTodos : []
+    if (openTodos.length) {
+      L.push(`📋 open টুডু: ${openTodos.length}টি`)
+      for (const t of openTodos.slice(0, 3)) {
+        L.push(`   • ${t.title}`)
+      }
+    }
+  }
+
+  const wh = brief.websiteHealth
+  if (wh?.configured) {
+    const issueCount =
+      (wh.summary?.length ?? 0) +
+      (wh.unpublishedInStock?.length ?? 0) +
+      (wh.liveOutOfStock?.length ?? 0) +
+      (wh.priceMismatches?.length ?? 0)
+    if (issueCount > 0) {
+      L.push(`🌐 ওয়েবসাইট: ${issueCount}টি issue`)
+    } else {
+      L.push('🌐 ওয়েবসাইট: স্বাভাবিক')
+    }
+  }
+
   return L.join('\n')
 }

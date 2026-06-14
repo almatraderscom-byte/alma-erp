@@ -1876,6 +1876,23 @@ model AgentReminder {
   @@map("agent_reminders")
 }
 
+model AgentOwnerTodo {
+  id                   String    @id @default(uuid())
+  title                String
+  detail               String?   @db.Text
+  status               String    @default("open")
+  priority             String    @default("normal")
+  dueHint              String?   @map("due_hint")
+  nudgeAfterDays       Int       @default(3) @map("nudge_after_days")
+  lastNudgedAt         DateTime? @map("last_nudged_at")
+  sourceConversationId String?   @map("source_conversation_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  completedAt          DateTime? @map("completed_at")
+
+  @@index([status, createdAt])
+  @@map("agent_owner_todos")
+}
+
 model AgentStaff {
   id             String                @id @default(uuid())
   name           String
