@@ -8,6 +8,7 @@ import AgentAskCard, { type AskCard } from './AgentAskCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
+import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 
 export interface ChatMessage {
   id: string
@@ -35,6 +36,8 @@ interface AgentThreadProps {
   onArtifactOpen: () => void
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
+  streamStatus?: string | null
+  streamMode?: 'fetching' | 'writing'
 }
 
 // Detect artifact-worthy content: code block ≥ 15 lines OR markdown doc ≥ 800 chars
@@ -131,7 +134,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, streamStatus, streamMode }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
@@ -216,6 +219,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 </div>
               ) : (
                 <div className="min-w-0 max-w-[85%]">
+                  {msg.streaming && streamStatus && (
+                    <AgentThinkingIndicator
+                      label={streamStatus}
+                      mode={streamMode ?? 'writing'}
+                      className="mb-1.5"
+                    />
+                  )}
+
                   {(!msg.streaming || msg.text) && (
                     <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-muted-hi">
                       {msg.streaming && msg.text ? (

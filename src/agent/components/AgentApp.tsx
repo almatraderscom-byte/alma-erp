@@ -99,6 +99,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [streamStatus, setStreamStatus] = useState<string | null>(null)
+  const [streamMode, setStreamMode] = useState<'fetching' | 'writing'>('writing')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
@@ -298,13 +299,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'text_delta') {
-          if (!toolInFlight) setStreamStatus('✍️ উত্তর লিখছি…')
+          if (!toolInFlight) {
+            setStreamMode('writing')
+            setStreamStatus('✍️ উত্তর লিখছি…')
+          }
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
           ))
         } else if (evt.type === 'tool_start') {
           toolInFlight = true
           const d = toolDisplay(String(evt.name))
+          setStreamMode('fetching')
           setStreamStatus(`${d.icon} ${d.label}`)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
@@ -313,6 +318,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
+          setStreamMode('writing')
           setStreamStatus('✍️ উত্তর লিখছি…')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
@@ -585,6 +591,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onArtifactOpen={() => setArtifactsOpen(true)}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
+            streamStatus={streamStatus}
+            streamMode={streamMode}
           />
           )}
           <AgentArtifactsPanel
@@ -601,7 +609,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           disabled={false}
           onStop={stopGeneration}
           streaming={streaming}
-          streamStatus={streamStatus}
           conversationId={activeConvId}
           isMobile={isMobile}
         />

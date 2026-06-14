@@ -3,46 +3,41 @@
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
-const DOTS = [0, 1, 2]
+const PALETTE = ['#e1306c', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4']
 
 interface AgentThinkingIndicatorProps {
   label?: string
-  toolName?: string
+  mode?: 'fetching' | 'writing'
   className?: string
 }
 
-/** Claude-inspired thinking / streaming indicator */
+/** Colorful Claude-style thinking indicator — faster while fetching, slower while writing. */
 export function AgentThinkingIndicator({
   label = 'চিন্তা করছি',
-  toolName,
+  mode = 'writing',
   className,
 }: AgentThinkingIndicatorProps) {
+  const dur = mode === 'fetching' ? 0.7 : 1.3
   return (
-    <div className={cn('flex items-center gap-3 py-1', className)}>
-      <div className="flex items-center gap-1.5" aria-hidden>
-        {DOTS.map((i) => (
+    <div className={cn('flex items-center gap-2.5 py-1', className)}>
+      <div className="flex items-center gap-1" aria-hidden>
+        {PALETTE.map((c, i) => (
           <motion.span
             key={i}
-            className="h-2 w-2 rounded-full bg-gold/80"
-            animate={{ y: [0, -5, 0], opacity: [0.35, 1, 0.35] }}
-            transition={{
-              duration: 1.1,
-              repeat: Infinity,
-              ease: 'easeInOut',
-              delay: i * 0.18,
-            }}
+            className="h-2 w-2 rounded-full"
+            style={{ background: c }}
+            animate={{ y: [0, -6, 0], opacity: [0.3, 1, 0.3], scale: [0.8, 1.15, 0.8] }}
+            transition={{ duration: dur, repeat: Infinity, ease: 'easeInOut', delay: i * (dur / PALETTE.length) }}
           />
         ))}
       </div>
-      <div className="min-w-0">
-        <motion.p
-          className="text-[13px] font-medium text-zinc-400"
-          animate={{ opacity: [0.55, 1, 0.55] }}
-          transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-        >
-          {toolName ? `${label} · ${toolName}` : label}
-        </motion.p>
-      </div>
+      <motion.span
+        className="text-[13px] font-medium text-zinc-400"
+        animate={{ opacity: [0.55, 1, 0.55] }}
+        transition={{ duration: dur * 1.6, repeat: Infinity, ease: 'easeInOut' }}
+      >
+        {label}
+      </motion.span>
     </div>
   )
 }

@@ -14,7 +14,6 @@ interface AgentComposerProps {
   disabled: boolean
   onStop: () => void
   streaming: boolean
-  streamStatus?: string | null
   conversationId: string | null
   isMobile?: boolean
 }
@@ -24,7 +23,6 @@ export default function AgentComposer({
   disabled,
   onStop,
   streaming,
-  streamStatus,
   conversationId: _conversationId,
   isMobile = false,
 }: AgentComposerProps) {
@@ -166,16 +164,6 @@ export default function AgentComposer({
         </div>
       )}
 
-      {streaming && streamStatus && (
-        <div className="mb-2 flex items-center gap-2 rounded-2xl border border-gold-dim/35 bg-gold/5 px-3 py-1.5">
-          <span className="flex gap-0.5" aria-hidden>
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '0ms' }} />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '120ms' }} />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold-lt" style={{ animationDelay: '240ms' }} />
-          </span>
-          <span className="flex-1 truncate text-xs font-medium text-gold-lt">{streamStatus}</span>
-        </div>
-      )}
 
       {recording && (
         <div className="mb-2 flex items-center gap-3 rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-2.5">
