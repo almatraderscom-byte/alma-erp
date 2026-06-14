@@ -661,5 +661,84 @@ export async function POST(
     })
   }
 
+  if (action.type === 'website_publish') {
+    const { productId } = payload as { productId: string }
+    const { publishWebsiteProduct } = await import('@/lib/website/write.service')
+    const result = await publishWebsiteProduct(String(productId))
+    if (!result.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result },
+    })
+    await appendConversationNote(db, action, `✅ Website publish: ${result.slug} এখন live। ISR/cache — পেজে দেখতে কিছুক্ষণ লাগতে পারে।`)
+    return Response.json({ success: true, ...result })
+  }
+
+  if (action.type === 'website_unpublish') {
+    const { productId } = payload as { productId: string }
+    const { unpublishWebsiteProduct } = await import('@/lib/website/write.service')
+    const result = await unpublishWebsiteProduct(String(productId))
+    if (!result.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result },
+    })
+    await appendConversationNote(db, action, `✅ Website unpublish: ${result.slug} storefront থেকে সরানো হয়েছে।`)
+    return Response.json({ success: true, ...result })
+  }
+
+  if (action.type === 'website_set_featured') {
+    const { productId, featured } = payload as { productId: string; featured: boolean }
+    const { setWebsiteProductFeatured } = await import('@/lib/website/write.service')
+    const result = await setWebsiteProductFeatured(String(productId), featured === true)
+    if (!result.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { ...result, featured } },
+    })
+    await appendConversationNote(db, action, `✅ Website featured ${featured ? 'ON' : 'OFF'}: ${result.slug}।`)
+    return Response.json({ success: true, ...result, featured })
+  }
+
+  if (action.type === 'website_update_product') {
+    const { productId, fields } = payload as {
+      productId: string
+      fields: { priceBdt?: number; description?: string; shortDescription?: string; categoryId?: string }
+    }
+    const { updateWebsiteProductFields } = await import('@/lib/website/write.service')
+    const result = await updateWebsiteProductFields(String(productId), fields ?? {})
+    if (!result.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { ...result, fields } },
+    })
+    await appendConversationNote(db, action, `✅ Website update: ${result.slug} আপডেট হয়েছে। ISR/cache — live page দেখতে কিছুক্ষণ লাগতে পারে।`)
+    return Response.json({ success: true, ...result })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }
