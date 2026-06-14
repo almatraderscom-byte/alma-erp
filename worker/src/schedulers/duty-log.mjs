@@ -1,4 +1,4 @@
-import { DAILY_DUTIES, JOB_TO_DUTY } from './duties.mjs'
+import { DAILY_DUTIES, JOB_TO_DUTY, dutiesForToday } from './duties.mjs'
 
 export function dhakaDateYmd() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -13,7 +13,7 @@ export function isTrackedDuty(jobName) {
  */
 export async function seedDailyDuties(supabase) {
   const dutyDate = dhakaDateYmd()
-  for (const d of DAILY_DUTIES) {
+  for (const d of dutiesForToday()) {
     const { data: existing } = await supabase
       .from('agent_duty_log')
       .select('duty')

@@ -118,9 +118,9 @@ export default function AgentStaffMonitor() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4 pb-8">
-      <div className="flex items-start justify-between gap-2">
-        <div>
+    <div className="mx-auto max-w-3xl space-y-4 p-3 pb-8 sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
           <h1 className="text-lg font-black text-cream">স্টাফ মনিটর (লাইভ)</h1>
           <p className="text-[11px] text-muted">
             আজ ({data.today}) · প্রতি ১০ সেকেন্ডে আপডেট
@@ -129,7 +129,7 @@ export default function AgentStaffMonitor() {
             )}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void load(true)}
@@ -152,36 +152,40 @@ export default function AgentStaffMonitor() {
         </div>
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <h2 className="text-sm font-bold text-zinc-300">🤖 এজেন্টের আজকের কাজ (লাইভ)</h2>
         {(data.agentDuties ?? []).map((d) => {
           const icon = dutyIcon(d.status)
-          const time = d.ranAt
-            ? fmtTime(d.ranAt)
-            : ''
+          const time = d.ranAt ? fmtTime(d.ranAt) : ''
+          const meta =
+            d.status === 'skipped' || d.status === 'missed'
+              ? (d.detail || (d.status === 'missed' ? 'মিস হয়েছে' : ''))
+              : time
           return (
             <div
               key={d.id}
               className={cn(
-                'flex items-center justify-between rounded-lg border px-3 py-2 text-xs',
-                d.status === 'failed'
-                  ? 'border-red-500/30 bg-red-500/5'
-                  : d.status === 'missed'
-                    ? 'border-orange-500/40 bg-orange-500/10'
-                    : 'border-white/10 bg-white/[0.02]',
+                'flex items-center gap-2 rounded-xl border px-3 py-2.5',
+                d.status === 'failed' || d.status === 'missed'
+                  ? 'border-red-500/30 bg-red-500/[0.06]'
+                  : 'border-white/10 bg-white/[0.02]',
               )}
             >
-              <span className="text-zinc-200">{icon} {d.label}</span>
-              <span className="max-w-[45%] truncate text-right text-zinc-500">
-                {d.status === 'missed'
-                  ? (d.detail ?? 'মিস হয়েছে')
-                  : d.status === 'skipped' && d.detail
-                    ? d.detail
-                    : time}
-              </span>
+              <span className="shrink-0 text-base leading-none">{icon}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{d.label}</span>
+              <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{meta}</span>
             </div>
           )
         })}
+
+        {(data.continuousServices?.length ?? 0) > 0 && (
+          <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-[11px] text-zinc-500">
+            🔄 চলমান সেবা:{' '}
+            {data.continuousServices
+              .map((s) => `${s.label} ${s.healthy ? '🟢' : '🔴'}`)
+              .join(' · ')}
+          </div>
+        )}
       </div>
 
       {Object.keys(data.typeCounts ?? {}).length > 0 && (

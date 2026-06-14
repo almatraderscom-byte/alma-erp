@@ -1,7 +1,13 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync'
-import { DAILY_DUTIES, type AgentDutyRow } from '@/agent/lib/agent-duties'
+import {
+  dutiesForToday,
+  CONTINUOUS_SERVICES,
+  type AgentDutyRow,
+  type ContinuousServiceHealth,
+} from '@/agent/lib/agent-duties'
+import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -42,6 +48,7 @@ export type StaffSummary = {
 export type StaffMonitorData = {
   today: string
   agentDuties: AgentDutyRow[]
+  continuousServices: ContinuousServiceHealth[]
   feed: StaffMonitorRow[]
   failures: StaffMonitorRow[]
   staffSummaries: StaffSummary[]
@@ -104,7 +111,7 @@ async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
     createdAt: Date
   }>
   const byDuty = new Map(rows.map((r) => [r.duty, r]))
-  return DAILY_DUTIES.map((d) => {
+  return dutiesForToday().map((d) => {
     const row = byDuty.get(d.duty)
     if (row) {
       return {
@@ -131,11 +138,33 @@ async function getAgentDutiesForToday(today: string): Promise<AgentDutyRow[]> {
   })
 }
 
+function heartbeatFresh(lastBeatAt: Date | null | undefined, maxMs = HEARTBEAT_STALE_MS): boolean {
+  if (!lastBeatAt) return false
+  return Date.now() - lastBeatAt.getTime() <= maxMs
+}
+
+async function getContinuousServicesHealth(): Promise<ContinuousServiceHealth[]> {
+  const rows = await db.agentHeartbeat.findMany({
+    where: { service: { in: ['schedulers', 'queue-consumer'] } },
+    select: { service: true, lastBeatAt: true },
+  }) as Array<{ service: string; lastBeatAt: Date }>
+
+  const byService = new Map(rows.map((r) => [r.service, r.lastBeatAt]))
+  const schedulersOk = heartbeatFresh(byService.get('schedulers'))
+  const queueOk = heartbeatFresh(byService.get('queue-consumer'), 120_000)
+
+  return CONTINUOUS_SERVICES.map((s) => ({
+    key: s.key,
+    label: s.label,
+    healthy: s.key === 'cs_services' ? schedulersOk && queueOk : schedulersOk,
+  }))
+}
+
 export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   const today = todayYmdDhaka()
   const todayStart = new Date(`${today}T00:00:00+06:00`)
 
-  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties] = await Promise.all([
+  const [todayTasks, todayOutbox, dispatchTaskIds, agentDuties, continuousServices] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -151,6 +180,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
     }),
     getActiveDispatchTaskIdsForDate(today),
     getAgentDutiesForToday(today),
+    getContinuousServicesHealth(),
   ])
 
   const scopedTasks = dispatchTaskIds?.length
@@ -248,6 +278,7 @@ export async function getStaffMonitorData(): Promise<StaffMonitorData> {
   return {
     today,
     agentDuties,
+    continuousServices,
     feed,
     failures,
     staffSummaries,

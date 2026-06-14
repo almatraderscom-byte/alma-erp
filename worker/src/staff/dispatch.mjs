@@ -11,6 +11,26 @@ import { lunchButtonRow } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
 import { leaveRequestButton } from './leave.mjs'
 
+async function updateMorningDispatchDutyLog(supabase, result) {
+  try {
+    const dutyDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+    const anySent = (result?.sentTasks ?? 0) > 0
+    await supabase.from('agent_duty_log').upsert(
+      {
+        duty: 'morning_dispatch',
+        label: '📤 স্টাফ টাস্ক ডিসপ্যাচ',
+        duty_date: dutyDate,
+        status: anySent ? 'done' : 'skipped',
+        detail: anySent ? `${result.sentTasks}টি পাঠানো` : 'কোনো approved টাস্ক ছিল না',
+        ran_at: new Date().toISOString(),
+      },
+      { onConflict: 'duty,duty_date' },
+    )
+  } catch (e) {
+    console.warn('[dispatch] duty-log update failed:', e.message)
+  }
+}
+
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -79,7 +99,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
   if (!pending.length) {
     console.warn('[dispatch] no approved tasks to dispatch for', date)
-    return {
+    const result = {
       date,
       totalTasks: 0,
       sentTasks: 0,
@@ -90,6 +110,8 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       fullSuccess: true,
       skipped: true,
     }
+    await updateMorningDispatchDutyLog(supabase, result)
+    return result
   }
 
   // Group by staff member
@@ -175,6 +197,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
   await markDispatchActionsExecuted(supabase, date)
   await sendDispatchOwnerReport({ bot, result })
+  await updateMorningDispatchDutyLog(supabase, result)
   return result
 }
 
