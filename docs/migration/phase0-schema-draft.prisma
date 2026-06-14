@@ -1,0 +1,260 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 0 DRAFT — NOT APPLIED
+// Review artifact for GAS → Supabase (ERP Postgres) migration.
+// Do NOT copy into prisma/schema.prisma until Phase 1 owner approval.
+//
+// Conventions mirrored from prisma/schema.prisma:
+//   - snake_case @@map / @map
+//   - Money: Int (whole BDT taka, roundMoney convention)
+//   - Dates: @db.Date for business dates; DateTime for audit timestamps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Orders (sheet: 📦 ORDERS, 45 cols, data from row 3) ─────────────────────
+
+model LifestyleOrder {
+  id              String   @id // sheet col A — e.g. AL-0001 (preserve on import)
+  businessId      String   @default("ALMA_LIFESTYLE") @map("business_id")
+  date            DateTime @db.Date
+  customer        String
+  phone           String
+  address         String   @db.Text
+  payment         String
+  source          String
+  status          String   // Pending|Confirmed|Packed|Shipped|Delivered|RETURNED_*|CANCELLED
+  product         String
+  category        String
+  size            String
+  qty             Int      @default(1)
+  unitPrice       Int      @default(0) @map("unit_price")
+  discount        Int      @default(0)
+  addDiscount     Int      @default(0) @map("add_discount")
+  advCost         Int      @default(0) @map("adv_cost")
+  advPlatform     String   @default("") @map("adv_platform")
+  sellPrice       Int      @default(0) @map("sell_price")
+  shippingFee     Int      @default(0) @map("shipping_fee") // sheet SHIP_COLLECTED
+  cogs            Int      @default(0)
+  courierCharge   Int      @default(0) @map("courier_charge")
+  otherCosts      Int      @default(0) @map("other_costs")
+  profit          Int      @default(0) // sheet formula col W — import snapshot
+  courier         String   @default("")
+  trackingId      String   @default("") @map("tracking_id")
+  trackingStatus  String   @default("") @map("tracking_status")
+  estDelivery     DateTime? @map("est_delivery") @db.Date
+  actualDelivery  DateTime? @map("actual_delivery") @db.Date
+  returnReason    String   @default("") @map("return_reason") @db.Text
+  returnDate      DateTime? @map("return_date") @db.Date
+  returnStatus    String   @default("") @map("return_status")
+  notes           String   @default("") @db.Text // human notes only; meta in notesMetaJson
+  sku             String   @default("")
+  handledBy       String   @default("") @map("handled_by")
+  invoiceNum      String   @default("") @map("invoice_num")
+  autoFlag        String   @default("") @map("auto_flag") // automation col AQ — invoice/drive hints
+
+  // Parsed from ORDER_ITEMS_JSON marker in NOTES (not separate sheet cols)
+  paidAmount          Int?     @map("paid_amount")
+  dueAmount           Int?     @map("due_amount")
+  estimatedProfit     Int?     @map("estimated_profit")
+  realizedProfit      Int?     @map("realized_profit")
+  reversedProfit      Int?     @map("reversed_profit")
+  netProfit           Int?     @map("net_profit")
+  returnNetProfit     Int?     @map("return_net_profit")
+  shippingMargin      Int?     @map("shipping_margin")
+  merchandiseProfit   Int?     @map("merchandise_profit")
+  returnType          String?  @map("return_type")
+  courierCost         Int?     @map("courier_cost")
+  inventoryCost       Int?     @map("inventory_cost")
+  stockRestored       Boolean  @default(false) @map("stock_restored")
+  stockRestoredAt     DateTime? @map("stock_restored_at")
+  stockRestoreReason  String?  @map("stock_restore_reason") @db.Text
+  notesMetaJson       String?  @map("notes_meta_json") @db.Text // raw ORDER_ITEMS_JSON blob for audit
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items LifestyleOrderItem[]
+
+  @@index([businessId, status])
+  @@index([businessId, date])
+  @@index([businessId, customer])
+  @@index([phone])
+  @@index([status, date])
+  @@map("lifestyle_orders")
+}
+
+// Sheet: 🧾 ORDER ITEMS (19 cols) — also embedded in order NOTES as JSON
+model LifestyleOrderItem {
+  id              String   @id @default(cuid())
+  orderId         String   @map("order_id")
+  order           LifestyleOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lineNo          Int      @map("line_no")
+  sku             String
+  productCode     String   @default("") @map("product_code")
+  product         String
+  category        String   @default("")
+  size            String   @default("")
+  variant         String   @default("")
+  qty             Int      @default(1)
+  unitPrice       Int      @default(0) @map("unit_price")
+  sellPrice       Int      @default(0) @map("sell_price")
+  subtotal        Int      @default(0)
+  cogs            Int      @default(0)
+  stockSku        String   @default("") @map("stock_sku")
+  collectionCode  String   @default("") @map("collection_code")
+  collectionType  String   @default("") @map("collection_type")
+  sizeGroup       String   @default("") @map("size_group")
+  variantGroup    String   @default("") @map("variant_group")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([orderId, lineNo])
+  @@index([sku])
+  @@index([orderId])
+  @@map("lifestyle_order_items")
+}
+
+// ── Product catalog (sheet: PRODUCT MASTER, data from row 3) ─────────────────
+// NOT the website Supabase `products` table (almatraders.com — separate project).
+
+model LifestyleProduct {
+  sku                 String  @id
+  name                String
+  category            String  @default("")
+  defaultCogs         Int     @default(0) @map("default_cogs")
+  defaultPrice        Int     @default(0) @map("default_price")
+  active              Boolean @default(true)
+  notes               String  @default("") @db.Text
+  imageUrl            String? @map("image_url") @db.Text
+  supplier            String? @default("manual")
+  supplierProductId   String? @map("supplier_product_id")
+  description         String? @db.Text
+  variantsJson        String? @map("variants_json") @db.Text
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([category])
+  @@index([active])
+  @@map("lifestyle_products")
+}
+
+// ── Stock / inventory (sheet: 📦 STOCK CONTROL, 20 cols, data from row 3) ────
+// Grain: one row per SKU + size (541 live rows; 326 active SKUs in summary).
+
+model LifestyleStockItem {
+  id              String   @id @default(cuid())
+  sku             String
+  product         String
+  category        String   @default("")
+  color           String   @default("")
+  size            String   @default("")
+  opening         Int      @default(0)
+  purchased       Int      @default(0)
+  sold            Int      @default(0)
+  returned        Int      @default(0)
+  damaged         Int      @default(0)
+  reserved        Int      @default(0)
+  currentStock    Int      @default(0) @map("current_stock")
+  available       Int      @default(0)
+  reorderLevel    Int      @default(5) @map("reorder_level")
+  status          String   @default("") // In Stock | Low Stock | Out of Stock | ARCHIVED
+  stockValue      Int      @default(0) @map("stock_value")
+  sellValue       Int      @default(0) @map("sell_value")
+  potentialProfit Int      @default(0) @map("potential_profit")
+  metaJson        String?  @map("meta_json") @db.Text // col T JSON: collectionCode, imageUrl, archived, etc.
+  collectionCode  String?  @map("collection_code")
+  collectionType  String?  @map("collection_type") // MEN | WOMEN | SINGLE
+  sizeGroup       String?  @map("size_group")
+  variantGroup    String?  @map("variant_group")
+  buyingPrice     Int?     @map("buying_price")
+  barcode         String?  @default("")
+  archived        Boolean  @default(false)
+  imageUrl        String?  @map("image_url") @db.Text
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([sku, size])
+  @@index([sku])
+  @@index([category])
+  @@index([archived, active])
+  @@index([available])
+  @@map("lifestyle_stock_items")
+}
+
+// ── Customers (sheet: 👥 CUSTOMERS, 29 cols, data from row 6) ───────────────
+
+model LifestyleCustomer {
+  id            String   @id // e.g. CUST-0001
+  businessId    String   @default("ALMA_LIFESTYLE") @map("business_id")
+  name          String
+  phone         String
+  district      String   @default("")
+  address       String   @default("") @db.Text
+  whatsapp      String   @default("")
+  totalOrders   Int      @default(0) @map("total_orders")
+  delivered     Int      @default(0)
+  returned      Int      @default(0)
+  cancelled     Int      @default(0)
+  pending       Int      @default(0)
+  totalSpent    Int      @default(0) @map("total_spent")
+  avgOrder      Int      @default(0) @map("avg_order")
+  totalProfit   Int      @default(0) @map("total_profit")
+  codOrders     Int      @default(0) @map("cod_orders")
+  codFails      Int      @default(0) @map("cod_fails")
+  codFailPct    Float    @default(0) @map("cod_fail_pct")
+  returnRate    Float    @default(0) @map("return_rate")
+  lastOrder     DateTime? @map("last_order") @db.Date
+  daysInactive  Float    @default(0) @map("days_inactive") // recompute on read in Phase 2
+  favCategory   String   @default("") @map("fav_category")
+  clvScore      Int      @default(0) @map("clv_score")
+  riskScore     Int      @default(0) @map("risk_score")
+  riskLevel     String   @default("LOW") @map("risk_level")
+  segment       String   @default("NEW")
+  loyaltyPts    Int      @default(0) @map("loyalty_pts")
+  source        String   @default("")
+  waOptin       String   @default("Yes") @map("wa_optin")
+  notes         String   @default("") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([businessId, phone])
+  @@index([businessId, segment])
+  @@index([businessId, riskLevel])
+  @@index([name])
+  @@index([phone])
+  @@map("lifestyle_customers")
+}
+
+// ── Promos (NOT deployed on live GAS — placeholder for agent routes) ─────────
+
+model LifestylePromo {
+  id              String    @id @default(cuid())
+  businessId      String    @default("ALMA_LIFESTYLE") @map("business_id")
+  code            String
+  discountPct     Int?      @map("discount_pct")
+  discountAmount  Int?      @map("discount_amount")
+  active          Boolean   @default(true)
+  expiresAt       DateTime? @map("expires_at")
+  usageCount      Int       @default(0) @map("usage_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([businessId, code])
+  @@index([active])
+  @@map("lifestyle_promos")
+}
+
+// ── Invoice numbering (replaces GAS Script Property AL_INV_COUNTER_{year}) ─────
+// Existing InvoiceRecord / InvoiceEvent models stay — this is the sequence only.
+
+model LifestyleInvoiceSequence {
+  businessId String @map("business_id")
+  year       Int
+  lastNumber Int    @default(0) @map("last_number") // next = lastNumber + 1 → AL-INV-{year}-{pad4}
+
+  @@id([businessId, year])
+  @@map("lifestyle_invoice_sequences")
+}
+
+// ── NOT modeled (derive via SQL in Phase 2+) ─────────────────────────────────
+//   dashboard / analytics — aggregate over lifestyle_orders (+ expenses from ERP)
+//   log / audit — ERP already has audit patterns; GAS 🤖 AUTOMATION LOG optional
+//   expenses — separate 💸 EXPENSE LEDGER (out of Lifestyle scope for Phase 1?)
