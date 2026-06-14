@@ -1,4 +1,9 @@
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestyleProducts, getLifestyleStock } from '@/lib/lifestyle/read'
+import {
+  mirrorAllStockAfterGasWrite,
+  mirrorProductAfterGasWrite,
+} from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 import type { StockItem } from '@/types'
 
@@ -22,8 +27,8 @@ function mapProduct(raw: Record<string, unknown>, idx: number) {
 }
 
 export async function listProducts(input: { search?: string; category?: string; limit?: number }) {
-  const data = await serverGet<ProductsGasResponse>('products', {}, 0)
-  const rows = data.products ?? data.items ?? (Array.isArray(data) ? data : [])
+  const data = await getLifestyleProducts()
+  const rows = data.products ?? (Array.isArray(data) ? data : [])
   let products = (rows as Record<string, unknown>[]).map(mapProduct)
   if (input.search) {
     const q = input.search.toLowerCase()
@@ -41,7 +46,7 @@ export async function getProduct(id: string) {
 }
 
 export async function listLowStock() {
-  const stock = await serverGet<{ items?: StockItem[]; summary?: { low_stock?: number } }>('stock', {}, 0)
+  const stock = await getLifestyleStock()
   const items = (stock.items ?? []).filter(
     i => Number(i.current_stock ?? i.stockQty ?? 0) <= Number(i.reorder_level ?? 5),
   )
@@ -63,6 +68,7 @@ export async function createProduct(body: Record<string, unknown>) {
     'create_product',
     agentActorPayload(body),
   )
+  mirrorProductAfterGasWrite(String(result.product_id ?? body.sku ?? ''))
   return {
     id: String(result.product_id ?? body.sku ?? ''),
     status: 'created',
@@ -72,6 +78,7 @@ export async function createProduct(body: Record<string, unknown>) {
 
 export async function patchProduct(id: string, body: Record<string, unknown>) {
   await serverPost('update_product', agentActorPayload({ sku: id, ...body }))
+  mirrorProductAfterGasWrite(id)
   return { id, status: 'updated', updatedAt: new Date().toISOString() }
 }
 
@@ -80,6 +87,7 @@ export async function patchProductPricing(id: string, price: number, note?: stri
     'update_product',
     agentActorPayload({ sku: id, sell_price: price, price_note: note }),
   )
+  mirrorProductAfterGasWrite(id)
   return { id, status: 'pricing_updated', price, updatedAt: new Date().toISOString() }
 }
 
@@ -88,6 +96,7 @@ export async function patchProductInventory(id: string, delta: number, reason: s
     'inventory_adjust',
     agentActorPayload({ sku: id, delta, reason, action: 'adjust' }),
   )
+  mirrorAllStockAfterGasWrite()
   return { id, status: 'inventory_adjusted', delta, updatedAt: new Date().toISOString() }
 }
 
@@ -96,5 +105,6 @@ export async function softDeleteProduct(id: string) {
     'inventory_archive',
     agentActorPayload({ sku: id, action: 'archive' }),
   )
+  mirrorAllStockAfterGasWrite()
   return { id, status: 'archived' }
 }

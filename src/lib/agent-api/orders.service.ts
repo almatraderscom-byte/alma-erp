@@ -1,4 +1,5 @@
-import { serverGet } from '@/lib/server-api'
+import { isSupabaseReadEnabled } from '@/lib/migration-flags'
+import { getLifestyleOrder, getLifestyleOrders } from '@/lib/lifestyle/read'
 import { getPeriodRangeDhaka, isoToYmd } from '@/lib/agent-api/period'
 import { dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
 import type {
@@ -14,17 +15,6 @@ import type { z } from 'zod'
 const DEFAULT_BUSINESS_ID = 'ALMA_LIFESTYLE'
 
 type AgentStatus = z.infer<typeof OrderStatusSchema>
-
-type GasOrdersResponse = {
-  orders?: Order[]
-  summary?: { total?: number }
-  syncedAt?: string
-}
-
-type GasOrderResponse = {
-  order?: Order
-  error?: string
-}
 
 const ALMA_TO_AGENT: Record<string, AgentStatus> = {
   pending: 'pending',
@@ -136,7 +126,7 @@ export interface ListAgentOrdersMeta {
   limit: number
   from: string | null
   to: string | null
-  dataSource: 'gas_sheet'
+  dataSource: 'gas_sheet' | 'supabase'
   fetchedAt: string
   sheetSyncedAt: string | null
   unknownCount?: number
@@ -208,8 +198,9 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
       : undefined
   if (almaStatus) params.status = almaStatus
 
-  const data = await serverGet<GasOrdersResponse>('orders', params, 0)
+  const data = await getLifestyleOrders(params)
   let orders = (data.orders ?? []).map(mapOrderToAgent)
+  const fromSupabase = await isSupabaseReadEnabled('orders')
 
   if (input.fromIso || input.toIso) {
     const fromYmd = input.fromIso ? isoToYmd(input.fromIso) : null
@@ -236,9 +227,9 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
     limit,
     from: input.fromIso ?? null,
     to: input.toIso ?? null,
-    dataSource: 'gas_sheet',
+    dataSource: fromSupabase ? 'supabase' : 'gas_sheet',
     fetchedAt: new Date().toISOString(),
-    sheetSyncedAt: data.syncedAt ?? null,
+    sheetSyncedAt: fromSupabase ? null : (data as { syncedAt?: string }).syncedAt ?? null,
     unknownCount,
   }
 
@@ -265,7 +256,7 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
 }
 
 export async function getAgentOrderDetail(id: string): Promise<AgentOrderDetail | null> {
-  const data = await serverGet<GasOrderResponse>('order', { id }, 0)
+  const data = await getLifestyleOrder(id, { business_id: DEFAULT_BUSINESS_ID })
   if (data.error || !data.order) return null
   return mapOrderDetail(data.order)
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestyleOrder, getLifestyleOrders } from '@/lib/lifestyle/read'
+import { mirrorOrderCreateResult } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { notifyRole } from '@/lib/notifications'
 import { sendOrderAlert } from '@/lib/resend'
@@ -16,7 +18,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const archiveVisibility = parseArchiveVisibility(url.searchParams.get('archive_visibility'))
   try {
-    const data = await serverGet(p.id ? 'order' : 'orders', p, 0)
+    const data = p.id ? await getLifestyleOrder(p.id, p) : await getLifestyleOrders(p)
     const businessId = String(p.business_id || 'ALMA_LIFESTYLE')
     if (!p.id && archiveVisibility === 'active' && data && typeof data === 'object') {
       const archivedIds = await getArchivedRegistryIds(businessId, 'orders')
@@ -50,6 +52,7 @@ export async function POST(req: NextRequest) {
     }
     const gasStarted = Date.now()
     const result = await serverPost('create_order', actorPayload)
+    mirrorOrderCreateResult(result as Record<string, unknown>, actorPayload)
     logEvent('info', 'order.create_gas_duration', {
       ms: Date.now() - gasStarted,
       itemCount: Array.isArray(payload.items) ? payload.items.length : 0,

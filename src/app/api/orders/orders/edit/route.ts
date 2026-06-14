@@ -8,7 +8,9 @@ import {
   type OrderEditableField,
 } from '@/lib/order-access'
 import { normalizeAlmaRole } from '@/lib/roles'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { fetchOrderById } from '@/lib/lifestyle/read'
+import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import type { Order } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -31,9 +33,9 @@ export async function POST(req: NextRequest) {
 
   let order: Order
   try {
-    const data = await serverGet<{ order?: Order } | Order>('order', { id: orderId, business_id: businessId }, 0)
-    order = ('order' in (data as object) ? (data as { order?: Order }).order : data) as Order
-    if (!order?.id) throw new Error('Order not found')
+    const found = await fetchOrderById(orderId, businessId)
+    if (!found?.id) throw new Error('Order not found')
+    order = found
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message || 'Order not found' }, { status: 404 })
   }
@@ -82,6 +84,9 @@ export async function POST(req: NextRequest) {
     try {
       const payload = await mergeActorPayload(req, { id: orderId, field: patch.field, value: patch.value })
       const result = await serverPost('update_field', payload)
+      if (!(result && typeof result === 'object' && 'error' in result && (result as { error?: string }).error)) {
+        mirrorOrderAfterGasWrite(orderId)
+      }
       if (result && typeof result === 'object' && 'error' in result && (result as { error?: string }).error) {
         results.push({ field: patch.field, ok: false, error: String((result as { error?: string }).error) })
       } else {

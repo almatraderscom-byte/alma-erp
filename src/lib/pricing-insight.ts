@@ -1,7 +1,7 @@
 /**
  * Pricing / margin insight from GAS products + stock buying prices + 30d sell velocity.
  */
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleProducts, getLifestyleStock } from '@/lib/lifestyle/read'
 import type { ProductsResponse } from '@/lib/api'
 import type { StockItem } from '@/types'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
@@ -19,8 +19,8 @@ const THIN_MARGIN_PCT = 15
 
 export async function analyzePricing(): Promise<PricingInsight> {
   const [productsRes, stockRes, invSales] = await Promise.all([
-    serverGet<ProductsResponse>('products', {}, 0).catch(() => ({ products: [] as ProductsResponse['products'] })),
-    serverGet<{ items?: StockItem[] }>('stock', {}, 0).catch(() => ({ items: [] as StockItem[] })),
+    getLifestyleProducts().catch(() => ({ products: [] as ProductsResponse['products'] })),
+    getLifestyleStock().catch(() => ({ items: [] as StockItem[] })),
     getInventoryWithSales(),
   ])
 
@@ -51,7 +51,7 @@ export async function analyzePricing(): Promise<PricingInsight> {
     const sell = roundMoney(Number(p.default_price ?? 0))
     const cost = roundMoney(
       Number(p.default_cogs ?? 0) > 0
-        ? p.default_cogs
+        ? Number(p.default_cogs)
         : Number(stock?.buyingPrice ?? 0),
     )
     const units = unitsMap.get(sku) ?? unitsMap.get(nameToSku.get(String(p.name).toLowerCase()) ?? '') ?? 0
@@ -63,7 +63,7 @@ export async function analyzePricing(): Promise<PricingInsight> {
     withCost++
 
     const marginPct = Math.round(((sell - cost) / sell) * 1000) / 10
-    const label = p.name || sku
+    const label = String(p.name || sku)
 
     if (marginPct < THIN_MARGIN_PCT) {
       thinMargin.push({

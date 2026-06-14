@@ -1,7 +1,7 @@
-import { serverGet, serverPost } from '@/lib/server-api'
+import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 import { getAgentOrderDetail, listAgentOrders } from '@/lib/agent-api/orders.service'
-import type { Order } from '@/types'
 
 export async function cancelOrder(id: string, reason: string) {
   const before = await getAgentOrderDetail(id)
@@ -10,6 +10,7 @@ export async function cancelOrder(id: string, reason: string) {
     'update_status',
     agentActorPayload({ id, status: 'CANCELLED', previous_status: before.status, reason }),
   )
+  mirrorOrderAfterGasWrite(id)
   return { id, status: 'cancelled', reason }
 }
 
@@ -24,6 +25,7 @@ export async function refundOrder(id: string, body: { full?: boolean; amount?: n
       refund_amount: body.amount,
     }),
   )
+  mirrorOrderAfterGasWrite(id)
   return { id, status: 'refunded', full: body.full ?? false, amount: body.amount ?? null }
 }
 
@@ -35,11 +37,13 @@ export async function patchOrderStatus(id: string, status: string, reason?: stri
     'update_status',
     agentActorPayload({ id, status: almaStatus, previous_status: before.status, reason }),
   )
+  mirrorOrderAfterGasWrite(id)
   return { id, status: status.toLowerCase() }
 }
 
 export async function addOrderNote(id: string, note: string) {
   await serverPost('update_field', agentActorPayload({ id, field: 'notes', value: note }))
+  mirrorOrderAfterGasWrite(id)
   return { id, status: 'note_added' }
 }
 

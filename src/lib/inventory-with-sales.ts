@@ -1,7 +1,7 @@
 /**
  * Merge inventory stock levels with order-based sell velocity (30d / 90d).
  */
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { expandOrderProductLines } from '@/lib/product-size-breakdown'
@@ -24,7 +24,7 @@ function countPiecesByProductKey(orders: Order[]): Record<string, number> {
 
 async function fetchRecentOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>('orders', { business_id: 'ALMA_LIFESTYLE', limit: '500' }, 0)
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

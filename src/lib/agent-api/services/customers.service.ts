@@ -1,4 +1,6 @@
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestyleCustomers } from '@/lib/lifestyle/read'
+import { mirrorCustomerAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 import { listAgentOrders } from '@/lib/agent-api/orders.service'
 import type { Customer } from '@/types'
@@ -20,7 +22,7 @@ function mapCustomer(c: Customer) {
 }
 
 export async function listCustomers(input: { search?: string; segment?: string; limit?: number }) {
-  const data = await serverGet<{ customers?: Customer[] }>('customers', {}, 0)
+  const data = await getLifestyleCustomers({})
   let customers = (data.customers ?? []).map(mapCustomer)
   if (input.search) {
     const q = input.search.toLowerCase()
@@ -50,16 +52,19 @@ export async function createCustomer(body: Record<string, unknown>) {
     agentActorPayload(body),
   )
   const id = String(result.customer_id ?? result.id ?? '')
+  mirrorCustomerAfterGasWrite(id)
   return { id, status: 'created', createdAt: new Date().toISOString() }
 }
 
 export async function patchCustomer(id: string, body: Record<string, unknown>) {
   await serverPost('update_customer', agentActorPayload({ id, ...body }))
+  mirrorCustomerAfterGasWrite(id)
   return { id, status: 'updated', updatedAt: new Date().toISOString() }
 }
 
 export async function addCustomerNote(id: string, note: string) {
   await serverPost('update_customer', agentActorPayload({ id, notes_append: note }))
+  mirrorCustomerAfterGasWrite(id)
   return { id, status: 'note_added' }
 }
 

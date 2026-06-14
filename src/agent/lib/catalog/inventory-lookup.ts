@@ -3,7 +3,7 @@
  * Stock API returns one row per SKU/variant; sizes live in size / sizeValue fields.
  */
 import { consolidateCollectionMembers, buildCollectionProfile, type CollectionProfile } from '@/agent/lib/catalog/collection-profile'
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders, getLifestyleStock } from '@/lib/lifestyle/read'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { Order, StockItem } from '@/types'
 
@@ -68,7 +68,7 @@ function rowFromStock(item: StockItem): CatalogStockRow {
 }
 
 async function fetchStockItems(): Promise<StockItem[]> {
-  const data = await serverGet<{ items?: StockItem[] }>('stock', {}, 0)
+  const data = await getLifestyleStock()
   return data.items ?? []
 }
 
@@ -244,12 +244,12 @@ export async function resolveCollection(codeOrSku: string): Promise<CollectionRe
 export async function getRecentSalesSkus(days = 30, limit = 50): Promise<string[]> {
   const end = new Date()
   const start = new Date(end.getTime() - days * 86_400_000)
-  const data = await serverGet<{ orders?: Order[] }>('orders', {
+  const data = await getLifestyleOrders({
     business_id: DEFAULT_AGENT_BUSINESS_ID,
     limit: '500',
     startDate: start.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),
-  }, 0)
+  })
   const counts = new Map<string, number>()
   for (const o of data.orders ?? []) {
     const lineSkus = (o.items ?? []).map((it) => it.sku || it.product_code || '').filter(Boolean)

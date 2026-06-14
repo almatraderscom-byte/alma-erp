@@ -1,7 +1,7 @@
 /**
  * Fetch current metric values for outcome measurement — real GAS/order data only.
  */
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { expandOrderProductLines } from '@/lib/product-size-breakdown'
 import { normalizeOrderStatusKey, filterOrdersByDateRange } from '@/lib/order-analytics'
@@ -12,7 +12,7 @@ import type { Order } from '@/types'
 
 async function fetchRecentOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>('orders', { business_id: 'ALMA_LIFESTYLE', limit: '500' }, 0)
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

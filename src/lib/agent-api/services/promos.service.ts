@@ -1,4 +1,6 @@
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestylePromos } from '@/lib/lifestyle/read'
+import { mirrorPromoAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 
 type PromoRow = {
@@ -14,7 +16,7 @@ type PromoRow = {
 /** GAS promos route — returns empty if not deployed yet. */
 export async function listPromos() {
   try {
-    const data = await serverGet<{ promos?: PromoRow[] }>('promos', {}, 0)
+    const data = await getLifestylePromos()
     const promos = (data.promos ?? []).map((p, i) => ({
       id: String(p.id ?? p.code ?? `promo_${i}`),
       code: String(p.code ?? ''),
@@ -35,20 +37,24 @@ export async function createPromo(body: Record<string, unknown>) {
     'create_promo',
     agentActorPayload(body),
   )
+  mirrorPromoAfterGasWrite(body, result as Record<string, unknown>)
   return { id: String(result.id ?? result.code ?? ''), status: 'created', createdAt: new Date().toISOString() }
 }
 
 export async function patchPromo(id: string, body: Record<string, unknown>) {
   await serverPost('update_promo', agentActorPayload({ id, ...body }))
+  mirrorPromoAfterGasWrite({ id, ...body })
   return { id, status: 'updated', updatedAt: new Date().toISOString() }
 }
 
 export async function deactivatePromo(id: string) {
   await serverPost('deactivate_promo', agentActorPayload({ id }))
+  mirrorPromoAfterGasWrite({ id, deactivate: true })
   return { id, status: 'deactivated' }
 }
 
 export async function deletePromo(id: string) {
   await serverPost('delete_promo', agentActorPayload({ id }))
+  mirrorPromoAfterGasWrite({ id, delete: true })
   return { id, status: 'deleted' }
 }

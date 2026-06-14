@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { fetchOrderById } from '@/lib/lifestyle/read'
+import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendOrderAlert } from '@/lib/resend'
 import { notifyRole, notifyUser } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import { handleOrderCommissionStatus, resolveOrderHandlerUser } from '@/lib/payroll-compensation'
-import type { Order } from '@/types'
 import { enqueueCourierUpdateSms } from '@/services/sms/events'
 
 const VALID_STATUSES = new Set([
@@ -23,8 +24,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 })
     }
 
-    const beforeData = await serverGet<{ order: Order }>('order', { id }, 0)
-    const beforeOrder = beforeData.order
+    const beforeOrder = await fetchOrderById(id, 'ALMA_LIFESTYLE')
+    if (!beforeOrder) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
     const previousStatus = beforeOrder.status
     if (isTerminal(previousStatus) && previousStatus !== nextStatus) {
       return NextResponse.json({ error: `Order is already terminal: ${previousStatus}` }, { status: 409 })
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
       reason: String(reason || '').slice(0, 500),
     })
     const result = await serverPost('update_status', actorPayload)
+    mirrorOrderAfterGasWrite(id)
     let commission: unknown = null
     try {
       commission = await handleOrderCommissionStatus(beforeOrder, nextStatus, String(actorPayload.actor_user_id || ''))

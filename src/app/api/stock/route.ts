@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestyleStock } from '@/lib/lifestyle/read'
+import { mirrorAllStockAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { prisma } from '@/lib/prisma'
 import { notifyRole } from '@/lib/notifications'
 import { mergeActorPayload } from '@/lib/api-route-actor'
@@ -8,7 +10,7 @@ import { logEvent } from '@/lib/logger'
 
 export async function GET() {
   try {
-    const data = await serverGet<{ summary?: { low_stock?: number; out_of_stock?: number } }>('stock', {}, 0)
+    const data = await getLifestyleStock()
     const low = Number(data.summary?.low_stock || 0)
     const out = Number(data.summary?.out_of_stock || 0)
     if (low || out) {
@@ -54,6 +56,7 @@ export async function POST(req: NextRequest) {
     const route = routeByAction[action]
     if (!route) return NextResponse.json({ error: 'Invalid inventory action' }, { status: 400 })
     const result = await serverPost(route, await mergeActorPayload(req, body))
+    mirrorAllStockAfterGasWrite()
     return NextResponse.json(result)
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

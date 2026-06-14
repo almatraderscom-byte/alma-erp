@@ -1,4 +1,4 @@
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleStock } from '@/lib/lifestyle/read'
 import { roundMoney } from '@/lib/money'
 import { listWebsiteProducts, websiteCatalogStats } from './catalog.service'
 import { getWebsiteSupabaseAdmin, websiteSupabaseConfigured } from './supabase-client'
@@ -52,8 +52,8 @@ export interface WebsiteHealthReport {
 }
 
 async function loadErpInventory(): Promise<ErpStockItem[]> {
-  const data = await serverGet<{ items?: ErpStockItem[]; products?: ErpStockItem[] }>('stock', {}, 0)
-  return data.items ?? data.products ?? []
+  const data = await getLifestyleStock()
+  return data.items ?? []
 }
 
 function erpPrice(item: ErpStockItem): number {

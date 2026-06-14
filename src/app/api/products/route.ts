@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { getLifestyleProducts } from '@/lib/lifestyle/read'
+import { mirrorProductAfterGasWrite } from '@/lib/lifestyle/mirror'
+import { serverPost } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 /** No CDN stale reads — inventory and product forms need fresh PRODUCT MASTER after writes. */
 export async function GET() {
   try {
-    const data = await serverGet('products', {}, 0)
+    const data = await getLifestyleProducts()
     return NextResponse.json(data, {
       headers: { 'Cache-Control': 'private, no-store, must-revalidate' },
     })
@@ -19,6 +21,7 @@ export async function POST(req: NextRequest) {
   try {
     const json = (await req.json()) as Record<string, unknown>
     const result = await serverPost('create_product', await mergeActorPayload(req, json))
+    mirrorProductAfterGasWrite(String((result as { product_id?: string }).product_id ?? json.sku ?? ''))
     logEvent('info', 'products.create_completed', {
       ok: (result as { ok?: boolean }).ok,
       productId: (result as { product_id?: string }).product_id,
