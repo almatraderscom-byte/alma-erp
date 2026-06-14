@@ -16,7 +16,7 @@
 import { Telegraf } from 'telegraf'
 import { transcribeVoiceNote, sendVoiceMessage } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
-import { setDispatcherBot } from './dispatcher.mjs'
+import { setDispatcherBot, getDispatcherBot } from './dispatcher.mjs'
 import { handleSalahCallback } from '../salah/scheduler.mjs'
 import { handleReminderCallback } from '../reminders/callbacks.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
@@ -316,6 +316,35 @@ async function buildConfirmCardKeyboard(card) {
 
 // ── Approve / Reject callback ──────────────────────────────────────────────
 
+async function findPendingProposalAction(supabase, dateYmd) {
+  const { data: rows } = await supabase
+    .from('agent_pending_actions')
+    .select('id, payload, summary, status')
+    .eq('type', 'dispatch_staff_tasks')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+  return (rows ?? []).find((r) => r.payload?.date === dateYmd) ?? null
+}
+
+async function dispatchApprovedStaffTasks(ctx, actionId) {
+  const supabase = createSupabase()
+  const { data: pendingAction } = await supabase
+    .from('agent_pending_actions')
+    .select('type, payload')
+    .eq('id', actionId)
+    .maybeSingle()
+
+  if (pendingAction?.type !== 'dispatch_staff_tasks') return null
+
+  const { date, taskIds } = pendingAction.payload ?? {}
+  const bot = getDispatcherBot()
+  if (!bot || !date) return null
+
+  const { dispatchTasksToStaff, formatDispatchOwnerReport } = await import('../staff/dispatch.mjs')
+  const dispatchResult = await dispatchTasksToStaff({ supabase, bot, date, taskIds })
+  return formatDispatchOwnerReport(dispatchResult)
+}
+
 async function handleActionCallback(ctx, action, actionId) {
   const endpoint = action === 'approve' ? 'approve' : 'reject'
   try {
@@ -359,7 +388,16 @@ async function handleActionCallback(ctx, action, actionId) {
     if (res.ok) {
       const label = action === 'approve' ? '✅ অনুমোদিত' : '❌ বাতিল করা হয়েছে'
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-      await ctx.reply(label + (data.message ? `\n${data.message}` : ''))
+      if (action === 'approve') {
+        const dispatchReport = await dispatchApprovedStaffTasks(ctx, actionId)
+        if (dispatchReport) {
+          await ctx.reply(`${label}\n${dispatchReport}`)
+        } else {
+          await ctx.reply(label + (data.message ? `\n${data.message}` : ''))
+        }
+      } else {
+        await ctx.reply(label + (data.message ? `\n${data.message}` : ''))
+      }
     } else if (data.error === 'already_resolved') {
       const statusLabel = data.status === 'executed' ? '✅ ইতিমধ্যে সম্পন্ন হয়েছে' :
                           data.status === 'approved' ? '✅ ইতিমধ্যে অনুমোদিত' :
@@ -1012,6 +1050,39 @@ export function createTelegramBot() {
       const actionId = data.slice('fin_edit:'.length)
       const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
       await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
+      return
+    }
+
+    if (data.startsWith('proposal_approve:')) {
+      const dateYmd = data.slice('proposal_approve:'.length)
+      const supabase = createSupabase()
+      const pa = await findPendingProposalAction(supabase, dateYmd)
+      if (!pa?.id) {
+        await ctx.answerCbQuery('কোনো pending proposal নেই')
+        await ctx.reply('এই তারিখের জন্য approve করার মতো proposal পাওয়া যায়নি।')
+        return
+      }
+      await handleActionCallback(ctx, 'approve', pa.id)
+      return
+    }
+
+    if (data.startsWith('proposal_show:')) {
+      const dateYmd = data.slice('proposal_show:'.length)
+      const supabase = createSupabase()
+      const pa = await findPendingProposalAction(supabase, dateYmd)
+      await ctx.answerCbQuery('প্রস্তাব')
+      if (pa?.summary) {
+        await ctx.reply(pa.summary, { parse_mode: 'Markdown' }).catch(() => ctx.reply(pa.summary))
+      } else {
+        const { count } = await supabase
+          .from('staff_tasks')
+          .select('id', { count: 'exact', head: true })
+          .eq('proposed_for', dateYmd)
+          .eq('status', 'proposed')
+        await ctx.reply(count
+          ? `${dateYmd} তারিখে ${count}টি proposed task আছে — Approve করুন।`
+          : `${dateYmd} তারিখে কোনো pending proposal নেই।`)
+      }
       return
     }
 

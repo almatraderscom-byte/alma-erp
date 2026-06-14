@@ -19,8 +19,32 @@ export function setDispatcherBot(bot, ownerChatId) {
   _ownerChatId = String(ownerChatId)
 }
 
+export function getDispatcherBot() {
+  return _bot
+}
+
+/** Inline keyboard for staff task proposal approval cards. */
+export function buildStaffProposalKeyboard(pendingActionId, proposalDate, opts = {}) {
+  const approveLabel = opts.approveLabel ?? '✅ Approve'
+  const rejectLabel = opts.rejectLabel ?? '❌ Cancel'
+  if (!pendingActionId) return null
+  return {
+    inline_keyboard: [
+      [
+        { text: approveLabel, callback_data: `approve:${pendingActionId}` },
+        { text: '✏️ Edit', callback_data: `proposal_edit:${proposalDate}` },
+      ],
+      [
+        { text: '➕ Add Task', callback_data: `proposal_addtask:${proposalDate}` },
+        { text: rejectLabel, callback_data: `reject:${pendingActionId}` },
+      ],
+    ],
+  }
+}
+
 /**
  * Sends an approval card to the owner.
+ * @returns {{ cardSent: boolean, messageId: number|null, pendingActionId: string|null }}
  */
 export async function sendTelegramApprovalCard({
   message,
@@ -31,30 +55,22 @@ export async function sendTelegramApprovalCard({
 }) {
   if (!_bot || !_ownerChatId) {
     console.warn('[dispatcher] bot not initialized for approval card')
-    return
+    return { cardSent: false, messageId: null, pendingActionId: pendingActionId ?? null }
   }
   if (!pendingActionId) {
     console.error('[dispatcher] pendingActionId is missing — buttons will not be attached')
   }
 
   const chunks = splitMessage(message)
+  let cardSent = false
+  let messageId = null
+
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1
     const date = proposalDate ?? ''
     const keyboard = isLast && pendingActionId
-      ? {
-          inline_keyboard: [
-            [
-              { text: approveLabel, callback_data: `approve:${pendingActionId}` },
-              { text: '✏️ Edit', callback_data: `proposal_edit:${date}` },
-            ],
-            [
-              { text: '➕ Add Task', callback_data: `proposal_addtask:${date}` },
-              { text: rejectLabel, callback_data: `reject:${pendingActionId}` },
-            ],
-          ],
-        }
-      : undefined
+      ? buildStaffProposalKeyboard(pendingActionId, date, { approveLabel, rejectLabel })
+      : null
     const extra = keyboard ? { reply_markup: keyboard } : {}
     if (isLast) {
       console.log('[dispatcher] sendMessage args:', JSON.stringify({
@@ -63,13 +79,19 @@ export async function sendTelegramApprovalCard({
         reply_markup: extra.reply_markup ?? null,
       }))
     }
-    await sendMarkdownSafe(
+    const sent = await sendMarkdownSafe(
       _bot.telegram,
       _ownerChatId,
       chunks[i],
       extra,
     )
+    if (isLast && keyboard) {
+      cardSent = Boolean(sent?.message_id)
+      messageId = sent?.message_id ?? null
+    }
   }
+
+  return { cardSent, messageId, pendingActionId: pendingActionId ?? null }
 }
 
 /**

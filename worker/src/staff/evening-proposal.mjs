@@ -590,23 +590,26 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
         : proposal.summaryBangla,
       costEstimate: 0,
       status: 'pending',
-      createdAt: new Date().toISOString(),
     })
 
-    const { sendTelegramApprovalCard } = await import('../telegram/dispatcher.mjs')
+    const { sendTelegramApprovalCard, buildStaffProposalKeyboard, getDispatcherBot } = await import('../telegram/dispatcher.mjs')
+    const { notify } = await import('../notify/index.mjs')
+    const { sendMarkdownSafe } = await import('../telegram/markdown-safe.mjs')
+
     const { data: pendingAction } = await supabase
       .from('agent_pending_actions')
       .select('id')
       .eq('status', 'pending')
       .eq('type', 'dispatch_staff_tasks')
-      .order('createdAt', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
-      .single()
+      .maybeSingle()
 
     if (!pendingAction?.id) {
       console.error(`[${label}] pending action not found — approval buttons will be missing`)
     }
-    await sendTelegramApprovalCard({
+
+    let cardResult = await sendTelegramApprovalCard({
       message: proposal.summaryBangla,
       pendingActionId: pendingAction?.id,
       proposalDate: targetDate,
@@ -614,7 +617,49 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       rejectLabel: '❌ বাতিল',
     })
 
-    console.log(`[${label}] approval card sent for ${taskData.length} tasks`)
+    // Self-verify: pending action row + card with buttons both present
+    const { data: paCheck } = await supabase
+      .from('agent_pending_actions')
+      .select('id')
+      .eq('type', 'dispatch_staff_tasks')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    let cardSent = cardResult?.cardSent ?? false
+    if (!cardSent || !paCheck?.length) {
+      console.warn(`[${label}] self-verify failed (card=${cardSent}, pending=${paCheck?.length ?? 0}) — retrying`)
+      const bot = getDispatcherBot()
+      const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+      const paId = paCheck?.[0]?.id ?? pendingAction?.id
+      const keyboard = buildStaffProposalKeyboard(paId, targetDate, {
+        approveLabel: '✅ সব Approve',
+        rejectLabel: '❌ বাতিল',
+      })
+      if (bot && ownerChatId && keyboard) {
+        try {
+          const retry = await sendMarkdownSafe(
+            bot.telegram,
+            ownerChatId,
+            `⚠️ আজকের টাস্ক proposal পাঠাতে সমস্যা হয়েছিল — আবার পাঠানো হলো:\n\n${proposal.summaryBangla}`,
+            { reply_markup: keyboard },
+          )
+          cardSent = Boolean(retry?.message_id)
+        } catch (e) {
+          console.error(`[${label}] retry failed:`, e.message)
+        }
+      }
+      if (!cardSent) {
+        await notify({
+          tier: 2,
+          title: '❌ Task proposal পাঠানো যায়নি',
+          message: 'আজকের evening proposal owner-কে পৌঁছানো যায়নি। Manually /proposal চালান বা worker চেক করুন।',
+          category: 'urgent',
+        }).catch(() => {})
+      }
+    }
+
+    console.log(`[${label}] approval card sent for ${taskData.length} tasks (verified=${cardSent})`)
   } catch (err) {
     console.error(`[${label}] error:`, err.message, err.stack)
     throw err

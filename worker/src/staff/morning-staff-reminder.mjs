@@ -4,6 +4,7 @@
  */
 
 import { dispatchTasksToStaff } from './dispatch.mjs'
+import { notify } from '../notify/index.mjs'
 
 export async function runMorningStaffReminder({ supabase, bot }) {
   console.log('[morning-staff-reminder] starting...')
@@ -20,14 +21,44 @@ export async function runMorningStaffReminder({ supabase, bot }) {
     console.log(`[morning-staff-reminder] dispatching ${taskIds.length} approved tasks`)
     await dispatchTasksToStaff({ supabase, bot, date: today, taskIds })
   } else {
-    console.log(`[morning-staff-reminder] 0 approved tasks for ${today} — checking if proposals exist`)
     const { count: proposedCount } = await supabase
       .from('staff_tasks')
       .select('id', { count: 'exact', head: true })
       .eq('proposed_for', today)
       .eq('status', 'proposed')
+
+    const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+
     if (proposedCount > 0) {
-      console.warn(`[morning-staff-reminder] ${proposedCount} tasks proposed but NOT approved — owner didn't approve last night's proposal`)
+      console.warn(`[morning-staff-reminder] ${proposedCount} proposed but UNAPPROVED at 09:00 — escalating`)
+      await notify({
+        tier: 3,
+        title: 'সকাল ৯টা — টাস্ক approve হয়নি',
+        message: `আজকের ${proposedCount}টি কাজ এখনো approve হয়নি। স্টাফরা কাজ পাচ্ছে না। এখনই approve করুন।`,
+        voiceMessage: `সালাম স্যার। আজকের স্টাফ টাস্ক এখনো approve করা হয়নি। ${proposedCount}টি কাজ অপেক্ষা করছে। দয়া করে এখনই approve করুন, নাহলে স্টাফরা কাজ পাবে না।`,
+        category: 'urgent',
+      })
+      if (ownerChatId && bot) {
+        await bot.telegram.sendMessage(
+          ownerChatId,
+          `🔴 আজকের ${proposedCount}টি কাজ approve হয়নি — স্টাফদের কাছে এখনো পাঠানো হয়নি।\n\nApprove করলেই সাথে সাথে পাঠানো হবে।`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '✅ এখন Approve করুন', callback_data: `proposal_approve:${today}` },
+              ]],
+            },
+          },
+        ).catch(() => {})
+      }
+    } else {
+      console.error('[morning-staff-reminder] NO proposal found for today — generation may have failed')
+      await notify({
+        tier: 2,
+        title: '⚠️ আজকের কোনো task proposal নেই',
+        message: 'গতরাতে proposal তৈরি হয়নি। Evening-proposal scheduler চেক করুন।',
+        category: 'urgent',
+      })
     }
   }
 
