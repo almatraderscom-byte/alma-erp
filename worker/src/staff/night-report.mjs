@@ -45,20 +45,30 @@ export async function runNightReport({ supabase, bot }) {
 
   for (const { staff, done, pending } of Object.values(byStaff)) {
     const staffName = staff?.name || 'অজানা'
-    const total = done.length + pending.length
-    const pct = total > 0 ? Math.round((done.length / total) * 100) : 0
+    const workPending = pending.filter((t) => t.type !== 'learning')
+    const learningPending = pending.filter((t) => t.type === 'learning')
+    const workDone = done.filter((t) => t.type !== 'learning')
+    const learningDone = done.filter((t) => t.type === 'learning')
+    const workTotal = workDone.length + workPending.length
+    const pct = workTotal > 0 ? Math.round((workDone.length / workTotal) * 100) : 0
     const shortName = staffName.split(' ').pop() ?? staffName
-    compactParts.push(`${shortName} ${bnNum(done.length)}/${bnNum(total)} সম্পন্ন`)
+    compactParts.push(`${shortName} ${bnNum(workDone.length)}/${bnNum(workTotal)} সম্পন্ন`)
 
     reportLines.push(
-      `👤 *${staffName}*: ${done.length}/${total} (${pct}%)\n` +
-      (done.length > 0 ? `   ✅ ${done.map(t => t.title).join(', ')}\n` : '') +
-      (pending.length > 0 ? `   ⏳ ${pending.map(t => t.title).join(', ')}` : '')
+      `👤 *${staffName}*: ${workDone.length}/${workTotal} (${pct}%)` +
+      (learningDone.length + learningPending.length > 0
+        ? ` · 📚 শেখা ${learningDone.length}/${learningDone.length + learningPending.length}`
+        : '') +
+      `\n` +
+      (workDone.length > 0 ? `   ✅ ${workDone.map(t => t.title).join(', ')}\n` : '') +
+      (workPending.length > 0 ? `   ⏳ ${workPending.map(t => t.title).join(', ')}\n` : '') +
+      (learningPending.length > 0 ? `   📚 (ঐচ্ছিক) ${learningPending.map(t => t.title).join(', ')}` : '') +
+      (learningDone.length > 0 && learningPending.length === 0 ? `   📚 ✅ ${learningDone.map(t => t.title).join(', ')}` : ''),
     )
 
-    // Mark pending as carried
-    if (pending.length > 0) {
-      tasksToCarry.push(...pending)
+    // Carry incomplete work tasks only — learning tasks are optional growth
+    if (workPending.length > 0) {
+      tasksToCarry.push(...workPending)
     }
   }
 

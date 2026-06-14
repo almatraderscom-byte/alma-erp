@@ -14,6 +14,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
     .select(`*, agent_staff(id, name, telegramChatId)`)
     .eq('proposed_for', today)
     .eq('status', 'sent')
+    .neq('type', 'learning')
 
   if (!pendingTasks?.length) {
     console.log('[midday-checkin] all tasks done — no reminders needed')

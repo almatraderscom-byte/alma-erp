@@ -44,6 +44,8 @@ export async function getVerificationSkipTypes(): Promise<string[]> {
 }
 
 export async function shouldVerifyTaskType(taskType: string): Promise<boolean> {
+  // Learning tasks are growth-oriented — encourage completion, no strict proof chain
+  if (taskType === 'learning') return false
   const enabled = await isTaskVerificationEnabled()
   if (!enabled) return false
   const skip = await getVerificationSkipTypes()

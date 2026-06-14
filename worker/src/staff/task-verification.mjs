@@ -91,6 +91,18 @@ export async function notifyOwnerForReview(telegram, taskRow, result) {
 }
 
 export async function handleStaffTaskDone(ctx, supabase, taskId, staff) {
+  const { data: taskRow } = await supabase
+    .from('staff_tasks')
+    .select('id, type, title')
+    .eq('id', taskId)
+    .maybeSingle()
+
+  // Learning tasks are growth-oriented — don't penalize; instant done, no proof pressure
+  if (taskRow?.type === 'learning') {
+    const result = await callTaskCallback({ taskId, staffId: staff.id, action: 'done' })
+    return { instant: true, result, learning: true }
+  }
+
   const result = await callTaskCallback({ taskId, staffId: staff.id, action: 'done' })
 
   if (result.instant) {

@@ -55,6 +55,36 @@ const DEFAULT_PROFILES: Record<string, StaffProfile> = {
   },
 }
 
+const LEARNING_CURRICULUM: Record<string, Array<{ title: string; detail: string }>> = {
+  Mustahid: [
+    { title: 'CapCut শেখা: একটি প্রোডাক্ট ভিডিওতে text + transition যোগ করুন', detail: 'আজকের যেকোনো প্রোডাক্ট দিয়ে ১৫-৩০ সেকেন্ড রিল বানিয়ে practice করুন। শেষে owner কে পাঠান।' },
+    { title: 'প্রোডাক্ট ডিজাইন বেসিক: Canva-তে একটি প্রোডাক্ট পোস্টার বানান', detail: 'ব্র্যান্ড কালার + প্রাইস + অফার সহ। ১টা ড্রাফট তৈরি করুন।' },
+    { title: 'পেজ ম্যানেজমেন্ট শেখা: FB Insights দেখে কোন পোস্ট ভালো চলছে নোট করুন', detail: 'Reach, engagement বুঝে ৩টা observation লিখুন।' },
+    { title: 'প্রোডাক্ট রিসার্চ: প্রতিযোগীদের ৩টা বেস্টসেলিং প্রোডাক্ট খুঁজে দাম তুলনা করুন', detail: 'কী কারণে তারা ভালো করছে — ২ লাইনে লিখুন।' },
+    { title: 'কাস্টমার সাইকোলজি: গত সপ্তাহের ৫টা অর্ডার দেখে কোন প্রোডাক্ট কেন বিক্রি হলো বুঝুন', detail: 'প্যাটার্ন নোট করুন — owner কে রিপোর্ট দিন।' },
+    { title: 'ফটোগ্রাফি শেখা: lighting + angle নিয়ে একই প্রোডাক্টের ৩ রকম ছবি তুলুন', detail: 'কোনটা সবচেয়ে ভালো — owner এর মতামত নিন।' },
+    { title: 'বিজনেস বেসিক: profit margin কীভাবে হিসাব হয় শিখুন', detail: 'একটা প্রোডাক্টের cost, sell price, margin বের করুন।' },
+  ],
+  'Mohammad Eyafi': [
+    { title: 'অ্যাড অপটিমাইজেশন: গত ক্যাম্পেইনের CTR/CPC দেখে কী উন্নতি করা যায় লিখুন', detail: '২টা actionable improvement।' },
+    { title: 'কন্টেন্ট স্ট্র্যাটেজি: আগামী সপ্তাহের ৭ দিনের পোস্ট আইডিয়া বানান', detail: 'প্রতিদিনের theme ঠিক করুন।' },
+    { title: 'অ্যাডভান্সড CapCut: trending transition + sound দিয়ে একটি রিল', detail: 'বর্তমান trend ফলো করে বানান।' },
+    { title: 'কাস্টমার রিটেনশন: repeat customer দের জন্য একটা অফার আইডিয়া দিন', detail: 'কীভাবে আবার কিনতে আনা যায়।' },
+    { title: 'কম্পিটিটর অ্যানালাইসিস: ৩টা প্রতিযোগী পেজের কৌশল নোট করুন', detail: 'আমরা কী শিখতে পারি।' },
+  ],
+}
+
+function getLearningTaskForStaff(staffName: string, dayIndex: number) {
+  for (const [name, curriculum] of Object.entries(LEARNING_CURRICULUM)) {
+    const n = staffName.toLowerCase()
+    const key = name.toLowerCase()
+    if (n.includes(key) || key.includes(n)) {
+      return curriculum[dayIndex % curriculum.length] ?? null
+    }
+  }
+  return null
+}
+
 let _profileCache: Record<string, StaffProfile> | null = null
 
 export function _resetProfileCache() { _profileCache = null }
@@ -315,13 +345,28 @@ function buildTasksForStaff(
 
   // Trim to target count (carry-forwards always kept)
   const carryCount = tasks.filter((t) => t.source === 'pattern' && t.title.startsWith('↩')).length
+  let trimmed: Omit<ProposedTaskInput, 'staffName'>[]
   if (tasks.length > targetCount + carryCount) {
     const carries = tasks.filter((t) => t.title.startsWith('↩'))
     const rest = tasks.filter((t) => !t.title.startsWith('↩')).slice(0, targetCount)
-    return [...carries, ...rest].map((t) => ({ ...t, staffName: staff.name }))
+    trimmed = [...carries, ...rest]
+  } else {
+    trimmed = tasks
   }
 
-  return tasks.map((t) => ({ ...t, staffName: staff.name }))
+  const dayIndex = Math.floor(Date.now() / 86_400_000)
+  const learning = getLearningTaskForStaff(staff.name, dayIndex)
+  if (learning) {
+    trimmed.push({
+      staffId: staff.id,
+      title: `📚 ${learning.title}`,
+      detail: learning.detail,
+      type: 'learning',
+      source: 'curriculum',
+    })
+  }
+
+  return trimmed.map((t) => ({ ...t, staffName: staff.name }))
 }
 
 function formatSummary(
