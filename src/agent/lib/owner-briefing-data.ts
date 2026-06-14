@@ -14,6 +14,7 @@ import { getInventoryWithSales } from '@/lib/inventory-with-sales'
 import { buildReorderSuggestions, type ReorderSuggestion } from '@/lib/inventory-forecast'
 import { analyzeReturns } from '@/lib/return-analysis'
 import { analyzePricing } from '@/lib/pricing-insight'
+import { detectOrderIssues, type OrderIssue } from '@/lib/order-monitor'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -50,6 +51,7 @@ export type OwnerBriefingData = {
   staffPatterns: Array<{ name: string; type: string; detail: string }>
   returns: { flags: string[]; totalReturns: number; returnRatePct: number | null } | null
   pricing: { flags: string[]; costDataMissing: boolean } | null
+  orderIssues: OrderIssue[]
   decisions: BriefingDecision[]
   ownerDecisionMemoryCount: number
   generatedAt: string
@@ -314,6 +316,7 @@ export function deriveBriefingDecisions(sig: {
   staffPatterns: OwnerBriefingData['staffPatterns']
   returns: OwnerBriefingData['returns']
   pricing: OwnerBriefingData['pricing']
+  orderIssues: OrderIssue[]
 }): BriefingDecision[] {
   const decisions: BriefingDecision[] = []
 
@@ -342,7 +345,29 @@ export function deriveBriefingDecisions(sig: {
   }
 
   const pendingCount = sig.pendingOrders?.count ?? 0
-  if (pendingCount >= 10) {
+  const orderIssueTypes = new Set((sig.orderIssues ?? []).map((i) => i.type))
+
+  for (const issue of (sig.orderIssues ?? []).slice(0, 3)) {
+    const recommend =
+      issue.type === 'stuck_pending'
+        ? 'pending অর্ডারগুলো আজ confirm/deliver করুন — স্টাফকে push করতে বলুন'
+        : issue.type === 'pile_up'
+          ? 'pending queue clear করুন — অগ্রাধিকার অনুযায়ী confirm করুন'
+          : issue.type === 'high_cancel'
+            ? 'cancel কারণ খুঁজুন (CS/quality/pricing) — corrective action approve করার আগে জিজ্ঞেস করুন'
+            : issue.type === 'high_return'
+              ? 'analyze_returns চালিয়ে return কারণ দেখুন'
+              : 'payment/অর্ডার ডেটা verify করুন'
+
+    decisions.push({
+      area: 'orders',
+      urgency: issue.severity,
+      text: issue.detail,
+      recommend,
+    })
+  }
+
+  if (pendingCount >= 10 && !orderIssueTypes.has('pile_up')) {
     decisions.push({
       area: 'orders',
       urgency: 'high',
@@ -447,7 +472,7 @@ export function filterVetoedDecisions(
 
 export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   const today = todayYmdDhaka()
-  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, staffPatterns, returnPricing, ownerMemories] =
+  const [sales, pendingOrders, inventoryBundle, csWaiting, adsDigest, staffYesterday, staffPatterns, returnPricing, orderIssues, ownerMemories] =
     await Promise.all([
       gatherSalesSignals(),
       gatherPendingOrders(),
@@ -457,6 +482,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
       gatherStaffYesterday(),
       gatherStaffPatterns(),
       gatherReturnPricingInsights(),
+      detectOrderIssues().catch(() => [] as OrderIssue[]),
       searchAgentMemory({
         query: 'owner decision preference veto briefing',
         scope: 'business',
@@ -480,6 +506,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     staffPatterns,
     returns,
     pricing,
+    orderIssues,
   }
   let decisions = deriveBriefingDecisions(signals)
   decisions = filterVetoedDecisions(decisions, ownerMemories)

@@ -51,6 +51,7 @@ const lazy = {
   approvalEscalation: () => import('../staff/approval-escalation.mjs'),
   staffPresence:      () => import('../staff/presence-nudge.mjs'),
   approvalTracker:    () => import('../approvals/tracker.mjs'),
+  orderWatch:         () => import('../orders/watch.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'approval-tracker',     cronUtc: '0 4,8,13 * * *', description: 'Re-surface unresolved approvals (10:00, 14:00, 19:00 Dhaka)' },
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
   { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
+  { name: 'order-watch',            cronUtc: '0 6,12 * * *', description: 'Order issue scan (12:00, 18:00 Dhaka)' },
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
@@ -155,6 +157,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'owner-briefing': {
           const { runOwnerBriefing } = await lazy.ownerBriefing()
           await runOwnerBriefing({ supabase, bot })
+          break
+        }
+        case 'order-watch': {
+          const { runOrderWatch } = await lazy.orderWatch()
+          await runOrderWatch({ bot })
           break
         }
         case 'morning-staff-reminder': {

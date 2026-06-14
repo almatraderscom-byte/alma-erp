@@ -706,6 +706,34 @@ const get_reorder_suggestions: AgentTool = {
   },
 }
 
+const check_order_issues: AgentTool = {
+  name: 'check_order_issues',
+  description:
+    'Scan orders for problems: stuck pending (3+ days), pile-ups, high cancel/return rates, payment gaps. ' +
+    'Use when the owner asks about order health, "order e kono somossa?", or proactively in briefings. ' +
+    'Read-only — suggest actions; owner must approve any corrective step.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const { detectOrderIssues } = await import('@/lib/order-monitor')
+      const issues = await detectOrderIssues()
+      return {
+        success: true,
+        data: {
+          count: issues.length,
+          healthy: issues.length === 0,
+          issues,
+          summaryBangla: issues.length
+            ? issues.map((i) => `${i.severity === 'high' ? '🔴' : '🟡'} ${i.detail}`).join('\n')
+            : 'অর্ডার সেকশন স্বাভাবিক — কোনো সমস্যা পাওয়া যায়নি।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const generate_owner_briefing: AgentTool = {
   name: 'generate_owner_briefing',
   description:
@@ -769,6 +797,7 @@ export const ERP_TOOLS: AgentTool[] = [
   analyze_pricing,
   get_customer_segments,
   get_reorder_suggestions,
+  check_order_issues,
   generate_owner_briefing,
   get_pending_approvals,
 ]

@@ -29,7 +29,7 @@ export async function buildOwnerBriefing({ supabase: _supabase } = {}) {
   const brief = await api('/api/assistant/internal/owner-briefing')
   if (!brief) {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-    return { today, sales: null, pendingOrders: null, inventory: null, reorderSuggestions: [], csWaiting: null, adsDigest: null, staffYesterday: null, returns: null, pricing: null, decisions: [] }
+    return { today, sales: null, pendingOrders: null, inventory: null, reorderSuggestions: [], csWaiting: null, adsDigest: null, staffYesterday: null, returns: null, pricing: null, orderIssues: [], decisions: [] }
   }
   return brief
 }
