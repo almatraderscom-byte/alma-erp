@@ -257,15 +257,8 @@ async function handleOwnerText(ctx, text) {
     }
 
     // Send confirm cards as inline keyboard buttons
-    const { buildFinanceKeyboard } = await import('../finance/confirm-cards.mjs')
     for (const card of result.pendingCards ?? []) {
-      const isFinance = card.isFinance === true
-      const keyboard = isFinance
-        ? buildFinanceKeyboard(card)
-        : [[
-            { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
-            { text: '❌ বাতিল', callback_data: `reject:${card.pendingActionId}` },
-          ]]
+      const keyboard = await buildConfirmCardKeyboard(card)
       await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${card.summary}`, {
         reply_markup: { inline_keyboard: keyboard },
       })
@@ -286,6 +279,39 @@ async function handleOwnerText(ctx, text) {
         : `সমস্যা হয়েছে। আবার চেষ্টা করুন।`
     await ctx.reply(`❌ ${bangla}`)
   }
+}
+
+// ── Confirm card keyboards ─────────────────────────────────────────────────
+
+async function buildConfirmCardKeyboard(card) {
+  const { buildFinanceKeyboard } = await import('../finance/confirm-cards.mjs')
+  if (card.isFinance) return buildFinanceKeyboard(card)
+
+  const supabase = createSupabase()
+  const { data: pendingAction } = await supabase
+    .from('agent_pending_actions')
+    .select('type, payload')
+    .eq('id', card.pendingActionId)
+    .maybeSingle()
+
+  if (pendingAction?.type === 'dispatch_staff_tasks') {
+    const date = pendingAction.payload?.date ?? ''
+    return [
+      [
+        { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
+        { text: '✏️ Edit', callback_data: `proposal_edit:${date}` },
+      ],
+      [
+        { text: '➕ Add Task', callback_data: `proposal_addtask:${date}` },
+        { text: '❌ বাতিল', callback_data: `reject:${card.pendingActionId}` },
+      ],
+    ]
+  }
+
+  return [[
+    { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
+    { text: '❌ বাতিল', callback_data: `reject:${card.pendingActionId}` },
+  ]]
 }
 
 // ── Approve / Reject callback ──────────────────────────────────────────────
@@ -989,9 +1015,44 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('proposal_edit:')) {
+      const date = data.slice('proposal_edit:'.length)
+      await ctx.answerCbQuery('সম্পাদনা')
+      await ctx.reply(
+        'কোন task edit করবেন? টাস্ক নম্বর আর নতুন লেখা বলুন, অথবা agent কে লিখুন।' +
+        (date ? `\n\n(সক্রিয় প্রস্তাব: ${date})` : ''),
+      )
+      return
+    }
+
+    if (data.startsWith('proposal_addtask:')) {
+      const date = data.slice('proposal_addtask:'.length)
+      await ctx.answerCbQuery('যোগ করুন')
+      await ctx.reply(
+        'কোন staff-এর জন্য কী task যোগ করবো? লিখুন।' +
+        (date ? `\n\n(সক্রিয় প্রস্তাব: ${date})` : ''),
+      )
+      return
+    }
+
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
       if (action === 'edit') {
+        const supabase = createSupabase()
+        const { data: pendingAction } = await supabase
+          .from('agent_pending_actions')
+          .select('type, payload')
+          .eq('id', actionId)
+          .maybeSingle()
+        if (pendingAction?.type === 'dispatch_staff_tasks') {
+          const date = pendingAction.payload?.date ?? ''
+          await ctx.answerCbQuery('সম্পাদনা')
+          await ctx.reply(
+            'কোন task edit করবেন? টাস্ক নম্বর আর নতুন লেখা বলুন, অথবা agent কে লিখুন।' +
+            (date ? `\n\n(সক্রিয় প্রস্তাব: ${date})` : ''),
+          )
+          return
+        }
         const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
         await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
       } else {

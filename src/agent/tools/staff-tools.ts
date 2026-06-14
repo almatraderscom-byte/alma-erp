@@ -20,6 +20,76 @@ function dhakaDateStr(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
+async function resolveActiveProposalDate(explicit?: string): Promise<string> {
+  if (explicit) return explicit
+  const pending = await db.agentPendingAction.findFirst({
+    where: { type: 'dispatch_staff_tasks', status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+    select: { payload: true },
+  })
+  const payloadDate = (pending?.payload as { date?: string } | null)?.date
+  return payloadDate || dhakaToday()
+}
+
+async function syncPendingDispatchAction(date: string): Promise<string | null> {
+  const proposed = await db.agentStaffTask.findMany({
+    where: { proposedFor: new Date(date), status: 'proposed' },
+    include: { staff: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (!proposed.length) return null
+
+  const summary = proposed
+    .map((t: { staff: { name: string }; title: string; type: string }) =>
+      `• ${t.staff.name}: ${t.title} (${t.type})`)
+    .join('\n')
+
+  const existing = await db.agentPendingAction.findFirst({
+    where: { type: 'dispatch_staff_tasks', status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, payload: true },
+  })
+
+  const taskIds = proposed.map((t: { id: string }) => t.id)
+  const summaryText = `স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${summary}`
+
+  if (existing) {
+    await db.agentPendingAction.update({
+      where: { id: existing.id },
+      data: {
+        payload: { ...(existing.payload as object), date, taskIds },
+        summary: summaryText,
+      },
+    })
+    return existing.id as string
+  }
+
+  const action = await db.agentPendingAction.create({
+    data: {
+      type: 'dispatch_staff_tasks',
+      payload: { date, taskIds },
+      summary: summaryText,
+      costEstimate: 0,
+      status: 'pending',
+    },
+  })
+  return action.id as string
+}
+
+async function findStaffByName(staffName: string) {
+  const trimmed = staffName.trim()
+  if (!trimmed) return null
+  const exact = await db.agentStaff.findFirst({
+    where: { name: { equals: trimmed, mode: 'insensitive' }, active: true },
+    select: { id: true, name: true },
+  })
+  if (exact) return exact
+  return db.agentStaff.findFirst({
+    where: { name: { contains: trimmed, mode: 'insensitive' }, active: true },
+    select: { id: true, name: true },
+  })
+}
+
 const APP_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
 const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
 
@@ -250,6 +320,154 @@ const propose_staff_tasks: AgentTool = {
   },
 }
 
+// ── merge_into_proposal ───────────────────────────────────────────────────────
+
+const merge_into_proposal: AgentTool = {
+  name: 'merge_into_proposal',
+  description:
+    'Add or edit tasks within the CURRENTLY pending (unapproved) staff proposal, preserving existing tasks. ' +
+    'Use when the owner requests changes/additions while a proposal is active. ' +
+    'Re-shows the full updated proposal for approval. Do NOT use add_staff_task_now or propose_staff_tasks for this.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD of the active proposal (default: pending proposal date)' },
+      staffName: { type: 'string', description: 'Which staff member the task is for' },
+      additions: {
+        type: 'array',
+        description: 'New tasks to append',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            detail: { type: 'string' },
+            type: { type: 'string', description: 'e.g. learning, research, video_reel, misc, custom' },
+          },
+          required: ['title'],
+        },
+      },
+      edits: {
+        type: 'array',
+        description: 'Edits to existing proposed tasks',
+        items: {
+          type: 'object',
+          properties: {
+            taskId: { type: 'string' },
+            newTitle: { type: 'string' },
+            newDetail: { type: 'string' },
+          },
+          required: ['taskId'],
+        },
+      },
+      removeTaskIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Task IDs to remove from the proposal',
+      },
+    },
+    required: ['staffName'],
+  },
+  handler: async (input) => {
+    try {
+      const date = await resolveActiveProposalDate(input.date as string | undefined)
+      const staffName = String(input.staffName)
+      const staff = await findStaffByName(staffName)
+      if (!staff) return { success: false, error: `Staff "${staffName}" not found.` }
+
+      const additions = (input.additions ?? []) as Array<{ title: string; detail?: string; type?: string }>
+      const edits = (input.edits ?? []) as Array<{ taskId: string; newTitle?: string; newDetail?: string }>
+      const removeTaskIds = (input.removeTaskIds ?? []) as string[]
+
+      if (!additions.length && !edits.length && !removeTaskIds.length) {
+        return { success: false, error: 'No additions, edits, or removals specified.' }
+      }
+
+      if (additions.length) {
+        await db.agentStaffTask.createMany({
+          data: additions.map((t) => ({
+            staffId: staff.id,
+            title: t.title,
+            detail: t.detail ?? null,
+            type: t.type ?? 'misc',
+            status: 'proposed',
+            proposedFor: new Date(date),
+            source: 'owner_manual',
+          })),
+        })
+      }
+
+      for (const e of edits) {
+        const patch: Record<string, string> = {}
+        if (e.newTitle) patch.title = e.newTitle
+        if (e.newDetail) patch.detail = e.newDetail
+        if (Object.keys(patch).length) {
+          await db.agentStaffTask.updateMany({
+            where: {
+              id: e.taskId,
+              staffId: staff.id,
+              status: 'proposed',
+              proposedFor: new Date(date),
+            },
+            data: patch,
+          })
+        }
+      }
+
+      if (removeTaskIds.length) {
+        await db.agentStaffTask.deleteMany({
+          where: {
+            id: { in: removeTaskIds },
+            staffId: staff.id,
+            status: 'proposed',
+            proposedFor: new Date(date),
+          },
+        })
+      }
+
+      const staffTasks = await db.agentStaffTask.findMany({
+        where: { staffId: staff.id, status: 'proposed', proposedFor: new Date(date) },
+        select: { id: true, title: true, detail: true, type: true },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      const allProposed = await db.agentStaffTask.findMany({
+        where: { proposedFor: new Date(date), status: 'proposed' },
+        include: { staff: { select: { name: true } } },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      const summaryBangla = allProposed
+        .map((t: { staff: { name: string }; title: string }) => `• ${t.staff.name}: ${t.title}`)
+        .join('\n')
+
+      const pendingActionId = await syncPendingDispatchAction(date)
+
+      return {
+        success: true,
+        data: {
+          status: 'merged',
+          date,
+          staffName: staff.name,
+          staffTasks,
+          allTasks: allProposed.map((t: { id: string; staff: { name: string }; title: string; detail: string | null; type: string }) => ({
+            id: t.id,
+            staffName: t.staff.name,
+            title: t.title,
+            detail: t.detail,
+            type: t.type,
+          })),
+          taskCount: allProposed.length,
+          summaryBangla,
+          pendingActionId,
+          message: `Proposal updated for ${staff.name}. Show all ${allProposed.length} tasks for approval — do NOT discard other staff tasks.`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── approve_and_dispatch_tasks ────────────────────────────────────────────────
 
 const approve_and_dispatch_tasks: AgentTool = {
@@ -318,7 +536,8 @@ const approve_and_dispatch_tasks: AgentTool = {
 const add_staff_task_now: AgentTool = {
   name: 'add_staff_task_now',
   description:
-    'Adds a single task to today\'s list for a staff member mid-day. ' +
+    'Adds a single task to today\'s list for a staff member mid-day when there is NO active unapproved proposal. ' +
+    'If a pending staff proposal exists, use merge_into_proposal instead. ' +
     'Creates a PENDING ACTION — owner must approve before the task is saved and the staff member is notified.',
   input_schema: {
     type: 'object' as const,
@@ -593,6 +812,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   get_all_staff,
   get_staff_tasks,
   propose_staff_tasks,
+  merge_into_proposal,
   approve_and_dispatch_tasks,
   add_staff_task_now,
   send_staff_announcement,

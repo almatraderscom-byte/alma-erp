@@ -471,8 +471,8 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
     await sendTelegramApprovalCard({
       message: proposal.summaryBangla,
       pendingActionId: pendingAction?.id,
+      proposalDate: targetDate,
       approveLabel: '✅ সব Approve',
-      editLabel: '✏️ সম্পাদনা',
       rejectLabel: '❌ বাতিল',
     })
 
