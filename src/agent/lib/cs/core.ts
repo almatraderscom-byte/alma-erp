@@ -104,10 +104,7 @@ export async function runCsTurn(input: {
       const lastMsg = messages[messages.length - 1]
       if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
         const lb = lastMsg.content[lastMsg.content.length - 1]
-        lastMsg.content[lastMsg.content.length - 1] = {
-          ...lb,
-          cache_control: { type: 'ephemeral' },
-        }
+        ;(lb as { cache_control?: { type: 'ephemeral' } }).cache_control = { type: 'ephemeral' }
       }
     }
 
