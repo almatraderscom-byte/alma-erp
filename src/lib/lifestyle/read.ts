@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { isSupabaseReadEnabled } from '@/lib/migration-flags'
+import { usePostgresFor } from '@/lib/migration-flags'
 import { serverGet } from '@/lib/server-api'
 import type { Prisma } from '@prisma/client'
 import type { Customer, Order, StockItem } from '@/types'
@@ -108,22 +108,22 @@ async function readOrderFromSupabase(id: string, p: QueryParams) {
 }
 
 export async function getLifestyleStock(p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('stock')) return readStockFromSupabase()
+  if (await usePostgresFor('stock')) return readStockFromSupabase()
   return serverGet<{ items?: StockItem[]; summary?: Record<string, number> }>('stock', p, 0)
 }
 
 export async function getLifestyleProducts(p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('products')) return readProductsFromSupabase()
+  if (await usePostgresFor('products')) return readProductsFromSupabase()
   return serverGet<{ products?: Array<Record<string, unknown>>; total?: number }>('products', p, 0)
 }
 
 export async function getLifestyleCustomers(p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('customers')) return readCustomersFromSupabase(p)
+  if (await usePostgresFor('customers')) return readCustomersFromSupabase(p)
   return serverGet<{ customers?: Customer[]; summary?: Record<string, unknown> }>('customers', p, 60)
 }
 
 export async function getLifestylePromos(p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('promos')) {
+  if (await usePostgresFor('promos')) {
     try {
       return await readPromosFromSupabase()
     } catch {
@@ -138,7 +138,7 @@ export async function getLifestylePromos(p: QueryParams = {}) {
 }
 
 export async function getLifestyleOrders(p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('orders')) {
+  if (await usePostgresFor('orders')) {
     const data = await readOrdersFromSupabase(p)
     return {
       orders: data.orders,
@@ -149,7 +149,7 @@ export async function getLifestyleOrders(p: QueryParams = {}) {
 }
 
 export async function getLifestyleOrder(id: string, p: QueryParams = {}) {
-  if (await isSupabaseReadEnabled('orders')) return readOrderFromSupabase(id, p)
+  if (await usePostgresFor('orders')) return readOrderFromSupabase(id, p)
   return serverGet<{ order?: Order; error?: string }>('order', { id, ...p }, 0)
 }
 

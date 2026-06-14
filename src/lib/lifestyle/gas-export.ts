@@ -1,0 +1,60 @@
+/**
+ * Phase 3 Option B — nightly Postgres → GAS sheet snapshot export.
+ */
+import { prisma } from '@/lib/prisma'
+import {
+  prismaCustomerToGas,
+  prismaOrderToGas,
+  prismaProductToGas,
+  prismaStockToGas,
+} from '@/lib/lifestyle/prisma-mappers'
+import { serverPost } from '@/lib/server-api'
+import { logEvent } from '@/lib/logger'
+
+export type GasExportResult = {
+  ok: boolean
+  counts: { orders: number; stock: number; products: number; customers: number }
+  gas?: Record<string, unknown>
+  error?: string
+}
+
+export async function buildLifestyleGasSnapshot() {
+  const [orders, stock, products, customers] = await Promise.all([
+    prisma.lifestyleOrder.findMany({ include: { items: true }, orderBy: { date: 'asc' } }),
+    prisma.lifestyleStockItem.findMany({ orderBy: { sku: 'asc' } }),
+    prisma.lifestyleProduct.findMany({ orderBy: { sku: 'asc' } }),
+    prisma.lifestyleCustomer.findMany({ orderBy: { id: 'asc' } }),
+  ])
+  return {
+    orders: orders.map(prismaOrderToGas),
+    stock: stock.map(prismaStockToGas),
+    products: products.map(prismaProductToGas),
+    customers: customers.map(prismaCustomerToGas),
+    exported_at: new Date().toISOString(),
+  }
+}
+
+export async function exportLifestyleSnapshotToGas(): Promise<GasExportResult> {
+  const snapshot = await buildLifestyleGasSnapshot()
+  const counts = {
+    orders: snapshot.orders.length,
+    stock: snapshot.stock.length,
+    products: snapshot.products.length,
+    customers: snapshot.customers.length,
+  }
+  try {
+    const gas = await serverPost<Record<string, unknown>>('postgres_snapshot_sync', snapshot, {
+      timeoutMs: 120_000,
+    })
+    if (gas?.error) {
+      logEvent('error', 'migration.gas_nightly_export_failed', { error: String(gas.error), counts })
+      return { ok: false, counts, gas, error: String(gas.error) }
+    }
+    logEvent('info', 'migration.gas_nightly_export_ok', { counts, gas })
+    return { ok: true, counts, gas }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    logEvent('error', 'migration.gas_nightly_export_failed', { error: message, counts })
+    return { ok: false, counts, error: message }
+  }
+}

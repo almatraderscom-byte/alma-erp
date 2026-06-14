@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLifestyleStock } from '@/lib/lifestyle/read'
-import { mirrorAllStockAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchInventoryAction } from '@/lib/lifestyle/write-dispatch'
 import { prisma } from '@/lib/prisma'
 import { notifyRole } from '@/lib/notifications'
 import { mergeActorPayload } from '@/lib/api-route-actor'
@@ -45,18 +44,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as Record<string, unknown>
     const action = String(body.action || '')
-    const routeByAction: Record<string, string> = {
-      edit: 'inventory_edit',
-      archive: 'inventory_archive',
-      restore: 'inventory_restore',
-      adjust: 'inventory_adjust',
-      bulk_update: 'inventory_bulk_update',
-      consolidate_lifestyle: 'inventory_consolidate_lifestyle',
-    }
-    const route = routeByAction[action]
-    if (!route) return NextResponse.json({ error: 'Invalid inventory action' }, { status: 400 })
-    const result = await serverPost(route, await mergeActorPayload(req, body))
-    mirrorAllStockAfterGasWrite()
+    if (!action) return NextResponse.json({ error: 'Invalid inventory action' }, { status: 400 })
+    const result = await dispatchInventoryAction(await mergeActorPayload(req, body))
     return NextResponse.json(result)
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

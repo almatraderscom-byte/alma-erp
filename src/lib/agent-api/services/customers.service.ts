@@ -1,6 +1,8 @@
 import { getLifestyleCustomers } from '@/lib/lifestyle/read'
-import { mirrorCustomerAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import {
+  dispatchCreateCustomer,
+  dispatchUpdateCustomer,
+} from '@/lib/lifestyle/write-dispatch'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
 import { listAgentOrders } from '@/lib/agent-api/orders.service'
 import type { Customer } from '@/types'
@@ -47,24 +49,18 @@ export async function getCustomerOrders(id: string, limit = 20) {
 }
 
 export async function createCustomer(body: Record<string, unknown>) {
-  const result = await serverPost<{ customer_id?: string; id?: string }>(
-    'create_customer',
-    agentActorPayload(body),
-  )
-  const id = String(result.customer_id ?? result.id ?? '')
-  mirrorCustomerAfterGasWrite(id)
+  const result = await dispatchCreateCustomer(agentActorPayload(body))
+  const id = String((result as { customer_id?: string; id?: string }).customer_id ?? (result as { id?: string }).id ?? '')
   return { id, status: 'created', createdAt: new Date().toISOString() }
 }
 
 export async function patchCustomer(id: string, body: Record<string, unknown>) {
-  await serverPost('update_customer', agentActorPayload({ id, ...body }))
-  mirrorCustomerAfterGasWrite(id)
+  await dispatchUpdateCustomer(agentActorPayload({ id, ...body }))
   return { id, status: 'updated', updatedAt: new Date().toISOString() }
 }
 
 export async function addCustomerNote(id: string, note: string) {
-  await serverPost('update_customer', agentActorPayload({ id, notes_append: note }))
-  mirrorCustomerAfterGasWrite(id)
+  await dispatchUpdateCustomer(agentActorPayload({ id, notes_append: note }))
   return { id, status: 'note_added' }
 }
 

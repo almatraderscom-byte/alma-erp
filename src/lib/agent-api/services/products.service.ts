@@ -1,16 +1,10 @@
 import { getLifestyleProducts, getLifestyleStock } from '@/lib/lifestyle/read'
 import {
-  mirrorAllStockAfterGasWrite,
-  mirrorProductAfterGasWrite,
-} from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+  dispatchCreateProduct,
+  dispatchInventoryAction,
+  dispatchUpdateProduct,
+} from '@/lib/lifestyle/write-dispatch'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
-import type { StockItem } from '@/types'
-
-type ProductsGasResponse = {
-  products?: Array<Record<string, unknown>>
-  items?: Array<Record<string, unknown>>
-}
 
 /** GAS products route — fields vary; map sku/product/name/price/stock from sheets. */
 function mapProduct(raw: Record<string, unknown>, idx: number) {
@@ -51,7 +45,7 @@ export async function listLowStock() {
     i => Number(i.current_stock ?? i.stockQty ?? 0) <= Number(i.reorder_level ?? 5),
   )
   return {
-    products: items.map((i, idx) => ({
+    products: items.map(i => ({
       id: i.sku,
       name: i.product,
       sku: i.sku,
@@ -64,47 +58,36 @@ export async function listLowStock() {
 }
 
 export async function createProduct(body: Record<string, unknown>) {
-  const result = await serverPost<{ product_id?: string; ok?: boolean }>(
-    'create_product',
-    agentActorPayload(body),
-  )
-  mirrorProductAfterGasWrite(String(result.product_id ?? body.sku ?? ''))
+  const result = await dispatchCreateProduct(agentActorPayload(body))
   return {
-    id: String(result.product_id ?? body.sku ?? ''),
+    id: String((result as { product_id?: string }).product_id ?? body.sku ?? ''),
     status: 'created',
     createdAt: new Date().toISOString(),
   }
 }
 
 export async function patchProduct(id: string, body: Record<string, unknown>) {
-  await serverPost('update_product', agentActorPayload({ sku: id, ...body }))
-  mirrorProductAfterGasWrite(id)
+  await dispatchUpdateProduct(agentActorPayload({ sku: id, ...body }))
   return { id, status: 'updated', updatedAt: new Date().toISOString() }
 }
 
 export async function patchProductPricing(id: string, price: number, note?: string) {
-  await serverPost(
-    'update_product',
+  await dispatchUpdateProduct(
     agentActorPayload({ sku: id, sell_price: price, price_note: note }),
   )
-  mirrorProductAfterGasWrite(id)
   return { id, status: 'pricing_updated', price, updatedAt: new Date().toISOString() }
 }
 
 export async function patchProductInventory(id: string, delta: number, reason: string) {
-  await serverPost(
-    'inventory_adjust',
+  await dispatchInventoryAction(
     agentActorPayload({ sku: id, delta, reason, action: 'adjust' }),
   )
-  mirrorAllStockAfterGasWrite()
   return { id, status: 'inventory_adjusted', delta, updatedAt: new Date().toISOString() }
 }
 
 export async function softDeleteProduct(id: string) {
-  await serverPost(
-    'inventory_archive',
+  await dispatchInventoryAction(
     agentActorPayload({ sku: id, action: 'archive' }),
   )
-  mirrorAllStockAfterGasWrite()
   return { id, status: 'archived' }
 }

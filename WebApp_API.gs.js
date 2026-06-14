@@ -371,6 +371,7 @@ function dispatchRoutePost_(body) {
     case 'trading_cleanup_install_trigger': return installTradingScreenshotCleanupTrigger();
     case 'backup_upload': return backupUpload_(body);
     case 'backup_retention_cleanup': return backupRetentionCleanup_(body);
+    case 'postgres_snapshot_sync': return syncPostgresSnapshot_(body);
     case 'admin_drain_crm_queue':
       if (!isSuperAdminActor_(body)) return { ok: false, error: 'forbidden' };
       return adminDrainCrmQueue_();
@@ -3727,6 +3728,199 @@ function testGetDashboard() {
     'Profit: ৳'   + result.kpis.total_profit   + '\n' +
     'Delivery: '  + result.kpis.delivery_rate  + '%'
   );
+}
+
+/**
+ * Phase 3 nightly export — upsert Postgres snapshot rows into lifestyle sheets (values, not formulas).
+ */
+function syncPostgresSnapshot_(body) {
+  var orders = body.orders || [];
+  var stock = body.stock || [];
+  var products = body.products || [];
+  var customers = body.customers || [];
+  var stats = { orders_upserted: 0, orders_appended: 0, stock_upserted: 0, stock_appended: 0, products_upserted: 0, customers_upserted: 0, errors: 0 };
+
+  function parseYmd_(s) {
+    if (!s) return new Date();
+    var d = new Date(String(s));
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+
+  function writeOrderRow_(sh, rowIndex, o) {
+    var row = [];
+    for (var c = 0; c < TOTAL_COLS; c++) row.push('');
+    row[OC.ORDER_ID - 1] = String(o.id || '');
+    row[OC.DATE - 1] = parseYmd_(o.date);
+    row[OC.CUSTOMER - 1] = String(o.customer || '');
+    row[OC.PHONE - 1] = String(o.phone || '');
+    row[OC.ADDRESS - 1] = String(o.address || '');
+    row[OC.PAYMENT - 1] = String(o.payment || '');
+    row[OC.SOURCE - 1] = String(o.source || '');
+    row[OC.STATUS - 1] = String(o.status || '');
+    row[OC.PRODUCT - 1] = String(o.product || '');
+    row[OC.CATEGORY - 1] = String(o.category || '');
+    row[OC.SIZE - 1] = String(o.size || '');
+    row[OC.QTY - 1] = Number(o.qty || 0);
+    row[OC.UNIT_PRICE - 1] = Number(o.unit_price || 0);
+    row[OC.DISCOUNT - 1] = Number(o.discount || 0);
+    row[OC.ADD_DISCOUNT - 1] = Number(o.add_discount || 0);
+    row[OC.ADV_COST - 1] = Number(o.adv_cost || 0);
+    row[OC.ADV_PLATFORM - 1] = String(o.adv_platform || '');
+    row[OC.SELL_PRICE - 1] = Number(o.sell_price || 0);
+    row[OC.SHIP_COLLECTED - 1] = Number(o.shipping_fee || 0);
+    row[OC.COGS - 1] = Number(o.cogs || 0);
+    row[OC.COURIER_CHARGE - 1] = Number(o.courier_charge || 0);
+    row[OC.OTHER_COSTS - 1] = Number(o.other_costs || 0);
+    row[OC.PROFIT - 1] = Number(o.profit || 0);
+    row[OC.COURIER - 1] = String(o.courier || '');
+    row[OC.TRACKING_ID - 1] = String(o.tracking_id || '');
+    row[OC.TRACKING_STATUS - 1] = String(o.tracking_status || '');
+    row[OC.NOTES - 1] = String(o.notes || '');
+    row[OC.SKU - 1] = String(o.sku || '');
+    row[OC.HANDLED_BY - 1] = String(o.handled_by || '');
+    sh.getRange(rowIndex, 1, 1, TOTAL_COLS).setValues([row]);
+    sh.getRange(rowIndex, OC.DATE).setNumberFormat('DD-MMM-YYYY');
+  }
+
+  try {
+    var orderSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ORDERS);
+    if (orderSh) {
+      for (var i = 0; i < orders.length; i++) {
+        var o = orders[i] || {};
+        if (!o.id) continue;
+        var found = findOrderRow_(o.id);
+        if (found) {
+          writeOrderRow_(found.sh, found.rowIndex, o);
+          stats.orders_upserted++;
+        } else {
+          var newRow = orderSh.getLastRow() + 1;
+          if (newRow < ORDERS_DATA_START) newRow = ORDERS_DATA_START;
+          writeOrderRow_(orderSh, newRow, o);
+          stats.orders_appended++;
+        }
+      }
+    }
+
+    var stockSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.STOCK);
+    if (stockSh) {
+      for (var s = 0; s < stock.length; s++) {
+        var st = stock[s] || {};
+        var sku = String(st.sku || '').trim();
+        if (!sku) continue;
+        var sref = findStockRowBySku_(sku);
+        var status = String(st.status || '');
+        if (!status) {
+          var cur = Number(st.current_stock || 0);
+          var reorder = Number(st.reorder_level || 0);
+          status = cur <= 0 ? '❌ OUT OF STOCK' : cur <= reorder ? '⚠️ LOW STOCK' : '✅ IN STOCK';
+        }
+        var srow = [
+          sku,
+          String(st.product || ''),
+          String(st.category || ''),
+          String(st.color || ''),
+          String(st.size || ''),
+          Number(st.opening || 0),
+          Number(st.purchased || 0),
+          Number(st.sold || 0),
+          Number(st.returned || 0),
+          Number(st.damaged || 0),
+          Number(st.reserved || 0),
+          Number(st.current_stock || 0),
+          Number(st.available || st.current_stock || 0),
+          Number(st.reorder_level || 0),
+          status,
+          Number(st.stock_value || 0),
+          Number(st.sell_value || 0),
+          Number(st.potential_profit || 0),
+          new Date(),
+          ''
+        ];
+        if (sref) {
+          stockSh.getRange(sref.row, 1, 1, 20).setValues([srow]);
+          stats.stock_upserted++;
+        } else {
+          var snew = stockSh.getLastRow() + 1;
+          if (snew < 3) snew = 3;
+          stockSh.getRange(snew, 1, 1, 20).setValues([srow]);
+          stats.stock_appended++;
+        }
+      }
+    }
+
+    var pmSh = null;
+    for (var a = 0; a < PRODUCT_MASTER_ALIASES.length; a++) {
+      pmSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PRODUCT_MASTER_ALIASES[a]);
+      if (pmSh) break;
+    }
+    if (pmSh) {
+      for (var p = 0; p < products.length; p++) {
+        var pr = products[p] || {};
+        var psku = String(pr.sku || pr.id || '').trim();
+        if (!psku) continue;
+        var plast = pmSh.getLastRow();
+        var prow = null;
+        if (plast >= PM_DATA_START) {
+          var pvals = pmSh.getRange(PM_DATA_START, 1, plast - PM_DATA_START + 1, 8).getValues();
+          for (var pi = 0; pi < pvals.length; pi++) {
+            if (String(pvals[pi][0] || '').trim().toLowerCase() === psku.toLowerCase()) {
+              prow = PM_DATA_START + pi;
+              break;
+            }
+          }
+        }
+        if (!prow) prow = pmSh.getLastRow() + 1;
+        pmSh.getRange(prow, 1, 1, 8).setValues([[
+          psku,
+          String(pr.name || ''),
+          String(pr.category || ''),
+          Number(pr.default_cogs || 0),
+          Number(pr.default_price || 0),
+          pr.active === false ? 'No' : 'Yes',
+          String(pr.notes || ''),
+          String(pr.updated_at || '')
+        ]]);
+        stats.products_upserted++;
+      }
+    }
+
+    var custSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.CUSTOMERS);
+    if (custSh && customers.length) {
+      for (var c = 0; c < customers.length; c++) {
+        var cu = customers[c] || {};
+        var cid = String(cu.id || '').trim();
+        if (!cid) continue;
+        var clast = custSh.getLastRow();
+        var crow = null;
+        if (clast >= 3) {
+          var cvals = custSh.getRange(3, 1, clast - 2, 6).getValues();
+          for (var ci = 0; ci < cvals.length; ci++) {
+            if (String(cvals[ci][0] || '').trim() === cid) {
+              crow = 3 + ci;
+              break;
+            }
+          }
+        }
+        if (!crow) crow = custSh.getLastRow() + 1;
+        custSh.getRange(crow, 1, 1, 6).setValues([[
+          cid,
+          String(cu.name || ''),
+          String(cu.phone || ''),
+          String(cu.district || ''),
+          String(cu.address || ''),
+          String(cu.source || '')
+        ]]);
+        stats.customers_upserted++;
+      }
+    }
+  } catch (e) {
+    stats.errors++;
+    apiLog_('ERROR', 'postgres_snapshot_sync', e.message, e.stack || '');
+    return { ok: false, error: e.message, stats: stats };
+  }
+
+  apiLog_('POSTGRES_SNAPSHOT', 'sync', JSON.stringify(stats), String(body.exported_at || ''));
+  return { ok: true, stats: stats, exported_at: body.exported_at || '' };
 }
 
 /**

@@ -34,6 +34,10 @@
       "schedule": "30 16 * * *"
     },
     {
+      "path": "/api/cron/lifestyle-gas-export",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/assistant/internal/watchdog",
       "schedule": "*/5 * * * *"
     }

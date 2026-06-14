@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLifestyleCustomers } from '@/lib/lifestyle/read'
-import { mirrorCustomerAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchCreateCustomer } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
@@ -12,8 +11,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const raw = (await req.json()) as Record<string, unknown>
-    const result = await serverPost<{ profile_row?: number; ok?: boolean }>('create_customer', await mergeActorPayload(req, raw))
-    mirrorCustomerAfterGasWrite(String(raw.id ?? ''))
+    const result = await dispatchCreateCustomer(await mergeActorPayload(req, raw))
     return NextResponse.json(result)
   }
   catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }

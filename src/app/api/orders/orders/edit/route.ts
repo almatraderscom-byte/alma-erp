@@ -9,8 +9,7 @@ import {
 } from '@/lib/order-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { fetchOrderById } from '@/lib/lifestyle/read'
-import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchUpdateOrderField } from '@/lib/lifestyle/write-dispatch'
 import type { Order } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -83,10 +82,7 @@ export async function POST(req: NextRequest) {
   for (const patch of updates) {
     try {
       const payload = await mergeActorPayload(req, { id: orderId, field: patch.field, value: patch.value })
-      const result = await serverPost('update_field', payload)
-      if (!(result && typeof result === 'object' && 'error' in result && (result as { error?: string }).error)) {
-        mirrorOrderAfterGasWrite(orderId)
-      }
+      const result = await dispatchUpdateOrderField(payload)
       if (result && typeof result === 'object' && 'error' in result && (result as { error?: string }).error) {
         results.push({ field: patch.field, ok: false, error: String((result as { error?: string }).error) })
       } else {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchOrderById } from '@/lib/lifestyle/read'
-import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchUpdateOrderStatus } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendOrderAlert } from '@/lib/resend'
 import { notifyRole, notifyUser } from '@/lib/notifications'
@@ -39,8 +38,7 @@ export async function POST(req: NextRequest) {
       business_id: businessId,
       reason: String(reason || '').slice(0, 500),
     })
-    const result = await serverPost('update_status', actorPayload)
-    mirrorOrderAfterGasWrite(id)
+    const result = await dispatchUpdateOrderStatus(actorPayload)
     let commission: unknown = null
     try {
       commission = await handleOrderCommissionStatus(beforeOrder, nextStatus, String(actorPayload.actor_user_id || ''))

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLifestyleOrder, getLifestyleOrders } from '@/lib/lifestyle/read'
-import { mirrorOrderCreateResult } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchCreateOrder } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { notifyRole } from '@/lib/notifications'
 import { sendOrderAlert } from '@/lib/resend'
@@ -50,14 +49,7 @@ export async function POST(req: NextRequest) {
     if (!actorPayload.handled_by && actorPayload.actor_user_id) {
       actorPayload.handled_by = `${String(actorPayload.actor || 'User')} (${String(actorPayload.actor_user_id)})`
     }
-    const gasStarted = Date.now()
-    const result = await serverPost('create_order', actorPayload)
-    mirrorOrderCreateResult(result as Record<string, unknown>, actorPayload)
-    logEvent('info', 'order.create_gas_duration', {
-      ms: Date.now() - gasStarted,
-      itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
-      businessId: payload.business_id,
-    })
+    const result = await dispatchCreateOrder(actorPayload)
     await enqueueOrderConfirmationSms({
       businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
       phone: String(payload.phone || payload.customer_phone || ''),

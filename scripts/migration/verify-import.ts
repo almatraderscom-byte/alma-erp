@@ -1,6 +1,8 @@
 #!/usr/bin/env npx tsx
 /**
- * Verify Phase 1 import: Postgres counts vs GAS totals + spot-check orders.
+ * Verify lifestyle data counts.
+ * Phase 1: compare Postgres import vs GAS (GAS should match or exceed).
+ * Phase 3 (Option B): Postgres is authoritative — GAS may lag until nightly export.
  */
 import { PrismaClient } from '@prisma/client'
 import { gasGet } from './gas-client'

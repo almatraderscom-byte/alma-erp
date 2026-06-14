@@ -1,8 +1,7 @@
 import { getLifestyleStock } from '@/lib/lifestyle/read'
-import { mirrorAllStockAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { dispatchInventoryAction } from '@/lib/lifestyle/write-dispatch'
+import { serverGet } from '@/lib/server-api'
 import { agentActorPayload } from '@/lib/agent-api/route-handler'
-import type { StockItem } from '@/types'
 
 export async function listInventory() {
   const data = await getLifestyleStock()
@@ -26,11 +25,9 @@ export async function adjustInventory(body: {
   adjustments: Array<{ sku: string; delta: number; reason: string }>
   note?: string
 }) {
-  const result = await serverPost(
-    'inventory_adjust',
+  const result = await dispatchInventoryAction(
     agentActorPayload({ action: 'adjust', adjustments: body.adjustments, note: body.note }),
   )
-  mirrorAllStockAfterGasWrite()
   return { status: 'adjusted', count: body.adjustments.length, result }
 }
 

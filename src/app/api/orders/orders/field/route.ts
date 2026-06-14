@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJwt } from '@/lib/api-guards'
 import { fetchOrderById } from '@/lib/lifestyle/read'
-import { mirrorOrderAfterGasWrite } from '@/lib/lifestyle/mirror'
-import { serverPost } from '@/lib/server-api'
+import { dispatchUpdateOrderField } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendOrderAlert } from '@/lib/resend'
 import { canEditOrder, orderFieldToGas } from '@/lib/order-access'
@@ -40,8 +39,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const result = await serverPost('update_field', await mergeActorPayload(req, { id, field: gasField, value }))
-    mirrorOrderAfterGasWrite(id)
+    const result = await dispatchUpdateOrderField(await mergeActorPayload(req, { id, field: gasField, value }))
     await sendOrderAlert({
       businessId: String(businessId || order.business_id || 'ALMA_LIFESTYLE'),
       subject: `Order field updated · ${id}`,
