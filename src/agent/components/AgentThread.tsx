@@ -9,6 +9,7 @@ import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
+import { toolDisplay } from '@/agent/lib/tool-labels'
 
 export interface ChatMessage {
   id: string
@@ -180,6 +181,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     .flatMap((m) => m.toolActivity ?? [])
     .find((t) => !t.done)
 
+  const activeToolLabel = activeTool ? toolDisplay(activeTool.name).label : undefined
+
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <div className="mx-auto max-w-3xl space-y-6 px-4 py-4 pb-6 md:py-6">
@@ -224,23 +227,43 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 <div className="min-w-0 max-w-[85%]">
                   {/* Tool activity chips */}
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {msg.toolActivity.map((t) => (
-                        <span
-                          key={t.id}
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold border ${
-                            t.done
-                              ? t.success
-                                ? 'border-green-400/20 bg-green-400/10 text-green-400'
-                                : 'border-red-400/20 bg-red-400/10 text-red-400'
-                              : 'border-gold-dim/30 bg-gold/10 text-gold'
-                          }`}
-                        >
-                          {t.done ? (t.success ? '✅' : '❌') : '🔧'}
-                          {' '}{t.name}
-                          {!t.done && <span className="ml-1 animate-pulse">…</span>}
-                        </span>
-                      ))}
+                    <div className="my-2 space-y-1.5 rounded-xl border border-white/10 bg-white/[0.02] p-2.5">
+                      <div className="text-[11px] font-semibold text-zinc-400">🔎 সোর্স চেক করছি…</div>
+                      {msg.toolActivity.map((t) => {
+                        const d = toolDisplay(t.name)
+                        return (
+                          <div key={t.id} className="flex items-center gap-2 text-[12px]">
+                            <span
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]"
+                              style={{ background: `${d.color}22`, border: `1px solid ${d.color}55` }}
+                            >
+                              {t.done ? (t.success === false ? '❌' : '✅') : d.icon}
+                            </span>
+                            <span
+                              className="min-w-0 flex-1 truncate"
+                              style={{ color: t.done ? '#a1a1aa' : d.color }}
+                            >
+                              {d.label}
+                            </span>
+                            {!t.done && (
+                              <span className="flex shrink-0 gap-0.5">
+                                <span
+                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
+                                  style={{ background: d.color, animationDelay: '0ms' }}
+                                />
+                                <span
+                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
+                                  style={{ background: d.color, animationDelay: '120ms' }}
+                                />
+                                <span
+                                  className="h-1.5 w-1.5 animate-bounce rounded-full"
+                                  style={{ background: d.color, animationDelay: '240ms' }}
+                                />
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
 
@@ -248,7 +271,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {msg.streaming && !msg.text ? (
                     <AgentThinkingIndicator
                       label="উত্তর তৈরি হচ্ছে"
-                      toolName={activeTool?.name}
+                      toolName={activeToolLabel}
                     />
                   ) : (
                     <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-muted-hi">
@@ -272,7 +295,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <div className="mt-2">
                       <AgentThinkingIndicator
                         label="কাজ চলছে"
-                        toolName={activeTool.name}
+                        toolName={activeToolLabel}
                       />
                     </div>
                   )}

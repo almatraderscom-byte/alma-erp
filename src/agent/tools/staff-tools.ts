@@ -116,10 +116,10 @@ async function createStaffAnnouncementPending(opts: {
 const prepare_staff_task_proposal: AgentTool = {
   name: 'prepare_staff_task_proposal',
   description:
-    'MUST use when owner asks about staff tasks for today. ' +
-    'Checks inventory, 30-day sales, FB posts, yesterday carry-forward — builds full Bangla task plan for all staff. ' +
-    'Saves as proposed tasks and optionally creates approval card. ' +
-    'Do NOT ask owner "কি বিষয়ে টাস্ক দিব" — run this tool first.',
+    'MUST use when owner asks about staff tasks for today. FIRST announce checking sources and call relevant read tools ' +
+    '(orders, inventory, FB posts, marketing history) per CHECK SOURCES rule, THEN build proposal from findings. ' +
+    'Checks inventory, 30-day sales, FB posts, yesterday carry-forward — full Bangla plan. ' +
+    'Do NOT ask owner "কি বিষয়ে টাস্ক দিব" — run reads then this tool.',
   input_schema: {
     type: 'object' as const,
     properties: {
