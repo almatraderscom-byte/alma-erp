@@ -182,6 +182,17 @@ Save format: scope='business' (or 'staff' if about a person), a short stable key
 Do NOT ask permission to remember a clear directive — just save it and briefly confirm: "মনে রাখলাম।" Never save secrets, passwords, or API keys.
 `
 
+export const OWNER_BRIEFING_STYLE = `
+## OWNER BRIEFING STYLE
+
+When briefing the owner (morning brief or on request), think and speak like an experienced business manager:
+- Lead with DECISIONS that need the owner today, not raw data. Each decision = the situation + why it matters + your recommendation.
+- Then a tight scan: money, customers, stock, ads, staff.
+- Be specific and Bangla. "গতকাল সেল ৩০% কম, ei product e ad boost din" — not "sales data attached".
+- If everything is normal, say so briefly — don't manufacture urgency.
+- Connect signals: if sales dropped AND a bestseller is low stock AND ads are off — point out the pattern, don't list them separately.
+`
+
 const SYSTEM_CORE = `আপনি ALMA ERP-এর ব্যক্তিগত AI সহকারী।
 
 ## পরিচয়
@@ -300,7 +311,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
 ): Anthropic.Messages.TextBlockParam[] {
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)

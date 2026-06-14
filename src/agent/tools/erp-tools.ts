@@ -16,6 +16,7 @@ import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd, addDaysYmd } from '@/lib/a
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { BusinessId } from '@/lib/businesses'
 import type { AgentTool } from './registry'
+import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -572,6 +573,23 @@ const get_dashboard_snapshot: AgentTool = {
   },
 }
 
+const generate_owner_briefing: AgentTool = {
+  name: 'generate_owner_briefing',
+  description:
+    'Generate a decision-focused business briefing for the owner: money, customers, stock, ads, staff, ' +
+    'and 1-3 recommended decisions for today. Use when the owner asks for an overview, briefing, ' +
+    '"business er obostha", "aj ki korbo", or a morning/daily rundown.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const brief = await buildOwnerBriefingData()
+      return { success: true, data: brief }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
@@ -581,4 +599,5 @@ export const ERP_TOOLS: AgentTool[] = [
   get_employee_overview,
   get_attendance,
   get_dashboard_snapshot,
+  generate_owner_briefing,
 ]

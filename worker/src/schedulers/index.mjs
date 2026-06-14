@@ -46,6 +46,7 @@ const lazy = {
   csMessengerPoll:    () => import('../cs/messenger-poll.mjs'),
   tokenHealth:        () => import('../cs/token-health.mjs'),
   sessionSummarizer:  () => import('../memory/session-summarizer.mjs'),
+  ownerBriefing:      () => import('../reports/owner-briefing-run.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'salah-init',             cronUtc: '0 18 * * *',   description: 'Midnight Dhaka — create today salah records' },
   { name: 'night-report',           cronUtc: '0 15 * * *',   description: 'Night staff report (21:00 Dhaka)' },
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
+  { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
@@ -130,6 +132,11 @@ export async function setupSchedulers({ connection, supabase, bot }) {
         case 'evening-proposal': {
           const { runEveningProposal } = await lazy.eveningProposal()
           await runEveningProposal(supabase)
+          break
+        }
+        case 'owner-briefing': {
+          const { runOwnerBriefing } = await lazy.ownerBriefing()
+          await runOwnerBriefing({ supabase, bot })
           break
         }
         case 'morning-staff-reminder': {
