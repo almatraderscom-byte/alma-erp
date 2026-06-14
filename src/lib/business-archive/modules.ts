@@ -6,7 +6,7 @@ import {
   resolveModule,
   type ArchiveModuleDef,
 } from '@/lib/business-archive/module-registry'
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import type { BusinessId } from '@/lib/businesses'
 import { BUSINESSES } from '@/lib/businesses'
 
@@ -149,9 +149,9 @@ export async function previewModuleArchive(
 
   if (moduleKey === 'orders') {
     try {
-      const data = await serverGet<{ orders?: Array<{ id?: string; created_at?: string }> }>('orders', { business_id: businessId }, 0)
+      const data = await getLifestyleOrders({ business_id: businessId, limit: '5000' })
       const orders = (data.orders || []).filter(o => o.id)
-      const times = orders.map(o => (o.created_at ? new Date(o.created_at).getTime() : NaN)).filter(Number.isFinite)
+      const times = orders.map(o => (o.date ? new Date(o.date).getTime() : NaN)).filter(Number.isFinite)
       return {
         moduleKey,
         label: mod.label,
@@ -323,7 +323,7 @@ async function markPrismaArchived(
 async function registryOnlyArchive(moduleKey: string, businessId: string) {
   if (moduleKey === 'orders') {
     try {
-      const data = await serverGet<{ orders?: Array<{ id?: string }> }>('orders', { business_id: businessId }, 0)
+      const data = await getLifestyleOrders({ business_id: businessId, limit: '5000' })
       return (data.orders || []).filter(o => o.id).map(o => ({
         entityType: 'Order',
         entityId: String(o.id),

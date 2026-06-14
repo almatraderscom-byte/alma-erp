@@ -1,8 +1,6 @@
 import { prisma } from '@/lib/prisma'
-import { usePostgresFor } from '@/lib/migration-flags'
-import { serverGet } from '@/lib/server-api'
 import type { Prisma } from '@prisma/client'
-import type { Customer, Order, StockItem } from '@/types'
+import type { Customer, Order } from '@/types'
 import {
   customerSummary,
   ordersSummaryFromSlice,
@@ -107,50 +105,37 @@ async function readOrderFromSupabase(id: string, p: QueryParams) {
   return { order: prismaOrderToGas(row) }
 }
 
-export async function getLifestyleStock(p: QueryParams = {}) {
-  if (await usePostgresFor('stock')) return readStockFromSupabase()
-  return serverGet<{ items?: StockItem[]; summary?: Record<string, number> }>('stock', p, 0)
+/** Postgres-only lifestyle reads (Phase 4 — GAS fallback removed). */
+export async function getLifestyleStock(_p: QueryParams = {}) {
+  return readStockFromSupabase()
 }
 
-export async function getLifestyleProducts(p: QueryParams = {}) {
-  if (await usePostgresFor('products')) return readProductsFromSupabase()
-  return serverGet<{ products?: Array<Record<string, unknown>>; total?: number }>('products', p, 0)
+export async function getLifestyleProducts(_p: QueryParams = {}) {
+  return readProductsFromSupabase()
 }
 
 export async function getLifestyleCustomers(p: QueryParams = {}) {
-  if (await usePostgresFor('customers')) return readCustomersFromSupabase(p)
-  return serverGet<{ customers?: Customer[]; summary?: Record<string, unknown> }>('customers', p, 60)
+  return readCustomersFromSupabase(p)
 }
 
-export async function getLifestylePromos(p: QueryParams = {}) {
-  if (await usePostgresFor('promos')) {
-    try {
-      return await readPromosFromSupabase()
-    } catch {
-      return { promos: [] }
-    }
-  }
+export async function getLifestylePromos(_p: QueryParams = {}) {
   try {
-    return await serverGet<{ promos?: Array<Record<string, unknown>> }>('promos', p, 0)
+    return await readPromosFromSupabase()
   } catch {
     return { promos: [] }
   }
 }
 
 export async function getLifestyleOrders(p: QueryParams = {}) {
-  if (await usePostgresFor('orders')) {
-    const data = await readOrdersFromSupabase(p)
-    return {
-      orders: data.orders,
-      summary: { ...data.summary, total: data.total },
-    }
+  const data = await readOrdersFromSupabase(p)
+  return {
+    orders: data.orders,
+    summary: { ...data.summary, total: data.total },
   }
-  return serverGet<{ orders?: Order[]; summary?: Record<string, unknown> }>('orders', p, 0)
 }
 
 export async function getLifestyleOrder(id: string, p: QueryParams = {}) {
-  if (await usePostgresFor('orders')) return readOrderFromSupabase(id, p)
-  return serverGet<{ order?: Order; error?: string }>('order', { id, ...p }, 0)
+  return readOrderFromSupabase(id, p)
 }
 
 /** Resolve order for routes that accept `{ order }` or bare Order. */
@@ -158,4 +143,14 @@ export async function fetchOrderById(id: string, businessId = 'ALMA_LIFESTYLE'):
   const data = await getLifestyleOrder(id, { business_id: businessId })
   if ('error' in data && data.error) return null
   return data.order ?? null
+}
+
+/** All orders in range for dashboard/analytics aggregation. */
+export async function fetchLifestyleOrdersForMetrics(p: QueryParams = {}): Promise<Order[]> {
+  const data = await readOrdersFromSupabase({
+    ...p,
+    limit: String(p.limit || '10000'),
+    offset: '0',
+  })
+  return data.orders
 }

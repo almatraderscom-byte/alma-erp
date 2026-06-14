@@ -3,7 +3,7 @@
  * Used by prepare_staff_task_proposal tool and evening-proposal worker job.
  */
 import { prisma } from '@/lib/prisma'
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { aggregateDashboardMetrics, filterOrdersByDateRange } from '@/lib/order-analytics'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listAgentOrders } from '@/lib/agent-api/orders.service'
@@ -506,7 +506,7 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
     listInventory().catch(() => ({ items: [] as Array<{ sku: string; name: string; currentStock: number }> })),
     (async () => {
       try {
-        const raw = await serverGet<{ orders?: Order[] }>('orders', { business_id: 'ALMA_LIFESTYLE', limit: '500' }, 0)
+        const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
         const orders = raw.orders ?? []
         return filterOrdersByDateRange(orders, { start: from30, end: dateYmd })
       } catch {

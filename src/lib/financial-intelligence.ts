@@ -3,6 +3,7 @@
  * Uses roundMoney everywhere; never fabricates margin when cost data is missing.
  */
 import { prisma } from '@/lib/prisma'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { serverGet } from '@/lib/server-api'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { aggregateDashboardMetrics, filterOrdersByDateRange } from '@/lib/order-analytics'
@@ -53,11 +54,7 @@ export interface FinancialHealth {
 
 async function fetchGasOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>(
-      'orders',
-      { business_id: 'ALMA_LIFESTYLE', limit: '500' },
-      0,
-    )
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

@@ -1,7 +1,7 @@
 /**
- * Return root-cause analysis — reads raw GAS orders (not mapped AgentOrder).
+ * Return root-cause analysis — Postgres lifestyle orders.
  */
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import {
   filterOrdersByDateRange,
@@ -24,11 +24,7 @@ export interface ReturnInsight {
 
 async function fetchGasOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>(
-      'orders',
-      { business_id: 'ALMA_LIFESTYLE', limit: '500' },
-      0,
-    )
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

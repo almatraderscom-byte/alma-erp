@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { exportLifestyleSnapshotToGas } from '@/lib/lifestyle/gas-export'
-import { isSupabaseWriteEnabled } from '@/lib/migration-flags'
 import { errorMeta, logEvent } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -16,10 +15,6 @@ function cronAuthorized(req: NextRequest) {
 export async function GET(req: NextRequest) {
   if (!cronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized cron' }, { status: 401 })
-  }
-
-  if (!(await isSupabaseWriteEnabled())) {
-    return NextResponse.json({ ok: true, skipped: 'writes_not_on_postgres' })
   }
 
   try {

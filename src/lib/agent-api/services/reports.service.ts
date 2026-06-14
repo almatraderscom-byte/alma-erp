@@ -1,3 +1,4 @@
+import { getLifestyleDashboard } from '@/lib/lifestyle/dashboard'
 import { serverGet } from '@/lib/server-api'
 import { getAgentOrdersSummary, listAgentOrders } from '@/lib/agent-api/orders.service'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
@@ -6,7 +7,6 @@ import { getAttendanceHistory, getAttendanceToday } from '@/lib/agent-api/servic
 import { listTasks } from '@/lib/agent-api/services/tasks.service'
 import { listFines } from '@/lib/agent-api/services/fines.service'
 import type { SummaryPeriod } from '@/lib/agent-api/orders.schema'
-import type { DashboardData } from '@/types'
 
 export async function reportSales(period: SummaryPeriod, groupBy?: string) {
   const summary = await getAgentOrdersSummary(period)
@@ -61,7 +61,7 @@ export async function reportEmployees(days: number) {
 }
 
 export async function reportFinance(period: string) {
-  const dash = await serverGet<DashboardData>('dashboard', {}, 0)
+  const dash = await getLifestyleDashboard({})
   const finance = await serverGet<{ total_expenses?: number; cash_balance?: number }>('finance', {}, 0)
   return {
     period,

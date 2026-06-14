@@ -2,7 +2,7 @@
  * Customer lifetime intelligence — tiers, churn risk, CLV (when data allows), personalization.
  */
 import { prisma } from '@/lib/prisma'
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { filterOrdersByDateRange } from '@/lib/order-analytics'
 import { learnFact } from '@/lib/knowledge-graph'
@@ -47,11 +47,7 @@ function normalizePhone(phone: string | null | undefined): string | null {
 
 async function fetchGasOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>(
-      'orders',
-      { business_id: 'ALMA_LIFESTYLE', limit: '500' },
-      0,
-    )
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

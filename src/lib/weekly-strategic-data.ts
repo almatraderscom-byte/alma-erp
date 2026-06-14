@@ -3,7 +3,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { serverGet } from '@/lib/server-api'
+import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, daysAgoYmd, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import {
   aggregateDashboardMetrics,
@@ -66,11 +66,7 @@ export type WeeklyStrategicData = {
 
 async function fetchGasOrders(): Promise<Order[]> {
   try {
-    const raw = await serverGet<{ orders?: Order[] }>(
-      'orders',
-      { business_id: 'ALMA_LIFESTYLE', limit: '500' },
-      0,
-    )
+    const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
   } catch {
     return []

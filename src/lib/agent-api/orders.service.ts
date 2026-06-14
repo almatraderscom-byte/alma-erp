@@ -1,4 +1,3 @@
-import { isSupabaseReadEnabled } from '@/lib/migration-flags'
 import { getLifestyleOrder, getLifestyleOrders } from '@/lib/lifestyle/read'
 import { getPeriodRangeDhaka, isoToYmd } from '@/lib/agent-api/period'
 import { dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
@@ -200,7 +199,7 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
 
   const data = await getLifestyleOrders(params)
   let orders = (data.orders ?? []).map(mapOrderToAgent)
-  const fromSupabase = await isSupabaseReadEnabled('orders')
+  const fromSupabase = true
 
   if (input.fromIso || input.toIso) {
     const fromYmd = input.fromIso ? isoToYmd(input.fromIso) : null
