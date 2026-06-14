@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
@@ -44,7 +45,7 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 }
 
-const SERVER_SESSION_TIMEOUT_MS = 4_000
+const SERVER_SESSION_TIMEOUT_MS = 1_500
 
 async function loadServerSession() {
   try {
@@ -71,6 +72,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {buildReloadScript && (
           <script dangerouslySetInnerHTML={{ __html: buildReloadScript }} />
         )}
+        <script dangerouslySetInnerHTML={{ __html: bootEscapeScript() }} />
       </head>
       <body className="bg-black text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">

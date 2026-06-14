@@ -20,7 +20,6 @@ import {
 } from '@/lib/businesses'
 import { setApiBusinessId } from '@/lib/api'
 import { parseBusinessAccess } from '@/lib/business-access'
-import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 
 interface BusinessContextValue {
   businessId: BusinessId
@@ -50,8 +49,8 @@ export function BusinessProvider({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const [businessId, setBusinessIdState] = useState<BusinessId>(DEFAULT_BUSINESS_ID)
-  const [hydrated, setHydrated] = useState(false)
+  const [businessId, setBusinessIdState] = useState<BusinessId>(() => loadBusinessId())
+  const [hydrated, setHydrated] = useState(() => typeof window !== 'undefined')
 
   const allowedBusinessIds = useMemo(
     () => parseBusinessAccess(allowedBusinessAccess ?? undefined),
@@ -106,10 +105,6 @@ export function BusinessProvider({
     () => ({ businessId, business, allowedBusinessIds, setBusinessId }),
     [businessId, business, allowedBusinessIds, setBusinessId],
   )
-
-  if (!hydrated) {
-    return <LoadingOverlay label="Loading workspace" />
-  }
 
   return (
     <BusinessContext.Provider value={value}>

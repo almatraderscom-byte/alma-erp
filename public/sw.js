@@ -1,9 +1,8 @@
 /**
- * Alma ERP service worker — v8
+ * Alma ERP service worker — v9
  * IMPORTANT: Do NOT cache /_next/static/* — stale chunks cause blank screens after deploy.
  *
- * OneSignal web push SDK: used only when PwaBootstrap registers this SW (browser/PWA).
- * Capacitor native shell skips SW registration — native push uses @onesignal/capacitor-plugin.
+ * Navigation uses a hard timeout so slow WiFi cannot hang the app behind the boot splash.
  */
 try {
   importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js')
@@ -11,10 +10,11 @@ try {
   // Push CDN optional — offline shell still works.
 }
 
-const SW_VERSION = 'v8'
+const SW_VERSION = 'v9'
 const SHELL_CACHE = `alma-erp-shell-${SW_VERSION}`
 const ICON_CACHE = `alma-erp-icons-${SW_VERSION}`
 const SHELL_ASSETS = ['/offline.html', '/manifest.json', '/icon.svg', '/maskable-icon.svg']
+const NAV_FETCH_TIMEOUT_MS = 12_000
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -46,20 +46,22 @@ function isIconAsset(url) {
   )
 }
 
-async function fetchWithNavigateRetry(req) {
+async function fetchNavigateWithTimeout(req) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), NAV_FETCH_TIMEOUT_MS)
   try {
-    return await fetch(req)
+    return await fetch(req, { signal: controller.signal, cache: 'no-store' })
   } catch {
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, 400))
     try {
-      return await fetch(req)
+      return await fetch(req, { cache: 'no-store' })
     } catch {
-      if (req.mode === 'navigate') {
-        const cached = await caches.match('/offline.html')
-        if (cached) return cached
-      }
+      const cached = await caches.match('/offline.html')
+      if (cached) return cached
       return Response.error()
     }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -74,7 +76,7 @@ self.addEventListener('fetch', event => {
   if (url.pathname.startsWith('/_next/')) return
 
   if (req.mode === 'navigate') {
-    event.respondWith(fetchWithNavigateRetry(req))
+    event.respondWith(fetchNavigateWithTimeout(req))
     return
   }
 

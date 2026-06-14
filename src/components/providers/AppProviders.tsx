@@ -25,6 +25,7 @@ import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
 import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
 import { isPublicPath } from '@/lib/auth-paths'
+import { fetchWithTimeout } from '@/lib/fetch-timeout'
 import { cn } from '@/lib/utils'
 
 const NotificationShellProvider = dynamic(
@@ -119,10 +120,10 @@ function OrdersDataScope({ children }: { children: ReactNode }) {
   )
 }
 
-const AUTH_LOADING_TIMEOUT_MS = 10_000
-const AUTH_SESSION_STUCK_MS = 5_000
-const AUTH_SESSION_PROBE_MS = 4_000
-const AUTH_REDIRECT_TIMEOUT_MS = 5_000
+const AUTH_LOADING_TIMEOUT_MS = 8_000
+const AUTH_SESSION_STUCK_MS = 4_000
+const AUTH_SESSION_PROBE_MS = 2_500
+const AUTH_SESSION_FETCH_MS = 6_000
 const AUTH_RETRY_STORAGE_KEY = 'alma-auth-loading-retries'
 
 async function forceRelogin() {
@@ -142,7 +143,6 @@ async function forceRelogin() {
 
 function AuthGate({ children, initialSession }: { children: ReactNode; initialSession: Session | null }) {
   const pathname = usePathname()
-  const router = useRouter()
   const { data: session, status } = useSession()
   const [loadingTimedOut, setLoadingTimedOut] = useState(false)
   const [sessionStuck, setSessionStuck] = useState(false)
@@ -176,17 +176,19 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
 
   useEffect(() => {
     if (status !== 'loading' || isPublic || typeof window === 'undefined') return
-    const ac = new AbortController()
+    let cancelled = false
     const timer = window.setTimeout(() => {
-      void fetch('/api/auth/session', { cache: 'no-store', signal: ac.signal })
+      void fetchWithTimeout('/api/auth/session', { cache: 'no-store', credentials: 'same-origin' }, AUTH_SESSION_FETCH_MS)
         .then(res => {
-          if (!res.ok) setSessionStuck(true)
+          if (!cancelled && !res.ok) setSessionStuck(true)
         })
-        .catch(() => setSessionStuck(true))
+        .catch(() => {
+          if (!cancelled) setSessionStuck(true)
+        })
     }, AUTH_SESSION_PROBE_MS)
     return () => {
+      cancelled = true
       window.clearTimeout(timer)
-      ac.abort()
     }
   }, [status, isPublic])
 
@@ -208,23 +210,18 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
     if (!sessionStuck || isPublic || isAuthed || typeof window === 'undefined') return
     const returnTo = `${pathname}${window.location.search}`
     const loginUrl = `/login?callbackUrl=${encodeURIComponent(returnTo)}`
-    router.replace(loginUrl)
-    const timer = window.setTimeout(() => {
-      window.location.href = loginUrl
-    }, 1_500)
-    return () => window.clearTimeout(timer)
-  }, [sessionStuck, isPublic, isAuthed, pathname, router])
+    window.location.replace(loginUrl)
+  }, [sessionStuck, isPublic, isAuthed, pathname])
 
   useEffect(() => {
     if (isPublic || status !== 'unauthenticated' || typeof window === 'undefined') return
     const returnTo = `${pathname}${window.location.search}`
     const loginUrl = `/login?callbackUrl=${encodeURIComponent(returnTo)}`
-    router.replace(loginUrl)
     const timer = window.setTimeout(() => {
-      window.location.href = loginUrl
-    }, AUTH_REDIRECT_TIMEOUT_MS)
+      window.location.replace(loginUrl)
+    }, 400)
     return () => window.clearTimeout(timer)
-  }, [isPublic, status, pathname, router])
+  }, [isPublic, status, pathname])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -320,7 +317,7 @@ function SessionBridge({ children, session }: { children: ReactNode; session: Se
   return (
     <SessionProvider
       session={session}
-      refetchOnWindowFocus
+      refetchOnWindowFocus={false}
       refetchInterval={0}
     >
       <AppBootRecovery />

@@ -1,4 +1,5 @@
 import { APP_BUILD_ID, RUNTIME_BUILD_STORAGE_KEY } from '@/lib/runtime-build'
+import { fetchWithTimeout } from '@/lib/fetch-timeout'
 
 export const BUILD_RELOAD_GUARD_KEY = 'alma_build_reload_guard'
 const POLL_MS = 90_000
@@ -11,7 +12,7 @@ export function isCapacitorNative(): boolean {
 
 export async function fetchRemoteBuildId(): Promise<string | null> {
   try {
-    const res = await fetch('/api/health', { cache: 'no-store' })
+    const res = await fetchWithTimeout('/api/health', { cache: 'no-store' }, 8_000)
     const json = await res.json().catch(() => ({}))
     const remote = String(json?.frontend?.git_commit || '').trim()
     return remote || null

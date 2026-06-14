@@ -3,6 +3,7 @@ import { getSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useEffect, Suspense } from 'react'
+import { fetchWithTimeout } from '@/lib/fetch-timeout'
 import { safeAuthCallbackUrl } from '@/lib/auth-paths'
 import { motion } from 'framer-motion'
 import { Button, Card, Input } from '@/components/ui'
@@ -25,12 +26,18 @@ function LoginForm() {
 
   useEffect(() => {
     let alive = true
-    void getSession().then(session => {
-      if (!alive || !session?.user) return
-      window.location.href = callbackUrl
-    })
+    const timer = window.setTimeout(() => {
+      void fetchWithTimeout('/api/auth/session', { cache: 'no-store', credentials: 'same-origin' }, 5_000)
+        .then(async res => {
+          if (!alive || !res.ok) return
+          const body = await res.json().catch(() => null)
+          if (body?.user) window.location.href = callbackUrl
+        })
+        .catch(() => {})
+    }, 0)
     return () => {
       alive = false
+      window.clearTimeout(timer)
     }
   }, [callbackUrl])
 
