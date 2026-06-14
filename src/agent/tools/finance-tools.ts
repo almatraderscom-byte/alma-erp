@@ -712,6 +712,30 @@ const edit_finance_entry: AgentTool = {
   },
 }
 
+const get_financial_health: AgentTool = {
+  name: 'get_financial_health',
+  description:
+    'CFO-style financial snapshot: revenue, expenses by category, ad spend & ROI caveats, gross/net profit, margin, ' +
+    'WoW trends, per-product/channel breakdown, and flags (thin margin, rising costs, poor ad ROI). Use for financial questions, ' +
+    '"business er financial obostha", profit/expense/ROI analysis. Says clearly if cost data is missing — never guesses margin.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Analysis window in days (default 30, max 90)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const days = Number(input.days ?? 30)
+      const { analyzeFinancials } = await import('@/lib/financial-intelligence')
+      const health = await analyzeFinancials({ days })
+      return { success: true, data: health }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const FINANCE_TOOLS: AgentTool[] = [
   log_expense,
   log_expenses_batch,
@@ -722,4 +746,5 @@ export const FINANCE_TOOLS: AgentTool[] = [
   list_recent_transactions,
   delete_finance_entry,
   edit_finance_entry,
+  get_financial_health,
 ]

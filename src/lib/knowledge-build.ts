@@ -351,6 +351,12 @@ async function foldOutcomeLearnings(): Promise<number> {
   return count
 }
 
+async function buildFinancialFacts(): Promise<number> {
+  const { analyzeAndPersistFinancials } = await import('@/lib/financial-intelligence')
+  await analyzeAndPersistFinancials(30)
+  return 3
+}
+
 export async function buildBusinessKnowledge(): Promise<{ factsWritten: number; errors: string[] }> {
   const errors: string[] = []
   let factsWritten = 0
@@ -362,6 +368,7 @@ export async function buildBusinessKnowledge(): Promise<{ factsWritten: number; 
     ['season', buildSeasonFacts],
     ['business', buildBusinessFacts],
     ['outcomes', foldOutcomeLearnings],
+    ['financial', buildFinancialFacts],
   ]
 
   for (const [name, fn] of steps) {

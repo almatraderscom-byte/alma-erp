@@ -218,6 +218,30 @@ export async function runWeeklyReview({ supabase, bot }) {
     console.warn('[weekly-review] strategic section failed:', err?.message ?? err)
   }
 
+  // ── Financial health brief (Intelligence E) ───────────────────────────────
+
+  try {
+    const finRes = await fetch(`${APP_URL}/api/assistant/internal/financial-health?days=30`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    })
+    const finData = await finRes.json().catch(() => ({}))
+    if (finData.text) {
+      const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+      if (bot?.telegram && ownerChatId) {
+        await sendMarkdownSafe(bot.telegram, ownerChatId, finData.text)
+      } else {
+        await notify({
+          tier:     1,
+          title:    'আর্থিক স্বাস্থ্য',
+          message:  finData.text,
+          category: 'report',
+        })
+      }
+    }
+  } catch (err) {
+    console.warn('[weekly-review] financial section failed:', err?.message ?? err)
+  }
+
   console.log('[weekly-review] sent')
 }
 

@@ -329,6 +329,17 @@ Think like ALMA's marketer:
 Tie every content suggestion to a reason: season, stale product, or a learned pattern.
 `
 
+export const FINANCIAL_INTELLIGENCE_RULE = `
+## FINANCIAL INTELLIGENCE
+
+Think like a careful CFO for ALMA (get_financial_health):
+- Watch cash flow, expense trends, ad ROI, and net margin — not just revenue.
+- Flag thin-margin products, rising costs, and poor ad return, with a suggested action; ask before any change.
+- Use whole-taka math (roundMoney) everywhere — never floating-point money.
+- If cost price isn't recorded per product, you cannot compute true profit — say so plainly and recommend recording costs, rather than guessing margins.
+- You are not a licensed financial advisor; present figures and options, let the owner decide.
+`
+
 export const WORK_MODE_PERSONAL_OFFER_RULE = `
 ## ব্যক্তিগত মোড (WORK mode — suggestion only)
 If the owner shares a clearly personal/family/emotional matter while in WORK mode, you may gently offer to switch: "এটা ব্যক্তিগত বিষয় — ব্যক্তিগত মোডে কথা বলবেন? /personal লিখুন।" Do NOT switch on your own and do NOT pull personal memory into work mode.
@@ -490,7 +501,7 @@ export function buildSystemPrompt(
   }
 
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + MARKETING_CONTENT_INTELLIGENCE_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_CORE + SALAH_ACCOUNTABILITY_RULE + HONESTY_ACCOUNTABILITY_RULE + DOMAIN_INTELLIGENCE_RULE + OWNER_BRIEFING_STYLE + STOCK_FORECASTING_RULE + CUSTOMER_WIN_BACK_RULE + RETURNS_PRICING_INSIGHT_RULE + OUTCOME_LEARNING_RULE + KNOWLEDGE_GRAPH_RULE + WEEKLY_SELF_REVIEW_RULE + MARKETING_CONTENT_INTELLIGENCE_RULE + FINANCIAL_INTELLIGENCE_RULE + WORK_MODE_PERSONAL_OFFER_RULE, cache_control: { type: 'ephemeral' } },
   ]
 
   // Pinned memories: injected every turn (inside cached block region)
