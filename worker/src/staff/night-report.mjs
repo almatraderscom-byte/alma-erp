@@ -8,6 +8,7 @@
 import { notify } from '../notify/index.mjs'
 import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 import { bnNum, formatDhakaDateLabel } from './bn-format.mjs'
+import { normalizeStaffTaskSource } from './task-source.mjs'
 
 export async function runNightReport({ supabase, bot }) {
   console.log('[night-report] starting...')
@@ -139,7 +140,7 @@ export async function runNightReport({ supabase, bot }) {
       product_ref:  t.product_ref ?? null,
       status:       'proposed',
       proposed_for: tomorrowStr,
-      source:       'carry_forward',
+      source: normalizeStaffTaskSource('carry_forward'),
       created_at:   new Date().toISOString(),
     }))
 
