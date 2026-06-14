@@ -13,6 +13,11 @@ import {
   buildDispatchSummary,
 } from '@/agent/lib/staff-dispatch-sync'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
+import {
+  announcementContradictsRecentDispatch,
+  buildCorrectionNoticeMessage,
+  getStaffDispatchCorrectionContext,
+} from '@/agent/lib/dispatch-correction-notice'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,6 +60,34 @@ async function findStaffByName(staffName: string) {
 
 const APP_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
 const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
+
+async function queueStaffAnnouncement(
+  staff: Array<{ id: string; name: string; telegramChatId: string | null }>,
+  message: string,
+  sendVoice: boolean,
+) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/staff-announcement`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${INTERNAL_TOKEN}`,
+    },
+    body: JSON.stringify({
+      message,
+      staffChatIds: staff.map((s) => ({
+        id: s.id,
+        name: s.name,
+        chatId: s.telegramChatId,
+      })),
+      sendVoice,
+    }),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Failed to queue announcement: HTTP ${res.status} ${body.slice(0, 120)}`)
+  }
+  return res.json() as Promise<{ actionId: string }>
+}
 
 // ── prepare_staff_task_proposal ───────────────────────────────────────────────
 
@@ -545,6 +578,8 @@ const get_dispatch_status: AgentTool = {
         select: { status: true, createdAt: true },
       })
 
+      const correctionContext = await getStaffDispatchCorrectionContext(date)
+
       return {
         success: true,
         data: {
@@ -553,6 +588,10 @@ const get_dispatch_status: AgentTool = {
           pendingActionStatus: pendingAction?.status ?? 'none',
           pendingActionCreatedAt: pendingAction?.createdAt ?? null,
           deliveryByStaff,
+          correctionContext,
+          correctionNoticeRule:
+            'After wrong-task correction: call send_dispatch_correction_notice (reads outbox). ' +
+            'Never say "নতুন লিস্ট শীঘ্রই আসবে" if correctionContext shows new_already_sent.',
           note: deliveryByStaff === null
             ? 'Outbox not available — rely on task sent-count; Staff Monitor (Prompt D) for delivery proof.'
             : 'deliveryByStaff is the source of truth for actual delivery.',
@@ -788,6 +827,98 @@ const add_staff_task_now: AgentTool = {
   },
 }
 
+// ── send_dispatch_correction_notice ───────────────────────────────────────────
+
+const send_dispatch_correction_notice: AgentTool = {
+  name: 'send_dispatch_correction_notice',
+  description:
+    'After wrong-task correction: notify staff that the OLD task list is void. ' +
+    'Reads agent_outbox — if a new task_dispatch was ALREADY delivered (even 1 min ago), ' +
+    'tells staff to follow THAT list (never "coming soon"). ' +
+    'Call AFTER approve_pending_dispatch + get_dispatch_status confirms delivery. ' +
+    'Do NOT use send_staff_announcement for this — this tool verifies outbox first.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      staffIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Limit to specific staff (optional — default: staff with task_dispatch today)',
+      },
+      sendVoice: { type: 'boolean', description: 'TTS voice note (default: true)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const date = (input.date as string) || dhakaToday()
+      const staffIds = input.staffIds as string[] | undefined
+      const sendVoice = input.sendVoice !== false
+
+      const ctx = await getStaffDispatchCorrectionContext(date, staffIds)
+      if (!ctx.length) {
+        return {
+          success: false,
+          error: 'আজ কোনো task_dispatch outbox নেই — আগে approve_pending_dispatch + get_dispatch_status দিয়ে verify করুন।',
+        }
+      }
+
+      const staffRows = await db.agentStaff.findMany({
+        where: {
+          active: true,
+          telegramChatId: { not: null },
+          id: {
+            in: ctx.map((c) => c.staffId).filter((id): id is string => Boolean(id)),
+          },
+        },
+        select: { id: true, name: true, telegramChatId: true },
+      })
+
+      const staffById = new Map(staffRows.map((s: { id: string }) => [s.id, s]))
+      const messageGroups = new Map<string, typeof staffRows>()
+
+      for (const c of ctx) {
+        if (!c.staffId) continue
+        const row = staffById.get(c.staffId)
+        if (!row) continue
+        const message = enforceIslamicGreeting(buildCorrectionNoticeMessage(c.staffName, c.situation))
+        const bucket = messageGroups.get(message) ?? []
+        bucket.push(row)
+        messageGroups.set(message, bucket)
+      }
+
+      if (!messageGroups.size) {
+        return { success: false, error: 'No Telegram-linked staff found for correction notice.' }
+      }
+
+      const sent: Array<{ messagePreview: string; staff: string[]; situation: string }> = []
+      for (const [message, group] of messageGroups) {
+        await queueStaffAnnouncement(group, message, sendVoice)
+        const sample = ctx.find((c) => c.staffId === group[0]?.id)
+        sent.push({
+          messagePreview: message.slice(0, 80),
+          staff: group.map((s: { name: string }) => s.name),
+          situation: sample?.situation ?? 'unknown',
+        })
+      }
+
+      return {
+        success: true,
+        data: {
+          status: 'correction_notice_queued',
+          date,
+          sent,
+          correctionContext: ctx,
+          message:
+            'Correction notice queued from outbox facts. new_already_sent = staff must use the list already in Telegram.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── send_staff_announcement ───────────────────────────────────────────────────
 
 const send_staff_announcement: AgentTool = {
@@ -796,6 +927,7 @@ const send_staff_announcement: AgentTool = {
     'Send an announcement/news/notice to staff via Telegram (text + voice note). ' +
     'NOT a task — no Done buttons, no completion tracking. ' +
     'Use for: rule changes, policy updates, office notices, reminders, news. ' +
+    'Do NOT use for wrong-task correction notices — use send_dispatch_correction_notice instead. ' +
     'Do NOT use this for work assignments — use propose_staff_tasks or add_staff_task_now for those.',
   input_schema: {
     type: 'object' as const,
@@ -823,6 +955,12 @@ const send_staff_announcement: AgentTool = {
 
       const sendVoice = input.sendVoice !== false
       const staffIds = input.staffIds as string[] | undefined
+      const date = dhakaToday()
+
+      const contradiction = await announcementContradictsRecentDispatch(message, date, staffIds)
+      if (contradiction.blocked) {
+        return { success: false, error: contradiction.reason }
+      }
 
       const where: Record<string, unknown> = {
         active: true,
@@ -841,29 +979,7 @@ const send_staff_announcement: AgentTool = {
         return { success: true, data: { status: 'no_staff', message: 'No active staff with Telegram linked found.' } }
       }
 
-      const res = await fetch(`${APP_URL}/api/assistant/internal/staff-announcement`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${INTERNAL_TOKEN}`,
-        },
-        body: JSON.stringify({
-          message,
-          staffChatIds: staff.map((s: { id: string; name: string; telegramChatId: string | null }) => ({
-            id: s.id,
-            name: s.name,
-            chatId: s.telegramChatId,
-          })),
-          sendVoice,
-        }),
-      })
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        return { success: false, error: `Failed to queue announcement: HTTP ${res.status} ${body.slice(0, 120)}` }
-      }
-
-      const queued = await res.json()
+      const queued = await queueStaffAnnouncement(staff, message, sendVoice)
       return {
         success: true,
         data: {
@@ -1022,6 +1138,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   correct_and_redispatch_staff_tasks,
   approve_and_dispatch_tasks,
   add_staff_task_now,
+  send_dispatch_correction_notice,
   send_staff_announcement,
   update_staff_task_status,
   get_marketing_history,

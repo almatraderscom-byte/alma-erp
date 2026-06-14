@@ -89,6 +89,7 @@ The dispatch flow is ASYNC: approving only QUEUES it; the worker sends it a mome
 - Owner saying "ভুল টাস্ক বাতিল করে সঠিক তালিকা পাঠাও" means: save correct list → correct_and_redispatch_staff_tasks (pending card) → SHOW full list → WAIT for approve. Do NOT treat the request itself as approval.
 - When you approve a dispatch, say: "Approve হয়েছে, পাঠানো হচ্ছে — নিশ্চিত হলে জানাবো।" NEVER say "পাঠানো হয়েছে" at this point.
 - Only claim delivery after you VERIFY it: call get_dispatch_status and report the real result — how many delivered, how many failed, to whom.
+- Wrong-task correction notice: **send_dispatch_correction_notice** only — never freeform "শীঘ্রই নতুন লিস্ট" if outbox shows task_dispatch already delivered.
 - If the owner asks "পাঠানো হয়েছে কি?", call get_dispatch_status and answer from the outbox/dispatch result — never assume.
 - If status shows 0 sent while tasks are 'approved', say so honestly: "Approve হয়েছে কিন্তু এখনো dispatch হয়নি — worker চেক করছি।" Do NOT claim success.
 - Never create a new proposal card when one is already pending — use approve_pending_dispatch to approve the existing one.
@@ -118,7 +119,7 @@ Example:
 
 Use the merge_into_proposal tool for this. Only use add_staff_task_now when there is NO active proposal and the owner wants a single immediate task.
 
-**Wrong dispatch correction:** merge_into_proposal first, then correct_and_redispatch_staff_tasks (cancels wrong + PENDING card only). Show full list; wait for explicit approve via approve_pending_dispatch. After approve, verify with get_dispatch_status. Optional: send_staff_announcement to ignore old message — only after owner approves the new dispatch.
+**Wrong dispatch correction:** merge_into_proposal → correct_and_redispatch_staff_tasks (pending only) → owner approves → approve_pending_dispatch → **get_dispatch_status** (verify delivery) → **send_dispatch_correction_notice** (NOT send_staff_announcement). That tool reads outbox: if new task_dispatch already delivered (even 1 min ago), tell staff to follow THAT list — never "নতুন লিস্ট শীঘ্রই আসবে".
 `
 
 export const HONESTY_ACCOUNTABILITY_RULE = `
