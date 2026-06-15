@@ -54,6 +54,7 @@ model User {
   operationalTaskAssignments    OperationalTaskAssignment[]      @relation("OperationalTaskAssignee")
   operationalTaskAcks           OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
   paymentMethods                EmployeePaymentMethod[]          @relation("UserPaymentMethods")
+  agentStaffLinks               AgentStaff[]                     @relation("AgentStaffUser")
 
   @@index([active, role])
   @@index([active, createdAt])
@@ -1707,10 +1708,14 @@ model AgentProject {
   name               String
   description        String?
   systemInstructions String?             @db.Text
+  /// Business scope of this project. null = personal / cross-business.
+  /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
+  businessId         String?             @map("business_id")
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   conversations      AgentConversation[]
 
+  @@index([businessId])
   @@map("agent_projects")
 }
 
@@ -1728,6 +1733,9 @@ model AgentConversation {
   totalCostUsd   Float           @default(0) @map("total_cost_usd")
   contextSummary String?         @map("context_summary")
   compactedToId  String?         @map("compacted_to_id")
+  /// Business scope inherited from project. null = personal / cross-business.
+  /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
+  businessId     String?         @map("business_id")
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   messages       AgentMessage[]
@@ -1735,6 +1743,7 @@ model AgentConversation {
 
   @@index([projectId])
   @@index([source])
+  @@index([businessId])
   @@index([updatedAt(sort: Desc)])
   @@map("agent_conversations")
 }
@@ -1818,12 +1827,15 @@ model AgentPendingAction {
   summary        String    @db.Text
   costEstimate   Float?
   status         String    @default("pending")
+  /// Business scope for routing/filtering ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt      DateTime  @default(now())
   resolvedAt     DateTime?
   result         Json?
 
   @@index([status])
   @@index([conversationId])
+  @@index([businessId, status])
   @@map("agent_pending_actions")
 }
 
@@ -1939,6 +1951,11 @@ model AgentStaff {
   telegramChatId String?
   ntfyTopic      String?               @map("ntfy_topic")
   active         Boolean               @default(true)
+  /// Business scope this staff belongs to ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
+  businessId     String                @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Optional link to ERP User (Trading staff are linked to User accounts for account assignment).
+  userId         String?               @map("user_id")
+  user           User?                 @relation("AgentStaffUser", fields: [userId], references: [id], onDelete: SetNull)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   tasks          AgentStaffTask[]
@@ -1946,6 +1963,8 @@ model AgentStaff {
   locations      AgentStaffLocation[]
   feedback       StaffFeedback[]
 
+  @@index([businessId, active])
+  @@index([userId])
   @@map("agent_staff")
 }
 
@@ -1960,8 +1979,11 @@ model StaffLunch {
   overage     Boolean   @default(false)
   warned45    Boolean   @default(false) @map("warned_45")
   alerted60   Boolean   @default(false) @map("alerted_60")
+  /// Business scope ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
+  businessId  String    @default("ALMA_LIFESTYLE") @map("business_id")
 
   @@index([staffId, lunchDate])
+  @@index([businessId, lunchDate])
   @@map("staff_lunch")
 }
 
@@ -2004,12 +2026,15 @@ model AgentStaffTask {
   proofData          Json?                          @map("proof_data")
   reviewerNote       String?                        @map("reviewer_note") @db.Text
   redoCount          Int                            @default(0) @map("redo_count")
+  /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
+  businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")
   marketingHistory   AgentProductMarketingHistory[]
 
   @@index([staffId])
   @@index([proposedFor, status])
   @@index([status])
+  @@index([businessId, proposedFor, status])
   @@map("staff_tasks")
 }
 

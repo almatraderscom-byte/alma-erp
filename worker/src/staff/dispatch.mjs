@@ -84,15 +84,25 @@ export async function sendDispatchOwnerReport({ bot, result }) {
 export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   console.log(`[dispatch] dispatching tasks for ${date}`)
 
+  // Read business_id from staff_tasks (Phase 7) so we can scope downstream
+  // queries and Telegram logs to the correct business.
   const query = supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, role, telegramChatId)`)
+    .select(`*, business_id, agent_staff(id, name, role, telegramChatId, business_id)`)
     .eq('status', 'approved')
     .eq('proposed_for', date)
 
   const { data: tasks, error } = await query
   if (error) throw new Error(`DB error: ${error.message}`)
   const pending = (tasks ?? []).filter((t) => t.status === 'approved')
+
+  // Derive business scope for this dispatch batch. If tasks span multiple
+  // businesses (shouldn't happen — one project per proposal — fall back to the
+  // first non-null businessId; downstream filtering keeps staff lookups safe).
+  const dispatchBusinessId =
+    pending.find((t) => t.business_id)?.business_id
+    ?? pending.find((t) => t.agent_staff?.business_id)?.agent_staff?.business_id
+    ?? 'ALMA_LIFESTYLE'
 
   if (taskIds?.length && pending.length !== taskIds.length) {
     console.warn(
@@ -118,11 +128,14 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   }
 
   const staffIds = [...new Set(pending.map((t) => t.agent_staff?.id || t.staff_id).filter(Boolean))]
+  // Prior-sent task lookup must stay within the same business to avoid bundling
+  // a Lifestyle staff's earlier tasks into a Trading dispatch (or vice versa).
   const { data: priorSentRows } = await supabase
     .from('staff_tasks')
     .select(`*, agent_staff(id, name, role, telegramChatId)`)
     .eq('proposed_for', date)
     .eq('status', 'sent')
+    .eq('business_id', dispatchBusinessId)
     .in('staff_id', staffIds)
 
   const priorSentByStaff = {}
@@ -182,6 +195,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
         staffId: staff.id,
         isUpdate,
         newCount: staffTasks.length,
+        businessId: staff?.business_id || dispatchBusinessId,
       })
       sentIds.push(...staffTasks.map((t) => t.id))
 
@@ -261,7 +275,7 @@ export async function markDispatchActionsExecuted(supabase, date) {
   }
 }
 
-async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId, isUpdate = false, newCount = 0 }) {
+async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId, isUpdate = false, newCount = 0, businessId = 'ALMA_LIFESTYLE' }) {
   const numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
   const taskLines = staffTasks.map((t, i) => {
@@ -299,7 +313,7 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     supabase,
     staffId,
     staffName,
-    businessId: 'ALMA_LIFESTYLE',
+    businessId,
     type: 'task_dispatch',
     content: msg,
     chatId,

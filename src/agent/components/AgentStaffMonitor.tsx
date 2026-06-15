@@ -303,6 +303,8 @@ export default function AgentStaffMonitor() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  // Phase 7: business scope filter. Default 'ALL' so existing view is preserved.
+  const [businessFilter, setBusinessFilter] = useState<'ALL' | 'ALMA_LIFESTYLE' | 'ALMA_TRADING'>('ALL')
 
   const loadLive = useCallback(async (manual = false) => {
     if (manual) setSyncing(true)
@@ -341,7 +343,22 @@ export default function AgentStaffMonitor() {
   }, [loadLive])
 
   const viewingHistory = Boolean(selectedDate && historyData)
-  const displayData = viewingHistory ? historyData : liveData
+  const rawDisplay = viewingHistory ? historyData : liveData
+
+  // Apply business filter to outbox-derived rows + staffSummaries that touched
+  // any row of the matching business. Duties/salah aren't business-scoped and
+  // are always shown.
+  const displayData = (() => {
+    if (!rawDisplay) return null
+    if (businessFilter === 'ALL') return rawDisplay
+    const keep = (b: string | null | undefined) => (b ?? 'ALMA_LIFESTYLE') === businessFilter
+    const feed = rawDisplay.feed.filter((r) => keep(r.businessId))
+    const unacked = rawDisplay.unackedMessages.filter((r) => keep(r.businessId))
+    const failures = rawDisplay.failures.filter((r) => keep(r.businessId))
+    const stafffeedIds = new Set([...feed, ...unacked].map((r) => r.staffId).filter(Boolean))
+    const summaries = rawDisplay.staffSummaries.filter((s) => stafffeedIds.has(s.staffId))
+    return { ...rawDisplay, feed, unackedMessages: unacked, failures, staffSummaries: summaries }
+  })()
 
   if (err && !displayData) {
     return (
@@ -374,6 +391,23 @@ export default function AgentStaffMonitor() {
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-0.5 text-[11px]">
+              {(['ALL', 'ALMA_LIFESTYLE', 'ALMA_TRADING'] as const).map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => setBusinessFilter(b)}
+                  className={cn(
+                    'rounded-lg px-2.5 py-1 font-medium transition-colors',
+                    businessFilter === b
+                      ? 'bg-gold/20 text-gold-lt'
+                      : 'text-muted hover:text-cream',
+                  )}
+                >
+                  {b === 'ALL' ? 'All' : b === 'ALMA_LIFESTYLE' ? 'Lifestyle' : 'Trading'}
+                </button>
+              ))}
+            </div>
             {viewingHistory ? (
               <button
                 type="button"

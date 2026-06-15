@@ -25,20 +25,31 @@ export async function POST(req: NextRequest) {
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
   if (!verifyToken(token)) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
-  let body: { name?: string; telegramChatId?: string }
+  let body: { name?: string; telegramChatId?: string; businessId?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
-  const { name, telegramChatId } = body
+  const { name, telegramChatId, businessId } = body
   if (!name || !telegramChatId) {
     return Response.json({ error: 'name and telegramChatId required' }, { status: 400 })
   }
 
+  // Optional businessId filter — Phase 7. Default to Lifestyle for backward compat
+  // so existing /staff link callers keep working.
+  const filterBusinessId =
+    businessId === 'ALMA_TRADING' || businessId === 'ALMA_LIFESTYLE'
+      ? businessId
+      : 'ALMA_LIFESTYLE'
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
-  // Find staff by name (case-insensitive partial match)
+  // Find staff by name (case-insensitive partial match), scoped to business.
   const staff = await db.agentStaff.findFirst({
-    where: { name: { contains: name, mode: 'insensitive' }, active: true },
+    where: {
+      name: { contains: name, mode: 'insensitive' },
+      active: true,
+      businessId: filterBusinessId,
+    },
   })
 
   if (!staff) {
