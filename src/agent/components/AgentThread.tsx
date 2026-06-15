@@ -9,20 +9,16 @@ import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
+import { toolDisplay } from '@/agent/lib/tool-labels'
 
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
-  // For user messages with file attachments
   files?: Array<{ previewUrl: string; mediaType: string }>
-  // Tool activity (for streaming assistant messages)
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
-  // Pending action confirm card (image gen, FB post, etc.)
   pendingAction?: PendingAction
-  // Clarifying question card (ask_user)
   askCard?: AskCard
-  // Usage stats (final)
   tokensIn?: number
   tokensOut?: number
   costUsd?: number
@@ -41,9 +37,7 @@ interface AgentThreadProps {
   compacting?: boolean
 }
 
-// Detect artifact-worthy content: code block ≥ 15 lines OR markdown doc ≥ 800 chars
 function detectArtifact(text: string): { type: 'code' | 'markdown'; content: string; title: string } | null {
-  // Find fenced code blocks ≥ 15 lines
   const codeBlockRe = /```(?:\w+)?\n([\s\S]*?)```/g
   let match: RegExpExecArray | null
   while ((match = codeBlockRe.exec(text)) !== null) {
@@ -53,12 +47,33 @@ function detectArtifact(text: string): { type: 'code' | 'markdown'; content: str
       return { type: 'code', content: match[1], title: lang ? `${lang} কোড` : 'কোড' }
     }
   }
-  // Markdown doc ≥ 800 chars
   if (text.length >= 800 && (text.includes('##') || text.includes('**'))) {
     const firstHeading = text.match(/#{1,3} (.+)/)?.[1] ?? 'ডকুমেন্ট'
     return { type: 'markdown', content: text, title: firstHeading }
   }
   return null
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        })
+      }}
+      className="rounded-lg p-1.5 text-white/30 transition-all hover:bg-white/[0.06] hover:text-white/60"
+      title={copied ? 'কপি হয়েছে' : 'কপি করুন'}
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      )}
+    </button>
+  )
 }
 
 function TtsButton({ text, messageId }: { text: string; messageId: string }) {
@@ -68,14 +83,11 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   const blobUrlRef = useRef<string | null>(null)
 
   async function speak() {
-    // If already playing, pause
     if (playing && audioRef.current) {
       audioRef.current.pause()
       setPlaying(false)
       return
     }
-
-    // Replay from cache if available
     if (blobUrlRef.current) {
       const audio = new Audio(blobUrlRef.current)
       audioRef.current = audio
@@ -85,7 +97,6 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       void audio.play()
       return
     }
-
     setLoading(true)
     try {
       const res = await fetch('/api/assistant/tts', {
@@ -100,8 +111,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
-      blobUrlRef.current = url // cache per message
-
+      blobUrlRef.current = url
       const audio = new Audio(url)
       audioRef.current = audio
       audio.onended = () => setPlaying(false)
@@ -115,7 +125,6 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
     }
   }
 
-  // Cleanup blob URL on unmount
   useEffect(() => {
     return () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
@@ -127,11 +136,41 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       onClick={speak}
       disabled={loading}
       data-message-id={messageId}
-      className={`rounded-md p-1 transition-all disabled:opacity-50 ${playing ? 'text-gold-lt' : 'text-zinc-600 hover:text-muted-hi hover:bg-white/[0.04]'}`}
+      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-gold/10 text-gold' : 'text-white/30 hover:bg-white/[0.06] hover:text-white/60'}`}
       title={playing ? 'থামান' : 'শুনুন'}
     >
-      {loading ? '⏳' : playing ? '⏸' : '🔊'}
+      {loading ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+      ) : playing ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14"/></svg>
+      )}
     </button>
+  )
+}
+
+function ToolActivityChip({ name, done, success }: { name: string; done: boolean; success?: boolean }) {
+  const d = toolDisplay(name)
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
+      done
+        ? success !== false
+          ? 'border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300/80'
+          : 'border-red-400/20 bg-red-400/[0.06] text-red-300/80'
+        : 'border-white/[0.08] bg-white/[0.03] text-white/50'
+    }`}>
+      {!done && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+      )}
+      {done && success !== false && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+      )}
+      {done && success === false && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      )}
+      <span>{d.label}</span>
+    </span>
   )
 }
 
@@ -184,7 +223,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-      <div className="mx-auto max-w-3xl space-y-6 px-4 py-4 pb-6 md:py-6">
+      <div className="mx-auto max-w-2xl px-4 py-4 pb-6 md:px-6 md:py-6">
         {messages.length === 0 && (
           <AgentEmptyState onSuggestion={onQuickSend} />
         )}
@@ -193,56 +232,68 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           {messages.map((msg, index) => (
             <motion.div
               key={msg.id}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, delay: index < 10 ? index * 0.03 : 0 }}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              transition={{ duration: 0.2, delay: index < 10 ? index * 0.02 : 0 }}
+              className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
               {msg.role === 'user' ? (
-                <div className="max-w-[80%] min-w-0">
-                  {/* File thumbnails */}
-                  {msg.files && msg.files.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-2 justify-end">
-                      {msg.files.map((f, i) => (
-                        f.mediaType.startsWith('image/') ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img key={i} src={f.previewUrl} alt="" className="h-24 w-24 rounded-xl object-cover border border-white/[0.08] shadow-[0_0_10px_rgba(201,168,76,0.08)]" />
-                        ) : (
-                          <div key={i} className="flex h-16 w-16 flex-col items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md text-[10px] text-muted-hi shadow-[0_0_10px_rgba(201,168,76,0.06)]">
-                            <span className="text-xl">📄</span>
-                            <span>PDF</span>
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  )}
-                  {msg.text && (
-                    <div className="rounded-2xl rounded-br-md bg-[rgba(201,168,76,0.08)] backdrop-blur-md border border-[rgba(201,168,76,0.2)] px-4 py-3 text-sm text-white whitespace-pre-wrap break-words select-text shadow-[0_0_16px_rgba(201,168,76,0.06)]">
-                      {msg.text}
-                    </div>
-                  )}
+                /* User message — subtle right-aligned pill */
+                <div className="flex justify-end">
+                  <div className="max-w-[85%] min-w-0">
+                    {msg.files && msg.files.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-2 justify-end">
+                        {msg.files.map((f, i) => (
+                          f.mediaType.startsWith('image/') ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-white/[0.08]" />
+                          ) : (
+                            <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-[10px] text-white/50">
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                              <span className="mt-0.5">PDF</span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
+                    {msg.text && (
+                      <div className="rounded-2xl rounded-br-sm bg-[rgba(201,168,76,0.1)] px-4 py-3 text-[15px] leading-relaxed text-white/90 whitespace-pre-wrap break-words select-text">
+                        {msg.text}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="min-w-0 max-w-[85%]">
-                  {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id ? (
+                /* Assistant message — full-width document flow (Claude-style) */
+                <div className="min-w-0">
+                  {/* Thinking indicator — only during active streaming */}
+                  {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
                       label={streamStatus}
                       mode={streamMode ?? 'writing'}
-                      className="mb-1.5"
+                      className="mb-3"
                     />
-                  ) : (
-                    <AgentThinkingIndicator mode="settled" className="mb-1.5" />
                   )}
 
+                  {/* Tool activity chips */}
+                  {msg.toolActivity && msg.toolActivity.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-1.5">
+                      {msg.toolActivity.map((t) => (
+                        <ToolActivityChip key={t.id} name={t.name} done={t.done} success={t.success} />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Message content — full-width, no bubble */}
                   {(!msg.streaming || msg.text) && (
-                    <div className="rounded-2xl rounded-bl-md border border-white/[0.06] bg-[rgba(18,18,24,0.6)] backdrop-blur-xl px-4 py-3 text-sm text-white select-text">
+                    <div className="text-[15px] leading-[1.7] text-white/90 select-text">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />
                           <motion.span
-                            className="ml-0.5 inline-block h-[1.1em] w-[3px] translate-y-[2px] rounded-full bg-gold/70"
-                            animate={{ opacity: [1, 0.2, 1] }}
-                            transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
+                            className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-gold/60"
+                            animate={{ opacity: [1, 0, 1] }}
+                            transition={{ duration: 0.8, repeat: Infinity, ease: 'steps(2)' }}
                             aria-hidden
                           />
                         </div>
@@ -252,7 +303,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     </div>
                   )}
 
-                  {/* Confirm card for pending actions */}
+                  {/* Confirm card */}
                   {msg.pendingAction && (
                     <AgentConfirmCard
                       action={msg.pendingAction}
@@ -262,7 +313,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {/* Ask card — tap sends option as next message */}
+                  {/* Ask card */}
                   {msg.askCard && onQuickSend && (
                     <AgentAskCard
                       card={msg.askCard}
@@ -277,31 +328,28 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {/* Footer actions */}
+                  {/* Message actions row */}
                   {!msg.streaming && msg.text && (
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <div className="mt-2 flex items-center gap-0.5">
+                      <CopyButton text={msg.text} />
                       <TtsButton text={msg.text} messageId={msg.id} />
-                      {/* Artifact offer */}
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button
                           onClick={() => saveArtifact(msg)}
-                          className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-gold border border-gold-dim/20 bg-gold/5 backdrop-blur-md transition-all hover:text-gold-lt hover:border-gold-dim/50 hover:bg-gold/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.15)]"
+                          className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-white/30 transition-all hover:bg-white/[0.06] hover:text-white/60"
                         >
-                          ✦ আর্টিফ্যাক্ট
+                          সংরক্ষণ
                         </button>
                       )}
                       {artifactSaved.has(msg.id) && (
-                        <span className="text-[10px] text-green-400">✅ সংরক্ষিত</span>
+                        <span className="px-2 text-[11px] text-emerald-400/70">সংরক্ষিত</span>
                       )}
-                      {/* Usage info */}
                       {msg.tokensIn != null && (
-                        <details className="ml-auto">
-                          <summary className="cursor-pointer text-[10px] text-zinc-700 hover:text-zinc-500 select-none">ⓘ</summary>
-                          <div className="mt-1 rounded-lg border border-white/[0.06] bg-[rgba(15,15,20,0.8)] backdrop-blur-xl px-3 py-2 text-[10px] text-muted-hi">
-                            <span>↑{msg.tokensIn?.toLocaleString()} ↓{msg.tokensOut?.toLocaleString()}</span>
-                            <span className="ml-3 text-gold">${msg.costUsd?.toFixed(6)}</span>
-                          </div>
-                        </details>
+                        <span className="ml-auto text-[10px] tabular-nums text-white/20">
+                          {msg.tokensIn != null && `↑${msg.tokensIn.toLocaleString()}`}{' '}
+                          {msg.tokensOut != null && `↓${msg.tokensOut.toLocaleString()}`}{' '}
+                          {msg.costUsd != null && <span className="text-gold/40">${msg.costUsd.toFixed(4)}</span>}
+                        </span>
                       )}
                     </div>
                   )}
@@ -315,14 +363,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-auto my-4 max-w-md rounded-xl border border-white/[0.08] bg-[rgba(18,18,24,0.5)] backdrop-blur-xl p-3"
+            className="mx-auto my-4 max-w-sm rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4"
           >
-            <div className="mb-2 text-[13px] font-medium text-zinc-300">
-              💬 কথোপকথন কম্প্যাক্ট করছি — যাতে আরও চ্যাট করতে পারি…
+            <div className="mb-2 text-[13px] font-medium text-white/60">
+              কথোপকথন কম্প্যাক্ট হচ্ছে…
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-blue-400"
+                className="h-full rounded-full bg-gradient-to-r from-gold/40 to-gold/20"
                 initial={{ width: '0%' }}
                 animate={{ width: '100%' }}
                 transition={{ duration: 2.2, ease: 'easeInOut' }}
@@ -345,10 +393,10 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
               setTimeout(checkScrollPosition, 400)
             }}
-            className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[rgba(201,168,76,0.3)] bg-[rgba(12,12,16,0.85)] px-5 py-2.5 text-xs font-semibold text-gold-lt shadow-[0_0_20px_rgba(201,168,76,0.15)] backdrop-blur-2xl transition-all hover:border-gold/50 hover:text-cream hover:shadow-[0_0_28px_rgba(201,168,76,0.25)]"
+            className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/[0.1] bg-[rgba(12,12,16,0.9)] px-4 py-2 text-xs font-medium text-white/60 shadow-lg backdrop-blur-2xl transition-all hover:text-white/80"
           >
-            <span aria-hidden>↓</span>
-            <span>নিচে যান</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+            নিচে যান
           </motion.button>
         )}
       </AnimatePresence>

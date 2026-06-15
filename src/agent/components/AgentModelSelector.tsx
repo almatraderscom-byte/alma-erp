@@ -87,23 +87,23 @@ export default function AgentModelSelector({
         disabled={disabled || loading}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'flex max-w-[200px] items-center gap-1.5 truncate rounded-xl border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-muted-hi transition-all hover:border-gold-dim/30 hover:text-cream md:max-w-none md:px-3',
-          open && 'border-gold-dim/40 text-cream',
+          'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-all',
+          open ? 'bg-white/[0.06] text-white/80' : 'text-white/60 hover:bg-white/[0.04] hover:text-white/80',
+          (disabled || loading) && 'opacity-50',
         )}
-        title="Model নির্বাচন"
       >
         <span className="truncate">{loading ? '…' : label}</span>
-        <span className="text-[9px] opacity-60">▾</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="opacity-40"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-xl border border-white/[0.1] bg-[rgba(12,12,18,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-          <div className="border-b border-white/[0.06] px-3 py-2 text-[10px] leading-snug text-zinc-500">
-            Sonnet = default ও সবচেয়ে নির্ভরযোগ্য tool-এ। অন্য model পরীক্ষামূলক।
+        <div className="absolute left-1/2 top-full z-50 mt-1.5 w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-white/[0.08] bg-[rgba(12,12,18,0.95)] shadow-[0_8px_30px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
+          <div className="border-b border-white/[0.04] px-3 py-2 text-[10px] text-white/30">
+            Sonnet = default ও সবচেয়ে নির্ভরযোগ্য
           </div>
           {Object.entries(grouped).map(([provider, items]) => (
             <div key={provider}>
-              <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+              <div className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-white/25">
                 {PROVIDER_LABELS[provider] ?? provider}
               </div>
               {items.map((m) => (
@@ -112,12 +112,14 @@ export default function AgentModelSelector({
                   type="button"
                   onClick={() => void pick(m.id)}
                   className={cn(
-                    'flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-white/[0.05]',
-                    m.id === modelId ? 'text-gold-lt' : 'text-muted-hi',
+                    'flex w-full items-center justify-between px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.05]',
+                    m.id === modelId ? 'text-gold' : 'text-white/60',
                   )}
                 >
                   <span>{m.label}</span>
-                  {m.default && <span className="text-[9px] text-zinc-600">default</span>}
+                  {m.id === modelId && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  )}
                 </button>
               ))}
             </div>
