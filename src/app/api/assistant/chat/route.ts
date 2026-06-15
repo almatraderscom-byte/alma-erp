@@ -16,7 +16,7 @@ import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 import { compactConversationIfNeeded, COMPACT_THRESHOLD_USD } from '@/agent/lib/conversation-compact'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+export const maxDuration = 300
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
@@ -26,6 +26,7 @@ interface ChatBody {
   files?: FileRef[]
   projectId?: string
   personalMode?: boolean
+  source?: string
 }
 
 function isAgentDbError(err: unknown): boolean {
@@ -206,7 +207,11 @@ export async function POST(req: NextRequest) {
   }
 
   const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'
+  const telegramFastPath =
+    isInternalCall
+    && (body.source === 'telegram' || req.headers.get('x-agent-source') === 'telegram')
   if (!streamMode) {
+    const turnStarted = Date.now()
     let finalText = ''
     let errorMsg = ''
     const pendingCards: Array<{
@@ -221,7 +226,11 @@ export async function POST(req: NextRequest) {
     let newConversationId: string | null = null
     let compactedFromCost: number | null = null
     try {
-      for await (const event of runAgentTurn(conversationId!, { projectSystemInstructions, personalMode })) {
+      for await (const event of runAgentTurn(conversationId!, {
+        projectSystemInstructions,
+        personalMode,
+        telegramFastPath,
+      })) {
         if (event.type === 'text_delta') finalText += event.delta
         else if (event.type === 'confirm_card') {
           pendingCards.push({
@@ -264,6 +273,10 @@ export async function POST(req: NextRequest) {
       errorMsg = err instanceof Error ? err.message : String(err)
     }
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
+    const turnMs = Date.now() - turnStarted
+    if (telegramFastPath && turnMs > 30_000) {
+      console.warn(`[assistant/chat] slow telegram turn ${turnMs}ms conv=${conversationId}`)
+    }
     return Response.json({
       conversationId,
       text: finalText,
@@ -289,6 +302,7 @@ export async function POST(req: NextRequest) {
           projectSystemInstructions,
           personalMode,
           signal: req.signal,
+          telegramFastPath,
         })) {
           enqueue(event)
           if (event.type === 'done') {

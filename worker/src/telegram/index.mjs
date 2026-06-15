@@ -14,7 +14,7 @@
  */
 
 import { Telegraf } from 'telegraf'
-import { transcribeVoiceNote, sendVoiceMessage } from './voice.mjs'
+import { transcribeVoiceNote } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
 import { setDispatcherBot, getDispatcherBot } from './dispatcher.mjs'
 import { handleSalahCallback } from '../salah/scheduler.mjs'
@@ -61,6 +61,8 @@ import {
   handleGroupSuggestCallback,
   showCatalogPanel,
 } from './command-defaults.mjs'
+import { ownerState, isOwnerTurnInFlight, markOwnerTurnStart, releaseOwnerTurn } from './owner-state.mjs'
+import { callAgentApi as sendToAgent } from './agent-turn.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -75,12 +77,7 @@ function createSupabase() {
   )
 }
 
-// Per-owner conversation state (in-memory — resets on worker restart, which is fine)
-const ownerState = {
-  conversationId: null,
-  personalConversationId: null,
-  financeEdit: null, // { actionId, field } while awaiting new value
-}
+// Per-owner conversation state lives in owner-state.mjs (shared with background agent-turn worker)
 
 // Flood guard: max 12 messages/min per chat (owner Telegram)
 const floodBuckets = new Map()
@@ -121,55 +118,7 @@ async function getDailyConversationId(personalMode = false) {
   return null
 }
 
-// ── Send a message to the agent backend ───────────────────────────────────
-
-const AGENT_FETCH_TIMEOUT_MS = 180_000
-
-async function sendToAgent(userMessage, conversationId, { personalMode = false } = {}) {
-  const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
-    },
-    body: JSON.stringify({
-      message: userMessage,
-      conversationId: conversationId ?? undefined,
-      personalMode: personalMode || undefined,
-    }),
-    signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Agent API ${res.status}: ${err}`)
-  }
-  return await res.json()
-  // Returns { conversationId, text, pendingCards }
-}
-
-// ── Telegram message splitting (4096 char limit) ───────────────────────────
-
-function splitMessage(text, limit = 4096) {
-  const chunks = []
-  let remaining = text
-  while (remaining.length > limit) {
-    let splitAt = remaining.lastIndexOf('\n', limit)
-    if (splitAt < limit * 0.5) splitAt = limit
-    chunks.push(remaining.slice(0, splitAt))
-    remaining = remaining.slice(splitAt).trimStart()
-  }
-  if (remaining) chunks.push(remaining)
-  return chunks
-}
-
-// Convert markdown to Telegram-safe MarkdownV2 (basic conversion)
-function toTelegramMd(text) {
-  // Escape MarkdownV2 special chars, then apply basic formatting
-  return text
-    .replace(/[_*[\]()~`>#+=|{}.!\\-]/g, (c) => `\\${c}`)
-    .replace(/\\\*\\\*(.*?)\\\*\\\*/g, '*$1*') // re-apply **bold** → *bold*
-    .replace(/\\\*(.*?)\\\*/g, '_$1_')           // *italic* → _italic_
-}
+// ── Voice reply detection ─────────────────────────────────────────────────
 
 /**
  * Voice reply to owner only when they want the AGENT to speak in voice — not when they ask
@@ -265,121 +214,40 @@ async function handleOwnerText(ctx, text) {
   let convId = personalMode ? ownerState.personalConversationId : ownerState.conversationId
   if (!convId) convId = await getDailyConversationId(personalMode)
 
-  let typingInterval
-  try {
-    typingInterval = setInterval(() => {
-      ctx.sendChatAction('typing').catch(() => {})
-    }, 4000)
-    await ctx.sendChatAction('typing')
-
-    const result = await sendToAgent(text, convId, { personalMode })
-
-    clearInterval(typingInterval)
-
-    // Cache the conversation id from the response
-    if (result.conversationId) {
-      if (personalMode) ownerState.personalConversationId = result.conversationId
-      else ownerState.conversationId = result.conversationId
-    }
-
-    const replyText = result.text || '(কোনো উত্তর নেই)'
-
-    // Send text reply (split if needed)
-    const chunks = splitMessage(replyText)
-    for (const chunk of chunks) {
-      await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk))
-    }
-
-    // Voice only when owner explicitly requests it (reminders send voice via notify())
-    if (process.env.GOOGLE_TTS_CREDENTIALS && userWantsVoiceReply(text)) {
-      try {
-        await sendVoiceMessage(ctx.telegram, ctx.chat.id, replyText)
-      } catch (ttsErr) {
-        console.warn('[telegram] TTS voice reply failed:', ttsErr.message)
-      }
-    }
-
-    // Send confirm cards as inline keyboard buttons (only if still pending)
-    for (const card of result.pendingCards ?? []) {
-      const supabase = createSupabase()
-      const { data: row } = await supabase
-        .from('agent_pending_actions')
-        .select('status, summary')
-        .eq('id', card.pendingActionId)
-        .maybeSingle()
-      if (row?.status !== 'pending') continue
-      const summary = card.summary || row.summary || ''
-      if (!summary.trim()) continue
-      const keyboard = await buildConfirmCardKeyboard(card)
-      await replyMarkdownSafe(ctx, `📋 *অনুমোদন প্রয়োজন*\n${summary}`, {
-        reply_markup: { inline_keyboard: keyboard },
-      })
-    }
-
-    // ask_user clarifying cards
-    for (const ask of result.askCards ?? []) {
-      await sendAskCardTelegram(ctx, ask)
-    }
-
-    // Auto-compact when cumulative cost exceeds threshold (server already compacted)
-    if (result.newConversationId) {
-      if (personalMode) ownerState.personalConversationId = result.newConversationId
-      else ownerState.conversationId = result.newConversationId
-      await ctx.reply('💬 কথোপকথন কম্প্যাক্ট — নতুন চ্যাট শুরু। বলুন স্যার।')
-    } else if (result.compactSuggested && result.conversationId) {
-      // Legacy fallback if server only suggested compaction
-      try {
-        const compactRes = await fetch(`${APP_URL}/api/assistant/internal/compact-conversation`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
-          body: JSON.stringify({ conversationId: result.conversationId }),
-        })
-        if (compactRes.ok) {
-          const compactData = await compactRes.json()
-          if (personalMode) ownerState.personalConversationId = compactData.newConversationId
-          else ownerState.conversationId = compactData.newConversationId
-          await ctx.reply('✅ রেডি — বলুন স্যার।')
-        }
-      } catch (compactErr) {
-        console.warn('[telegram] compaction failed:', compactErr.message)
-      }
-    }
-  } catch (err) {
-    clearInterval(typingInterval)
-    captureWorkerError(err, 'worker.telegram.agent_call')
-    safeLogMessage('[telegram] agent call error:', err.message)
-    const bangla = /rate_limited|429/i.test(err.message)
-      ? 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
-      : /quota|credit|billing/i.test(err.message)
-        ? 'API কোটা শেষ — মালিককে জানানো হয়েছে।'
-        : /504|FUNCTION_INVOCATION_TIMEOUT|timed out|TimeoutError/i.test(err.message)
-          ? 'উত্তর প্রস্তুত হতে বেশি সময় লাগছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার লিখুন।'
-          : 'সমস্যা হয়েছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার চেষ্টা করুন।'
-    await ctx.reply(`❌ ${bangla}`)
-  }
+  await ctx.reply('⏳ ভাবছি স্যার...')
+  const { enqueueAgentTurn } = await import('./agent-turn.mjs')
+  await enqueueAgentTurn({
+    chatId: String(chatId),
+    text,
+    conversationId: convId,
+    personalMode,
+    wantsVoice: userWantsVoiceReply(text),
+  })
+  return { queued: true }
 }
 
-/** One owner turn at a time per chat — handler returns immediately so polling never blocks. */
-const ownerTurnInFlight = new Set()
-
+/** One owner turn at a time per chat — returns immediately; agent runs in background queue. */
 function dispatchOwnerText(ctx, text) {
   const chatId = String(ctx.chat?.id ?? '')
   if (!chatId) return
-  if (ownerTurnInFlight.has(chatId)) {
+  if (isOwnerTurnInFlight(chatId)) {
     void ctx.reply('⏳ আগের মেসেজের উত্তর এখনো প্রস্তুত হচ্ছে — একটু অপেক্ষা করুন।').catch(() => {})
     return
   }
-  ownerTurnInFlight.add(chatId)
+  markOwnerTurnStart(chatId)
   void handleOwnerText(ctx, text)
+    .then((r) => {
+      if (!r?.queued) releaseOwnerTurn(chatId)
+    })
     .catch((err) => {
       console.error('[telegram] owner turn failed:', err.message)
       captureWorkerError(err, 'worker.telegram.owner_turn')
       void ctx.reply('❌ সমস্যা হয়েছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার চেষ্টা করুন।').catch(() => {})
+      releaseOwnerTurn(chatId)
     })
-    .finally(() => ownerTurnInFlight.delete(chatId))
 }
 
-// ── Confirm card keyboards ─────────────────────────────────────────────────
+// ── Confirm card keyboards (inline callbacks still use this) ─────────────
 
 async function buildConfirmCardKeyboard(card) {
   const { buildFinanceKeyboard } = await import('../finance/confirm-cards.mjs')

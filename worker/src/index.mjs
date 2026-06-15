@@ -28,6 +28,7 @@ import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { sendStaffAnnouncement } from './staff/announcement.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
 import { startTwilioHttpServer } from './twilio-http.mjs'
+import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer } from './diagnostic-http.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
@@ -371,6 +372,15 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
     await callJobResult(job.data.pendingActionId, 'success', result)
   }
 }, { connection, concurrency: 1 })
+
+const agentTurnWorker = new Worker('agent-turn', async (job) => {
+  await deliverAgentTurn(job.data)
+}, { connection, concurrency: 1 })
+
+agentTurnWorker.on('failed', (job, err) => {
+  console.error(`[worker] agent-turn ${job?.id} failed:`, err.message)
+  captureWorkerError(err, 'worker.agent_turn.failed', { jobId: job?.id })
+})
 
 staffDispatchWorker.on('failed', async (job, err) => {
   console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)

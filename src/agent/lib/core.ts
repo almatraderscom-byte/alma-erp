@@ -226,6 +226,8 @@ export interface RunAgentTurnOptions {
   projectSystemInstructions?: string | null
   /** Personal Advisor mode — separate brain, personal tools + memory only. */
   personalMode?: boolean
+  /** Telegram owner path — skip expensive cross-surface context loads. */
+  telegramFastPath?: boolean
   /** AbortSignal from the HTTP request — cancels the stream early if client disconnects. */
   signal?: AbortSignal
 }
@@ -237,7 +239,7 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, personalMode = false, signal } = options
+  const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
@@ -289,7 +291,9 @@ export async function* runAgentTurn(
     loadPinnedMemories(personalMode),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    personalMode ? Promise.resolve([]) : loadRecentOtherConversations(conversationId, 5),
+    personalMode || telegramFastPath
+      ? Promise.resolve([])
+      : loadRecentOtherConversations(conversationId, 5),
   ])
 
   type ToolRecord = {
