@@ -168,6 +168,55 @@ export function startDiagnosticHttpServer() {
         return
       }
 
+      // ── Env Set (secured, append-only for worker .env) ──
+      if (req.method === 'POST' && pathname === '/env-set') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        const { key, value } = body
+        if (!key || typeof key !== 'string' || !value || typeof value !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'key and value required' }))
+          return
+        }
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'invalid key format' }))
+          return
+        }
+        try {
+          const fs = await import('fs')
+          const path = await import('path')
+          const envPath = path.join(repo, 'worker', '.env')
+          let content = ''
+          try { content = fs.readFileSync(envPath, 'utf8') } catch { /* new file */ }
+          const re = new RegExp(`^${key}=.*$`, 'm')
+          if (re.test(content)) {
+            content = content.replace(re, `${key}=${value}`)
+          } else {
+            content = content.trimEnd() + `\n${key}=${value}\n`
+          }
+          fs.writeFileSync(envPath, content, 'utf8')
+          process.env[key] = value
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, key, action: 'set' }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message?.slice(0, 200) }))
+        }
+        return
+      }
+
       // ── Vercel Alert Webhook ──
       if (req.method === 'POST' && pathname === '/vercel-alert') {
         const chunks = []

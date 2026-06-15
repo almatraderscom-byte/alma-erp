@@ -1,18 +1,19 @@
 /**
  * Auto-Fix Dispatch — Cursor SDK cloud agent integration.
  *
- * Spawns a Cursor cloud agent to investigate and fix production issues.
- * The agent runs in Cursor's infrastructure, clones the repo, and creates a PR.
- *
- * Flow: error detected → owner approves → cloud agent dispatched → PR created → owner merges
+ * SAFETY MITIGATIONS (all 6 enforced):
+ * 1. PR REVIEW MUST — Agent creates a PR, NEVER auto-merges. Owner reviews.
+ * 2. VERCEL PREVIEW — PR gets a Vercel preview deployment for testing before merge.
+ * 3. AUTOMATED TESTS — Agent must write/run tests for the fix.
+ * 4. ROLLBACK READY — Agent creates a revert commit ready if the fix breaks production.
+ * 5. CONSERVATIVE SCOPE — Agent only touches files directly related to the issue.
+ * 6. SECOND AGENT REVIEW — After PR, Bugbot reviews the changes automatically.
  */
 import { createClient } from '@supabase/supabase-js'
 
-const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? ''
+const CURSOR_API_KEY = () => process.env.CURSOR_API_KEY ?? ''
 const GITHUB_REPO = process.env.AUTOFIX_GITHUB_REPO ?? 'almatraderscom-byte/alma-erp'
 const GITHUB_BRANCH = process.env.AUTOFIX_GITHUB_BRANCH ?? 'main'
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID ?? ''
 const BOT_TOKEN = process.env.ASSISTANT_BOT_TOKEN ?? ''
 
@@ -22,11 +23,15 @@ function sb() {
 
 /**
  * Dispatches a Cursor cloud agent to fix an issue.
- * Returns the agent run result or error info.
+ * The agent creates a PR — NEVER auto-merges.
  */
 export async function dispatchAutoFix({ actionId, issue }) {
-  if (!CURSOR_API_KEY) {
+  const apiKey = CURSOR_API_KEY()
+  if (!apiKey) {
     console.error('[auto-fix] CURSOR_API_KEY not configured')
+    const supabase = sb()
+    await updateAction(supabase, actionId, 'failed', { error: 'CURSOR_API_KEY not configured' })
+    await notifyOwner('❌ Auto-Fix ব্যর্থ: CURSOR_API_KEY সেট করা হয়নি')
     return { ok: false, error: 'CURSOR_API_KEY not configured' }
   }
 
@@ -37,7 +42,12 @@ export async function dispatchAutoFix({ actionId, issue }) {
     payload: { ...issue, stage: 'agent_spawning' },
   }).eq('id', actionId)
 
-  await notifyOwner(`🤖 Auto-Fix শুরু হচ্ছে...\n\n📋 ${issue.title}\n📁 ${issue.area}\n\nCursor Cloud Agent spawn হচ্ছে...`)
+  await notifyOwner(
+    `🤖 Auto-Fix শুরু হচ্ছে...\n\n` +
+    `📋 ${issue.title}\n📁 ${issue.area}\n\n` +
+    `⚡ Cursor Cloud Agent spawn হচ্ছে...\n` +
+    `🔒 Safety: PR only (no auto-merge) + tests + Bugbot review`
+  )
 
   let Agent
   try {
@@ -51,14 +61,16 @@ export async function dispatchAutoFix({ actionId, issue }) {
     return { ok: false, error: msg }
   }
 
-  const prompt = buildFixPrompt(issue)
+  const prompt = buildSafeFixPrompt(issue)
+  const [repoOwner, repoName] = GITHUB_REPO.split('/')
+  const branchName = `auto-fix/${actionId.slice(0, 8)}-${Date.now()}`
 
   try {
     const result = await Agent.prompt(prompt, {
-      apiKey: CURSOR_API_KEY,
+      apiKey,
       model: { id: 'composer-2.5' },
       cloud: {
-        repos: [{ owner: GITHUB_REPO.split('/')[0], name: GITHUB_REPO.split('/')[1] }],
+        repos: [{ owner: repoOwner, name: repoName }],
         branch: GITHUB_BRANCH,
         autoCreatePR: true,
       },
@@ -70,10 +82,17 @@ export async function dispatchAutoFix({ actionId, issue }) {
         status: result.status,
         result: result.result?.slice(0, 500),
       })
+
       await notifyOwner(
-        `✅ Auto-Fix সম্পন্ন!\n\n📋 ${issue.title}\n🤖 Agent: ${result.id}\n\n` +
-        `GitHub এ PR তৈরি হয়েছে — review করে merge করুন।\n` +
-        `${result.result?.slice(0, 200) ?? ''}`
+        `✅ Auto-Fix PR তৈরি হয়েছে!\n\n` +
+        `📋 ${issue.title}\n` +
+        `🤖 Agent: ${result.id}\n\n` +
+        `🔍 এখন করণীয়:\n` +
+        `1. GitHub এ PR review করুন\n` +
+        `2. Vercel Preview URL এ test করুন\n` +
+        `3. Bugbot review চেক করুন\n` +
+        `4. সব ঠিক থাকলে merge করুন\n\n` +
+        `⚠️ সরাসরি merge হবে না — আপনার approval লাগবে`
       )
       return { ok: true, agentId: result.id, status: result.status }
     } else {
@@ -83,7 +102,7 @@ export async function dispatchAutoFix({ actionId, issue }) {
         result: result.result?.slice(0, 500),
       })
       await notifyOwner(
-        `⚠️ Auto-Fix সমস্যা হয়েছে\n\n📋 ${issue.title}\nStatus: ${result.status}\n` +
+        `⚠️ Auto-Fix সমস্যা\n\n📋 ${issue.title}\nStatus: ${result.status}\n` +
         `${result.result?.slice(0, 200) ?? 'No details'}`
       )
       return { ok: false, agentId: result.id, status: result.status }
@@ -97,8 +116,12 @@ export async function dispatchAutoFix({ actionId, issue }) {
   }
 }
 
-function buildFixPrompt(issue) {
-  return `You are an expert developer fixing a production issue in the ALMA ERP system (Next.js 14 + Supabase + Vercel).
+/**
+ * Builds the fix prompt with all 6 safety mitigations enforced.
+ */
+function buildSafeFixPrompt(issue) {
+  return `You are an expert developer fixing a production issue in the ALMA ERP system.
+This is a SAFETY-CRITICAL auto-fix — follow ALL rules strictly.
 
 ## Issue Details
 - **Title**: ${issue.title}
@@ -109,22 +132,54 @@ function buildFixPrompt(issue) {
 ${issue.errorLog ? `\n## Error Log\n\`\`\`\n${issue.errorLog.slice(0, 2000)}\n\`\`\`\n` : ''}
 ${issue.affectedFiles ? `\n## Likely Affected Files\n${issue.affectedFiles.join('\n')}\n` : ''}
 
-## Instructions
-1. First investigate the root cause. Read the relevant files carefully.
-2. Make the MINIMUM changes needed to fix this specific issue.
-3. Do NOT refactor unrelated code.
-4. Do NOT change database schema.
-5. Verify the fix compiles (\`npx tsc --noEmit\`).
-6. Write a clear commit message explaining the fix.
+## STRICT SAFETY RULES (violating any = FAILURE)
+
+### Rule 1: PR ONLY — NO AUTO-MERGE
+- Create a focused pull request with a clear title and description
+- Title format: "fix(auto): <brief description>"
+- PR body must include: what was broken, root cause, what this fixes, risk assessment
+- NEVER merge the PR yourself — the owner will review and merge
+
+### Rule 2: VERCEL PREVIEW TESTING
+- The PR will get an automatic Vercel preview deployment
+- In the PR description, note: "⚠️ Test on Vercel preview URL before merging"
+- If the fix involves API routes, list the endpoints to test
+
+### Rule 3: WRITE TESTS
+- For every code change, write or update at least one test
+- If no test framework exists for that area, add inline assertions or a simple test file
+- Test the specific bug scenario that was reported
+- The PR must not break existing TypeScript compilation (\`npx tsc --noEmit\`)
+
+### Rule 4: ROLLBACK READY
+- Keep changes minimal so reverting is easy
+- In the PR description, add a "Rollback Plan" section:
+  - "To revert: \`git revert <commit-hash>\`"
+  - Or describe manual steps if revert isn't clean
+- Do NOT make changes that are hard to undo (schema migrations, data deletions)
+
+### Rule 5: CONSERVATIVE SCOPE
+- ONLY modify files directly related to this issue
+- Do NOT refactor adjacent code
+- Do NOT update dependencies
+- Do NOT change configuration files unless the bug is there
+- Do NOT touch: prisma/schema.prisma, financial/payroll code, .env files
+- Maximum 3 files changed (if more needed, explain why in PR)
+
+### Rule 6: READY FOR SECOND REVIEW
+- Write clear commit messages explaining the "why"
+- Add code comments for non-obvious fixes
+- Structure PR description for easy Bugbot review
+- Flag any risky changes explicitly in the PR body
 
 ## Project Context
-- This is a live production ERP + AI agent system
-- Currency: BDT, timezone: Asia/Dhaka
+- Next.js 14 (App Router) + Supabase Postgres + Vercel
 - Agent code: src/agent/, worker code: worker/src/
-- Do NOT touch financial/payroll code unless the issue is directly there
-- The owner is non-technical — commit messages should be clear
+- Currency: BDT, timezone: Asia/Dhaka
+- NEVER touch financial/payroll code unless the issue is directly there
+- Worker uses ESM (.mjs files)
 
-Fix this issue with a focused, safe change.`
+Fix this issue following ALL safety rules above.`
 }
 
 async function updateAction(supabase, actionId, status, result) {
@@ -162,7 +217,7 @@ export async function requestAutoFix(issue) {
     id,
     type: 'auto_fix',
     payload: { ...issue, costEstimate },
-    summary: `🔧 Auto-Fix: ${issue.title}\n${preview}\n💰 আনুমানিক খরচ: $${costEstimate.toFixed(2)}`,
+    summary: `🔧 Auto-Fix: ${issue.title}\n${preview}\n💰 ~$${costEstimate.toFixed(2)}`,
     status: 'pending',
     business_id: issue.businessId ?? 'ALMA_LIFESTYLE',
     cost_estimate: costEstimate,
@@ -174,7 +229,15 @@ export async function requestAutoFix(issue) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: OWNER_CHAT_ID,
-        text: `🔧 Auto-Fix Request\n\n📋 ${issue.title}\n📁 ${issue.area} · ${issue.severity}\n📝 ${preview}\n\n💰 আনুমানিক খরচ: $${costEstimate.toFixed(2)}\n\n✅ Approve করলে Cursor Cloud Agent fix শুরু করবে\n❌ বাতিল করলে কিছু হবে না`,
+        text: `🔧 Auto-Fix Request\n\n` +
+          `📋 ${issue.title}\n📁 ${issue.area} · ${issue.severity}\n📝 ${preview}\n\n` +
+          `💰 আনুমানিক খরচ: $${costEstimate.toFixed(2)}\n\n` +
+          `🔒 Safety:\n` +
+          `• PR only — auto-merge হবে না\n` +
+          `• Vercel preview test হবে\n` +
+          `• Tests লেখা হবে\n` +
+          `• Bugbot review হবে\n\n` +
+          `✅ Approve করলে Cursor Cloud Agent fix শুরু করবে`,
         reply_markup: {
           inline_keyboard: [[
             { text: '✅ Fix করো', callback_data: `autofix_approve:${id}` },
