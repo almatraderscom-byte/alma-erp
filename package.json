@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.104.1",
+    "@capacitor/ios": "^8.4.0",
     "@google/generative-ai": "^0.24.1",
     "@onesignal/capacitor-plugin": "^1.1.0",
     "@prisma/client": "5.22.0",

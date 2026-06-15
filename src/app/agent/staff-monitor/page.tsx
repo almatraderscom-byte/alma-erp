@@ -4,7 +4,6 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
-import AgentShell from '@/agent/components/AgentShell'
 
 /** Live monitor: agentDuties + salahDuties from /api/agent/staff-monitor */
 
@@ -18,10 +17,8 @@ export default async function StaffMonitorPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <AgentShell>
-      <div className="h-full min-h-0 overflow-y-auto">
-        <AgentStaffMonitor />
-      </div>
-    </AgentShell>
+    <div className="h-full min-h-0 overflow-y-auto">
+      <AgentStaffMonitor />
+    </div>
   )
 }
