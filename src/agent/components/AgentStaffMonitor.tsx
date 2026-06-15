@@ -268,9 +268,16 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
   async function loadHealthScan() {
     setHealthScanning(true)
     try {
-      const res = await fetch('/api/agent/health-scan', { cache: 'no-store' })
-      if (res.ok) setHealthReport(await res.json() as HealthReport)
-    } catch { /* ignore */ } finally {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch('/api/agent/health-scan', { cache: 'no-store' })
+          if (res.ok) { setHealthReport(await res.json() as HealthReport); return }
+          if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue }
+        } catch {
+          if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue }
+        }
+      }
+    } finally {
       setHealthScanning(false)
     }
   }
@@ -836,16 +843,27 @@ export default function AgentStaffMonitor() {
   const loadLive = useCallback(async (manual = false) => {
     if (manual) setSyncing(true)
     try {
-      const res = await fetch('/api/agent/staff-monitor', { cache: 'no-store' })
-      if (!res.ok) throw new Error('load failed')
-      setLiveData(await res.json() as StaffMonitorData)
-      setErr(null)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'load failed')
+      const maxAttempts = manual ? 3 : 2
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await fetch('/api/agent/staff-monitor', { cache: 'no-store' })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          setLiveData(await res.json() as StaffMonitorData)
+          setErr(null)
+          return
+        } catch (e) {
+          if (attempt < maxAttempts - 1) {
+            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)))
+            continue
+          }
+          // Only show error if no data loaded yet — stale data is better than error screen
+          if (!liveData) setErr(e instanceof Error ? e.message : 'load failed')
+        }
+      }
     } finally {
       if (manual) setSyncing(false)
     }
-  }, [])
+  }, [liveData])
 
   const loadHistoryDay = useCallback(async (date: string) => {
     setHistoryLoading(true)
@@ -987,17 +1005,25 @@ export default function AgentStaffMonitor() {
               onClick={async () => {
                 setDeploying(true)
                 setDeployMsg(null)
-                try {
-                  const res = await fetch('/api/agent/vps/deploy', { method: 'POST' })
-                  const json = await res.json()
-                  if (res.ok) setDeployMsg('✓ Worker deployed')
-                  else setDeployMsg(`✗ ${json.message ?? 'Deploy failed'}`)
-                } catch (e) {
-                  setDeployMsg(`✗ ${e instanceof Error ? e.message : 'Network error'}`)
-                } finally {
-                  setDeploying(false)
-                  setTimeout(() => setDeployMsg(null), 5000)
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  try {
+                    const res = await fetch('/api/agent/vps/deploy', { method: 'POST' })
+                    const json = await res.json().catch(() => ({}))
+                    if (res.ok) {
+                      setDeployMsg('✓ Worker deployed successfully')
+                      setDeploying(false)
+                      setTimeout(() => setDeployMsg(null), 8000)
+                      return
+                    }
+                    if (attempt < 2) { await new Promise(r => setTimeout(r, 2000)); continue }
+                    setDeployMsg(`✗ ${(json as Record<string, string>).message ?? `Deploy failed (HTTP ${res.status})`}`)
+                  } catch (e) {
+                    if (attempt < 2) { await new Promise(r => setTimeout(r, 2000)); continue }
+                    setDeployMsg(`✗ ${e instanceof Error ? e.message : 'Network error'} — check VPS connectivity`)
+                  }
                 }
+                setDeploying(false)
+                setTimeout(() => setDeployMsg(null), 10000)
               }}
               className={cn(
                 'rounded-xl border px-3 py-1.5 text-[10px] font-bold transition-all',
