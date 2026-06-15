@@ -29,6 +29,15 @@ const GHOST_CONNECT_MAX_SEC = 12
 
 let lastCallPlacedAt = 0
 
+/** Salah reminders only — never used for agent/urgent/reminder calls. */
+function resolveTwilioFromNumber(opts = {}) {
+  const isSalah = Boolean(opts.salah || opts.purpose === 'salah')
+  const defaultFrom = process.env.TWILIO_FROM_NUMBER
+  const salahFrom = process.env.TWILIO_SALAH_FROM_NUMBER
+  if (isSalah && salahFrom) return { fromNumber: salahFrom, dedicatedSalah: true }
+  return { fromNumber: defaultFrom, dedicatedSalah: false }
+}
+
 function getSupabase() {
   return createClient(
     process.env.SUPABASE_URL,
@@ -244,21 +253,25 @@ async function scheduleSalahCallRetries({
 
 /**
  * @param {string} text
- * @param {{ force?: boolean, salah?: boolean, skipAutoRetry?: boolean, toNumber?: string }} opts
+ * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, toNumber?: string }} opts
  * @returns {Promise<{ok:boolean, callSid?:string, error?:string, skipped?:boolean}>}
  */
 export async function makeTwilioCall(text, opts = {}) {
   const force = Boolean(opts.force)
-  const salah = Boolean(opts.salah)
+  const salah = Boolean(opts.salah || opts.purpose === 'salah')
   const accountSid  = process.env.TWILIO_ACCOUNT_SID
   const authToken   = process.env.TWILIO_AUTH_TOKEN
-  const fromNumber  = process.env.TWILIO_FROM_NUMBER
+  const { fromNumber, dedicatedSalah } = resolveTwilioFromNumber(opts)
   const toNumber    = opts.toNumber ?? process.env.TWILIO_TO_NUMBER
   const publicBase  = getTwilioPublicBase()
   const appUrl      = (process.env.APP_URL ?? '').replace(/\/$/, '')
 
   if (!accountSid || !authToken || !fromNumber || !toNumber) {
     return { ok: false, error: 'Twilio env vars missing (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER / destination number)' }
+  }
+
+  if (salah && dedicatedSalah) {
+    console.log('[twilio/salah] outbound from dedicated TWILIO_SALAH_FROM_NUMBER')
   }
 
   const now = Date.now()
@@ -302,7 +315,7 @@ export async function makeTwilioCall(text, opts = {}) {
     void logCost({
       provider: 'twilio',
       kind: 'call',
-      units: { callSid: result.callSid, estimated_seconds: 60, salah },
+      units: { callSid: result.callSid, estimated_seconds: 60, salah, dedicatedSalah },
       costUsd: calcTwilioCostUsd(60),
       jobId: result.callSid,
       dedupKey: `twilio:${result.callSid}`,

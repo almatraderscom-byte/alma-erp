@@ -123,6 +123,7 @@ export async function notify({
     const callResult = await makeTwilioCall(callText, {
       force: true,
       salah: category === 'salah',
+      purpose: category === 'salah' ? 'salah' : undefined,
     })
     statuses.twilio_call = callResult.ok ? `sent:${callResult.callSid}` : `error: ${callResult.error}`
   }
