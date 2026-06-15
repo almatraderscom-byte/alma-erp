@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { startContentPipeline, loadProductAsset } from '@/lib/content-engine/pipeline'
+import type { ContentVariant } from '@/lib/content-engine/generate-variants'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,16 +74,25 @@ const list_product_assets: AgentTool = {
 const run_content_post: AgentTool = {
   name: 'run_content_post',
   description:
-    'Start the content engine for a Facebook post (Phase 1: single + father+son variants). ' +
-    'Renders DRAFT try-on images with brand frame → Gate 1 approval (images). ' +
-    'After Gate 1 approve → PRO re-render + Bangla caption → Gate 2 approval → publish. ' +
-    'NEVER publishes without both owner approvals. Omit productCode to auto-pick least-recently-posted.',
+    'Start the content engine for a Facebook post. Family variants: single, father+son, mother+son, full family. ' +
+    'Default: single+father_son; familyMatch products → all 4. Pass variants[] to control cost. ' +
+    'DRAFT renders → Gate 1 (per-variant keep/regenerate) → PRO for kept only → Gate 2 → publish. ' +
+    'NEVER publishes without both owner approvals.',
   input_schema: {
     type: 'object' as const,
     properties: {
       productCode: { type: 'string', description: 'Optional — omit to auto-pick next product' },
       page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Default lifestyle' },
       conversationId: { type: 'string' },
+      variants: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['single', 'father_son', 'mother_son', 'full_family'],
+        },
+        description:
+          'Which variants to generate. Examples: ["single","father_son"] safe; full set all 4. Cost ≈ draft+pro per variant.',
+      },
     },
   },
   handler: async (input) => {
@@ -94,18 +104,25 @@ const run_content_post: AgentTool = {
           error: 'কোনো প্রোডাক্ট অ্যাসেট নেই। আগে add_product_asset দিয়ে প্রোডাক্ট যোগ করুন।',
         }
       }
+      const variants = Array.isArray(input.variants)
+        ? (input.variants as ContentVariant[]).filter((v) =>
+            ['single', 'father_son', 'mother_son', 'full_family'].includes(v),
+          )
+        : undefined
       const result = await startContentPipeline({
         productCode: product.productCode,
         conversationId: input.conversationId ? String(input.conversationId) : null,
         page: input.page === 'onlineshop' ? 'onlineshop' : 'lifestyle',
+        variants: variants?.length ? variants : undefined,
       })
       return {
         success: true,
         data: {
           ...result,
+          variantLabels: result.variants.map((v) => v),
           message:
-            `কন্টেন্ট পাইপলাইন শুরু — ${product.productCode}। ` +
-            `Draft রেন্ডার হচ্ছে; Gate 1 কার্ড আসবে ছবি অনুমোদনের জন্য।`,
+            `কন্টেন্ট পাইপলাইন শুরু — ${product.productCode} (${result.variants.length}টি ভ্যারিয়েন্ট)। ` +
+            `Draft রেন্ডার হচ্ছে; Gate 1-এ প্রতিটিতে Keep/Regenerate থাকবে।`,
         },
       }
     } catch (err) {
@@ -122,7 +139,9 @@ export const CONTENT_ENGINE_TOOLS: AgentTool[] = [
 
 export const CONTENT_ENGINE_ROLE_PROMPT = `
 ## CONTENT ENGINE
-On request (run_content_post), prepare a Facebook post for a product: generate on-brand model photos (single + father+son), apply the brand frame (logo, code, dynamic Bangla hook), write a Bangla caption + business footer. TWO approvals always: (1) Gate 1 images — fabric/garment correct?, (2) Gate 2 final post before publishing. If fabric/look is off, owner rejects and you re-run run_content_post (new draft). Never publish without both approvals.
+On request (run_content_post), prepare a Facebook post for a product: generate on-brand model photos, apply the brand frame (logo, code, dynamic Bangla hook), write a Bangla caption + business footer. TWO approvals always: (1) Gate 1 images — fabric/garment correct?, (2) Gate 2 final post before publishing. If fabric/look is off, owner rejects and you re-run run_content_post (new draft). Never publish without both approvals.
+- Family variants available: single, father+son, mother+son, full family. Generate the set that fits the product (use the matching set for family-matching products). Multi-person shots can be imperfect — let the owner keep/regenerate per variant at gate 1.
 - প্রোডাক্ট লাইব্রেরি: add_product_asset / list_product_assets
-- Gate 1 = cheap draft renders (~৳1.10/img); Gate 1 approve → PRO final (~৳4.50/img)
+- variants[] controls cost: each variant ≈ ৳1.10 draft + ৳4.50 pro if kept
+- Gate 1: per-variant ✅ Keep / 🔄 Regenerate — only kept variants go to PRO
 `

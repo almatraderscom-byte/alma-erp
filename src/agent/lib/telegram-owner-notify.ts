@@ -5,9 +5,10 @@
 
 export async function sendOwnerApprovalCard(input: {
   summary: string
-  pendingActionId: string
+  pendingActionId?: string
   approveLabel?: string
   rejectLabel?: string
+  reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
 }): Promise<{ ok: boolean; error?: string }> {
   const token = process.env.ASSISTANT_BOT_TOKEN
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
@@ -15,18 +16,20 @@ export async function sendOwnerApprovalCard(input: {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or TELEGRAM_OWNER_CHAT_ID not set' }
   }
 
+  const reply_markup = input.reply_markup ?? (input.pendingActionId ? {
+    inline_keyboard: [[
+      { text: input.approveLabel ?? '✅ আবার কল দিন', callback_data: `approve:${input.pendingActionId}` },
+      { text: input.rejectLabel ?? '❌ না', callback_data: `reject:${input.pendingActionId}` },
+    ]],
+  } : undefined)
+
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
       text: `📋 অনুমোদন প্রয়োজন\n\n${input.summary}`,
-      reply_markup: {
-        inline_keyboard: [[
-          { text: input.approveLabel ?? '✅ আবার কল দিন', callback_data: `approve:${input.pendingActionId}` },
-          { text: input.rejectLabel ?? '❌ না', callback_data: `reject:${input.pendingActionId}` },
-        ]],
-      },
+      reply_markup,
     }),
   })
 

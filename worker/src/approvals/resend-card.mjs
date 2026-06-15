@@ -7,6 +7,9 @@ import {
   getDispatcherBot,
 } from '../telegram/dispatcher.mjs'
 
+const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+
 const FINANCE_TYPES = new Set([
   'log_expense',
   'log_ledger_entry',
@@ -62,6 +65,18 @@ export async function resendApprovalCard(telegram, ownerChatId, row) {
     return true
   }
 
+  if (row.type === 'content_gate1' && payload.stage === 'gate1_ready') {
+    const chunks = splitMessage(`📋 *অনুমোদন প্রয়োজন*\n${summary}`)
+    const keyboard = buildContentGate1KeyboardFromPayload(actionId, payload)
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1
+      await sendMarkdownSafe(telegram, ownerChatId, chunks[i], {
+        reply_markup: isLast ? keyboard : undefined,
+      })
+    }
+    return true
+  }
+
   if (FINANCE_TYPES.has(row.type)) {
     const isBatch = row.type.includes('batch')
     const entryCount = Array.isArray(payload.entries)
@@ -98,6 +113,60 @@ export async function resendApprovalCard(telegram, ownerChatId, row) {
     await sendMarkdownSafe(telegram, ownerChatId, chunks[i], {
       reply_markup: keyboard ?? undefined,
     })
+  }
+  return true
+}
+
+/** Gate 1 keyboard — keep/regenerate per variant (mirrors pipeline buildContentGate1Keyboard). */
+export function buildContentGate1KeyboardFromPayload(gate1Id, payload) {
+  const VARIANT_LABELS = {
+    single: 'সিঙ্গেল',
+    father_son: 'বাবা+ছেলে',
+    mother_son: 'মা+ছেলে',
+    full_family: 'ফ্যামিলি',
+  }
+  const rows = []
+  for (const v of payload.variants ?? []) {
+    if (!v.framedImagePath) continue
+    const label = VARIANT_LABELS[v.key] ?? v.key
+    const keepIcon = v.keep !== false ? '✅' : '⬜'
+    rows.push([
+      { text: `${keepIcon} ${label}`, callback_data: `content_keep:${gate1Id}:${v.key}` },
+      { text: `🔄 ${label}`, callback_data: `content_regen:${gate1Id}:${v.key}` },
+    ])
+  }
+  const keptCount = (payload.variants ?? []).filter((v) => v.keep !== false && v.framedImagePath).length
+  rows.push([
+    { text: `✅ Approve (${keptCount}) → PRO`, callback_data: `approve:${gate1Id}` },
+    { text: '❌ বাতিল', callback_data: `reject:${gate1Id}` },
+  ])
+  return { inline_keyboard: rows }
+}
+
+export async function handleContentGate1Variant(ctx, gate1Id, variant, action) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/content-gate1-variant`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${INT_TOKEN}`,
+    },
+    body: JSON.stringify({ gate1Id, variant, action }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.answerCbQuery(`❌ ${data.error ?? 'failed'}`)
+    return false
+  }
+  await ctx.answerCbQuery(action === 'keep' ? (data.keep ? '✅ রাখা' : '⬜ বাদ') : '🔄 রিজেনারেট…')
+  if (action === 'keep' && data.summary && data.keyboard) {
+    await ctx.editMessageText(`📋 *অনুমোদন প্রয়োজন*\n${data.summary}`, {
+      parse_mode: 'Markdown',
+      reply_markup: data.keyboard,
+    }).catch(() => {
+      ctx.reply(`📋 ${data.summary}`, { reply_markup: data.keyboard }).catch(() => {})
+    })
+  } else if (action === 'regenerate' && data.summary) {
+    await ctx.reply(`🔄 ${variant} রিজেনারেট কিউ হয়েছে…`)
   }
   return true
 }

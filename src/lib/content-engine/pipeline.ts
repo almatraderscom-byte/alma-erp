@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
-import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
 import { resolvePageId } from '@/agent/lib/meta'
 import { upcomingSeasons } from '@/lib/marketing-calendar'
 import { trackPublishedContent } from '@/lib/content-intelligence'
@@ -10,6 +10,7 @@ import { generateCaption } from '@/lib/content-engine/caption'
 import {
   generateProductVariants,
   PHASE1_VARIANTS,
+  PHASE2_FULL_VARIANTS,
   variantLabel,
   type ContentVariant,
   type ProductAsset,
@@ -24,6 +25,8 @@ export type PipelineVariantState = {
   rawImagePath: string | null
   framedImagePath: string | null
   renderActionId: string | null
+  /** Owner keeps this variant for PRO pass (default true when image ready). */
+  keep: boolean
 }
 
 export type ContentPipelinePayload = {
@@ -39,6 +42,10 @@ export type ContentPipelinePayload = {
   caption?: string
   captionFooter?: string
   gate2Id?: string
+}
+
+export type ContentGate1Keyboard = {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>
 }
 
 function isFridayDhaka(now = new Date()): boolean {
@@ -98,12 +105,14 @@ async function queueVariantRenders(args: {
   gate1Id: string
   theme: BrandTheme
   conversationId?: string | null
+  seedNote?: string
 }): Promise<string[]> {
   const specs = await generateProductVariants({
     product: args.product,
     variants: args.variants,
     quality: args.quality,
     style: args.theme === 'eid' || args.theme === 'puja' ? 'festival' : 'studio',
+    seedNote: args.seedNote,
   })
 
   const actionIds: string[] = []
@@ -144,16 +153,22 @@ function updateVariantRenderId(payload: ContentPipelinePayload, variant: Content
   if (v) v.renderActionId = actionId
 }
 
+function defaultVariantsForProduct(product: ProductAsset, requested?: ContentVariant[]): ContentVariant[] {
+  if (requested?.length) return requested
+  if (product.familyMatch) return PHASE2_FULL_VARIANTS
+  return PHASE1_VARIANTS
+}
+
 export async function startContentPipeline(opts: {
   productCode?: string
   conversationId?: string | null
   page?: 'lifestyle' | 'onlineshop'
   variants?: ContentVariant[]
-}): Promise<{ gate1Id: string; pipelineId: string; productCode: string }> {
+}): Promise<{ gate1Id: string; pipelineId: string; productCode: string; variants: ContentVariant[] }> {
   const product = await loadProductAsset(opts.productCode)
   if (!product) throw new Error('product_not_found')
 
-  const variants = opts.variants ?? PHASE1_VARIANTS
+  const variants = defaultVariantsForProduct(product, opts.variants)
   const { theme } = await resolveContentTheme()
   const page = opts.page ?? 'lifestyle'
   const captionResult = await generateCaption(product, { theme, page })
@@ -167,6 +182,7 @@ export async function startContentPipeline(opts: {
       rawImagePath: null,
       framedImagePath: null,
       renderActionId: null,
+      keep: true,
     })),
     theme,
     hook: captionResult.hook,
@@ -211,7 +227,31 @@ export async function startContentPipeline(opts: {
     data: { payload },
   })
 
-  return { gate1Id: gate1.id, pipelineId, productCode: product.productCode }
+  return { gate1Id: gate1.id, pipelineId, productCode: product.productCode, variants }
+}
+
+export function buildContentGate1Keyboard(
+  gate1Id: string,
+  payload: ContentPipelinePayload,
+): ContentGate1Keyboard {
+  const rows: ContentGate1Keyboard['inline_keyboard'] = []
+  for (const v of payload.variants) {
+    if (!v.framedImagePath) continue
+    const keepIcon = v.keep ? '✅' : '⬜'
+    rows.push([
+      { text: `${keepIcon} ${variantLabel(v.key)}`, callback_data: `content_keep:${gate1Id}:${v.key}` },
+      { text: `🔄 ${variantLabel(v.key)}`, callback_data: `content_regen:${gate1Id}:${v.key}` },
+    ])
+  }
+  const keptCount = payload.variants.filter((v) => v.keep && v.framedImagePath).length
+  rows.push([
+    {
+      text: `✅ Approve (${keptCount}) → PRO`,
+      callback_data: `approve:${gate1Id}`,
+    },
+    { text: '❌ বাতিল', callback_data: `reject:${gate1Id}` },
+  ])
+  return { inline_keyboard: rows }
 }
 
 async function buildGate1Summary(productCode: string, payload: ContentPipelinePayload): Promise<string> {
@@ -220,21 +260,33 @@ async function buildGate1Summary(productCode: string, payload: ContentPipelinePa
     `প্রোডাক্ট: ${productCode}`,
     `থিম: ${payload.theme} | ${payload.hook ?? ''}`,
     '',
-    'ভ্যারিয়েন্ট:',
+    'ভ্যারিয়েন্ট (✅=রাখবেন, ⬜=বাদ):',
   ]
   for (const v of payload.variants) {
     const path = v.framedImagePath ?? v.rawImagePath
+    const keepTag = v.framedImagePath ? (v.keep ? '✅' : '⬜') : '⏳'
     if (path) {
       try {
         const url = await agentStorageSignedUrl(path, 3600)
-        lines.push(`• ${variantLabel(v.key)}: ![${v.key}](${url})`)
+        lines.push(`• ${keepTag} ${variantLabel(v.key)}: ![${v.key}](${url})`)
       } catch {
-        lines.push(`• ${variantLabel(v.key)}: ${path}`)
+        lines.push(`• ${keepTag} ${variantLabel(v.key)}: ${path}`)
       }
+    } else if (v.renderActionId) {
+      lines.push(`• ⏳ ${variantLabel(v.key)}: রেন্ডার হচ্ছে…`)
     }
   }
-  lines.push('', 'ফ্যাব্রিক/লুক ঠিক আছে কিনা দেখুন — Approve করলে PRO রেন্ডার + ক্যাপশন হবে।')
+  const kept = payload.variants.filter((v) => v.keep && v.framedImagePath).length
+  lines.push(
+    '',
+    `${kept}টি ভ্যারিয়েন্ট PRO-তে যাবে। দুর্বল ছবি 🔄 Regenerate — ভালোগুলো ✅ Keep রাখুন।`,
+    'সব ঠিক থাকলে Approve করুন।',
+  )
   return lines.join('\n')
+}
+
+function allDraftVariantsReady(payload: ContentPipelinePayload): boolean {
+  return payload.variants.every((v) => Boolean(v.framedImagePath))
 }
 
 export async function onPipelineRenderComplete(
@@ -273,25 +325,47 @@ export async function onPipelineRenderComplete(
     theme: payload.theme,
     footer: payload.qualityPass === 'pro',
   })
+  variant.keep = true
 
-  const allDone = payload.variants.every((v) => v.framedImagePath)
-  if (!allDone) {
+  if (payload.qualityPass === 'draft') {
+    const ready = allDraftVariantsReady(payload)
+    if (ready) {
+      payload.stage = 'gate1_ready'
+      const summary = await buildGate1Summary(payload.productCode, payload)
+      await db.agentPendingAction.update({
+        where: { id: gate1.id },
+        data: { payload, summary },
+      })
+      await sendOwnerApprovalCard({
+        summary,
+        reply_markup: buildContentGate1Keyboard(gate1.id, payload),
+      })
+      return
+    }
+
+    if (payload.stage === 'gate1_ready') {
+      const summary = await buildGate1Summary(payload.productCode, payload)
+      await db.agentPendingAction.update({
+        where: { id: gate1.id },
+        data: { payload, summary },
+      })
+      await sendOwnerApprovalCard({
+        summary: `🔄 ${variantLabel(cp.variant)} রিজেনারেট সম্পন্ন\n\n${summary}`,
+        reply_markup: buildContentGate1Keyboard(gate1.id, payload),
+      })
+      return
+    }
+
     await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
     return
   }
 
-  if (payload.qualityPass === 'draft') {
-    payload.stage = 'gate1_ready'
-    const summary = await buildGate1Summary(payload.productCode, payload)
-    await db.agentPendingAction.update({
-      where: { id: gate1.id },
-      data: { payload, summary },
-    })
-    await sendOwnerText(`📸 কন্টেন্ট Gate 1 প্রস্তুত — ${payload.productCode}\nছবি দেখে Approve করুন (ফ্যাব্রিক ঠিক না হলে আবার বলুন)।`)
+  const allProDone = payload.variants.every((v) => v.framedImagePath)
+  if (!allProDone) {
+    await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
     return
   }
 
-  // Pro pass complete → Gate 2 with caption prepared at pipeline start
   payload.stage = 'gate2_ready'
   const captionText = payload.caption ?? `${payload.productCode} — Alma Lifestyle`
 
@@ -340,13 +414,41 @@ export async function onPipelineRenderComplete(
     data: { payload, status: 'executed', resolvedAt: new Date() },
   })
 
-  await sendOwnerText(
-    `📣 কন্টেন্ট Gate 2 প্রস্তুত — ${payload.productCode}\n` +
-    `${imageLines.join('\n')}\n\n${captionText.slice(0, 500)}`,
-  )
+  await sendOwnerApprovalCard({
+    summary:
+      `📣 কন্টেন্ট Gate 2 প্রস্তুত — ${payload.productCode}\n` +
+      `${imageLines.join('\n')}\n\n${captionText.slice(0, 500)}`,
+    pendingActionId: gate2.id,
+    approveLabel: '✅ Publish',
+    rejectLabel: '❌ বাতিল',
+  })
 }
 
-export async function advanceToProRenders(gate1Id: string): Promise<{ queued: boolean; message: string }> {
+export async function toggleGate1VariantKeep(
+  gate1Id: string,
+  variantKey: ContentVariant,
+): Promise<{ keep: boolean; summary: string; keyboard: ContentGate1Keyboard }> {
+  const gate1 = await db.agentPendingAction.findUnique({ where: { id: gate1Id } })
+  if (!gate1 || gate1.type !== 'content_gate1') throw new Error('invalid_gate1')
+  const payload = gate1.payload as ContentPipelinePayload
+  if (payload.stage !== 'gate1_ready') throw new Error('gate1_not_ready')
+
+  const v = payload.variants.find((x) => x.key === variantKey)
+  if (!v?.framedImagePath) throw new Error('variant_not_ready')
+
+  v.keep = !v.keep
+  const summary = await buildGate1Summary(payload.productCode, payload)
+  await db.agentPendingAction.update({
+    where: { id: gate1Id },
+    data: { payload, summary },
+  })
+  return { keep: v.keep, summary, keyboard: buildContentGate1Keyboard(gate1Id, payload) }
+}
+
+export async function regenerateGate1Variant(
+  gate1Id: string,
+  variantKey: ContentVariant,
+): Promise<{ queued: boolean; summary: string }> {
   const gate1 = await db.agentPendingAction.findUnique({ where: { id: gate1Id } })
   if (!gate1 || gate1.type !== 'content_gate1') throw new Error('invalid_gate1')
   const payload = gate1.payload as ContentPipelinePayload
@@ -355,13 +457,55 @@ export async function advanceToProRenders(gate1Id: string): Promise<{ queued: bo
   const product = await loadProductAsset(payload.productCode)
   if (!product) throw new Error('product_not_found')
 
+  const v = payload.variants.find((x) => x.key === variantKey)
+  if (!v) throw new Error('variant_not_found')
+
+  v.rawImagePath = null
+  v.framedImagePath = null
+  v.renderActionId = null
+  v.keep = true
+
+  const [actionId] = await queueVariantRenders({
+    product,
+    variants: [variantKey],
+    quality: 'draft',
+    pipelineId: payload.pipelineId,
+    gate1Id,
+    theme: payload.theme,
+    conversationId: payload.conversationId,
+    seedNote: `regenerate ${variantKey}`,
+  })
+  v.renderActionId = actionId
+
+  const summary = await buildGate1Summary(payload.productCode, payload)
+  await db.agentPendingAction.update({
+    where: { id: gate1Id },
+    data: { payload, summary },
+  })
+
+  return { queued: true, summary }
+}
+
+export async function advanceToProRenders(gate1Id: string): Promise<{ queued: boolean; message: string }> {
+  const gate1 = await db.agentPendingAction.findUnique({ where: { id: gate1Id } })
+  if (!gate1 || gate1.type !== 'content_gate1') throw new Error('invalid_gate1')
+  const payload = gate1.payload as ContentPipelinePayload
+  if (payload.stage !== 'gate1_ready') throw new Error('gate1_not_ready')
+
+  const kept = payload.variants.filter((v) => v.keep && v.framedImagePath)
+  if (!kept.length) throw new Error('no_variants_kept')
+
+  const product = await loadProductAsset(payload.productCode)
+  if (!product) throw new Error('product_not_found')
+
   payload.stage = 'pro_rendering'
   payload.qualityPass = 'pro'
-  for (const v of payload.variants) {
-    v.rawImagePath = null
-    v.framedImagePath = null
-    v.renderActionId = null
-  }
+  payload.variants = kept.map((v) => ({
+    ...v,
+    rawImagePath: null,
+    framedImagePath: null,
+    renderActionId: null,
+  }))
 
   const variants = payload.variants.map((v) => v.key)
   const actionIds = await queueVariantRenders({
@@ -383,13 +527,13 @@ export async function advanceToProRenders(gate1Id: string): Promise<{ queued: bo
       status: 'approved',
       resolvedAt: new Date(),
       payload,
-      summary: `📸 Gate 1 অনুমোদিত — PRO রেন্ডার হচ্ছে (${payload.productCode})`,
+      summary: `📸 Gate 1 অনুমোদিত — PRO রেন্ডার হচ্ছে (${payload.productCode}, ${variants.length}টি)`,
     },
   })
 
   return {
     queued: true,
-    message: 'Gate 1 approved — PRO renders queued. Gate 2 will arrive when renders finish.',
+    message: `Gate 1 approved — ${variants.length} variant(s) queued for PRO. Gate 2 follows when renders finish.`,
   }
 }
 
@@ -436,3 +580,6 @@ export async function publishContentGate2(gate2Id: string): Promise<{ postId: st
 
   return { postId }
 }
+
+/** Alias for agent tool naming in phase docs. */
+export const runContentPost = startContentPipeline

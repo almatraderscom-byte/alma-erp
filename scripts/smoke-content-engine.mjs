@@ -66,8 +66,22 @@ else fail('content engine role prompt')
 if (modelLib.includes('ModelRole') && modelLib.includes('resolveModelByRole')) ok('model roles')
 else fail('model roles')
 
-if (variants.includes('PHASE1_VARIANTS') && variants.includes('father_son')) ok('phase1 variants')
-else fail('phase1 variants')
+if (variants.includes('mother_son') && variants.includes('full_family')) ok('phase2 family variants')
+else fail('phase2 family variants')
+
+if (pipeline.includes('toggleGate1VariantKeep') && pipeline.includes('regenerateGate1Variant')) {
+  ok('per-variant gate1 actions')
+} else fail('per-variant gate1 actions')
+
+if (pipeline.includes('variants?: ContentVariant[]') || pipeline.includes('variants?:')) {
+  ok('configurable variant set')
+} else fail('configurable variant set')
+
+if (tools.includes('mother_son') && tools.includes('full_family')) ok('run_content_post variants param')
+else fail('run_content_post variants param')
+
+if (tools.includes('mother+son') && tools.includes('full family')) ok('system prompt phase2')
+else fail('system prompt phase2')
 
 if (variants.includes('workerQuality') && variants.includes('toWorkerQuality')) ok('draft→standard worker quality')
 else fail('draft→standard worker quality')

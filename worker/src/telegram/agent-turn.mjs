@@ -84,6 +84,11 @@ async function buildConfirmCardKeyboard(card) {
     ]
   }
 
+  if (pendingAction?.type === 'content_gate1' && pendingAction.payload?.stage === 'gate1_ready') {
+    const { buildContentGate1KeyboardFromPayload } = await import('../approvals/resend-card.mjs')
+    return buildContentGate1KeyboardFromPayload(card.pendingActionId, pendingAction.payload).inline_keyboard
+  }
+
   return [[
     { text: '✅ অনুমোদন', callback_data: `approve:${card.pendingActionId}` },
     { text: '❌ বাতিল', callback_data: `reject:${card.pendingActionId}` },

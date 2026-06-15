@@ -5,12 +5,20 @@ import {
   type TryOnStyle,
   type TryOnPose,
   type ModelRole,
+  type SavedModel,
 } from '@/lib/tryon/model-library'
 
 export type ContentVariant = 'single' | 'father_son' | 'mother_son' | 'full_family'
 export type RenderQuality = 'draft' | 'pro'
 
 export const PHASE1_VARIANTS: ContentVariant[] = ['single', 'father_son']
+export const PHASE2_FAMILY_VARIANTS: ContentVariant[] = ['mother_son', 'full_family']
+export const PHASE2_FULL_VARIANTS: ContentVariant[] = [
+  'single',
+  'father_son',
+  'mother_son',
+  'full_family',
+]
 
 export type ProductAsset = {
   productCode: string
@@ -36,10 +44,10 @@ export function toWorkerQuality(quality: RenderQuality): 'standard' | 'pro' {
   return quality === 'draft' ? 'standard' : 'pro'
 }
 
-function modelRoleForVariant(variant: ContentVariant): ModelRole {
+function primaryRoleForVariant(variant: ContentVariant): ModelRole {
   if (variant === 'single') return 'single'
-  if (variant === 'father_son' || variant === 'mother_son' || variant === 'full_family') return 'father'
-  return 'single'
+  if (variant === 'mother_son') return 'mother'
+  return 'father'
 }
 
 const VARIANT_LABELS: Record<ContentVariant, string> = {
@@ -53,32 +61,84 @@ export function variantLabel(variant: ContentVariant): string {
   return VARIANT_LABELS[variant] ?? variant
 }
 
+function modelNoteFor(role: ModelRole, model: SavedModel | null): string {
+  if (!model) return ''
+  return model.notes
+    ? `${role} (${model.name}): ${model.notes}`
+    : `${role} model: ${model.name}`
+}
+
+async function buildMultiPersonNotes(
+  variant: ContentVariant,
+  primary: SavedModel,
+): Promise<{ modelNotes: string; familyExtra: string }> {
+  let familyExtra = buildFamilyVariantExtra(variant, undefined)
+  const noteParts = [primary.notes ? `Primary (${primary.name}): ${primary.notes}` : `Primary: ${primary.name}`]
+
+  if (variant === 'father_son') {
+    const son = await getModelByRole('son')
+    if (son) noteParts.push(modelNoteFor('son', son))
+    familyExtra = [
+      familyExtra,
+      'Two people — father and son — wearing the SAME matching collection from the product reference in ONE cohesive scene.',
+      'Bangladeshi family photoshoot aesthetic, true-to-fabric, coordinated outfits, consistent lighting with other variants of this product.',
+      son?.notes ? `Preserve son identity from brand library (${son.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'mother_son') {
+    const son = await getModelByRole('son')
+    if (son) noteParts.push(modelNoteFor('son', son))
+    familyExtra = [
+      familyExtra,
+      'Two people — mother and son — wearing the SAME matching collection from the product reference in ONE cohesive scene.',
+      'Bangladeshi family photoshoot aesthetic, true-to-fabric, coordinated outfits, consistent lighting with other variants of this product.',
+      son?.notes ? `Preserve son identity from brand library (${son.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'full_family') {
+    const mother = await getModelByRole('mother')
+    const son = await getModelByRole('son')
+    const daughter = await getModelByRole('daughter')
+    if (mother) noteParts.push(modelNoteFor('mother', mother))
+    if (son) noteParts.push(modelNoteFor('son', son))
+    if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
+    familyExtra = [
+      familyExtra,
+      'Four people — father, mother, son, and daughter — ALL wearing the SAME matching family collection in ONE cohesive scene.',
+      'Everyone in the matching set together; Bangladeshi family photoshoot, true-to-fabric, coordinated outfits.',
+      'Keep scene/style/lighting consistent with single and father+son variants of this same product post.',
+      'Best-effort 4-person composition — all faces visible, natural family grouping.',
+      [mother, son, daughter].filter(Boolean).map((m) => `Preserve ${m!.name} identity from brand library.`).join(' '),
+    ].filter(Boolean).join(' ')
+  }
+
+  return { modelNotes: noteParts.filter(Boolean).join('; '), familyExtra }
+}
+
 export async function buildVariantRenderSpec(
   product: ProductAsset,
   variant: ContentVariant,
   quality: RenderQuality,
   opts?: { style?: TryOnStyle; pose?: TryOnPose; seedNote?: string },
 ): Promise<VariantRenderSpec> {
-  const model = await getModelByRole(modelRoleForVariant(variant))
-  if (!model) throw new Error('no_model_for_variant')
+  const primary = await getModelByRole(primaryRoleForVariant(variant))
+  if (!primary) throw new Error('no_model_for_variant')
 
   const style = opts?.style ?? 'studio'
   const pose: TryOnPose = opts?.pose ?? 'front'
-  let familyExtra = buildFamilyVariantExtra(variant, product.fabric ?? undefined)
   const seedNote = opts?.seedNote ? `Regeneration note: ${opts.seedNote}` : ''
 
-  let modelNotes = model.notes
-  if (variant === 'father_son') {
-    const son = await getModelByRole('son')
-    if (son) {
-      const sonNote = son.notes ? `Son (${son.name}): ${son.notes}` : `Son model: ${son.name}`
-      modelNotes = [model.notes, sonNote].filter(Boolean).join('; ')
-      familyExtra = [
-        familyExtra,
-        'Two people (father and son) wearing the matching garment set in the same scene — Bangladeshi family photoshoot, true-to-fabric, coordinated outfits.',
-        son.notes ? `Preserve son identity from brand library (${son.name}).` : '',
-      ].filter(Boolean).join(' ')
-    }
+  let modelNotes = primary.notes ?? ''
+  let familyExtra = buildFamilyVariantExtra(variant, product.fabric ?? undefined)
+
+  if (variant !== 'single') {
+    const multi = await buildMultiPersonNotes(variant, primary)
+    modelNotes = multi.modelNotes
+    familyExtra = [multi.familyExtra, product.fabric ? `Garment fabric/details: ${product.fabric}.` : '']
+      .filter(Boolean)
+      .join(' ')
   }
 
   const prompt = buildTryOnPrompt({
@@ -94,7 +154,7 @@ export async function buildVariantRenderSpec(
     quality,
     workerQuality: toWorkerQuality(quality),
     prompt,
-    modelImagePath: model.imagePath,
+    modelImagePath: primary.imagePath,
     productImagePath: product.imagePath,
     costEstimate: quality === 'pro' ? 4.5 : 1.1,
   }
