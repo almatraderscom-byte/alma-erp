@@ -4,8 +4,6 @@ import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { resolvePageId } from '@/agent/lib/meta'
 import { upcomingSeasons } from '@/lib/marketing-calendar'
-import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
-import { trackOutcome } from '@/lib/outcome-loop'
 import { trackPublishedContent } from '@/lib/content-intelligence'
 import { applyBrandFrame, type BrandTheme } from '@/lib/content-engine/brand-frame'
 import { generateCaption } from '@/lib/content-engine/caption'
@@ -39,6 +37,7 @@ export type ContentPipelinePayload = {
   page: 'lifestyle' | 'onlineshop'
   conversationId?: string | null
   caption?: string
+  captionFooter?: string
   gate2Id?: string
 }
 
@@ -115,7 +114,7 @@ async function queueVariantRenders(args: {
         type: 'image_gen',
         payload: {
           prompt: spec.prompt,
-          quality: spec.quality,
+          quality: spec.workerQuality,
           referenceImageId: spec.modelImagePath,
           secondReferenceImageId: spec.productImagePath,
           tryOn: true,
@@ -155,9 +154,10 @@ export async function startContentPipeline(opts: {
   if (!product) throw new Error('product_not_found')
 
   const variants = opts.variants ?? PHASE1_VARIANTS
-  const { theme, hook } = await resolveContentTheme()
-  const pipelineId = randomUUID()
+  const { theme } = await resolveContentTheme()
   const page = opts.page ?? 'lifestyle'
+  const captionResult = await generateCaption(product, { theme, page })
+  const pipelineId = randomUUID()
 
   const payload: ContentPipelinePayload = {
     pipelineId,
@@ -169,7 +169,9 @@ export async function startContentPipeline(opts: {
       renderActionId: null,
     })),
     theme,
-    hook,
+    hook: captionResult.hook,
+    caption: captionResult.caption,
+    captionFooter: captionResult.footer,
     stage: 'draft_rendering',
     qualityPass: 'draft',
     page,
@@ -269,7 +271,7 @@ export async function onPipelineRenderComplete(
     productCode: payload.productCode,
     hook: payload.hook,
     theme: payload.theme,
-    footer: false,
+    footer: payload.qualityPass === 'pro',
   })
 
   const allDone = payload.variants.every((v) => v.framedImagePath)
@@ -289,15 +291,9 @@ export async function onPipelineRenderComplete(
     return
   }
 
-  // Pro pass complete → caption + gate2
+  // Pro pass complete → Gate 2 with caption prepared at pipeline start
   payload.stage = 'gate2_ready'
-  const captionResult = await generateCaption(product, {
-    theme: payload.theme,
-    hook: payload.hook,
-    page: payload.page,
-  })
-  payload.caption = captionResult.caption
-  payload.hook = captionResult.hook
+  const captionText = payload.caption ?? `${payload.productCode} — Alma Lifestyle`
 
   const imageLines: string[] = []
   for (const v of payload.variants) {
@@ -324,8 +320,8 @@ export async function onPipelineRenderComplete(
         productCode: payload.productCode,
         page: payload.page,
         pageId: resolvePageId(payload.page),
-        message: captionResult.caption,
-        hook: captionResult.hook,
+        message: captionText,
+        hook: payload.hook,
         imagePaths: payload.variants.map((v) => v.framedImagePath).filter(Boolean),
         primaryImagePath: primaryImage,
         conversationId: payload.conversationId,
@@ -333,7 +329,7 @@ export async function onPipelineRenderComplete(
       summary:
         `📣 কন্টেন্ট পোস্ট — Gate 2 (ফাইনাল)\n` +
         `প্রোডাক্ট: ${payload.productCode}\n` +
-        `ক্যাপশন:\n${captionResult.caption.slice(0, 400)}`,
+        `ক্যাপশন:\n${captionText.slice(0, 400)}`,
       status: 'pending',
     },
   })
@@ -346,7 +342,7 @@ export async function onPipelineRenderComplete(
 
   await sendOwnerText(
     `📣 কন্টেন্ট Gate 2 প্রস্তুত — ${payload.productCode}\n` +
-    `${imageLines.join('\n')}\n\n${captionResult.caption.slice(0, 500)}`,
+    `${imageLines.join('\n')}\n\n${captionText.slice(0, 500)}`,
   )
 }
 
@@ -427,16 +423,6 @@ export async function publishContentGate2(gate2Id: string): Promise<{ postId: st
     message: payload.message,
     contentType: postedAsPhoto ? 'fb_photo' : 'fb_text',
     page: payload.page,
-  }).catch(() => {})
-
-  void trackOutcome({
-    type: 'content',
-    subjectKind: 'product',
-    subjectId: payload.productCode,
-    subjectName: payload.productCode,
-    suggestion: `FB content post ${todayYmdDhaka()}`,
-    metric: 'engagement',
-    measureAfterDays: 7,
   }).catch(() => {})
 
   await db.agentPendingAction.update({

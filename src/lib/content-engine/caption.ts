@@ -23,7 +23,7 @@ export async function generateCaption(
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const res = await client.messages.create({
     model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 700,
+    max_tokens: 300,
     system:
       'You write Bangla Facebook captions for ALMA Lifestyle (family fashion, Bangladesh). ' +
       'Warm, modern, trustworthy. Output ONLY valid JSON: {"hook":"...","caption":"...","footer":"..."}. ' +

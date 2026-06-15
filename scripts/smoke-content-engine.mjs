@@ -57,14 +57,23 @@ else fail('content-engine tools')
 if (registry.includes('CONTENT_ENGINE_TOOLS')) ok('registry wired')
 else fail('registry')
 
-if (prompt.includes('CONTENT_ENGINE_ROLE_PROMPT')) ok('system prompt')
-else fail('system prompt')
+if (prompt.includes('CONTENT_ENGINE_ROLE_PROMPT')) ok('system prompt wired')
+else fail('system prompt wired')
+
+if (tools.includes('CONTENT ENGINE') && tools.includes('TWO approvals')) ok('content engine role prompt')
+else fail('content engine role prompt')
 
 if (modelLib.includes('ModelRole') && modelLib.includes('resolveModelByRole')) ok('model roles')
 else fail('model roles')
 
 if (variants.includes('PHASE1_VARIANTS') && variants.includes('father_son')) ok('phase1 variants')
 else fail('phase1 variants')
+
+if (variants.includes('workerQuality') && variants.includes('toWorkerQuality')) ok('draft→standard worker quality')
+else fail('draft→standard worker quality')
+
+if (pipeline.includes('generateCaption(product') && pipeline.includes('captionResult.hook')) ok('early caption hook')
+else fail('early caption hook')
 
 if (brand.includes('applyBrandFrame') && brand.includes('ALMA')) ok('brand frame')
 else fail('brand frame')
