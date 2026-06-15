@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import type { StaffMonitorData, StaffSummary } from '@/agent/lib/staff-monitor-data'
+import type { StaffMonitorData, StaffSummary, StaffMonitorRow } from '@/agent/lib/staff-monitor-data'
 import type { AgentDutyRow, SalahDutyRow } from '@/agent/lib/agent-duties'
 
 const FEED_PREVIEW_LEN = 120
@@ -64,6 +64,53 @@ function fmtTime(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+const ACK_TRACKED_TYPES = new Set([
+  'task_dispatch',
+  'announcement',
+  'reminder',
+  'coaching',
+  'proof_reminder',
+  'task_redo',
+  'presence',
+])
+
+function tracksAck(m: StaffMonitorRow): boolean {
+  if (m.requiresAck) return true
+  return ACK_TRACKED_TYPES.has(m.type) && (m.status === 'delivered' || m.status === 'sent' || !!m.acknowledgedAt)
+}
+
+function AckStatus({ m }: { m: StaffMonitorRow }) {
+  if (!tracksAck(m)) return null
+  if (m.acknowledgedAt) {
+    return (
+      <div className="mt-2">
+        <span className="inline-flex items-center rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-300">
+          ✅ দেখেছেন · {fmtTime(m.acknowledgedAt)}
+        </span>
+      </div>
+    )
+  }
+  if (m.status === 'delivered' || m.status === 'sent') {
+    return (
+      <div className="mt-2">
+        <span className="inline-flex items-center rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200">
+          ⏳ এখনো দেখেননি
+        </span>
+      </div>
+    )
+  }
+  if (m.status === 'queued' || m.status === 'pending') {
+    return (
+      <div className="mt-2">
+        <span className="inline-flex items-center rounded-lg border border-zinc-500/30 bg-zinc-500/10 px-2.5 py-1 text-[10px] text-zinc-400">
+          📤 পাঠানো হচ্ছে…
+        </span>
+      </div>
+    )
+  }
+  return null
 }
 
 function dutyIcon(status: AgentDutyRow['status']) {
@@ -172,6 +219,24 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
         </p>
       )}
 
+      {isLive && (data.unackedMessages?.length ?? 0) > 0 && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+          <h2 className="text-sm font-bold text-amber-200">⏳ দেখেননি ({data.unackedMessages.length})</h2>
+          <div className="mt-2 space-y-2">
+            {data.unackedMessages.map((m) => (
+              <div key={m.id} className="rounded-lg border border-amber-500/20 bg-black/20 p-2 text-xs">
+                <div className="flex justify-between text-amber-100/80">
+                  <span>{m.staffName ?? '—'} · {typeLabel(m.type)}</span>
+                  <span>{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
+                </div>
+                <FeedMessage content={m.content ?? ''} />
+                <AckStatus m={m} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {data.failures.length > 0 && (
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
           🔴 {data.failures.length}টি মেসেজ পৌঁছায়নি
@@ -218,6 +283,7 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                   <span>{fmtTime(m.createdAt)}</span>
                 </div>
                 <FeedMessage content={m.content ?? ''} />
+                <AckStatus m={m} />
                 {m.errorReason && <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>}
               </div>
             )

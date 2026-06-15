@@ -32,6 +32,7 @@ const variants = read('src/lib/content-engine/generate-variants.ts')
 const brand = read('src/lib/content-engine/brand-frame.ts')
 const brandId = read('src/lib/content-engine/brand-identity.ts')
 const brandTools = read('src/agent/tools/brand-tools.ts')
+const monitor = read('src/agent/components/AgentStaffMonitor.tsx')
 const caption = read('src/lib/content-engine/caption.ts')
 const pipeline = read('src/lib/content-engine/pipeline.ts')
 const tools = read('src/agent/tools/content-engine-tools.ts')
@@ -141,6 +142,17 @@ else fail('pause/resume tools')
 
 if (tools.includes('3 posts/day') || tools.includes('autonomously prepare')) ok('phase3 autonomy prompt')
 else fail('phase3 autonomy prompt')
+
+const menu = read('worker/src/telegram/menu.mjs')
+if (menu.includes('menu:content:status') && menu.includes('menu:content:off')) ok('telegram content menu')
+else fail('telegram content menu')
+
+if (existsSync(resolve(root, 'src/app/api/assistant/internal/content-engine-settings/route.ts'))) {
+  ok('content-engine-settings API')
+} else fail('content-engine-settings API')
+
+if (monitor.includes('AckStatus') && monitor.includes('দেখেছেন')) ok('staff monitor ack badge')
+else fail('staff monitor ack badge')
 
 if (failures.length) {
   console.error(`\n${failures.length} failure(s)`)

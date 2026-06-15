@@ -47,7 +47,7 @@ import { replyMarkdownSafe } from './markdown-safe.mjs'
 import { parseTaskIdFromCallback } from './callback-data.mjs'
 import { registerBotCommands } from './commands.mjs'
 import { buildOwnerHelpText, buildStaffHelpText } from './help.mjs'
-import { showMenuPanel, handleMenuCallback } from './menu.mjs'
+import { showMenuPanel, handleMenuCallback, showContentEngineStatus } from './menu.mjs'
 import {
   showCsPanel,
   showDetailsPicker,
@@ -863,6 +863,14 @@ export function createTelegramBot() {
       return
     }
     await handlePostlink(ctx, args)
+  })
+
+  bot.command('content', async (ctx) => {
+    if (!isOwner(ctx.chat?.id)) {
+      await ctx.reply('শুধু Owner')
+      return
+    }
+    await showContentEngineStatus(ctx)
   })
 
   const csModeHandler = async (ctx, modeArg) => {

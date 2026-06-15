@@ -16,6 +16,7 @@ export const OWNER_COMMANDS = [
   { command: 'csauto', description: 'CS Auto মোড চালু' },
   { command: 'csoff', description: 'CS বন্ধ করুন' },
   { command: 'postlink', description: 'FB পোস্ট লিঙ্ক তালিকা' },
+  { command: 'content', description: 'কন্টেন্ট ইঞ্জিন — অটো প্রেপ চালু/বন্ধ' },
   { command: 'catalog', description: 'ক্যাটালগ অগ্রগতি ও বাটন' },
   { command: 'group', description: 'ডিজাইন গ্রুপ তালিকা ও গাইড' },
   { command: 'sizechart', description: 'বয়স→সাইজ চার্ট' },

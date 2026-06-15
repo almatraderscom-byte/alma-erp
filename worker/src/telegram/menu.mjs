@@ -45,6 +45,11 @@ export function menuKeyboard() {
         { text: '📦 ক্যাটালগ Status', callback_data: 'menu:catalog:status' },
       ],
       [
+        { text: '📸 পোস্ট প্রেপ', callback_data: 'menu:content:status' },
+        { text: '▶️ অটো চালু', callback_data: 'menu:content:on' },
+        { text: '⏸ অটো বন্ধ', callback_data: 'menu:content:off' },
+      ],
+      [
         { text: '⚙️ Scheduler', callback_data: 'menu:sys:scheduler' },
         { text: '💚 Worker health', callback_data: 'menu:sys:health' },
       ],
@@ -74,6 +79,51 @@ async function postSetting(key, value) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN()}` },
     body: JSON.stringify({ key, value }),
+  })
+}
+
+async function fetchContentEngineSettings() {
+  return fetchInternal('/api/assistant/internal/content-engine-settings')
+}
+
+export async function showContentEngineStatus(ctx) {
+  const data = await fetchContentEngineSettings()
+  if (!data) return ctx.reply('❌ Content engine স্ট্যাটাস লোড হয়নি')
+  const icon = data.enabled ? '🟢' : '🔴'
+  const slots = (data.slotsDhaka ?? []).join(', ') || '—'
+  const text =
+    `${icon} *Content Engine*\n\n` +
+    `অটো প্রেপ: *${data.enabled ? 'চালু' : 'বন্ধ'}*\n` +
+    `স্লট/দিন: ${data.perDay} (${slots} Dhaka)\n` +
+    `Pending approval: ${data.pendingApprovals ?? 0} / ${data.maxPending ?? 2}\n\n` +
+    `পাবলিশ করতে এখনো Gate 1 + Gate 2 দু'টি approval লাগবে।\n` +
+    `বন্ধ/চালু: /menu → ⏸ অটো বন্ধ / ▶️ অটো চালু`
+  return replyMarkdownSafe(ctx, text, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '▶️ অটো চালু', callback_data: 'menu:content:on' },
+          { text: '⏸ অটো বন্ধ', callback_data: 'menu:content:off' },
+        ],
+      ],
+    },
+  })
+}
+
+async function setContentEngine(ctx, enabled) {
+  const res = await fetch(`${APP_URL()}/api/assistant/internal/content-engine-settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN()}` },
+    body: JSON.stringify({ enabled }),
+  })
+  if (!res.ok) return ctx.reply('❌ সেটিং আপডেট হয়নি')
+  const data = await res.json()
+  return replyMarkdownSafe(ctx, data.message ?? (enabled ? 'চালু' : 'বন্ধ'), {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📸 স্ট্যাটাস', callback_data: 'menu:content:status' }],
+      ],
+    },
   })
 }
 
@@ -154,6 +204,12 @@ export async function handleMenuCallback(ctx, action, deps) {
     }
     case 'catalog:status':
       return showCatalogPanel(ctx, { isOwner: true })
+    case 'content:status':
+      return showContentEngineStatus(ctx)
+    case 'content:on':
+      return setContentEngine(ctx, true)
+    case 'content:off':
+      return setContentEngine(ctx, false)
     case 'sys:scheduler': {
       const data = await fetchInternal('/api/assistant/internal/watchdog')
       if (!data) return ctx.reply('❌ Scheduler স্ট্যাটাস লোড হয়নি')

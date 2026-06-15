@@ -19,6 +19,10 @@ export function buildOwnerHelpText() {
     `/cs followups on — ফলো-আপ চালু\n` +
     `/cs block 123456 — কাস্টমার ব্লক\n` +
     `/postlink <পোস্ট> FM-204 — FB পোস্ট লিঙ্ক\n\n` +
+    `*📸 কন্টেন্ট ইঞ্জিন (FB পোস্ট)*\n` +
+    `/content — অটো প্রেপ স্ট্যাটাস (১০/১৫/১৯ Dhaka)\n` +
+    `/menu → 📸 পোস্ট প্রেপ / ⏸ অটো বন্ধ\n` +
+    `পাবলিশ করতে Gate 1 + Gate 2 approval লাগবে\n\n` +
     `*🕌 সালাত*\n` +
     `নামাজের বাটন দিয়ে মার্ক করুন — /menu → সালাত\n\n` +
     `*⏰ রিমাইন্ডার*\n` +
