@@ -132,10 +132,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Close sidebar by default on mobile
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
-  // Surface real server config issues (not the old misleading client guess).
   useEffect(() => {
     void fetch('/api/assistant/health')
       .then(async (res) => (res.ok ? res.json() as Promise<{ db?: boolean; anthropic?: boolean }> : null))
@@ -160,7 +158,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }, [personalProjectId, activeConvProjectId])
 
-  // Load messages when conversation changes
   async function loadConversation(conv: Conversation) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
@@ -225,7 +222,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
 
-    // Ensure conversation exists before upload so files land under <convId>/ not general/.
     let convIdForUpload = activeConvId
     if (!convIdForUpload && pendingFiles.length > 0) {
       try {
@@ -250,7 +246,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     }
 
-    // Upload files first, collect file refs.
     const fileRefs: Array<{ bucket: string; path: string; mediaType: string }> = []
     for (const pf of pendingFiles) {
       try {
@@ -268,7 +263,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     }
 
-    // Optimistic user message
     const userMsgId = nextId('user')
     const userMsg: ChatMessage = {
       id: userMsgId,
@@ -281,7 +275,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       userMsg,
     ])
 
-    // Streaming assistant placeholder
     const assistantMsgId = nextId('streaming')
     setMessages((prev) => [
       ...prev,
@@ -387,7 +380,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'verification_retry') {
-          // Server-side honesty check failed — discard streamed draft and start fresh.
           setStreamMode('fetching')
           setStreamStatus('🔁 verify করছি…')
           setMessages((prev) => prev.map((m) =>
@@ -518,9 +510,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }
 
-  // Poll for new messages after a confirm-card action is approved.
-  // Checks immediately (catches fb_post inline result) then every 8s for up to 96s
-  // (covers the worker's 30s poll cycle + image generation time).
   function startResultPolling(convId: string) {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
     let attempts = 0
@@ -540,10 +529,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       } catch { /* ignore */ }
     }
 
-    void fetchAndUpdate() // immediate check
+    void fetchAndUpdate()
     pollTimerRef.current = setInterval(() => {
       attempts++
-      if (attempts >= 12) { // ~96s max
+      if (attempts >= 12) {
         clearInterval(pollTimerRef.current!)
         pollTimerRef.current = null
         return
@@ -582,12 +571,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       {/* Main area */}
       <div className="flex min-h-0 flex-1 flex-col">
-        {/* Minimal header */}
-        <header className="safe-top safe-x relative flex shrink-0 items-center gap-2 border-b border-white/[0.04] bg-[rgba(10,10,14,0.55)] px-3 py-2 backdrop-blur-2xl md:px-4">
+        {/* Header — light theme */}
+        <header className="safe-top safe-x relative flex shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white/80 px-3 py-2 backdrop-blur-xl md:px-4">
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/50 transition-all hover:bg-white/[0.05] hover:text-white/80 active:scale-95 md:h-9 md:w-9"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 active:scale-95 md:h-9 md:w-9"
             aria-label="সাইডবার"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -602,7 +591,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               disabled={streaming}
             />
             {activePersonalMode && (
-              <span className="shrink-0 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
                 ব্যক্তিগত
               </span>
             )}
@@ -612,7 +601,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <button
             type="button"
             onClick={() => newConversation()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/50 transition-all hover:bg-white/[0.05] hover:text-white/80 active:scale-95 md:h-9 md:w-9"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 active:scale-95 md:h-9 md:w-9"
             aria-label="নতুন চ্যাট"
             title="নতুন কথোপকথন"
           >
@@ -623,7 +612,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <div className="hidden items-center gap-1.5 md:flex">
             <Link
               href="/"
-              className="flex h-8 items-center rounded-lg px-2.5 text-[11px] text-white/40 transition-all hover:bg-white/[0.04] hover:text-white/70"
+              className="flex h-8 items-center rounded-lg px-2.5 text-[11px] text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600"
             >
               ERP
             </Link>
@@ -631,7 +620,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               <button
                 type="button"
                 onClick={() => setArtifactsOpen((v) => !v)}
-                className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] text-white/40 transition-all hover:bg-white/[0.04] hover:text-white/70"
+                className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2H22l-6 4.8 2.4 7.2L12 16.4l-6.4 4.8L8 14 2 9.2h7.6z"/></svg>
                 {artifacts.length}
@@ -639,11 +628,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             )}
           </div>
 
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[rgba(201,168,76,0.2)] to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-black/[0.06] to-transparent" />
         </header>
 
         {activePersonalMode && (
-          <div className="shrink-0 border-b border-emerald-500/10 bg-emerald-500/[0.03] px-4 py-1.5 text-center text-[11px] text-emerald-300/80 backdrop-blur-md">
+          <div className="shrink-0 border-b border-emerald-200/50 bg-emerald-50/60 px-4 py-1.5 text-center text-[11px] text-emerald-700 backdrop-blur-md">
             ব্যক্তিগত মোড — শুধু ব্যক্তিগত ও পারিবারিক বিষয়
           </div>
         )}
@@ -656,10 +645,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             </div>
           ) : convLoadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-              <p className="text-sm text-red-400/90">{convLoadError}</p>
+              <p className="text-sm text-red-500/90">{convLoadError}</p>
               <button
                 onClick={() => activeConvId && loadConversation({ id: activeConvId, title: null, projectId: null, archived: false, updatedAt: '' })}
-                className="rounded-xl border border-white/[0.08] px-4 py-2 text-xs text-white/50 transition-all hover:bg-white/[0.04] hover:text-white/80"
+                className="rounded-xl border border-black/[0.08] px-4 py-2 text-xs text-gray-500 transition-all hover:bg-black/[0.03] hover:text-gray-700"
               >
                 আবার চেষ্টা
               </button>

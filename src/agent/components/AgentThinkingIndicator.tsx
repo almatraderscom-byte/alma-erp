@@ -18,12 +18,12 @@ export function AgentThinkingIndicator({
 
   return (
     <div className={cn('flex items-center gap-2.5', className)}>
-      {/* Animated dots */}
+      {/* Animated dots — coral */}
       <div className="flex items-center gap-1">
         {[0, 1, 2].map((i) => (
           <motion.span
             key={i}
-            className="h-1.5 w-1.5 rounded-full bg-gold/50"
+            className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]/50"
             animate={{
               scale: [1, 1.4, 1],
               opacity: [0.4, 1, 0.4],
@@ -38,7 +38,7 @@ export function AgentThinkingIndicator({
         ))}
       </div>
       <motion.span
-        className="text-[13px] text-white/40"
+        className="text-[13px] text-[#64748b]"
         animate={{ opacity: [0.5, 0.9, 0.5] }}
         transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
       >

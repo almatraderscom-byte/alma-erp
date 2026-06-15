@@ -64,7 +64,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="rounded-lg p-1.5 text-white/30 transition-all hover:bg-white/[0.06] hover:text-white/60"
+      className="rounded-lg p-1.5 text-gray-400 transition-all hover:bg-black/[0.05] hover:text-gray-600"
       title={copied ? 'কপি হয়েছে' : 'কপি করুন'}
     >
       {copied ? (
@@ -136,7 +136,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       onClick={speak}
       disabled={loading}
       data-message-id={messageId}
-      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-gold/10 text-gold' : 'text-white/30 hover:bg-white/[0.06] hover:text-white/60'}`}
+      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-gray-400 hover:bg-black/[0.05] hover:text-gray-600'}`}
       title={playing ? 'থামান' : 'শুনুন'}
     >
       {loading ? (
@@ -156,9 +156,9 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
       done
         ? success !== false
-          ? 'border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300/80'
-          : 'border-red-400/20 bg-red-400/[0.06] text-red-300/80'
-        : 'border-white/[0.08] bg-white/[0.03] text-white/50'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : 'border-red-200 bg-red-50 text-red-600'
+        : 'border-black/[0.08] bg-black/[0.02] text-gray-500'
     }`}>
       {!done && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
@@ -238,7 +238,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
               {msg.role === 'user' ? (
-                /* User message — subtle right-aligned pill */
+                /* User message — coral-tinted pill */
                 <div className="flex justify-end">
                   <div className="max-w-[85%] min-w-0">
                     {msg.files && msg.files.length > 0 && (
@@ -246,9 +246,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         {msg.files.map((f, i) => (
                           f.mediaType.startsWith('image/') ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-white/[0.08]" />
+                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-black/[0.06]" />
                           ) : (
-                            <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-[10px] text-white/50">
+                            <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-black/[0.06] bg-gray-50 text-[10px] text-gray-500">
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                               <span className="mt-0.5">PDF</span>
                             </div>
@@ -257,16 +257,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     )}
                     {msg.text && (
-                      <div className="rounded-2xl rounded-br-sm bg-[rgba(201,168,76,0.1)] px-4 py-3 text-[15px] leading-relaxed text-white/90 whitespace-pre-wrap break-words select-text">
+                      <div className="rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-[#1a1a2e] whitespace-pre-wrap break-words select-text">
                         {msg.text}
                       </div>
                     )}
                   </div>
                 </div>
               ) : (
-                /* Assistant message — full-width document flow (Claude-style) */
+                /* Assistant message — full-width, dark text on light bg */
                 <div className="min-w-0">
-                  {/* Thinking indicator — only during active streaming */}
                   {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
                       label={streamStatus}
@@ -275,7 +274,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {/* Tool activity chips */}
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
                     <div className="mb-3 flex flex-wrap gap-1.5">
                       {msg.toolActivity.map((t) => (
@@ -284,14 +282,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     </div>
                   )}
 
-                  {/* Message content — full-width, no bubble */}
                   {(!msg.streaming || msg.text) && (
-                    <div className="text-[15px] leading-[1.7] text-white/90 select-text">
+                    <div className="text-[15px] leading-[1.7] text-[#1a1a2e] select-text">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />
                           <motion.span
-                            className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-gold/60"
+                            className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
                             animate={{ opacity: [1, 0, 1] }}
                             transition={{ duration: 0.8, repeat: Infinity, ease: 'steps(2)' }}
                             aria-hidden
@@ -303,7 +300,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     </div>
                   )}
 
-                  {/* Confirm card */}
                   {msg.pendingAction && (
                     <AgentConfirmCard
                       action={msg.pendingAction}
@@ -313,7 +309,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {/* Ask card */}
                   {msg.askCard && onQuickSend && (
                     <AgentAskCard
                       card={msg.askCard}
@@ -328,7 +323,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {/* Message actions row */}
                   {!msg.streaming && msg.text && (
                     <div className="mt-2 flex items-center gap-0.5">
                       <CopyButton text={msg.text} />
@@ -336,19 +330,19 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button
                           onClick={() => saveArtifact(msg)}
-                          className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-white/30 transition-all hover:bg-white/[0.06] hover:text-white/60"
+                          className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition-all hover:bg-black/[0.05] hover:text-gray-600"
                         >
                           সংরক্ষণ
                         </button>
                       )}
                       {artifactSaved.has(msg.id) && (
-                        <span className="px-2 text-[11px] text-emerald-400/70">সংরক্ষিত</span>
+                        <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
                       )}
                       {msg.tokensIn != null && (
-                        <span className="ml-auto text-[10px] tabular-nums text-white/20">
+                        <span className="ml-auto text-[10px] tabular-nums text-gray-400">
                           {msg.tokensIn != null && `↑${msg.tokensIn.toLocaleString()}`}{' '}
                           {msg.tokensOut != null && `↓${msg.tokensOut.toLocaleString()}`}{' '}
-                          {msg.costUsd != null && <span className="text-gold/40">${msg.costUsd.toFixed(4)}</span>}
+                          {msg.costUsd != null && <span className="text-[#E07A5F]/60">${msg.costUsd.toFixed(4)}</span>}
                         </span>
                       )}
                     </div>
@@ -363,14 +357,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-auto my-4 max-w-sm rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4"
+            className="mx-auto my-4 max-w-sm rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm"
           >
-            <div className="mb-2 text-[13px] font-medium text-white/60">
+            <div className="mb-2 text-[13px] font-medium text-gray-600">
               কথোপকথন কম্প্যাক্ট হচ্ছে…
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-black/[0.06]">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-gold/40 to-gold/20"
+                className="h-full rounded-full bg-gradient-to-r from-[#E07A5F]/40 to-[#81B29A]/30"
                 initial={{ width: '0%' }}
                 animate={{ width: '100%' }}
                 transition={{ duration: 2.2, ease: 'easeInOut' }}
@@ -393,7 +387,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
               setTimeout(checkScrollPosition, 400)
             }}
-            className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/[0.1] bg-[rgba(12,12,16,0.9)] px-4 py-2 text-xs font-medium text-white/60 shadow-lg backdrop-blur-2xl transition-all hover:text-white/80"
+            className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-black/[0.08] bg-white px-4 py-2 text-xs font-medium text-gray-500 shadow-lg backdrop-blur-2xl transition-all hover:text-gray-700 hover:shadow-xl"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
             নিচে যান

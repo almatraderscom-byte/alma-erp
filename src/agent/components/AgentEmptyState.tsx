@@ -16,7 +16,7 @@ interface AgentEmptyStateProps {
 export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) {
   return (
     <div className="flex min-h-[min(440px,55dvh)] flex-col items-center justify-center px-4 py-12 text-center">
-      {/* Subtle animated orb */}
+      {/* Warm gradient orb */}
       <motion.div
         className="relative mb-8 h-16 w-16"
         initial={{ opacity: 0, scale: 0.8 }}
@@ -26,7 +26,7 @@ export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) 
         <motion.div
           className="absolute inset-0 rounded-full"
           style={{
-            background: 'radial-gradient(circle at 40% 35%, rgba(201,168,76,0.2) 0%, rgba(100,60,180,0.06) 60%, transparent 100%)',
+            background: 'radial-gradient(circle at 40% 35%, rgba(224,122,95,0.3) 0%, rgba(129,178,154,0.15) 60%, transparent 100%)',
           }}
           animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
           transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
@@ -34,16 +34,16 @@ export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) 
         <motion.div
           className="absolute inset-2 rounded-full"
           style={{
-            background: 'radial-gradient(circle, rgba(232,201,106,0.15) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(212,168,75,0.2) 0%, transparent 70%)',
           }}
           animate={{ scale: [0.95, 1.1, 0.95] }}
           transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
         />
-        <div className="absolute inset-0 rounded-full border border-white/[0.06]" />
+        <div className="absolute inset-0 rounded-full border border-black/[0.06]" />
       </motion.div>
 
       <motion.p
-        className="text-xl font-semibold text-white/90"
+        className="text-xl font-semibold text-[#1a1a2e]"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, duration: 0.4 }}
@@ -51,7 +51,7 @@ export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) 
         আস্সালামু আলাইকুম
       </motion.p>
       <motion.p
-        className="mt-2 text-[14px] text-white/40"
+        className="mt-2 text-[14px] text-[#64748b]"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15, duration: 0.4 }}
@@ -74,7 +74,7 @@ export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) 
               key={s.text}
               type="button"
               onClick={() => onSuggestion(s.text)}
-              className="flex items-start gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3 text-left text-[12px] leading-snug text-white/50 transition-all hover:border-white/[0.12] hover:bg-white/[0.04] hover:text-white/70 active:scale-[0.98]"
+              className="flex items-start gap-2 rounded-2xl border border-black/[0.06] bg-white p-3 text-left text-[12px] leading-snug text-[#64748b] shadow-sm transition-all hover:border-[#E07A5F]/20 hover:bg-[#E07A5F]/[0.03] hover:text-[#1a1a2e] hover:shadow-md active:scale-[0.98]"
               variants={{
                 hidden: { opacity: 0, y: 10 },
                 visible: { opacity: 1, y: 0 },

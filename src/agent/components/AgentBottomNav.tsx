@@ -16,7 +16,7 @@ export function AgentBottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
-      <div className="absolute inset-0 bg-[#08080A]/80 backdrop-blur-2xl border-t border-white/[0.06]" />
+      <div className="absolute inset-0 bg-white/80 backdrop-blur-2xl border-t border-black/[0.06]" />
 
       <div
         className="relative flex items-center justify-around px-4 pt-2"
@@ -33,13 +33,13 @@ export function AgentBottomNav() {
               href={item.href}
               className={cn(
                 'relative flex flex-col items-center gap-0.5 px-4 py-1.5 transition-all',
-                isActive ? 'text-[#C9A84C]' : 'text-white/40',
+                isActive ? 'text-[#E07A5F]' : 'text-[#94A3B8]',
               )}
             >
               {isActive && (
                 <motion.div
                   layoutId="bottomNavIndicator"
-                  className="absolute -top-0.5 left-1/2 -translate-x-1/2 h-0.5 w-8 rounded-full bg-[#C9A84C]"
+                  className="absolute -top-0.5 left-1/2 -translate-x-1/2 h-0.5 w-8 rounded-full bg-[#E07A5F]"
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                 />
               )}

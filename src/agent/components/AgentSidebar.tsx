@@ -24,10 +24,10 @@ export interface Conversation {
 
 function businessBadgeStyle(businessId: string | null | undefined): { label: string; cls: string } | null {
   if (businessId === 'ALMA_TRADING') {
-    return { label: 'Trading', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' }
+    return { label: 'Trading', cls: 'bg-amber-100 text-amber-700 border-amber-200' }
   }
   if (businessId === 'ALMA_LIFESTYLE') {
-    return { label: 'Lifestyle', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' }
+    return { label: 'Lifestyle', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
   }
   return null
 }
@@ -143,70 +143,67 @@ export default function AgentSidebar({
   }
 
   const sidebarContent = (
-    <div className={cn('flex h-full flex-col bg-[rgba(12,12,16,0.7)] backdrop-blur-2xl', isMobile && 'safe-top')}>
+    <div className={cn('flex h-full flex-col bg-white/90 backdrop-blur-2xl', isMobile && 'safe-top')}>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/[0.04] px-4 py-3">
+      <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
         <div className="flex items-center gap-2">
-          <span
-            className="text-sm font-bold text-gold"
-            style={{ textShadow: '0 0 12px rgba(201,168,76,0.4), 0 0 4px rgba(201,168,76,0.2)' }}
-          >
+          <span className="text-sm font-bold text-[#E07A5F]">
             ALMA Agent
           </span>
           <a
             href="/agent/costs"
-            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-gold-lt hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            className="rounded-full border border-black/[0.06] bg-gray-50 px-2 py-0.5 text-[9px] text-gray-500 transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"
             title="খরচ ড্যাশবোর্ড"
           >
             $
           </a>
           <a
             href="/agent/staff-monitor"
-            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-gold-lt hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            className="rounded-full border border-black/[0.06] bg-gray-50 px-2 py-0.5 text-[9px] text-gray-500 transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"
             title="LIVE Business"
           >
             📊
           </a>
           <a
             href="/agent/trading-staff"
-            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-amber-300 hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            className="rounded-full border border-black/[0.06] bg-gray-50 px-2 py-0.5 text-[9px] text-gray-500 transition-all hover:border-amber-300/40 hover:bg-amber-50 hover:text-amber-600"
             title="Trading Staff"
           >
             ₿
           </a>
         </div>
         {isMobile && (
-          <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-cream">✕</button>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600">✕</button>
         )}
       </div>
 
       {onEnterPersonal && (
-        <div className="border-b border-white/[0.04] px-3 py-2">
+        <div className="border-b border-black/[0.06] px-3 py-2">
           <button
             type="button"
             onClick={onEnterPersonal}
             className={cn(
               'w-full rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-all',
               personalActive
-                ? 'border-emerald-500/50 bg-[rgba(16,185,129,0.12)] text-emerald-200 shadow-[0_0_20px_rgba(16,185,129,0.15),inset_0_0_20px_rgba(201,168,76,0.05)] backdrop-blur-md'
-                : 'border-white/[0.06] bg-white/[0.03] text-cream backdrop-blur-md hover:border-emerald-500/30 hover:bg-emerald-500/5',
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
+                : 'border-black/[0.06] bg-gray-50 text-gray-700 hover:border-emerald-200 hover:bg-emerald-50/50',
             )}
           >
             🤲 ব্যক্তিগত
-            {personalActive && <span className="mt-0.5 block text-[10px] font-normal text-emerald-300/80">মোড সক্রিয়</span>}
+            {personalActive && <span className="mt-0.5 block text-[10px] font-normal text-emerald-600">মোড সক্রিয়</span>}
           </button>
         </div>
       )}
 
       {/* Tab bar */}
-      <div className="flex border-b border-white/[0.04]">
+      <div className="flex border-b border-black/[0.06]">
         <button
           onClick={() => setTab('chats')}
           className={cn(
             'flex-1 py-2 text-xs font-semibold transition-all',
             tab === 'chats'
-              ? 'text-gold-lt border-b-2 border-gold shadow-[0_2px_8px_rgba(201,168,76,0.3)]'
-              : 'text-muted hover:bg-white/[0.03] hover:text-cream',
+              ? 'text-[#E07A5F] border-b-2 border-[#E07A5F]'
+              : 'text-gray-400 hover:bg-black/[0.02] hover:text-gray-600',
           )}
         >
           💬 চ্যাট
@@ -216,8 +213,8 @@ export default function AgentSidebar({
           className={cn(
             'flex-1 py-2 text-xs font-semibold transition-all',
             tab === 'memory'
-              ? 'text-gold-lt border-b-2 border-gold shadow-[0_2px_8px_rgba(201,168,76,0.3)]'
-              : 'text-muted hover:bg-white/[0.03] hover:text-cream',
+              ? 'text-[#E07A5F] border-b-2 border-[#E07A5F]'
+              : 'text-gray-400 hover:bg-black/[0.02] hover:text-gray-600',
           )}
         >
           🧠 স্মৃতি
@@ -229,11 +226,11 @@ export default function AgentSidebar({
       ) : (
         <>
       {/* Project selector */}
-      <div className="border-b border-white/[0.04] p-3">
+      <div className="border-b border-black/[0.06] p-3">
         <select
           value={activeProject}
           onChange={(e) => setActiveProject(e.target.value)}
-          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+          className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-3 py-2 text-xs text-gray-700 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
         >
           <option value={PROJECT_NONE}>সব কথোপকথন</option>
           {projects.map((p) => {
@@ -258,13 +255,13 @@ export default function AgentSidebar({
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => onNewConv(activeProject === PROJECT_NONE ? undefined : activeProject)}
-            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 px-3 py-2 text-xs font-semibold text-gold-lt transition-all hover:bg-gold/20 hover:border-gold/50 hover:shadow-[0_0_16px_rgba(201,168,76,0.2)]"
+            className="flex-1 rounded-xl bg-[#E07A5F]/10 border border-[#E07A5F]/25 px-3 py-2 text-xs font-semibold text-[#E07A5F] transition-all hover:bg-[#E07A5F]/15 hover:shadow-sm"
           >
             + নতুন চ্যাট
           </button>
           <button
             onClick={() => { setEditProject(null); setShowProjectDialog(true) }}
-            className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2 text-xs text-muted backdrop-blur-md transition-all hover:text-cream hover:border-gold-dim/30"
+            className="rounded-xl border border-black/[0.06] bg-gray-50 px-3 py-2 text-xs text-gray-500 transition-all hover:text-gray-700 hover:border-[#E07A5F]/25"
             title="নতুন প্রজেক্ট"
           >
             ⊕
@@ -278,28 +275,28 @@ export default function AgentSidebar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="খুঁজুন…"
-          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+          className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-3 py-2 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
         />
       </div>
 
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-1">
         {loading && (
-          <p className="py-8 text-center text-[11px] text-zinc-500 animate-pulse">লোড হচ্ছে…</p>
+          <p className="py-8 text-center text-[11px] text-gray-400 animate-pulse">লোড হচ্ছে…</p>
         )}
         {!loading && loadError && (
           <div className="py-6 text-center space-y-2">
-            <p className="text-[11px] text-red-400">{loadError}</p>
+            <p className="text-[11px] text-red-500">{loadError}</p>
             <button
               onClick={() => void loadData()}
-              className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] text-muted-hi hover:text-cream backdrop-blur-md"
+              className="rounded-lg border border-black/[0.06] bg-gray-50 px-3 py-1.5 text-[11px] text-gray-600 hover:text-gray-800"
             >
               আবার চেষ্টা
             </button>
           </div>
         )}
         {!loading && !loadError && filtered.length === 0 && (
-          <p className="py-8 text-center text-[11px] text-zinc-600">কোনো কথোপকথন নেই — নতুন চ্যাট শুরু করুন</p>
+          <p className="py-8 text-center text-[11px] text-gray-400">কোনো কথোপকথন নেই — নতুন চ্যাট শুরু করুন</p>
         )}
         {filtered.map((c) => (
           <div
@@ -321,8 +318,8 @@ export default function AgentSidebar({
             className={cn(
               'group relative rounded-xl px-3 py-2.5 cursor-pointer transition-all',
               c.id === activeConvId
-                ? 'bg-[rgba(201,168,76,0.08)] backdrop-blur-md border border-[rgba(201,168,76,0.25)] shadow-[0_0_16px_rgba(201,168,76,0.1)]'
-                : 'hover:bg-white/[0.03] border border-transparent',
+                ? 'bg-[#E07A5F]/[0.08] border border-[#E07A5F]/20 shadow-sm'
+                : 'hover:bg-black/[0.02] border border-transparent',
             )}
           >
             {renameId === c.id ? (
@@ -335,23 +332,23 @@ export default function AgentSidebar({
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onBlur={() => setRenameId(null)}
-                  className="w-full rounded-lg bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-gold-dim/40 px-2 py-1 text-xs text-cream focus:outline-none"
+                  className="w-full rounded-lg bg-white border border-[#E07A5F]/30 px-2 py-1 text-xs text-gray-800 focus:outline-none"
                 />
               </form>
             ) : (
               <>
                 <div className="min-w-0 pr-6">
-                  <p className={cn('truncate text-xs font-medium', c.id === activeConvId ? 'text-gold-lt' : 'text-muted-hi group-hover:text-cream')}>
+                  <p className={cn('truncate text-xs font-medium', c.id === activeConvId ? 'text-[#E07A5F]' : 'text-gray-700 group-hover:text-gray-900')}>
                     {c.title ?? '(শিরোনাম নেই)'}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-zinc-600">
+                  <p className="mt-0.5 text-[10px] text-gray-400">
                     {new Date(c.updatedAt).toLocaleDateString('en-BD', { day: '2-digit', month: 'short' })}
                   </p>
                 </div>
                 {/* Context menu trigger */}
                 <button
                   onClick={(e) => { e.stopPropagation(); setMenuConvId(menuConvId === c.id ? null : c.id) }}
-                  className="absolute right-2 top-2 hidden rounded-md p-1 text-zinc-600 hover:text-cream group-hover:block"
+                  className="absolute right-2 top-2 hidden rounded-md p-1 text-gray-400 hover:text-gray-600 group-hover:block"
                 >
                   ⋯
                 </button>
@@ -362,24 +359,24 @@ export default function AgentSidebar({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl shadow-xl"
+                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-black/[0.08] bg-white shadow-lg"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
                         onClick={() => { setRenameId(c.id); setRenameValue(c.title ?? ''); setMenuConvId(null) }}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-muted-hi hover:bg-white/[0.05] hover:text-cream rounded-t-xl"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-gray-600 hover:bg-black/[0.03] hover:text-gray-800 rounded-t-xl"
                       >
                         ✏️ নাম পরিবর্তন
                       </button>
                       <button
                         onClick={() => archiveConv(c.id)}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-muted-hi hover:bg-white/[0.05] hover:text-cream"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-gray-600 hover:bg-black/[0.03] hover:text-gray-800"
                       >
                         📦 আর্কাইভ
                       </button>
                       <button
                         onClick={() => { setDeleteId(c.id); setMenuConvId(null) }}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-red-400 hover:bg-red-400/10 rounded-b-xl"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-red-500 hover:bg-red-50 rounded-b-xl"
                       >
                         🗑️ মুছুন
                       </button>
@@ -394,7 +391,7 @@ export default function AgentSidebar({
           <button
             onClick={() => void loadData(true, nextCursor)}
             disabled={loadingMore}
-            className="mt-2 w-full rounded-xl border border-white/[0.06] bg-white/[0.03] py-2 text-[11px] text-muted-hi backdrop-blur-md hover:text-cream disabled:opacity-50"
+            className="mt-2 w-full rounded-xl border border-black/[0.06] bg-gray-50 py-2 text-[11px] text-gray-600 hover:text-gray-800 disabled:opacity-50"
           >
             {loadingMore ? 'লোড হচ্ছে…' : 'আরও দেখুন'}
           </button>
@@ -419,21 +416,21 @@ export default function AgentSidebar({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
             onClick={() => setDeleteId(null)}
           >
             <motion.div
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
+              className="w-full max-w-sm rounded-2xl border border-black/[0.08] bg-white shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="mb-2 font-bold text-cream">কথোপকথন মুছবেন?</h3>
-              <p className="mb-5 text-sm text-muted-hi">এই কথোপকথন এবং সকল বার্তা স্থায়ীভাবে মুছে যাবে।</p>
+              <h3 className="mb-2 font-bold text-gray-800">কথোপকথন মুছবেন?</h3>
+              <p className="mb-5 text-sm text-gray-500">এই কথোপকথন এবং সকল বার্তা স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteId(null)} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20 hover:shadow-[0_0_12px_rgba(248,113,113,0.2)]">মুছুন</button>
+                <button onClick={() => setDeleteId(null)} className="flex-1 rounded-xl border border-black/[0.06] bg-gray-50 py-2.5 text-sm text-gray-600 hover:text-gray-800">বাতিল</button>
+                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl bg-red-50 border border-red-200 py-2.5 text-sm font-semibold text-red-500 hover:bg-red-100">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>
@@ -453,7 +450,7 @@ export default function AgentSidebar({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+              className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
               onClick={onClose}
             />
             <motion.div
@@ -472,7 +469,7 @@ export default function AgentSidebar({
   }
 
   return (
-    <div className={cn('flex-shrink-0 border-r border-white/[0.04] transition-all duration-200', open ? 'w-64' : 'w-0 overflow-hidden')}>
+    <div className={cn('flex-shrink-0 border-r border-black/[0.06] transition-all duration-200', open ? 'w-64' : 'w-0 overflow-hidden')}>
       {open && sidebarContent}
     </div>
   )
@@ -503,19 +500,19 @@ function LearnedRulesPanel() {
       .finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <p className="px-3 py-2 text-[10px] text-muted">শেখা নিয়ম লোড…</p>
+  if (loading) return <p className="px-3 py-2 text-[10px] text-gray-400">শেখা নিয়ম লোড…</p>
   if (!rules.length) return null
 
   return (
-    <div className="border-b border-white/[0.04] px-3 py-2">
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gold/80">শেখা নিয়ম</p>
+    <div className="border-b border-black/[0.06] px-3 py-2">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[#E07A5F]">শেখা নিয়ম</p>
       <div className="max-h-40 space-y-1.5 overflow-y-auto">
         {rules.slice(0, 12).map((r) => (
-          <div key={`${r.kind}-${r.id}`} className="rounded-lg bg-white/[0.03] px-2 py-1.5 text-[10px] text-cream/90">
-            <span className="text-gold/70">[{r.domain}]</span>{' '}
+          <div key={`${r.kind}-${r.id}`} className="rounded-lg bg-gray-50 px-2 py-1.5 text-[10px] text-gray-700">
+            <span className="text-[#E07A5F]/70">[{r.domain}]</span>{' '}
             {r.text.slice(0, 100)}{r.text.length > 100 ? '…' : ''}
             {r.timesApplied > 0 && (
-              <span className="ml-1 text-muted">· {r.timesApplied}×</span>
+              <span className="ml-1 text-gray-400">· {r.timesApplied}×</span>
             )}
           </div>
         ))}
@@ -581,11 +578,11 @@ function MemoryView() {
     <div className="flex flex-1 flex-col overflow-hidden">
       <LearnedRulesPanel />
       {/* Scope filter */}
-      <div className="border-b border-white/[0.04] px-3 py-2">
+      <div className="border-b border-black/[0.06] px-3 py-2">
         <select
           value={scopeFilter}
           onChange={(e) => setScopeFilter(e.target.value)}
-          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+          className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-3 py-2 text-xs text-gray-700 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
         >
           <option value="all">সব ক্যাটাগরি</option>
           <option value="personal">ব্যক্তিগত</option>
@@ -597,77 +594,77 @@ function MemoryView() {
       {/* Memory list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {financeSummary && (financeSummary.balances.length > 0 || financeSummary.monthExpensesByCategory.length > 0) && (
-          <div className="mb-3 rounded-xl border border-[rgba(201,168,76,0.25)] bg-[rgba(201,168,76,0.06)] backdrop-blur-md p-3 text-[11px] shadow-[0_0_20px_rgba(201,168,76,0.08)]">
-            <p className="mb-2 font-semibold text-gold-lt">💰 আর্থিক সারসংক্ষেপ</p>
+          <div className="mb-3 rounded-xl border border-[#D4A84B]/20 bg-[#D4A84B]/[0.04] p-3 text-[11px] shadow-sm">
+            <p className="mb-2 font-semibold text-[#D4A84B]">💰 আর্থিক সারসংক্ষেপ</p>
             {financeSummary.balances.length > 0 && (
               <div className="mb-2">
-                <p className="mb-1 text-[10px] text-muted">পাওনা/দেনা (ব্যক্তি অনুযায়ী)</p>
+                <p className="mb-1 text-[10px] text-gray-500">পাওনা/দেনা (ব্যক্তি অনুযায়ী)</p>
                 <ul className="space-y-1">
                   {financeSummary.balances.slice(0, 8).map((b) => (
-                    <li key={b.person} className="text-muted-hi leading-snug">{b.display || b.person}</li>
+                    <li key={b.person} className="text-gray-700 leading-snug">{b.display || b.person}</li>
                   ))}
                 </ul>
               </div>
             )}
             {financeSummary.monthExpensesByCategory.length > 0 && (
               <div>
-                <p className="mb-1 text-[10px] text-muted">এই মাসের খরচ (ক্যাটাগরি)</p>
+                <p className="mb-1 text-[10px] text-gray-500">এই মাসের খরচ (ক্যাটাগরি)</p>
                 <ul className="space-y-1">
                   {financeSummary.monthExpensesByCategory.slice(0, 6).map((e) => (
-                    <li key={`${e.currency}-${e.category}`} className="text-muted-hi">{e.display}</li>
+                    <li key={`${e.currency}-${e.category}`} className="text-gray-700">{e.display}</li>
                   ))}
                 </ul>
               </div>
             )}
-            <p className="mt-2 text-[9px] text-zinc-600">সংশোধন শুধু চ্যাটে — এখানে শুধু দেখা</p>
+            <p className="mt-2 text-[9px] text-gray-400">সংশোধন শুধু চ্যাটে — এখানে শুধু দেখা</p>
           </div>
         )}
 
-        {loading && <p className="py-6 text-center text-[11px] text-zinc-600">লোড হচ্ছে…</p>}
+        {loading && <p className="py-6 text-center text-[11px] text-gray-400">লোড হচ্ছে…</p>}
         {!loading && memories.length === 0 && (
-          <p className="py-8 text-center text-[11px] text-zinc-600">কোনো স্মৃতি নেই</p>
+          <p className="py-8 text-center text-[11px] text-gray-400">কোনো স্মৃতি নেই</p>
         )}
         {memories.map((m) => (
           <div
             key={m.id}
             className={cn(
-              'rounded-xl border p-3 text-[11px] transition-all backdrop-blur-md',
+              'rounded-xl border p-3 text-[11px] transition-all',
               m.pinned
-                ? 'border-[rgba(201,168,76,0.3)] bg-[rgba(201,168,76,0.08)] shadow-[0_0_14px_rgba(201,168,76,0.1)]'
-                : 'border-white/[0.06] bg-white/[0.03]',
-              m.scope === 'personal' && !m.pinned && 'shadow-[0_0_10px_rgba(96,165,250,0.05)]',
-              m.scope === 'business' && !m.pinned && 'shadow-[0_0_10px_rgba(201,168,76,0.05)]',
-              m.scope === 'staff' && !m.pinned && 'shadow-[0_0_10px_rgba(192,132,252,0.05)]',
+                ? 'border-[#E07A5F]/20 bg-[#E07A5F]/[0.04] shadow-sm'
+                : 'border-black/[0.06] bg-gray-50',
+              m.scope === 'personal' && !m.pinned && 'shadow-sm',
+              m.scope === 'business' && !m.pinned && 'shadow-sm',
+              m.scope === 'staff' && !m.pinned && 'shadow-sm',
             )}
           >
             <div className="mb-1.5 flex items-center gap-2">
               <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
-                m.scope === 'personal' ? 'bg-blue-400/10 text-blue-400' :
-                m.scope === 'business' ? 'bg-gold/10 text-gold-lt' :
-                'bg-purple-400/10 text-purple-400'
+                m.scope === 'personal' ? 'bg-blue-100 text-blue-600' :
+                m.scope === 'business' ? 'bg-amber-100 text-amber-700' :
+                'bg-purple-100 text-purple-600'
               )}>
                 {SCOPE_LABELS[m.scope] ?? m.scope}
               </span>
-              {m.key && <span className="text-zinc-600">{m.key}</span>}
+              {m.key && <span className="text-gray-400">{m.key}</span>}
               <div className="ml-auto flex items-center gap-1">
                 <button
                   onClick={() => togglePin(m.id, m.pinned)}
                   title={m.pinned ? 'পিন সরান' : 'পিন করুন'}
-                  className={cn('rounded p-0.5 transition-colors', m.pinned ? 'text-gold' : 'text-zinc-600 hover:text-gold')}
+                  className={cn('rounded p-0.5 transition-colors', m.pinned ? 'text-[#E07A5F]' : 'text-gray-400 hover:text-[#E07A5F]')}
                 >
                   📌
                 </button>
                 <button
                   onClick={() => setDeleteMemId(m.id)}
-                  className="rounded p-0.5 text-zinc-600 hover:text-red-400 transition-colors"
+                  className="rounded p-0.5 text-gray-400 hover:text-red-500 transition-colors"
                   title="মুছুন"
                 >
                   🗑️
                 </button>
               </div>
             </div>
-            <p className="leading-relaxed text-muted-hi line-clamp-3">{m.content}</p>
-            <p className="mt-1.5 text-[9px] text-zinc-600">
+            <p className="leading-relaxed text-gray-700 line-clamp-3">{m.content}</p>
+            <p className="mt-1.5 text-[9px] text-gray-400">
               {new Date(m.createdAt).toLocaleDateString('en-BD', { day: '2-digit', month: 'short', year: '2-digit' })}
             </p>
           </div>
@@ -679,19 +676,19 @@ function MemoryView() {
         {deleteMemId && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
             onClick={() => setDeleteMemId(null)}
           >
             <motion.div
               initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
+              className="w-full max-w-sm rounded-2xl border border-black/[0.08] bg-white shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="mb-2 font-bold text-cream">স্মৃতি মুছবেন?</h3>
-              <p className="mb-5 text-sm text-muted-hi">এই তথ্য স্থায়ীভাবে মুছে যাবে।</p>
+              <h3 className="mb-2 font-bold text-gray-800">স্মৃতি মুছবেন?</h3>
+              <p className="mb-5 text-sm text-gray-500">এই তথ্য স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteMemId(null)} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20 hover:shadow-[0_0_12px_rgba(248,113,113,0.2)]">মুছুন</button>
+                <button onClick={() => setDeleteMemId(null)} className="flex-1 rounded-xl border border-black/[0.06] bg-gray-50 py-2.5 text-sm text-gray-600 hover:text-gray-800">বাতিল</button>
+                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl bg-red-50 border border-red-200 py-2.5 text-sm font-semibold text-red-500 hover:bg-red-100">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>
@@ -752,58 +749,58 @@ function ProjectDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ scale: 0.95 }}
         animate={{ scale: 1 }}
         exit={{ scale: 0.95 }}
-        className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
+        className="w-full max-w-md rounded-2xl border border-black/[0.08] bg-white shadow-xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-5 font-bold text-cream">{project ? 'প্রজেক্ট সম্পাদনা' : 'নতুন প্রজেক্ট'}</h3>
+        <h3 className="mb-5 font-bold text-gray-800">{project ? 'প্রজেক্ট সম্পাদনা' : 'নতুন প্রজেক্ট'}</h3>
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">নাম *</label>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">নাম *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ALMA Trading"
-              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+              className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">বিবরণ</label>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">বিবরণ</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="সংক্ষিপ্ত বিবরণ"
-              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+              className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">ব্যবসা (business scope)</label>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">ব্যবসা (business scope)</label>
             <select
               value={businessId}
               onChange={(e) => setBusinessId(e.target.value)}
-              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+              className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-4 py-3 text-sm text-gray-800 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
             >
               <option value="">— Personal / cross-business —</option>
               <option value="ALMA_LIFESTYLE">ALMA Lifestyle</option>
               <option value="ALMA_TRADING">ALMA Trading (Binance P2P)</option>
             </select>
-            <p className="mt-1 text-[11px] text-muted">
+            <p className="mt-1 text-[11px] text-gray-500">
               Trading select করলে agent শুধু trading tools, staff, ও memory ব্যবহার করবে।
             </p>
           </div>
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">সিস্টেম নির্দেশনা</label>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">সিস্টেম নির্দেশনা</label>
             <textarea value={sysInstructions} onChange={(e) => setSysInstructions(e.target.value)}
               placeholder="এই প্রজেক্টের জন্য বিশেষ নির্দেশনা…"
               rows={4}
-              className="w-full resize-none rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
+              className="w-full resize-none rounded-xl bg-gray-50 border border-black/[0.06] px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
             />
           </div>
         </div>
         <div className="mt-5 flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
+          <button onClick={onClose} className="flex-1 rounded-xl border border-black/[0.06] bg-gray-50 py-2.5 text-sm text-gray-600 hover:text-gray-800">বাতিল</button>
           <button onClick={save} disabled={!name.trim() || saving}
-            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 py-2.5 text-sm font-semibold text-gold-lt hover:bg-gold/20 hover:shadow-[0_0_16px_rgba(201,168,76,0.2)] disabled:opacity-40"
+            className="flex-1 rounded-xl bg-[#E07A5F]/10 border border-[#E07A5F]/25 py-2.5 text-sm font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/15 disabled:opacity-40"
           >
             {saving ? '…' : 'সংরক্ষণ'}
           </button>

@@ -4,22 +4,24 @@ import '@/agent/styles/agent-ambient.css'
 
 export default function AgentLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="agent-shell relative min-h-[100dvh] bg-[#08080A] text-white">
-      {/* Film grain noise overlay */}
+    <div className="agent-shell relative min-h-[100dvh] bg-[#FAF9F6] text-[#1a1a2e]">
+      {/* Warm mesh gradient background */}
       <div
-        className="pointer-events-none fixed inset-0 z-0 opacity-[0.015]"
+        className="pointer-events-none fixed inset-0 z-0"
         style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
-          backgroundSize: '200px',
+          background: `
+            radial-gradient(ellipse 80% 50% at 20% 0%, rgba(224,122,95,0.08) 0%, transparent 50%),
+            radial-gradient(ellipse 60% 60% at 80% 100%, rgba(129,178,154,0.06) 0%, transparent 50%),
+            radial-gradient(ellipse 70% 40% at 50% 50%, rgba(212,168,75,0.04) 0%, transparent 50%),
+            #FAF9F6
+          `,
         }}
       />
 
-      {/* Main content with bottom padding for nav on mobile */}
       <main className="relative z-10 h-[100dvh] pb-16 md:pb-0">
         {children}
       </main>
 
-      {/* Bottom nav — mobile only */}
       <AgentBottomNav />
     </div>
   )

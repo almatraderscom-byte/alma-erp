@@ -145,9 +145,9 @@ export default function AgentComposer({
             <div key={i} className="relative shrink-0">
               {f.file.type.startsWith('image/') ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={f.previewUrl} alt="" className="h-14 w-14 rounded-xl border border-white/[0.06] object-cover" />
+                <img src={f.previewUrl} alt="" className="h-14 w-14 rounded-xl border border-black/[0.06] object-cover" />
               ) : (
-                <div className="flex h-14 w-14 flex-col items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.03] text-[10px] text-white/50">
+                <div className="flex h-14 w-14 flex-col items-center justify-center rounded-xl border border-black/[0.06] bg-gray-50 text-[10px] text-gray-500">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                   <span className="mt-0.5">PDF</span>
                 </div>
@@ -155,7 +155,7 @@ export default function AgentComposer({
               <button
                 type="button"
                 onClick={() => removeFile(i)}
-                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white/10 text-[8px] text-white/70 backdrop-blur-md hover:bg-red-500/80 hover:text-white"
+                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-gray-200 text-[8px] text-gray-600 hover:bg-red-500 hover:text-white"
               >
                 <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
               </button>
@@ -166,13 +166,13 @@ export default function AgentComposer({
 
       {/* Recording UI */}
       {recording && (
-        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-red-400/15 bg-red-500/[0.04] px-4 py-2.5">
+        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-2.5">
           <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
-          <span className="flex-1 text-sm font-medium text-red-300/80">
+          <span className="flex-1 text-sm font-medium text-red-600">
             রেকর্ডিং {Math.floor(recordSecs / 60).toString().padStart(2, '0')}:{(recordSecs % 60).toString().padStart(2, '0')}
           </span>
-          <button type="button" onClick={cancelRecording} className="text-xs text-white/40 hover:text-white/70">বাতিল</button>
-          <button type="button" onClick={stopRecording} className="rounded-lg bg-red-400/10 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-400/20">পাঠান</button>
+          <button type="button" onClick={cancelRecording} className="text-xs text-gray-500 hover:text-gray-700">বাতিল</button>
+          <button type="button" onClick={stopRecording} className="rounded-lg bg-red-100 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-200">পাঠান</button>
         </div>
       )}
 
@@ -181,8 +181,8 @@ export default function AgentComposer({
         className={cn(
           'flex items-end gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
           streaming
-            ? 'border-gold/20 bg-[rgba(15,15,20,0.7)] shadow-[0_0_20px_rgba(201,168,76,0.06)]'
-            : 'border-white/[0.08] bg-[rgba(15,15,20,0.5)] focus-within:border-white/[0.14] focus-within:bg-[rgba(15,15,20,0.7)]',
+            ? 'border-[#E07A5F]/25 bg-white shadow-[0_2px_12px_rgba(224,122,95,0.08)]'
+            : 'border-black/[0.08] bg-white focus-within:border-black/[0.14] focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06)]',
         )}
       >
         {/* Attach */}
@@ -190,7 +190,7 @@ export default function AgentComposer({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || streaming}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/30 transition-all hover:bg-white/[0.05] hover:text-white/60 disabled:opacity-30 md:h-9 md:w-9"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 disabled:opacity-30 md:h-9 md:w-9"
           aria-label="ফাইল যুক্ত করুন"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
@@ -205,7 +205,7 @@ export default function AgentComposer({
           disabled={disabled || recording || streaming}
           placeholder={recording ? '' : 'বার্তা লিখুন…'}
           rows={1}
-          className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[15px] leading-snug text-white/90 placeholder-white/25 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
+          className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[15px] leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
         />
 
         {/* Mic */}
@@ -214,7 +214,7 @@ export default function AgentComposer({
             type="button"
             onClick={startRecording}
             disabled={disabled}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/30 transition-all hover:bg-white/[0.05] hover:text-white/60 disabled:opacity-30 md:h-9 md:w-9"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 disabled:opacity-30 md:h-9 md:w-9"
             aria-label="ভয়েস ইনপুট"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -226,7 +226,7 @@ export default function AgentComposer({
           <button
             type="button"
             onClick={onStop}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-white/60 transition-all hover:bg-white/[0.12] active:scale-95 md:h-9 md:w-9"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-500 transition-all hover:bg-gray-200 active:scale-95 md:h-9 md:w-9"
             aria-label="থামান"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
@@ -239,8 +239,8 @@ export default function AgentComposer({
             className={cn(
               'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all active:scale-95 md:h-9 md:w-9',
               canSend
-                ? 'bg-white text-black hover:bg-white/90'
-                : 'bg-white/[0.06] text-white/20',
+                ? 'bg-[#E07A5F] text-white hover:bg-[#d06a4f]'
+                : 'bg-gray-100 text-gray-300',
             )}
             aria-label="পাঠান"
           >
