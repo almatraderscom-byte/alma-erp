@@ -27,6 +27,7 @@ import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
 import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
+import { QC_TOOLS } from './qc-tools'
 import { COST_TOOLS } from './cost-tools'
 import { LOCATION_TOOLS } from './location-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
@@ -63,7 +64,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],
   finance: [...FINANCE_TOOLS],
   cs: [...OWNER_CUSTOMER_INTEL_TOOLS],
-  content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS],
+  content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS, ...QC_TOOLS],
   growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS],
   website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],

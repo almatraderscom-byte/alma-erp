@@ -24,6 +24,7 @@ export type CostKind =
   | 'call'
   | 'cs_chat'
   | 'cs_vision'
+  | 'qc_vision'
   | 'cs_comment_classify'
   | 'web_research'
 

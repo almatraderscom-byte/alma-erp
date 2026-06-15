@@ -144,6 +144,12 @@ export async function POST(req: NextRequest) {
           : String(data?.imageUrl ?? '')
         if (!imageUrl) throw new Error('No image path in job result')
         messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+        const qcFlag = typeof data?.qc === 'object' && data.qc !== null
+          ? (data.qc as { flagged?: string }).flagged
+          : undefined
+        if (qcFlag) {
+          messageText += `\n\n_${qcFlag}_`
+        }
       } catch (signErr) {
         const detail = signErr instanceof Error ? signErr.message : String(signErr)
         console.error('[job-result] signed URL failed', { storagePath, detail })

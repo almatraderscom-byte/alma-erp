@@ -33,6 +33,7 @@ import { TRADING_READ_TOOLS } from './trading-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
 import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
+import { QC_TOOLS } from './qc-tools'
 
 export interface ToolResult {
   success: boolean
@@ -407,6 +408,7 @@ export const TOOLS: AgentTool[] = [
   ...PLAYBOOK_TOOLS,
   ...LEARNING_TOOLS,
   ...REFERENCE_TOOLS,
+  ...QC_TOOLS,
   ...TRYON_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,

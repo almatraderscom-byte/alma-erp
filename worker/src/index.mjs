@@ -221,20 +221,19 @@ async function pollPendingJobs() {
 
 // ── Image generation handler ───────────────────────────────────────────────
 
-async function processImageGen(job) {
-  const { pendingActionId, payload } = job.data
-  console.log(`[worker] image-gen ${pendingActionId} — starting`)
-
-  if (!payload) {
-    await callJobResult(pendingActionId, 'failed', undefined, 'No payload in job data')
-    return
-  }
-
-  const { prompt, quality, referenceImageId, secondReferenceImageId, conversationId, aspectRatio, imageSize } = payload
-
+async function generateImageToStorage({
+  pendingActionId,
+  prompt,
+  quality,
+  referenceImageId,
+  secondReferenceImageId,
+  aspectRatio,
+  imageSize,
+  suffix = '',
+}) {
   const modelName = quality === 'standard'
-    ? 'gemini-3.1-flash-image'   // Nano Banana 2 (GA)
-    : 'gemini-3-pro-image'       // Nano Banana Pro (GA, highest quality)
+    ? 'gemini-3.1-flash-image'
+    : 'gemini-3-pro-image'
 
   const resolvedAspectRatio = aspectRatio ?? '4:5'
   const resolvedImageSize = imageSize ?? '2K'
@@ -286,7 +285,9 @@ async function processImageGen(job) {
   if (!imageBase64) throw new Error('No image in Gemini response')
 
   const ext = imageMimeType.split('/')[1] || 'png'
-  const storagePath = `generated/${pendingActionId}.${ext}`
+  const storagePath = suffix
+    ? `generated/${pendingActionId}-${suffix}.${ext}`
+    : `generated/${pendingActionId}.${ext}`
   const imageBuffer = Buffer.from(imageBase64, 'base64')
 
   const { error: uploadErr } = await supabase
@@ -296,30 +297,103 @@ async function processImageGen(job) {
 
   if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
 
-  // Private bucket — job-result route signs storagePath for the chat message.
-  await callJobResult(pendingActionId, 'success', {
-    storagePath,
+  return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+}
+
+async function processImageGen(job) {
+  const { pendingActionId, payload } = job.data
+  console.log(`[worker] image-gen ${pendingActionId} — starting`)
+
+  if (!payload) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'No payload in job data')
+    return
+  }
+
+  const {
+    prompt: basePrompt,
+    quality,
+    referenceImageId,
+    secondReferenceImageId,
     conversationId,
-  })
+    aspectRatio,
+    imageSize,
+    contentPipeline,
+  } = payload
+
+  const { fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
+  const qcLevel = await fetchQcLevel(supabase)
+
+  const genOpts = {
+    pendingActionId,
+    quality,
+    referenceImageId,
+    secondReferenceImageId,
+    aspectRatio,
+    imageSize,
+  }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
-  void logCost({
-    provider: 'gemini',
-    kind: 'image',
-    units: {
-      quality,
-      model: modelName,
-      aspectRatio: resolvedAspectRatio,
-      imageSize: resolvedImageSize,
-      pendingActionId,
+
+  async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
+    void logCost({
+      provider: 'gemini',
+      kind: 'image',
+      units: {
+        quality,
+        model: modelName,
+        aspectRatio: resolvedAspectRatio,
+        imageSize: resolvedImageSize,
+        pendingActionId,
+        qcAttempt,
+      },
+      costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize),
+      conversationId: conversationId ?? undefined,
+      jobId: pendingActionId,
+      dedupKey: `image:${pendingActionId}:${qcAttempt ?? 1}`,
+    })
+  }
+
+  const first = await generateImageToStorage({ ...genOpts, prompt: basePrompt })
+  await logImageCost(first.storagePath, first.modelName, first.resolvedAspectRatio, first.resolvedImageSize, 1)
+  console.log(`[worker] image-gen ${pendingActionId} — gen attempt 1 → ${first.storagePath}`)
+
+  const productType = contentPipeline?.productCode ?? null
+  const productImagePath = secondReferenceImageId ?? null
+
+  let regenCount = 0
+  const qcResult = await runImageQcLoop({
+    supabase,
+    appUrl: APP_URL,
+    token: INTERNAL_TOKEN,
+    qcLevel,
+    initialPath: first.storagePath,
+    productType,
+    productImagePath,
+    regenerate: async (fixHint, attemptNum) => {
+      regenCount += 1
+      const regenPrompt = `${basePrompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
+      const regen = await generateImageToStorage({
+        ...genOpts,
+        prompt: regenPrompt,
+        suffix: `qc${attemptNum}`,
+      })
+      await logImageCost(regen.storagePath, regen.modelName, regen.resolvedAspectRatio, regen.resolvedImageSize, attemptNum)
+      console.log(`[worker] image-gen ${pendingActionId} — QC regen ${attemptNum} → ${regen.storagePath}`)
+      return regen.storagePath
     },
-    costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize),
-    conversationId: conversationId ?? undefined,
-    jobId: pendingActionId,
-    dedupKey: `image:${pendingActionId}`,
   })
 
-  console.log(`[worker] image-gen ${pendingActionId} — done → ${storagePath}`)
+  if (qcResult.qc?.scores?.length) {
+    console.log(`[worker] image-gen ${pendingActionId} — QC`, JSON.stringify(qcResult.qc))
+  }
+
+  await callJobResult(pendingActionId, 'success', {
+    storagePath: qcResult.storagePath,
+    conversationId,
+    qc: qcResult.qc,
+  })
+
+  console.log(`[worker] image-gen ${pendingActionId} — done → ${qcResult.storagePath}${qcResult.qc?.flagged ? ` (${qcResult.qc.flagged})` : ''}`)
 }
 
 // ── Video generation handler (Veo 3.1) — see video-gen.mjs ───────────────────
