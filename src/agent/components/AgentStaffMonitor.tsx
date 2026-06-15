@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type {
   StaffMonitorData,
@@ -21,14 +21,14 @@ const AgentSalahTimesSettings = dynamic(
 const FEED_PREVIEW_LEN = 120
 
 const TYPE_LABELS: Record<string, string> = {
-  task_dispatch: 'টাস্ক ডিসপ্যাচ',
+  task_dispatch: 'টাস্ক',
   announcement: 'ঘোষণা',
   reminder: 'রিমাইন্ডার',
   presence: 'প্রেজেন্স',
-  coaching: 'অ্যাটেনড্যান্স কোচিং',
-  feedback_ack: 'ফিডব্যাক রিপ্লাই',
-  task_redo: 'আবার করো',
-  proof_reminder: 'প্রমাণ রিমাইন্ডার',
+  coaching: 'কোচিং',
+  feedback_ack: 'ফিডব্যাক',
+  task_redo: 'রিডু',
+  proof_reminder: 'প্রমাণ',
 }
 
 function typeLabel(type: string) {
@@ -41,12 +41,12 @@ function FeedMessage({ content }: { content: string }) {
   const needsMore = text.length > FEED_PREVIEW_LEN
 
   return (
-    <div className="mt-1 text-[#FAFAF8]/90">
+    <div className="mt-1.5">
       <div className={cn(!expanded && needsMore && 'line-clamp-2')}>
         {expanded || !needsMore ? (
-          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">{text}</pre>
+          <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-white/80">{text}</pre>
         ) : (
-          <span className="text-xs">{text.slice(0, FEED_PREVIEW_LEN)}…</span>
+          <span className="text-[11px] text-white/80">{text.slice(0, FEED_PREVIEW_LEN)}…</span>
         )}
       </div>
       {needsMore && (
@@ -55,19 +55,19 @@ function FeedMessage({ content }: { content: string }) {
           onClick={() => setExpanded(v => !v)}
           className="mt-1 text-[10px] font-semibold text-[#C9A84C] hover:text-[#E8C96A] transition-colors"
         >
-          {expanded ? 'কম দেখুন' : 'আরও'}
+          {expanded ? '▴ কম' : '▾ আরও'}
         </button>
       )}
     </div>
   )
 }
 
-function statusDot(summary: StaffSummary) {
-  if (summary.failed > 0) return '🔴'
-  if (summary.dispatched > 0 && summary.delivered < summary.dispatched) return '🟡'
-  if (summary.tasksTotal > 0 && summary.completionPct >= 100) return '🟢'
-  if (summary.started) return '🟡'
-  return '⚪'
+function statusColor(summary: StaffSummary): { dot: string; ring: string; bg: string } {
+  if (summary.failed > 0) return { dot: 'bg-red-400', ring: 'shadow-[0_0_8px_rgba(248,113,113,0.6)]', bg: 'border-red-500/25' }
+  if (summary.dispatched > 0 && summary.delivered < summary.dispatched) return { dot: 'bg-amber-400', ring: 'shadow-[0_0_8px_rgba(251,191,36,0.6)]', bg: 'border-amber-500/20' }
+  if (summary.tasksTotal > 0 && summary.completionPct >= 100) return { dot: 'bg-emerald-400', ring: 'shadow-[0_0_8px_rgba(52,211,153,0.6)]', bg: 'border-emerald-500/20' }
+  if (summary.started) return { dot: 'bg-amber-400', ring: 'shadow-[0_0_8px_rgba(251,191,36,0.6)]', bg: 'border-amber-500/15' }
+  return { dot: 'bg-zinc-500', ring: '', bg: 'border-white/[0.06]' }
 }
 
 function fmtTime(iso: string) {
@@ -79,13 +79,8 @@ function fmtTime(iso: string) {
 }
 
 const ACK_TRACKED_TYPES = new Set([
-  'task_dispatch',
-  'announcement',
-  'reminder',
-  'coaching',
-  'proof_reminder',
-  'task_redo',
-  'presence',
+  'task_dispatch', 'announcement', 'reminder', 'coaching',
+  'proof_reminder', 'task_redo', 'presence',
 ])
 
 function tracksAck(m: StaffMonitorRow): boolean {
@@ -93,274 +88,362 @@ function tracksAck(m: StaffMonitorRow): boolean {
   return ACK_TRACKED_TYPES.has(m.type) && (m.status === 'delivered' || m.status === 'sent' || !!m.acknowledgedAt)
 }
 
-function AckStatus({ m }: { m: StaffMonitorRow }) {
+function AckBadge({ m }: { m: StaffMonitorRow }) {
   if (!tracksAck(m)) return null
   if (m.acknowledgedAt) {
     return (
-      <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-emerald-400/30 bg-emerald-500/10 backdrop-blur-sm px-2.5 py-1 text-[10px] font-semibold text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.1)]">
-          ✅ দেখেছেন · {fmtTime(m.acknowledgedAt)}
-        </span>
-      </div>
+      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/25 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300">
+        ✓ {fmtTime(m.acknowledgedAt)}
+      </span>
     )
   }
   if (m.status === 'delivered' || m.status === 'sent') {
     return (
-      <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-amber-400/30 bg-amber-500/10 backdrop-blur-sm px-2.5 py-1 text-[10px] font-semibold text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.1)]">
-          ⏳ এখনো দেখেননি
-        </span>
-      </div>
+      <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">
+        ⏳ unseen
+      </span>
     )
   }
   if (m.status === 'queued' || m.status === 'pending') {
     return (
-      <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-[#1E1E24] bg-white/5 backdrop-blur-sm px-2.5 py-1 text-[10px] text-[#9B9BA4]">
-          📤 পাঠানো হচ্ছে…
-        </span>
-      </div>
+      <span className="inline-flex items-center rounded-md border border-zinc-600/30 bg-white/5 px-1.5 py-0.5 text-[9px] text-zinc-400">
+        sending…
+      </span>
     )
   }
   return null
 }
 
 function dutyIcon(status: AgentDutyRow['status']) {
-  if (status === 'done') return '✅'
-  if (status === 'failed') return '❌'
-  if (status === 'missed') return '🔴'
-  if (status === 'skipped') return '⏭️'
-  return '⏳'
+  if (status === 'done') return <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+  if (status === 'failed') return <span className="inline-block h-2 w-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
+  if (status === 'missed') return <span className="inline-block h-2 w-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
+  if (status === 'skipped') return <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" />
+  return <span className="inline-block h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse" />
 }
 
 function dutyRightText(d: AgentDutyRow): string {
   if (d.status === 'done' && d.ranAt) return fmtTime(d.ranAt)
-  if (d.status === 'skipped' || d.status === 'missed') {
-    return d.detail || (d.status === 'missed' ? 'মিস হয়েছে' : '')
-  }
-  if (d.time) return `🕒 ${d.time}`
+  if (d.status === 'skipped' || d.status === 'missed') return d.detail || (d.status === 'missed' ? 'missed' : '')
+  if (d.time) return d.time
   return ''
 }
 
 function salahRightText(s: SalahDutyRow): string {
-  if (s.status === 'done' && s.doneTime) return `✓ ${s.doneTime}`
-  return `🕒 ${s.scheduledTime}`
+  if (s.status === 'done' && s.doneTime) return s.doneTime
+  return s.scheduledTime
 }
 
 function salahIcon(status: SalahDutyRow['status']) {
-  if (status === 'done') return '✅'
-  if (status === 'missed') return '🔴'
-  return '⏳'
+  if (status === 'done') return <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+  if (status === 'missed') return <span className="inline-block h-2 w-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
+  return <span className="inline-block h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse" />
+}
+
+function SectionCard({ title, icon, children, className, accent }: {
+  title: string; icon?: string; children: React.ReactNode; className?: string
+  accent?: 'gold' | 'emerald' | 'amber' | 'red' | 'blue'
+}) {
+  const accentColors = {
+    gold: 'border-[#C9A84C]/20 shadow-[0_0_24px_rgba(201,168,76,0.04)]',
+    emerald: 'border-emerald-500/20 shadow-[0_0_24px_rgba(16,185,129,0.04)]',
+    amber: 'border-amber-500/20 shadow-[0_0_24px_rgba(245,158,11,0.04)]',
+    red: 'border-red-500/20 shadow-[0_0_24px_rgba(239,68,68,0.04)]',
+    blue: 'border-blue-500/20 shadow-[0_0_24px_rgba(59,130,246,0.04)]',
+  }
+  return (
+    <div className={cn(
+      'rounded-2xl border bg-white/[0.02] backdrop-blur-xl overflow-hidden',
+      accent ? accentColors[accent] : 'border-white/[0.06]',
+      className,
+    )}>
+      <div className="flex items-center gap-2 border-b border-white/[0.04] px-4 py-2.5">
+        {icon && <span className="text-sm">{icon}</span>}
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/50">{title}</h3>
+      </div>
+      <div className="p-3">{children}</div>
+    </div>
+  )
+}
+
+function LivePulse() {
+  return (
+    <span className="relative inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+      </span>
+      Live
+    </span>
+  )
+}
+
+function ArchiveBadge({ date }: { date: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-600/30 bg-zinc-800/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+      <span className="inline-flex h-2 w-2 rounded-full bg-zinc-500" />
+      {date}
+    </span>
+  )
+}
+
+const fadeIn = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
 }
 
 const staggerContainer = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06 },
-  },
-}
-
-const staggerItem = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
+  hidden: {},
+  show: { transition: { staggerChildren: 0.05 } },
 }
 
 function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean }) {
+  const [feedExpanded, setFeedExpanded] = useState(false)
+  const feedItems = data.feed ?? []
+  const visibleFeed = feedExpanded ? feedItems : feedItems.slice(0, 6)
+
+  const totalDuties = (data.agentDuties ?? []).length
+  const doneDuties = (data.agentDuties ?? []).filter(d => d.status === 'done').length
+  const failedDuties = (data.agentDuties ?? []).filter(d => d.status === 'failed' || d.status === 'missed').length
+
   return (
-    <>
+    <motion.div
+      className="space-y-4"
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+    >
+      {/* Warnings banner */}
       {(data.warnings?.length ?? 0) > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-bold text-red-300">⚠️ সতর্কতা</h2>
+        <motion.div variants={fadeIn} className="space-y-2">
           {data.warnings.map((w, i) => (
             <div
               key={`${w.kind}-${i}`}
               className={cn(
-                'rounded-xl border px-3 py-2.5 text-xs backdrop-blur-md',
+                'flex items-start gap-3 rounded-xl border px-4 py-3 text-[12px] backdrop-blur-md',
                 w.severity === 'critical'
-                  ? 'border-red-500/40 bg-red-500/10 text-red-100 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
-                  : 'border-amber-500/30 bg-amber-500/10 text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.1)]',
+                  ? 'border-red-500/30 bg-red-500/[0.06] text-red-100 shadow-[0_0_20px_rgba(239,68,68,0.1)]'
+                  : 'border-amber-500/25 bg-amber-500/[0.06] text-amber-100',
               )}
             >
-              {w.message}
+              <span className="mt-0.5 text-lg">{w.severity === 'critical' ? '🚨' : '⚠️'}</span>
+              <span className="flex-1">{w.message}</span>
             </div>
           ))}
-        </div>
+        </motion.div>
       )}
 
-      <div className="space-y-1.5">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">
-          🤖 এজেন্টের কাজ {isLive ? '(লাইভ)' : '(আর্কাইভ)'}
-        </h2>
-        {(data.agentDuties ?? []).map((d) => (
-          <div
-            key={d.id}
-            className={cn(
-              'flex items-center gap-2 rounded-xl border px-3 py-2.5 backdrop-blur-md transition-all',
-              d.status === 'failed' || d.status === 'missed'
-                ? 'border-red-500/30 bg-red-500/[0.08] shadow-[inset_-2px_0_0_rgba(239,68,68,0.5),0_0_12px_rgba(239,68,68,0.08)]'
-                : 'border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.05]',
-            )}
-          >
-            <span className="shrink-0 text-base leading-none">{dutyIcon(d.status)}</span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-[#FAFAF8]/90">{d.label}</span>
-            <span className="shrink-0 text-[11px] text-[#6B6B72] tabular-nums">{dutyRightText(d)}</span>
+      {/* KPI row — quick stats */}
+      <motion.div variants={fadeIn} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          { label: 'Agent Duties', value: `${doneDuties}/${totalDuties}`, sub: failedDuties > 0 ? `${failedDuties} failed` : 'on track', color: failedDuties > 0 ? 'text-red-400' : 'text-emerald-400' },
+          { label: 'Staff Active', value: String(data.staffSummaries?.length ?? 0), sub: 'tracked today', color: 'text-[#E8C96A]' },
+          { label: 'Unacked', value: String(data.unackedMessages?.length ?? 0), sub: 'pending', color: (data.unackedMessages?.length ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400' },
+          { label: 'Failures', value: String(data.failures?.length ?? 0), sub: 'delivery', color: (data.failures?.length ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400' },
+        ].map((kpi) => (
+          <div key={kpi.label} className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md px-3 py-2.5">
+            <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-white/30">{kpi.label}</p>
+            <p className={cn('mt-0.5 text-xl font-black tabular-nums', kpi.color)}>{kpi.value}</p>
+            <p className="text-[10px] text-white/30">{kpi.sub}</p>
           </div>
         ))}
+      </motion.div>
 
-        {isLive && (data.salahDuties?.length ?? 0) > 0 && (
-          <div className="mt-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] backdrop-blur-md p-2.5 shadow-[0_0_16px_rgba(16,185,129,0.05)]">
-            <div className="mb-1.5 text-xs font-bold text-emerald-300/90">🕌 আজকের সালাহ রিমাইন্ডার</div>
-            {data.salahDuties.map((s) => (
-              <div key={s.waqt} className="flex items-center gap-2 px-1 py-1 text-[12px]">
-                <span className="shrink-0">{salahIcon(s.status)}</span>
-                <span className="min-w-0 flex-1 truncate text-[#FAFAF8]/80">
-                  {s.label}
-                  {s.reminders ? ` · ${s.reminders} রিমাইন্ডার` : ''}
-                </span>
-                <span className="shrink-0 text-[11px] text-[#6B6B72] tabular-nums">{salahRightText(s)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isLive && (data.continuousServices?.length ?? 0) > 0 && (
-          <div className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md px-3 py-2.5 text-[11px] text-[#9B9BA4]">
-            🔄 চলমান সেবা:{' '}
-            {data.continuousServices.map((s) => (
-              <span key={s.label} className="inline-flex items-center gap-1">
-                {s.label}{' '}
-                <span className={cn(
-                  'inline-block h-2 w-2 rounded-full',
-                  s.healthy
-                    ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
-                    : 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]'
-                )} />
-                {' · '}
-              </span>
-            ))}
-            {data.schedulerHealth?.ackEscalationLastRun && (
-              <> ack check {fmtTime(data.schedulerHealth.ackEscalationLastRun)}</>
-            )}
-          </div>
-        )}
-      </div>
-
-      {Object.keys(data.typeCounts ?? {}).length > 0 && (
-        <p className="text-[10px] text-[#9B9BA4]">
-          মেসেজ:{' '}
-          {Object.entries(data.typeCounts)
-            .map(([t, n]) => `${typeLabel(t)} ${n}`)
-            .join(' · ')}
-        </p>
-      )}
-
-      {isLive && (data.unackedMessages?.length ?? 0) > 0 && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] backdrop-blur-md p-3 shadow-[0_0_20px_rgba(245,158,11,0.08)]">
-          <h2 className="text-sm font-bold text-amber-200">⏳ দেখেননি ({data.unackedMessages.length})</h2>
-          <div className="mt-2 space-y-2">
-            {data.unackedMessages.map((m) => (
-              <div key={m.id} className="rounded-lg border border-amber-500/15 bg-white/[0.03] backdrop-blur-sm p-2.5 text-xs">
-                <div className="flex justify-between text-amber-100/80">
-                  <span>{m.staffName ?? '—'} · {typeLabel(m.type)}</span>
-                  <span className="text-amber-200/70 font-medium tabular-nums">{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
-                </div>
-                <FeedMessage content={m.content ?? ''} />
-                <AckStatus m={m} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(data.failures?.length ?? 0) > 0 && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/[0.08] backdrop-blur-md p-3 text-sm text-red-200 shadow-[0_0_20px_rgba(239,68,68,0.1)]">
-          🔴 {data.failures?.length ?? 0}টি মেসেজ পৌঁছায়নি
-        </div>
-      )}
-
-      {(data.staffSummaries?.length ?? 0) > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">স্টাফ</h2>
-          <motion.div
-            className="grid gap-2 sm:grid-cols-2"
-            variants={staggerContainer}
-            initial="hidden"
-            animate="show"
-          >
-            {data.staffSummaries.map((s) => (
-              <motion.div
-                key={s.staffId}
-                variants={staggerItem}
-                className={cn(
-                  'rounded-xl border bg-white/[0.03] backdrop-blur-md p-3 text-xs transition-all',
-                  s.failed > 0
-                    ? 'border-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.08)]'
-                    : s.completionPct >= 100
-                      ? 'border-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.06)]'
-                      : 'border-white/[0.08] hover:border-[#C9A84C]/20',
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-[#FAFAF8]">{statusDot(s)} {s.staffName}</span>
-                  <span className="text-[#9B9BA4] font-medium">{s.completionPct}%</span>
-                </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+      {/* Main 2-col grid: Duties + Salah | Staff cards */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+        {/* Left column — duties & salah (3/5) */}
+        <div className="space-y-3 lg:col-span-3">
+          <motion.div variants={fadeIn}>
+            <SectionCard title="Agent Duties" icon="🤖" accent="gold">
+              <div className="space-y-1">
+                {(data.agentDuties ?? []).map((d) => (
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#8B6914] to-[#E8C96A] transition-all duration-500"
-                    style={{ width: `${Math.min(s.completionPct, 100)}%` }}
-                  />
-                </div>
-                <div className="mt-2 space-y-0.5 text-[#9B9BA4]">
-                  <div>পাঠানো {s.dispatched} / পৌঁছেছে {s.delivered} / ব্যর্থ {s.failed}</div>
-                  <div>কাজ {s.tasksDone}/{s.tasksTotal}</div>
-                </div>
-              </motion.div>
-            ))}
+                    key={d.id}
+                    className={cn(
+                      'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[12px] transition-all',
+                      (d.status === 'failed' || d.status === 'missed')
+                        ? 'bg-red-500/[0.06] border-l-2 border-l-red-400/60'
+                        : d.status === 'done'
+                          ? 'bg-white/[0.01] border-l-2 border-l-emerald-400/40'
+                          : 'bg-white/[0.01] border-l-2 border-l-amber-400/30',
+                    )}
+                  >
+                    <span className="shrink-0">{dutyIcon(d.status)}</span>
+                    <span className="min-w-0 flex-1 truncate text-white/80">{d.label}</span>
+                    <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/30">{dutyRightText(d)}</span>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
           </motion.div>
+
+          {isLive && (data.salahDuties?.length ?? 0) > 0 && (
+            <motion.div variants={fadeIn}>
+              <SectionCard title="Salah Reminders" icon="🕌" accent="emerald">
+                <div className="space-y-1">
+                  {data.salahDuties.map((s) => (
+                    <div key={s.waqt} className="flex items-center gap-2.5 rounded-lg bg-white/[0.01] px-2.5 py-2 text-[12px]">
+                      <span className="shrink-0">{salahIcon(s.status)}</span>
+                      <span className="min-w-0 flex-1 truncate text-white/80">
+                        {s.label}
+                        {s.reminders ? <span className="ml-1 text-[10px] text-white/30">({s.reminders}×)</span> : null}
+                      </span>
+                      <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/30">{salahRightText(s)}</span>
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
+            </motion.div>
+          )}
+
+          {isLive && (data.continuousServices?.length ?? 0) > 0 && (
+            <motion.div variants={fadeIn}>
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md px-4 py-2.5 text-[11px] text-white/40">
+                <span className="font-bold uppercase tracking-wider text-white/25">Services</span>
+                {data.continuousServices.map((s) => (
+                  <span key={s.label} className="inline-flex items-center gap-1.5">
+                    <span className={cn(
+                      'inline-block h-1.5 w-1.5 rounded-full',
+                      s.healthy ? 'bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.6)]' : 'bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.6)]'
+                    )} />
+                    {s.label}
+                  </span>
+                ))}
+                {data.schedulerHealth?.ackEscalationLastRun && (
+                  <span className="text-white/20">ack {fmtTime(data.schedulerHealth.ackEscalationLastRun)}</span>
+                )}
+              </div>
+            </motion.div>
+          )}
         </div>
+
+        {/* Right column — staff cards (2/5) */}
+        <div className="space-y-3 lg:col-span-2">
+          {(data.staffSummaries?.length ?? 0) > 0 && (
+            <motion.div variants={fadeIn}>
+              <SectionCard title="Staff Overview" icon="👥" accent="gold">
+                <div className="space-y-2">
+                  {data.staffSummaries.map((s) => {
+                    const sc = statusColor(s)
+                    return (
+                      <div key={s.staffId} className={cn('rounded-xl border bg-white/[0.02] p-3', sc.bg)}>
+                        <div className="flex items-center gap-2">
+                          <span className={cn('h-2.5 w-2.5 rounded-full shrink-0', sc.dot, sc.ring)} />
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/90">{s.staffName}</span>
+                          <span className="text-[12px] font-bold tabular-nums text-white/50">{s.completionPct}%</span>
+                        </div>
+                        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                          <motion.div
+                            className="h-full rounded-full bg-gradient-to-r from-[#8B6914] via-[#C9A84C] to-[#E8C96A]"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(s.completionPct, 100)}%` }}
+                            transition={{ duration: 0.8, ease: 'easeOut' }}
+                          />
+                        </div>
+                        <div className="mt-2 flex gap-3 text-[10px] text-white/30">
+                          <span>📤 {s.dispatched}</span>
+                          <span>✓ {s.delivered}</span>
+                          {s.failed > 0 && <span className="text-red-400">✗ {s.failed}</span>}
+                          <span className="ml-auto">🎯 {s.tasksDone}/{s.tasksTotal}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </SectionCard>
+            </motion.div>
+          )}
+
+          {/* Unacked messages — attention panel */}
+          {isLive && (data.unackedMessages?.length ?? 0) > 0 && (
+            <motion.div variants={fadeIn}>
+              <SectionCard title={`Pending Ack (${data.unackedMessages.length})`} icon="⏳" accent="amber">
+                <div className="space-y-1.5">
+                  {data.unackedMessages.map((m) => (
+                    <div key={m.id} className="rounded-lg border border-amber-500/10 bg-amber-500/[0.03] p-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-medium text-amber-100/80">{m.staffName ?? '—'}</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[9px] font-semibold text-amber-300">{typeLabel(m.type)}</span>
+                          <span className="tabular-nums text-[10px] text-white/25">{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
+                        </div>
+                      </div>
+                      <FeedMessage content={m.content ?? ''} />
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      {/* Failures banner */}
+      {(data.failures?.length ?? 0) > 0 && (
+        <motion.div variants={fadeIn} className="rounded-xl border border-red-500/25 bg-red-500/[0.04] backdrop-blur-md px-4 py-3 text-[13px] font-semibold text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.06)]">
+          <span className="mr-2 inline-block h-2 w-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
+          {data.failures?.length ?? 0} delivery failure{(data.failures?.length ?? 0) > 1 ? 's' : ''}
+        </motion.div>
       )}
 
-      <div className="space-y-2">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">মেসেজ ফিড</h2>
-        {(data.feed?.length ?? 0) === 0 ? (
-          <p className="text-xs text-[#6B6B72]">কোনো মেসেজ লগ নেই।</p>
-        ) : (
-          <motion.div
-            className="space-y-2"
-            variants={staggerContainer}
-            initial="hidden"
-            animate="show"
-          >
-            {data.feed?.map((m) => {
-              const dot = m.status === 'delivered' ? '🟢' : m.status === 'failed' ? '🔴' : '🟡'
-              return (
-                <motion.div
-                  key={m.id}
-                  variants={staggerItem}
-                  className={cn(
-                    'rounded-xl border p-2.5 text-xs backdrop-blur-md transition-all',
-                    m.status === 'failed'
-                      ? 'border-red-500/25 bg-red-500/[0.06] shadow-[inset_3px_0_0_rgba(239,68,68,0.5)]'
-                      : m.status === 'delivered'
-                        ? 'border-white/[0.08] bg-white/[0.03] shadow-[inset_3px_0_0_rgba(16,185,129,0.4)]'
-                        : 'border-white/[0.08] bg-white/[0.03] shadow-[inset_3px_0_0_rgba(234,179,8,0.4)]',
-                  )}
-                >
-                  <div className="flex justify-between text-[#9B9BA4]">
-                    <span>{dot} {m.staffName ?? '—'} · {typeLabel(m.type)}</span>
-                    <span className="font-medium tabular-nums text-[#FAFAF8]/60">{fmtTime(m.createdAt)}</span>
+      {/* Type counts summary */}
+      {Object.keys(data.typeCounts ?? {}).length > 0 && (
+        <motion.div variants={fadeIn} className="flex flex-wrap gap-2 px-1">
+          {Object.entries(data.typeCounts).map(([t, n]) => (
+            <span key={t} className="rounded-md border border-white/[0.04] bg-white/[0.02] px-2 py-1 text-[10px] font-medium text-white/25">
+              {typeLabel(t)} <span className="text-white/50">{n}</span>
+            </span>
+          ))}
+        </motion.div>
+      )}
+
+      {/* Message feed — collapsible */}
+      <motion.div variants={fadeIn}>
+        <SectionCard title="Message Feed" icon="📨" accent="blue">
+          {feedItems.length === 0 ? (
+            <p className="py-4 text-center text-[11px] text-white/20">কোনো মেসেজ লগ নেই</p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                {visibleFeed.map((m) => (
+                  <div
+                    key={m.id}
+                    className={cn(
+                      'flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-[11px] transition-all',
+                      m.status === 'failed'
+                        ? 'bg-red-500/[0.04] border-l-2 border-l-red-400/50'
+                        : m.status === 'delivered'
+                          ? 'bg-white/[0.01] border-l-2 border-l-emerald-400/30'
+                          : 'bg-white/[0.01] border-l-2 border-l-amber-400/25',
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white/60">{m.staffName ?? '—'}</span>
+                        <span className="rounded bg-white/[0.04] px-1 py-0.5 text-[9px] font-semibold text-white/30">{typeLabel(m.type)}</span>
+                        <AckBadge m={m} />
+                        <span className="ml-auto shrink-0 tabular-nums text-[10px] text-white/20">{fmtTime(m.createdAt)}</span>
+                      </div>
+                      <FeedMessage content={m.content ?? ''} />
+                      {m.errorReason && <div className="mt-1 text-[10px] text-red-300">⚠ {m.errorReason}</div>}
+                    </div>
                   </div>
-                  <FeedMessage content={m.content ?? ''} />
-                  <AckStatus m={m} />
-                  {m.errorReason && <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>}
-                </motion.div>
-              )
-            })}
-          </motion.div>
-        )}
-      </div>
-    </>
+                ))}
+              </div>
+              {feedItems.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setFeedExpanded(v => !v)}
+                  className="mt-2 w-full rounded-lg border border-white/[0.04] bg-white/[0.02] py-2 text-[10px] font-semibold text-white/30 transition-all hover:text-white/50 hover:border-[#C9A84C]/15"
+                >
+                  {feedExpanded ? `▴ Show less` : `▾ Show all ${feedItems.length} messages`}
+                </button>
+              )}
+            </>
+          )}
+        </SectionCard>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -427,63 +510,78 @@ export default function AgentStaffMonitor() {
 
   if (err && !displayData) {
     return (
-      <div className="p-4 text-red-400">
-        লোড করা যায়নি: {err}
-        <button type="button" onClick={() => void loadLive()} className="ml-2 text-[#C9A84C] underline hover:text-[#E8C96A]">আবার</button>
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/[0.04] px-6 py-4 text-center text-sm text-red-300">
+          লোড করা যায়নি: {err}
+        </div>
+        <button type="button" onClick={() => void loadLive()} className="rounded-xl border border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] px-4 py-2 text-xs font-semibold text-[#C9A84C] hover:bg-[#C9A84C]/10 transition-all">
+          আবার চেষ্টা
+        </button>
       </div>
     )
   }
 
   if (!liveData) {
-    return <div className="p-4 text-[#6B6B72]">লোড হচ্ছে…</div>
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <div className="flex items-center gap-3 text-white/30">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#C9A84C]/30 border-t-[#C9A84C]" />
+          <span className="text-sm">Loading monitor…</span>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl gap-0 p-0 pb-8 lg:gap-4 lg:p-4">
+    <div className="mx-auto flex max-w-6xl gap-0 pb-8 lg:gap-4 lg:p-4">
+      {/* Main content */}
       <div className="min-w-0 flex-1 space-y-4 p-3 sm:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-black text-[#FAFAF8]">
-              {viewingHistory ? (
-                <>স্টাফ মনিটর — <span className="text-[#C9A84C]">{selectedDate}</span></>
-              ) : (
-                <>স্টাফ মনিটর <span className="text-[#C9A84C]">(লাইভ)</span></>
-              )}
-            </h1>
-            <p className="text-[11px] text-[#6B6B72]">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-black tracking-tight text-white/90">Staff Monitor</h1>
+              {viewingHistory ? <ArchiveBadge date={selectedDate!} /> : <LivePulse />}
+            </div>
+            <p className="mt-1 text-[11px] text-white/25">
               {viewingHistory
-                ? 'আর্কাইভ দেখা · লাইভে ফিরতে "আজ" চাপুন'
-                : `আজ (${liveData.today}) · প্রতি ১০ সেকেন্ডে আপডেট`}
-              {!viewingHistory && liveData.generatedAt && (
-                <> · সর্বশেষ {fmtTime(liveData.generatedAt)}</>
-              )}
+                ? 'Viewing archive · press "Today" to return'
+                : (
+                  <>
+                    {liveData.today} · auto-refresh 10s
+                    {liveData.generatedAt && <> · last {fmtTime(liveData.generatedAt)}</>}
+                  </>
+                )}
             </p>
           </div>
+
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-0.5 text-[11px]">
+            {/* Business filter */}
+            <div className="inline-flex rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md p-0.5">
               {(['ALL', 'ALMA_LIFESTYLE', 'ALMA_TRADING'] as const).map((b) => (
                 <button
                   key={b}
                   type="button"
                   onClick={() => setBusinessFilter(b)}
                   className={cn(
-                    'rounded-lg px-2.5 py-1 font-medium transition-all',
+                    'rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-all',
                     businessFilter === b
-                      ? 'bg-[rgba(201,168,76,0.15)] border border-[rgba(201,168,76,0.3)] text-[#E8C96A] shadow-[0_0_12px_rgba(201,168,76,0.1)]'
-                      : 'border border-transparent text-[#6B6B72] hover:text-[#FAFAF8]',
+                      ? 'bg-[rgba(201,168,76,0.12)] text-[#E8C96A] shadow-[0_0_10px_rgba(201,168,76,0.08)]'
+                      : 'text-white/20 hover:text-white/40',
                   )}
                 >
-                  {b === 'ALL' ? 'All' : b === 'ALMA_LIFESTYLE' ? 'Lifestyle' : 'Trading'}
+                  {b === 'ALL' ? 'All' : b === 'ALMA_LIFESTYLE' ? 'Life' : 'Trade'}
                 </button>
               ))}
             </div>
+
             {viewingHistory ? (
               <button
                 type="button"
                 onClick={() => { setSelectedDate(null); setHistoryData(null) }}
-                className="rounded-xl border border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] backdrop-blur-sm px-3 py-1.5 text-[11px] font-semibold text-[#C9A84C] hover:bg-[#C9A84C]/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
+                className="rounded-xl border border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] px-3 py-1.5 text-[10px] font-bold text-[#C9A84C] transition-all hover:bg-[#C9A84C]/10"
               >
-                ← আজ (লাইভ)
+                ← Today
               </button>
             ) : (
               <button
@@ -491,33 +589,37 @@ export default function AgentStaffMonitor() {
                 onClick={() => void loadLive(true)}
                 disabled={syncing}
                 className={cn(
-                  'rounded-xl border backdrop-blur-sm px-3 py-1.5 text-[11px] font-semibold transition-all',
+                  'rounded-xl border px-3 py-1.5 text-[10px] font-bold transition-all',
                   syncing
-                    ? 'border-white/[0.08] text-[#6B6B72]'
-                    : 'border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)]',
+                    ? 'border-white/[0.06] text-white/15'
+                    : 'border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10',
                 )}
               >
-                {syncing ? 'সিঙ্ক…' : '↻ সিঙ্ক'}
+                {syncing ? '…' : '↻ Sync'}
               </button>
             )}
+
             <button
               type="button"
               onClick={() => setHistoryOpen((v) => !v)}
-              className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-1.5 text-[11px] text-[#6B6B72] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all lg:hidden"
+              className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[10px] font-bold text-white/20 transition-all hover:text-white/40 lg:hidden"
             >
-              📅 ইতিহাস
+              📅
             </button>
+
             <Link
               href="/agent"
-              className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-1.5 text-[11px] text-[#6B6B72] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all"
+              className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[10px] font-bold text-white/20 transition-all hover:text-white/40"
             >
-              ← Agent
+              ← Chat
             </Link>
           </div>
         </div>
 
+        {/* Dashboard body */}
         {displayData && <MonitorBody data={displayData} isLive={!viewingHistory} />}
 
+        {/* Salah settings */}
         {!viewingHistory && (
           <div className="mt-4">
             <AgentSalahTimesSettings />
@@ -525,35 +627,36 @@ export default function AgentStaffMonitor() {
         )}
       </div>
 
+      {/* History sidebar */}
       <aside
         className={cn(
-          'shrink-0 border-white/[0.08] backdrop-blur-xl bg-white/[0.02] lg:block lg:w-56 lg:rounded-2xl lg:border',
-          historyOpen ? 'fixed inset-y-0 right-0 z-40 w-72 border-l bg-[#08080A]/90 backdrop-blur-xl p-3 shadow-[0_0_40px_rgba(0,0,0,0.5)]' : 'hidden',
+          'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-white/[0.06] lg:bg-white/[0.02] lg:backdrop-blur-xl lg:p-3',
+          historyOpen ? 'fixed inset-y-0 right-0 z-40 w-64 border-l border-white/[0.06] bg-[#08080A]/95 backdrop-blur-2xl p-4 shadow-[0_0_40px_rgba(0,0,0,0.6)]' : 'hidden',
         )}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-[#FAFAF8]">📅 ইতিহাস</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/40">History</h2>
           <button
             type="button"
             onClick={() => setHistoryOpen(false)}
-            className="text-xs text-[#6B6B72] hover:text-[#FAFAF8] lg:hidden"
+            className="text-xs text-white/20 hover:text-white/50 lg:hidden"
           >
             ✕
           </button>
         </div>
-        <p className="mb-2 text-[10px] text-[#6B6B72]">গত {liveData.feedDays ?? 7} দিন — ক্লিক করলে সেই দিন</p>
-        <div className="space-y-1">
+        <p className="mb-3 text-[10px] text-white/15">Last {liveData.feedDays ?? 7} days</p>
+        <div className="space-y-0.5">
           <button
             type="button"
             onClick={() => { setSelectedDate(null); setHistoryData(null); setHistoryOpen(false) }}
             className={cn(
-              'w-full rounded-lg px-2 py-2 text-left text-xs transition-all',
+              'w-full rounded-lg px-2.5 py-2 text-left text-[11px] font-medium transition-all',
               !viewingHistory
-                ? 'bg-[rgba(201,168,76,0.12)] border border-[rgba(201,168,76,0.25)] text-[#E8C96A] shadow-[0_0_10px_rgba(201,168,76,0.08)]'
-                : 'border border-transparent text-[#9B9BA4] hover:bg-white/[0.04]',
+                ? 'bg-[rgba(201,168,76,0.1)] text-[#E8C96A]'
+                : 'text-white/25 hover:bg-white/[0.03] hover:text-white/40',
             )}
           >
-            আজ (লাইভ)
+            Today (live)
           </button>
           {(liveData.historyDates ?? []).map((date) => (
             <button
@@ -561,10 +664,10 @@ export default function AgentStaffMonitor() {
               type="button"
               onClick={() => { void loadHistoryDay(date); setHistoryOpen(false) }}
               className={cn(
-                'w-full rounded-lg px-2 py-2 text-left text-xs transition-all',
+                'w-full rounded-lg px-2.5 py-2 text-left text-[11px] font-medium tabular-nums transition-all',
                 selectedDate === date
-                  ? 'bg-white/[0.06] border border-white/[0.1] text-[#FAFAF8]'
-                  : 'border border-transparent text-[#6B6B72] hover:bg-white/[0.04] hover:text-[#9B9BA4]',
+                  ? 'bg-white/[0.05] text-white/70'
+                  : 'text-white/20 hover:bg-white/[0.03] hover:text-white/35',
               )}
             >
               {date}
