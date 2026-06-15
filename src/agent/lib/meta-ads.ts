@@ -83,3 +83,84 @@ export async function updateCampaignBudget(
   }
   return { success: true }
 }
+
+export async function duplicateCampaign(
+  campaignId: string,
+  opts?: { statusOption?: 'PAUSED' | 'ACTIVE' },
+): Promise<{ success: boolean; newCampaignId?: string; error?: string }> {
+  const scope = await checkAdsManagementScope()
+  if (!scope.ok) return { success: false, error: scope.error }
+
+  const res = await resilientFetch(`${GRAPH_BASE}/${campaignId}/copies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      deep_copy: false,
+      status_option: opts?.statusOption ?? 'PAUSED',
+      rename_options: {
+        rename_strategy: 'DEEP_RENAME',
+        rename_prefix: 'Copy — ',
+      },
+      access_token: adsToken(),
+    }),
+    timeoutMs: 45_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    return { success: false, error: `Ads API ${res.status}: ${err.slice(0, 200)}` }
+  }
+  const data = (await res.json()) as { copied_campaign_id?: string; id?: string }
+  const newCampaignId = data.copied_campaign_id ?? data.id
+  if (!newCampaignId) {
+    return { success: false, error: 'Duplicate response missing new campaign id' }
+  }
+  return { success: true, newCampaignId }
+}
+
+/** Duplicate top ad set within campaign (fresh ad set copy, PAUSED). */
+export async function duplicateTopAdSet(
+  campaignId: string,
+): Promise<{ success: boolean; newAdSetId?: string; error?: string }> {
+  const scope = await checkAdsManagementScope()
+  if (!scope.ok) return { success: false, error: scope.error }
+
+  const adSetsRes = await resilientFetch(
+    `${GRAPH_BASE}/${campaignId}/adsets?` +
+    new URLSearchParams({
+      effective_status: '["ACTIVE"]',
+      fields: 'id,name',
+      limit: '10',
+      access_token: adsToken(),
+    }).toString(),
+    { timeoutMs: 30_000, retries: 1 },
+  )
+  if (!adSetsRes.ok) {
+    const err = await adSetsRes.text()
+    return { success: false, error: `Ad sets fetch ${adSetsRes.status}: ${err.slice(0, 200)}` }
+  }
+  const adSets = (await adSetsRes.json()) as { data?: Array<{ id: string; name: string }> }
+  const top = adSets.data?.[0]
+  if (!top?.id) return { success: false, error: 'No active ad set found to duplicate' }
+
+  const res = await resilientFetch(`${GRAPH_BASE}/${top.id}/copies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      deep_copy: false,
+      status_option: 'PAUSED',
+      rename_options: { rename_strategy: 'DEEP_RENAME', rename_prefix: 'Copy — ' },
+      access_token: adsToken(),
+    }),
+    timeoutMs: 45_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    return { success: false, error: `Ads API ${res.status}: ${err.slice(0, 200)}` }
+  }
+  const data = (await res.json()) as { copied_adset_id?: string; id?: string }
+  const newAdSetId = data.copied_adset_id ?? data.id
+  if (!newAdSetId) return { success: false, error: 'Duplicate response missing new ad set id' }
+  return { success: true, newAdSetId }
+}

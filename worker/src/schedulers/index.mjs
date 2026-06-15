@@ -33,6 +33,7 @@ const lazy = {
   weeklyReview:       () => import('../staff/weekly-review.mjs'),
   messengerScan:      () => import('../messenger/scan.mjs'),
   adsMonitor:         () => import('../ads/monitor.mjs'),
+  adsOptimizer:         () => import('../ads/optimizer.mjs'),
   salahScheduler:     () => import('../salah/scheduler.mjs'),
   dailySummary:       () => import('./daily-summary.mjs'),
   subscriptionRenewal: () => import('./subscription-renewal.mjs'),
@@ -79,6 +80,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
   { name: 'content-engine-1',       cronUtc: '0 4 * * *',   description: 'Auto post prep #1 (10:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
+  { name: 'ads-optimizer',          cronUtc: '45 3 * * *',   description: 'Ads optimizer batch card (09:45 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
   { name: 'content-engine-2',       cronUtc: '0 9 * * *',   description: 'Auto post prep #2 (15:00 Dhaka)' },
   { name: 'staff-morale',           cronUtc: '0 7 * * *',    description: 'Daily staff encouragement (13:00 Dhaka)' },
@@ -180,6 +182,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'ads-monitor': {
       const { runAdsMonitor } = await lazy.adsMonitor()
       await runAdsMonitor({ supabase })
+      break
+    }
+    case 'ads-optimizer': {
+      const { runAdsOptimizer } = await lazy.adsOptimizer()
+      dutyResult = await runAdsOptimizer()
       break
     }
     case 'midday-checkin': {

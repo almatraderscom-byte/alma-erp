@@ -1193,6 +1193,15 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('ads_opt_exec:')) {
+      const parts = data.split(':')
+      const gateId = parts[1]
+      const recIndex = parts[2]
+      const { handleAdsOptimizerExec } = await import('../approvals/resend-card.mjs')
+      await handleAdsOptimizerExec(ctx, gateId, recIndex)
+      return
+    }
+
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
       if (action === 'edit') {

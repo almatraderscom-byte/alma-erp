@@ -10,6 +10,7 @@ import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
 import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
 import { AD_CREATIVE_ROLE_PROMPT } from '@/agent/tools/ad-creative-tools'
+import { ADS_ROLE_PROMPT } from '@/agent/tools/ads-tools'
 import { BRAND_ROLE_PROMPT } from '@/agent/tools/brand-tools'
 import { TRADING_READ_ROLE_PROMPT } from '@/agent/tools/trading-tools'
 import { PLAYBOOK_ROLE_PROMPT } from '@/agent/tools/playbook-tools'
@@ -239,6 +240,7 @@ const LIFESTYLE_STATIC_PROMPT =
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${CONTENT_ENGINE_ROLE_PROMPT}\n`
   + `\n${AD_CREATIVE_ROLE_PROMPT}\n`
+  + `\n${ADS_ROLE_PROMPT}\n`
   + `\n${BRAND_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE

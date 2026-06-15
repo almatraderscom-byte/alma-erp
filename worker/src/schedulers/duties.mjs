@@ -12,6 +12,7 @@ export const DAILY_DUTIES = [
   { duty: 'cost_reconcile', label: '🧮 কস্ট রিকনসাইল', job: 'cost-reconcile', time: '08:15' },
   { duty: 'morning_dispatch', label: '📤 স্টাফ টাস্ক ডিসপ্যাচ', job: 'morning-staff-reminder', time: '09:00' },
   { duty: 'ads_monitor', label: '📢 অ্যাড মনিটর', job: 'ads-monitor', time: '09:30' },
+  { duty: 'ads_optimizer', label: '🎯 অ্যাড অপটিমাইজার', job: 'ads-optimizer', time: '09:45' },
   { duty: 'token_health', label: '🔑 টোকেন হেলথ চেক', job: 'token-health', time: '09:30' },
   { duty: 'content_engine_1', label: '📸 কন্টেন্ট পোস্ট #1', job: 'content-engine-1', time: '10:00' },
   { duty: 'subscription_renewal', label: '🔄 সাবস্ক্রিপশন চেক', job: 'subscription-renewal', time: '10:00' },

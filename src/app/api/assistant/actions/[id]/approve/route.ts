@@ -761,6 +761,71 @@ export async function POST(
     })
   }
 
+  if (action.type === 'duplicate_campaign') {
+    const { campaignId } = payload as { campaignId: string }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { duplicateTopAdSet } = await import('@/agent/lib/meta-ads')
+      const result = await duplicateTopAdSet(String(campaignId))
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: 'executed',
+          resolvedAt: new Date(),
+          result: { newAdSetId: result.newAdSetId, campaignId },
+        },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Ad set duplicated (PAUSED). New ad set ID: ${result.newAdSetId}. Advantage+ learning safe — activate manually when ready.`,
+      )
+      return Response.json({ success: true, newAdSetId: result.newAdSetId, campaignId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'ads_creative_brief') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const { angleHint, campaignName, productCode } = payload as {
+      angleHint?: string
+      campaignName?: string
+      productCode?: string | null
+    }
+    await appendConversationNote(
+      db,
+      action,
+      `✅ Creative brief approved — make_ad_creatives চালান${productCode ? ` (${productCode})` : ''}. Angle: ${angleHint ?? 'নতুন hook'}. Campaign: ${campaignName ?? ''}`,
+    )
+    return Response.json({
+      success: true,
+      message: 'Creative brief approved. Agent should call make_ad_creatives with the angleHint.',
+      angleHint,
+      productCode,
+    })
+  }
+
   if (action.type === 'website_publish') {
     const { productId } = payload as { productId: string }
     const { publishWebsiteProduct } = await import('@/lib/website/write.service')

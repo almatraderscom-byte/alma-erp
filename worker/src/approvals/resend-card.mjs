@@ -89,6 +89,18 @@ export async function resendApprovalCard(telegram, ownerChatId, row) {
     return true
   }
 
+  if (row.type === 'ads_optimizer_batch') {
+    const chunks = splitMessage(`📋 *Ad Optimizer*\n${summary}`)
+    const keyboard = buildAdsOptimizerKeyboardFromPayload(actionId, payload)
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1
+      await sendMarkdownSafe(telegram, ownerChatId, chunks[i], {
+        reply_markup: isLast ? keyboard : undefined,
+      })
+    }
+    return true
+  }
+
   if (FINANCE_TYPES.has(row.type)) {
     const isBatch = row.type.includes('batch')
     const entryCount = Array.isArray(payload.entries)
@@ -224,6 +236,48 @@ export async function handleAdCreativeRegen(ctx, gateId, creativeId) {
       ctx.reply(`📋 ${data.summary}`, { reply_markup: data.keyboard }).catch(() => {})
     })
   }
+  return true
+}
+
+export function buildAdsOptimizerKeyboardFromPayload(gateId, payload) {
+  const rows = []
+  for (let idx = 0; idx < (payload.recommendations ?? []).length; idx++) {
+    const r = payload.recommendations[idx]
+    if (!r || r.verdict === 'hold') continue
+    if ((payload.executedIndices ?? []).includes(idx)) continue
+    const icon = r.verdict === 'scale' ? '📈' : r.verdict === 'kill' ? '🛑' : r.verdict === 'duplicate' ? '📋' : r.verdict === 'refresh_creative' ? '🎨' : '📉'
+    rows.push([{
+      text: `${icon} ${String(r.name ?? r.campaignId).slice(0, 18)}`,
+      callback_data: `ads_opt_exec:${gateId}:${idx}`,
+    }])
+  }
+  rows.push([{ text: '⏭ সব skip', callback_data: `reject:${gateId}` }])
+  return { inline_keyboard: rows }
+}
+
+export async function handleAdsOptimizerExec(ctx, gateId, recIndex) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/ads-optimizer-exec`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${INT_TOKEN}`,
+    },
+    body: JSON.stringify({ gateId, recIndex: Number(recIndex) }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.answerCbQuery(`❌ ${data.error ?? 'failed'}`)
+    return false
+  }
+  await ctx.answerCbQuery('✅ confirm card পাঠানো')
+  await ctx.reply(`📋 ${data.summary ?? 'Confirm card queued'}`, {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Approve', callback_data: `approve:${data.pendingActionId}` },
+        { text: '❌ Cancel', callback_data: `reject:${data.pendingActionId}` },
+      ]],
+    },
+  }).catch(() => {})
   return true
 }
 

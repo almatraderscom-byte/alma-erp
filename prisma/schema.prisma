@@ -2218,6 +2218,25 @@ model AgentPlaybook {
   @@map("agent_playbook")
 }
 
+model AgentCreativePerformance {
+  id           String   @id @default(uuid())
+  campaignId   String   @map("campaign_id")
+  campaignName String?  @map("campaign_name")
+  adId         String?  @map("ad_id")
+  angle        String
+  productCode  String?  @map("product_code")
+  roas         Float?
+  ctr          Float?
+  spendBdt     Int?     @map("spend_bdt")
+  verdict      String?
+  recordedAt   DateTime @default(now()) @map("recorded_at")
+
+  @@index([campaignId])
+  @@index([angle])
+  @@index([recordedAt(sort: Desc)])
+  @@map("agent_creative_performance")
+}
+
 model AgentKnowledge {
   id            String   @id @default(uuid())
   entityType    String   @map("entity_type")
