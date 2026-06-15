@@ -1,11 +1,21 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import type { StaffMonitorData, StaffSummary, StaffMonitorRow } from '@/agent/lib/staff-monitor-data'
-import type { AgentDutyRow, SalahDutyRow } from '@/agent/lib/agent-duties'
-import AgentSalahTimesSettings from '@/agent/components/AgentSalahTimesSettings'
+import type {
+  StaffMonitorData,
+  StaffSummary,
+  StaffMonitorRow,
+  AgentDutyRow,
+  SalahDutyRow,
+} from '@/agent/lib/staff-monitor-types'
+
+const AgentSalahTimesSettings = dynamic(
+  () => import('@/agent/components/AgentSalahTimesSettings'),
+  { ssr: false, loading: () => null },
+)
 
 const FEED_PREVIEW_LEN = 120
 

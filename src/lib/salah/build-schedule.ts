@@ -1,4 +1,4 @@
-import type { SalahTimeConfig, WaqtKey } from '@/lib/salah/time-config'
+import type { SalahTimeConfig, WaqtKey } from '@/lib/salah/time-config-shared'
 import { dhakaInstant } from '@/lib/salah/dhaka-utils'
 
 export type WaqtSchedule = {

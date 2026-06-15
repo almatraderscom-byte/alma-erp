@@ -4,12 +4,30 @@ import { getActiveDispatchTaskIdsForDate } from '@/agent/lib/staff-dispatch-sync
 import {
   dutiesForToday,
   CONTINUOUS_SERVICES,
-  type AgentDutyRow,
-  type ContinuousServiceHealth,
-  type SalahDutyRow,
 } from '@/agent/lib/agent-duties'
 import { isEffectivelyDone } from '@/agent/lib/salah-resolve'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
+import type {
+  AgentDutyRow,
+  ContinuousServiceHealth,
+  MonitorWarning,
+  SalahDutyRow,
+  SchedulerHealth,
+  StaffMonitorData,
+  StaffMonitorRow,
+  StaffSummary,
+} from '@/agent/lib/staff-monitor-types'
+
+export type {
+  AgentDutyRow,
+  ContinuousServiceHealth,
+  MonitorWarning,
+  SalahDutyRow,
+  SchedulerHealth,
+  StaffMonitorData,
+  StaffMonitorRow,
+  StaffSummary,
+} from '@/agent/lib/staff-monitor-types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -17,78 +35,9 @@ const db = prisma as any
 const DONE_STATUSES = new Set(['done', 'verified', 'done_unverified', 'awaiting_proof'])
 const STARTED_STATUSES = new Set(['awaiting_proof', 'done', 'verified', 'done_unverified'])
 
-export type MonitorWarning = {
-  severity: 'critical' | 'warn'
-  kind: string
-  message: string
-}
-
 export type DutyHistoryDay = {
   date: string
   duties: AgentDutyRow[]
-}
-
-export type SchedulerHealth = {
-  ackEscalationLastRun: string | null
-  schedulersHeartbeatAt: string | null
-  queueHeartbeatAt: string | null
-}
-
-export type StaffMonitorRow = {
-  id: string
-  staffId: string | null
-  staffName: string | null
-  businessId: string | null
-  type: string
-  content: string
-  status: string
-  telegramMessageId: string | null
-  errorReason: string | null
-  relatedTaskIds: unknown
-  requiresAck: boolean
-  acknowledgedAt: string | null
-  createdAt: string
-  sentAt: string | null
-}
-
-export type StaffSummary = {
-  staffId: string
-  staffName: string
-  dispatched: number
-  delivered: number
-  failed: number
-  tasksTotal: number
-  tasksDone: number
-  completionPct: number
-  started: boolean
-  lastActivityAt: string | null
-}
-
-export type StaffMonitorData = {
-  today: string
-  feedDays: number
-  isHistorical?: boolean
-  historyDates?: string[]
-  agentDuties: AgentDutyRow[]
-  dutyHistory?: DutyHistoryDay[]
-  salahDuties: SalahDutyRow[]
-  continuousServices: ContinuousServiceHealth[]
-  schedulerHealth: SchedulerHealth
-  warnings: MonitorWarning[]
-  unackedMessages: StaffMonitorRow[]
-  feed: StaffMonitorRow[]
-  historyFeed?: StaffMonitorRow[]
-  failures: StaffMonitorRow[]
-  staffSummaries: StaffSummary[]
-  typeCounts: Record<string, number>
-  mismatches: Array<{
-    staffId: string
-    staffName: string
-    outboxId: string
-    errorReason: string | null
-    relatedTaskIds: string[]
-  }>
-  generatedAt: string
 }
 
 function mapOutbox(row: {
