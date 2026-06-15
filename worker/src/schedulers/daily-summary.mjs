@@ -101,4 +101,8 @@ export async function runDailySummary({ supabase, bot }) {
   })
 
   console.log(`[daily-summary] sent for ${today}`)
+  return {
+    dutyStatus: 'done',
+    dutyDetail: `কাজ ${taskDone}/${taskTotal}, নামাজ ${salahCounts.prayed_on_time}/5, খরচ ${expensesParts.length ? expensesParts.join('+') : '০'}`,
+  }
 }

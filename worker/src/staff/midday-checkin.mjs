@@ -20,7 +20,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
 
   if (!pendingTasks?.length) {
     console.log('[midday-checkin] all tasks done — no reminders needed')
-    return
+    return { dutyStatus: 'done', dutyDetail: 'সব কাজ সম্পন্ন, রিমাইন্ডার দরকার নেই' }
   }
 
   // Group by staff
@@ -66,4 +66,8 @@ export async function runMiddayCheckin({ supabase, bot }) {
   }
 
   console.log(`[midday-checkin] sent reminders for ${pendingTasks.length} pending tasks`)
+  return {
+    dutyStatus: 'done',
+    dutyDetail: `${stuckStaff.length} স্টাফকে রিমাইন্ডার, ${pendingTasks.length}টি পেন্ডিং টাস্ক`,
+  }
 }

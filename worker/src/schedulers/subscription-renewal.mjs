@@ -34,6 +34,8 @@ export async function runSubscriptionRenewalCheck({ supabase }) {
     return
   }
 
+  let advancedCount = 0
+  let alertedCount = 0
   for (const sub of subs ?? []) {
     let renewal = String(sub.next_renewal_at).slice(0, 10)
 
@@ -47,6 +49,7 @@ export async function runSubscriptionRenewalCheck({ supabase }) {
         .update({ next_renewal_at: renewal, updated_at: new Date().toISOString() })
         .eq('id', sub.id)
       console.log(`[subscription-renewal] advanced ${sub.name} → ${renewal}`)
+      advancedCount++
     }
 
     if (renewal >= today && renewal <= in3Str) {
@@ -57,8 +60,14 @@ export async function runSubscriptionRenewalCheck({ supabase }) {
         message: `${sub.name}: ${sub.currency} ${sub.amount} renews in ${daysLeft} day(s) (${renewal})`,
         category: 'urgent',
       })
+      alertedCount++
     }
   }
 
+  const total = subs?.length ?? 0
   console.log('[subscription-renewal] done')
+  return {
+    dutyStatus: 'done',
+    dutyDetail: `${total}টি সাবস্ক্রিপশন চেক, ${alertedCount} renewal alert, ${advancedCount} advanced`,
+  }
 }

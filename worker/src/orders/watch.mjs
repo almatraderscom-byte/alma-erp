@@ -14,12 +14,12 @@ export async function runOrderWatch({ bot }) {
     })
     if (!res.ok) {
       console.warn('[order-watch] API', res.status)
-      return
+      return { dutyStatus: 'error', dutyDetail: `API error: HTTP ${res.status}` }
     }
 
     const body = await res.json()
     const issues = body?.issues
-    if (!issues?.length) return
+    if (!issues?.length) return { dutyStatus: 'done', dutyDetail: 'কোনো সমস্যা নেই' }
 
     const L = ['📦 *অর্ডার সতর্কতা*', '']
     for (const issue of issues) {
@@ -33,8 +33,14 @@ export async function runOrderWatch({ bot }) {
     L.push('বিস্তারিত দেখতে agent-কে জিজ্ঞেস করুন বা ERP order section দেখুন।')
 
     await sendMarkdownSafe(bot.telegram, ownerChatId, L.join('\n'))
+    const highCount = issues.filter(i => i.severity === 'high').length
     console.log(`[order-watch] alerted owner — ${issues.length} issue(s)`)
+    return {
+      dutyStatus: 'done',
+      dutyDetail: `${issues.length}টি সমস্যা পাওয়া গেছে (${highCount} urgent)`,
+    }
   } catch (e) {
     console.error('[order-watch] failed:', e.message)
+    return { dutyStatus: 'error', dutyDetail: `Order watch ব্যর্থ: ${e.message.slice(0, 40)}` }
   }
 }

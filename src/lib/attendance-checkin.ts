@@ -519,4 +519,52 @@ export function queueAttendanceCheckInSideEffects(input: {
       }
     })()
   }
+
+  // Auto-greeting: welcome + motivation + tracking message to staff on check-in
+  void (async () => {
+    try {
+      const staff = await prisma.agentStaff.findFirst({
+        where: { userId, active: true, businessId: record.businessId },
+        select: { id: true, name: true, telegramChatId: true },
+      })
+      if (!staff?.telegramChatId) return
+
+      const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka' }).format(record.checkInAt)
+      const dedupeKey = `checkin_welcome:${staff.id}:${ymd}`
+
+      const MOTIVATIONS = [
+        'আজকের দিনটাকে সেরা করে তুলুন — প্রতিটি কাজ গুরুত্বপূর্ণ! 💪',
+        'আল্লাহর রহমতে আজও একটি নতুন সুযোগ — সর্বোচ্চটা দিন! 🌟',
+        'সফলতা আসে ছোট ছোট প্রচেষ্টা থেকে — আজ থেকেই শুরু! 🚀',
+        'কঠিন পরিশ্রমের বিকল্প নেই — আজ আরও একটু এগিয়ে যান! 🎯',
+        'প্রতিটি কাজই ইবাদত — সেরা মানের কাজ করুন! ✨',
+      ]
+      const motivation = MOTIVATIONS[Math.floor(Math.random() * MOTIVATIONS.length)]
+
+      const isLate = record.lateMinutes > 0
+      const greeting = isLate
+        ? `🏢 ${staff.name} ভাই, আপনি চেক-ইন করেছেন (${record.lateMinutes} মিনিট দেরি)।`
+        : `🌅 সুপ্রভাত ${staff.name} ভাই! আজ সময়মতো চেক-ইন — দারুণ! 👏`
+
+      const message = `${greeting}\n\n💡 ${motivation}\n\n📊 আজ আপনার সব কাজ আমি ট্র্যাক করছি — শেষ হলে ✅ Done বাটন চাপুন।`
+
+      const { enqueueTelegramNotification } = await import(
+        '@/lib/telegram-notification/queue'
+      )
+      await enqueueTelegramNotification({
+        businessId: record.businessId,
+        eventType: 'ATTENDANCE_FACE_VERIFIED_CHECK_IN',
+        message,
+        chatIds: [staff.telegramChatId],
+        dedupeKey,
+        metadata: { force: true, staffWelcome: true, staffId: staff.id },
+      })
+    } catch (err) {
+      logAttendanceCheckinSideEffectFailed({
+        ...logBase,
+        sideEffect: 'checkin_welcome',
+        message: (err as Error).message,
+      })
+    }
+  })()
 }

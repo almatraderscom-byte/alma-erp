@@ -14,12 +14,15 @@ export async function runCostReconciliation() {
     })
     if (!res.ok) {
       console.warn(`[cost-reconcile] HTTP ${res.status}`)
-      return
+      return { dutyStatus: 'error', dutyDetail: `API error: HTTP ${res.status}` }
     }
     const data = await res.json()
-    if (data.drift && data.drift.length > 0) {
-      for (const d of data.drift) {
+    const driftItems = data.drift ?? []
+    const alerts = []
+    if (driftItems.length > 0) {
+      for (const d of driftItems) {
         if (d.pctDrift > 15) {
+          alerts.push(d.provider)
           await notify({
             tier: 1,
             title: `Cost drift: ${d.provider}`,
@@ -30,7 +33,12 @@ export async function runCostReconciliation() {
       }
     }
     console.log('[cost-reconcile] done', data)
+    const detail = alerts.length
+      ? `${driftItems.length} provider চেক, ${alerts.length} drift alert (${alerts.join(', ')})`
+      : `${driftItems.length} provider চেক, কোনো drift নেই`
+    return { dutyStatus: 'done', dutyDetail: detail }
   } catch (err) {
     console.error('[cost-reconcile] failed:', err.message)
+    return { dutyStatus: 'error', dutyDetail: `Reconcile ব্যর্থ: ${err.message.slice(0, 40)}` }
   }
 }

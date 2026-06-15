@@ -20,7 +20,11 @@ export async function runOwnerBriefing({ supabase, bot }) {
     } catch (voiceErr) {
       console.warn('[owner-briefing] voice note skipped:', voiceErr.message)
     }
+
+    const charCount = text.length
+    return { dutyStatus: 'done', dutyDetail: `ব্রিফিং পাঠানো হয়েছে (${charCount} chars)` }
   } catch (e) {
     console.error('[owner-briefing] failed:', e.message)
+    return { dutyStatus: 'error', dutyDetail: `ব্রিফিং ব্যর্থ: ${e.message.slice(0, 50)}` }
   }
 }

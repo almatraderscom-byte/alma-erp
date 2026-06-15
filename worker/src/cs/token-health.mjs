@@ -47,5 +47,8 @@ export async function checkPageTokenHealth() {
   }
 
   console.log(`[token-health] ${results.length} checked, ${failed.length} failed`)
-  return results
+  const detail = failed.length
+    ? `${results.length} token চেক, ${failed.length} ব্যর্থ: ${failed.map(f => f.name).join(', ')}`
+    : `${results.length} token সব OK`
+  return { results, dutyStatus: 'done', dutyDetail: detail }
 }

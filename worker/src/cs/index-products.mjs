@@ -17,5 +17,10 @@ export async function runCsIndexProducts() {
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
   console.log('[cs-index] done:', JSON.stringify(data))
-  return data
+  const count = data.indexed ?? data.count ?? '?'
+  return {
+    ...data,
+    dutyStatus: 'done',
+    dutyDetail: `${count}টি প্রোডাক্ট ইনডেক্স হয়েছে`,
+  }
 }

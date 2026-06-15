@@ -197,42 +197,53 @@ function DutyDetailPanel({ duty, onRetrigger, retriggering }: {
             )}>
               {duty.status.toUpperCase()}
             </span>
+            {duty.ranAt && <span className="text-[10px] text-white/25">at {fmtTime(duty.ranAt)}</span>}
           </div>
           {duty.detail && (
-            <div className="text-white/50">
-              <span className="font-semibold text-white/40">Detail: </span>
-              <span className={isFailed ? 'text-red-300/80' : ''}>{duty.detail}</span>
+            <div className={cn(
+              'rounded-md border px-2.5 py-1.5',
+              isFailed ? 'border-red-500/15 bg-red-500/[0.03] text-red-300/80' : 'border-white/[0.04] bg-white/[0.01] text-white/50',
+            )}>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-white/25">Agent Feedback:</span>
+              <p className="mt-0.5">{duty.detail}</p>
             </div>
           )}
-          {duty.ranAt && <div className="text-white/30">Ran at: {fmtTime(duty.ranAt)}</div>}
-          {!duty.detail && !isFailed && duty.status === 'pending' && (
-            <div className="text-white/25 italic">Scheduled at {duty.time ?? '—'} — not yet run</div>
+          {!duty.detail && duty.status === 'done' && (
+            <div className="text-[10px] text-white/20 italic">Completed — no detailed feedback logged</div>
+          )}
+          {!duty.detail && duty.status === 'pending' && (
+            <div className="text-[10px] text-white/25 italic">Scheduled at {duty.time ?? '—'} — not yet run</div>
           )}
         </div>
-        {isFailed && (
-          <div className="mt-2.5 flex items-center gap-2">
-            <button
-              type="button"
-              disabled={retriggering}
-              onClick={() => onRetrigger(duty.duty)}
-              className={cn(
-                'rounded-lg border px-3 py-1.5 text-[10px] font-bold transition-all',
-                retriggering
-                  ? 'border-white/[0.06] text-white/20 cursor-wait'
+        <div className="mt-2.5 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={retriggering}
+            onClick={() => onRetrigger(duty.duty)}
+            className={cn(
+              'rounded-lg border px-3 py-1.5 text-[10px] font-bold transition-all',
+              retriggering
+                ? 'border-white/[0.06] text-white/20 cursor-wait'
+                : isFailed
+                  ? 'border-red-400/30 bg-red-500/[0.08] text-red-300 hover:bg-red-500/15'
                   : 'border-[#C9A84C]/30 bg-[#C9A84C]/[0.08] text-[#E8C96A] hover:bg-[#C9A84C]/15 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)]',
-              )}
-            >
-              {retriggering ? '⏳ Running…' : '⟳ Retrigger Now'}
-            </button>
-            <span className="text-[9px] text-white/20">Calls worker to re-run this duty</span>
-          </div>
-        )}
+            )}
+          >
+            {retriggering ? '⏳ Running…' : isFailed ? '⟳ Retrigger Now' : '⟳ Re-check Now'}
+          </button>
+          <span className="text-[9px] text-white/20">
+            {isFailed ? 'Re-run this failed duty' : 'Force agent to re-run and get fresh data'}
+          </span>
+        </div>
       </div>
     </motion.div>
   )
 }
 
 /* ───────── Monitor Body ───────── */
+
+type HealthIssue = { severity: 'high' | 'medium' | 'low'; area: string; title: string; detail: string }
+type HealthReport = { scannedAt: string; ok: boolean; issues: HealthIssue[]; summary: string }
 
 function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean }) {
   const [feedExpanded, setFeedExpanded] = useState(false)
@@ -241,6 +252,8 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
   const [escalating, setEscalating] = useState<string | null>(null)
   const [capsOpen, setCapsOpen] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
+  const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
+  const [healthScanning, setHealthScanning] = useState(false)
 
   const feedItems = data.feed ?? []
   const visibleFeed = feedExpanded ? feedItems : feedItems.slice(0, 6)
@@ -251,6 +264,22 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
 
   const systemErrors = (data.warnings ?? []).filter(w => w.kind.startsWith('duty_') || w.kind === 'worker_heartbeat')
   const otherWarnings = (data.warnings ?? []).filter(w => !w.kind.startsWith('duty_') && w.kind !== 'worker_heartbeat')
+
+  async function loadHealthScan() {
+    setHealthScanning(true)
+    try {
+      const res = await fetch('/api/agent/health-scan', { cache: 'no-store' })
+      if (res.ok) setHealthReport(await res.json() as HealthReport)
+    } catch { /* ignore */ } finally {
+      setHealthScanning(false)
+    }
+  }
+
+  // Auto-load health scan on mount (live mode only)
+  useEffect(() => {
+    if (isLive && !healthReport) void loadHealthScan()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive])
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
@@ -386,6 +415,78 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
           </div>
         ))}
       </motion.div>
+
+      {/* ── System Health ── */}
+      {isLive && (
+        <motion.div variants={fadeIn}>
+          <SectionCard
+            title="System Health"
+            icon="🔍"
+            accent={healthReport?.ok ? 'emerald' : healthReport ? 'red' : undefined}
+            badge={healthReport && (
+              <span className={cn(
+                'rounded-md px-1.5 py-0.5 text-[9px] font-bold',
+                healthReport.ok ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300',
+              )}>
+                {healthReport.ok ? '✅ Healthy' : `⚠️ ${healthReport.issues.length} issues`}
+              </span>
+            )}
+            actions={
+              <button
+                type="button"
+                disabled={healthScanning}
+                onClick={() => void loadHealthScan()}
+                className={cn(
+                  'rounded-lg border px-2 py-1 text-[9px] font-bold transition-all',
+                  healthScanning
+                    ? 'border-white/[0.06] text-white/20'
+                    : 'border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10',
+                )}
+              >
+                {healthScanning ? '⏳ Scanning…' : '🔍 Scan Now'}
+              </button>
+            }
+          >
+            {!healthReport ? (
+              <p className="py-2 text-[10px] text-white/20">Loading health scan…</p>
+            ) : healthReport.ok ? (
+              <div className="flex items-center gap-2 py-1 text-[11px] text-emerald-300/80">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                {healthReport.summary}
+                {healthReport.scannedAt && <span className="ml-auto text-[9px] text-white/20">Scanned {fmtTime(healthReport.scannedAt)}</span>}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {healthReport.issues.map((issue, i) => (
+                  <div key={i} className={cn(
+                    'rounded-lg border p-2 text-[11px]',
+                    issue.severity === 'high' ? 'border-red-500/20 bg-red-500/[0.04]' :
+                    issue.severity === 'medium' ? 'border-amber-500/20 bg-amber-500/[0.04]' :
+                    'border-white/[0.06] bg-white/[0.01]',
+                  )}>
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase',
+                        issue.severity === 'high' ? 'bg-red-500/20 text-red-300' :
+                        issue.severity === 'medium' ? 'bg-amber-500/20 text-amber-300' :
+                        'bg-white/10 text-white/40',
+                      )}>
+                        {issue.severity}
+                      </span>
+                      <span className="font-semibold text-white/70">{issue.title}</span>
+                      <span className="ml-auto text-[9px] text-white/20">{issue.area}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-white/40">{issue.detail}</p>
+                  </div>
+                ))}
+                <p className="text-[9px] text-white/20">
+                  Scanned {healthReport.scannedAt ? fmtTime(healthReport.scannedAt) : '—'}
+                </p>
+              </div>
+            )}
+          </SectionCard>
+        </motion.div>
+      )}
 
       {/* ── Main 2-col grid ── */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
@@ -802,7 +903,7 @@ export default function AgentStaffMonitor() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-black tracking-tight text-white/90">Staff Monitor</h1>
+              <h1 className="text-xl font-black tracking-tight text-white/90">LIVE Business</h1>
               {viewingHistory ? <ArchiveBadge date={selectedDate!} /> : <LivePulse />}
             </div>
             <p className="mt-1 text-[11px] text-white/25">

@@ -8,7 +8,7 @@ import AgentShell from '@/agent/components/AgentShell'
 
 /** Live monitor: agentDuties + salahDuties from /api/agent/staff-monitor */
 
-export const metadata = { title: 'ALMA Agent — Staff Monitor' }
+export const metadata = { title: 'ALMA Agent — LIVE Business' }
 
 export default async function StaffMonitorPage() {
   if (!isAgentEnabled()) notFound()

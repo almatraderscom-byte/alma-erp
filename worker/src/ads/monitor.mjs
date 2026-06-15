@@ -33,7 +33,7 @@ function safeNum(v) {
 export async function runAdsMonitor({ supabase }) {
   if (!META_ADS_TOKEN || !AD_ACCOUNT_ID) {
     console.warn('[ads] META_ADS_TOKEN or META_AD_ACCOUNT_ID not set — skipping')
-    return
+    return { dutyStatus: 'skipped', dutyDetail: 'Ads credentials not configured' }
   }
 
   console.log('[ads] fetching campaign insights...')
@@ -47,7 +47,7 @@ export async function runAdsMonitor({ supabase }) {
 
     if (!campaigns.data?.length) {
       console.log('[ads] no active campaigns found')
-      return
+      return { dutyStatus: 'done', dutyDetail: 'কোনো সক্রিয় ক্যাম্পেইন নেই' }
     }
 
     // Get today's insights + 7-day avg
@@ -116,7 +116,7 @@ export async function runAdsMonitor({ supabase }) {
 
     if (!insightRows.length) {
       console.log('[ads] no insight data available yet for today')
-      return
+      return { dutyStatus: 'done', dutyDetail: 'আজকের ডেটা এখনো পাওয়া যায়নি' }
     }
 
     // Build digest message
@@ -144,8 +144,14 @@ export async function runAdsMonitor({ supabase }) {
       category: 'report',
     })
 
+    const totalSpend = insightRows.reduce((s, r) => s + parseFloat(r.spend), 0)
     console.log(`[ads] digest sent — ${insightRows.length} campaigns, ${anomalies.length} anomalies`)
+    return {
+      dutyStatus: 'done',
+      dutyDetail: `${insightRows.length} ক্যাম্পেইন, ৳${totalSpend.toFixed(0)} spend, ${anomalies.length} anomaly`,
+    }
   } catch (err) {
     console.error('[ads] monitor error:', err.message)
+    return { dutyStatus: 'error', dutyDetail: `Ads error: ${err.message.slice(0, 50)}` }
   }
 }

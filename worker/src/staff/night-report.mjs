@@ -54,7 +54,7 @@ export async function runNightReport({ supabase, bot }) {
       message: `${today} — কোনো টাস্ক ছিল না।`,
       category: 'report',
     })
-    return
+    return { dutyStatus: 'done', dutyDetail: 'কোনো টাস্ক ছিল না' }
   }
 
   // Group by staff
@@ -289,5 +289,11 @@ export async function runNightReport({ supabase, bot }) {
     voice:    true,
   })
 
+  const staffCount = Object.keys(byStaff).length
+  const doneCount = allTasks.filter(t => t.status === 'done').length
   console.log(`[night-report] sent for ${today} — ${allTasks.length} tasks, ${tasksToCarry.length} carried`)
+  return {
+    dutyStatus: 'done',
+    dutyDetail: `${staffCount} স্টাফ, ${doneCount}/${allTasks.length} সম্পন্ন, ${tasksToCarry.length} carry`,
+  }
 }

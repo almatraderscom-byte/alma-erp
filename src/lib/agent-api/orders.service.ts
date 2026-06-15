@@ -146,20 +146,20 @@ export async function crossCheckPendingCounts(): Promise<{
   mismatch: boolean
   note: string | null
 }> {
-  const [gasPending, allRecent] = await Promise.all([
+  const [statusFiltered, allRecent] = await Promise.all([
     listAgentOrders({ status: 'pending', limit: 500 }),
     listAgentOrders({ limit: 500 }),
   ])
 
   const mappedPending = allRecent.orders.filter((o) => o.status === 'pending').length
   const unknownCount = allRecent.orders.filter((o) => o.status === 'unknown').length
-  const gasCount = gasPending.meta.count
-  const mismatch = gasCount !== mappedPending
+  const dbPendingCount = statusFiltered.meta.count
+  const mismatch = dbPendingCount !== mappedPending
 
   let note: string | null = null
   if (mismatch) {
     note =
-      `GAS অনুযায়ী ${gasCount}টি pending, mapped count ${mappedPending} — sync delay বা status mismatch হতে পারে; refresh করুন।`
+      `DB pending count ${dbPendingCount}, mapped count ${mappedPending} — status mismatch হতে পারে; verify করুন।`
   }
   if (unknownCount > 0) {
     const unk =
@@ -169,9 +169,9 @@ export async function crossCheckPendingCounts(): Promise<{
 
   return {
     pendingCount: mappedPending,
-    gasPendingCount: gasCount,
+    gasPendingCount: dbPendingCount,
     unknownCount,
-    sheetSyncedAt: gasPending.meta.sheetSyncedAt ?? allRecent.meta.sheetSyncedAt,
+    sheetSyncedAt: null,
     fetchedAt: new Date().toISOString(),
     mismatch,
     note,
@@ -186,6 +186,14 @@ export async function listAgentOrders(input: ListAgentOrdersInput): Promise<{
   const params: Record<string, string> = {
     business_id: DEFAULT_BUSINESS_ID,
     limit: String(Math.min(limit + 200, 500)),
+  }
+
+  // Auto-scope to last 60 days when no explicit date range is given.
+  // Matches ERP UI behavior and prevents old orphaned orders from appearing.
+  if (!input.startDate && !input.endDate) {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 60)
+    params.startDate = cutoff.toISOString().slice(0, 10)
   }
 
   if (input.startDate) params.startDate = input.startDate

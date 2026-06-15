@@ -163,9 +163,9 @@ export default function AgentSidebar({
           <a
             href="/agent/staff-monitor"
             className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-gold-lt hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
-            title="স্টাফ মনিটর"
+            title="LIVE Business"
           >
-            👥
+            📊
           </a>
           <a
             href="/agent/trading-staff"
