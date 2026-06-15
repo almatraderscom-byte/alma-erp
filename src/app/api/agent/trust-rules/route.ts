@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { getAllTrustRules, setTrustTier, type TrustTier } from '@/agent/lib/trust-engine'
+import { getAllTrustRules, setTrustTier, seedDefaultTrustRules, type TrustTier } from '@/agent/lib/trust-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,7 +16,15 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const businessId = req.nextUrl.searchParams.get('businessId') ?? undefined
+
+  // Auto-seed defaults if no rules exist
   const rules = await getAllTrustRules(businessId)
+  if (rules.length === 0) {
+    await seedDefaultTrustRules(businessId ?? 'ALMA_LIFESTYLE')
+    const seeded = await getAllTrustRules(businessId)
+    return Response.json({ rules: seeded, seeded: true })
+  }
+
   return Response.json({ rules })
 }
 

@@ -113,6 +113,39 @@ export async function getAllTrustRules(businessId?: string) {
   }
 }
 
+/**
+ * Seeds known-safe trust rules. Called once on first load.
+ * Low-risk staff operations start at 'auto' or 'notify'.
+ */
+export async function seedDefaultTrustRules(businessId: string = 'ALMA_LIFESTYLE'): Promise<number> {
+  const defaults: Array<{ domain: string; actionPattern: string; tier: TrustTier }> = [
+    // These are low-risk, no customer impact — safe to auto-send
+    { domain: 'staff', actionPattern: 'staff_auto_message:presence', tier: 'auto' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:coaching', tier: 'auto' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:reminder', tier: 'auto' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:feedback_ack', tier: 'auto' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:proof_reminder', tier: 'auto' },
+
+    // These affect staff work but are routine — notify owner
+    { domain: 'staff', actionPattern: 'staff_auto_message:task_dispatch', tier: 'notify' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:announcement', tier: 'notify' },
+    { domain: 'staff', actionPattern: 'staff_auto_message:task_redo', tier: 'notify' },
+  ]
+
+  let seeded = 0
+  for (const rule of defaults) {
+    try {
+      await db.agentTrustRule.upsert({
+        where: { domain_actionPattern_businessId: { domain: rule.domain, actionPattern: rule.actionPattern, businessId } },
+        create: { ...rule, businessId, approvalCount: 10, consecutiveApprovals: 10 },
+        update: {}, // Don't overwrite if already exists
+      })
+      seeded++
+    } catch { /* ignore duplicates */ }
+  }
+  return seeded
+}
+
 export async function setTrustTier(
   ruleId: string,
   tier: TrustTier,

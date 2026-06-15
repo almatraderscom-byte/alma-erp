@@ -9,6 +9,7 @@ import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
+import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -143,7 +144,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -154,6 +155,7 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
+    personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
   ])
 
   const promptArgs = {
@@ -174,6 +176,7 @@ async function* runAlternateProviderTurn(
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,
+    businessContext,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)

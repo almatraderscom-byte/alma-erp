@@ -10,6 +10,35 @@ import { normalizeStaffTaskSource } from './task-source.mjs'
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
+/** Smart task brief cache — reset per proposal run */
+let _smartTaskCache = null
+
+function resetSmartTaskCache() { _smartTaskCache = null }
+
+async function fetchSmartTaskBrief(staffName, taskType, productName, completionRate) {
+  try {
+    if (!_smartTaskCache) _smartTaskCache = {}
+    const key = `${staffName}:${taskType}`
+    if (_smartTaskCache[key]) return _smartTaskCache[key]
+
+    const res = await fetch(`${APP_URL()}/api/agent/smart-task`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${INT_TOKEN()}`,
+      },
+      body: JSON.stringify({ staffName, taskType, productName, completionRate }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (res.ok) {
+      const brief = await res.json()
+      _smartTaskCache[key] = brief
+      return brief
+    }
+  } catch { /* fall through to existing logic */ }
+  return null
+}
+
 /** Default profiles — seeded when agent_kv_settings has none. */
 export const DEFAULT_PROFILES = {
   'Mohammad Eyafi': {
@@ -245,7 +274,7 @@ function buildSkillTask(staff, skill, picks, pendingOrders, profile) {
 }
 
 /** Build profile-filtered tasks for one staff member (6–8 tasks). */
-export function buildTasksForStaff(staff, profile, picks, carryForward, pendingOrders) {
+export function buildTasksForStaff(staff, profile, picks, carryForward, pendingOrders, smartBriefs) {
   const tasks = []
   const targetCount = profile?.dailyTargetTasks ?? 6
   const usedTypes = new Set()
@@ -279,7 +308,31 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
     if (!pickSlice.length && ['video_reel', 'ad_creative', 'product_content', 'product_photo', 'listing_update', 'stock_check'].includes(skill)) {
       continue
     }
-    const task = buildSkillTask(staff, skill, pickSlice.length ? pickSlice : picks, pendingOrders, profile)
+    const currentPicks = pickSlice.length ? pickSlice : picks
+    const pick = currentPicks[0]
+    const label = pick ? productLabel(pick) : null
+
+    // Try smart brief first (if pre-fetched)
+    const briefKey = `${staff.name}:${skill}`
+    const smartBrief = smartBriefs?.[briefKey]
+    if (smartBrief) {
+      let detail = smartBrief.detail
+      if (smartBrief.stepByStep?.length) {
+        detail += '\n\n' + smartBrief.stepByStep.join('\n')
+      }
+      if (smartBrief.verificationCriteria?.length) {
+        detail += '\n\n✅ চেক: ' + smartBrief.verificationCriteria.join(' | ')
+      }
+      tasks.push(makeTask(staff, skill, smartBrief.title, detail, pick, 'smart'))
+      usedTypes.add(skill)
+      if (['video_reel', 'product_photo', 'ad_creative', 'product_content', 'listing_update'].includes(skill)) {
+        pickIdx = Math.min(pickIdx + 1, Math.max(0, picks.length - 1))
+      }
+      continue
+    }
+
+    // Fallback to existing switch-case logic
+    const task = buildSkillTask(staff, skill, currentPicks, pendingOrders, profile)
     if (task) {
       tasks.push(task)
       usedTypes.add(skill)
@@ -433,6 +486,7 @@ function formatSummary(date, staffList, tasks, picks, carryCount, pendingOrders)
  * ERP rotation data fetched from Vercel API; task list built locally.
  */
 export async function buildWorkerTaskProposal(supabase, targetDate) {
+  resetSmartTaskCache()
   const [{ data: staffRows, error: staffErr }, profiles, apiData] = await Promise.all([
     supabase.from('agent_staff').select('id, name, role, telegramChatId').eq('active', true).order('name'),
     loadStaffProfiles(supabase),
@@ -536,7 +590,29 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
 
   for (const staff of staffList) {
     const profile = getProfileForStaff(profiles, staff.name)
-    let staffTasks = buildTasksForStaff(staff, profile, picks, carryRows ?? [], pendingOrders)
+
+    // Pre-fetch smart task briefs for this staff's skills (non-blocking enhancement)
+    let smartBriefs = {}
+    try {
+      const skillOrder = isContentStaff(staff) ? SKILL_ORDER_CONTENT : SKILL_ORDER_OTHER
+      const completionRate = (() => {
+        if (!Array.isArray(staffCapabilities)) return 50
+        const myProfile = staffCapabilities.find(c => c.staffId === staff.id)
+        return myProfile?.overallCompletionRate ?? 50
+      })()
+
+      const briefPromises = skillOrder.slice(0, 6).map(async (skill) => {
+        const pick = picks[0]
+        const productName = pick ? productLabel(pick) : null
+        const brief = await fetchSmartTaskBrief(staff.name, skill, productName, completionRate)
+        if (brief) smartBriefs[`${staff.name}:${skill}`] = brief
+      })
+      await Promise.allSettled(briefPromises)
+    } catch (err) {
+      console.warn(`[evening-proposal] smart brief fetch failed for ${staff.name}:`, err.message)
+    }
+
+    let staffTasks = buildTasksForStaff(staff, profile, picks, carryRows ?? [], pendingOrders, smartBriefs)
 
     // Inject strategist directive tasks for content staff (first match only)
     if (isContentStaff(staff) && strategistTasks.length > 0) {
