@@ -106,7 +106,25 @@ export async function retrieveRelevantMemories(
 ): Promise<RelevantMemory[]> {
   try {
     const embedResult = await embed(userMessage)
-    if (!embedResult.success) return []
+    if (!embedResult.success) {
+      // ILIKE fallback when embedding is unavailable
+      const scopeClauseFb = personalMode
+        ? `AND scope = 'personal'`
+        : `AND scope != 'personal'`
+      const businessClauseFb = personalMode
+        ? ''
+        : businessId === 'ALMA_TRADING'
+          ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
+          : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fbRows: Array<{ id: string; content: string; scope: string }> = await (prisma as any).$queryRawUnsafe(
+        `SELECT id, content, scope FROM agent_memory
+         WHERE pinned = false AND content ILIKE $1 ${scopeClauseFb} ${businessClauseFb}
+         ORDER BY "createdAt" DESC LIMIT 6`,
+        `%${userMessage.slice(0, 100)}%`,
+      )
+      return fbRows.map((r) => ({ id: r.id, content: r.content, scope: r.scope, score: 0.5 }))
+    }
 
     const vec = vectorLiteral(embedResult.data)
     const scopeClause = personalMode

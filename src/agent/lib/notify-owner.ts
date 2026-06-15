@@ -12,7 +12,7 @@ async function sendNtfy(topic: 'general' | 'critical', title: string, message: s
   const priority = topic === 'critical' ? '5' : '3'
   const tags = category === 'urgent' ? 'rotating_light,sos' : category === 'salah' ? 'salah,mosque' : ''
 
-  await resilientFetch(`${server}/${topicName}`, {
+  const res = await resilientFetch(`${server}/${topicName}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
@@ -23,7 +23,8 @@ async function sendNtfy(topic: 'general' | 'critical', title: string, message: s
     body: message,
     timeoutMs: 15_000,
     retries: 1,
-  }).catch(() => {})
+  })
+  if (!res.ok) throw new Error(`ntfy ${topic} returned ${res.status}`)
 }
 
 export async function notifyOwner(opts: {
