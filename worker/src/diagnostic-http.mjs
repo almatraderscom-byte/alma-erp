@@ -110,21 +110,32 @@ export function startDiagnosticHttpServer() {
           steps.push({ step: 'npm_install', ok: false, error: err.message?.slice(0, 200) ?? 'npm ci failed' })
         }
 
-        try {
-          let restartOut
-          try {
-            restartOut = execSync('pm2 restart agent-worker 2>&1', { timeout: 30_000, encoding: 'utf8' })
-          } catch {
-            restartOut = execSync('pm2 restart alma-agent-worker 2>&1', { timeout: 30_000, encoding: 'utf8' })
-          }
-          steps.push({ step: 'pm2_restart', ok: true, output: restartOut.slice(-200) })
-        } catch (err) {
-          steps.push({ step: 'pm2_restart', ok: false, error: err.message?.slice(0, 200) ?? 'pm2 restart failed' })
+        // PM2 restart must run AFTER the HTTP response — restarting kills this process.
+        const npmOk = steps.find(s => s.step === 'npm_install')?.ok ?? false
+        const gitOk = steps.find(s => s.step === 'git_pull')?.ok ?? false
+        if (gitOk && npmOk) {
+          steps.push({ step: 'pm2_restart', ok: true, output: 'restart scheduled (post-response)' })
+        } else {
+          steps.push({ step: 'pm2_restart', ok: false, error: 'skipped — git pull or npm install failed' })
         }
 
         const allOk = steps.every(s => s.ok)
         res.writeHead(allOk ? 200 : 207, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: allOk, steps }))
+
+        if (gitOk && npmOk) {
+          setImmediate(() => {
+            try {
+              execSync('pm2 restart agent-worker --update-env 2>&1', { timeout: 30_000, encoding: 'utf8' })
+            } catch {
+              try {
+                execSync('pm2 restart alma-agent-worker --update-env 2>&1', { timeout: 30_000, encoding: 'utf8' })
+              } catch (err) {
+                console.error('[diagnostic-http] pm2 restart failed:', err.message?.slice(0, 200))
+              }
+            }
+          })
+        }
         return
       }
 
