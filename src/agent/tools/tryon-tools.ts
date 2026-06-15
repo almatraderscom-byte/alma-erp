@@ -1,9 +1,12 @@
 import { prisma } from '@/lib/prisma'
 import {
   getModelLibrary,
-  setModelLibrary,
+  addBrandModel,
+  removeBrandModel,
+  setDefaultBrandModel,
   resolveModel,
   buildTryOnPrompt,
+  listModelsByRole,
   type SavedModel,
   type TryOnStyle,
   type TryOnPose,
@@ -11,42 +14,63 @@ import {
 } from '@/lib/tryon/model-library'
 import type { AgentTool } from './registry'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any
+const VALID_ROLES: ModelRole[] = ['father', 'mother', 'son', 'daughter', 'single']
 
 const manage_model_library: AgentTool = {
   name: 'manage_model_library',
   description:
-    'View, add, remove, or set-default ALMA\'s saved try-on models (reference photos used to put products ' +
-    'on a model). Add only when the owner uploads a model photo and asks to save it. The imagePath must be ' +
-    'an agent-files storage path of an already-uploaded photo (the owner uploads via the chat; use the ' +
-    'storage path returned from that upload).',
+    'View, add, remove, or set-default ALMA brand model photos (used for try-on + content engine). ' +
+    'Owner uploads a full-body photo in chat, then asks to save with a role (father/mother/son/daughter/single). ' +
+    'imagePath must be the agent-files storage path from that upload. One model per role — adding the same role replaces the previous.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['list', 'add', 'remove', 'set_default'] },
-      id: { type: 'string', description: 'Short slug for the model, e.g. "maruf" (add/remove/set_default)' },
+      action: { type: 'string', enum: ['list', 'add', 'remove', 'set_default', 'list_by_role'] },
+      id: { type: 'string', description: 'Short slug, e.g. "maruf-father" (add/remove/set_default)' },
       name: { type: 'string', description: 'Display name (add)' },
       imagePath: { type: 'string', description: 'agent-files storage path of the uploaded model photo (add)' },
-      notes: { type: 'string', description: 'Optional: body type / gender / age range — helps fit accuracy' },
+      notes: { type: 'string', description: 'Optional: age range / body type — helps fit accuracy' },
       role: {
         type: 'string',
-        enum: ['father', 'mother', 'son', 'daughter', 'single'],
-        description: 'Family role for content engine composition (add)',
+        enum: VALID_ROLES,
+        description: 'Family role — required for content engine (father, mother, son, daughter, or single)',
       },
     },
     required: ['action'],
   },
   handler: async (input) => {
     const action = String(input.action ?? '')
-    const lib = await getModelLibrary()
 
     if (action === 'list') {
+      const lib = await getModelLibrary()
       return {
         success: true,
-        data: { models: lib.map((m) => ({ id: m.id, name: m.name, isDefault: m.isDefault, notes: m.notes })) },
+        data: {
+          models: lib.map((m) => ({
+            id: m.id,
+            name: m.name,
+            role: m.role ?? null,
+            isDefault: m.isDefault,
+            notes: m.notes,
+          })),
+        },
       }
     }
+
+    if (action === 'list_by_role') {
+      const byRole = await listModelsByRole()
+      return {
+        success: true,
+        data: {
+          father: byRole.father ?? null,
+          mother: byRole.mother ?? null,
+          son: byRole.son ?? null,
+          daughter: byRole.daughter ?? null,
+          single: byRole.single ?? null,
+        },
+      }
+    }
+
     if (action === 'add') {
       const id = String(input.id ?? '')
         .trim()
@@ -54,44 +78,46 @@ const manage_model_library: AgentTool = {
         .replace(/\s+/g, '-')
       const name = String(input.name ?? '').trim()
       const imagePath = String(input.imagePath ?? '').trim()
-      if (!id || !name || !imagePath) return { success: false, error: 'add-এর জন্য id, name, imagePath লাগবে।' }
-      if (lib.some((m) => m.id === id)) return { success: false, error: `"${id}" আইডি ইতোমধ্যে আছে।` }
-      const model: SavedModel = {
+      const role = input.role ? (String(input.role) as ModelRole) : undefined
+      if (!id || !name || !imagePath) {
+        return { success: false, error: 'add-এর জন্য id, name, imagePath লাগবে।' }
+      }
+      if (!role) {
+        return { success: false, error: 'content engine-এর জন্য role লাগবে (father/mother/son/daughter/single)।' }
+      }
+
+      const saved = await addBrandModel({
         id,
         name,
         imagePath,
-        isDefault: lib.length === 0,
+        isDefault: false,
         notes: input.notes ? String(input.notes) : undefined,
-        role: input.role ? (String(input.role) as SavedModel['role']) : undefined,
-      }
-      await setModelLibrary([...lib, model])
+        role,
+      })
+
       return {
         success: true,
         data: {
-          message: `মডেল "${name}" যুক্ত হয়েছে${model.isDefault ? ' (default)' : ''}।`,
-          models: [...lib, model].map((m) => ({ id: m.id, name: m.name, isDefault: m.isDefault })),
+          message: `মডেল "${name}" যুক্ত হয়েছে (role: ${role})${saved.isDefault ? ' — default' : ''}।`,
+          model: { id: saved.id, name: saved.name, role: saved.role, isDefault: saved.isDefault },
         },
       }
     }
+
     if (action === 'remove') {
-      const id = String(input.id ?? '')
-        .trim()
-        .toLowerCase()
-      const updated = lib.filter((m) => m.id !== id)
-      if (updated.length === lib.length) return { success: false, error: `"${id}" পাওয়া যায়নি।` }
-      if (!updated.some((m) => m.isDefault) && updated.length) updated[0].isDefault = true
-      await setModelLibrary(updated)
+      const id = String(input.id ?? '').trim().toLowerCase()
+      const ok = await removeBrandModel(id)
+      if (!ok) return { success: false, error: `"${id}" পাওয়া যায়নি।` }
       return { success: true, data: { message: `"${id}" সরানো হয়েছে।` } }
     }
+
     if (action === 'set_default') {
-      const id = String(input.id ?? '')
-        .trim()
-        .toLowerCase()
-      if (!lib.some((m) => m.id === id)) return { success: false, error: `"${id}" পাওয়া যায়নি।` }
-      const updated = lib.map((m) => ({ ...m, isDefault: m.id === id }))
-      await setModelLibrary(updated)
+      const id = String(input.id ?? '').trim().toLowerCase()
+      const ok = await setDefaultBrandModel(id)
+      if (!ok) return { success: false, error: `"${id}" পাওয়া যায়নি।` }
       return { success: true, data: { message: `"${id}" এখন default মডেল।` } }
     }
+
     return { success: false, error: `invalid action: ${action}` }
   },
 }
@@ -136,7 +162,7 @@ const generate_on_model_image: AgentTool = {
     if (!model) {
       return {
         success: false,
-        error: 'কোনো saved মডেল নেই। আগে manage_model_library (action=add) দিয়ে একটি মডেল ছবি যোগ করুন।',
+        error: 'কোনো saved মডেল নেই। আগে manage_model_library (action=add, role=...) দিয়ে মডেল ছবি যোগ করুন।',
       }
     }
 
@@ -150,11 +176,12 @@ const generate_on_model_image: AgentTool = {
 
     const summary =
       `🧍 On-model try-on (pro)\n` +
-      `মডেল: ${model.name}\n` +
+      `মডেল: ${model.name}${model.role ? ` (${model.role})` : ''}\n` +
       `স্টাইল: ${input.style ?? 'studio'} | পোজ: ${input.pose ?? 'front'}\n` +
       `প্রোডাক্ট: ${productImagePath.split('/').pop()}`
 
-    const action = await db.agentPendingAction.create({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const action = await (prisma as any).agentPendingAction.create({
       data: {
         conversationId: input.conversationId ? String(input.conversationId) : null,
         type: 'image_gen',
@@ -186,11 +213,15 @@ const generate_on_model_image: AgentTool = {
 export const TRYON_TOOLS: AgentTool[] = [manage_model_library, generate_on_model_image]
 
 export const TRYON_ROLE_PROMPT = `
-## ভার্চুয়াল ট্রাই-অন (নিজের মডেলে প্রোডাক্ট)
-owner প্রোডাক্ট ছবি দিলে এবং মডেলে দেখাতে চাইলে → generate_on_model_image ব্যবহার করুন (generate_image নয়)।
-- owner কোনো hard image prompt লিখবেন না — আপনি style/pose বেছে expert prompt নিজে বানাবেন।
-- default saved মডেল ব্যবহার হবে; owner অন্য মডেল/পোজ/স্টাইল বললে সেই অনুযায়ী।
-- background সবসময় বাস্তব বাংলাদেশি ফটোশুট-টাইপ (বিদেশি generic নয়) — এটা built-in।
-- নতুন মডেল ছবি owner আপলোড করে "এটা সেভ করো" বললে → manage_model_library (action=add)।
-- প্রোডাক্ট garment ৯৯% হুবহু রাখতে হবে — রঙ/প্যাটার্ন/ডিটেইল বদলাবে না; শুধু মডেলের গায়ে fit হবে।
+## ব্র্যান্ড মডেল লাইব্রেরি (আগে সেটআপ — content engine-এর জন্য বাধ্যতামূলক)
+owner full-body ছবি আপলোড করলে → manage_model_library (action=add, role=father|mother|son|daughter|single)।
+এক role-এ এক মডেল — নতুন add করলে সেই role আপডেট হয়।
+list_by_role দিয়ে কোন role আছে/নেই দেখুন। father+son+mother+daughter স্টক করলে family-matching পোস্ট ভালো হয়।
+ছবির টিপস: full body, সামনে/হালকা কোণ, plain background, ভালো আলো, heavy filter নয়।
+
+## ভার্চুয়াল ট্রাই-অন
+owner প্রোডাক্ট ছবি দিলে এবং মডেলে দেখাতে চাইলে → generate_on_model_image (generate_image নয়)।
+- owner image prompt লিখবেন না — style/pose আপনি বেছে expert prompt বানাবেন।
+- background বাস্তব বাংলাদেশি ফটোশুট-টাইপ — built-in।
+- garment ৯৯% হুবহু রাখতে হবে।
 `

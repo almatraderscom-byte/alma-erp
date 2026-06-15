@@ -1909,6 +1909,20 @@ model ProductContentAsset {
   @@map("product_content_asset")
 }
 
+model AgentBrandModel {
+  id        String   @id
+  name      String
+  imagePath String   @map("image_path")
+  role      String?  @unique
+  isDefault Boolean  @default(false) @map("is_default")
+  notes     String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isDefault])
+  @@map("agent_brand_models")
+}
+
 model AgentStaff {
   id             String                @id @default(uuid())
   name           String

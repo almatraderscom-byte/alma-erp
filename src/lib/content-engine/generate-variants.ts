@@ -1,7 +1,7 @@
 import {
   buildTryOnPrompt,
   buildFamilyVariantExtra,
-  resolveModelByRole,
+  getModelByRole,
   type TryOnStyle,
   type TryOnPose,
   type ModelRole,
@@ -53,7 +53,7 @@ export async function buildVariantRenderSpec(
   quality: RenderQuality,
   opts?: { style?: TryOnStyle; pose?: TryOnPose; seedNote?: string },
 ): Promise<VariantRenderSpec> {
-  const model = await resolveModelByRole(modelRoleForVariant(variant))
+  const model = await getModelByRole(modelRoleForVariant(variant))
   if (!model) throw new Error('no_model_for_variant')
 
   const style = opts?.style ?? 'studio'
