@@ -26,13 +26,19 @@ export async function POST(req: NextRequest) {
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
   if (!verifyToken(token)) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
-  const result = await runFullProductIndex()
-  const status = await catalogStatus()
+  try {
+    const result = await runFullProductIndex()
+    const status = await catalogStatus()
 
-  return Response.json({
-    ...result,
-    withImages: status.withImages,
-    missingCount: status.missingCount,
-    topMissing: status.topMissing.slice(0, 20),
-  })
+    return Response.json({
+      ...result,
+      withImages: status.withImages,
+      missingCount: status.missingCount,
+      topMissing: status.topMissing.slice(0, 20),
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[cs-index-products]', message)
+    return Response.json({ error: message.slice(0, 500) }, { status: 500 })
+  }
 }
