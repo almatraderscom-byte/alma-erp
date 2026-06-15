@@ -1,7 +1,7 @@
 /**
  * Task verification orchestration — Done flow, proof, owner review cards.
  */
-import { autoVerifyTask, assessProofQuality } from './verify-task.mjs'
+import { autoVerifyTask, assessProofQuality, trackProofFailurePattern } from './verify-task.mjs'
 import { taskDoneCallbackData, compactUuid, buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { notifyStaffTaskProgress, resolveTaskProgressContext } from './task-progress.mjs'
@@ -77,7 +77,11 @@ export async function notifyOwnerForReview(telegram, taskRow, result) {
 
   if (result.proofQuality && !result.proofQuality.matches && result.proofQuality.confidence === 'high') {
     body += `⚠️ প্রমাণ টাস্কের সাথে মিলছে না বলে মনে হচ্ছে।`
-    if (result.proofQuality.note) body += ` (${result.proofQuality.note})`
+    if (result.proofQuality.feedback?.summary) {
+      body += `\n💡 ${result.proofQuality.feedback.summary}`
+    } else if (result.proofQuality.note) {
+      body += ` (${result.proofQuality.note})`
+    }
     body += '\n'
   }
 
@@ -208,6 +212,12 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
         proofImageUrl: proofData.imageUrl,
         proofText: proofData.text,
       })
+
+      // Track failure patterns for personalized improvement
+      if (proofQuality && !proofQuality.matches && proofQuality.confidence === 'high') {
+        const failedAspects = proofQuality.feedback?.hints ?? [proofQuality.note].filter(Boolean)
+        await trackProofFailurePattern(supabase, staff.id, task.type, failedAspects).catch(() => {})
+      }
     }
 
     const result = await callTaskCallback({
@@ -222,7 +232,13 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
       return true
     }
 
-    await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
+    // Send specific feedback to staff if proof quality assessment has improvement tips
+    if (proofQuality && !proofQuality.matches && proofQuality.confidence === 'high' && proofQuality.feedback?.hints?.length) {
+      const feedbackMsg = `📝 প্রমাণ পেয়েছি। কিছু বিষয় next time মনে রাখবেন:\n${proofQuality.feedback.hints.slice(0, 3).join('\n')}`
+      await ctx.reply(feedbackMsg)
+    } else {
+      await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
+    }
     await notifyOwnerForReview(ctx.telegram, task, { ...result, proofQuality })
     return true
   } finally {
