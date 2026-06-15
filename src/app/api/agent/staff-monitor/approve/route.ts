@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { recordApproval, recordRejection } from '@/agent/lib/trust-engine'
 
 export const runtime = 'nodejs'
 
@@ -19,11 +20,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'actionId and decision required' }, { status: 400 })
   }
 
-  type PendingRow = { id: string; payload: Record<string, unknown> | null; status: string }
+  type PendingRow = { id: string; payload: Record<string, unknown> | null; status: string; type: string; businessId: string | null }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const row = await (prisma as any).agentPendingAction.findUnique({
     where: { id: body.actionId },
-    select: { id: true, payload: true, status: true },
+    select: { id: true, payload: true, status: true, type: true, businessId: true },
   }) as PendingRow | null
 
   if (!row) return Response.json({ error: 'not_found' }, { status: 404 })
@@ -37,6 +38,14 @@ export async function POST(req: NextRequest) {
     where: { id: body.actionId },
     data: { status: approved ? 'approved' : 'rejected', resolvedAt: new Date() },
   })
+
+  // Record trust approval/rejection (non-blocking, staff domain)
+  const trustBiz = row.businessId ?? 'ALMA_LIFESTYLE'
+  if (approved) {
+    void recordApproval('staff', row.type, trustBiz).catch(() => {})
+  } else {
+    void recordRejection('staff', row.type, trustBiz).catch(() => {})
+  }
 
   if (approved && row.payload) {
     const workerUrl = process.env.AGENT_WORKER_DIAGNOSTIC_URL?.replace(/\/$/, '')

@@ -439,6 +439,45 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
     callInternal(`/api/assistant/internal/staff-task-proposal?date=${targetDate}`),
   ])
 
+  // Fetch today's approved strategist directives
+  let strategistDirectives = []
+  try {
+    const today = dhakaTodayYmd()
+    const dayStart = `${today}T00:00:00+06:00`
+    const { data: moves } = await supabase
+      .from('agent_pending_actions')
+      .select('payload')
+      .eq('type', 'strategist_moves')
+      .in('status', ['approved', 'completed'])
+      .gte('created_at', dayStart)
+      .limit(3)
+
+    if (moves?.length) {
+      for (const m of moves) {
+        const p = typeof m.payload === 'string' ? JSON.parse(m.payload) : m.payload
+        if (p?.moves && Array.isArray(p.moves)) {
+          strategistDirectives.push(...p.moves)
+        } else if (p?.move || p?.suggestion) {
+          strategistDirectives.push(p)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[evening-proposal] strategist fetch failed:', err.message)
+  }
+
+  // Fetch staff capability profiles for smart assignment
+  let staffCapabilities = {}
+  try {
+    const capRes = await fetch(`${APP_URL()}/api/agent/staff-capabilities`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (capRes.ok) staffCapabilities = await capRes.json()
+  } catch (err) {
+    console.warn('[evening-proposal] capability fetch failed:', err.message)
+  }
+
   if (staffErr) throw new Error(`staff load: ${staffErr.message}`)
   const staffList = (staffRows ?? []).map((s) => ({
     id: s.id,
@@ -481,9 +520,48 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
   const decisionHints = analyzeOwnerDecisions(ownerDecisions)
   const decisionNotes = []
 
+  // Convert strategist directives to concrete high-priority tasks for the first staff
+  const strategistTasks = []
+  for (const directive of strategistDirectives.slice(0, 2)) {
+    const desc = directive.move ?? directive.suggestion ?? ''
+    if (!desc) continue
+    strategistTasks.push({
+      title: `🎯 ${desc.slice(0, 80)}`,
+      detail: directive.rationale ?? directive.detail ?? 'Daily strategist directive',
+      type: 'strategist_directive',
+      priority: 'high',
+      source: 'daily_strategist',
+    })
+  }
+
   for (const staff of staffList) {
     const profile = getProfileForStaff(profiles, staff.name)
     let staffTasks = buildTasksForStaff(staff, profile, picks, carryRows ?? [], pendingOrders)
+
+    // Inject strategist directive tasks for content staff (first match only)
+    if (isContentStaff(staff) && strategistTasks.length > 0) {
+      const injected = strategistTasks.splice(0, strategistTasks.length)
+      staffTasks = [...injected.map(t => ({ ...t, staffId: staff.id, staffName: staff.name })), ...staffTasks]
+    }
+
+    // Capability-aware assignment adjustment
+    if (Array.isArray(staffCapabilities) && staffCapabilities.length > 0) {
+      const myProfile = staffCapabilities.find(c => c.staffId === staff.id)
+      if (myProfile) {
+        for (let i = 0; i < staffTasks.length; i++) {
+          const t = staffTasks[i]
+          if (!t.type || t.title.startsWith('🔄') || t.title.startsWith('🎯')) continue
+          const myCap = myProfile.capabilities?.find(c => c.taskType === t.type)
+          if (myCap && myCap.completionRate < 50 && myCap.totalTasks >= 3) {
+            staffTasks[i] = {
+              ...t,
+              detail: `${t.detail ?? ''}\n📊 ${staff.name} er ${t.type} completion rate: ${myCap.completionRate}%`.trim(),
+            }
+          }
+        }
+      }
+    }
+
     const adjusted = adjustTasksForOwnerDecisions(staff, staffTasks, decisionHints)
     staffTasks = adjusted.tasks
     if (adjusted.note) decisionNotes.push(adjusted.note)

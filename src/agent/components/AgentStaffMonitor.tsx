@@ -348,10 +348,50 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
     } catch { /* ignore */ }
   }
 
+  // Trust rules state
+  interface TrustRule { id: string; domain: string; actionPattern: string; tier: string; approvalCount: number; rejectionCount: number; consecutiveApprovals: number }
+  const [trustRules, setTrustRules] = useState<TrustRule[]>([])
+
+  async function loadTrustRules() {
+    try {
+      const res = await fetch('/api/agent/trust-rules', { cache: 'no-store' })
+      if (res.ok) setTrustRules(await res.json())
+    } catch { /* ignore */ }
+  }
+
+  async function updateTrustTier(ruleId: string, newTier: string) {
+    try {
+      const res = await fetch('/api/agent/trust-rules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ruleId, tier: newTier }),
+      })
+      if (res.ok) {
+        showToast('Trust tier updated', 'ok')
+        void loadTrustRules()
+      } else {
+        showToast('Update failed', 'err')
+      }
+    } catch { showToast('Update failed', 'err') }
+  }
+
+  // Staff capabilities state
+  interface StaffCap { staffId: string; staffName: string; overallCompletionRate: number; strongTypes: string[]; weakTypes: string[] }
+  const [staffCaps, setStaffCaps] = useState<StaffCap[]>([])
+
+  async function loadStaffCaps() {
+    try {
+      const res = await fetch('/api/agent/staff-capabilities', { cache: 'no-store' })
+      if (res.ok) setStaffCaps(await res.json())
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => {
     if (isLive && !healthReport) void loadHealthScan()
     if (isLive) void loadAutoFixActions()
     if (isLive) void loadBrainStats()
+    if (isLive) void loadTrustRules()
+    if (isLive) void loadStaffCaps()
 
     if (!isLive) return
     const healthInterval = setInterval(() => { void loadHealthScan() }, 60_000)
@@ -701,6 +741,78 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                 )}
               </div>
             )}
+          </SectionCard>
+        </motion.div>
+      )}
+
+      {/* ── Trust Engine ── */}
+      {isLive && (
+        <motion.div variants={fadeIn}>
+          <SectionCard title="ট্রাস্ট ইঞ্জিন" icon="🛡️" accent="blue">
+            {trustRules.length === 0 ? (
+              <p className="py-2 text-[10px] text-white/30">কোনো trust rule নেই — agent approve হতে থাকলে auto-promote হবে</p>
+            ) : (
+              <div className="space-y-1.5">
+                {trustRules.map(rule => (
+                  <div key={rule.id} className="flex items-center gap-2 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-1.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold text-white/60">{rule.domain} / {rule.actionPattern}</p>
+                      <p className="text-[9px] text-white/30">
+                        ✅ {rule.approvalCount} approved · ❌ {rule.rejectionCount} rejected · 🔥 {rule.consecutiveApprovals} streak
+                      </p>
+                    </div>
+                    <select
+                      value={rule.tier}
+                      onChange={(e) => updateTrustTier(rule.id, e.target.value)}
+                      className={cn(
+                        'rounded-md px-2 py-0.5 text-[10px] font-bold border cursor-pointer',
+                        rule.tier === 'auto' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' :
+                        rule.tier === 'notify' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' :
+                        'border-red-500/20 bg-red-500/[0.05] text-red-300',
+                      )}
+                    >
+                      <option value="approve">🔒 Approve</option>
+                      <option value="notify">📢 Notify</option>
+                      <option value="auto">⚡ Auto</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        </motion.div>
+      )}
+
+      {/* ── Staff Capabilities ── */}
+      {isLive && staffCaps.length > 0 && (
+        <motion.div variants={fadeIn}>
+          <SectionCard title="স্টাফ সক্ষমতা" icon="📊" accent="emerald">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {staffCaps.map(sc => (
+                <div key={sc.staffId} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-white/70">{sc.staffName}</p>
+                    <span className={cn(
+                      'text-xs font-black tabular-nums',
+                      sc.overallCompletionRate >= 80 ? 'text-emerald-400' :
+                      sc.overallCompletionRate >= 50 ? 'text-amber-400' : 'text-red-400',
+                    )}>
+                      {sc.overallCompletionRate}%
+                    </span>
+                  </div>
+                  {sc.strongTypes.length > 0 && (
+                    <p className="mt-1 text-[9px] text-emerald-400/60">
+                      💪 Strong: {sc.strongTypes.join(', ')}
+                    </p>
+                  )}
+                  {sc.weakTypes.length > 0 && (
+                    <p className="mt-0.5 text-[9px] text-red-400/60">
+                      📈 Needs work: {sc.weakTypes.join(', ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
           </SectionCard>
         </motion.div>
       )}

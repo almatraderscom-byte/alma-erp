@@ -8,6 +8,7 @@ import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
+import { recordApproval } from '@/agent/lib/trust-engine'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -87,6 +88,15 @@ export async function POST(
     })
     return Response.json({ error: 'expired' }, { status: 410 })
   }
+
+  // Record trust approval (non-blocking)
+  const trustDomain = action.type.startsWith('staff_') ? 'staff' :
+    action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :
+    action.type.startsWith('website_') ? 'content' :
+    action.type.startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
+    'general'
+  const trustBiz = (action.businessId as string) ?? 'ALMA_LIFESTYLE'
+  void recordApproval(trustDomain, action.type as string, trustBiz).catch(() => {})
 
   const payload = action.payload as Record<string, unknown>
 

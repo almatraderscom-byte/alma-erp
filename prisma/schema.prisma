@@ -2913,3 +2913,22 @@ model LifestyleInvoiceSequence {
   @@id([businessId, year])
   @@map("lifestyle_invoice_sequences")
 }
+
+model AgentTrustRule {
+  id              String    @id @default(uuid())
+  domain          String
+  actionPattern   String    @map("action_pattern")
+  tier            String    @default("approve")
+  conditions      Json?
+  approvalCount   Int       @default(0) @map("approval_count")
+  rejectionCount  Int       @default(0) @map("rejection_count")
+  consecutiveApprovals Int  @default(0) @map("consecutive_approvals")
+  businessId      String    @default("ALMA_LIFESTYLE") @map("business_id")
+  lastPromotedAt  DateTime? @map("last_promoted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([domain, actionPattern, businessId])
+  @@index([businessId, tier])
+  @@map("agent_trust_rules")
+}

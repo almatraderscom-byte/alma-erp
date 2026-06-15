@@ -8,6 +8,7 @@ import { MAX_TOOL_ITERATIONS } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
+import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -142,7 +143,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -152,6 +153,7 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
     personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
+    (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
   ])
 
   const promptArgs = {
@@ -171,6 +173,7 @@ async function* runAlternateProviderTurn(
     activePlaybook,
     outcomeLearnings,
     ownerDecisions,
+    conflictSignals,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)

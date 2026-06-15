@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
+import { recordRejection } from '@/agent/lib/trust-engine'
 
 export const runtime = 'nodejs'
 
@@ -56,6 +57,15 @@ export async function POST(
     where: { id: actionId },
     data: { status: 'rejected', resolvedAt: new Date() },
   })
+
+  // Record trust rejection (non-blocking)
+  const trustDomain = (action.type as string).startsWith('staff_') ? 'staff' :
+    ['content_gate1', 'content_gate2', 'fb_post', 'ad_creative_gate', 'ads_creative_brief'].includes(action.type as string) ? 'content' :
+    (action.type as string).startsWith('website_') ? 'content' :
+    (action.type as string).startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
+    'general'
+  const trustBiz = (action.businessId as string) ?? 'ALMA_LIFESTYLE'
+  void recordRejection(trustDomain, action.type as string, trustBiz).catch(() => {})
 
   const payload = action.payload as Record<string, unknown>
 

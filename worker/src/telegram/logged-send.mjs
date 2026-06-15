@@ -32,11 +32,15 @@ export async function loggedSendToStaff(telegram, {
   if (!skipApproval) {
     try {
       const { requireStaffApproval } = await import('../approval/staff-approval-gate.mjs')
-      return await requireStaffApproval({
+      const gateResult = await requireStaffApproval({
         staffId, staffName, businessId: biz, type, content, chatId,
         relatedTaskIds, extra, requiresAck, officeHoursOnly,
         dutySource: extra?.dutySource ?? null,
       })
+      if (!gateResult.autoApproved) {
+        return gateResult
+      }
+      // autoApproved (trust tier auto/notify) — fall through to send logic
     } catch (err) {
       console.warn('[logged-send] approval gate error, falling through:', err.message)
     }

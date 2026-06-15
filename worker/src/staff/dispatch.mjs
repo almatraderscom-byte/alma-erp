@@ -288,8 +288,29 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     ? `আজকের কাজ আপডেট (${staffTasks.length}টি${newCount ? ` — ${newCount}টি নতুন` : ''}):`
     : `আজকের কাজ (${staffTasks.length}টি):`
 
+  // Fetch staff context for human-like message
+  let greeting = `আস্সালামু আলাইকুম ${staffName} ভাই! 📋`
+  let taskIntro = ''
+  try {
+    const ctxRes = await fetch(`${APP_URL}/api/agent/staff-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${INT_TOKEN}`,
+      },
+      body: JSON.stringify({ staffId, staffName, taskCount: staffTasks.length }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (ctxRes.ok) {
+      const ctx = await ctxRes.json()
+      greeting = ctx.greeting
+      taskIntro = ctx.taskIntro
+    }
+  } catch { /* fallback to template */ }
+
   const msg =
-    `আস্সালামু আলাইকুম ${staffName} ভাই! 📋\n\n` +
+    `${greeting}\n\n` +
+    (taskIntro ? `${taskIntro}\n\n` : '') +
     `${header}\n\n` +
     taskLines.join('\n\n') +
     `\n\nপ্রতিটা শেষ হলে নিচে Done চাপুন ✅`

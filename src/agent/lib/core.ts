@@ -5,6 +5,7 @@ import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
+import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -345,7 +346,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories and retrieve relevant memories in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -355,6 +356,7 @@ export async function* runAgentTurn(
     personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
     personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
+    personalMode ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
   ])
 
   type ToolRecord = {
@@ -384,6 +386,7 @@ export async function* runAgentTurn(
     teachingBlock,
     outcomeLearnings,
     ownerDecisions,
+    conflictSignals,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
