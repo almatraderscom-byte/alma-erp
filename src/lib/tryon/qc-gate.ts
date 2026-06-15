@@ -31,7 +31,7 @@ export type QCGateConfig = {
 
 const QC_KV_KEY = 'agent_qc_level'
 
-const VISION_MODEL = 'gemini-2.0-flash'
+const VISION_MODEL = 'gemini-2.5-flash'
 
 export function getQcConfig(level: QCLevel): QCGateConfig {
   switch (level) {
