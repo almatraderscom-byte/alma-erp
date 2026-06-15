@@ -10,6 +10,7 @@ import {
   type ModelRole,
   type SavedModel,
 } from '@/lib/tryon/model-library'
+import { getDesignPlaybookLines } from '@/agent/lib/taste/distill'
 
 export type ContentVariant = 'single' | 'father_son' | 'mother_son' | 'full_family'
 export type RenderQuality = 'draft' | 'pro'
@@ -158,11 +159,18 @@ export async function buildVariantRenderSpec(
     extra: [familyExtra, seedNote].filter(Boolean).join(' '),
   })
 
+  const designRules = await getDesignPlaybookLines()
+  const designExtra = designRules.length
+    ? `OWNER DESIGN TASTE RULES (follow strictly): ${designRules.join(' | ')}`
+    : ''
+
+  const finalPrompt = designExtra ? `${prompt} ${designExtra}` : prompt
+
   return {
     variant,
     quality,
     workerQuality: toWorkerQuality(quality),
-    prompt,
+    prompt: finalPrompt,
     modelImagePath: primary.imagePath,
     productImagePath: product.imagePath,
     costEstimate: quality === 'pro' ? 4.5 : 1.1,

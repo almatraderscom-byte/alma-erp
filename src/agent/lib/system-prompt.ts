@@ -328,6 +328,7 @@ export type BuildSystemPromptArgs = {
   personalMode?: boolean
   businessId?: AgentBusinessId
   activePlaybook?: ActivePlaybookEntry[]
+  teachingBlock?: string
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -349,6 +350,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     personalMode = false,
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
+    teachingBlock,
   } = args
 
   const stableParts: string[] = []
@@ -387,13 +389,18 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     if (activePlaybook && activePlaybook.length > 0) {
       const playbookLines = activePlaybook
-        .map((h) => `- [${h.domain}] ${h.heuristic}`)
+        .map((h) => `- [${h.domain}] ${h.heuristic}${h.timesApplied > 0 ? ` _(applied ${h.timesApplied}×)_` : ''}`)
         .join('\n')
       stableParts.push(
         `\n## শেখা নিয়ম (playbook)\n` +
           `এই business সম্পর্কে আমি যা শিখেছি, সিদ্ধান্ত নেওয়ার সময় মাথায় রাখি (correlation, causation নয়):\n` +
-          playbookLines,
+          playbookLines +
+          `\n\nযখন কোনো rule প্রয়োগ করি, occasionally এক লাইনে উল্লেখ করুন ("আপনার নিয়ম মেনে…") — প্রতি টার্নে নয়।`,
       )
+    }
+
+    if (teachingBlock) {
+      volatileParts.push(teachingBlock)
     }
 
     if (pinnedMemories && pinnedMemories.length > 0) {

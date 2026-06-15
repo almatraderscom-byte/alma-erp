@@ -25,6 +25,7 @@ import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
+import { LEARNING_TOOLS } from './learning-tools'
 import { COST_TOOLS } from './cost-tools'
 import { LOCATION_TOOLS } from './location-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
@@ -53,6 +54,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...REMINDER_TOOLS,
     ...OWNER_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,
+    ...LEARNING_TOOLS,
     ...COST_TOOLS,
     ...SALAH_TOOLS,
   ],

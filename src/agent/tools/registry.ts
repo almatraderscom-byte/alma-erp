@@ -31,6 +31,7 @@ import { MARKETING_TOOLS } from './marketing-tools' // plan_marketing, marketing
 import { BRAND_TOOLS } from './brand-tools'
 import { TRADING_READ_TOOLS } from './trading-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
+import { LEARNING_TOOLS } from './learning-tools'
 
 export interface ToolResult {
   success: boolean
@@ -403,6 +404,7 @@ export const TOOLS: AgentTool[] = [
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,
   ...PLAYBOOK_TOOLS,
+  ...LEARNING_TOOLS,
   ...TRYON_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,

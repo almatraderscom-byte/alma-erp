@@ -20,6 +20,8 @@ export async function runWeeklyReflection() {
     console.log(
       `[reflection] proposed=${data.proposed ?? 0}${data.skipped ? ' (skipped)' : ''}`,
     )
+    const { runTasteDistillJob } = await import('./taste-distill.mjs')
+    await runTasteDistillJob()
   } catch (e) {
     console.warn('[reflection]', e.message)
   }

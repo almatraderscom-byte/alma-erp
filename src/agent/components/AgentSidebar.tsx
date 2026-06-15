@@ -489,6 +489,41 @@ interface MemoryRow {
   createdAt: string
 }
 
+function LearnedRulesPanel() {
+  const [rules, setRules] = useState<Array<{
+    id: string; kind: string; domain: string; text: string; timesApplied: number
+  }>>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    void fetch('/api/assistant/learned-rules')
+      .then((r) => (r.ok ? r.json() : { rules: [] }))
+      .then((d) => setRules(d.rules ?? []))
+      .catch(() => setRules([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <p className="px-3 py-2 text-[10px] text-muted">শেখা নিয়ম লোড…</p>
+  if (!rules.length) return null
+
+  return (
+    <div className="border-b border-white/[0.04] px-3 py-2">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gold/80">শেখা নিয়ম</p>
+      <div className="max-h-40 space-y-1.5 overflow-y-auto">
+        {rules.slice(0, 12).map((r) => (
+          <div key={`${r.kind}-${r.id}`} className="rounded-lg bg-white/[0.03] px-2 py-1.5 text-[10px] text-cream/90">
+            <span className="text-gold/70">[{r.domain}]</span>{' '}
+            {r.text.slice(0, 100)}{r.text.length > 100 ? '…' : ''}
+            {r.timesApplied > 0 && (
+              <span className="ml-1 text-muted">· {r.timesApplied}×</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function MemoryView() {
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [financeSummary, setFinanceSummary] = useState<{
@@ -544,6 +579,7 @@ function MemoryView() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <LearnedRulesPanel />
       {/* Scope filter */}
       <div className="border-b border-white/[0.04] px-3 py-2">
         <select

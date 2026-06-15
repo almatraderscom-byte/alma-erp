@@ -57,8 +57,38 @@ export async function POST(
     data: { status: 'rejected', resolvedAt: new Date() },
   })
 
-  // Append rejection note to conversation
   const payload = action.payload as Record<string, unknown>
+
+  if (action.type === 'content_gate1' || action.type === 'ad_creative_gate') {
+    try {
+      const { captureTasteSignalAsync } = await import('@/agent/lib/taste/capture')
+      const pl = payload as { productCode?: string; variants?: Array<{ framedImagePath?: string | null; keep?: boolean }>; storagePath?: string; previewPath?: string }
+      if (action.type === 'content_gate1' && pl.variants?.length) {
+        for (const v of pl.variants) {
+          if (v.framedImagePath) {
+            captureTasteSignalAsync({
+              verdict: 'reject',
+              imagePath: v.framedImagePath,
+              productCode: pl.productCode ?? null,
+              source: 'content_gate1_reject',
+            })
+          }
+        }
+      } else {
+        const path = pl.storagePath ?? pl.previewPath
+        if (path) {
+          captureTasteSignalAsync({
+            verdict: 'reject',
+            imagePath: path,
+            productCode: pl.productCode ?? null,
+            source: `${action.type}_reject`,
+          })
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // Append rejection note to conversation
   if (payload.conversationId) {
     await db.agentMessage.create({
       data: {

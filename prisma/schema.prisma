@@ -2215,7 +2215,23 @@ model AgentPlaybook {
   reviewedAt   DateTime? @map("reviewed_at")
 
   @@index([businessId, status])
+  @@index([businessId, domain, status])
   @@map("agent_playbook")
+}
+
+model AgentTasteSignal {
+  id          String   @id @default(uuid())
+  verdict     String
+  attrs       Json     @default("{}")
+  productType String?  @map("product_type")
+  productCode String?  @map("product_code")
+  imagePath   String   @map("image_path")
+  source      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([verdict])
+  @@map("agent_taste_signal")
 }
 
 model AgentCreativePerformance {

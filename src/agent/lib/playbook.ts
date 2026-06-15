@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
-export const PLAYBOOK_DOMAINS = ['content', 'ads', 'staff', 'pricing', 'customer', 'ops'] as const
+export const PLAYBOOK_DOMAINS = ['content', 'ads', 'staff', 'pricing', 'customer', 'ops', 'design'] as const
 export type PlaybookDomain = typeof PLAYBOOK_DOMAINS[number]
 
 export type ActivePlaybookEntry = {
@@ -9,6 +9,7 @@ export type ActivePlaybookEntry = {
   domain: string
   heuristic: string
   confidence: number
+  timesApplied: number
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,8 +20,8 @@ export async function getActivePlaybook(businessId: AgentBusinessId): Promise<Ac
     const rows = await db.agentPlaybook.findMany({
       where: { businessId, status: 'active' },
       orderBy: { confidence: 'desc' },
-      take: 12,
-      select: { id: true, domain: true, heuristic: true, confidence: true },
+      take: 16,
+      select: { id: true, domain: true, heuristic: true, confidence: true, timesApplied: true },
     })
     return rows as ActivePlaybookEntry[]
   } catch {
@@ -31,6 +32,7 @@ export async function getActivePlaybook(businessId: AgentBusinessId): Promise<Ac
 export function inferPlaybookDomain(toolName: string): PlaybookDomain | null {
   const n = toolName.toLowerCase()
   if (/content|facebook|post|image|brand|tryon|catalog|gate1/.test(n)) return 'content'
+  if (/design|creative|taste|background|lighting|composition/.test(n)) return 'design'
   if (/ads|campaign|meta_ad|oxylabs/.test(n)) return 'ads'
   if (/staff|dispatch|morale|lunch|leave|task/.test(n)) return 'staff'
   if (/customer|cs|messenger|winback|segment/.test(n)) return 'customer'

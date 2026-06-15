@@ -24,7 +24,7 @@ const REFLECTION_SYSTEM = `আপনি ALMA ERP agent-এর সাপ্তা
 - heuristic ≤ 200 অক্ষর, imperative tone।
 - ≥২টি supporting observation না থাকলে কিছু propose করবেন না — [] দিন।
 - সর্বোচ্চ ৫টি candidate।
-- domain: content | ads | staff | pricing | customer | ops
+- domain: content | ads | staff | pricing | customer | ops | design
 - businessId: ALMA_LIFESTYLE | ALMA_TRADING
 - confidence: 1..5`
 

@@ -453,6 +453,19 @@ export async function toggleGate1VariantKeep(
     where: { id: gate1Id },
     data: { payload, summary },
   })
+
+  if (v.keep && v.framedImagePath) {
+    const product = await loadProductAsset(payload.productCode).catch(() => null)
+    const { captureTasteSignalAsync } = await import('@/agent/lib/taste/capture')
+    captureTasteSignalAsync({
+      verdict: 'keep',
+      imagePath: v.framedImagePath,
+      productCode: payload.productCode,
+      productType: product?.category ?? null,
+      source: `content_gate1:${variantKey}`,
+    })
+  }
+
   return { keep: v.keep, summary, keyboard: buildContentGate1Keyboard(gate1Id, payload) }
 }
 
@@ -470,6 +483,17 @@ export async function regenerateGate1Variant(
 
   const v = payload.variants.find((x) => x.key === variantKey)
   if (!v) throw new Error('variant_not_found')
+
+  if (v.framedImagePath) {
+    const { captureTasteSignalAsync } = await import('@/agent/lib/taste/capture')
+    captureTasteSignalAsync({
+      verdict: 'reject',
+      imagePath: v.framedImagePath,
+      productCode: payload.productCode,
+      productType: product.category ?? null,
+      source: `content_gate1_regen:${variantKey}`,
+    })
+  }
 
   v.rawImagePath = null
   v.framedImagePath = null

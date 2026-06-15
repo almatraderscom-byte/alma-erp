@@ -15,6 +15,9 @@ import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/busin
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
+import { bumpPlaybookRulesForDomains } from '@/agent/lib/learning/learned-rules'
+import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
+import { applyOwnerTeaching, buildTeachingTurnPromptBlock } from '@/agent/lib/learning/apply-teaching'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -298,6 +301,19 @@ export async function* runAgentTurn(
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
 
   const now = new Date()
+  let teachingBlock: string | undefined
+  if (!personalMode && lastUserText) {
+    const teaching = detectTeachingIntent(lastUserText)
+    if (teaching) {
+      try {
+        const applied = await applyOwnerTeaching({ intent: teaching, businessId })
+        teachingBlock = buildTeachingTurnPromptBlock(applied)
+      } catch (err) {
+        console.error('[core] applyOwnerTeaching failed:', err)
+      }
+    }
+  }
+
   if (!personalMode) {
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
@@ -337,6 +353,7 @@ export async function* runAgentTurn(
     personalMode,
     businessId,
     activePlaybook,
+    teachingBlock,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
@@ -496,6 +513,10 @@ export async function* runAgentTurn(
 
         if (result.success && !personalMode) {
           void bumpPlaybookForTool(tb.name, businessId).catch(() => {})
+          const designTools = /make_ad_creatives|run_content_post|make_product_reel|generate_on_model|content/i
+          if (designTools.test(tb.name)) {
+            void bumpPlaybookRulesForDomains(['design', 'content'], businessId).catch(() => {})
+          }
         }
 
         // Emit confirm_card only when the pending action is still awaiting owner approval
