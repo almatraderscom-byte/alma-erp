@@ -355,7 +355,10 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
   async function loadTrustRules() {
     try {
       const res = await fetch('/api/agent/trust-rules', { cache: 'no-store' })
-      if (res.ok) setTrustRules(await res.json())
+      if (res.ok) {
+        const data = await res.json()
+        setTrustRules(Array.isArray(data) ? data : data.rules ?? [])
+      }
     } catch { /* ignore */ }
   }
 
