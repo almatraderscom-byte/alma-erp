@@ -3,6 +3,22 @@
  * Used by dispatch cards, get_staff_tasks, proposals.
  */
 
+export type StaffDispatchBreakdown = {
+  date: string
+  proposedToDispatch: number
+  alreadySentPending: number
+  alreadyDone: number
+  perStaff: Array<{
+    name: string
+    sentPending: number
+    done: number
+    proposed: number
+    approved: number
+    sentPendingTitles: string[]
+    proposedTitles: string[]
+  }>
+}
+
 export type FormattableStaffTask = {
   id?: string
   title: string
@@ -48,7 +64,9 @@ function groupByStaff(tasks: FormattableStaffTask[]): Map<string, FormattableSta
 }
 
 function formatStaffBlock(name: string, staffTasks: FormattableStaffTask[]): string {
-  const sentLike = staffTasks.filter((t) => ['sent', 'done', 'approved'].includes(t.status ?? ''))
+  const sentPending = staffTasks.filter((t) => (t.status ?? '') === 'sent')
+  const done = staffTasks.filter((t) => (t.status ?? '') === 'done')
+  const approved = staffTasks.filter((t) => (t.status ?? '') === 'approved')
   const proposed = staffTasks.filter((t) => (t.status ?? 'proposed') === 'proposed')
   const other = staffTasks.filter(
     (t) => !['sent', 'done', 'approved', 'proposed'].includes(t.status ?? ''),
@@ -56,18 +74,21 @@ function formatStaffBlock(name: string, staffTasks: FormattableStaffTask[]): str
 
   const lines: string[] = [`*${name}* (${staffTasks.length}টি)`]
 
-  if (sentLike.length) {
-    lines.push('  _আগে পাঠানো/পেন্ডিং:_')
-    for (const t of sentLike) {
-      const tag = t.status === 'done' ? ' ✅' : t.status === 'sent' ? ' 📤' : ''
-      lines.push(`  • ${t.title}${tag}`)
-    }
+  if (sentPending.length) {
+    lines.push('  _পাঠানো (Done হয়নি):_')
+    for (const t of sentPending) lines.push(`  • ${t.title} 📤`)
+  }
+  if (done.length) {
+    lines.push('  _সম্পন্ন:_')
+    for (const t of done) lines.push(`  • ${t.title} ✅`)
+  }
+  if (approved.length) {
+    lines.push('  _অনুমোদিত (এখনো পাঠানো হয়নি):_')
+    for (const t of approved) lines.push(`  • ${t.title}`)
   }
   if (proposed.length) {
     lines.push('  _অনুমোদনের অপেক্ষায়:_')
-    for (const t of proposed) {
-      lines.push(`  • ${t.title}`)
-    }
+    for (const t of proposed) lines.push(`  • ${t.title}`)
   }
   for (const t of other) {
     const label = STATUS_BN[t.status ?? ''] ?? t.status
@@ -89,19 +110,21 @@ function formatStaffBlockRich(
   const newTasks = proposed.filter((t) => t.id && newIdSet.has(t.id))
   const existingProposed = proposed.filter((t) => !t.id || !newIdSet.has(t.id))
 
-  const priorCount = priorActive.length
+  const priorSent = priorActive.filter((t) => (t.status ?? '') === 'sent')
+  const priorDone = priorActive.filter((t) => (t.status ?? '') === 'done')
+  const priorCount = priorSent.length
   const newCount = newTasks.length
   const existingCount = existingProposed.length
 
   let header = `*${name}*`
   if (isChanged && newCount > 0) {
-    header += priorCount
-      ? ` — ${priorCount}টি আগে পাঠানো, ${newCount}টি নতুন যোগ`
+    header += priorSent.length
+      ? ` — ${priorSent.length}টি আগে পাঠানো (Done হয়নি), ${newCount}টি নতুন যোগ`
       : ` — ${newCount}টি নতুন যোগ`
-  } else if (priorCount > 0 && existingCount === 0 && newCount === 0) {
-    header += ` — ${priorCount}টি আগে পাঠানো (আজ নতুন যোগ নেই)`
-  } else if (priorCount > 0 && !isChanged) {
-    header += ` — ${priorCount}টি আগে পাঠানো, ${existingCount}টি প্রস্তাবে (আপনি পরিবর্তন করেননি)`
+  } else if (priorSent.length > 0 && existingCount === 0 && newCount === 0) {
+    header += ` — ${priorSent.length}টি পাঠানো (Done হয়নি), নতুন যোগ নেই`
+  } else if (priorSent.length > 0 && !isChanged) {
+    header += ` — ${priorSent.length}টি পাঠানো (Done হয়নি), ${existingCount}টি প্রস্তাবে (আপনি পরিবর্তন করেননি)`
   } else if (existingCount > 0) {
     header += ` — ${existingCount}টি প্রস্তাবে`
   } else {
@@ -110,16 +133,17 @@ function formatStaffBlockRich(
 
   const lines: string[] = [header]
 
-  if (priorActive.length) {
-    lines.push('  _আগে পাঠানো/পেন্ডিং:_')
-    for (const t of priorActive) {
-      const tag = t.status === 'done' ? ' ✅' : ' 📤'
-      lines.push(`  • ${t.title}${tag}`)
-    }
+  if (priorSent.length) {
+    lines.push('  _আগে পাঠানো (Done হয়নি):_')
+    for (const t of priorSent) lines.push(`  • ${t.title} 📤`)
+  }
+  if (priorDone.length) {
+    lines.push('  _সম্পন্ন:_')
+    for (const t of priorDone) lines.push(`  • ${t.title} ✅`)
   }
 
   if (newTasks.length) {
-    lines.push('  _এই আপডেটে নতুন:_')
+    lines.push('  _এই আপডেটে নতুন (Approve হলে যাবে):_')
     for (const t of newTasks) lines.push(`  • ${t.title} ✨`)
   }
 
@@ -172,9 +196,10 @@ export function buildRichDispatchSummary(
     ),
   )
 
+  const proposedCount = proposed.length
   const footer = opts?.changedStaff
-    ? `\n\n_ℹ️ আপনি শুধু ${opts.changedStaff}-এর তালিকা আপডেট করেছেন। অন্য স্টাফের প্রস্তাব আগের মতো আছে — Approve করলে সব proposed টাস্ক যাবে।_`
-    : ''
+    ? `\n\n_ℹ️ আপনি শুধু ${opts.changedStaff} আপডেট করেছেন। Approve করলে শুধু ${proposedCount}টি proposed টাস্ক পাঠাবে — আগে পাঠানো টাস্ক আবার যাবে না, তবে স্টাফের আপডেটেড লিস্টে সেগুলোও থাকবে।_`
+    : `\n\n_ℹ️ Approve করলে ${proposedCount}টি proposed টাস্ক পাঠাবে। আগে পাঠানো (Done হয়নি) টাস্ক আলাদা — সেগুলো সম্পন্ন নয় বলে ধরবেন না।_`
 
   return `📋 স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${blocks.join('\n\n')}${footer}`
 }
@@ -194,7 +219,9 @@ export function buildMergeOwnerFocusReply(
   priorActive: FormattableStaffTask[],
   allStaffNames: string[],
 ): string {
-  const priorForChanged = priorActive.filter((t) => namesMatch(t.staff.name, changedStaff))
+  const priorForChanged = priorActive.filter(
+    (t) => namesMatch(t.staff.name, changedStaff) && (t.status ?? '') === 'sent',
+  )
   const others = allStaffNames.filter((n) => !namesMatch(n, changedStaff))
 
   const lines: string[] = []
@@ -202,13 +229,44 @@ export function buildMergeOwnerFocusReply(
     lines.push(`✅ *${changedStaff}*-এর জন্য ${newCount}টি নতুন টাস্ক যোগ করেছি।`)
   }
   if (priorForChanged.length) {
-    lines.push(`📤 ${changedStaff}-এর ${priorForChanged.length}টি আগের টাস্ক এখনো পাঠানো/পেন্ডিং আছে — সেগুলো নিচে দেখানো হয়েছে।`)
+    lines.push(
+      `📤 ${changedStaff}-এর ${priorForChanged.length}টি আগের টাস্ক এখনো পাঠানো আছে (Done হয়নি) — Approve হলে নতুনের সাথে আপডেটেড লিস্ট যাবে।`,
+    )
   }
   for (const other of others) {
-    const prior = priorActive.filter((t) => namesMatch(t.staff.name, other))
-    const priorNote = prior.length ? `${prior.length}টি আগে পাঠানো` : 'আগে পাঠানো কিছু নেই'
+    const prior = priorActive.filter(
+      (t) => namesMatch(t.staff.name, other) && (t.status ?? '') === 'sent',
+    )
+    const priorNote = prior.length
+      ? `${prior.length}টি পাঠানো (Done হয়নি)`
+      : 'আগে পাঠানো কিছু নেই'
     lines.push(`ℹ️ *${other}*: ${priorNote} — আপনি এখন পরিবর্তন করেননি।`)
   }
-  lines.push('\nনিচের approval card-এ সব স্টাফের প্রস্তাব আছে — শুধু আপনি যে অংশ বলেছেন সেটাই নতুন যোগ হয়েছে।')
+  lines.push('\nনিচের approval card-এ proposed টাস্ক আছে — আগে পাঠানো টাস্ক "সম্পন্ন" নয়।')
+  return lines.join('\n')
+}
+
+/** Owner-facing summary after approve_pending_dispatch. */
+export function buildApproveResultBangla(
+  breakdown: StaffDispatchBreakdown,
+  dispatchedCount: number,
+): string {
+  const lines: string[] = [
+    `✅ Approve হয়েছে — ${dispatchedCount}টি নতুন টাস্ক dispatch queue-তে।`,
+  ]
+  if (breakdown.alreadySentPending > 0) {
+    lines.push(
+      `📤 ${breakdown.alreadySentPending}টি আগে পাঠানো টাস্ক এখনো Done হয়নি — সেগুলো সম্পন্ন নয়, শুধু স্টাফের কাছে আছে।`,
+    )
+  }
+  for (const s of breakdown.perStaff) {
+    if (s.proposed > 0 || s.sentPending > 0) {
+      const parts: string[] = []
+      if (s.sentPending) parts.push(`${s.sentPending}টি আগে পাঠানো`)
+      if (s.proposed) parts.push(`${s.proposed}টি নতুন পাঠাবে`)
+      lines.push(`• *${s.name}*: ${parts.join(' + ')} = আজ মোট ${s.sentPending + s.proposed}টি সক্রিয়`)
+    }
+  }
+  lines.push('\nget_dispatch_status দিয়ে verify করুন — "পাঠানো হয়েছে" বলার আগে।')
   return lines.join('\n')
 }

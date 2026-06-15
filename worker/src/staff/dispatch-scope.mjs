@@ -6,10 +6,10 @@
 export async function fetchActiveDispatchTaskIds(supabase, dateYmd) {
   const { data, error } = await supabase
     .from('agent_pending_actions')
-    .select('payload, status, createdAt')
+    .select('payload, status, resolvedAt')
     .eq('type', 'dispatch_staff_tasks')
     .in('status', ['executed', 'approved'])
-    .order('createdAt', { ascending: false })
+    .order('resolvedAt', { ascending: false })
     .limit(30)
   if (error) throw new Error(error.message)
 

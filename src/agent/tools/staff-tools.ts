@@ -12,8 +12,13 @@ import {
   loadProposedTasksForDate,
   loadPriorActiveTasksForDate,
   buildDispatchSummary,
+  getDispatchBreakdownForDate,
 } from '@/agent/lib/staff-dispatch-sync'
-import { buildMergeOwnerFocusReply, formatTasksGroupedByStaff } from '@/agent/lib/staff-task-format'
+import {
+  buildMergeOwnerFocusReply,
+  buildApproveResultBangla,
+  formatTasksGroupedByStaff,
+} from '@/agent/lib/staff-task-format'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
 import {
@@ -264,8 +269,10 @@ const get_staff_tasks: AgentTool = {
         },
       )
 
-      const sentCount = tasks.filter((t: { status: string }) => ['sent', 'done', 'approved'].includes(t.status)).length
+      const sentPendingCount = tasks.filter((t: { status: string }) => t.status === 'sent').length
+      const doneCount = tasks.filter((t: { status: string }) => t.status === 'done').length
       const proposedCount = tasks.filter((t: { status: string }) => t.status === 'proposed').length
+      const approvedCount = tasks.filter((t: { status: string }) => t.status === 'approved').length
 
       return {
         success: true,
@@ -273,11 +280,16 @@ const get_staff_tasks: AgentTool = {
           date,
           staffFilter: input.staffName ? String(input.staffName) : null,
           totalTasks: tasks.length,
-          sentOrActiveCount: sentCount,
+          sentPendingCount,
+          doneCount,
           proposedCount,
+          approvedCount,
+          /** @deprecated use sentPendingCount — sent ≠ done */
+          sentOrActiveCount: sentPendingCount + doneCount,
           staffGroups: Object.values(staffTasks),
           formattedBangla,
-          message: 'Owner-কে formattedBangla দেখান — একজনের প্রশ্ন হলে শুধু সেই staff filter করুন।',
+          message:
+            'Owner-কে formattedBangla দেখান। sent=পাঠানো(Done হয়নি), done=সম্পন্ন — গুলিয়ে বলবেন না।',
         },
       }
     } catch (err) {
@@ -602,6 +614,9 @@ const approve_pending_dispatch: AgentTool = {
         }
       }
 
+      const breakdown = await getDispatchBreakdownForDate(result.date)
+      const summaryBangla = buildApproveResultBangla(breakdown, result.taskCount)
+
       return {
         success: true,
         data: {
@@ -610,9 +625,10 @@ const approve_pending_dispatch: AgentTool = {
           date: result.date,
           taskCount: result.taskCount,
           taskIds: result.taskIds,
+          breakdown,
+          summaryBangla,
           message:
-            `Approve করা হয়েছে (${result.taskCount}টি টাস্ক DB থেকে sync করে) — worker dispatch করবে। ` +
-            'নিশ্চিত হওয়ার আগে "পাঠানো হয়েছে" বলবেন না; get_dispatch_status দিয়ে verify করুন।',
+            `${summaryBangla} Worker dispatch করবে — আগে পাঠানো টাস্ক "সম্পন্ন/done" বলবেন না যতক্ষণ status=done না।`,
         },
       }
     } catch (err) {
@@ -626,9 +642,8 @@ const approve_pending_dispatch: AgentTool = {
 const get_dispatch_status: AgentTool = {
   name: 'get_dispatch_status',
   description:
-    'Check the REAL dispatch/delivery status of staff tasks for a date: how many tasks are proposed/approved/sent, ' +
-    'and (if outbox exists) how many messages were delivered/failed per staff. Use BEFORE telling the owner ' +
-    'whether tasks were sent. Never claim delivery without calling this.',
+    'Check REAL staff task status for a date. taskCounts by DB status (sent=পাঠানো Done হয়নি, done=সম্পন্ন). ' +
+    'deliveryByStaff = Telegram messages delivered (NOT task completion). Use BEFORE claiming tasks sent/done.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -677,22 +692,30 @@ const get_dispatch_status: AgentTool = {
       })
 
       const correctionContext = await getStaffDispatchCorrectionContext(date)
+      const breakdown = await getDispatchBreakdownForDate(date)
 
       return {
         success: true,
         data: {
           date,
           taskCounts,
+          breakdown,
           pendingActionStatus: pendingAction?.status ?? 'none',
           pendingActionCreatedAt: pendingAction?.createdAt ?? null,
           deliveryByStaff,
           correctionContext,
+          statusRules: {
+            sent: 'পাঠানো — স্টাফের কাছে আছে, Done হয়নি (সম্পন্ন নয়)',
+            done: 'সম্পন্ন — স্টাফ Done চেপেছে',
+            proposed: 'প্রস্তাবিত — approve হলে পাঠাবে',
+            outboxDelivered: 'Telegram মেসেজ পৌঁছেছে — টাস্ক সম্পন্ন নয়',
+          },
           correctionNoticeRule:
             'After wrong-task correction: call send_dispatch_correction_notice (reads outbox). ' +
             'Never say "নতুন লিস্ট শীঘ্রই আসবে" if correctionContext shows new_already_sent.',
           note: deliveryByStaff === null
-            ? 'Outbox not available — rely on task sent-count; Staff Monitor (Prompt D) for delivery proof.'
-            : 'deliveryByStaff is the source of truth for actual delivery.',
+            ? 'Outbox not available — rely on task status counts; Staff Monitor for delivery proof.'
+            : 'deliveryByStaff = Telegram messages only. Task completion = taskCounts.done.',
         },
       }
     } catch (err) {

@@ -40,7 +40,10 @@ const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 export function formatDispatchOwnerReport(result) {
   if (!result || result.skipped) return null
   if (result.fullSuccess) {
-    return `✅ ${result.sentTasks}টি কাজ ${result.sentToStaffCount} জন স্টাফকে পাঠানো হয়েছে — সব নিশ্চিত।`
+    const bundled = result.priorSentBundled > 0
+      ? ` (${result.priorSentBundled}টি আগের টাস্কসহ আপডেটেড লিস্ট)`
+      : ''
+    return `✅ ${result.sentTasks}টি নতুন কাজ ${result.sentToStaffCount} জন স্টাফকে পাঠানো হয়েছে${bundled} — সব নিশ্চিত।`
   }
   const lines = ['⚠️ কাজ পাঠানো হয়েছে — তবে সব যায়নি:']
   lines.push(`• পাঠানো: ${result.sentTasks}/${result.totalTasks}`)
@@ -81,7 +84,6 @@ export async function sendDispatchOwnerReport({ bot, result }) {
 export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   console.log(`[dispatch] dispatching tasks for ${date}`)
 
-  // Source of truth: ALL approved tasks for the date (payload taskIds may be stale after merges).
   const query = supabase
     .from('staff_tasks')
     .select(`*, agent_staff(id, name, role, telegramChatId)`)
@@ -104,6 +106,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       totalTasks: 0,
       sentTasks: 0,
       sentToStaffCount: 0,
+      priorSentBundled: 0,
       failures: [],
       unlinked: [],
       onLeave: [],
@@ -114,20 +117,35 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     return result
   }
 
-  // Group by staff member
+  const staffIds = [...new Set(pending.map((t) => t.agent_staff?.id || t.staff_id).filter(Boolean))]
+  const { data: priorSentRows } = await supabase
+    .from('staff_tasks')
+    .select(`*, agent_staff(id, name, role, telegramChatId)`)
+    .eq('proposed_for', date)
+    .eq('status', 'sent')
+    .in('staff_id', staffIds)
+
+  const priorSentByStaff = {}
+  for (const t of priorSentRows ?? []) {
+    const staffId = t.agent_staff?.id || t.staff_id
+    if (!priorSentByStaff[staffId]) priorSentByStaff[staffId] = []
+    priorSentByStaff[staffId].push(t)
+  }
+
   const byStaff = {}
   for (const task of pending) {
     const staffId = task.agent_staff?.id || task.staff_id
-    if (!byStaff[staffId]) byStaff[staffId] = { staff: task.agent_staff, tasks: [] }
+    if (!byStaff[staffId]) byStaff[staffId] = { staff: task.agent_staff, tasks: [], priorSent: priorSentByStaff[staffId] ?? [] }
     byStaff[staffId].tasks.push(task)
   }
 
   const sentIds = []
+  let priorSentBundled = 0
   const failures = []
   const unlinked = []
   const onLeave = []
 
-  for (const { staff, tasks: staffTasks } of Object.values(byStaff)) {
+  for (const { staff, tasks: staffTasks, priorSent } of Object.values(byStaff)) {
     const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
 
@@ -143,8 +161,28 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
       continue
     }
 
+    const seen = new Set()
+    const combinedTasks = []
+    for (const t of [...priorSent, ...staffTasks]) {
+      if (!seen.has(t.id)) {
+        seen.add(t.id)
+        combinedTasks.push(t)
+      }
+    }
+    priorSentBundled += priorSent.length
+
     try {
-      await sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId: staff.id })
+      const isUpdate = priorSent.length > 0
+      await sendTasksToStaff({
+        bot,
+        chatId,
+        staffName,
+        staffTasks: combinedTasks,
+        supabase,
+        staffId: staff.id,
+        isUpdate,
+        newCount: staffTasks.length,
+      })
       sentIds.push(...staffTasks.map((t) => t.id))
 
       const { data: staffRow } = await supabase
@@ -153,10 +191,13 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
         .eq('id', staff.id)
         .maybeSingle()
       if (staffRow?.ntfyTopic) {
+        const ntfyMsg = isUpdate
+          ? `${staffRow.name ?? staffName}, ${staffTasks.length}টি নতুন কাজ যোগ — মোট ${combinedTasks.length}টি। Telegram দেখুন।`
+          : `${staffRow.name ?? staffName}, ${combinedTasks.length}টি নতুন কাজ — Telegram দেখুন।`
         await sendNtfyToTopic(
           staffRow.ntfyTopic,
           'আজকের কাজ',
-          `${staffRow.name ?? staffName}, ${staffTasks.length}টি নতুন কাজ — Telegram দেখুন।`,
+          ntfyMsg,
           'task',
         ).catch((err) => console.warn(`[dispatch] ntfy failed for ${staffName}:`, err.message))
       }
@@ -171,7 +212,6 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     }
   }
 
-  // READ-BACK VERIFICATION: confirm the rows actually flipped to 'sent'
   let verifiedSent = 0
   if (sentIds.length) {
     await supabase.from('staff_tasks').update({ status: 'sent' }).in('id', sentIds)
@@ -187,6 +227,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
     totalTasks: pending.length,
     sentTasks: verifiedSent,
     sentToStaffCount: Object.keys(byStaff).length - failures.length - unlinked.length,
+    priorSentBundled,
     failures,
     unlinked,
     onLeave,
@@ -220,7 +261,7 @@ export async function markDispatchActionsExecuted(supabase, date) {
   }
 }
 
-async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId }) {
+async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId, isUpdate = false, newCount = 0 }) {
   const numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
   const taskLines = staffTasks.map((t, i) => {
@@ -229,9 +270,13 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     return `${num} ${t.title}${detail}`
   })
 
+  const header = isUpdate
+    ? `আজকের কাজ আপডেট (${staffTasks.length}টি${newCount ? ` — ${newCount}টি নতুন` : ''}):`
+    : `আজকের কাজ (${staffTasks.length}টি):`
+
   const msg =
     `আস্সালামু আলাইকুম ${staffName} ভাই! 📋\n\n` +
-    `আজকের কাজ (${staffTasks.length}টি):\n\n` +
+    `${header}\n\n` +
     taskLines.join('\n\n') +
     `\n\nপ্রতিটা শেষ হলে নিচে Done চাপুন ✅`
 

@@ -331,17 +331,25 @@ async function handleActionCallback(ctx, action, actionId) {
           return
         }
         if (pendingAction.payload?.date) {
-          const { count } = await supabase
+          const { count: proposedCount } = await supabase
             .from('staff_tasks')
             .select('id', { count: 'exact', head: true })
             .eq('proposed_for', pendingAction.payload.date)
-            .in('status', ['sent', 'done'])
-          if ((count ?? 0) > 0) {
+            .eq('status', 'proposed')
+          if ((proposedCount ?? 0) === 0) {
+            const { count: sentCount } = await supabase
+              .from('staff_tasks')
+              .select('id', { count: 'exact', head: true })
+              .eq('proposed_for', pendingAction.payload.date)
+              .in('status', ['sent', 'done'])
             await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
-            await supabase
-              .from('agent_pending_actions')
-              .update({ status: 'executed', resolvedAt: new Date().toISOString() })
-              .eq('id', actionId)
+            if ((sentCount ?? 0) > 0) {
+              await supabase
+                .from('agent_pending_actions')
+                .update({ status: 'executed', resolvedAt: new Date().toISOString() })
+                .eq('id', actionId)
+              await ctx.reply('ℹ️ ইতোমধ্যে পাঠানো হয়েছে — নতুন টাস্ক যোগ করতে agent-কে বলুন।')
+            }
             return
           }
         }

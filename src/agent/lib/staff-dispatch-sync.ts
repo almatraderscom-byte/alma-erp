@@ -7,6 +7,7 @@ import {
   buildRichDispatchSummary,
   type FormattableStaffTask,
   type RichDispatchOpts,
+  type StaffDispatchBreakdown,
 } from '@/agent/lib/staff-task-format'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,11 +29,12 @@ export async function loadProposedTasksForDate(date: string): Promise<ProposedTa
   })
 }
 
+/** Already dispatched — sent (pending Done) or done. Excludes approved (not yet sent). */
 export async function loadPriorActiveTasksForDate(date: string): Promise<FormattableStaffTask[]> {
   const rows = await db.agentStaffTask.findMany({
     where: {
       proposedFor: new Date(date),
-      status: { in: ['sent', 'approved', 'done'] },
+      status: { in: ['sent', 'done'] },
     },
     include: { staff: { select: { name: true } } },
     orderBy: { createdAt: 'asc' },
@@ -52,6 +54,68 @@ export async function loadPriorActiveTasksForDate(date: string): Promise<Formatt
     source: r.source,
     staff: r.staff,
   }))
+}
+
+export async function getDispatchBreakdownForDate(date: string): Promise<StaffDispatchBreakdown> {
+  const rows = await db.agentStaffTask.findMany({
+    where: { proposedFor: new Date(date), status: { notIn: ['cancelled'] } },
+    include: { staff: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  const byStaff = new Map<string, StaffDispatchBreakdown['perStaff'][number]>()
+  let proposedToDispatch = 0
+  let alreadySentPending = 0
+  let alreadyDone = 0
+
+  for (const r of rows as Array<{
+    title: string
+    status: string
+    staff: { name: string }
+  }>) {
+    const name = r.staff.name
+    if (!byStaff.has(name)) {
+      byStaff.set(name, {
+        name,
+        sentPending: 0,
+        done: 0,
+        proposed: 0,
+        approved: 0,
+        sentPendingTitles: [],
+        proposedTitles: [],
+      })
+    }
+    const s = byStaff.get(name)!
+    if (r.status === 'sent') {
+      s.sentPending++
+      s.sentPendingTitles.push(r.title)
+      alreadySentPending++
+    } else if (r.status === 'done') {
+      s.done++
+      alreadyDone++
+    } else if (r.status === 'proposed') {
+      s.proposed++
+      s.proposedTitles.push(r.title)
+      proposedToDispatch++
+    } else if (r.status === 'approved') {
+      s.approved++
+    }
+  }
+
+  return {
+    date,
+    proposedToDispatch,
+    alreadySentPending,
+    alreadyDone,
+    perStaff: [...byStaff.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  }
+}
+
+/** True when there are proposed tasks left to approve/dispatch for the date. */
+export async function hasProposedTasksForDate(date: string): Promise<number> {
+  return db.agentStaffTask.count({
+    where: { proposedFor: new Date(date), status: 'proposed' },
+  })
 }
 
 export async function buildDispatchSummary(

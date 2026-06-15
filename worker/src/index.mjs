@@ -90,15 +90,28 @@ async function tasksAlreadyDispatchedForJob(supabase, job) {
   if (!date) return false
   const taskIds = job.payload?.taskIds
     ?? (job.payload?.taskId ? [job.payload.taskId] : null)
-  let query = supabase
+
+  if (Array.isArray(taskIds) && taskIds.length) {
+    const { data: rows } = await supabase
+      .from('staff_tasks')
+      .select('id, status')
+      .in('id', taskIds)
+    if (!rows?.length) return false
+    return rows.every((r) => ['sent', 'done'].includes(r.status))
+  }
+
+  const { count: approvedCount } = await supabase
+    .from('staff_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('proposed_for', date)
+    .eq('status', 'approved')
+  if ((approvedCount ?? 0) > 0) return false
+
+  const { count } = await supabase
     .from('staff_tasks')
     .select('id', { count: 'exact', head: true })
     .eq('proposed_for', date)
     .in('status', ['sent', 'done'])
-  if (Array.isArray(taskIds) && taskIds.length) {
-    query = query.in('id', taskIds)
-  }
-  const { count } = await query
   return (count ?? 0) > 0
 }
 

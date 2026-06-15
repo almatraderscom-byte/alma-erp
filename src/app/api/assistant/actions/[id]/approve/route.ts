@@ -260,32 +260,36 @@ export async function POST(
     const { date } = payload as { date: string }
     const actionDate = date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
-    const { refreshAndApproveDispatch } = await import('@/agent/lib/staff-dispatch-sync')
+    const { refreshAndApproveDispatch, hasProposedTasksForDate } = await import('@/agent/lib/staff-dispatch-sync')
 
-    const alreadySent = await db.agentStaffTask.count({
-      where: {
-        proposedFor: new Date(actionDate),
-        status: { in: ['sent', 'done'] },
-      },
-    })
-    if (alreadySent > 0) {
-      const sameDateActions = await db.agentPendingAction.findMany({
-        where: { type: 'dispatch_staff_tasks', status: { in: ['pending', 'approved'] } },
-        select: { id: true, payload: true },
+    const proposedCount = await hasProposedTasksForDate(actionDate)
+    if (proposedCount === 0) {
+      const alreadySent = await db.agentStaffTask.count({
+        where: {
+          proposedFor: new Date(actionDate),
+          status: { in: ['sent', 'done'] },
+        },
       })
-      for (const a of sameDateActions) {
-        const p = a.payload as { date?: string }
-        if (!actionDate || p.date === actionDate) {
-          await db.agentPendingAction.update({
-            where: { id: a.id },
-            data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
-          })
+      if (alreadySent > 0) {
+        const sameDateActions = await db.agentPendingAction.findMany({
+          where: { type: 'dispatch_staff_tasks', status: { in: ['pending', 'approved'] } },
+          select: { id: true, payload: true },
+        })
+        for (const a of sameDateActions) {
+          const p = a.payload as { date?: string }
+          if (!actionDate || p.date === actionDate) {
+            await db.agentPendingAction.update({
+              where: { id: a.id },
+              data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'already_dispatched' } },
+            })
+          }
         }
+        return Response.json({
+          success: true, alreadyDispatched: true,
+          message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — নতুন টাস্ক যোগ করতে merge_into_proposal ব্যবহার করুন।',
+        })
       }
-      return Response.json({
-        success: true, alreadyDispatched: true,
-        message: 'ইতোমধ্যে পাঠানো হয়েছে ✅ — ভুল টাস্ক গেলে correct_and_redispatch_staff_tasks ব্যবহার করুন।',
-      })
+      return Response.json({ error: 'no_proposed_tasks', message: 'কোনো proposed টাস্ক নেই।' }, { status: 400 })
     }
 
     const refreshed = await refreshAndApproveDispatch(actionDate, actionId)

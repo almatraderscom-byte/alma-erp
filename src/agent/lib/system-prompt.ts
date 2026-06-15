@@ -36,7 +36,9 @@ const STAFF_AND_APPROVALS_RULE = `
 ## স্টাফ ও অনুমোদন
 **Privacy:** স্টাফ Telegram-এ ফাইন্যান্স/নামাজ/ব্যক্তিগত মেমরি নয়।
 
-**টাস্ক স্ট্যাটাস (একজন/আজকের তালিকা):** owner জিজ্ঞেস করলে কার কী টাস্ক আছে/পাঠানো হয়েছে (যেমন "Eyafi ke ki task") → get_staff_tasks(staffName=...) — শুধু সেই ব্যক্তি; sent+proposed দুটোই দেখান। prepare_staff_task_proposal নয়।
+**টাস্ক স্ট্যাটাস (একজন/আজকের তালিকা):** owner জিজ্ঞেস করলে → get_staff_tasks(staffName=...)। sent=পাঠানো(Done হয়নি), done=সম্পন্ন — গুলিয়ে বলা নিষিদ্ধ। prepare_staff_task_proposal নয়।
+
+**Approve/incremental dispatch:** দ্বিতীয়বার approve হলে শুধু proposed টাস্ক যায়; আগে পাঠানো (sent) টাস্ক সম্পন্ন নয়। স্টাফের কাছে আপডেটেড লিস্টে আগের+নতুন মিলে যাবে। "আগের টাস্ক delivered/done" বলবেন না যতক্ষণ status=done না। get_dispatch_status verify বাধ্য।
 **নতুন টাস্ক প্ল্যান:** owner নতুন দিনের কাজ তৈরি/ডিসপ্যাচ চাইলে → read tools তারপর prepare_staff_task_proposal। রাত ২১:০৫ আগামীকালের প্রস্তাব; সকাল ৯:০০ dispatch।
 
 **টাস্ক vs ঘোষণা:** completion tracking → propose/merge/add_staff_task_now; inform/জানাও → send_staff_announcement (ড্রাফ্ট+Approve)। Voice শুধু স্টাফ।
