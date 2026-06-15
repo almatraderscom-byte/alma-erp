@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
 import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -132,7 +133,7 @@ async function proposeMoves(context: Awaited<ReturnType<typeof gatherStrategistC
   const factsJson = JSON.stringify(context, null, 0).slice(0, 14000)
 
   const res = await client.messages.create({
-    model: AGENT_MODEL,
+    model: enforceClaudeOnlyModel(),
     max_tokens: 1800,
     thinking: { type: 'adaptive' },
     system: [{ type: 'text', text: STRATEGIST_SYSTEM, cache_control: { type: 'ephemeral' } }],
@@ -154,7 +155,7 @@ async function proposeMoves(context: Awaited<ReturnType<typeof gatherStrategistC
     units: {
       input_tokens: res.usage.input_tokens,
       output_tokens: res.usage.output_tokens,
-      model: AGENT_MODEL,
+      model: enforceClaudeOnlyModel(),
       purpose: 'daily_strategist',
     },
     costUsd: calcAnthropicChatCostUsd({

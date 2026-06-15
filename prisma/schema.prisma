@@ -1725,7 +1725,7 @@ model AgentConversation {
   projectId      String?
   project        AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   title          String?
-  model          String?
+  modelId  String  @default("claude-sonnet-4-6") @map("model")
   source         String          @default("web")
   archived       Boolean         @default(false)
   summarizedAt   DateTime?       @map("summarized_at")

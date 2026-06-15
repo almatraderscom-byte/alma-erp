@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
+import { AGENT_MODEL, MAX_TOOL_ITERATIONS } from '@/agent/config'
+import { getModel } from '@/agent/lib/models/registry'
+import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
@@ -236,6 +238,8 @@ export interface RunAgentTurnOptions {
   signal?: AbortSignal
   /** Business scope — drives prompt operations rule, tool registry, staff/dispatch filters. */
   businessId?: AgentBusinessId | null
+  /** Registry model id — owner /agent only; default claude-sonnet-4-6 when absent. */
+  modelId?: string | null
 }
 
 // ── Main agent turn ────────────────────────────────────────────────────────
@@ -246,6 +250,8 @@ export async function* runAgentTurn(
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
   const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
+  const chatModel = getModel(options.modelId)
+  const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
   // Resolve business scope: personal mode is always cross-business; otherwise default to Lifestyle.
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
@@ -344,7 +350,7 @@ export async function* runAgentTurn(
 
       const stream = client.messages.stream(
         {
-          model: AGENT_MODEL,
+          model: apiModel,
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
           system: systemBlocks,
@@ -539,9 +545,11 @@ export async function* runAgentTurn(
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     const storedContent = textContent.length > 0 ? textContent : [{ type: 'text', text: '' }]
-    const costUsd = calcCostUsd({
-      input_tokens: totalInputTokens, output_tokens: totalOutputTokens,
-      cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens,
+    const costUsd = calcModelTurnCostUsd(chatModel, {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cacheWrite: totalCacheCreationTokens,
+      cacheRead: totalCacheReadTokens,
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -573,7 +581,9 @@ export async function* runAgentTurn(
         output_tokens: totalOutputTokens,
         cache_creation_input_tokens: totalCacheCreationTokens,
         cache_read_input_tokens: totalCacheReadTokens,
-        model: AGENT_MODEL,
+        model: chatModel.id,
+        apiModel,
+        provider: chatModel.provider,
       },
       costUsd,
       conversationId,

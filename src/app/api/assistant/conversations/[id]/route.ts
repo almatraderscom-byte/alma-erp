@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
+import { isKnownModelId } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(
@@ -23,10 +24,18 @@ export async function PATCH(
   if (typeof body.archived === 'boolean') data.archived = body.archived
   if (body.projectId !== undefined) data.projectId = body.projectId || null
 
+  if (typeof body.modelId === 'string') {
+    const id = body.modelId.trim()
+    if (!isKnownModelId(id)) {
+      return Response.json({ error: 'invalid_model' }, { status: 400 })
+    }
+    data.modelId = id
+  }
+
   const updated = await prisma.agentConversation.update({
     where: { id },
     data,
-    select: { id: true, title: true, projectId: true, archived: true, updatedAt: true },
+    select: { id: true, title: true, projectId: true, archived: true, modelId: true, updatedAt: true },
   })
 
   return Response.json(updated)

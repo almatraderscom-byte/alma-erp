@@ -6,6 +6,7 @@ import { motion } from 'framer-motion'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
+import AgentModelSelector from './AgentModelSelector'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
@@ -107,6 +108,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [personalProjectId, setPersonalProjectId] = useState<string | null>(null)
   const [activePersonalMode, setActivePersonalMode] = useState(false)
   const [activeConvProjectId, setActiveConvProjectId] = useState<string | null>(null)
+  const [activeModelId, setActiveModelId] = useState('claude-sonnet-4-6')
   const [compacting, setCompacting] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
@@ -144,6 +146,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   async function loadConversation(conv: Conversation) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
+    setActiveModelId(conv.modelId ?? 'claude-sonnet-4-6')
     setActivePersonalMode(
       !!personalProjectId && conv.projectId === personalProjectId,
     )
@@ -177,6 +180,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(null)
     setMessages([])
     setArtifacts([])
+    setActiveModelId('claude-sonnet-4-6')
     pendingProjectIdRef.current = projectId ?? null
     setActiveConvProjectId(projectId ?? null)
     setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
@@ -664,14 +668,24 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         </div>
 
         {/* Composer */}
-        <AgentComposer
-          onSend={handleSend}
-          disabled={false}
-          onStop={stopGeneration}
-          streaming={streaming}
-          conversationId={activeConvId}
-          isMobile={isMobile}
-        />
+        <div className="flex shrink-0 flex-col gap-2">
+          <div className="safe-x flex items-center justify-between px-3 pt-2 md:px-5">
+            <AgentModelSelector
+              conversationId={activeConvId}
+              modelId={activeModelId}
+              onModelChange={setActiveModelId}
+              disabled={streaming}
+            />
+          </div>
+          <AgentComposer
+            onSend={handleSend}
+            disabled={false}
+            onStop={stopGeneration}
+            streaming={streaming}
+            conversationId={activeConvId}
+            isMobile={isMobile}
+          />
+        </div>
       </div>
     </div>
   )

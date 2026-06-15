@@ -79,7 +79,7 @@ export async function compactConversationIfNeeded(
 ): Promise<CompactResult | null> {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, projectId: true, source: true, model: true, title: true, compactedToId: true, archived: true },
+    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true, archived: true },
   })
   if (!conv || conv.compactedToId || conv.archived) return null
 
@@ -105,7 +105,7 @@ export async function compactConversationIfNeeded(
   const newConv = await db.agentConversation.create({
     data: {
       title: conv.title ? `${conv.title} (cont.)` : null,
-      model: conv.model,
+      modelId: conv.modelId,
       source: conv.source,
       projectId: conv.projectId,
       contextSummary: summary,
@@ -129,7 +129,7 @@ export async function compactConversationIfNeeded(
 export async function compactConversationById(conversationId: string): Promise<CompactResult> {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, projectId: true, source: true, model: true, title: true, compactedToId: true },
+    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true },
   })
   if (!conv) throw new Error('not_found')
   if (conv.compactedToId) {
@@ -154,7 +154,7 @@ export async function compactConversationById(conversationId: string): Promise<C
   const newConv = await db.agentConversation.create({
     data: {
       title: conv.title ? `${conv.title} (cont.)` : null,
-      model: conv.model,
+      modelId: conv.modelId,
       source: conv.source,
       projectId: conv.projectId,
       contextSummary: summary,

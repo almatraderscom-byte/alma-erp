@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       title: true,
       projectId: true,
       businessId: true,
-      model: true,
+      modelId: true,
       archived: true,
       createdAt: true,
       updatedAt: true,
@@ -107,10 +107,10 @@ export async function POST(req: NextRequest) {
     data: {
       title: title ?? null,
       projectId: projectId ?? null,
-      model: 'claude-sonnet-4-6',
+      modelId: 'claude-sonnet-4-6',
       source: 'web',
     },
-    select: { id: true, title: true, projectId: true, model: true, createdAt: true, updatedAt: true },
+    select: { id: true, title: true, projectId: true, modelId: true, createdAt: true, updatedAt: true },
   })
 
   return Response.json(conversation, { status: 201 })

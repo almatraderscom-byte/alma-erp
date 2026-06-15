@@ -16,6 +16,7 @@ export interface Conversation {
   id: string
   title: string | null
   projectId: string | null
+  modelId?: string | null
   archived: boolean
   updatedAt: string
   businessId?: string | null

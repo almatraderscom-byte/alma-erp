@@ -3,6 +3,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
+import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
 import { buildCsCustomerPrompt } from '@/agent/lib/cs/customer-prompt'
 import { CUSTOMER_TOOL_DEFINITIONS, executeCsTool } from '@/agent/tools/cs-registry'
 import { appendCsMessage, loadCsHistory } from '@/agent/lib/cs/conversations'
@@ -109,7 +110,7 @@ export async function runCsTurn(input: {
     }
 
     const res = await client.messages.create({
-      model: AGENT_MODEL,
+      model: enforceClaudeOnlyModel(),
       max_tokens: 1024,
       system: Array.isArray(system)
         ? system

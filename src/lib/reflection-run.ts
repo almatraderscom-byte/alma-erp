@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
 import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -151,7 +152,7 @@ async function proposeHeuristics(context: Awaited<ReturnType<typeof gatherReflec
   const factsJson = JSON.stringify(context, null, 0).slice(0, 12000)
 
   const res = await client.messages.create({
-    model: AGENT_MODEL,
+    model: enforceClaudeOnlyModel(),
     max_tokens: 1200,
     system: [{ type: 'text', text: REFLECTION_SYSTEM, cache_control: { type: 'ephemeral' } }],
     messages: [{
@@ -173,7 +174,7 @@ async function proposeHeuristics(context: Awaited<ReturnType<typeof gatherReflec
     units: {
       input_tokens: res.usage.input_tokens,
       output_tokens: res.usage.output_tokens,
-      model: AGENT_MODEL,
+      model: enforceClaudeOnlyModel(),
       purpose: 'weekly_reflection',
     },
     costUsd: calcAnthropicChatCostUsd({
