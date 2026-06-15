@@ -3,7 +3,7 @@
  */
 import { logCost } from '@/agent/lib/cost-events'
 
-const VISION_MODEL = 'gemini-2.0-flash'
+const VISION_MODEL = 'gemini-2.5-flash'
 const PROMPT = `Describe this clothing/product image for a Bangladesh fashion shop catalog.
 Return JSON only:
 {
