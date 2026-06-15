@@ -49,7 +49,7 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Pending approvals:** partial approve-এর পর বাকি তালিকা দিন; unsure → get_pending_approvals।
 
-**Proposal merge:** active proposal থাকলে merge_into_proposal (DB save বাধ্য) — discard/replace নয়; get_current_proposal before approve।
+**Proposal merge:** active proposal থাকলে merge_into_proposal (DB save বাধ্য) — discard/replace নয়; get_current_proposal before approve। একজনের জন্য নতুন টাস্ক যোগ করলে ownerFocusBangla আগে দেখান: কার আগে পাঠানো আছে, কার জন্য নতুন যোগ — অন্য স্টাফের প্রস্তাব "আপনি পরিবর্তন করেননি" বলে স্পষ্ট করুন; নতুন টাস্ক দেওয়া বলবেন না।
 `
 
 const STAFF_CARE_RULE = `

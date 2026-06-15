@@ -3,16 +3,20 @@
  * Source of truth: all rows with status=proposed for the date.
  */
 import { prisma } from '@/lib/prisma'
+import {
+  buildRichDispatchSummary,
+  type FormattableStaffTask,
+  type RichDispatchOpts,
+} from '@/agent/lib/staff-task-format'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-import { buildDispatchSummary as formatDispatchSummary } from '@/agent/lib/staff-task-format'
 
 export type ProposedTaskRow = {
   id: string
   title: string
   type: string
+  source?: string
   staff: { name: string }
 }
 
@@ -24,11 +28,50 @@ export async function loadProposedTasksForDate(date: string): Promise<ProposedTa
   })
 }
 
-export function buildDispatchSummary(date: string, proposed: ProposedTaskRow[]): string {
-  return formatDispatchSummary(date, proposed)
+export async function loadPriorActiveTasksForDate(date: string): Promise<FormattableStaffTask[]> {
+  const rows = await db.agentStaffTask.findMany({
+    where: {
+      proposedFor: new Date(date),
+      status: { in: ['sent', 'approved', 'done'] },
+    },
+    include: { staff: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  return rows.map((r: {
+    id: string
+    title: string
+    type: string
+    status: string
+    source?: string
+    staff: { name: string }
+  }) => ({
+    id: r.id,
+    title: r.title,
+    type: r.type,
+    status: r.status,
+    source: r.source,
+    staff: r.staff,
+  }))
 }
 
-type DispatchPayload = { date?: string; taskIds?: string[] }
+export async function buildDispatchSummary(
+  date: string,
+  proposed: ProposedTaskRow[],
+  richOpts?: RichDispatchOpts,
+): Promise<string> {
+  const priorActive = await loadPriorActiveTasksForDate(date)
+  const proposedFmt: FormattableStaffTask[] = proposed.map((t) => ({
+    id: t.id,
+    title: t.title,
+    type: t.type,
+    status: 'proposed',
+    source: t.source,
+    staff: t.staff,
+  }))
+  return buildRichDispatchSummary(date, proposedFmt, priorActive, richOpts)
+}
+
+type DispatchPayload = { date?: string; taskIds?: string[]; changedStaff?: string; newTaskIds?: string[] }
 
 /** Latest executed/approved dispatch for a date — authoritative task scope for monitor/progress. */
 export async function getActiveDispatchTaskIdsForDate(date: string): Promise<string[] | null> {
@@ -49,12 +92,15 @@ export async function getActiveDispatchTaskIdsForDate(date: string): Promise<str
 }
 
 /** Rebuild pending action payload + summary from current proposed tasks in DB. */
-export async function syncPendingDispatchAction(date: string): Promise<string | null> {
+export async function syncPendingDispatchAction(
+  date: string,
+  richOpts?: RichDispatchOpts,
+): Promise<string | null> {
   const proposed = await loadProposedTasksForDate(date)
   if (!proposed.length) return null
 
   const taskIds = proposed.map((t) => t.id)
-  const summaryText = buildDispatchSummary(date, proposed)
+  const summaryText = await buildDispatchSummary(date, proposed, richOpts)
 
   const existing = await db.agentPendingAction.findFirst({
     where: { type: 'dispatch_staff_tasks', status: 'pending' },
@@ -62,13 +108,17 @@ export async function syncPendingDispatchAction(date: string): Promise<string | 
     select: { id: true, payload: true },
   })
 
+  const payload: DispatchPayload = {
+    date,
+    taskIds,
+    changedStaff: richOpts?.changedStaff,
+    newTaskIds: richOpts?.newTaskIds,
+  }
+
   if (existing) {
     await db.agentPendingAction.update({
       where: { id: existing.id },
-      data: {
-        payload: { ...(existing.payload as object), date, taskIds },
-        summary: summaryText,
-      },
+      data: { payload, summary: summaryText },
     })
     return existing.id as string
   }
@@ -76,7 +126,7 @@ export async function syncPendingDispatchAction(date: string): Promise<string | 
   const action = await db.agentPendingAction.create({
     data: {
       type: 'dispatch_staff_tasks',
-      payload: { date, taskIds },
+      payload,
       summary: summaryText,
       costEstimate: 0,
       status: 'pending',
@@ -110,7 +160,7 @@ export async function refreshAndApproveDispatch(
   if (!proposed.length) return { ok: false, reason: 'no_proposed' }
 
   const taskIds = proposed.map((t) => t.id)
-  const summaryText = buildDispatchSummary(date, proposed)
+  const summaryText = await buildDispatchSummary(date, proposed)
 
   let actionId: string | undefined = preferredActionId
   if (actionId) {
@@ -193,7 +243,6 @@ export async function prepareCorrectedDispatchPending(date: string): Promise<Pre
   const proposed = await loadProposedTasksForDate(date)
   if (!proposed.length) return { ok: false, reason: 'no_proposed' }
 
-  // Cancel ALL superseded work (including done/awaiting_proof from wrong dispatch).
   const cancelled = await db.agentStaffTask.updateMany({
     where: {
       proposedFor: new Date(date),
@@ -234,6 +283,6 @@ export async function prepareCorrectedDispatchPending(date: string): Promise<Pre
     cancelledCount: cancelled.count as number,
     proposedCount: proposed.length,
     taskIds,
-    summaryBangla: buildDispatchSummary(date, proposed),
+    summaryBangla: await buildDispatchSummary(date, proposed),
   }
 }

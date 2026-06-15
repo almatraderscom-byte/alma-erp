@@ -10,8 +10,10 @@ import {
   refreshAndApproveDispatch,
   prepareCorrectedDispatchPending,
   loadProposedTasksForDate,
+  loadPriorActiveTasksForDate,
+  buildDispatchSummary,
 } from '@/agent/lib/staff-dispatch-sync'
-import { buildDispatchSummary, formatTasksGroupedByStaff } from '@/agent/lib/staff-task-format'
+import { buildMergeOwnerFocusReply, formatTasksGroupedByStaff } from '@/agent/lib/staff-task-format'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
 import {
@@ -388,6 +390,7 @@ const merge_into_proposal: AgentTool = {
   description:
     'Add/edit/remove tasks in the ACTIVE unapproved proposal — never discard existing tasks. ' +
     'MUST persist via this tool (not text-only lists). Re-show full updated list for approval. ' +
+    'When owner adds for ONE staff only, other staff proposed tasks stay unchanged — explain prior sent vs new per person (ownerFocusBangla). ' +
     'Before approve: get_current_proposal to verify DB matches what owner saw. Use add_staff_task_now only when NO active proposal.',
   input_schema: {
     type: 'object' as const,
@@ -443,6 +446,9 @@ const merge_into_proposal: AgentTool = {
         return { success: false, error: 'No additions, edits, or removals specified.' }
       }
 
+      const beforeProposed = await loadProposedTasksForDate(date)
+      const beforeIds = new Set(beforeProposed.map((t) => t.id))
+
       if (additions.length) {
         await db.agentStaffTask.createMany({
           data: additions.map((t) => ({
@@ -491,24 +497,36 @@ const merge_into_proposal: AgentTool = {
         orderBy: { createdAt: 'asc' },
       })
 
-      const allProposed = await db.agentStaffTask.findMany({
-        where: { proposedFor: new Date(date), status: 'proposed' },
-        include: { staff: { select: { name: true } } },
-        orderBy: { createdAt: 'asc' },
+      const allProposed = await loadProposedTasksForDate(date)
+      const newTaskIds = allProposed.filter((t) => !beforeIds.has(t.id)).map((t) => t.id)
+      const newCountForStaff = allProposed.filter(
+        (t) => !beforeIds.has(t.id) && t.staff.name === staff.name,
+      ).length
+
+      const priorActive = await loadPriorActiveTasksForDate(date)
+      const allStaffNames = [
+        ...new Set([
+          ...priorActive.map((t) => t.staff.name),
+          ...allProposed.map((t) => t.staff.name),
+        ]),
+      ]
+
+      const summaryBangla = await buildDispatchSummary(date, allProposed, {
+        changedStaff: staff.name,
+        newTaskIds,
       })
 
-      const summaryBangla = formatTasksGroupedByStaff(
-        allProposed.map((t: { id: string; staff: { name: string }; title: string; type: string }) => ({
-          id: t.id,
-          title: t.title,
-          type: t.type,
-          status: 'proposed',
-          staff: t.staff,
-        })),
-        { header: `📋 আপডেটেড প্রস্তাব — ${date}` },
+      const ownerFocusBangla = buildMergeOwnerFocusReply(
+        staff.name,
+        newCountForStaff,
+        priorActive,
+        allStaffNames,
       )
 
-      const pendingActionId = await syncPendingDispatchAction(date)
+      const pendingActionId = await syncPendingDispatchAction(date, {
+        changedStaff: staff.name,
+        newTaskIds,
+      })
 
       return {
         success: true,
@@ -517,17 +535,21 @@ const merge_into_proposal: AgentTool = {
           date,
           staffName: staff.name,
           staffTasks,
-          allTasks: allProposed.map((t: { id: string; staff: { name: string }; title: string; detail: string | null; type: string }) => ({
+          allTasks: allProposed.map((t) => ({
             id: t.id,
             staffName: t.staff.name,
             title: t.title,
-            detail: t.detail,
             type: t.type,
           })),
           taskCount: allProposed.length,
+          newTaskIds,
+          newCountForStaff,
+          ownerFocusBangla,
           summaryBangla,
           pendingActionId,
-          message: `Proposal updated for ${staff.name}. Show all ${allProposed.length} tasks for approval — do NOT discard other staff tasks.`,
+          message:
+            `Proposal updated for ${staff.name}. Show ownerFocusBangla first, then approval card (summaryBangla). ` +
+            `Other staff unchanged — do NOT say you assigned new tasks to them.`,
         },
       }
     } catch (err) {
@@ -782,7 +804,7 @@ const get_current_proposal: AgentTool = {
           date,
           totalTasks: proposed.length,
           byStaff,
-          summaryBangla: buildDispatchSummary(date, proposed),
+          summaryBangla: await buildDispatchSummary(date, proposed),
           note: 'This DB snapshot is dispatched on approve — never show the owner a list you have not saved via merge_into_proposal / propose_staff_tasks.',
         },
       }
