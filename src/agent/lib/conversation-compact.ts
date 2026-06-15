@@ -10,7 +10,7 @@ import { AGENT_MODEL } from '@/agent/config'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '1')
+export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '8')
 
 export async function getConversationCostUsd(conversationId: string): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
@@ -47,7 +47,7 @@ async function summarizeForCompaction(messages: Array<{ role: string; content: u
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const res = await client.messages.create({
-    model: AGENT_MODEL,
+    model: AGENT_MODEL || 'claude-sonnet-4-6',
     max_tokens: 400,
     system:
       'You are summarizing a conversation for continuity. Extract:\n' +
@@ -93,7 +93,13 @@ export async function compactConversationIfNeeded(
     take: 100,
   })
 
-  const summary = await summarizeForCompaction(messages)
+  let summary = ''
+  try {
+    summary = await summarizeForCompaction(messages)
+  } catch (err) {
+    console.warn('[compact] summarization failed, skipping compaction:', err)
+    return null
+  }
   if (!summary) return null
 
   const newConv = await db.agentConversation.create({
