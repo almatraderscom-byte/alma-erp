@@ -7,6 +7,7 @@ import { CONFIRM_TOOLS } from './confirm-tools'
 import { FINANCE_TOOLS } from './finance-tools'
 import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
+import { AD_CREATIVE_TOOLS } from './ad-creative-tools'
 import { BRAND_TOOLS } from './brand-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { ADS_TOOLS } from './ads-tools'
@@ -56,7 +57,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],
   finance: [...FINANCE_TOOLS],
   cs: [...OWNER_CUSTOMER_INTEL_TOOLS],
-  content: [...CONTENT_ENGINE_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS],
+  content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS],
   growth: [...ADS_TOOLS, ...SEO_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS],
   website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],

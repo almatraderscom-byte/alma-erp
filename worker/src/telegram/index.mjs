@@ -1184,6 +1184,15 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('ad_regen:')) {
+      const parts = data.split(':')
+      const gateId = parts[1]
+      const creativeId = parts[2]
+      const { handleAdCreativeRegen } = await import('../approvals/resend-card.mjs')
+      await handleAdCreativeRegen(ctx, gateId, creativeId)
+      return
+    }
+
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
       const [action, actionId] = data.split(':')
       if (action === 'edit') {

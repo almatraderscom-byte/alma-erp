@@ -217,6 +217,33 @@ export async function POST(
     }
   }
 
+  if (action.type === 'ad_creative_gate') {
+    try {
+      const { approveAdCreativeGate } = await import('@/lib/content-engine/ad-creative-gate')
+      const { creatives } = await approveAdCreativeGate(actionId)
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Ad creative batch approved — ${creatives.length}টি ক্রিয়েটিভ ready (Ads/download). কিছু auto-post হয়নি।`,
+      )
+      return Response.json({
+        success: true,
+        creativeCount: creatives.length,
+        creatives: creatives.map((c) => ({
+          id: c.id,
+          angle: c.angle,
+          aspect: c.aspect,
+          imagePath: c.imagePath,
+          hookBn: c.hookBn,
+        })),
+        message: 'Ad creatives approved. Ready for Meta Ads — nothing was auto-posted.',
+      })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      return Response.json({ error: errMsg }, { status: 400 })
+    }
+  }
+
   if (action.type === 'content_gate2') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

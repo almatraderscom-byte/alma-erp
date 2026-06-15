@@ -23,7 +23,7 @@ export function selectToolGroups(
   if (/order|stock|inventory|product|দাম|price|reorder|catalog/i.test(t)) g.add('erp')
   if (/customer|messenger|cs|winback|segment|inbox/i.test(t)) g.add('cs')
   if (/ad|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel/i.test(t)) g.add('growth')
-  if (/content|ছবি|image|post|model|try.?on|ব্র্যান্ড|facebook|fb/i.test(t)) g.add('content')
+  if (/content|ছবি|image|post|model|try.?on|ব্র্যান্ড|facebook|fb|creative|অফার|offer|poster/i.test(t)) g.add('content')
   if (/website|almatraders|publish|catalog/i.test(t)) g.add('website')
   if (/salah|নামাজ|prayer|namaz/i.test(t)) g.add('salah')
   if (/expense|ledger|finance|খরচ|টাকা|bdt|aed/i.test(t)) g.add('finance')

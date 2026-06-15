@@ -77,6 +77,18 @@ export async function resendApprovalCard(telegram, ownerChatId, row) {
     return true
   }
 
+  if (row.type === 'ad_creative_gate') {
+    const chunks = splitMessage(`📋 *Ad Creative Gate*\n${summary}`)
+    const keyboard = buildAdCreativeKeyboardFromPayload(actionId, payload)
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1
+      await sendMarkdownSafe(telegram, ownerChatId, chunks[i], {
+        reply_markup: isLast ? keyboard : undefined,
+      })
+    }
+    return true
+  }
+
   if (FINANCE_TYPES.has(row.type)) {
     const isBatch = row.type.includes('batch')
     const entryCount = Array.isArray(payload.entries)
@@ -167,6 +179,50 @@ export async function handleContentGate1Variant(ctx, gate1Id, variant, action) {
     })
   } else if (action === 'regenerate' && data.summary) {
     await ctx.reply(`🔄 ${variant} রিজেনারেট কিউ হয়েছে…`)
+  }
+  return true
+}
+
+/** Ad creative gate keyboard — regen per creative + approve/reject. */
+export function buildAdCreativeKeyboardFromPayload(gateId, payload) {
+  const rows = []
+  for (const c of payload.creatives ?? []) {
+    rows.push([
+      {
+        text: `🔄 ${String(c.angle ?? c.id).slice(0, 14)} (${c.aspect ?? ''})`,
+        callback_data: `ad_regen:${gateId}:${c.id}`,
+      },
+    ])
+  }
+  rows.push([
+    { text: '✅ Approve creatives', callback_data: `approve:${gateId}` },
+    { text: '❌ বাতিল', callback_data: `reject:${gateId}` },
+  ])
+  return { inline_keyboard: rows }
+}
+
+export async function handleAdCreativeRegen(ctx, gateId, creativeId) {
+  const res = await fetch(`${APP_URL}/api/assistant/internal/ad-creative-gate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${INT_TOKEN}`,
+    },
+    body: JSON.stringify({ gateId, creativeId }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    await ctx.answerCbQuery(`❌ ${data.error ?? 'failed'}`)
+    return false
+  }
+  await ctx.answerCbQuery('🔄 রিজেনারেট হয়েছে')
+  if (data.summary && data.keyboard) {
+    await ctx.editMessageText(`📋 *Ad Creative Gate*\n${data.summary}`, {
+      parse_mode: 'Markdown',
+      reply_markup: data.keyboard,
+    }).catch(() => {
+      ctx.reply(`📋 ${data.summary}`, { reply_markup: data.keyboard }).catch(() => {})
+    })
   }
   return true
 }

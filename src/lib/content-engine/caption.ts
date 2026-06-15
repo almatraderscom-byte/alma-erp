@@ -67,3 +67,89 @@ export async function generateCaption(
     }
   }
 }
+
+export type AdCopyAngle = {
+  angle: string
+  hookBn: string
+  primaryTextBn: string
+  ctaBn: string
+}
+
+export type AdOfferContext = {
+  priceBdt?: number
+  strikePriceBdt?: number
+  discountPercent?: number
+  headlineBn?: string
+  urgencyBn?: string
+}
+
+const AD_ANGLES = [
+  'value/price',
+  'emotional family',
+  'quality/fabric',
+  'urgency/scarcity',
+  'social-proof',
+] as const
+
+export async function generateAdCopySet(
+  product: ProductAsset,
+  opts?: { theme?: BrandTheme; count?: number; offer?: AdOfferContext },
+): Promise<AdCopyAngle[]> {
+  const count = Math.min(Math.max(opts?.count ?? 4, 1), 5)
+  const seasons = await upcomingSeasons()
+  const activeSeason = seasons.find((s) => s.inLeadWindow)
+  const intel = await buildMarketingIntel(product.category ?? undefined).catch(() => null)
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+  const res = await client.messages.create({
+    model: AGENT_MODEL || 'claude-sonnet-4-6',
+    max_tokens: 1200,
+    system:
+      'You write Bangla Meta ad copy angles for ALMA Lifestyle (Bangladesh family fashion). ' +
+      'Each angle must use a DIFFERENT psychological hook — not mere rephrasing. ' +
+      'Output ONLY a JSON array: [{"angle":"value/price","hookBn":"...","primaryTextBn":"...","ctaBn":"..."}, ...]. ' +
+      'hookBn = short headline for the visual overlay. primaryTextBn = 2-3 lines ad primary text. ctaBn = inbox order CTA. ' +
+      'Warm, trustworthy, no emoji spam. Use exact offer numbers when provided.',
+    messages: [{
+      role: 'user',
+      content: JSON.stringify({
+        productCode: product.productCode,
+        name: product.name,
+        category: product.category,
+        fabric: product.fabric,
+        familyMatch: product.familyMatch,
+        theme: opts?.theme ?? 'default',
+        offer: opts?.offer ?? null,
+        activeSeason: activeSeason?.name ?? null,
+        learnedApproach: intel?.bestApproaches?.[0]?.approach ?? null,
+        requestedAngles: AD_ANGLES.slice(0, count),
+        count,
+      }),
+    }],
+  })
+
+  const block = res.content.find((b) => b.type === 'text')
+  const raw = block && block.type === 'text' ? block.text.trim() : ''
+  try {
+    const match = raw.match(/\[[\s\S]*\]/)
+    const parsed = JSON.parse(match?.[0] ?? '[]') as AdCopyAngle[]
+    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('empty')
+    return parsed.slice(0, count).map((row, i) => ({
+      angle: String(row.angle ?? AD_ANGLES[i] ?? `angle-${i + 1}`),
+      hookBn: String(row.hookBn ?? opts?.offer?.headlineBn ?? 'বিশেষ অফার').trim(),
+      primaryTextBn: String(row.primaryTextBn ?? '').trim(),
+      ctaBn: String(row.ctaBn ?? 'অর্ডার করতে ইনবক্সে মেসেজ করুন').trim(),
+    }))
+  } catch {
+    const fallback: AdCopyAngle[] = []
+    for (let i = 0; i < count; i++) {
+      fallback.push({
+        angle: AD_ANGLES[i] ?? `angle-${i + 1}`,
+        hookBn: opts?.offer?.headlineBn ?? (i === 0 ? 'বিশেষ অফার' : 'ALMA Lifestyle'),
+        primaryTextBn: `${product.name ?? product.productCode} — ${product.fabric ?? 'প্রিমিয়াম কাপড়'}`,
+        ctaBn: 'অর্ডার করতে ইনবক্সে মেসেজ করুন',
+      })
+    }
+    return fallback
+  }
+}

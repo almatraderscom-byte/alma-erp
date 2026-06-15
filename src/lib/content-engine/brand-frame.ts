@@ -14,7 +14,7 @@ export type { BrandTheme }
 const PRODUCT_CARD_SIZE = 1080
 const MODEL_CANVAS = { width: 1080, height: 1350 } as const
 
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -106,7 +106,7 @@ function buildModelOverlaySvg(width: number, height: number, opts: {
   return { topBand, codeBadge, footerBand }
 }
 
-async function compositeLogo(
+export async function compositeLogo(
   composites: Array<{ input: Buffer; top: number; left: number }>,
   transparent: boolean,
   widthPx: number,
