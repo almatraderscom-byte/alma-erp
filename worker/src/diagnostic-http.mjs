@@ -5,6 +5,7 @@
 
 import http from 'http'
 import { timingSafeEqual } from 'crypto'
+import { createClient } from '@supabase/supabase-js'
 import { runCodeSearch } from './diagnostic/code-search.mjs'
 
 let _runSchedulerJob = null
@@ -164,6 +165,105 @@ export function startDiagnosticHttpServer() {
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: err.message?.slice(0, 300) }))
         }
+        return
+      }
+
+      // ── Vercel Alert Webhook ──
+      if (req.method === 'POST' && pathname === '/vercel-alert') {
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+        const alerts = body.payload?.alerts ?? []
+        for (const alert of alerts) {
+          const key = `vercel.alert.${Date.now()}.${(alert.alertId ?? '').slice(0, 8)}`
+          await supabase.from('agent_kv_settings').upsert({
+            key,
+            value: JSON.stringify({
+              title: alert.title ?? 'Vercel Alert',
+              severity: 'high',
+              detail: `${alert.count ?? '?'} errors · z-score ${alert.zscore?.toFixed(1) ?? '?'}`,
+              count: alert.count, type: alert.type,
+              processed: false, receivedAt: new Date().toISOString(),
+            }),
+          })
+        }
+        console.log(`[diagnostic-http] received ${alerts.length} Vercel alert(s)`)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, received: alerts.length }))
+        return
+      }
+
+      // ── Auto-Fix: notify owner via Telegram ──
+      if (req.method === 'POST' && pathname === '/auto-fix-notify') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        const { actionId, issue } = body
+        const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+        const botToken = process.env.ASSISTANT_BOT_TOKEN
+        if (ownerChatId && botToken) {
+          const preview = issue.detail?.length > 100 ? issue.detail.slice(0, 100) + '…' : (issue.detail ?? '')
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: ownerChatId,
+              text: `🔧 Auto-Fix Request\n\n📋 ${issue.title}\n📁 ${issue.area} · ${issue.severity}\n📝 ${preview}\n\n💰 আনুমানিক খরচ: $${(issue.costEstimate ?? 0).toFixed(2)}\n\nApprove করলে Cursor Cloud Agent fix শুরু করবে`,
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '✅ Fix করো', callback_data: `autofix_approve:${actionId}` },
+                  { text: '❌ বাদ দাও', callback_data: `autofix_reject:${actionId}` },
+                ]],
+              },
+            }),
+          })
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+
+      // ── Auto-Fix: run after owner approval ──
+      if (req.method === 'POST' && pathname === '/auto-fix-run') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        setImmediate(async () => {
+          try {
+            const { dispatchAutoFix } = await import('./auto-fix/dispatch.mjs')
+            await dispatchAutoFix({ actionId: body.actionId, issue: body.issue })
+          } catch (err) {
+            console.error('[auto-fix-run] dispatch failed:', err.message)
+          }
+        })
+        res.writeHead(202, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, message: 'dispatched' }))
         return
       }
 

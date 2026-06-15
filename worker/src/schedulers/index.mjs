@@ -112,6 +112,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'outcome-measure',        cronUtc: '0 5 * * *',    description: 'Measure matured agent suggestions (11:00 Dhaka)' },
   { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
   { name: 'staff-approval-escalation', cronUtc: '* * * * *',  description: 'Escalate unapproved staff messages (every minute)' },
+  { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -333,6 +334,13 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'staff-approval-escalation': {
       const { pollApprovalEscalations } = await import('../approval/escalation-poller.mjs')
       const res = await pollApprovalEscalations()
+      dutyStatus = res?.dutyStatus ?? 'done'
+      dutyDetail = res?.dutyDetail ?? ''
+      break
+    }
+    case 'auto-fix-scan': {
+      const { runErrorCollector } = await import('../auto-fix/error-collector.mjs')
+      const res = await runErrorCollector()
       dutyStatus = res?.dutyStatus ?? 'done'
       dutyDetail = res?.dutyDetail ?? ''
       break

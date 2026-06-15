@@ -242,8 +242,13 @@ function DutyDetailPanel({ duty, onRetrigger, retriggering }: {
 
 /* ───────── Monitor Body ───────── */
 
-type HealthIssue = { severity: 'high' | 'medium' | 'low'; area: string; title: string; detail: string }
+type HealthIssue = { severity: 'high' | 'medium' | 'low'; area: string; title: string; detail: string; signal?: string }
 type HealthReport = { scannedAt: string; ok: boolean; issues: HealthIssue[]; summary: string }
+type AutoFixAction = {
+  id: string; status: string; summary: string; costEstimate: number
+  payload: { title?: string; area?: string; severity?: string; stage?: string }
+  createdAt: string; resolvedAt?: string; result?: { agentId?: string; status?: string; error?: string }
+}
 
 function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean }) {
   const [feedExpanded, setFeedExpanded] = useState(false)
@@ -254,6 +259,8 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
   const [healthScanning, setHealthScanning] = useState(false)
+  const [autoFixActions, setAutoFixActions] = useState<AutoFixAction[]>([])
+  const [fixingIssue, setFixingIssue] = useState<string | null>(null)
   const [editingDutyTime, setEditingDutyTime] = useState<string | null>(null)
   const [editTimeValue, setEditTimeValue] = useState('')
   const [savingTime, setSavingTime] = useState(false)
@@ -285,9 +292,52 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
     }
   }
 
-  // Auto-load health scan on mount (live mode only)
+  async function loadAutoFixActions() {
+    try {
+      const res = await fetch('/api/agent/auto-fix', { cache: 'no-store' })
+      if (res.ok) {
+        const d = await res.json() as { actions: AutoFixAction[] }
+        setAutoFixActions(d.actions ?? [])
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function requestFix(issue: HealthIssue) {
+    setFixingIssue(issue.title)
+    try {
+      const res = await fetch('/api/agent/auto-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issue }),
+      })
+      const d = await res.json() as { ok?: boolean; costEstimate?: number }
+      if (d.ok) {
+        showToast(`Auto-fix request created · ~$${(d.costEstimate ?? 0).toFixed(2)} · Telegram এ approve করুন`, 'ok')
+        void loadAutoFixActions()
+      } else {
+        showToast('Auto-fix request failed', 'err')
+      }
+    } catch { showToast('Network error', 'err') }
+    finally { setFixingIssue(null) }
+  }
+
+  async function handleAutoFixDecision(actionId: string, decision: 'approve' | 'reject') {
+    try {
+      const res = await fetch('/api/agent/auto-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionId, decision }),
+      })
+      if (res.ok) {
+        showToast(decision === 'approve' ? '✅ Auto-Fix শুরু হচ্ছে...' : '❌ বাতিল', 'ok')
+        void loadAutoFixActions()
+      }
+    } catch { showToast('Failed', 'err') }
+  }
+
   useEffect(() => {
     if (isLive && !healthReport) void loadHealthScan()
+    if (isLive) void loadAutoFixActions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive])
 
@@ -498,7 +548,24 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                       <span className="font-semibold text-white/70">{issue.title}</span>
                       <span className="ml-auto text-[9px] text-white/20">{issue.area}</span>
                     </div>
-                    <p className="mt-1 text-[10px] text-white/40">{issue.detail}</p>
+                    <div className="mt-1 flex items-center justify-between">
+                      <p className="text-[10px] text-white/40">{issue.detail}</p>
+                      {issue.severity === 'high' && (
+                        <button
+                          type="button"
+                          disabled={fixingIssue === issue.title}
+                          onClick={() => void requestFix(issue)}
+                          className={cn(
+                            'ml-2 shrink-0 rounded-md border px-2 py-0.5 text-[9px] font-bold transition-all',
+                            fixingIssue === issue.title
+                              ? 'border-white/[0.06] text-white/20'
+                              : 'border-blue-400/30 bg-blue-400/[0.08] text-blue-300 hover:bg-blue-400/15',
+                          )}
+                        >
+                          {fixingIssue === issue.title ? '⏳...' : '🤖 Fix This'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
                 <p className="text-[9px] text-white/20">
@@ -506,6 +573,64 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                 </p>
               </div>
             )}
+          </SectionCard>
+        </motion.div>
+      )}
+
+      {/* ── Auto-Fix Pipeline ── */}
+      {isLive && autoFixActions.length > 0 && (
+        <motion.div variants={fadeIn}>
+          <SectionCard
+            title={`Auto-Fix Pipeline (${autoFixActions.length})`}
+            icon="🤖"
+            accent="blue"
+            actions={
+              <button type="button" onClick={() => void loadAutoFixActions()}
+                className="rounded-lg border border-blue-400/25 bg-blue-400/[0.06] px-2 py-1 text-[9px] font-bold text-blue-300 hover:bg-blue-400/10 transition-all">
+                🔄 Refresh
+              </button>
+            }
+          >
+            <div className="space-y-2">
+              {autoFixActions.map(a => {
+                const statusColor =
+                  a.status === 'pending' ? 'text-amber-300 bg-amber-500/15' :
+                  a.status === 'approved' || a.status === 'in_progress' ? 'text-blue-300 bg-blue-500/15' :
+                  a.status === 'completed' ? 'text-emerald-300 bg-emerald-500/15' :
+                  a.status === 'rejected' ? 'text-white/30 bg-white/5' :
+                  'text-red-300 bg-red-500/15'
+                const statusLabel =
+                  a.status === 'pending' ? '⏳ Approval Pending' :
+                  a.status === 'approved' ? '🚀 Dispatching...' :
+                  a.status === 'in_progress' ? '🤖 Agent Working...' :
+                  a.status === 'completed' ? '✅ Fixed' :
+                  a.status === 'rejected' ? '❌ Rejected' : '⚠️ Failed'
+                return (
+                  <div key={a.id} className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-2.5 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold', statusColor)}>{statusLabel}</span>
+                      <span className="font-semibold text-white/70 truncate">{a.payload?.title ?? 'Unknown'}</span>
+                      <span className="ml-auto text-[9px] text-white/20">${(a.costEstimate ?? 0).toFixed(2)}</span>
+                    </div>
+                    {a.result?.agentId && <p className="mt-1 text-[9px] text-blue-300/50">Agent: {a.result.agentId}</p>}
+                    {a.result?.error && <p className="mt-1 text-[9px] text-red-300/60">{a.result.error}</p>}
+                    {a.status === 'pending' && (
+                      <div className="mt-1.5 flex gap-2">
+                        <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'approve')}
+                          className="rounded border border-emerald-400/30 bg-emerald-400/[0.08] px-2 py-0.5 text-[9px] font-bold text-emerald-300 hover:bg-emerald-400/15 transition-all">
+                          ✅ Approve Fix
+                        </button>
+                        <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'reject')}
+                          className="rounded border border-red-400/30 bg-red-400/[0.08] px-2 py-0.5 text-[9px] font-bold text-red-300 hover:bg-red-400/15 transition-all">
+                          ❌ Reject
+                        </button>
+                      </div>
+                    )}
+                    <p className="mt-1 text-[9px] text-white/15">{fmtTime(a.createdAt)}</p>
+                  </div>
+                )
+              })}
+            </div>
           </SectionCard>
         </motion.div>
       )}

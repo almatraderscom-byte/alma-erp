@@ -1063,6 +1063,47 @@ export function createTelegramBot() {
       return
     }
 
+    if (data.startsWith('autofix_approve:') || data.startsWith('autofix_reject:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const [action, actionId] = data.split(':')
+      const approved = action === 'autofix_approve'
+      const supabase = createSupabase()
+      const { data: row } = await supabase.from('agent_pending_actions')
+        .select('id, payload, status')
+        .eq('id', actionId)
+        .single()
+      if (!row || (row.status !== 'pending' && row.status !== 'waiting_list')) {
+        await ctx.answerCbQuery('⚠ ইতিমধ্যে প্রসেস হয়েছে')
+        return
+      }
+      await supabase.from('agent_pending_actions').update({
+        status: approved ? 'approved' : 'rejected',
+        resolved_at: new Date().toISOString(),
+      }).eq('id', actionId)
+      if (approved) {
+        try {
+          const { getDiagnosticPublicBase } = await import('../diagnostic-http.mjs')
+          const base = getDiagnosticPublicBase()
+          await fetch(`${base}/auto-fix-run`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${INT_TOKEN}`,
+            },
+            body: JSON.stringify({ actionId, issue: row.payload }),
+          })
+        } catch (err) {
+          console.warn('[autofix-callback] dispatch failed:', err.message)
+        }
+      }
+      await ctx.answerCbQuery(approved ? '✅ Auto-Fix শুরু হচ্ছে...' : '❌ বাতিল')
+      try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }) } catch { /* already edited */ }
+      return
+    }
+
     if (data.startsWith('staff_approve:') || data.startsWith('staff_reject:')) {
       if (!isOwner(ctx.chat?.id)) {
         await ctx.answerCbQuery('অনুমতি নেই')
