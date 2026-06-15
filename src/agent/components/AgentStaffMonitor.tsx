@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { StaffMonitorData, StaffSummary, StaffMonitorRow } from '@/agent/lib/staff-monitor-data'
 import type { AgentDutyRow, SalahDutyRow } from '@/agent/lib/agent-duties'
+import AgentSalahTimesSettings from '@/agent/components/AgentSalahTimesSettings'
 
 const FEED_PREVIEW_LEN = 120
 
@@ -411,6 +412,12 @@ export default function AgentStaffMonitor() {
         </div>
 
         {displayData && <MonitorBody data={displayData} isLive={!viewingHistory} />}
+
+        {!viewingHistory && (
+          <div className="mt-4">
+            <AgentSalahTimesSettings />
+          </div>
+        )}
       </div>
 
       <aside

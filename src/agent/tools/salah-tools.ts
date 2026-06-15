@@ -13,8 +13,13 @@ import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
 import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
 import { computeLockUntil, MAX_DELAY_MIN } from '@/lib/salah/duty-window'
+import {
+  getSalahTimeConfig,
+  setSalahWaqtTimes,
+  isValidHm,
+  type WaqtKey,
+} from '@/lib/salah/time-config'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
-import type { WaqtKey } from '@/agent/lib/salah-times'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -372,10 +377,76 @@ const request_salah_delay: AgentTool = {
   },
 }
 
+// ── set_salah_time / get_salah_time_config ───────────────────────────────────
+
+const set_salah_time: AgentTool = {
+  name: 'set_salah_time',
+  description:
+    'Update configurable salah times for a waqt — azan (wakto start), prayer (jamat), and/or wakto end. ' +
+    'Use when owner says e.g. "Dhuhr jamat 1:45 koro" or "Asr azan 4:15". Times HH:MM 24h Dhaka. ' +
+    'Only change what owner specifies. Duty-window reads the new jamat time automatically.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      waqt: { type: 'string', enum: ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] },
+      azan: { type: 'string', description: 'HH:MM 24h — wakto start (optional)' },
+      prayer: { type: 'string', description: 'HH:MM 24h — jamat (optional)' },
+      end: { type: 'string', description: 'HH:MM 24h — wakto end (optional)' },
+    },
+    required: ['waqt'],
+  },
+  handler: async (input) => {
+    try {
+      const waqt = String(input.waqt ?? '') as WaqtKey
+      const patch: Partial<Record<'azan' | 'prayer' | 'end', string>> = {}
+      for (const k of ['azan', 'prayer', 'end'] as const) {
+        if (input[k] != null) {
+          const v = String(input[k])
+          if (!isValidHm(v)) {
+            return { success: false, error: `${k} সময় HH:MM ফরম্যাটে দিন (যেমন 13:45)।` }
+          }
+          patch[k] = v
+        }
+      }
+      if (!Object.keys(patch).length) {
+        return { success: false, error: 'কমপক্ষে একটি সময় (azan/prayer/end) দিন।' }
+      }
+      const cfg = await setSalahWaqtTimes(waqt, patch)
+      return {
+        success: true,
+        data: {
+          waqt,
+          updated: patch,
+          current: cfg[waqt],
+          message: `${waqt}-এর সময় আপডেট হয়েছে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const get_salah_time_config: AgentTool = {
+  name: 'get_salah_time_config',
+  description: 'Show current configurable salah times (azan/prayer/end for all 5 waqts).',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const cfg = await getSalahTimeConfig()
+      return { success: true, data: cfg }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const SALAH_TOOLS: AgentTool[] = [
   get_prayer_times,
   get_salah_status,
   mark_salah,
   get_salah_weekly_summary,
   request_salah_delay,
+  set_salah_time,
+  get_salah_time_config,
 ]
