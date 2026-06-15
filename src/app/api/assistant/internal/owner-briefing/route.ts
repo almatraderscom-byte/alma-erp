@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
       pendingApprovalsCount: digest.pendingApprovalsCount,
       openTodos: digest.openTodos,
       lingeringTodos: digest.lingeringTodos,
+      healthScan: digest.healthScan,
     })
   } catch (err) {
     console.error('[owner-briefing] internal API failed:', err)

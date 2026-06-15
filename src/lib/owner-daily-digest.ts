@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import type { HealthScanReport } from '@/lib/diagnostic/health-scan'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -10,6 +11,7 @@ export type DailyDigest = {
   pendingApprovalsCount: number
   openTodos: Array<{ title: string; priority: string; ageDays: number }>
   lingeringTodos: Array<{ title: string; ageDays: number }>
+  healthScan: HealthScanReport | null
 }
 
 export async function buildOwnerDailyDigest(): Promise<DailyDigest> {
@@ -64,6 +66,14 @@ export async function buildOwnerDailyDigest(): Promise<DailyDigest> {
     /* ignore */
   }
 
+  let healthScan: HealthScanReport | null = null
+  try {
+    const { runHealthScan } = await import('@/lib/diagnostic/health-scan')
+    healthScan = await runHealthScan()
+  } catch {
+    healthScan = null
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     business,
@@ -71,5 +81,6 @@ export async function buildOwnerDailyDigest(): Promise<DailyDigest> {
     pendingApprovalsCount,
     openTodos,
     lingeringTodos,
+    healthScan,
   }
 }

@@ -171,5 +171,19 @@ export function renderBriefing(brief) {
     }
   }
 
+  const health = brief.healthScan
+  if (health?.summary) {
+    L.push('')
+    L.push('🩺 *সিস্টেম হেলথ:*')
+    L.push(health.summary)
+    const highs = (health.issues ?? []).filter(i => i.severity === 'high')
+    if (highs.length) {
+      L.push('⚠️ *আজ ঠিক করার মতো বিষয়:*')
+      for (const issue of highs.slice(0, 5)) {
+        L.push(`   • ${issue.title}`)
+      }
+    }
+  }
+
   return L.join('\n')
 }
