@@ -8,9 +8,12 @@ import {
 import { isEffectivelyDone } from '@/agent/lib/salah-resolve'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 import type {
+  ActiveReminderRow,
+  ActiveTodoRow,
   AgentDutyRow,
   ContinuousServiceHealth,
   MonitorWarning,
+  PendingApprovalRow,
   SalahDutyRow,
   SchedulerHealth,
   StaffMonitorData,
@@ -19,15 +22,36 @@ import type {
 } from '@/agent/lib/staff-monitor-types'
 
 export type {
+  ActiveReminderRow,
+  ActiveTodoRow,
   AgentDutyRow,
   ContinuousServiceHealth,
   MonitorWarning,
+  PendingApprovalRow,
   SalahDutyRow,
   SchedulerHealth,
   StaffMonitorData,
   StaffMonitorRow,
   StaffSummary,
 } from '@/agent/lib/staff-monitor-types'
+
+async function getDutyTimeOverrides(): Promise<Record<string, string>> {
+  const rows = await prisma.agentKvSetting.findMany({
+    where: { key: { startsWith: 'duty.time.' } },
+  })
+  const overrides: Record<string, string> = {}
+  for (const r of rows) {
+    const dutyKey = r.key.replace('duty.time.', '')
+    if (dutyKey === '_changed') continue
+    try {
+      const parsed = JSON.parse(r.value) as { dhakaTime?: string }
+      if (parsed.dhakaTime) overrides[dutyKey] = parsed.dhakaTime
+    } catch {
+      if (/^\d{2}:\d{2}$/.test(r.value)) overrides[dutyKey] = r.value
+    }
+  }
+  return overrides
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -278,7 +302,7 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
   const tenMinAgo = new Date(Date.now() - 10 * 60_000)
   const historyDates = Array.from({ length: historyDays - 1 }, (_, i) => daysAgoYmd(i + 1))
 
-  const [todayTasks, todayOutbox, unackedRows, dispatchTaskIds, agentDuties, salahDuties, hbPack, schedulerHealth] = await Promise.all([
+  const [todayTasks, todayOutbox, unackedRows, dispatchTaskIds, agentDuties, salahDuties, hbPack, schedulerHealth, reminderRows, todoRows, approvalRows, dutyTimeOverrides] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(today),
@@ -307,9 +331,67 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     getSalahDutiesForToday(today),
     getContinuousServicesHealth(),
     getSchedulerHealth(),
+    db.agentReminder.findMany({
+      where: { status: { in: ['pending', 'sent', 'snoozed'] } },
+      orderBy: { dueAt: 'asc' },
+      take: 30,
+    }),
+    db.agentOwnerTodo.findMany({
+      where: { status: 'open' },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    db.agentPendingAction.findMany({
+      where: {
+        status: { in: ['pending', 'waiting_list'] },
+        createdAt: { gte: new Date(Date.now() - 48 * 3600_000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    getDutyTimeOverrides(),
   ])
 
   const continuousServices = hbPack.services
+
+  const activeReminders = (reminderRows as Array<{
+    id: string; title: string; body: string | null; dueAt: Date; tier: number
+    status: string; snoozedUntil: Date | null; recurrenceRrule: string | null
+  }>).map(r => ({
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    dueAt: r.dueAt.toISOString(),
+    tier: r.tier,
+    status: r.status,
+    snoozedUntil: r.snoozedUntil?.toISOString() ?? null,
+    isRecurring: !!r.recurrenceRrule,
+  }))
+
+  const activeTodos = (todoRows as Array<{
+    id: string; title: string; detail: string | null; status: string
+    priority: string; dueHint: string | null; createdAt: Date
+  }>).map(t => ({
+    id: t.id,
+    title: t.title,
+    detail: t.detail,
+    priority: t.priority,
+    dueHint: t.dueHint,
+    createdAt: t.createdAt.toISOString(),
+  }))
+
+  const pendingApprovals = (approvalRows as Array<{
+    id: string; type: string; summary: string; status: string
+    businessId: string; createdAt: Date; payload: unknown
+  }>).map(a => ({
+    id: a.id,
+    type: a.type,
+    summary: a.summary,
+    status: a.status,
+    businessId: a.businessId,
+    createdAt: a.createdAt.toISOString(),
+    staffName: (a.payload as Record<string, unknown>)?.staffName as string | null ?? null,
+  }))
 
   const scopedTasks = dispatchTaskIds?.length
     ? (todayTasks as Array<{ id: string }>).filter((t) => dispatchTaskIds.includes(t.id))
@@ -472,6 +554,10 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     staffSummaries,
     typeCounts,
     mismatches,
+    activeReminders,
+    activeTodos,
+    pendingApprovals,
+    dutyTimeOverrides,
     generatedAt: new Date().toISOString(),
   }
 }

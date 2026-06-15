@@ -42,7 +42,7 @@ export function startDiagnosticHttpServer() {
 
       if (pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, publicBase, repo }))
+        res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo }))
         return
       }
 
@@ -92,17 +92,77 @@ export function startDiagnosticHttpServer() {
           return
         }
         console.log('[diagnostic-http] deploy request received')
+        const { execSync } = await import('child_process')
+        const steps = []
+
         try {
-          const { execSync } = await import('child_process')
-          const output = execSync(
-            `cd ${repo} && git pull origin main 2>&1 && pm2 restart agent-worker 2>&1`,
-            { timeout: 90_000, encoding: 'utf8' },
-          )
+          const pullOut = execSync(`cd ${repo} && git pull origin main 2>&1`, { timeout: 60_000, encoding: 'utf8' })
+          steps.push({ step: 'git_pull', ok: true, output: pullOut.slice(-300) })
+        } catch (err) {
+          steps.push({ step: 'git_pull', ok: false, error: err.message?.slice(0, 300) ?? 'git pull failed' })
+        }
+
+        try {
+          const npmOut = execSync(`cd ${repo}/worker && npm ci --omit=dev 2>&1`, { timeout: 120_000, encoding: 'utf8' })
+          steps.push({ step: 'npm_install', ok: true, output: npmOut.slice(-200) })
+        } catch (err) {
+          steps.push({ step: 'npm_install', ok: false, error: err.message?.slice(0, 200) ?? 'npm ci failed' })
+        }
+
+        try {
+          let restartOut
+          try {
+            restartOut = execSync('pm2 restart agent-worker 2>&1', { timeout: 30_000, encoding: 'utf8' })
+          } catch {
+            restartOut = execSync('pm2 restart alma-agent-worker 2>&1', { timeout: 30_000, encoding: 'utf8' })
+          }
+          steps.push({ step: 'pm2_restart', ok: true, output: restartOut.slice(-200) })
+        } catch (err) {
+          steps.push({ step: 'pm2_restart', ok: false, error: err.message?.slice(0, 200) ?? 'pm2 restart failed' })
+        }
+
+        const allOk = steps.every(s => s.ok)
+        res.writeHead(allOk ? 200 : 207, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: allOk, steps }))
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/staff-send') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        try {
+          const chunks = []
+          for await (const chunk of req) chunks.push(chunk)
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          const p = body.payload
+          if (!p?.chatId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'no chatId in payload' }))
+            return
+          }
+          const { loggedSendToStaff } = await import('./telegram/logged-send.mjs')
+          const { getDispatcherBot } = await import('./telegram/dispatcher.mjs')
+          const bot = getDispatcherBot()
+          if (!bot?.telegram) {
+            res.writeHead(503, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'bot not ready' }))
+            return
+          }
+          const result = await loggedSendToStaff(bot.telegram, {
+            staffId: p.staffId, staffName: p.staffName, businessId: p.businessId,
+            type: p.type, content: p.content, chatId: p.chatId,
+            relatedTaskIds: p.relatedTaskIds,
+            extra: { ...(p.extra ?? {}), skipApproval: true },
+            requiresAck: p.requiresAck ?? false, officeHoursOnly: false,
+          })
           res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: true, output: output.slice(-500) }))
+          res.end(JSON.stringify({ ok: true, result }))
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: err.message?.slice(0, 500) ?? 'deploy failed' }))
+          res.end(JSON.stringify({ error: err.message?.slice(0, 300) }))
         }
         return
       }

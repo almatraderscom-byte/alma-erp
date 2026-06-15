@@ -109,18 +109,18 @@ export async function getCostDashboardData() {
                ORDER BY 1 ASC`,
   ).catch(() => [] as Array<{ day: string; total: string }>)
 
-  const topTelegramDays = await prisma.$queryRaw<Array<{ day: string; total: string; conversations: number }>>(
-    Prisma.sql`SELECT to_char((e.occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
+  const topTelegramConvRows = await prisma.$queryRaw<Array<{ conversation_id: string; total: string; title: string | null }>>(
+    Prisma.sql`SELECT e.conversation_id,
                       SUM(e.cost_usd)::text AS total,
-                      COUNT(DISTINCT e.conversation_id)::int AS conversations
+                      c.title
                FROM agent_cost_events e
                INNER JOIN agent_conversations c ON c.id::text = e.conversation_id
                WHERE c.source = 'telegram'
                  AND e.occurred_at >= ${monthB.start} AND e.occurred_at < ${monthB.end}
-               GROUP BY 1
+               GROUP BY e.conversation_id, c.title
                ORDER BY SUM(e.cost_usd) DESC
-               LIMIT 10`,
-  ).catch(() => [] as Array<{ day: string; total: string; conversations: number }>)
+               LIMIT 15`,
+  ).catch(() => [] as Array<{ conversation_id: string; total: string; title: string | null }>)
 
   const telegramTodayRow = await prisma.$queryRaw<Array<{ total: string }>>(
     Prisma.sql`SELECT COALESCE(SUM(e.cost_usd), 0)::text AS total
@@ -175,10 +175,10 @@ export async function getCostDashboardData() {
       date: r.day,
       totalUsd: parseFloat(r.total) || 0,
     })),
-    topTelegramDays: topTelegramDays.map((r) => ({
-      date: r.day,
+    topTelegramConversations: topTelegramConvRows.map((r) => ({
+      conversationId: r.conversation_id,
+      title: r.title,
       totalUsd: parseFloat(r.total) || 0,
-      conversations: r.conversations,
     })),
     subscriptions: subscriptions.map((s) => ({
       id: s.id,

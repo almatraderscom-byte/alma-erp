@@ -218,6 +218,36 @@ export type DutyHistoryDay = {
   duties: AgentDutyRow[]
 }
 
+export type ActiveReminderRow = {
+  id: string
+  title: string
+  body: string | null
+  dueAt: string
+  tier: number
+  status: string
+  snoozedUntil: string | null
+  isRecurring: boolean
+}
+
+export type ActiveTodoRow = {
+  id: string
+  title: string
+  detail: string | null
+  priority: string
+  dueHint: string | null
+  createdAt: string
+}
+
+export type PendingApprovalRow = {
+  id: string
+  type: string
+  summary: string
+  status: string
+  businessId: string
+  createdAt: string
+  staffName: string | null
+}
+
 export type StaffMonitorData = {
   today: string
   feedDays: number
@@ -242,5 +272,9 @@ export type StaffMonitorData = {
     errorReason: string | null
     relatedTaskIds: string[]
   }>
+  activeReminders?: ActiveReminderRow[]
+  activeTodos?: ActiveTodoRow[]
+  pendingApprovals?: PendingApprovalRow[]
+  dutyTimeOverrides?: Record<string, string>
   generatedAt: string
 }

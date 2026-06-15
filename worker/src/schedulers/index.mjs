@@ -111,6 +111,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
   { name: 'outcome-measure',        cronUtc: '0 5 * * *',    description: 'Measure matured agent suggestions (11:00 Dhaka)' },
   { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
+  { name: 'staff-approval-escalation', cronUtc: '* * * * *',  description: 'Escalate unapproved staff messages (every minute)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -329,6 +330,13 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
       await runKnowledgeBuild()
       break
     }
+    case 'staff-approval-escalation': {
+      const { pollApprovalEscalations } = await import('../approval/escalation-poller.mjs')
+      const res = await pollApprovalEscalations()
+      dutyStatus = res?.dutyStatus ?? 'done'
+      dutyDetail = res?.dutyDetail ?? ''
+      break
+    }
     case 'weekly-reflection': {
       const { runWeeklyReflection } = await lazy.weeklyReflection()
       await runWeeklyReflection()
@@ -461,9 +469,68 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     }
   }, 120_000)
 
+  // Poll for duty time overrides every 5 minutes
+  let lastTimeChangeCheck = null
+  const dutyTimePoll = setInterval(async () => {
+    try {
+      const { data: changed } = await supabase
+        .from('agent_kv_settings')
+        .select('value')
+        .eq('key', 'duty.time._changed')
+        .maybeSingle()
+
+      if (!changed?.value || changed.value === lastTimeChangeCheck) return
+      lastTimeChangeCheck = changed.value
+
+      const { data: overrides } = await supabase
+        .from('agent_kv_settings')
+        .select('key, value')
+        .like('key', 'duty.time.%')
+        .neq('key', 'duty.time._changed')
+
+      if (!overrides?.length) return
+
+      console.log(`[schedulers] duty time overrides detected: ${overrides.length} overrides`)
+
+      for (const row of overrides) {
+        try {
+          const dutyName = row.key.replace('duty.time.', '')
+          const parsed = JSON.parse(row.value)
+          const newCron = parsed.cronUtc
+          if (!newCron) continue
+
+          const entry = SCHEDULER_REGISTRY.find(s =>
+            s.name === dutyName || s.name === dutyName.replace(/_/g, '-')
+          )
+
+          if (!entry || entry.cronUtc === newCron) continue
+
+          entry.cronUtc = newCron
+
+          const repeatables = await schedulerQueue.getRepeatableJobs()
+          for (const rep of repeatables) {
+            if (rep.name === entry.name) {
+              await schedulerQueue.removeRepeatableByKey(rep.key)
+            }
+          }
+          await schedulerQueue.add(entry.name, { jobName: entry.name }, {
+            repeat: { pattern: newCron, tz: 'UTC' },
+          })
+
+          console.log(`[schedulers] re-registered ${entry.name} with cron: ${newCron}`)
+        } catch (err) {
+          console.warn(`[schedulers] time override apply failed for ${row.key}:`, err.message)
+        }
+      }
+    } catch (err) {
+      console.warn('[schedulers] time override poll error:', err.message)
+    }
+  }, 5 * 60_000)
+
   return {
     schedulerQueue,
     retriggerPoll,
+    dutyTimePoll,
     runSchedulerJob: (jobName, opts) => runSchedulerJob(jobName, context, opts),
   }
 }

@@ -28,6 +28,20 @@ export async function loggedSendToStaff(telegram, {
   const supabase = extSupabase ?? sb()
   const biz = businessId ?? 'ALMA_LIFESTYLE'
 
+  const skipApproval = extra?.skipApproval || process.env.STAFF_APPROVAL_REQUIRED === 'false'
+  if (!skipApproval) {
+    try {
+      const { requireStaffApproval } = await import('../approval/staff-approval-gate.mjs')
+      return await requireStaffApproval({
+        staffId, staffName, businessId: biz, type, content, chatId,
+        relatedTaskIds, extra, requiresAck, officeHoursOnly,
+        dutySource: extra?.dutySource ?? null,
+      })
+    } catch (err) {
+      console.warn('[logged-send] approval gate error, falling through:', err.message)
+    }
+  }
+
   if (officeHoursOnly && !isWithinOfficeHours(biz)) {
     const outboxId = crypto.randomUUID()
     const shortId = compactUuid(outboxId)

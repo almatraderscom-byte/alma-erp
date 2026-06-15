@@ -254,6 +254,9 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
   const [healthScanning, setHealthScanning] = useState(false)
+  const [editingDutyTime, setEditingDutyTime] = useState<string | null>(null)
+  const [editTimeValue, setEditTimeValue] = useState('')
+  const [savingTime, setSavingTime] = useState(false)
 
   const feedItems = data.feed ?? []
   const visibleFeed = feedExpanded ? feedItems : feedItems.slice(0, 6)
@@ -542,7 +545,69 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                       >
                         <span className="shrink-0">{dutyIcon(d.status)}</span>
                         <span className="min-w-0 flex-1 truncate text-white/80">{d.label}</span>
-                        <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/30">{dutyRightText(d)}</span>
+                        <span className="shrink-0">
+                          {editingDutyTime === d.duty ? (
+                            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="time"
+                                value={editTimeValue}
+                                onChange={e => setEditTimeValue(e.target.value)}
+                                className="rounded border border-[#C9A84C]/30 bg-transparent px-1.5 py-0.5 text-[10px] text-[#E8C96A] outline-none w-20"
+                              />
+                              <button
+                                type="button"
+                                disabled={savingTime}
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  if (!editTimeValue) return
+                                  setSavingTime(true)
+                                  try {
+                                    const res = await fetch('/api/agent/duty-time', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ dutyKey: d.duty, time: editTimeValue }),
+                                    })
+                                    if (res.ok) {
+                                      setToast({ msg: `✓ ${d.label} time → ${editTimeValue}`, type: 'ok' })
+                                      setEditingDutyTime(null)
+                                    } else {
+                                      const err = await res.json().catch(() => ({}))
+                                      setToast({ msg: `✗ ${(err as {error?:string}).error ?? 'Save failed'}`, type: 'err' })
+                                    }
+                                  } catch {
+                                    setToast({ msg: '✗ Network error', type: 'err' })
+                                  } finally {
+                                    setSavingTime(false)
+                                    setTimeout(() => setToast(null), 4000)
+                                  }
+                                }}
+                                className="rounded border border-emerald-400/30 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-bold text-emerald-300"
+                              >
+                                {savingTime ? '…' : '✓'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); setEditingDutyTime(null) }}
+                                className="text-[9px] text-white/20 hover:text-white/40"
+                              >✕</button>
+                            </div>
+                          ) : (
+                            <span className="group flex items-center gap-1">
+                              <span className="text-[10px] font-medium tabular-nums text-white/30">{(data.dutyTimeOverrides ?? {})[d.duty] ?? dutyRightText(d)}</span>
+                              {d.time && d.status === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation()
+                                    setEditingDutyTime(d.duty)
+                                    setEditTimeValue((data.dutyTimeOverrides ?? {})[d.duty] ?? d.time ?? '')
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 text-[9px] text-white/15 hover:text-[#C9A84C] transition-all"
+                                >✏️</button>
+                              )}
+                            </span>
+                          )}
+                        </span>
                         <span className={cn('shrink-0 text-[10px] text-white/15 transition-transform', isExpanded && 'rotate-180')}>▾</span>
                       </button>
                       <AnimatePresence>
@@ -822,6 +887,134 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
           </AnimatePresence>
         </SectionCard>
       </motion.div>
+
+      {/* Live Tasks & Reminders */}
+      {((data.activeReminders?.length ?? 0) > 0 || (data.activeTodos?.length ?? 0) > 0) && (
+        <motion.div variants={fadeIn}>
+          <SectionCard title="Live Tasks & Reminders" icon="📌" accent="blue">
+            {(data.activeReminders?.length ?? 0) > 0 && (
+              <div className="mb-3">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-white/25 mb-1.5">Reminders</p>
+                <div className="space-y-1">
+                  {data.activeReminders!.map(r => (
+                    <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-1.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn('inline-block h-1.5 w-1.5 rounded-full', r.tier >= 3 ? 'bg-red-400' : r.tier >= 2 ? 'bg-amber-400' : 'bg-blue-400')} />
+                          <span className="truncate text-[11px] font-medium text-white/60">{r.title}</span>
+                          {r.isRecurring && <span className="text-[9px] text-white/20">🔁</span>}
+                        </div>
+                        {r.body && <p className="mt-0.5 truncate text-[10px] text-white/25">{r.body}</p>}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-[10px] font-medium text-white/40">{fmtTime(r.dueAt)}</div>
+                        <div className={cn('text-[9px]', r.status === 'snoozed' ? 'text-amber-300/60' : r.status === 'sent' ? 'text-emerald-300/60' : 'text-white/20')}>
+                          {r.status}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(data.activeTodos?.length ?? 0) > 0 && (
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-white/25 mb-1.5">Owner Todos</p>
+                <div className="space-y-1">
+                  {data.activeTodos!.map(t => (
+                    <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-1.5">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[11px] font-medium text-white/60">{t.title}</span>
+                        {t.detail && <p className="mt-0.5 truncate text-[10px] text-white/25">{t.detail}</p>}
+                      </div>
+                      <div className="shrink-0">
+                        <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-bold',
+                          t.priority === 'high' ? 'bg-red-500/15 text-red-300' :
+                          t.priority === 'urgent' ? 'bg-red-500/20 text-red-200' :
+                          'bg-white/5 text-white/30'
+                        )}>{t.priority}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </SectionCard>
+        </motion.div>
+      )}
+
+      {/* Pending Approvals */}
+      {(data.pendingApprovals?.length ?? 0) > 0 && (
+        <motion.div variants={fadeIn}>
+          <SectionCard title="Pending Approvals (48h)" icon="⏳" accent="amber"
+            badge={<span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold text-amber-300">{data.pendingApprovals!.length}</span>}
+          >
+            <div className="space-y-1.5">
+              {data.pendingApprovals!.map(a => {
+                const ageMs = Date.now() - new Date(a.createdAt).getTime()
+                const ageH = ageMs / 3_600_000
+                const ageColor = ageH > 12 ? 'border-red-500/20 bg-red-500/[0.03]' : ageH > 2 ? 'border-amber-500/20 bg-amber-500/[0.03]' : 'border-white/[0.06] bg-white/[0.01]'
+                return (
+                  <div key={a.id} className={cn('rounded-lg border px-3 py-2', ageColor)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-white/40">{a.type.replace(/_/g, ' ')}</span>
+                          {a.status === 'waiting_list' && <span className="rounded bg-red-500/20 px-1 py-0.5 text-[8px] font-bold text-red-300">WAITING</span>}
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-white/50 line-clamp-2">{a.summary}</p>
+                        <div className="mt-1 flex items-center gap-2 text-[9px] text-white/20">
+                          <span>{fmtTime(a.createdAt)}</span>
+                          <span>·</span>
+                          <span>{ageH < 1 ? `${Math.round(ageH * 60)}m ago` : `${ageH.toFixed(1)}h ago`}</span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/agent/staff-monitor/approve', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ actionId: a.id, decision: 'approve' }),
+                              })
+                              if (res.ok) setToast({ msg: '✓ Approved', type: 'ok' })
+                              else setToast({ msg: 'Approve failed', type: 'err' })
+                            } catch { setToast({ msg: 'Network error', type: 'err' }) }
+                            setTimeout(() => setToast(null), 3000)
+                          }}
+                          className="rounded-lg border border-emerald-400/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[10px] font-bold text-emerald-300 transition-all hover:bg-emerald-500/15"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/agent/staff-monitor/approve', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ actionId: a.id, decision: 'reject' }),
+                              })
+                              if (res.ok) setToast({ msg: '✗ Rejected', type: 'ok' })
+                              else setToast({ msg: 'Reject failed', type: 'err' })
+                            } catch { setToast({ msg: 'Network error', type: 'err' }) }
+                            setTimeout(() => setToast(null), 3000)
+                          }}
+                          className="rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2.5 py-1 text-[10px] font-bold text-red-300 transition-all hover:bg-red-500/15"
+                        >
+                          ✗
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </SectionCard>
+        </motion.div>
+      )}
     </motion.div>
   )
 }
@@ -838,6 +1031,7 @@ export default function AgentStaffMonitor() {
   const [syncing, setSyncing] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [deployMsg, setDeployMsg] = useState<string | null>(null)
+  const [lastDeploy, setLastDeploy] = useState<string | null>(null)
   const [businessFilter, setBusinessFilter] = useState<'ALL' | 'ALMA_LIFESTYLE' | 'ALMA_TRADING'>('ALL')
 
   const loadLive = useCallback(async (manual = false) => {
@@ -884,6 +1078,12 @@ export default function AgentStaffMonitor() {
     let alive = true
     void loadLive().then(() => { if (!alive) return })
     const t = setInterval(() => { if (alive) void loadLive() }, 10_000)
+    fetch('/api/agent/vps/deploy', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d: { lastDeploy?: { ts?: string } }) => {
+        if (alive && d?.lastDeploy?.ts) setLastDeploy(d.lastDeploy.ts)
+      })
+      .catch(() => {})
     return () => { alive = false; clearInterval(t) }
   }, [loadLive])
 
@@ -1008,15 +1208,21 @@ export default function AgentStaffMonitor() {
                 for (let attempt = 0; attempt < 3; attempt++) {
                   try {
                     const res = await fetch('/api/agent/vps/deploy', { method: 'POST' })
-                    const json = await res.json().catch(() => ({}))
-                    if (res.ok) {
-                      setDeployMsg('✓ Worker deployed successfully')
+                    const json = await res.json().catch(() => ({})) as { ok?: boolean; steps?: Array<{ step: string; ok: boolean }>; healthCheck?: string; message?: string }
+                    if (res.ok || res.status === 207) {
+                      const stepLabels: Record<string, string> = { git_pull: 'Git Pull', npm_install: 'NPM Install', pm2_restart: 'PM2 Restart' }
+                      const summary = (json.steps ?? []).map(s =>
+                        `${s.ok ? '✓' : '✗'} ${stepLabels[s.step] ?? s.step}`
+                      ).join(' → ')
+                      const health = json.healthCheck ? ` · Health: ${json.healthCheck}` : ''
+                      setDeployMsg(json.ok ? `✓ ${summary}${health}` : `⚠ ${summary}${health}`)
+                      setLastDeploy(new Date().toISOString())
                       setDeploying(false)
-                      setTimeout(() => setDeployMsg(null), 8000)
+                      setTimeout(() => setDeployMsg(null), 10000)
                       return
                     }
                     if (attempt < 2) { await new Promise(r => setTimeout(r, 2000)); continue }
-                    setDeployMsg(`✗ ${(json as Record<string, string>).message ?? `Deploy failed (HTTP ${res.status})`}`)
+                    setDeployMsg(`✗ ${json.message ?? `Deploy failed (HTTP ${res.status})`}`)
                   } catch (e) {
                     if (attempt < 2) { await new Promise(r => setTimeout(r, 2000)); continue }
                     setDeployMsg(`✗ ${e instanceof Error ? e.message : 'Network error'} — check VPS connectivity`)
@@ -1034,6 +1240,11 @@ export default function AgentStaffMonitor() {
             >
               {deploying ? '⏳ Deploying…' : '🚀 Deploy Worker'}
             </button>
+            {lastDeploy && (
+              <span className="text-[9px] text-white/15" title={lastDeploy}>
+                Last: {fmtTime(lastDeploy)}
+              </span>
+            )}
 
             <Link
               href="/agent"

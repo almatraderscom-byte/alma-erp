@@ -21,7 +21,7 @@ type DashboardData = {
   telegramTodayUsd: number
   telegramMonthUsd: number
   telegramDailyLast30: Array<{ date: string; totalUsd: number }>
-  topTelegramDays: Array<{ date: string; totalUsd: number; conversations: number }>
+  topTelegramConversations: Array<{ conversationId: string; title: string | null; totalUsd: number }>
   subscriptions: Array<{
     id: string; name: string; amount: number; currency: string
     billingCycle: string; nextRenewalAt: string; category: string | null
@@ -509,20 +509,20 @@ export default function AgentCostsDashboard() {
         </div>
 
         <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-1">📱 Telegram — দৈনিক খরচ (শীর্ষ দিন)</p>
+          <p className="text-xs font-semibold text-[#9B9BA4] mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
           <p className="text-[10px] text-[#6B6B72] mb-3">
             আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
           </p>
-          {data.topTelegramDays.length === 0 ? (
+          {data.topTelegramConversations.length === 0 ? (
             <p className="text-[11px] text-[#6B6B72] py-4 text-center">
               এখনো Telegram ট্যাগ করা কথোপকথন নেই — নতুন মেসেজ থেকে ট্র্যাক হবে
             </p>
           ) : (
             <ul className="space-y-2">
-              {data.topTelegramDays.map((d) => (
-                <li key={d.date} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.03] transition-colors">
-                  <span className="text-[#9B9BA4]">{d.date}</span>
-                  <span className="shrink-0 text-[#C9A84C] font-medium">{fmtUsd(d.totalUsd)}</span>
+              {data.topTelegramConversations.map((c) => (
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.03] transition-colors">
+                  <span className="truncate text-[#9B9BA4]">{c.title ?? c.conversationId.slice(0, 8)}</span>
+                  <span className="shrink-0 text-[#C9A84C] font-medium">{fmtUsd(c.totalUsd)}</span>
                 </li>
               ))}
             </ul>

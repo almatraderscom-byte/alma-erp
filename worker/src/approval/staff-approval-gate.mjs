@@ -1,0 +1,68 @@
+/**
+ * Staff message approval gate.
+ * Stores the proposed message in agent_pending_actions and sends
+ * an approval card to the owner. The message is only sent after approval.
+ */
+import { createClient } from '@supabase/supabase-js'
+
+function sb() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+}
+
+export async function requireStaffApproval({
+  staffId, staffName, businessId, type, content, chatId,
+  relatedTaskIds, extra, requiresAck, officeHoursOnly, dutySource,
+}) {
+  const supabase = sb()
+  const id = crypto.randomUUID()
+  const biz = businessId ?? 'ALMA_LIFESTYLE'
+
+  const payload = {
+    staffId, staffName, businessId: biz,
+    type, content, chatId: String(chatId ?? ''),
+    relatedTaskIds: relatedTaskIds ?? null,
+    extra: extra ?? null,
+    requiresAck: requiresAck ?? false,
+    officeHoursOnly: officeHoursOnly ?? false,
+    dutySource: dutySource ?? null,
+    escalationLevel: 0,
+  }
+
+  const preview = content?.length > 100 ? content.slice(0, 100) + '…' : content
+  const summary = `📩 স্টাফ মেসেজ (${type})\n👤 ${staffName ?? 'Unknown'}\n\n${preview}`
+
+  await supabase.from('agent_pending_actions').insert({
+    id,
+    type: 'staff_auto_message',
+    payload,
+    summary,
+    status: 'pending',
+    business_id: biz,
+    cost_estimate: 0,
+  })
+
+  try {
+    const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+    const botToken = process.env.ASSISTANT_BOT_TOKEN
+    if (ownerChatId && botToken) {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: ownerChatId,
+          text: `📋 Staff Message Approval\n\n👤 ${staffName ?? 'Unknown'} (${type})\n📝 ${preview}\n\n⏰ 10 মিনিটে অনুমোদন না দিলে কল আসবে`,
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '✅ অনুমোদন', callback_data: `staff_approve:${id}` },
+              { text: '❌ বাতিল', callback_data: `staff_reject:${id}` },
+            ]],
+          },
+        }),
+      })
+    }
+  } catch (err) {
+    console.warn('[staff-approval-gate] telegram card failed:', err.message)
+  }
+
+  return { pendingActionId: id, queued: true, ok: false }
+}

@@ -9,7 +9,6 @@ import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
-import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
@@ -171,40 +170,11 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const source = isInternalCall ? 'telegram' : 'web'
-      const today = todayYmdDhaka()
-      const title = personalMode
-        ? `Telegram ব্যক্তিগত ${today}`
-        : isInternalCall
-          ? `Telegram ${today}`
-          : (message.slice(0, 60) || null)
-
-      if (isInternalCall) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const existing = await (prisma as any).agentConversation.findFirst({
-          where: { title, source: 'telegram' },
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            projectId: true,
-            businessId: true,
-            modelId: true,
-            project: { select: { name: true, systemInstructions: true, businessId: true } },
-          },
-        })
-        if (existing) {
-          conversationId = existing.id
-          conversationModelId = existing.modelId ?? DEFAULT_MODEL_ID
-          personalMode = isPersonalProject(existing.project) || personalMode
-          projectSystemInstructions = personalMode ? null : (existing.project?.systemInstructions ?? null)
-          if (!personalMode) {
-            if (isAgentBusinessId(existing.businessId)) {
-              businessId = existing.businessId as AgentBusinessId
-            } else if (isAgentBusinessId(existing.project?.businessId)) {
-              businessId = existing.project!.businessId as AgentBusinessId
-            }
-          }
-        }
-      }
+      const title = isInternalCall
+        ? (personalMode
+          ? `Telegram ব্যক্তিগত — ${message.slice(0, 50) || 'চ্যাট'}`
+          : `Telegram — ${message.slice(0, 50) || 'চ্যাট'}`)
+        : (message.slice(0, 60) || null)
 
       if (!conversationId) {
         const inherited = personalMode

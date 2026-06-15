@@ -212,7 +212,7 @@ async function handleOwnerText(ctx, text) {
   const personalMode = await getTelegramPersonalMode(supabase, String(chatId))
 
   let convId = personalMode ? ownerState.personalConversationId : ownerState.conversationId
-  if (!convId) convId = await getDailyConversationId(personalMode)
+  // Per-conversation tracking: let chat route create a new conversation when none active
 
   await ctx.reply('⏳ ভাবছি স্যার...')
   const { enqueueAgentTurn } = await import('./agent-turn.mjs')
@@ -1060,6 +1060,49 @@ export function createTelegramBot() {
 
     if (data === 'msg_ack_done') {
       await ctx.answerCbQuery('✅ ইতিমধ্যে নিশ্চিত')
+      return
+    }
+
+    if (data.startsWith('staff_approve:') || data.startsWith('staff_reject:')) {
+      if (!isOwner(ctx.chat?.id)) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const [action, actionId] = data.split(':')
+      const approved = action === 'staff_approve'
+      const supabase = createSupabase()
+      const { data: row } = await supabase.from('agent_pending_actions')
+        .select('id, payload, status')
+        .eq('id', actionId)
+        .single()
+      if (!row || (row.status !== 'pending' && row.status !== 'waiting_list')) {
+        await ctx.answerCbQuery(approved ? '⚠ ইতিমধ্যে প্রসেস হয়েছে' : '⚠ ইতিমধ্যে প্রসেস হয়েছে')
+        return
+      }
+      await supabase.from('agent_pending_actions').update({
+        status: approved ? 'approved' : 'rejected',
+        resolved_at: new Date().toISOString(),
+      }).eq('id', actionId)
+      if (approved && row.payload?.chatId) {
+        try {
+          const { getDiagnosticPublicBase } = await import('../diagnostic-http.mjs')
+          const base = getDiagnosticPublicBase()
+          await fetch(`${base}/staff-send`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${INT_TOKEN}`,
+            },
+            body: JSON.stringify({ actionId, payload: row.payload }),
+          })
+        } catch (err) {
+          console.warn('[staff-approval] dispatch failed:', err.message)
+        }
+      }
+      await ctx.answerCbQuery(approved ? '✅ অনুমোদিত — মেসেজ পাঠানো হচ্ছে' : '❌ বাতিল')
+      try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
+      } catch { /* already edited */ }
       return
     }
 
