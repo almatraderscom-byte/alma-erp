@@ -3,10 +3,14 @@ import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
 import { resolvePageId } from '@/agent/lib/meta'
-import { upcomingSeasons } from '@/lib/marketing-calendar'
 import { trackPublishedContent } from '@/lib/content-intelligence'
 import { applyBrandFrame, type BrandTheme } from '@/lib/content-engine/brand-frame'
 import { generateCaption } from '@/lib/content-engine/caption'
+import { resolveTheme, type ResolvedContentTheme } from '@/lib/content-engine/theme'
+import {
+  getContentEngineConfig,
+  variantsForProduct,
+} from '@/lib/content-engine/config'
 import {
   generateProductVariants,
   PHASE1_VARIANTS,
@@ -35,6 +39,7 @@ export type ContentPipelinePayload = {
   variants: PipelineVariantState[]
   theme: BrandTheme
   hook?: string
+  tryOnStyle?: ResolvedContentTheme['tryOnStyle']
   stage: 'draft_rendering' | 'gate1_ready' | 'pro_rendering' | 'gate2_ready' | 'published'
   qualityPass: RenderQuality
   page: 'lifestyle' | 'onlineshop'
@@ -42,28 +47,18 @@ export type ContentPipelinePayload = {
   caption?: string
   captionFooter?: string
   gate2Id?: string
+  autonomousSlot?: number
+  themeLabel?: string
 }
 
 export type ContentGate1Keyboard = {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>
 }
 
-function isFridayDhaka(now = new Date()): boolean {
-  const wd = now.toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', weekday: 'short' })
-  return wd === 'Fri'
-}
-
+/** @deprecated use resolveTheme from theme.ts */
 export async function resolveContentTheme(): Promise<{ theme: BrandTheme; hook: string }> {
-  const seasons = await upcomingSeasons()
-  const active = seasons.find((s) => s.inLeadWindow)
-  if (active?.key === 'eid_fitr' || active?.key === 'eid_adha') {
-    return { theme: 'eid', hook: 'ঈদ স্পেশাল কালেকশন' }
-  }
-  if (active?.key === 'pahela_baishakh') return { theme: 'boishakh', hook: 'পহেলা বৈশাখ স্পেশাল' }
-  if (active?.key === 'puja') return { theme: 'puja', hook: 'পূজা স্পেশাল' }
-  if (active?.key === 'winter') return { theme: 'winter', hook: 'শীত কালেকশন' }
-  if (isFridayDhaka()) return { theme: 'default', hook: 'জুম্মার দিন — নতুন কালেকশন' }
-  return { theme: 'default', hook: 'নতুন কালেকশন' }
+  const t = await resolveTheme()
+  return { theme: t.theme, hook: t.hook }
 }
 
 export async function loadProductAsset(productCode?: string): Promise<ProductAsset | null> {
@@ -104,6 +99,7 @@ async function queueVariantRenders(args: {
   pipelineId: string
   gate1Id: string
   theme: BrandTheme
+  tryOnStyle: ResolvedContentTheme['tryOnStyle']
   conversationId?: string | null
   seedNote?: string
 }): Promise<string[]> {
@@ -111,7 +107,7 @@ async function queueVariantRenders(args: {
     product: args.product,
     variants: args.variants,
     quality: args.quality,
-    style: args.theme === 'eid' || args.theme === 'puja' ? 'festival' : 'studio',
+    style: args.tryOnStyle,
     seedNote: args.seedNote,
   })
 
@@ -153,10 +149,13 @@ function updateVariantRenderId(payload: ContentPipelinePayload, variant: Content
   if (v) v.renderActionId = actionId
 }
 
-function defaultVariantsForProduct(product: ProductAsset, requested?: ContentVariant[]): ContentVariant[] {
-  if (requested?.length) return requested
-  if (product.familyMatch) return PHASE2_FULL_VARIANTS
-  return PHASE1_VARIANTS
+export async function countPendingContentApprovals(): Promise<number> {
+  return db.agentPendingAction.count({
+    where: {
+      type: { in: ['content_gate1', 'content_gate2'] },
+      status: 'pending',
+    },
+  })
 }
 
 export async function startContentPipeline(opts: {
@@ -164,14 +163,20 @@ export async function startContentPipeline(opts: {
   conversationId?: string | null
   page?: 'lifestyle' | 'onlineshop'
   variants?: ContentVariant[]
+  resolvedTheme?: ResolvedContentTheme
+  autonomousSlot?: number
 }): Promise<{ gate1Id: string; pipelineId: string; productCode: string; variants: ContentVariant[] }> {
   const product = await loadProductAsset(opts.productCode)
   if (!product) throw new Error('product_not_found')
 
-  const variants = defaultVariantsForProduct(product, opts.variants)
-  const { theme } = await resolveContentTheme()
+  const config = await getContentEngineConfig()
+  const variants = opts.variants?.length
+    ? opts.variants
+    : variantsForProduct(product.familyMatch, config.variants)
+  const resolved = opts.resolvedTheme ?? (await resolveTheme())
+  const { theme, hook, tryOnStyle, label: themeLabel } = resolved
   const page = opts.page ?? 'lifestyle'
-  const captionResult = await generateCaption(product, { theme, page })
+  const captionResult = await generateCaption(product, { theme, page, hook })
   const pipelineId = randomUUID()
 
   const payload: ContentPipelinePayload = {
@@ -186,12 +191,15 @@ export async function startContentPipeline(opts: {
     })),
     theme,
     hook: captionResult.hook,
+    tryOnStyle,
     caption: captionResult.caption,
     captionFooter: captionResult.footer,
     stage: 'draft_rendering',
     qualityPass: 'draft',
     page,
     conversationId: opts.conversationId ?? null,
+    autonomousSlot: opts.autonomousSlot,
+    themeLabel,
   }
 
   const gate1 = await db.agentPendingAction.create({
@@ -202,6 +210,7 @@ export async function startContentPipeline(opts: {
       summary:
         `📸 কন্টেন্ট পোস্ট — Gate 1 (ছবি)\n` +
         `প্রোডাক্ট: ${product.productCode}\n` +
+        `থিম: ${themeLabel} | ${captionResult.hook}\n` +
         `ভ্যারিয়েন্ট: ${variants.map(variantLabel).join(', ')}\n` +
         `Draft রেন্ডার হচ্ছে…`,
       costEstimate: variants.length * 1.1,
@@ -216,6 +225,7 @@ export async function startContentPipeline(opts: {
     pipelineId,
     gate1Id: gate1.id,
     theme,
+    tryOnStyle,
     conversationId: opts.conversationId,
   })
 
@@ -472,6 +482,7 @@ export async function regenerateGate1Variant(
     pipelineId: payload.pipelineId,
     gate1Id,
     theme: payload.theme,
+    tryOnStyle: payload.tryOnStyle ?? 'studio',
     conversationId: payload.conversationId,
     seedNote: `regenerate ${variantKey}`,
   })
@@ -515,6 +526,7 @@ export async function advanceToProRenders(gate1Id: string): Promise<{ queued: bo
     pipelineId: payload.pipelineId,
     gate1Id,
     theme: payload.theme,
+    tryOnStyle: payload.tryOnStyle ?? 'studio',
     conversationId: payload.conversationId,
   })
   for (let i = 0; i < variants.length; i++) {

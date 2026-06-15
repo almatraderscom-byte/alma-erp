@@ -57,6 +57,7 @@ const lazy = {
   personalCheckin:    () => import('../personal/checkin.mjs'),
   lunchWatch:         () => import('../staff/lunch-watch.mjs'),
   staffMorale:        () => import('../staff/morale.mjs'),
+  contentEngine:      () => import('../content-engine/run.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -71,9 +72,12 @@ export const SCHEDULER_REGISTRY = [
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
   { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
   { name: 'order-watch',            cronUtc: '0 6,12 * * *', description: 'Order issue scan (12:00, 18:00 Dhaka)' },
+  { name: 'content-engine-3',       cronUtc: '0 13 * * *',  description: 'Auto post prep #3 (19:00 Dhaka)' },
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
+  { name: 'content-engine-1',       cronUtc: '0 4 * * *',   description: 'Auto post prep #1 (10:00 Dhaka)' },
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
+  { name: 'content-engine-2',       cronUtc: '0 9 * * *',   description: 'Auto post prep #2 (15:00 Dhaka)' },
   { name: 'staff-morale',           cronUtc: '0 7 * * *',    description: 'Daily staff encouragement (13:00 Dhaka)' },
   { name: 'staff-presence',         cronUtc: '0 5,11 * * *', description: 'Staff presence nudges (11:00, 17:00 Dhaka)' },
   { name: 'salah-escalation',       cronUtc: '*/5 * * * *',  description: 'Salah escalation check (every 5 min)' },
@@ -159,6 +163,14 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'morning-staff-reminder': {
       const { runMorningStaffReminder } = await lazy.morningStaffReminder()
       dutyResult = await runMorningStaffReminder(context)
+      break
+    }
+    case 'content-engine-1':
+    case 'content-engine-2':
+    case 'content-engine-3': {
+      const { runContentEngineSlot } = await lazy.contentEngine()
+      const slot = Number(jobName.split('-').pop())
+      dutyResult = await runContentEngineSlot({ supabase, slot })
       break
     }
     case 'ads-monitor': {

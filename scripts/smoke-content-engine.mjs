@@ -102,6 +102,25 @@ if (approve.includes("action.type === 'content_gate1'") && approve.includes("act
 if (jobResult.includes('onPipelineRenderComplete')) ok('job-result pipeline hook')
 else fail('job-result hook')
 
+for (const f of ['pick-product.ts', 'theme.ts', 'config.ts']) {
+  if (existsSync(resolve(root, `src/lib/content-engine/${f}`))) ok(`content-engine/${f}`)
+  else fail(`content-engine/${f}`)
+}
+
+if (existsSync(resolve(root, 'worker/src/content-engine/run.mjs'))) ok('worker content-engine run')
+else fail('worker content-engine run')
+
+const schedulers = read('worker/src/schedulers/index.mjs')
+if (schedulers.includes('content-engine-1') && schedulers.includes('content-engine-2') && schedulers.includes('content-engine-3')) {
+  ok('content engine schedulers')
+} else fail('content engine schedulers')
+
+if (tools.includes('pause_content_engine') && tools.includes('resume_content_engine')) ok('pause/resume tools')
+else fail('pause/resume tools')
+
+if (tools.includes('3 posts/day') || tools.includes('autonomously prepare')) ok('phase3 autonomy prompt')
+else fail('phase3 autonomy prompt')
+
 if (failures.length) {
   console.error(`\n${failures.length} failure(s)`)
   process.exit(1)
