@@ -2,6 +2,9 @@ import {
   buildTryOnPrompt,
   buildFamilyVariantExtra,
   getModelByRole,
+  getOrClassifyGarment,
+  type GarmentAttrs,
+  type GarmentType,
   type TryOnStyle,
   type TryOnPose,
   type ModelRole,
@@ -121,11 +124,12 @@ export async function buildVariantRenderSpec(
   product: ProductAsset,
   variant: ContentVariant,
   quality: RenderQuality,
-  opts?: { style?: TryOnStyle; pose?: TryOnPose; seedNote?: string },
+  opts?: { style?: TryOnStyle; pose?: TryOnPose; seedNote?: string; attrs?: GarmentAttrs },
 ): Promise<VariantRenderSpec> {
   const primary = await getModelByRole(primaryRoleForVariant(variant))
   if (!primary) throw new Error('no_model_for_variant')
 
+  const attrs = opts?.attrs
   const style = opts?.style ?? 'studio'
   const pose: TryOnPose = opts?.pose ?? 'front'
   const seedNote = opts?.seedNote ? `Regeneration note: ${opts.seedNote}` : ''
@@ -141,11 +145,16 @@ export async function buildVariantRenderSpec(
       .join(' ')
   }
 
+  const garmentType: GarmentType = variant === 'single'
+    ? (attrs?.garmentType ?? 'unknown')
+    : 'family_matching_set'
+
   const prompt = buildTryOnPrompt({
     style,
     pose,
     modelNotes,
-    garmentType: product.category ?? product.name ?? product.productCode,
+    garmentType,
+    attrs,
     extra: [familyExtra, seedNote].filter(Boolean).join(' '),
   })
 
@@ -188,12 +197,17 @@ export async function generateProductVariants(args: {
   }
   if (!product) throw new Error('product_not_found')
 
+  const attrs = await getOrClassifyGarment(product.imagePath, product.productCode)
+
   const specs: VariantRenderSpec[] = []
-  for (const variant of args.variants) {
+  for (let i = 0; i < args.variants.length; i++) {
+    const variant = args.variants[i]
+    const renderQuality: RenderQuality = i === 0 ? 'pro' : 'draft'
     specs.push(
-      await buildVariantRenderSpec(product, variant, args.quality, {
+      await buildVariantRenderSpec(product, variant, renderQuality, {
         style: args.style,
         seedNote: args.seedNote,
+        attrs,
       }),
     )
   }

@@ -6,6 +6,8 @@ import {
   setDefaultBrandModel,
   resolveModel,
   buildTryOnPrompt,
+  getOrClassifyGarment,
+  normalizeGarmentType,
   listModelsByRole,
   type SavedModel,
   type TryOnStyle,
@@ -166,17 +168,24 @@ const generate_on_model_image: AgentTool = {
       }
     }
 
+    const attrs = await getOrClassifyGarment(productImagePath)
+    const garmentType = input.garmentType
+      ? normalizeGarmentType(String(input.garmentType), attrs.garmentType)
+      : attrs.garmentType
+
     const prompt = buildTryOnPrompt({
       style: input.style as TryOnStyle | undefined,
       pose: input.pose as TryOnPose | undefined,
       modelNotes: model.notes,
-      garmentType: input.garmentType ? String(input.garmentType) : undefined,
+      garmentType,
+      attrs,
       extra: input.extra ? String(input.extra) : undefined,
     })
 
     const summary =
       `🧍 On-model try-on (pro)\n` +
       `মডেল: ${model.name}${model.role ? ` (${model.role})` : ''}\n` +
+      `গার্মেন্ট: ${garmentType}${attrs.notes ? ` — ${attrs.notes.slice(0, 80)}` : ''}\n` +
       `স্টাইল: ${input.style ?? 'studio'} | পোজ: ${input.pose ?? 'front'}\n` +
       `প্রোডাক্ট: ${productImagePath.split('/').pop()}`
 
