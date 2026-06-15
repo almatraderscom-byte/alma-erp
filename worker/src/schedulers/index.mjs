@@ -50,6 +50,7 @@ const lazy = {
   sessionSummarizer:  () => import('../memory/session-summarizer.mjs'),
   ownerBriefing:      () => import('../reports/owner-briefing-run.mjs'),
   customerIntel:      () => import('../reports/customer-intel.mjs'),
+  marketingWeekly:    () => import('../reports/marketing-weekly.mjs'),
   approvalEscalation: () => import('../staff/approval-escalation.mjs'),
   staffPresence:      () => import('../staff/presence-nudge.mjs'),
   approvalTracker:    () => import('../approvals/tracker.mjs'),
@@ -92,6 +93,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'weekly-reflection',      cronUtc: '0 16 * * 5',   description: 'Weekly self-reflection → playbook proposals (22:00 Fri Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'customer-intel',         cronUtc: '0 4 * * 6',    description: 'Weekly customer win-back + loyalty digest (Sat 10:00 Dhaka)' },
+  { name: 'marketing-weekly',       cronUtc: '0 4 * * 6',    description: 'Weekly marketing report (Sat 10:00 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
   { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
@@ -235,6 +237,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'customer-intel': {
       const { runCustomerIntel } = await lazy.customerIntel()
       dutyResult = await runCustomerIntel({ bot }) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'marketing-weekly': {
+      const { runMarketingWeekly } = await lazy.marketingWeekly()
+      dutyResult = await runMarketingWeekly({ bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'subscription-renewal': {

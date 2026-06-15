@@ -37,6 +37,7 @@ export const DUTY_TO_JOB: Record<string, string> = {
   weekly_review: 'weekly-review',
   weekly_reflection: 'weekly-reflection',
   customer_intel: 'customer-intel',
+  marketing_weekly: 'marketing-weekly',
 }
 
 /** Agent capability categories for the capabilities reference section. */

@@ -34,6 +34,7 @@ export const DAILY_DUTIES = [
   { duty: 'weekly_review', label: '🗓️ সাপ্তাহিক রিভিউ (শুক্র)', job: 'weekly-review', time: '21:30', weeklyOnly: true },
   { duty: 'weekly_reflection', label: '🪞 সাপ্তাহিক সেলফ-রিফ্লেকশন (শুক্র)', job: 'weekly-reflection', time: '22:00', weeklyOnly: true },
   { duty: 'customer_intel', label: '🔍 কাস্টমার ইন্টেলিজেন্স (শনি)', job: 'customer-intel', time: '10:00', saturdayOnly: true },
+  { duty: 'marketing_weekly', label: '📈 সাপ্তাহিক মার্কেটিং রিপোর্ট (শনি)', job: 'marketing-weekly', time: '10:00', saturdayOnly: true },
 ]
 
 /** Continuous background services — health line in monitor, not a daily checklist. */

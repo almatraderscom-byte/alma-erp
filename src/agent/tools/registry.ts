@@ -27,6 +27,7 @@ import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { AD_CREATIVE_TOOLS } from './ad-creative-tools' // make_ad_creatives
 import { VIDEO_TOOLS } from './video-tools' // make_product_reel
+import { MARKETING_TOOLS } from './marketing-tools' // plan_marketing, marketing_report
 import { BRAND_TOOLS } from './brand-tools'
 import { TRADING_READ_TOOLS } from './trading-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
@@ -392,6 +393,7 @@ export const TOOLS: AgentTool[] = [
   ...REMINDER_TOOLS,
   ...ASK_TOOLS,
   ...ADS_TOOLS,
+  ...MARKETING_TOOLS,
   ...LOCATION_TOOLS,
   ...CATALOG_TOOLS,
   ...WEBSITE_TOOLS,

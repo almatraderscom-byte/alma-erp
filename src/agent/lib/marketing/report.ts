@@ -1,0 +1,204 @@
+/**
+ * Weekly / on-demand marketing funnel report — paid + Messenger + COD.
+ * Directional attribution; honest about thin data.
+ */
+import Anthropic from '@anthropic-ai/sdk'
+import { prisma } from '@/lib/prisma'
+import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { fetchActiveCampaignMetrics } from '@/agent/lib/ads/insights'
+import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
+import { getCsAnalyticsSummary } from '@/agent/lib/cs/analytics'
+import { buildMarketingIntel } from '@/lib/content-intelligence'
+import { getAgentOrdersSummary } from '@/lib/agent-api/orders.service'
+import { roundMoney } from '@/lib/money'
+import { logCost } from '@/agent/lib/cost-events'
+import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
+import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
+
+export type MarketingReportData = {
+  periodDays: number
+  generatedAt: string
+  paid: {
+    totalSpendWeek: number
+    campaigns: Array<{ name: string; spendWeek: number; roasWeek: number; ctrWeekPct: number; hasData: boolean }>
+    bestCampaign: string | null
+    worstCampaign: string | null
+    topAngles: Array<{ angle: string; avgRoas: number; count: number }>
+    thinData: boolean
+  }
+  funnel: {
+    cs: Awaited<ReturnType<typeof getCsAnalyticsSummary>>
+    ordersWeek: { totalOrders: number; totalRevenue: number; deliveredCount: number | null }
+    thinData: boolean
+  }
+  organic: {
+    staleProducts: number
+    upcomingSeasons: number
+    recentStaffTasks: Array<{ title: string; type: string; status: string }>
+  }
+}
+
+export async function gatherMarketingReportData(days = 7): Promise<MarketingReportData> {
+  const [
+    campaigns,
+    topAngles,
+    cs,
+    ordersWeek,
+    marketingIntel,
+    staffTasks,
+  ] = await Promise.all([
+    fetchActiveCampaignMetrics().catch(() => []),
+    getTopCreativeAngles(5),
+    getCsAnalyticsSummary(days),
+    getAgentOrdersSummary('week').catch(() => null),
+    buildMarketingIntel().catch(() => null),
+    db.agentStaffTask.findMany({
+      where: {
+        createdAt: { gte: new Date(Date.now() - days * 86400000) },
+        type: { in: ['organic_marketing', 'offer_idea', 'ad_creative', 'product_content'] },
+        businessId: 'ALMA_LIFESTYLE',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+      select: { title: true, type: true, status: true },
+    }).catch(() => []),
+  ])
+
+  const withData = campaigns.filter((c) => c.hasEnoughData)
+  const totalSpendWeek = campaigns.reduce((s, c) => s + c.spendWeek, 0)
+  const sorted = [...withData].sort((a, b) => b.roasWeek - a.roasWeek)
+
+  let deliveredCount: number | null = null
+  if (ordersWeek?.byStatus) {
+    deliveredCount = ordersWeek.byStatus.delivered ?? ordersWeek.byStatus.Delivered ?? null
+  }
+
+  return {
+    periodDays: days,
+    generatedAt: new Date().toISOString(),
+    paid: {
+      totalSpendWeek: Math.round(totalSpendWeek),
+      campaigns: campaigns.map((m) => ({
+        name: m.name,
+        spendWeek: Math.round(m.spendWeek),
+        roasWeek: Number(m.roasWeek.toFixed(2)),
+        ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
+        hasData: m.hasEnoughData,
+      })),
+      bestCampaign: sorted[0]?.name ?? null,
+      worstCampaign: sorted.length > 1 ? sorted[sorted.length - 1]?.name ?? null : null,
+      topAngles,
+      thinData: withData.length === 0,
+    },
+    funnel: {
+      cs,
+      ordersWeek: {
+        totalOrders: ordersWeek?.totalOrders ?? 0,
+        totalRevenue: ordersWeek ? roundMoney(ordersWeek.totalRevenue) : 0,
+        deliveredCount,
+      },
+      thinData: cs.conversations < 3 && (ordersWeek?.totalOrders ?? 0) < 5,
+    },
+    organic: {
+      staleProducts: marketingIntel?.staleProducts?.length ?? 0,
+      upcomingSeasons: marketingIntel?.upcomingSeasons?.length ?? 0,
+      recentStaffTasks: staffTasks as Array<{ title: string; type: string; status: string }>,
+    },
+  }
+}
+
+const REPORT_SYSTEM = `আপনি ALMA Lifestyle marketing analyst। Owner-কে Bangla weekly funnel report লিখুন।
+
+STRUCTURE (markdown):
+## 📊 Paid (Meta)
+- spend, ROAS trend, best/worst campaign, best creative angle (if data)
+## 🔗 Funnel (ad → Messenger → COD)
+- chat count, draft→confirm rates, orders, where it leaks — directional only
+## 📱 Organic
+- what was posted / staff tasks if known
+## ✅ এই সপ্তাহের ২–৩ concrete moves
+- numbered, high-leverage, feeds next marketing plan
+
+RULES:
+- Cite real numbers from data only — invent নয়।
+- Thin data হলে স্পষ্ট বলুন।
+- correlation ≠ causation; Meta ROAS ≠ exact COD profit।
+- Max 3 recommendations — noisy report নিষিদ্ধ।`
+
+export async function buildMarketingReportText(days = 7): Promise<{
+  report: string
+  data: MarketingReportData
+  recommendations: string[]
+}> {
+  const data = await gatherMarketingReportData(days)
+
+  if (!isAnthropicConfigured()) {
+    return {
+      report: formatMarketingReportFallback(data),
+      data,
+      recommendations: [],
+    }
+  }
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const res = await client.messages.create({
+    model: AGENT_MODEL || 'claude-sonnet-4-6',
+    max_tokens: 2000,
+    system: REPORT_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
+    }],
+  })
+
+  const block = res.content.find((b) => b.type === 'text')
+  const report = block && block.type === 'text' ? block.text.trim() : formatMarketingReportFallback(data)
+
+  void logCost({
+    provider: 'anthropic',
+    kind: 'chat',
+    units: { purpose: 'marketing_report', days },
+    costUsd: calcAnthropicChatCostUsd(res.usage),
+    dedupKey: `marketing_report:${todayYmdDhaka()}:${days}`,
+  })
+
+  const recMatch = report.match(/## ✅[^\n]*\n([\s\S]*?)(?=## |$)/)
+  const recommendations = recMatch
+    ? recMatch[1].split('\n').filter((l) => /^\d+\./.test(l.trim())).slice(0, 3)
+    : []
+
+  return { report, data, recommendations }
+}
+
+export function formatMarketingReportFallback(data: MarketingReportData): string {
+  const L = [
+    `📈 *Marketing Report — ${data.periodDays} দিন*`,
+    '',
+    '*Paid (Meta)*',
+    data.paid.thinData
+      ? '• ডেটা পাতলা — active campaign insights নেই বা spend কম।'
+      : `• Spend ~৳${data.paid.totalSpendWeek} | Best: ${data.paid.bestCampaign ?? '—'} | Worst: ${data.paid.worstCampaign ?? '—'}`,
+    data.paid.topAngles[0]
+      ? `• Top angle: "${data.paid.topAngles[0].angle}" (avg ROAS ${data.paid.topAngles[0].avgRoas.toFixed(1)}x)`
+      : '',
+    '',
+    '*Funnel (directional)*',
+    `• Messenger chats: ${data.funnel.cs.conversations} | Draft→Confirm: ${data.funnel.cs.conversionDraftToConfirmed}%`,
+    `• Orders (week): ${data.funnel.ordersWeek.totalOrders} | Revenue ~৳${data.funnel.ordersWeek.totalRevenue}`,
+    data.funnel.thinData ? '• ⚠️ Funnel data thin — trends directional only.' : '',
+    '',
+    '*Organic*',
+    `• Stale products (30d+): ${data.organic.staleProducts} | Upcoming seasons: ${data.organic.upcomingSeasons}`,
+  ]
+  if (data.organic.recentStaffTasks.length) {
+    L.push('• Recent content tasks:')
+    data.organic.recentStaffTasks.slice(0, 4).forEach((t) => {
+      L.push(`  - [${t.type}] ${t.title} (${t.status})`)
+    })
+  }
+  L.push('', '_Approve marketing plan items separately — nothing auto-executes._')
+  return L.filter(Boolean).join('\n')
+}

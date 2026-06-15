@@ -22,7 +22,7 @@ export function selectToolGroups(
   }
   if (/order|stock|inventory|product|দাম|price|reorder|catalog/i.test(t)) g.add('erp')
   if (/customer|messenger|cs|winback|segment|inbox/i.test(t)) g.add('cs')
-  if (/ad|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale/i.test(t)) g.add('growth')
+  if (/ad|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale|plan_marketing|marketing_report|মার্কেটিং|ফানেল/i.test(t)) g.add('growth')
   if (/content|ছবি|image|post|model|try.?on|ব্র্যান্ড|facebook|fb|creative|অফার|offer|poster|reel|video|ভিডিও|রিল/i.test(t)) g.add('content')
   if (/website|almatraders|publish|catalog/i.test(t)) g.add('website')
   if (/salah|নামাজ|prayer|namaz|fajr|dhuhr|asr|maghrib|isha|ফজর|যোহর|আসর|মাগরিব|ইশা|জুম্মা|poreci|porlam|পড়েছি|পড়লাম|নামায/i.test(t)) g.add('salah')

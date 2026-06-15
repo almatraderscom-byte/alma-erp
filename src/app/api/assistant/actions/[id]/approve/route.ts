@@ -295,6 +295,43 @@ export async function POST(
     })
   }
 
+  if (action.type === 'marketing_plan') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const planPayload = payload as {
+      items?: Array<Record<string, unknown>>
+      conversationId?: string | null
+    }
+    const items = Array.isArray(planPayload.items) ? planPayload.items : []
+    const { orchestrateMarketingPlanItems } = await import('@/agent/lib/marketing/plan-orchestrate')
+    const orch = await orchestrateMarketingPlanItems(
+      items as unknown as import('@/agent/lib/marketing/planner').MarketingPlanItem[],
+      action.conversationId ?? planPayload.conversationId ?? null,
+    )
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: {
+        status: 'executed',
+        result: orch,
+      },
+    })
+    await appendConversationNote(
+      db,
+      action,
+      `✅ Marketing plan approved — ${orch.creativeBriefs} ad brief(s), ${orch.organicTasks} organic task(s) queued (each needs separate approval — no auto-post).`,
+    )
+    return Response.json({
+      success: true,
+      message: 'Marketing plan orchestrated — child approval cards created.',
+      ...orch,
+    })
+  }
+
   if (action.type === 'video_reel_gate') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

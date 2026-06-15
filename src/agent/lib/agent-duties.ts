@@ -33,6 +33,7 @@ export const DAILY_DUTIES = [
   { duty: 'weekly_review', label: '🗓️ সাপ্তাহিক রিভিউ (শুক্র)', time: '21:30', weeklyOnly: true as const },
   { duty: 'weekly_reflection', label: '🪞 সাপ্তাহিক সেলফ-রিফ্লেকশন (শুক্র)', time: '22:00', weeklyOnly: true as const },
   { duty: 'customer_intel', label: '🔍 কাস্টমার ইন্টেলিজেন্স (শনি)', time: '10:00', saturdayOnly: true as const },
+  { duty: 'marketing_weekly', label: '📈 সাপ্তাহিক মার্কেটিং রিপোর্ট (শনি)', time: '10:00', saturdayOnly: true as const },
 ] as const
 
 export const CONTINUOUS_SERVICES = [
