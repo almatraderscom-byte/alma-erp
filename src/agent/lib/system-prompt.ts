@@ -315,6 +315,9 @@ export interface SystemPromptSplit {
   volatile: Anthropic.Messages.TextBlockParam[]
 }
 
+export type OutcomeLearning = { content: string; metadata: Record<string, unknown> | null }
+export type OwnerDecision = { content: string; createdAt: Date }
+
 export type BuildSystemPromptArgs = {
   projectInstructions?: string | null
   pinnedMemories?: PinnedMemory[]
@@ -329,6 +332,8 @@ export type BuildSystemPromptArgs = {
   businessId?: AgentBusinessId
   activePlaybook?: ActivePlaybookEntry[]
   teachingBlock?: string
+  outcomeLearnings?: OutcomeLearning[]
+  ownerDecisions?: OwnerDecision[]
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -351,6 +356,8 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
     teachingBlock,
+    outcomeLearnings,
+    ownerDecisions,
   } = args
 
   const stableParts: string[] = []
@@ -468,6 +475,18 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
         .join('\n')
       volatileParts.push(`\n## প্রাসঙ্গিক স্মৃতি\n${relevant}`)
+    }
+
+    if (outcomeLearnings && outcomeLearnings.length > 0) {
+      const lines = outcomeLearnings.map((l) => `• ${l.content}`)
+      volatileParts.push(
+        `\n## সাম্প্রতিক আউটকাম লার্নিং (correlation, causation নয়)\n${lines.join('\n')}`,
+      )
+    }
+
+    if (ownerDecisions && ownerDecisions.length > 0) {
+      const lines = ownerDecisions.map((d) => `• ${d.content}`)
+      volatileParts.push(`\n## সাম্প্রতিক Owner সিদ্ধান্ত\n${lines.join('\n')}`)
     }
 
     if (projectInstructions?.trim()) {

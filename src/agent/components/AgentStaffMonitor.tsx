@@ -335,9 +335,27 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
     } catch { showToast('Failed', 'err') }
   }
 
+  const [brainStats, setBrainStats] = useState<{
+    memoryCount: number; activePlaybookCount: number; proposedPlaybookCount: number
+    knowledgeCount: number; lastKnowledgeBuild: string | null; lastSessionSummary: string | null
+    todayCostUsd: number
+  } | null>(null)
+
+  async function loadBrainStats() {
+    try {
+      const res = await fetch('/api/agent/brain-stats', { cache: 'no-store' })
+      if (res.ok) setBrainStats(await res.json())
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => {
     if (isLive && !healthReport) void loadHealthScan()
     if (isLive) void loadAutoFixActions()
+    if (isLive) void loadBrainStats()
+
+    if (!isLive) return
+    const healthInterval = setInterval(() => { void loadHealthScan() }, 60_000)
+    return () => clearInterval(healthInterval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive])
 
@@ -473,12 +491,13 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
       )}
 
       {/* ── KPI row ── */}
-      <motion.div variants={fadeIn} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <motion.div variants={fadeIn} className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           { label: 'Agent Duties', value: `${doneDuties}/${totalDuties}`, sub: failedDuties > 0 ? `${failedDuties} failed` : 'on track', color: failedDuties > 0 ? 'text-red-400' : 'text-emerald-400' },
           { label: 'Staff Active', value: String(data.staffSummaries?.length ?? 0), sub: 'tracked today', color: 'text-[#E8C96A]' },
           { label: 'Unacked', value: String(data.unackedMessages?.length ?? 0), sub: 'pending', color: (data.unackedMessages?.length ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400' },
           { label: 'Failures', value: String(data.failures?.length ?? 0), sub: 'delivery', color: (data.failures?.length ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400' },
+          { label: 'AI Cost Today', value: brainStats ? `$${brainStats.todayCostUsd.toFixed(2)}` : '—', sub: 'USD', color: 'text-purple-400' },
         ].map(kpi => (
           <div key={kpi.label} className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md px-3 py-2.5">
             <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-white/30">{kpi.label}</p>
@@ -578,10 +597,10 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
       )}
 
       {/* ── Auto-Fix Pipeline ── */}
-      {isLive && autoFixActions.length > 0 && (
+      {isLive && (
         <motion.div variants={fadeIn}>
           <SectionCard
-            title={`Auto-Fix Pipeline (${autoFixActions.length})`}
+            title={`Auto-Fix Pipeline${autoFixActions.length > 0 ? ` (${autoFixActions.length})` : ''}`}
             icon="🤖"
             accent="blue"
             actions={
@@ -591,6 +610,11 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
               </button>
             }
           >
+            {autoFixActions.length === 0 ? (
+              <p className="py-2 text-center text-[10px] text-white/20">
+                কোনো অ্যাক্টিভ ফিক্স নেই — সিস্টেম প্রতি ১৫ মিনিটে স্ক্যান করছে
+              </p>
+            ) : (
             <div className="space-y-2">
               {autoFixActions.map(a => {
                 const statusColor =
@@ -631,6 +655,52 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                 )
               })}
             </div>
+            )}
+          </SectionCard>
+        </motion.div>
+      )}
+
+      {/* ── Agent Brain ── */}
+      {isLive && (
+        <motion.div variants={fadeIn}>
+          <SectionCard title="এজেন্ট ব্রেইন" icon="🧠" accent="purple">
+            {!brainStats ? (
+              <p className="py-2 text-[10px] text-white/20">Loading brain stats…</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">Memories</p>
+                  <p className="mt-0.5 text-lg font-black tabular-nums text-purple-300">{brainStats.memoryCount}</p>
+                </div>
+                <div className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">Active Rules</p>
+                  <p className="mt-0.5 text-lg font-black tabular-nums text-emerald-300">{brainStats.activePlaybookCount}</p>
+                </div>
+                <div className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">Knowledge Facts</p>
+                  <p className="mt-0.5 text-lg font-black tabular-nums text-blue-300">{brainStats.knowledgeCount}</p>
+                </div>
+                <div className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">Last Session Summary</p>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-white/40">
+                    {brainStats.lastSessionSummary ? fmtTime(brainStats.lastSessionSummary) : '—'}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">Last Knowledge Build</p>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-white/40">
+                    {brainStats.lastKnowledgeBuild ? fmtTime(brainStats.lastKnowledgeBuild) : '—'}
+                  </p>
+                </div>
+                {brainStats.proposedPlaybookCount > 0 && (
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-2.5 py-2">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-amber-300/50">Proposed Rules</p>
+                    <p className="mt-0.5 text-lg font-black tabular-nums text-amber-300">{brainStats.proposedPlaybookCount}</p>
+                    <p className="text-[9px] text-amber-300/40">awaiting approval</p>
+                  </div>
+                )}
+              </div>
+            )}
           </SectionCard>
         </motion.div>
       )}
@@ -891,11 +961,31 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
         </div>
       </div>
 
-      {/* ── Failures banner ── */}
+      {/* ── Delivery Failures ── */}
       {(data.failures?.length ?? 0) > 0 && (
-        <motion.div variants={fadeIn} className="rounded-xl border border-red-500/25 bg-red-500/[0.04] backdrop-blur-md px-4 py-3 text-[13px] font-semibold text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.06)]">
-          <span className="mr-2 inline-block h-2 w-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]" />
-          {data.failures.length} delivery failure{data.failures.length > 1 ? 's' : ''}
+        <motion.div variants={fadeIn}>
+          <SectionCard
+            title={`Delivery Failures (${data.failures.length})`}
+            icon="❌"
+            accent="red"
+          >
+            <div className="space-y-1.5">
+              {data.failures.map(f => (
+                <div key={f.id} className="rounded-lg border border-red-500/15 bg-red-500/[0.03] p-2 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-red-200/80">{f.staffName ?? 'Unknown'}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded bg-red-500/15 px-1 py-0.5 text-[9px] font-semibold text-red-300">{typeLabel(f.type)}</span>
+                      <span className="tabular-nums text-[10px] text-white/20">{f.sentAt ? fmtTime(f.sentAt) : fmtTime(f.createdAt)}</span>
+                    </div>
+                  </div>
+                  {f.errorReason && (
+                    <p className="mt-1 text-[10px] text-red-300/60">⚠ {f.errorReason}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </SectionCard>
         </motion.div>
       )}
 
@@ -989,11 +1079,14 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
                         <span>{cap.icon}</span>
                         <span className="text-[11px] font-bold text-white/60">{cap.category}</span>
                       </div>
-                      <ul className="space-y-1">
+                      <ul className="space-y-1.5">
                         {cap.items.map(item => (
-                          <li key={item} className="flex items-start gap-1.5 text-[10px] text-white/35">
+                          <li key={item.name} className="flex items-start gap-1.5">
                             <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[#C9A84C]/40" />
-                            {item}
+                            <div>
+                              <span className="text-[10px] text-white/35">{item.name}</span>
+                              <div className="text-[10px] text-white/40 mt-0.5">💬 {item.command}</div>
+                            </div>
                           </li>
                         ))}
                       </ul>

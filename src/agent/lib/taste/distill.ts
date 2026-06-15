@@ -89,8 +89,8 @@ export async function runTasteDistill(opts?: { days?: number }): Promise<{
         distilledAt: new Date().toISOString(),
       }),
       confidence,
-      status: 'active',
-      reviewedAt: new Date(),
+      status: 'proposed',
+      reviewedAt: null,
     },
   })
 

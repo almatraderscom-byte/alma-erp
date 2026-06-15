@@ -6,7 +6,8 @@
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, type PinnedMemory } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -82,6 +83,31 @@ async function loadPinnedMemories(
   }
 }
 
+async function loadOwnerDecisions(businessId: AgentBusinessId): Promise<OwnerDecision[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (prisma as any).agentMemory.findMany({
+      where: { scope: 'business' },
+      orderBy: { createdAt: 'desc' },
+      take: 40,
+      select: { content: true, metadata: true, createdAt: true },
+    }) as Array<{ content: string; metadata: Record<string, unknown> | null; createdAt: Date }>
+
+    return rows
+      .filter((r) => {
+        const meta = r.metadata
+        if (!meta || meta.type !== 'owner_decision') return false
+        const tag = meta.businessId as string | undefined
+        if (businessId === 'ALMA_TRADING') return tag === 'ALMA_TRADING'
+        return !tag || tag === 'ALMA_LIFESTYLE'
+      })
+      .slice(0, 5)
+      .map((r) => ({ content: r.content, createdAt: r.createdAt }))
+  } catch {
+    return []
+  }
+}
+
 async function* runAlternateProviderTurn(
   conversationId: string,
   modelId: string,
@@ -116,7 +142,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -124,6 +150,8 @@ async function* runAlternateProviderTurn(
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
     personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
+    personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
+    personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
   ])
 
   const promptArgs = {
@@ -141,6 +169,8 @@ async function* runAlternateProviderTurn(
     personalMode,
     businessId,
     activePlaybook,
+    outcomeLearnings,
+    ownerDecisions,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
