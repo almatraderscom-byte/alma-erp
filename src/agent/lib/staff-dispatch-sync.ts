@@ -7,6 +7,8 @@ import { prisma } from '@/lib/prisma'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+import { buildDispatchSummary as formatDispatchSummary } from '@/agent/lib/staff-task-format'
+
 export type ProposedTaskRow = {
   id: string
   title: string
@@ -23,10 +25,7 @@ export async function loadProposedTasksForDate(date: string): Promise<ProposedTa
 }
 
 export function buildDispatchSummary(date: string, proposed: ProposedTaskRow[]): string {
-  const lines = proposed.map(
-    (t) => `• ${t.staff.name}: ${t.title} (${t.type})`,
-  )
-  return `স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${lines.join('\n')}`
+  return formatDispatchSummary(date, proposed)
 }
 
 type DispatchPayload = { date?: string; taskIds?: string[] }

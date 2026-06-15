@@ -10,8 +10,8 @@ import {
   refreshAndApproveDispatch,
   prepareCorrectedDispatchPending,
   loadProposedTasksForDate,
-  buildDispatchSummary,
 } from '@/agent/lib/staff-dispatch-sync'
+import { buildDispatchSummary, formatTasksGroupedByStaff } from '@/agent/lib/staff-task-format'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
 import {
@@ -116,10 +116,10 @@ async function createStaffAnnouncementPending(opts: {
 const prepare_staff_task_proposal: AgentTool = {
   name: 'prepare_staff_task_proposal',
   description:
-    'MUST use when owner asks about staff tasks for today. FIRST announce checking sources and call relevant read tools ' +
-    '(orders, inventory, FB posts, marketing history) per CHECK SOURCES rule, THEN build proposal from findings. ' +
-    'Checks inventory, 30-day sales, FB posts, yesterday carry-forward — full Bangla plan. ' +
-    'Do NOT ask owner "কি বিষয়ে টাস্ক দিব" — run reads then this tool.',
+    'Build a NEW full-team task plan for dispatch (all active staff). ' +
+    'Use ONLY when owner wants to CREATE/plan/dispatch tasks — NOT when asking what tasks already exist. ' +
+    'For status questions ("Eyafi ke ki task dewa hoise") use get_staff_tasks(staffName=...) instead. ' +
+    'FIRST announce checking sources, call read tools, THEN this tool.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -196,22 +196,39 @@ const prepare_staff_task_proposal: AgentTool = {
 const get_staff_tasks: AgentTool = {
   name: 'get_staff_tasks',
   description:
-    'Returns the task list for a given date (default: today). ' +
-    'Includes proposed, approved, sent, done, carried, and cancelled tasks per staff member.',
+    'Returns tasks for a date (default: today) — proposed, sent, approved, done, carried. ' +
+    'USE when owner asks what tasks someone HAS (status lookup), e.g. "Eyafi ke ki task dewa hoise". ' +
+    'Filter one person with staffName (fuzzy). Shows grouped formattedBangla with sent vs pending sections. ' +
+    'Do NOT use prepare_staff_task_proposal for status questions.',
   input_schema: {
     type: 'object' as const,
     properties: {
       date:     { type: 'string', description: 'YYYY-MM-DD (default: today in Asia/Dhaka)' },
-      staffId:  { type: 'string', description: 'Filter by specific staff ID (optional)' },
-      statusFilter: { type: 'string', description: 'Comma-separated statuses to include (optional)' },
+      staffId:  { type: 'string', description: 'Filter by staff ID (optional)' },
+      staffName: { type: 'string', description: 'Filter by staff name — fuzzy, e.g. Eyafi, Mustahid' },
+      statusFilter: { type: 'string', description: 'Comma-separated statuses (default: all except cancelled)' },
     },
   },
   handler: async (input) => {
     try {
       const date = (input.date as string) || dhakaToday()
       const where: Record<string, unknown> = { proposedFor: new Date(date) }
-      if (input.staffId) where.staffId = String(input.staffId)
-      if (input.statusFilter) where.status = { in: String(input.statusFilter).split(',').map(s => s.trim()) }
+
+      if (input.staffId) {
+        where.staffId = String(input.staffId)
+      } else if (input.staffName) {
+        const staff = await findStaffByName(String(input.staffName))
+        if (!staff) {
+          return { success: false, error: `"${input.staffName}" পাওয়া যায়নি। get_all_staff দিয়ে নাম চেক করুন।` }
+        }
+        where.staffId = staff.id
+      }
+
+      if (input.statusFilter) {
+        where.status = { in: String(input.statusFilter).split(',').map((s) => s.trim()) }
+      } else {
+        where.status = { notIn: ['cancelled'] }
+      }
 
       const tasks = await db.agentStaffTask.findMany({
         where,
@@ -230,7 +247,37 @@ const get_staff_tasks: AgentTool = {
         })
       }
 
-      return { success: true, data: { date, staffGroups: Object.values(staffTasks) } }
+      const formattedBangla = formatTasksGroupedByStaff(
+        tasks.map((t: { id: string; title: string; type: string; status: string; staff: { name: string } }) => ({
+          id: t.id,
+          title: t.title,
+          type: t.type,
+          status: t.status,
+          staff: t.staff,
+        })),
+        {
+          header: input.staffName
+            ? `📋 ${String(input.staffName)} — ${date}`
+            : `📋 স্টাফ টাস্ক — ${date}`,
+        },
+      )
+
+      const sentCount = tasks.filter((t: { status: string }) => ['sent', 'done', 'approved'].includes(t.status)).length
+      const proposedCount = tasks.filter((t: { status: string }) => t.status === 'proposed').length
+
+      return {
+        success: true,
+        data: {
+          date,
+          staffFilter: input.staffName ? String(input.staffName) : null,
+          totalTasks: tasks.length,
+          sentOrActiveCount: sentCount,
+          proposedCount,
+          staffGroups: Object.values(staffTasks),
+          formattedBangla,
+          message: 'Owner-কে formattedBangla দেখান — একজনের প্রশ্ন হলে শুধু সেই staff filter করুন।',
+        },
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -450,9 +497,16 @@ const merge_into_proposal: AgentTool = {
         orderBy: { createdAt: 'asc' },
       })
 
-      const summaryBangla = allProposed
-        .map((t: { staff: { name: string }; title: string }) => `• ${t.staff.name}: ${t.title}`)
-        .join('\n')
+      const summaryBangla = formatTasksGroupedByStaff(
+        allProposed.map((t: { id: string; staff: { name: string }; title: string; type: string }) => ({
+          id: t.id,
+          title: t.title,
+          type: t.type,
+          status: 'proposed',
+          staff: t.staff,
+        })),
+        { header: `📋 আপডেটেড প্রস্তাব — ${date}` },
+      )
 
       const pendingActionId = await syncPendingDispatchAction(date)
 

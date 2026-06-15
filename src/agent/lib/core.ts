@@ -5,7 +5,7 @@ import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/age
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
-import { isStaffTaskPlanningInquiry } from '@/agent/lib/staff-task-intent'
+import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { agentStorageDownload } from '@/agent/lib/storage'
@@ -324,6 +324,7 @@ export async function* runAgentTurn(
               ? false
               : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
             personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
+            personalMode ? false : isStaffTaskStatusInquiry(lastUserText),
             crossSurface,
             personalMode ? false : isSalahStatusInquiry(lastUserText),
             personalMode,

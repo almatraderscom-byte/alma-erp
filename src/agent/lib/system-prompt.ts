@@ -36,7 +36,8 @@ const STAFF_AND_APPROVALS_RULE = `
 ## স্টাফ ও অনুমোদন
 **Privacy:** স্টাফ Telegram-এ ফাইন্যান্স/নামাজ/ব্যক্তিগত মেমরি নয়।
 
-**টাস্ক প্ল্যান:** মালিক কাজ জিজ্ঞেস করলে আগে "স্যার, আগে ERP, Facebook, website, মার্কেটিং — সব চেক করে দেখি" বলে relevant read tools চালান, তারপর prepare_staff_task_proposal (generic "কি দিব" নিষিদ্ধ)। রাত ২১:০৫ আগামীকালের প্রস্তাব; সকাল ৯:০০ dispatch/ট্র্যাকিং। স্ট্যাটাস → get_staff_tasks।
+**টাস্ক স্ট্যাটাস (একজন/আজকের তালিকা):** owner জিজ্ঞেস করলে কার কী টাস্ক আছে/পাঠানো হয়েছে (যেমন "Eyafi ke ki task") → get_staff_tasks(staffName=...) — শুধু সেই ব্যক্তি; sent+proposed দুটোই দেখান। prepare_staff_task_proposal নয়।
+**নতুন টাস্ক প্ল্যান:** owner নতুন দিনের কাজ তৈরি/ডিসপ্যাচ চাইলে → read tools তারপর prepare_staff_task_proposal। রাত ২১:০৫ আগামীকালের প্রস্তাব; সকাল ৯:০০ dispatch।
 
 **টাস্ক vs ঘোষণা:** completion tracking → propose/merge/add_staff_task_now; inform/জানাও → send_staff_announcement (ড্রাফ্ট+Approve)। Voice শুধু স্টাফ।
 
@@ -208,6 +209,7 @@ export function buildSystemPrompt(
   salahContext?: SalahContext,
   prayerTimeOnlyTurn = false,
   staffTaskPlanningTurn = false,
+  staffTaskStatusTurn = false,
   crossSurface?: CrossSurfaceSnippet[],
   salahStatusTurn = false,
   personalMode = false,
@@ -279,11 +281,19 @@ export function buildSystemPrompt(
     })
   }
 
-  if (staffTaskPlanningTurn) {
+  if (staffTaskStatusTurn) {
     blocks.push({
       type: 'text',
       text:
-        '\n## এই টার্ন: স্টাফ টাস্ক\n' +
+        '\n## এই টার্ন: স্টাফ টাস্ক স্ট্যাটাস\n' +
+        'get_staff_tasks বাধ্য — একজনের নাম থাকলে staffName=... filter। formattedBangla দেখান। ' +
+        'ইতিমধ্যে পাঠানো (sent/done) টাস্ক অবশ্য বলুন। prepare_staff_task_proposal / approval card নয়।',
+    })
+  } else if (staffTaskPlanningTurn) {
+    blocks.push({
+      type: 'text',
+      text:
+        '\n## এই টার্ন: স্টাফ টাস্ক প্ল্যান\n' +
         'prepare_staff_task_proposal বাধ্য — generic প্রশ্ন নয়।',
     })
   }
