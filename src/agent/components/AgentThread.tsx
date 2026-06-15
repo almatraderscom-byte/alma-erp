@@ -127,7 +127,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       onClick={speak}
       disabled={loading}
       data-message-id={messageId}
-      className={`rounded-md p-1 transition-colors disabled:opacity-50 ${playing ? 'text-gold-lt' : 'text-zinc-600 hover:text-muted-hi'}`}
+      className={`rounded-md p-1 transition-all disabled:opacity-50 ${playing ? 'text-gold-lt' : 'text-zinc-600 hover:text-muted-hi hover:bg-white/[0.04]'}`}
       title={playing ? 'থামান' : 'শুনুন'}
     >
       {loading ? '⏳' : playing ? '⏸' : '🔊'}
@@ -190,12 +190,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         )}
 
         <AnimatePresence initial={false}>
-          {messages.map((msg) => (
+          {messages.map((msg, index) => (
             <motion.div
               key={msg.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.25, delay: index < 10 ? index * 0.03 : 0 }}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {msg.role === 'user' ? (
@@ -206,9 +206,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {msg.files.map((f, i) => (
                         f.mediaType.startsWith('image/') ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img key={i} src={f.previewUrl} alt="" className="h-24 w-24 rounded-xl object-cover border border-border" />
+                          <img key={i} src={f.previewUrl} alt="" className="h-24 w-24 rounded-xl object-cover border border-white/[0.08] shadow-[0_0_10px_rgba(201,168,76,0.08)]" />
                         ) : (
-                          <div key={i} className="flex h-16 w-16 flex-col items-center justify-center rounded-xl border border-border bg-card text-[10px] text-muted-hi">
+                          <div key={i} className="flex h-16 w-16 flex-col items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md text-[10px] text-muted-hi shadow-[0_0_10px_rgba(201,168,76,0.06)]">
                             <span className="text-xl">📄</span>
                             <span>PDF</span>
                           </div>
@@ -217,7 +217,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     </div>
                   )}
                   {msg.text && (
-                    <div className="rounded-2xl rounded-br-md bg-gold/10 border border-gold-dim/30 px-4 py-3 text-sm text-white whitespace-pre-wrap break-words select-text">
+                    <div className="rounded-2xl rounded-br-md bg-[rgba(201,168,76,0.08)] backdrop-blur-md border border-[rgba(201,168,76,0.2)] px-4 py-3 text-sm text-white whitespace-pre-wrap break-words select-text shadow-[0_0_16px_rgba(201,168,76,0.06)]">
                       {msg.text}
                     </div>
                   )}
@@ -235,12 +235,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   )}
 
                   {(!msg.streaming || msg.text) && (
-                    <div className="rounded-2xl rounded-bl-md border border-white/[0.08] bg-card/90 px-4 py-3 text-sm text-white select-text">
+                    <div className="rounded-2xl rounded-bl-md border border-white/[0.06] bg-[rgba(18,18,24,0.6)] backdrop-blur-xl px-4 py-3 text-sm text-white select-text">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />
                           <motion.span
-                            className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-gold/70"
+                            className="ml-0.5 inline-block h-[1.1em] w-[3px] translate-y-[2px] rounded-full bg-gold/70"
                             animate={{ opacity: [1, 0.2, 1] }}
                             transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
                             aria-hidden
@@ -285,7 +285,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button
                           onClick={() => saveArtifact(msg)}
-                          className="rounded-md px-2 py-1 text-[10px] font-semibold text-gold hover:text-gold-lt transition-colors border border-gold-dim/20 hover:border-gold-dim/50"
+                          className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-gold border border-gold-dim/20 bg-gold/5 backdrop-blur-md transition-all hover:text-gold-lt hover:border-gold-dim/50 hover:bg-gold/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.15)]"
                         >
                           ✦ আর্টিফ্যাক্ট
                         </button>
@@ -297,7 +297,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {msg.tokensIn != null && (
                         <details className="ml-auto">
                           <summary className="cursor-pointer text-[10px] text-zinc-700 hover:text-zinc-500 select-none">ⓘ</summary>
-                          <div className="mt-1 rounded-lg border border-border bg-surface px-3 py-2 text-[10px] text-muted-hi">
+                          <div className="mt-1 rounded-lg border border-white/[0.06] bg-[rgba(15,15,20,0.8)] backdrop-blur-xl px-3 py-2 text-[10px] text-muted-hi">
                             <span>↑{msg.tokensIn?.toLocaleString()} ↓{msg.tokensOut?.toLocaleString()}</span>
                             <span className="ml-3 text-gold">${msg.costUsd?.toFixed(6)}</span>
                           </div>
@@ -315,7 +315,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-auto my-4 max-w-md rounded-xl border border-white/10 bg-white/[0.03] p-3"
+            className="mx-auto my-4 max-w-md rounded-xl border border-white/[0.08] bg-[rgba(18,18,24,0.5)] backdrop-blur-xl p-3"
           >
             <div className="mb-2 text-[13px] font-medium text-zinc-300">
               💬 কথোপকথন কম্প্যাক্ট করছি — যাতে আরও চ্যাট করতে পারি…
@@ -345,7 +345,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
               setTimeout(checkScrollPosition, 400)
             }}
-            className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-gold-dim/50 bg-zinc-900/95 px-5 py-2.5 text-xs font-semibold text-gold-lt shadow-2xl backdrop-blur-md transition-colors hover:border-gold/60 hover:text-cream"
+            className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[rgba(201,168,76,0.3)] bg-[rgba(12,12,16,0.85)] px-5 py-2.5 text-xs font-semibold text-gold-lt shadow-[0_0_20px_rgba(201,168,76,0.15)] backdrop-blur-2xl transition-all hover:border-gold/50 hover:text-cream hover:shadow-[0_0_28px_rgba(201,168,76,0.25)]"
           >
             <span aria-hidden>↓</span>
             <span>নিচে যান</span>

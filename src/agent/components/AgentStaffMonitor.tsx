@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type {
   StaffMonitorData,
@@ -40,19 +41,19 @@ function FeedMessage({ content }: { content: string }) {
   const needsMore = text.length > FEED_PREVIEW_LEN
 
   return (
-    <div className="mt-1 text-zinc-200">
+    <div className="mt-1 text-[#FAFAF8]/90">
       <div className={cn(!expanded && needsMore && 'line-clamp-2')}>
         {expanded || !needsMore ? (
           <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">{text}</pre>
         ) : (
-          <span>{text.slice(0, FEED_PREVIEW_LEN)}…</span>
+          <span className="text-xs">{text.slice(0, FEED_PREVIEW_LEN)}…</span>
         )}
       </div>
       {needsMore && (
         <button
           type="button"
           onClick={() => setExpanded(v => !v)}
-          className="mt-1 text-[10px] font-semibold text-gold hover:text-gold-lt"
+          className="mt-1 text-[10px] font-semibold text-[#C9A84C] hover:text-[#E8C96A] transition-colors"
         >
           {expanded ? 'কম দেখুন' : 'আরও'}
         </button>
@@ -97,7 +98,7 @@ function AckStatus({ m }: { m: StaffMonitorRow }) {
   if (m.acknowledgedAt) {
     return (
       <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-300">
+        <span className="inline-flex items-center rounded-lg border border-emerald-400/30 bg-emerald-500/10 backdrop-blur-sm px-2.5 py-1 text-[10px] font-semibold text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.1)]">
           ✅ দেখেছেন · {fmtTime(m.acknowledgedAt)}
         </span>
       </div>
@@ -106,7 +107,7 @@ function AckStatus({ m }: { m: StaffMonitorRow }) {
   if (m.status === 'delivered' || m.status === 'sent') {
     return (
       <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200">
+        <span className="inline-flex items-center rounded-lg border border-amber-400/30 bg-amber-500/10 backdrop-blur-sm px-2.5 py-1 text-[10px] font-semibold text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.1)]">
           ⏳ এখনো দেখেননি
         </span>
       </div>
@@ -115,7 +116,7 @@ function AckStatus({ m }: { m: StaffMonitorRow }) {
   if (m.status === 'queued' || m.status === 'pending') {
     return (
       <div className="mt-2">
-        <span className="inline-flex items-center rounded-lg border border-zinc-500/30 bg-zinc-500/10 px-2.5 py-1 text-[10px] text-zinc-400">
+        <span className="inline-flex items-center rounded-lg border border-[#1E1E24] bg-white/5 backdrop-blur-sm px-2.5 py-1 text-[10px] text-[#9B9BA4]">
           📤 পাঠানো হচ্ছে…
         </span>
       </div>
@@ -152,6 +153,19 @@ function salahIcon(status: SalahDutyRow['status']) {
   return '⏳'
 }
 
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06 },
+  },
+}
+
+const staggerItem = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
+}
+
 function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean }) {
   return (
     <>
@@ -162,10 +176,10 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
             <div
               key={`${w.kind}-${i}`}
               className={cn(
-                'rounded-xl border px-3 py-2 text-xs',
+                'rounded-xl border px-3 py-2.5 text-xs backdrop-blur-md',
                 w.severity === 'critical'
-                  ? 'border-red-500/40 bg-red-500/10 text-red-100'
-                  : 'border-amber-500/30 bg-amber-500/10 text-amber-100',
+                  ? 'border-red-500/40 bg-red-500/10 text-red-100 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.1)]',
               )}
             >
               {w.message}
@@ -175,54 +189,65 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
       )}
 
       <div className="space-y-1.5">
-        <h2 className="text-sm font-bold text-zinc-300">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">
           🤖 এজেন্টের কাজ {isLive ? '(লাইভ)' : '(আর্কাইভ)'}
         </h2>
         {(data.agentDuties ?? []).map((d) => (
           <div
             key={d.id}
             className={cn(
-              'flex items-center gap-2 rounded-xl border px-3 py-2.5',
+              'flex items-center gap-2 rounded-xl border px-3 py-2.5 backdrop-blur-md transition-all',
               d.status === 'failed' || d.status === 'missed'
-                ? 'border-red-500/30 bg-red-500/[0.06]'
-                : 'border-white/10 bg-white/[0.02]',
+                ? 'border-red-500/30 bg-red-500/[0.08] shadow-[inset_-2px_0_0_rgba(239,68,68,0.5),0_0_12px_rgba(239,68,68,0.08)]'
+                : 'border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.05]',
             )}
           >
             <span className="shrink-0 text-base leading-none">{dutyIcon(d.status)}</span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-200">{d.label}</span>
-            <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{dutyRightText(d)}</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] text-[#FAFAF8]/90">{d.label}</span>
+            <span className="shrink-0 text-[11px] text-[#6B6B72] tabular-nums">{dutyRightText(d)}</span>
           </div>
         ))}
 
         {isLive && (data.salahDuties?.length ?? 0) > 0 && (
-          <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] p-2">
-            <div className="mb-1 text-xs font-bold text-zinc-300">🕌 আজকের সালাহ রিমাইন্ডার</div>
+          <div className="mt-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] backdrop-blur-md p-2.5 shadow-[0_0_16px_rgba(16,185,129,0.05)]">
+            <div className="mb-1.5 text-xs font-bold text-emerald-300/90">🕌 আজকের সালাহ রিমাইন্ডার</div>
             {data.salahDuties.map((s) => (
               <div key={s.waqt} className="flex items-center gap-2 px-1 py-1 text-[12px]">
                 <span className="shrink-0">{salahIcon(s.status)}</span>
-                <span className="min-w-0 flex-1 truncate text-zinc-200">
+                <span className="min-w-0 flex-1 truncate text-[#FAFAF8]/80">
                   {s.label}
                   {s.reminders ? ` · ${s.reminders} রিমাইন্ডার` : ''}
                 </span>
-                <span className="shrink-0 text-[11px] text-zinc-500 tabular-nums">{salahRightText(s)}</span>
+                <span className="shrink-0 text-[11px] text-[#6B6B72] tabular-nums">{salahRightText(s)}</span>
               </div>
             ))}
           </div>
         )}
 
         {isLive && (data.continuousServices?.length ?? 0) > 0 && (
-          <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-[11px] text-zinc-500">
+          <div className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md px-3 py-2.5 text-[11px] text-[#9B9BA4]">
             🔄 চলমান সেবা:{' '}
-            {data.continuousServices.map((s) => `${s.label} ${s.healthy ? '🟢' : '🔴'}`).join(' · ')}
+            {data.continuousServices.map((s) => (
+              <span key={s.label} className="inline-flex items-center gap-1">
+                {s.label}{' '}
+                <span className={cn(
+                  'inline-block h-2 w-2 rounded-full',
+                  s.healthy
+                    ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
+                    : 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]'
+                )} />
+                {' · '}
+              </span>
+            ))}
             {data.schedulerHealth?.ackEscalationLastRun && (
-              <> · ack check {fmtTime(data.schedulerHealth.ackEscalationLastRun)}</>
+              <> ack check {fmtTime(data.schedulerHealth.ackEscalationLastRun)}</>
             )}
           </div>
         )}
       </div>
 
       {Object.keys(data.typeCounts ?? {}).length > 0 && (
-        <p className="text-[10px] text-muted-hi">
+        <p className="text-[10px] text-[#9B9BA4]">
           মেসেজ:{' '}
           {Object.entries(data.typeCounts)
             .map(([t, n]) => `${typeLabel(t)} ${n}`)
@@ -231,14 +256,14 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
       )}
 
       {isLive && (data.unackedMessages?.length ?? 0) > 0 && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] backdrop-blur-md p-3 shadow-[0_0_20px_rgba(245,158,11,0.08)]">
           <h2 className="text-sm font-bold text-amber-200">⏳ দেখেননি ({data.unackedMessages.length})</h2>
           <div className="mt-2 space-y-2">
             {data.unackedMessages.map((m) => (
-              <div key={m.id} className="rounded-lg border border-amber-500/20 bg-black/20 p-2 text-xs">
+              <div key={m.id} className="rounded-lg border border-amber-500/15 bg-white/[0.03] backdrop-blur-sm p-2.5 text-xs">
                 <div className="flex justify-between text-amber-100/80">
                   <span>{m.staffName ?? '—'} · {typeLabel(m.type)}</span>
-                  <span>{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
+                  <span className="text-amber-200/70 font-medium tabular-nums">{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
                 </div>
                 <FeedMessage content={m.content ?? ''} />
                 <AckStatus m={m} />
@@ -249,56 +274,90 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
       )}
 
       {(data.failures?.length ?? 0) > 0 && (
-        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+        <div className="rounded-xl border border-red-500/30 bg-red-500/[0.08] backdrop-blur-md p-3 text-sm text-red-200 shadow-[0_0_20px_rgba(239,68,68,0.1)]">
           🔴 {data.failures?.length ?? 0}টি মেসেজ পৌঁছায়নি
         </div>
       )}
 
       {(data.staffSummaries?.length ?? 0) > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-bold text-zinc-300">স্টাফ</h2>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">স্টাফ</h2>
+          <motion.div
+            className="grid gap-2 sm:grid-cols-2"
+            variants={staggerContainer}
+            initial="hidden"
+            animate="show"
+          >
             {data.staffSummaries.map((s) => (
-              <div key={s.staffId} className="rounded-xl border border-white/10 bg-white/[0.02] p-3 text-xs">
+              <motion.div
+                key={s.staffId}
+                variants={staggerItem}
+                className={cn(
+                  'rounded-xl border bg-white/[0.03] backdrop-blur-md p-3 text-xs transition-all',
+                  s.failed > 0
+                    ? 'border-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.08)]'
+                    : s.completionPct >= 100
+                      ? 'border-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.06)]'
+                      : 'border-white/[0.08] hover:border-[#C9A84C]/20',
+                )}
+              >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-cream">{statusDot(s)} {s.staffName}</span>
-                  <span className="text-muted">{s.completionPct}%</span>
+                  <span className="font-semibold text-[#FAFAF8]">{statusDot(s)} {s.staffName}</span>
+                  <span className="text-[#9B9BA4] font-medium">{s.completionPct}%</span>
                 </div>
-                <div className="mt-2 space-y-0.5 text-muted-hi">
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#8B6914] to-[#E8C96A] transition-all duration-500"
+                    style={{ width: `${Math.min(s.completionPct, 100)}%` }}
+                  />
+                </div>
+                <div className="mt-2 space-y-0.5 text-[#9B9BA4]">
                   <div>পাঠানো {s.dispatched} / পৌঁছেছে {s.delivered} / ব্যর্থ {s.failed}</div>
                   <div>কাজ {s.tasksDone}/{s.tasksTotal}</div>
                 </div>
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         </div>
       )}
 
       <div className="space-y-2">
-        <h2 className="text-sm font-bold text-zinc-300">মেসেজ ফিড</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C]">মেসেজ ফিড</h2>
         {(data.feed?.length ?? 0) === 0 ? (
-          <p className="text-xs text-muted">কোনো মেসেজ লগ নেই।</p>
+          <p className="text-xs text-[#6B6B72]">কোনো মেসেজ লগ নেই।</p>
         ) : (
-          data.feed?.map((m) => {
-            const dot = m.status === 'delivered' ? '🟢' : m.status === 'failed' ? '🔴' : '🟡'
-            return (
-              <div
-                key={m.id}
-                className={cn(
-                  'rounded-lg border p-2 text-xs',
-                  m.status === 'failed' ? 'border-red-500/30 bg-red-500/5' : 'border-white/10 bg-white/[0.02]',
-                )}
-              >
-                <div className="flex justify-between text-zinc-400">
-                  <span>{dot} {m.staffName ?? '—'} · {typeLabel(m.type)}</span>
-                  <span>{fmtTime(m.createdAt)}</span>
-                </div>
-                <FeedMessage content={m.content ?? ''} />
-                <AckStatus m={m} />
-                {m.errorReason && <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>}
-              </div>
-            )
-          })
+          <motion.div
+            className="space-y-2"
+            variants={staggerContainer}
+            initial="hidden"
+            animate="show"
+          >
+            {data.feed?.map((m) => {
+              const dot = m.status === 'delivered' ? '🟢' : m.status === 'failed' ? '🔴' : '🟡'
+              return (
+                <motion.div
+                  key={m.id}
+                  variants={staggerItem}
+                  className={cn(
+                    'rounded-xl border p-2.5 text-xs backdrop-blur-md transition-all',
+                    m.status === 'failed'
+                      ? 'border-red-500/25 bg-red-500/[0.06] shadow-[inset_3px_0_0_rgba(239,68,68,0.5)]'
+                      : m.status === 'delivered'
+                        ? 'border-white/[0.08] bg-white/[0.03] shadow-[inset_3px_0_0_rgba(16,185,129,0.4)]'
+                        : 'border-white/[0.08] bg-white/[0.03] shadow-[inset_3px_0_0_rgba(234,179,8,0.4)]',
+                  )}
+                >
+                  <div className="flex justify-between text-[#9B9BA4]">
+                    <span>{dot} {m.staffName ?? '—'} · {typeLabel(m.type)}</span>
+                    <span className="font-medium tabular-nums text-[#FAFAF8]/60">{fmtTime(m.createdAt)}</span>
+                  </div>
+                  <FeedMessage content={m.content ?? ''} />
+                  <AckStatus m={m} />
+                  {m.errorReason && <div className="mt-1 text-red-300">⚠️ {m.errorReason}</div>}
+                </motion.div>
+              )
+            })}
+          </motion.div>
         )}
       </div>
     </>
@@ -313,7 +372,6 @@ export default function AgentStaffMonitor() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
-  // Phase 7: business scope filter. Default 'ALL' so existing view is preserved.
   const [businessFilter, setBusinessFilter] = useState<'ALL' | 'ALMA_LIFESTYLE' | 'ALMA_TRADING'>('ALL')
 
   const loadLive = useCallback(async (manual = false) => {
@@ -355,9 +413,6 @@ export default function AgentStaffMonitor() {
   const viewingHistory = Boolean(selectedDate && historyData)
   const rawDisplay = viewingHistory ? historyData : liveData
 
-  // Apply business filter to outbox-derived rows + staffSummaries that touched
-  // any row of the matching business. Duties/salah aren't business-scoped and
-  // are always shown.
   const displayData = (() => {
     if (!rawDisplay) return null
     if (businessFilter === 'ALL') return rawDisplay
@@ -374,13 +429,13 @@ export default function AgentStaffMonitor() {
     return (
       <div className="p-4 text-red-400">
         লোড করা যায়নি: {err}
-        <button type="button" onClick={() => void loadLive()} className="ml-2 underline">আবার</button>
+        <button type="button" onClick={() => void loadLive()} className="ml-2 text-[#C9A84C] underline hover:text-[#E8C96A]">আবার</button>
       </div>
     )
   }
 
   if (!liveData) {
-    return <div className="p-4 text-zinc-400">লোড হচ্ছে…</div>
+    return <div className="p-4 text-[#6B6B72]">লোড হচ্ছে…</div>
   }
 
   return (
@@ -388,10 +443,14 @@ export default function AgentStaffMonitor() {
       <div className="min-w-0 flex-1 space-y-4 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-lg font-black text-cream">
-              {viewingHistory ? `স্টাফ মনিটর — ${selectedDate}` : 'স্টাফ মনিটর (লাইভ)'}
+            <h1 className="text-xl font-black text-[#FAFAF8]">
+              {viewingHistory ? (
+                <>স্টাফ মনিটর — <span className="text-[#C9A84C]">{selectedDate}</span></>
+              ) : (
+                <>স্টাফ মনিটর <span className="text-[#C9A84C]">(লাইভ)</span></>
+              )}
             </h1>
-            <p className="text-[11px] text-muted">
+            <p className="text-[11px] text-[#6B6B72]">
               {viewingHistory
                 ? 'আর্কাইভ দেখা · লাইভে ফিরতে "আজ" চাপুন'
                 : `আজ (${liveData.today}) · প্রতি ১০ সেকেন্ডে আপডেট`}
@@ -401,17 +460,17 @@ export default function AgentStaffMonitor() {
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-0.5 text-[11px]">
+            <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-0.5 text-[11px]">
               {(['ALL', 'ALMA_LIFESTYLE', 'ALMA_TRADING'] as const).map((b) => (
                 <button
                   key={b}
                   type="button"
                   onClick={() => setBusinessFilter(b)}
                   className={cn(
-                    'rounded-lg px-2.5 py-1 font-medium transition-colors',
+                    'rounded-lg px-2.5 py-1 font-medium transition-all',
                     businessFilter === b
-                      ? 'bg-gold/20 text-gold-lt'
-                      : 'text-muted hover:text-cream',
+                      ? 'bg-[rgba(201,168,76,0.15)] border border-[rgba(201,168,76,0.3)] text-[#E8C96A] shadow-[0_0_12px_rgba(201,168,76,0.1)]'
+                      : 'border border-transparent text-[#6B6B72] hover:text-[#FAFAF8]',
                   )}
                 >
                   {b === 'ALL' ? 'All' : b === 'ALMA_LIFESTYLE' ? 'Lifestyle' : 'Trading'}
@@ -422,7 +481,7 @@ export default function AgentStaffMonitor() {
               <button
                 type="button"
                 onClick={() => { setSelectedDate(null); setHistoryData(null) }}
-                className="rounded-xl border border-gold/40 px-3 py-1.5 text-[11px] font-semibold text-gold hover:bg-gold/10"
+                className="rounded-xl border border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] backdrop-blur-sm px-3 py-1.5 text-[11px] font-semibold text-[#C9A84C] hover:bg-[#C9A84C]/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
               >
                 ← আজ (লাইভ)
               </button>
@@ -432,8 +491,10 @@ export default function AgentStaffMonitor() {
                 onClick={() => void loadLive(true)}
                 disabled={syncing}
                 className={cn(
-                  'rounded-xl border px-3 py-1.5 text-[11px] font-semibold transition-colors',
-                  syncing ? 'border-white/10 text-muted' : 'border-gold/40 text-gold hover:bg-gold/10',
+                  'rounded-xl border backdrop-blur-sm px-3 py-1.5 text-[11px] font-semibold transition-all',
+                  syncing
+                    ? 'border-white/[0.08] text-[#6B6B72]'
+                    : 'border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)]',
                 )}
               >
                 {syncing ? 'সিঙ্ক…' : '↻ সিঙ্ক'}
@@ -442,13 +503,13 @@ export default function AgentStaffMonitor() {
             <button
               type="button"
               onClick={() => setHistoryOpen((v) => !v)}
-              className="rounded-xl border border-white/[0.08] px-3 py-1.5 text-[11px] text-muted hover:text-cream lg:hidden"
+              className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-1.5 text-[11px] text-[#6B6B72] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all lg:hidden"
             >
               📅 ইতিহাস
             </button>
             <Link
               href="/agent"
-              className="rounded-xl border border-white/[0.08] px-3 py-1.5 text-[11px] text-muted hover:text-cream"
+              className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-1.5 text-[11px] text-[#6B6B72] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all"
             >
               ← Agent
             </Link>
@@ -466,28 +527,30 @@ export default function AgentStaffMonitor() {
 
       <aside
         className={cn(
-          'shrink-0 border-white/10 bg-black/40 lg:block lg:w-56 lg:rounded-2xl lg:border',
-          historyOpen ? 'fixed inset-y-0 right-0 z-40 w-72 border-l p-3 shadow-2xl' : 'hidden',
+          'shrink-0 border-white/[0.08] backdrop-blur-xl bg-white/[0.02] lg:block lg:w-56 lg:rounded-2xl lg:border',
+          historyOpen ? 'fixed inset-y-0 right-0 z-40 w-72 border-l bg-[#08080A]/90 backdrop-blur-xl p-3 shadow-[0_0_40px_rgba(0,0,0,0.5)]' : 'hidden',
         )}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-zinc-300">📅 ইতিহাস</h2>
+          <h2 className="text-sm font-bold text-[#FAFAF8]">📅 ইতিহাস</h2>
           <button
             type="button"
             onClick={() => setHistoryOpen(false)}
-            className="text-xs text-muted lg:hidden"
+            className="text-xs text-[#6B6B72] hover:text-[#FAFAF8] lg:hidden"
           >
             ✕
           </button>
         </div>
-        <p className="mb-2 text-[10px] text-muted">গত {liveData.feedDays ?? 7} দিন — ক্লিক করলে সেই দিন</p>
+        <p className="mb-2 text-[10px] text-[#6B6B72]">গত {liveData.feedDays ?? 7} দিন — ক্লিক করলে সেই দিন</p>
         <div className="space-y-1">
           <button
             type="button"
             onClick={() => { setSelectedDate(null); setHistoryData(null); setHistoryOpen(false) }}
             className={cn(
-              'w-full rounded-lg px-2 py-2 text-left text-xs',
-              !viewingHistory ? 'bg-gold/15 text-gold-lt' : 'text-zinc-400 hover:bg-white/5',
+              'w-full rounded-lg px-2 py-2 text-left text-xs transition-all',
+              !viewingHistory
+                ? 'bg-[rgba(201,168,76,0.12)] border border-[rgba(201,168,76,0.25)] text-[#E8C96A] shadow-[0_0_10px_rgba(201,168,76,0.08)]'
+                : 'border border-transparent text-[#9B9BA4] hover:bg-white/[0.04]',
             )}
           >
             আজ (লাইভ)
@@ -498,8 +561,10 @@ export default function AgentStaffMonitor() {
               type="button"
               onClick={() => { void loadHistoryDay(date); setHistoryOpen(false) }}
               className={cn(
-                'w-full rounded-lg px-2 py-2 text-left text-xs',
-                selectedDate === date ? 'bg-white/10 text-cream' : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300',
+                'w-full rounded-lg px-2 py-2 text-left text-xs transition-all',
+                selectedDate === date
+                  ? 'bg-white/[0.06] border border-white/[0.1] text-[#FAFAF8]'
+                  : 'border border-transparent text-[#6B6B72] hover:bg-white/[0.04] hover:text-[#9B9BA4]',
               )}
             >
               {date}

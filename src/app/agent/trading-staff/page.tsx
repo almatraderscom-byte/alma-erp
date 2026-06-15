@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import TradingStaffAdmin from './TradingStaffAdmin'
+import AgentShell from '@/agent/components/AgentShell'
 
 export const metadata = { title: 'ALMA Agent — Trading Staff' }
 
@@ -15,8 +16,10 @@ export default async function TradingStaffPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-black text-white">
-      <TradingStaffAdmin />
-    </div>
+    <AgentShell>
+      <div className="h-full min-h-0 overflow-y-auto text-white">
+        <TradingStaffAdmin />
+      </div>
+    </AgentShell>
   )
 }

@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
+import { cn } from '@/lib/utils'
 
 interface User {
   id: string
@@ -23,6 +25,19 @@ interface StaffRow {
 interface ApiResponse {
   staff: StaffRow[]
   eligibleUsers: User[]
+}
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.07 },
+  },
+}
+
+const staggerItem = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
 }
 
 export default function TradingStaffAdmin() {
@@ -75,7 +90,7 @@ export default function TradingStaffAdmin() {
   }
 
   if (loading) {
-    return <div className="p-6 text-zinc-300">Loading Trading staff…</div>
+    return <div className="p-6 text-[#9B9BA4]">Loading Trading staff…</div>
   }
   if (error) {
     return <div className="p-6 text-rose-400">Error: {error}</div>
@@ -87,26 +102,48 @@ export default function TradingStaffAdmin() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">ALMA Trading — Staff</h1>
-        <p className="text-sm text-zinc-400">
+      <header className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md px-5 py-4">
+        <h1 className="text-2xl font-bold text-[#FAFAF8]">ALMA Trading — <span className="text-[#C9A84C]">Staff</span></h1>
+        <p className="mt-1 text-sm text-[#6B6B72]">
           Binance P2P trader-দের AgentStaff row লিঙ্ক করুন। প্রত্যেক TradingAccount-এর assigned User-এর সাথে
           এখান থেকে Telegram chat ID যোগ করুন — তাহলে agent এই staff-দের কাছে dispatch করতে পারবে।
         </p>
       </header>
 
       <section>
-        <h2 className="text-lg font-medium mb-3">Linked Trading staff ({data.staff.length})</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C] mb-3">Linked Trading staff ({data.staff.length})</h2>
         {data.staff.length === 0 ? (
-          <p className="text-sm text-zinc-500">এখনো কোনো Trading staff লিঙ্ক করা হয়নি।</p>
+          <p className="text-sm text-[#6B6B72]">এখনো কোনো Trading staff লিঙ্ক করা হয়নি।</p>
         ) : (
-          <div className="space-y-3">
+          <motion.div
+            className="space-y-3"
+            variants={staggerContainer}
+            initial="hidden"
+            animate="show"
+          >
             {data.staff.map((s) => (
-              <div key={s.id} className="rounded border border-zinc-800 bg-zinc-900/50 p-4 space-y-2">
+              <motion.div
+                key={s.id}
+                variants={staggerItem}
+                className={cn(
+                  'rounded-xl border bg-white/[0.03] backdrop-blur-md p-4 space-y-3 transition-all',
+                  s.active
+                    ? 'border-white/[0.08] hover:border-[#C9A84C]/20'
+                    : 'border-red-500/15 opacity-70',
+                )}
+              >
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="font-medium">{s.name}</div>
-                    <div className="text-xs text-zinc-500">
+                    <div className="font-medium text-[#FAFAF8] flex items-center gap-2">
+                      {s.name}
+                      <span className={cn(
+                        'inline-block h-2.5 w-2.5 rounded-full',
+                        s.active
+                          ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
+                          : 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]',
+                      )} />
+                    </div>
+                    <div className="text-xs text-[#6B6B72] mt-0.5">
                       ERP: {s.user?.name ?? '— unlinked —'} · Role: {s.role} · {s.active ? 'Active' : 'Inactive'}
                     </div>
                   </div>
@@ -114,15 +151,20 @@ export default function TradingStaffAdmin() {
                     <button
                       onClick={() => upsert({ id: s.id, active: !s.active })}
                       disabled={saving !== null}
-                      className="text-xs px-3 py-1.5 rounded border border-zinc-700 hover:bg-zinc-800"
+                      className={cn(
+                        'text-xs px-3 py-1.5 rounded-lg border backdrop-blur-sm transition-all',
+                        s.active
+                          ? 'border-red-500/25 bg-red-500/[0.06] text-red-300 hover:bg-red-500/10 hover:shadow-[0_0_10px_rgba(239,68,68,0.1)]'
+                          : 'border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 hover:shadow-[0_0_10px_rgba(16,185,129,0.1)]',
+                      )}
                     >
                       {s.active ? 'Deactivate' : 'Activate'}
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   <label className="space-y-1">
-                    <span className="text-zinc-400 text-xs">Telegram chat ID</span>
+                    <span className="text-[#6B6B72] text-xs">Telegram chat ID</span>
                     <input
                       defaultValue={s.telegramChatId ?? ''}
                       onBlur={(e) => {
@@ -132,79 +174,79 @@ export default function TradingStaffAdmin() {
                         }
                       }}
                       placeholder="123456789"
-                      className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5"
+                      className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-1.5 text-[#FAFAF8] text-xs focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
                     />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-zinc-400 text-xs">Role label</span>
+                    <span className="text-[#6B6B72] text-xs">Role label</span>
                     <input
                       defaultValue={s.role}
                       onBlur={(e) => {
                         const v = e.target.value.trim() || 'p2p_trader'
                         if (v !== s.role) void upsert({ id: s.id, role: v })
                       }}
-                      className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5"
+                      className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-1.5 text-[#FAFAF8] text-xs focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
                     />
                   </label>
                 </div>
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </section>
 
       <section>
-        <h2 className="text-lg font-medium mb-3">Link a new Trading staff</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-[#C9A84C] mb-3">Link a new Trading staff</h2>
         {availableUsers.length === 0 ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-[#6B6B72]">
             সব eligible User ইতিমধ্যে লিঙ্ক করা আছে। নতুন trader add করতে User Management থেকে User তৈরি করুন
             (businessAccess-এ ALMA_TRADING রাখুন)।
           </p>
         ) : (
-          <div className="rounded border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4 space-y-3">
             <label className="block space-y-1">
-              <span className="text-zinc-400 text-xs">ERP User</span>
+              <span className="text-[#6B6B72] text-xs">ERP User</span>
               <select
                 value={draft.userId}
                 onChange={(e) => {
                   const u = availableUsers.find((x) => x.id === e.target.value)
                   setDraft((d) => ({ ...d, userId: e.target.value, name: u?.name ?? d.name }))
                 }}
-                className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5 text-sm"
+                className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-2 text-sm text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
               >
-                <option value="">— select user —</option>
+                <option value="" className="bg-[#141418] text-[#6B6B72]">— select user —</option>
                 {availableUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
+                  <option key={u.id} value={u.id} className="bg-[#141418] text-[#FAFAF8]">
                     {u.name} {u.email ? `(${u.email})` : ''} — {u.role}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block space-y-1">
-              <span className="text-zinc-400 text-xs">Staff name (override)</span>
+              <span className="text-[#6B6B72] text-xs">Staff name (override)</span>
               <input
                 value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                 placeholder="default = User.name"
-                className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5 text-sm"
+                className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-1.5 text-sm text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
               />
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <label className="block space-y-1">
-                <span className="text-zinc-400 text-xs">Role</span>
+                <span className="text-[#6B6B72] text-xs">Role</span>
                 <input
                   value={draft.role}
                   onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
-                  className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5 text-sm"
+                  className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-1.5 text-sm text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-zinc-400 text-xs">Telegram chat ID</span>
+                <span className="text-[#6B6B72] text-xs">Telegram chat ID</span>
                 <input
                   value={draft.telegramChatId}
                   onChange={(e) => setDraft((d) => ({ ...d, telegramChatId: e.target.value }))}
                   placeholder="123456789"
-                  className="w-full rounded bg-black border border-zinc-700 px-2 py-1.5 text-sm"
+                  className="w-full rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2.5 py-1.5 text-sm text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
                 />
               </label>
             </div>
@@ -222,7 +264,7 @@ export default function TradingStaffAdmin() {
                     setDraft({ userId: '', name: '', role: 'p2p_trader', telegramChatId: '' })
                   })
                 }}
-                className="rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-1.5 text-sm font-medium"
+                className="rounded-lg bg-[#C9A84C]/10 border border-[#C9A84C]/30 backdrop-blur-sm px-4 py-2 text-sm font-semibold text-[#E8C96A] disabled:opacity-50 hover:bg-[#C9A84C]/15 hover:shadow-[0_0_16px_rgba(201,168,76,0.15)] transition-all"
               >
                 {saving ? 'Saving…' : 'Link staff'}
               </button>

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentApp from '@/agent/components/AgentApp'
+import AgentShell from '@/agent/components/AgentShell'
 
 export const metadata = { title: 'ALMA Agent' }
 
@@ -15,6 +16,8 @@ export default async function AgentPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <AgentApp userName={session.user.name ?? session.user.email ?? 'Owner'} />
+    <AgentShell>
+      <AgentApp userName={session.user.name ?? session.user.email ?? 'Owner'} />
+    </AgentShell>
   )
 }

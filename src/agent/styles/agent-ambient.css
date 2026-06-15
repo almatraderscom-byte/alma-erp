@@ -1,0 +1,60 @@
+/* ALMA Agent — Ambient Neural Expressive Theme */
+
+.agent-shell {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 30%, oklch(0.15 0.04 75) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 50% at 80% 70%, oklch(0.12 0.035 260) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 80% at 50% 50%, oklch(0.10 0.025 300) 0%, transparent 50%),
+    #08080a;
+  background-size: 220% 220%;
+  animation: drift 14s ease-in-out infinite;
+}
+
+@keyframes drift {
+  0%, 100% {
+    background-position: 30% 40%, 70% 60%, 50% 50%;
+  }
+  33% {
+    background-position: 45% 55%, 55% 35%, 60% 45%;
+  }
+  66% {
+    background-position: 25% 60%, 75% 45%, 40% 55%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-shell {
+    animation: none;
+  }
+}
+
+.glass-panel {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  background: rgba(15, 15, 18, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.glass-card {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(20, 20, 28, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.neon-gold {
+  box-shadow:
+    0 0 20px rgba(201, 168, 76, 0.12),
+    0 0 4px rgba(201, 168, 76, 0.2);
+}
+
+.neon-gold-hover:hover {
+  box-shadow:
+    0 0 24px rgba(201, 168, 76, 0.18),
+    0 0 8px rgba(201, 168, 76, 0.28);
+}
+
+.neon-border {
+  border-color: rgba(201, 168, 76, 0.25);
+  box-shadow: 0 0 12px rgba(201, 168, 76, 0.08);
+}

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentCostsDashboard from '@/agent/components/AgentCostsDashboard'
+import AgentShell from '@/agent/components/AgentShell'
 
 export const metadata = { title: 'ALMA Agent — Costs' }
 
@@ -15,8 +16,10 @@ export default async function AgentCostsPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-black">
-      <AgentCostsDashboard />
-    </div>
+    <AgentShell>
+      <div className="h-full min-h-0 overflow-y-auto">
+        <AgentCostsDashboard />
+      </div>
+    </AgentShell>
   )
 }

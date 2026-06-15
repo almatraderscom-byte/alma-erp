@@ -142,18 +142,35 @@ export default function AgentSidebar({
   }
 
   const sidebarContent = (
-    <div className={cn('flex h-full flex-col bg-surface', isMobile && 'safe-top')}>
+    <div className={cn('flex h-full flex-col bg-[rgba(12,12,16,0.7)] backdrop-blur-2xl', isMobile && 'safe-top')}>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+      <div className="flex items-center justify-between border-b border-white/[0.04] px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-gold">ALMA Agent</span>
-          <a href="/agent/costs" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="খরচ ড্যাশবোর্ড">
+          <span
+            className="text-sm font-bold text-gold"
+            style={{ textShadow: '0 0 12px rgba(201,168,76,0.4), 0 0 4px rgba(201,168,76,0.2)' }}
+          >
+            ALMA Agent
+          </span>
+          <a
+            href="/agent/costs"
+            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-gold-lt hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            title="খরচ ড্যাশবোর্ড"
+          >
             $
           </a>
-          <a href="/agent/staff-monitor" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="স্টাফ মনিটর">
+          <a
+            href="/agent/staff-monitor"
+            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-gold-lt hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            title="স্টাফ মনিটর"
+          >
             👥
           </a>
-          <a href="/agent/trading-staff" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-amber-300" title="Trading Staff">
+          <a
+            href="/agent/trading-staff"
+            className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9px] text-muted backdrop-blur-md transition-all hover:border-gold/30 hover:bg-gold/10 hover:text-amber-300 hover:shadow-[0_0_10px_rgba(201,168,76,0.2)]"
+            title="Trading Staff"
+          >
             ₿
           </a>
         </div>
@@ -163,15 +180,15 @@ export default function AgentSidebar({
       </div>
 
       {onEnterPersonal && (
-        <div className="border-b border-border px-3 py-2">
+        <div className="border-b border-white/[0.04] px-3 py-2">
           <button
             type="button"
             onClick={onEnterPersonal}
             className={cn(
-              'w-full rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-colors',
+              'w-full rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-all',
               personalActive
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
-                : 'border-border bg-card text-cream hover:border-emerald-500/30 hover:bg-emerald-500/5',
+                ? 'border-emerald-500/50 bg-[rgba(16,185,129,0.12)] text-emerald-200 shadow-[0_0_20px_rgba(16,185,129,0.15),inset_0_0_20px_rgba(201,168,76,0.05)] backdrop-blur-md'
+                : 'border-white/[0.06] bg-white/[0.03] text-cream backdrop-blur-md hover:border-emerald-500/30 hover:bg-emerald-500/5',
             )}
           >
             🤲 ব্যক্তিগত
@@ -181,16 +198,26 @@ export default function AgentSidebar({
       )}
 
       {/* Tab bar */}
-      <div className="flex border-b border-border">
+      <div className="flex border-b border-white/[0.04]">
         <button
           onClick={() => setTab('chats')}
-          className={cn('flex-1 py-2 text-xs font-semibold transition-colors', tab === 'chats' ? 'text-gold-lt border-b-2 border-gold' : 'text-muted hover:text-cream')}
+          className={cn(
+            'flex-1 py-2 text-xs font-semibold transition-all',
+            tab === 'chats'
+              ? 'text-gold-lt border-b-2 border-gold shadow-[0_2px_8px_rgba(201,168,76,0.3)]'
+              : 'text-muted hover:bg-white/[0.03] hover:text-cream',
+          )}
         >
           💬 চ্যাট
         </button>
         <button
           onClick={() => setTab('memory')}
-          className={cn('flex-1 py-2 text-xs font-semibold transition-colors', tab === 'memory' ? 'text-gold-lt border-b-2 border-gold' : 'text-muted hover:text-cream')}
+          className={cn(
+            'flex-1 py-2 text-xs font-semibold transition-all',
+            tab === 'memory'
+              ? 'text-gold-lt border-b-2 border-gold shadow-[0_2px_8px_rgba(201,168,76,0.3)]'
+              : 'text-muted hover:bg-white/[0.03] hover:text-cream',
+          )}
         >
           🧠 স্মৃতি
         </button>
@@ -201,11 +228,11 @@ export default function AgentSidebar({
       ) : (
         <>
       {/* Project selector */}
-      <div className="border-b border-border p-3">
+      <div className="border-b border-white/[0.04] p-3">
         <select
           value={activeProject}
           onChange={(e) => setActiveProject(e.target.value)}
-          className="w-full rounded-xl bg-card border border-border px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60"
+          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
         >
           <option value={PROJECT_NONE}>সব কথোপকথন</option>
           {projects.map((p) => {
@@ -230,13 +257,13 @@ export default function AgentSidebar({
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => onNewConv(activeProject === PROJECT_NONE ? undefined : activeProject)}
-            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 px-3 py-2 text-xs font-semibold text-gold-lt hover:bg-gold/20 transition-colors"
+            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 px-3 py-2 text-xs font-semibold text-gold-lt transition-all hover:bg-gold/20 hover:border-gold/50 hover:shadow-[0_0_16px_rgba(201,168,76,0.2)]"
           >
             + নতুন চ্যাট
           </button>
           <button
             onClick={() => { setEditProject(null); setShowProjectDialog(true) }}
-            className="rounded-xl border border-border px-3 py-2 text-xs text-muted hover:text-cream hover:border-gold-dim/30 transition-colors"
+            className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2 text-xs text-muted backdrop-blur-md transition-all hover:text-cream hover:border-gold-dim/30"
             title="নতুন প্রজেক্ট"
           >
             ⊕
@@ -250,7 +277,7 @@ export default function AgentSidebar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="খুঁজুন…"
-          className="w-full rounded-xl bg-card border border-border px-3 py-2 text-xs text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60"
+          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
         />
       </div>
 
@@ -264,7 +291,7 @@ export default function AgentSidebar({
             <p className="text-[11px] text-red-400">{loadError}</p>
             <button
               onClick={() => void loadData()}
-              className="rounded-lg border border-border px-3 py-1.5 text-[11px] text-muted-hi hover:text-cream"
+              className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] text-muted-hi hover:text-cream backdrop-blur-md"
             >
               আবার চেষ্টা
             </button>
@@ -291,10 +318,10 @@ export default function AgentSidebar({
               }
             }}
             className={cn(
-              'group relative rounded-xl px-3 py-2.5 cursor-pointer transition-colors',
+              'group relative rounded-xl px-3 py-2.5 cursor-pointer transition-all',
               c.id === activeConvId
-                ? 'bg-gold/10 border border-gold-dim/40'
-                : 'hover:bg-white/[0.04] border border-transparent',
+                ? 'bg-[rgba(201,168,76,0.08)] backdrop-blur-md border border-[rgba(201,168,76,0.25)] shadow-[0_0_16px_rgba(201,168,76,0.1)]'
+                : 'hover:bg-white/[0.03] border border-transparent',
             )}
           >
             {renameId === c.id ? (
@@ -307,7 +334,7 @@ export default function AgentSidebar({
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onBlur={() => setRenameId(null)}
-                  className="w-full rounded-lg bg-card border border-gold-dim/40 px-2 py-1 text-xs text-cream focus:outline-none"
+                  className="w-full rounded-lg bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-gold-dim/40 px-2 py-1 text-xs text-cream focus:outline-none"
                 />
               </form>
             ) : (
@@ -334,7 +361,7 @@ export default function AgentSidebar({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-border bg-surface shadow-xl"
+                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl shadow-xl"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -366,7 +393,7 @@ export default function AgentSidebar({
           <button
             onClick={() => void loadData(true, nextCursor)}
             disabled={loadingMore}
-            className="mt-2 w-full rounded-xl border border-border py-2 text-[11px] text-muted-hi hover:text-cream disabled:opacity-50"
+            className="mt-2 w-full rounded-xl border border-white/[0.06] bg-white/[0.03] py-2 text-[11px] text-muted-hi backdrop-blur-md hover:text-cream disabled:opacity-50"
           >
             {loadingMore ? 'লোড হচ্ছে…' : 'আরও দেখুন'}
           </button>
@@ -391,21 +418,21 @@ export default function AgentSidebar({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
             onClick={() => setDeleteId(null)}
           >
             <motion.div
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6"
+              className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="mb-2 font-bold text-cream">কথোপকথন মুছবেন?</h3>
               <p className="mb-5 text-sm text-muted-hi">এই কথোপকথন এবং সকল বার্তা স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteId(null)} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted-hi hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20">মুছুন</button>
+                <button onClick={() => setDeleteId(null)} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
+                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20 hover:shadow-[0_0_12px_rgba(248,113,113,0.2)]">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>
@@ -425,7 +452,7 @@ export default function AgentSidebar({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/60"
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
               onClick={onClose}
             />
             <motion.div
@@ -444,7 +471,7 @@ export default function AgentSidebar({
   }
 
   return (
-    <div className={cn('flex-shrink-0 border-r border-border transition-all duration-200', open ? 'w-64' : 'w-0 overflow-hidden')}>
+    <div className={cn('flex-shrink-0 border-r border-white/[0.04] transition-all duration-200', open ? 'w-64' : 'w-0 overflow-hidden')}>
       {open && sidebarContent}
     </div>
   )
@@ -517,11 +544,11 @@ function MemoryView() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Scope filter */}
-      <div className="border-b border-border px-3 py-2">
+      <div className="border-b border-white/[0.04] px-3 py-2">
         <select
           value={scopeFilter}
           onChange={(e) => setScopeFilter(e.target.value)}
-          className="w-full rounded-xl bg-card border border-border px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60"
+          className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
         >
           <option value="all">সব ক্যাটাগরি</option>
           <option value="personal">ব্যক্তিগত</option>
@@ -533,7 +560,7 @@ function MemoryView() {
       {/* Memory list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {financeSummary && (financeSummary.balances.length > 0 || financeSummary.monthExpensesByCategory.length > 0) && (
-          <div className="mb-3 rounded-xl border border-gold-dim/30 bg-gold/5 p-3 text-[11px]">
+          <div className="mb-3 rounded-xl border border-[rgba(201,168,76,0.25)] bg-[rgba(201,168,76,0.06)] backdrop-blur-md p-3 text-[11px] shadow-[0_0_20px_rgba(201,168,76,0.08)]">
             <p className="mb-2 font-semibold text-gold-lt">💰 আর্থিক সারসংক্ষেপ</p>
             {financeSummary.balances.length > 0 && (
               <div className="mb-2">
@@ -567,8 +594,13 @@ function MemoryView() {
           <div
             key={m.id}
             className={cn(
-              'rounded-xl border p-3 text-[11px] transition-colors',
-              m.pinned ? 'border-gold-dim/40 bg-gold/5' : 'border-border bg-card',
+              'rounded-xl border p-3 text-[11px] transition-all backdrop-blur-md',
+              m.pinned
+                ? 'border-[rgba(201,168,76,0.3)] bg-[rgba(201,168,76,0.08)] shadow-[0_0_14px_rgba(201,168,76,0.1)]'
+                : 'border-white/[0.06] bg-white/[0.03]',
+              m.scope === 'personal' && !m.pinned && 'shadow-[0_0_10px_rgba(96,165,250,0.05)]',
+              m.scope === 'business' && !m.pinned && 'shadow-[0_0_10px_rgba(201,168,76,0.05)]',
+              m.scope === 'staff' && !m.pinned && 'shadow-[0_0_10px_rgba(192,132,252,0.05)]',
             )}
           >
             <div className="mb-1.5 flex items-center gap-2">
@@ -610,19 +642,19 @@ function MemoryView() {
         {deleteMemId && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
             onClick={() => setDeleteMemId(null)}
           >
             <motion.div
               initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6"
+              className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="mb-2 font-bold text-cream">স্মৃতি মুছবেন?</h3>
               <p className="mb-5 text-sm text-muted-hi">এই তথ্য স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteMemId(null)} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted-hi hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20">মুছুন</button>
+                <button onClick={() => setDeleteMemId(null)} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
+                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl bg-red-400/10 border border-red-400/30 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-400/20 hover:shadow-[0_0_12px_rgba(248,113,113,0.2)]">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>
@@ -683,14 +715,14 @@ function ProjectDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ scale: 0.95 }}
         animate={{ scale: 1 }}
         exit={{ scale: 0.95 }}
-        className="w-full max-w-md rounded-2xl border border-border bg-surface p-6"
+        className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[rgba(15,15,20,0.85)] backdrop-blur-2xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-5 font-bold text-cream">{project ? 'প্রজেক্ট সম্পাদনা' : 'নতুন প্রজেক্ট'}</h3>
@@ -698,13 +730,13 @@ function ProjectDialog({
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">নাম *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ALMA Trading"
-              className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60"
+              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
             />
           </div>
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">বিবরণ</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="সংক্ষিপ্ত বিবরণ"
-              className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60"
+              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
             />
           </div>
           <div>
@@ -712,7 +744,7 @@ function ProjectDialog({
             <select
               value={businessId}
               onChange={(e) => setBusinessId(e.target.value)}
-              className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream focus:outline-none focus:border-gold-dim/60"
+              className="w-full rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
             >
               <option value="">— Personal / cross-business —</option>
               <option value="ALMA_LIFESTYLE">ALMA Lifestyle</option>
@@ -727,14 +759,14 @@ function ProjectDialog({
             <textarea value={sysInstructions} onChange={(e) => setSysInstructions(e.target.value)}
               placeholder="এই প্রজেক্টের জন্য বিশেষ নির্দেশনা…"
               rows={4}
-              className="w-full resize-none rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60"
+              className="w-full resize-none rounded-xl bg-[rgba(20,20,28,0.5)] backdrop-blur-md border border-white/[0.06] px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 focus:shadow-[0_0_8px_rgba(201,168,76,0.15)]"
             />
           </div>
         </div>
         <div className="mt-5 flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted-hi hover:text-cream">বাতিল</button>
+          <button onClick={onClose} className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2.5 text-sm text-muted-hi backdrop-blur-md hover:text-cream">বাতিল</button>
           <button onClick={save} disabled={!name.trim() || saving}
-            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 py-2.5 text-sm font-semibold text-gold-lt hover:bg-gold/20 disabled:opacity-40"
+            className="flex-1 rounded-xl bg-gold/10 border border-gold-dim/40 py-2.5 text-sm font-semibold text-gold-lt hover:bg-gold/20 hover:shadow-[0_0_16px_rgba(201,168,76,0.2)] disabled:opacity-40"
           >
             {saving ? '…' : 'সংরক্ষণ'}
           </button>

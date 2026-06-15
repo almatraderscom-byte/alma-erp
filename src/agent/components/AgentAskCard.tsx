@@ -34,7 +34,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
         layout
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mt-3 rounded-xl border border-blue-500/25 bg-blue-950/20 px-4 py-3 text-sm"
+        className="mt-3 rounded-xl border border-[rgba(96,165,250,0.2)] bg-[rgba(10,15,30,0.5)] backdrop-blur-xl px-4 py-3 text-sm shadow-[0_0_16px_rgba(96,165,250,0.06)]"
       >
         <p className="text-xs text-zinc-500">{card.question}</p>
         <p className="mt-1 text-xs font-medium text-blue-200">
@@ -47,7 +47,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
   return (
     <motion.div
       layout
-      className="mt-3 rounded-xl border border-blue-500/40 bg-blue-950/30 p-4 text-sm"
+      className="mt-3 rounded-xl border border-[rgba(96,165,250,0.25)] bg-[rgba(10,15,30,0.5)] backdrop-blur-xl p-4 text-sm shadow-[0_0_20px_rgba(96,165,250,0.08)]"
     >
       <div className="mb-2 flex items-center gap-2 font-semibold text-blue-300">
         <span>❓</span>
@@ -61,7 +61,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
             type="button"
             onClick={() => handleSelect(opt)}
             disabled={disabled}
-            className="rounded-lg border border-blue-500/30 bg-blue-900/40 px-4 py-2.5 text-left text-xs font-medium text-blue-100 transition-colors hover:bg-blue-800/50 disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-[rgba(96,165,250,0.2)] bg-[rgba(96,165,250,0.06)] backdrop-blur-md px-4 py-2.5 text-left text-xs font-medium text-blue-100 transition-all hover:bg-[rgba(96,165,250,0.12)] hover:border-[rgba(96,165,250,0.35)] hover:shadow-[0_0_12px_rgba(96,165,250,0.15)] disabled:pointer-events-none disabled:opacity-40"
           >
             {opt}
           </button>

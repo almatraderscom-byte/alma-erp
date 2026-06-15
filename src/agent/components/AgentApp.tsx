@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { motion } from 'framer-motion'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
@@ -543,7 +544,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   }
 
   return (
-    <div className="agent-chat-root flex h-full min-h-0 overflow-hidden bg-black select-text">
+    <div className="agent-chat-root flex h-full min-h-0 overflow-hidden bg-transparent select-text">
       {/* Sidebar */}
       <AgentSidebar
         open={sidebarOpen}
@@ -559,11 +560,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       {/* Main area */}
       <div className="flex min-h-0 flex-1 flex-col">
-        {/* Top bar */}
-        <header className="safe-top safe-x flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/80 px-3 py-2 backdrop-blur-md md:gap-3 md:px-4 md:py-2.5">
+        {/* Top bar — glass morphism */}
+        <header className="safe-top safe-x relative flex shrink-0 items-center gap-2 border-b border-white/[0.04] bg-[rgba(10,10,14,0.6)] px-3 py-2 backdrop-blur-2xl md:gap-3 md:px-4 md:py-2.5">
           <Link
             href="/"
-            className="flex h-11 shrink-0 items-center justify-center gap-1 rounded-xl border border-white/[0.08] px-2.5 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-cream active:scale-[0.98] md:h-9 md:px-3"
+            className="neon-gold-hover flex h-11 shrink-0 items-center justify-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.02] px-2.5 text-[11px] font-medium text-muted transition-all hover:border-gold-dim/30 hover:text-cream hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] active:scale-[0.98] md:h-9 md:px-3"
             title="ALMA ERP হোম"
             aria-label="ALMA ERP হোমে ফিরে যান"
           >
@@ -573,7 +574,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg text-muted transition-colors hover:bg-white/[0.04] hover:text-cream active:scale-[0.98] md:h-9 md:w-9"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg text-muted transition-all hover:bg-white/[0.04] hover:text-cream hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] active:scale-[0.98] md:h-9 md:w-9"
             title="সাইডবার"
             aria-label="সাইডবার খুলুন"
           >
@@ -583,19 +584,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             {activePersonalMode ? '🤲 ব্যক্তিগত মোড' : (activeConvId ? 'কথোপকথন' : 'নতুন কথোপকথন')}
           </span>
           {activePersonalMode && (
-            <span className="hidden shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-200 sm:inline">
+            <span className="hidden shrink-0 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-200 shadow-[0_0_12px_rgba(52,211,153,0.08)] backdrop-blur-md sm:inline">
               ব্যক্তিগত
             </span>
           )}
           <a
             href="/agent/costs"
-            className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-gold-lt active:scale-[0.98] md:px-2.5"
+            className="neon-gold-hover flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 text-[11px] font-medium text-muted transition-all hover:border-gold-dim/30 hover:text-gold-lt hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] active:scale-[0.98] md:px-2.5"
           >
             খরচ
           </a>
           <a
             href="/agent/staff-monitor"
-            className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-medium text-muted transition-colors hover:border-gold-dim/30 hover:text-gold-lt active:scale-[0.98] md:px-2.5"
+            className="neon-gold-hover flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 text-[11px] font-medium text-muted transition-all hover:border-gold-dim/30 hover:text-gold-lt hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] active:scale-[0.98] md:px-2.5"
           >
             স্টাফ
           </a>
@@ -603,15 +604,24 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             <button
               type="button"
               onClick={() => setArtifactsOpen((v) => !v)}
-              className="hidden h-9 shrink-0 items-center rounded-xl border border-white/[0.08] px-3 text-[11px] font-semibold text-muted-hi transition-colors hover:border-gold-dim/30 hover:text-cream sm:flex"
+              className="neon-gold-hover hidden h-9 shrink-0 items-center rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 text-[11px] font-semibold text-muted-hi transition-all hover:border-gold-dim/30 hover:text-cream hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] sm:flex"
             >
               ✦ {artifacts.length}
             </button>
           )}
+          {/* Animated gold line at bottom of header */}
+          <motion.div
+            className="absolute bottom-0 left-0 right-0 h-px"
+            style={{
+              background: 'linear-gradient(90deg, transparent 0%, rgba(201,168,76,0.3) 30%, rgba(201,168,76,0.5) 50%, rgba(201,168,76,0.3) 70%, transparent 100%)',
+            }}
+            animate={{ opacity: [0.4, 0.8, 0.4] }}
+            transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+          />
         </header>
 
         {activePersonalMode && (
-          <div className="shrink-0 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-center text-[11px] text-emerald-200/90">
+          <div className="shrink-0 border-b border-emerald-500/15 bg-[rgba(16,185,129,0.04)] px-4 py-2 text-center text-[11px] text-emerald-200/90 backdrop-blur-md shadow-[inset_0_0_20px_rgba(16,185,129,0.03)]">
             আপনি এখন ব্যক্তিগত মোডে আছেন — শুধু ব্যক্তিগত ও পারিবারিক বিষয়
           </div>
         )}

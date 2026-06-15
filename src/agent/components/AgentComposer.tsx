@@ -138,16 +138,17 @@ export default function AgentComposer({
   const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming
 
   return (
-    <div className="safe-x shrink-0 border-t border-white/[0.06] bg-gradient-to-t from-black via-black/95 to-black/80 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-4 md:pb-4 md:pt-3">
+    <div className="safe-x shrink-0 bg-transparent px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 md:px-5 md:pb-5 md:pt-4">
+      {/* File preview strip */}
       {files.length > 0 && (
-        <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+        <div className="mb-2.5 flex gap-2 overflow-x-auto pb-1">
           {files.map((f, i) => (
             <div key={i} className="relative shrink-0">
               {f.file.type.startsWith('image/') ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={f.previewUrl} alt="" className="h-16 w-16 rounded-xl border border-white/[0.08] object-cover" />
+                <img src={f.previewUrl} alt="" className="h-16 w-16 rounded-xl border border-white/[0.06] object-cover backdrop-blur-md" />
               ) : (
-                <div className="flex h-16 w-16 flex-col items-center justify-center rounded-xl border border-white/[0.08] bg-card text-[10px] text-muted-hi">
+                <div className="flex h-16 w-16 flex-col items-center justify-center rounded-xl border border-white/[0.06] bg-[rgba(20,20,28,0.6)] text-[10px] text-muted-hi backdrop-blur-md">
                   <span className="text-xl">📄</span>
                   <span className="truncate px-1 text-center">PDF</span>
                 </div>
@@ -155,7 +156,7 @@ export default function AgentComposer({
               <button
                 type="button"
                 onClick={() => removeFile(i)}
-                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white shadow"
+                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white shadow-[0_0_8px_rgba(239,68,68,0.3)]"
               >
                 ✕
               </button>
@@ -164,29 +165,33 @@ export default function AgentComposer({
         </div>
       )}
 
-
+      {/* Recording UI — glass with red glow */}
       {recording && (
-        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-2.5">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+        <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-red-400/20 bg-[rgba(20,12,12,0.6)] px-4 py-2.5 shadow-[0_0_20px_rgba(239,68,68,0.06)] backdrop-blur-xl">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-400 shadow-[0_0_8px_rgba(239,68,68,0.4)]" />
           <span className="flex-1 text-sm font-semibold text-red-400">
             রেকর্ডিং {Math.floor(recordSecs / 60).toString().padStart(2, '0')}:{(recordSecs % 60).toString().padStart(2, '0')}
           </span>
-          <button type="button" onClick={cancelRecording} className="text-xs text-muted-hi hover:text-cream">বাতিল</button>
-          <button type="button" onClick={stopRecording} className="rounded-lg bg-red-400/20 px-3 py-1 text-xs font-semibold text-red-400">বন্ধ</button>
+          <button type="button" onClick={cancelRecording} className="text-xs text-muted-hi transition-colors hover:text-cream">বাতিল</button>
+          <button type="button" onClick={stopRecording} className="rounded-lg bg-red-400/15 px-3 py-1 text-xs font-semibold text-red-400 transition-colors hover:bg-red-400/25">বন্ধ</button>
         </div>
       )}
 
+      {/* Input pill — floating glass composer */}
       <div
         className={cn(
-          'flex items-end gap-1.5 rounded-[1.35rem] border border-white/[0.1] bg-zinc-900/90 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl md:gap-2 md:p-2',
-          streaming && 'border-gold-dim/25',
+          'flex items-end gap-1.5 rounded-2xl border bg-[rgba(15,15,20,0.6)] p-1.5 shadow-[0_8px_40px_rgba(0,0,0,0.5)] backdrop-blur-2xl transition-all duration-300 md:gap-2 md:p-2',
+          streaming
+            ? 'border-[rgba(201,168,76,0.3)] shadow-[0_0_24px_rgba(201,168,76,0.08),0_8px_40px_rgba(0,0,0,0.5)]'
+            : 'border-white/[0.08] focus-within:border-[rgba(139,105,20,0.4)] focus-within:shadow-[0_0_20px_rgba(201,168,76,0.08),0_8px_40px_rgba(0,0,0,0.5)]',
         )}
       >
+        {/* Attach button */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || streaming}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base text-muted-hi transition-colors hover:bg-white/[0.05] hover:text-cream disabled:opacity-40 md:h-9 md:w-9"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base text-muted-hi transition-all hover:bg-white/[0.05] hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.06)] disabled:opacity-40 md:h-9 md:w-9"
           title="ফাইল যুক্ত করুন"
           aria-label="ফাইল যুক্ত করুন"
         >
@@ -206,12 +211,13 @@ export default function AgentComposer({
           style={{ fontFamily: 'var(--font-sans)' }}
         />
 
+        {/* Mic button */}
         {!recording && !streaming && (
           <button
             type="button"
             onClick={startRecording}
             disabled={disabled}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base text-muted-hi transition-colors hover:bg-white/[0.05] hover:text-cream disabled:opacity-40 md:h-9 md:w-9"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base text-muted-hi transition-all hover:bg-white/[0.05] hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.06)] disabled:opacity-40 md:h-9 md:w-9"
             title="ভয়েস ইনপুট"
             aria-label="ভয়েস ইনপুট"
           >
@@ -219,11 +225,12 @@ export default function AgentComposer({
           </button>
         )}
 
+        {/* Send / Stop button */}
         {streaming ? (
           <button
             type="button"
             onClick={onStop}
-            className="flex h-10 shrink-0 items-center justify-center rounded-xl bg-red-500/15 px-3 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/25 md:h-9"
+            className="flex h-10 shrink-0 items-center justify-center rounded-xl bg-red-500/15 px-3 text-xs font-semibold text-red-400 transition-all hover:bg-red-500/25 hover:shadow-[0_0_12px_rgba(239,68,68,0.1)] md:h-9"
           >
             ⏹
           </button>
@@ -235,7 +242,7 @@ export default function AgentComposer({
             className={cn(
               'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold transition-all md:h-9 md:w-9',
               canSend
-                ? 'bg-gold/20 text-gold-lt hover:bg-gold/30 active:scale-95'
+                ? 'bg-gradient-to-br from-gold/30 to-gold-dim/20 text-gold-lt shadow-[0_0_16px_rgba(201,168,76,0.12)] hover:from-gold/40 hover:to-gold-dim/30 hover:shadow-[0_0_20px_rgba(201,168,76,0.18)] active:scale-95'
                 : 'bg-white/[0.04] text-zinc-600',
             )}
             aria-label="পাঠান"
