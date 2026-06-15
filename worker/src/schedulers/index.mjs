@@ -333,16 +333,12 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'staff-approval-escalation': {
       const { pollApprovalEscalations } = await import('../approval/escalation-poller.mjs')
-      const res = await pollApprovalEscalations()
-      dutyStatus = res?.dutyStatus ?? 'done'
-      dutyDetail = res?.dutyDetail ?? ''
+      dutyResult = await pollApprovalEscalations() ?? { dutyStatus: 'done' }
       break
     }
     case 'auto-fix-scan': {
       const { runErrorCollector } = await import('../auto-fix/error-collector.mjs')
-      const res = await runErrorCollector()
-      dutyStatus = res?.dutyStatus ?? 'done'
-      dutyDetail = res?.dutyDetail ?? ''
+      dutyResult = await runErrorCollector() ?? { dutyStatus: 'done' }
       break
     }
     case 'weekly-reflection': {

@@ -230,6 +230,11 @@ export function startDiagnosticHttpServer() {
 
       // ── Vercel Alert Webhook ──
       if (req.method === 'POST' && pathname === '/vercel-alert') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
         const chunks = []
         for await (const chunk of req) chunks.push(chunk)
         let body

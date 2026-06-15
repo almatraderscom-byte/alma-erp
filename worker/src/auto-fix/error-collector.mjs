@@ -92,7 +92,7 @@ export async function runErrorCollector() {
   try {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
     const { data: failures } = await supabase
-      .from('agent_duty_logs')
+      .from('agent_duty_log')
       .select('duty, label, detail, status')
       .eq('duty_date', today)
       .in('status', ['failed'])
@@ -122,29 +122,33 @@ export async function runErrorCollector() {
     console.warn('[error-collector] duty check failed:', err.message)
   }
 
-  // Deduplicate: don't re-request fixes for already-pending issues
+  // Rate limit: max 3 auto-fix requests per hour
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const { count: recentCount } = await supabase
+    .from('agent_pending_actions')
+    .select('*', { count: 'exact', head: true })
+    .eq('type', 'auto_fix')
+    .gte('created_at', hourAgo)
+
+  if ((recentCount ?? 0) >= 3) {
+    detail = `Rate limited: ${issues.length} issues found but already 3+ requests this hour`
+    return { dutyStatus: 'done', dutyDetail: detail }
+  }
+
+  // Deduplicate by signal: skip issues that already have a pending/in-progress fix
   const newIssues = []
   for (const issue of issues) {
-    const { data: existing } = await supabase
-      .from('agent_pending_actions')
-      .select('id')
-      .eq('type', 'auto_fix')
-      .in('status', ['pending', 'in_progress', 'approved'])
-      .limit(1)
+    if (issue.signal) {
+      const { data: existing } = await supabase
+        .from('agent_pending_actions')
+        .select('id')
+        .eq('type', 'auto_fix')
+        .in('status', ['pending', 'in_progress', 'approved'])
+        .like('summary', `%${issue.signal.slice(0, 60)}%`)
+        .limit(1)
 
-    // Basic rate limit: max 3 auto-fix requests per hour
-    const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-    const { count } = await supabase
-      .from('agent_pending_actions')
-      .select('*', { count: 'exact', head: true })
-      .eq('type', 'auto_fix')
-      .gte('created_at', hourAgo)
-
-    if ((count ?? 0) >= 3) {
-      detail = `Rate limited: ${issues.length} issues found but already 3+ requests this hour`
-      break
+      if (existing?.length) continue
     }
-
     newIssues.push(issue)
   }
 

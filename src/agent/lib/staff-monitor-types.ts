@@ -16,6 +16,7 @@ export const DUTY_TO_JOB: Record<string, string> = {
   cost_reconcile: 'cost-reconcile',
   morning_dispatch: 'morning-staff-reminder',
   ads_monitor: 'ads-monitor',
+  ads_optimizer: 'ads-optimizer',
   token_health: 'token-health',
   content_engine_1: 'content-engine-1',
   subscription_renewal: 'subscription-renewal',

@@ -63,7 +63,6 @@ export async function dispatchAutoFix({ actionId, issue }) {
 
   const prompt = buildSafeFixPrompt(issue)
   const [repoOwner, repoName] = GITHUB_REPO.split('/')
-  const branchName = `auto-fix/${actionId.slice(0, 8)}-${Date.now()}`
 
   try {
     const result = await Agent.prompt(prompt, {
