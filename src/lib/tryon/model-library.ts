@@ -11,7 +11,10 @@ export type SavedModel = {
   imagePath: string
   isDefault: boolean
   notes?: string
+  role?: ModelRole
 }
+
+export type ModelRole = 'father' | 'mother' | 'son' | 'daughter' | 'single'
 
 export type TryOnStyle = 'studio' | 'outdoor_bd' | 'festival' | 'lifestyle'
 export type TryOnPose = 'front' | 'three_quarter' | 'walking' | 'sitting' | 'detail'
@@ -75,6 +78,16 @@ export async function resolveModel(idOrName?: string): Promise<SavedModel | null
   return lib.find((m) => m.id.toLowerCase() === q || m.name.toLowerCase().includes(q)) ?? null
 }
 
+export async function resolveModelByRole(role: ModelRole): Promise<SavedModel | null> {
+  const lib = await getModelLibrary()
+  const byRole = lib.find((m) => m.role === role)
+  if (byRole) return byRole
+  if (role === 'single') {
+    return lib.find((m) => m.role === 'father') ?? getDefaultModel()
+  }
+  return getDefaultModel()
+}
+
 export function buildTryOnPrompt(opts: {
   style?: TryOnStyle
   pose?: TryOnPose
@@ -102,4 +115,29 @@ export function buildTryOnPrompt(opts: {
   ]
     .filter(Boolean)
     .join(' ')
+}
+
+export function buildFamilyVariantExtra(variant: string, fabric?: string): string {
+  const fabricNote = fabric ? `Garment fabric/details: ${fabric}.` : ''
+  if (variant === 'father_son') {
+    return [
+      'COMPOSITION: Bangladeshi father (age 35-45) and young son (age 8-12) standing together in ONE scene,',
+      'both wearing matching coordinated outfits from the product reference — family fashion shoot.',
+      fabricNote,
+    ].filter(Boolean).join(' ')
+  }
+  if (variant === 'mother_son') {
+    return [
+      'COMPOSITION: Bangladeshi mother and young son together in ONE scene, matching family outfits from the product.',
+      fabricNote,
+    ].filter(Boolean).join(' ')
+  }
+  if (variant === 'full_family') {
+    return [
+      'COMPOSITION: Full Bangladeshi family (father, mother, son, daughter) together in ONE scene,',
+      'all wearing matching coordinated outfits from the product reference.',
+      fabricNote,
+    ].filter(Boolean).join(' ')
+  }
+  return fabricNote
 }

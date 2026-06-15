@@ -8,6 +8,7 @@ import { ADVISOR_ROLE_PROMPT } from '@/agent/tools/advisor-tools'
 import { OWNER_TODO_ROLE_PROMPT } from '@/agent/tools/owner-todo-tools'
 import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
+import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
 ## নামাজ
@@ -163,6 +164,7 @@ const STATIC_CACHED_PROMPT =
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
   + `\n${TRYON_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
+  + `\n${CONTENT_ENGINE_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE

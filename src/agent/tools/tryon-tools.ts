@@ -7,6 +7,7 @@ import {
   type SavedModel,
   type TryOnStyle,
   type TryOnPose,
+  type ModelRole,
 } from '@/lib/tryon/model-library'
 import type { AgentTool } from './registry'
 
@@ -28,6 +29,11 @@ const manage_model_library: AgentTool = {
       name: { type: 'string', description: 'Display name (add)' },
       imagePath: { type: 'string', description: 'agent-files storage path of the uploaded model photo (add)' },
       notes: { type: 'string', description: 'Optional: body type / gender / age range — helps fit accuracy' },
+      role: {
+        type: 'string',
+        enum: ['father', 'mother', 'son', 'daughter', 'single'],
+        description: 'Family role for content engine composition (add)',
+      },
     },
     required: ['action'],
   },
@@ -56,6 +62,7 @@ const manage_model_library: AgentTool = {
         imagePath,
         isDefault: lib.length === 0,
         notes: input.notes ? String(input.notes) : undefined,
+        role: input.role ? (String(input.role) as SavedModel['role']) : undefined,
       }
       await setModelLibrary([...lib, model])
       return {

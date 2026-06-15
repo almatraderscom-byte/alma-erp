@@ -106,18 +106,29 @@ export async function POST(req: NextRequest) {
     pushTelegram = true
   } else if (status === 'success' && (data?.storagePath || data?.imageUrl)) {
     const storagePath = typeof data?.storagePath === 'string' ? data.storagePath.trim() : ''
-    try {
-      const imageUrl = storagePath
-        ? await agentStorageSignedUrl(storagePath, IMAGE_SIGNED_URL_TTL_SEC)
-        : String(data?.imageUrl ?? '')
-      if (!imageUrl) throw new Error('No image path in job result')
-      messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
-    } catch (signErr) {
-      const detail = signErr instanceof Error ? signErr.message : String(signErr)
-      console.error('[job-result] signed URL failed', { storagePath, detail })
-      messageText = storagePath
-        ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
-        : `✅ Image generated but preview unavailable.`
+    const cp = payload.contentPipeline as { gate1Id?: string } | undefined
+    if (cp?.gate1Id && storagePath) {
+      try {
+        const { onPipelineRenderComplete } = await import('@/lib/content-engine/pipeline')
+        await onPipelineRenderComplete(pendingActionId, storagePath)
+      } catch (pipeErr) {
+        console.error('[job-result] content pipeline advance failed:', pipeErr)
+      }
+      messageText = null
+    } else {
+      try {
+        const imageUrl = storagePath
+          ? await agentStorageSignedUrl(storagePath, IMAGE_SIGNED_URL_TTL_SEC)
+          : String(data?.imageUrl ?? '')
+        if (!imageUrl) throw new Error('No image path in job result')
+        messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+      } catch (signErr) {
+        const detail = signErr instanceof Error ? signErr.message : String(signErr)
+        console.error('[job-result] signed URL failed', { storagePath, detail })
+        messageText = storagePath
+          ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
+          : `✅ Image generated but preview unavailable.`
+      }
     }
   } else if (action.type === 'outbound_call' && status === 'failed') {
     messageText = `❌ স্যার, কল দেওয়া যায়নি।\nকারণ: ${error ?? String(data?.error ?? 'Unknown error')}`

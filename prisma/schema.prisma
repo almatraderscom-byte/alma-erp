@@ -1893,6 +1893,22 @@ model AgentOwnerTodo {
   @@map("agent_owner_todos")
 }
 
+model ProductContentAsset {
+  id           String    @id @default(uuid())
+  productCode  String    @map("product_code")
+  name         String?
+  category     String?
+  fabric       String?   @db.Text
+  imagePath    String    @map("image_path")
+  familyMatch  Boolean   @default(false) @map("family_match")
+  lastPostedAt DateTime? @map("last_posted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([lastPostedAt])
+  @@index([productCode])
+  @@map("product_content_asset")
+}
+
 model AgentStaff {
   id             String                @id @default(uuid())
   name           String

@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+/**
+ * Content engine Phase 1 smoke (static contracts).
+ */
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const failures = []
+
+function fail(msg) {
+  console.error(`FAIL ${msg}`)
+  failures.push(msg)
+}
+
+function ok(msg) {
+  console.log(`PASS ${msg}`)
+}
+
+function read(rel) {
+  const p = resolve(root, rel)
+  if (!existsSync(p)) {
+    fail(`missing ${rel}`)
+    return ''
+  }
+  return readFileSync(p, 'utf8')
+}
+
+const schema = read('prisma/schema.prisma')
+const variants = read('src/lib/content-engine/generate-variants.ts')
+const brand = read('src/lib/content-engine/brand-frame.ts')
+const caption = read('src/lib/content-engine/caption.ts')
+const pipeline = read('src/lib/content-engine/pipeline.ts')
+const tools = read('src/agent/tools/content-engine-tools.ts')
+const registry = read('src/agent/tools/registry.ts')
+const prompt = read('src/agent/lib/system-prompt.ts')
+const modelLib = read('src/lib/tryon/model-library.ts')
+const approve = read('src/app/api/assistant/actions/[id]/approve/route.ts')
+const jobResult = read('src/app/api/assistant/internal/job-result/route.ts')
+
+if (schema.includes('model ProductContentAsset')) ok('ProductContentAsset schema')
+else fail('ProductContentAsset schema')
+
+if (existsSync(resolve(root, 'prisma/migrations/20260615120000_product_content_asset/migration.sql'))) {
+  ok('migration file')
+} else fail('migration file')
+
+for (const f of ['generate-variants.ts', 'brand-frame.ts', 'caption.ts', 'pipeline.ts']) {
+  if (existsSync(resolve(root, `src/lib/content-engine/${f}`))) ok(`content-engine/${f}`)
+  else fail(`content-engine/${f}`)
+}
+
+if (tools.includes('run_content_post') && tools.includes('add_product_asset')) ok('content-engine tools')
+else fail('content-engine tools')
+
+if (registry.includes('CONTENT_ENGINE_TOOLS')) ok('registry wired')
+else fail('registry')
+
+if (prompt.includes('CONTENT_ENGINE_ROLE_PROMPT')) ok('system prompt')
+else fail('system prompt')
+
+if (modelLib.includes('ModelRole') && modelLib.includes('resolveModelByRole')) ok('model roles')
+else fail('model roles')
+
+if (variants.includes('PHASE1_VARIANTS') && variants.includes('father_son')) ok('phase1 variants')
+else fail('phase1 variants')
+
+if (brand.includes('applyBrandFrame') && brand.includes('ALMA')) ok('brand frame')
+else fail('brand frame')
+
+if (pipeline.includes('content_gate1') && pipeline.includes('content_gate2')) ok('two-gate pipeline')
+else fail('two-gate pipeline')
+
+if (approve.includes("action.type === 'content_gate1'") && approve.includes("action.type === 'content_gate2'")) {
+  ok('approve handlers')
+} else fail('approve handlers')
+
+if (jobResult.includes('onPipelineRenderComplete')) ok('job-result pipeline hook')
+else fail('job-result hook')
+
+if (failures.length) {
+  console.error(`\n${failures.length} failure(s)`)
+  process.exit(1)
+}
+
+console.log('\n✓ Content engine smoke passed')

@@ -193,6 +193,52 @@ export async function POST(
     }
   }
 
+  if (action.type === 'content_gate1') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { advanceToProRenders } = await import('@/lib/content-engine/pipeline')
+      const result = await advanceToProRenders(actionId)
+      await appendConversationNote(
+        db,
+        action,
+        '✅ কন্টেন্ট Gate 1 অনুমোদিত — PRO রেন্ডার কিউ হয়েছে। Gate 2 আসবে রেন্ডার শেষে।',
+      )
+      return Response.json({ success: true, ...result })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      return Response.json({ error: errMsg }, { status: 400 })
+    }
+  }
+
+  if (action.type === 'content_gate2') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { publishContentGate2 } = await import('@/lib/content-engine/pipeline')
+      const { postId } = await publishContentGate2(actionId)
+      await appendConversationNote(db, action, `✅ Facebook-এ পোস্ট প্রকাশিত। Post ID: ${postId}`)
+      return Response.json({ success: true, postId, message: 'Content published to Facebook.' })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'image_gen') {
     // Mark as approved — the VPS worker polls /api/assistant/internal/pending-jobs
     // and picks this up via BullMQ (worker-side queue). No BullMQ dependency in Next.js.
