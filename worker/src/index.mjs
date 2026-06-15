@@ -29,7 +29,7 @@ import { sendStaffAnnouncement } from './staff/announcement.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
 import { startTwilioHttpServer } from './twilio-http.mjs'
 import { deliverAgentTurn } from './telegram/agent-turn.mjs'
-import { startDiagnosticHttpServer } from './diagnostic-http.mjs'
+import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -520,6 +520,7 @@ const heartbeatInterval = startHeartbeatLoop({
 const healthPingInterval = startHealthPingLoop()
 
 startTwilioHttpServer()
+if (runSchedulerJobFn) setRetriggerHandler(runSchedulerJobFn)
 startDiagnosticHttpServer()
 
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')

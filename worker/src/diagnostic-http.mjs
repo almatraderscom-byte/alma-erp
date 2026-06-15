@@ -1,11 +1,14 @@
 /**
- * VPS-hosted diagnostic HTTP — READ-ONLY code grep/read for agent self-diagnosis.
+ * VPS-hosted diagnostic HTTP — code grep/read + duty retrigger for agent self-diagnosis.
  * Port 3098 (Twilio uses 3099). Auth: AGENT_INTERNAL_TOKEN Bearer.
  */
 
 import http from 'http'
 import { timingSafeEqual } from 'crypto'
 import { runCodeSearch } from './diagnostic/code-search.mjs'
+
+let _runSchedulerJob = null
+export function setRetriggerHandler(fn) { _runSchedulerJob = fn }
 
 function verifyToken(token) {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -43,14 +46,51 @@ export function startDiagnosticHttpServer() {
         return
       }
 
+      const auth = req.headers.authorization ?? ''
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+
+      if (req.method === 'POST' && pathname === '/retrigger') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        if (!body.jobName || typeof body.jobName !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'jobName required' }))
+          return
+        }
+        if (!_runSchedulerJob) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'scheduler not initialized' }))
+          return
+        }
+        console.log(`[diagnostic-http] retrigger request: ${body.jobName}`)
+        try {
+          await _runSchedulerJob(body.jobName, { catchUp: true })
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, jobName: body.jobName }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+
       if (req.method !== 'POST' || pathname !== '/code-search') {
         res.writeHead(404)
         res.end('not found')
         return
       }
 
-      const auth = req.headers.authorization ?? ''
-      const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
       if (!verifyToken(token)) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'unauthorized' }))
