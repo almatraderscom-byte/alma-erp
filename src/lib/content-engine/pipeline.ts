@@ -330,8 +330,9 @@ export async function onPipelineRenderComplete(
   if (!product) return
 
   variant.framedImagePath = await applyBrandFrame(storagePath, {
+    mode: 'model_overlay',
     productCode: payload.productCode,
-    hook: payload.hook,
+    hook: payload.hook ?? 'নতুন কালেকশন',
     theme: payload.theme,
     footer: payload.qualityPass === 'pro',
   })

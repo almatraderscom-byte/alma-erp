@@ -30,6 +30,8 @@ function read(rel) {
 const schema = read('prisma/schema.prisma')
 const variants = read('src/lib/content-engine/generate-variants.ts')
 const brand = read('src/lib/content-engine/brand-frame.ts')
+const brandId = read('src/lib/content-engine/brand-identity.ts')
+const brandTools = read('src/agent/tools/brand-tools.ts')
 const caption = read('src/lib/content-engine/caption.ts')
 const pipeline = read('src/lib/content-engine/pipeline.ts')
 const tools = read('src/agent/tools/content-engine-tools.ts')
@@ -46,7 +48,7 @@ if (existsSync(resolve(root, 'prisma/migrations/20260615120000_product_content_a
   ok('migration file')
 } else fail('migration file')
 
-for (const f of ['generate-variants.ts', 'brand-frame.ts', 'caption.ts', 'pipeline.ts']) {
+for (const f of ['generate-variants.ts', 'brand-frame.ts', 'brand-identity.ts', 'caption.ts', 'pipeline.ts']) {
   if (existsSync(resolve(root, `src/lib/content-engine/${f}`))) ok(`content-engine/${f}`)
   else fail(`content-engine/${f}`)
 }
@@ -89,8 +91,27 @@ else fail('draft→standard worker quality')
 if (pipeline.includes('generateCaption(product') && pipeline.includes('captionResult.hook')) ok('early caption hook')
 else fail('early caption hook')
 
-if (brand.includes('applyBrandFrame') && brand.includes('ALMA')) ok('brand frame')
+if (brand.includes('applyBrandFrame') && brand.includes('product_card') && brand.includes('model_overlay')) ok('brand frame')
 else fail('brand frame')
+
+if (brandId.includes('BRAND') && brandId.includes('THEME_ACCENT') && brandId.includes('F5EBDD') && brandId.includes('2A2622')) {
+  ok('brand identity')
+} else fail('brand identity')
+
+if (brandId.includes('getLogoPath') && brand.includes('getLogoPath')) ok('getLogoPath wired')
+else fail('getLogoPath wired')
+
+if (schema.includes('model BrandAsset')) ok('BrandAsset schema')
+else fail('BrandAsset schema')
+
+if (brandTools.includes('save_brand_asset')) ok('save_brand_asset tool')
+else fail('save_brand_asset tool')
+
+if (registry.includes('BRAND_TOOLS')) ok('brand tools registry')
+else fail('brand tools registry')
+
+if (prompt.includes('BRAND_ROLE_PROMPT') || prompt.includes('save_brand_asset')) ok('brand prompt wired')
+else fail('brand prompt wired')
 
 if (pipeline.includes('content_gate1') && pipeline.includes('content_gate2')) ok('two-gate pipeline')
 else fail('two-gate pipeline')

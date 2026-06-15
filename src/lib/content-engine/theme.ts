@@ -1,5 +1,5 @@
 import { upcomingSeasons } from '@/lib/marketing-calendar'
-import type { BrandTheme } from '@/lib/content-engine/brand-frame'
+import type { BrandTheme } from '@/lib/content-engine/brand-identity'
 import type { TryOnStyle } from '@/lib/tryon/model-library'
 
 export type ResolvedContentTheme = {

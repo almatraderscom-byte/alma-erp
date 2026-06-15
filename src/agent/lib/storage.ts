@@ -50,11 +50,16 @@ export async function agentStorageUpload(
   objectPath: string,
   data: Buffer,
   contentType: string,
+  opts?: { upsert?: boolean },
 ): Promise<{ bucket: string; objectPath: string }> {
   const { url, serviceKey } = await ensureAgentBucket()
   const res = await fetch(`${url}/storage/v1/object/${AGENT_BUCKET}/${objectPath}`, {
     method: 'POST',
-    headers: { ...storageHeaders(serviceKey), 'Content-Type': contentType, 'x-upsert': 'false' },
+    headers: {
+      ...storageHeaders(serviceKey),
+      'Content-Type': contentType,
+      'x-upsert': opts?.upsert ? 'true' : 'false',
+    },
     body: data,
   })
   if (!res.ok) {
@@ -78,6 +83,16 @@ export async function agentStorageSignedUrl(objectPath: string, expiresIn = 3600
   const signedPath = data.signedURL || data.signedUrl
   if (!signedPath) throw new Error('Supabase did not return a signed URL')
   return `${url}/storage/v1${signedPath}`
+}
+
+/** Copy an agent-files object to a stable path (upsert). */
+export async function agentStorageCopy(
+  sourcePath: string,
+  destPath: string,
+  contentType = 'image/png',
+): Promise<{ bucket: string; objectPath: string }> {
+  const buf = await agentStorageDownload(sourcePath)
+  return agentStorageUpload(destPath, buf, contentType, { upsert: true })
 }
 
 export async function agentStorageDownload(objectPath: string): Promise<Buffer> {

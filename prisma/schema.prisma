@@ -1909,6 +1909,15 @@ model ProductContentAsset {
   @@map("product_content_asset")
 }
 
+model BrandAsset {
+  id        String   @id @default(uuid())
+  kind      String   @unique
+  path      String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("brand_asset")
+}
+
 model AgentBrandModel {
   id        String   @id
   name      String

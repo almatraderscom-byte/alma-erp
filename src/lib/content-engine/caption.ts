@@ -3,7 +3,7 @@ import { AGENT_MODEL } from '@/agent/config'
 import { upcomingSeasons } from '@/lib/marketing-calendar'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
 import type { ProductAsset } from '@/lib/content-engine/generate-variants'
-import type { BrandTheme } from '@/lib/content-engine/brand-frame'
+import type { BrandTheme } from '@/lib/content-engine/brand-identity'
 
 export type CaptionResult = {
   hook: string
