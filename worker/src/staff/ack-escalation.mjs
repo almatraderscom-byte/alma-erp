@@ -9,11 +9,16 @@ import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
 
 async function recordAckEscalationRun(supabase) {
   const at = new Date().toISOString()
-  await supabase.from('agent_kv_settings').upsert({
-    key: 'scheduler:last_run:ack-escalation',
-    value: JSON.stringify({ at }),
-    updated_at: at,
-  }).catch((err) => console.warn('[ack-escalation] last-run log failed:', err.message))
+  try {
+    const { error } = await supabase.from('agent_kv_settings').upsert({
+      key: 'scheduler:last_run:ack-escalation',
+      value: JSON.stringify({ at }),
+      updated_at: at,
+    })
+    if (error) console.warn('[ack-escalation] last-run log failed:', error.message)
+  } catch (err) {
+    console.warn('[ack-escalation] last-run log failed:', err.message)
+  }
 }
 
 /**

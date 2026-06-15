@@ -123,6 +123,8 @@ async function getDailyConversationId(personalMode = false) {
 
 // ── Send a message to the agent backend ───────────────────────────────────
 
+const AGENT_FETCH_TIMEOUT_MS = 180_000
+
 async function sendToAgent(userMessage, conversationId, { personalMode = false } = {}) {
   const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
     method: 'POST',
@@ -135,6 +137,7 @@ async function sendToAgent(userMessage, conversationId, { personalMode = false }
       conversationId: conversationId ?? undefined,
       personalMode: personalMode || undefined,
     }),
+    signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
   })
   if (!res.ok) {
     const err = await res.text()
@@ -349,9 +352,31 @@ async function handleOwnerText(ctx, text) {
       ? 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।'
       : /quota|credit|billing/i.test(err.message)
         ? 'API কোটা শেষ — মালিককে জানানো হয়েছে।'
-        : `সমস্যা হয়েছে। আবার চেষ্টা করুন।`
+        : /504|FUNCTION_INVOCATION_TIMEOUT|timed out|TimeoutError/i.test(err.message)
+          ? 'উত্তর প্রস্তুত হতে বেশি সময় লাগছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার লিখুন।'
+          : 'সমস্যা হয়েছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার চেষ্টা করুন।'
     await ctx.reply(`❌ ${bangla}`)
   }
+}
+
+/** One owner turn at a time per chat — handler returns immediately so polling never blocks. */
+const ownerTurnInFlight = new Set()
+
+function dispatchOwnerText(ctx, text) {
+  const chatId = String(ctx.chat?.id ?? '')
+  if (!chatId) return
+  if (ownerTurnInFlight.has(chatId)) {
+    void ctx.reply('⏳ আগের মেসেজের উত্তর এখনো প্রস্তুত হচ্ছে — একটু অপেক্ষা করুন।').catch(() => {})
+    return
+  }
+  ownerTurnInFlight.add(chatId)
+  void handleOwnerText(ctx, text)
+    .catch((err) => {
+      console.error('[telegram] owner turn failed:', err.message)
+      captureWorkerError(err, 'worker.telegram.owner_turn')
+      void ctx.reply('❌ সমস্যা হয়েছে। /new দিয়ে নতুন চ্যাট শুরু করে আবার চেষ্টা করুন।').catch(() => {})
+    })
+    .finally(() => ownerTurnInFlight.delete(chatId))
 }
 
 // ── Confirm card keyboards ─────────────────────────────────────────────────
@@ -1089,7 +1114,7 @@ export function createTelegramBot() {
       )
       return
     }
-    await handleOwnerText(ctx, ctx.message.text)
+    dispatchOwnerText(ctx, ctx.message.text)
   })
 
   // ── Staff location (live + one-time) ─────────────────────────────────────
@@ -1132,7 +1157,7 @@ export function createTelegramBot() {
         return
       }
       await ctx.reply(`📝 _"${transcribed}"_`, { parse_mode: 'Markdown' })
-      await handleOwnerText(ctx, transcribed)
+      dispatchOwnerText(ctx, transcribed)
     } catch (err) {
       console.error('[telegram] voice transcription error:', err.message)
       await ctx.reply(`❌ ভয়েস নোট প্রসেস করা যায়নি: ${err.message}`)
@@ -1567,7 +1592,7 @@ export function createTelegramBot() {
         })
         await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
         await ctx.answerCbQuery(`✅ ${option}`)
-        await handleOwnerText(ctx, option)
+        dispatchOwnerText(ctx, option)
       } catch (err) {
         await ctx.answerCbQuery(`সমস্যা: ${err.message}`)
       }

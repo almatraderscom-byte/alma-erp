@@ -77,8 +77,10 @@ const longTaskQueue = new Queue('long-agent-task', {
 
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
+const stuckReenqueueCounts = new Map()
 
 const STUCK_APPROVED_MS = 10 * 60 * 1000
+const STUCK_MAX_REENQUEUES = 5
 const DISPATCH_JOB_TYPES = new Set(['dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement'])
 
 async function tasksAlreadyDispatchedForJob(supabase, job) {
@@ -114,10 +116,21 @@ async function reconcileStuckApprovedJob(supabase, job) {
     console.log(`[worker] stuck job ${job.id} — tasks already sent, marking executed`)
     await callJobResult(job.id, 'success', { skipped: 'already_dispatched' })
     enqueuedIds.delete(job.id)
+    stuckReenqueueCounts.delete(job.id)
     return true
   }
 
-  console.log(`[worker] re-enqueueing stuck approved job ${job.id}`)
+  const retries = (stuckReenqueueCounts.get(job.id) ?? 0) + 1
+  stuckReenqueueCounts.set(job.id, retries)
+  if (retries >= STUCK_MAX_REENQUEUES) {
+    console.log(`[worker] stuck job ${job.id} — marking failed after ${retries} re-enqueues`)
+    await callJobResult(job.id, 'failed', undefined, 'dispatch_stuck_max_retries')
+    enqueuedIds.delete(job.id)
+    stuckReenqueueCounts.delete(job.id)
+    return true
+  }
+
+  console.log(`[worker] re-enqueueing stuck approved job ${job.id} (retry ${retries}/${STUCK_MAX_REENQUEUES})`)
   enqueuedIds.delete(job.id)
   return true
 }
@@ -310,8 +323,7 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
   const bot = telegramBot
 
   if (!bot) {
-    console.warn('[worker] staff-dispatch: Telegram bot not ready')
-    return
+    throw new Error('Telegram bot not ready for staff dispatch')
   }
 
   if (type === 'dispatch_staff_tasks') {

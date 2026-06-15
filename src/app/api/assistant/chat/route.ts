@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
           break
         }
       }
-      if (!errorMsg && conversationId) {
+      if (!errorMsg && conversationId && !isInternalCall) {
         try {
           const compacted = await compactConversationIfNeeded(conversationId, COMPACT_THRESHOLD_USD)
           if (compacted) {
