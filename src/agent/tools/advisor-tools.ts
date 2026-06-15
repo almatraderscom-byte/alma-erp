@@ -1,6 +1,5 @@
 import type { AgentTool } from './registry'
-
-type AdvisorTopic = 'pricing' | 'marketing' | 'financial' | 'staffing' | 'product_focus' | 'general'
+import { buildAdvisorDataBundle, type AdvisorTopic } from '@/lib/advisor-data-bundle'
 
 const advisor_data_bundle: AgentTool = {
   name: 'advisor_data_bundle',
@@ -31,103 +30,13 @@ const advisor_data_bundle: AgentTool = {
   handler: async (input) => {
     const topic = String(input.topic ?? 'general') as AdvisorTopic
     const focusEntity = input.focusEntity ? String(input.focusEntity) : undefined
-    const bundle: Record<string, unknown> = { topic, focusEntity }
 
     try {
-      switch (topic) {
-        case 'pricing': {
-          const { analyzePricing } = await import('@/lib/pricing-insight')
-          const { analyzeFinancials } = await import('@/lib/financial-intelligence')
-          const [pricing, financial] = await Promise.all([
-            analyzePricing().catch(() => null),
-            analyzeFinancials({ days: 30 }).catch(() => null),
-          ])
-          bundle.pricing = pricing
-          bundle.financial = financial
-          break
-        }
-        case 'marketing': {
-          const { buildMarketingIntel } = await import('@/lib/content-intelligence')
-          const { buildWeeklyStrategicReview } = await import('@/lib/weekly-strategic-data')
-          const [marketing, strategic] = await Promise.all([
-            buildMarketingIntel(focusEntity).catch(() => null),
-            buildWeeklyStrategicReview().catch(() => null),
-          ])
-          bundle.marketing = marketing
-          bundle.strategic = strategic?.data
-          break
-        }
-        case 'financial': {
-          const { analyzeFinancials } = await import('@/lib/financial-intelligence')
-          const { buildWeeklyStrategicReview } = await import('@/lib/weekly-strategic-data')
-          const [financial, strategic] = await Promise.all([
-            analyzeFinancials({ days: 30 }).catch(() => null),
-            buildWeeklyStrategicReview().catch(() => null),
-          ])
-          bundle.financial = financial
-          bundle.strategic = strategic?.data
-          break
-        }
-        case 'staffing': {
-          const { buildWeeklyStrategicReview } = await import('@/lib/weekly-strategic-data')
-          const strategic = await buildWeeklyStrategicReview().catch(() => null)
-          bundle.strategic = strategic?.data
-          break
-        }
-        case 'product_focus': {
-          const { getInventoryWithSales } = await import('@/lib/inventory-with-sales')
-          const { buildReorderSuggestions } = await import('@/lib/inventory-forecast')
-          const { segmentCustomers } = await import('@/lib/customer-intelligence')
-          const { buildMarketingIntel } = await import('@/lib/content-intelligence')
-          const [products, segments, marketing] = await Promise.all([
-            getInventoryWithSales().catch(() => null),
-            segmentCustomers().catch(() => null),
-            buildMarketingIntel(focusEntity).catch(() => null),
-          ])
-          const suggestions =
-            products != null ? buildReorderSuggestions(products, { leadDays: 7 }) : null
-          bundle.reorderSuggestions =
-            suggestions != null
-              ? {
-                  count: suggestions.length,
-                  leadDays: 7,
-                  suggestions,
-                }
-              : null
-          bundle.customerSegments =
-            segments != null
-              ? {
-                  winBackCount: segments.winBack.length,
-                  loyalCount: segments.loyal.length,
-                  atRiskCount: segments.atRisk.length,
-                  newRecentCount: segments.newRecent.length,
-                  winBack: segments.winBack.slice(0, 20),
-                  loyal: segments.loyal.slice(0, 10),
-                  atRisk: segments.atRisk.slice(0, 10),
-                  newRecent: segments.newRecent.slice(0, 10),
-                }
-              : null
-          bundle.marketing = marketing
-          break
-        }
-        case 'general':
-        default: {
-          const { buildWeeklyStrategicReview } = await import('@/lib/weekly-strategic-data')
-          const { analyzeFinancials } = await import('@/lib/financial-intelligence')
-          const [strategic, financial] = await Promise.all([
-            buildWeeklyStrategicReview().catch(() => null),
-            analyzeFinancials({ days: 30 }).catch(() => null),
-          ])
-          bundle.strategic = strategic?.data
-          bundle.financial = financial
-          break
-        }
-      }
+      const data = await buildAdvisorDataBundle(topic, focusEntity)
+      return { success: true, data }
     } catch (err) {
       return { success: false, error: String(err) }
     }
-
-    return { success: true, data: bundle }
   },
 }
 

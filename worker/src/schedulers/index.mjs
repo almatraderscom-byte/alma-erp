@@ -59,6 +59,7 @@ const lazy = {
   staffMorale:        () => import('../staff/morale.mjs'),
   contentEngine:      () => import('../content-engine/run.mjs'),
   weeklyReflection:   () => import('../intelligence/reflection.mjs'),
+  dailyStrategist:    () => import('../intelligence/strategist.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'catchup-scan',         cronUtc: '0 4 * * *',    description: 'Catch-up missed duties (10:00 Dhaka)' },
   { name: 'evening-proposal',       cronUtc: '5 15 * * *',  description: 'Evening task proposal for tomorrow (21:05 Dhaka)' },
   { name: 'owner-briefing',         cronUtc: '30 1 * * *',   description: 'Owner morning briefing (07:30 Dhaka)' },
+  { name: 'daily-strategist',       cronUtc: '0 2 * * *',    description: 'Daily cross-domain strategy pass (08:00 Dhaka)' },
   { name: 'order-watch',            cronUtc: '0 6,12 * * *', description: 'Order issue scan (12:00, 18:00 Dhaka)' },
   { name: 'content-engine-3',       cronUtc: '0 13 * * *',  description: 'Auto post prep #3 (19:00 Dhaka)' },
   { name: 'morning-staff-reminder', cronUtc: '0 3 * * *',   description: 'Morning staff remind + dispatch (09:00 Dhaka)' },
@@ -321,6 +323,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'weekly-reflection': {
       const { runWeeklyReflection } = await lazy.weeklyReflection()
       await runWeeklyReflection()
+      break
+    }
+    case 'daily-strategist': {
+      const { runDailyStrategist } = await lazy.dailyStrategist()
+      await runDailyStrategist()
       break
     }
     default:
