@@ -310,6 +310,7 @@ export function buildArtDirectorPrompt(opts: {
   pose?: TryOnPose
   modelNotes?: string
   extra?: string
+  referenceBlock?: string
 }): string {
   const garmentType = opts.garmentType ?? opts.attrs?.garmentType ?? 'unknown'
   const spec = GARMENT_SPECS[garmentType]
@@ -330,6 +331,7 @@ export function buildArtDirectorPrompt(opts: {
     `COMPOSITION: ${STYLE_DIRECTION[opts.style ?? 'studio']}`,
     `POSE: ${POSE_DIRECTION[opts.pose ?? 'front']}`,
     opts.modelNotes ? `Model characteristics: ${opts.modelNotes}.` : '',
+    opts.referenceBlock ?? '',
     opts.extra ?? '',
     'OUTPUT: high-resolution, sharp focus on the garment, accurate color, e-commerce ready.',
     NEGATIVE_DIRECTIVES,
@@ -345,6 +347,7 @@ export function buildTryOnPrompt(opts: {
   garmentType?: GarmentType | string
   attrs?: GarmentAttrs
   extra?: string
+  referenceBlock?: string
 }): string {
   const garmentType = normalizeGarmentType(
     typeof opts.garmentType === 'string' ? opts.garmentType : opts.garmentType,
@@ -357,5 +360,6 @@ export function buildTryOnPrompt(opts: {
     pose: opts.pose,
     modelNotes: opts.modelNotes,
     extra: opts.extra,
+    referenceBlock: opts.referenceBlock,
   })
 }

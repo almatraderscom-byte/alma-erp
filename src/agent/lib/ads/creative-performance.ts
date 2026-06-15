@@ -2,6 +2,7 @@
  * Creative angle performance log + playbook write-back (File 11 loop closure).
  */
 import { prisma } from '@/lib/prisma'
+import { promoteOwnWinnerReference } from '@/agent/lib/reference/library'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -44,6 +45,8 @@ export async function writeWinningAngleToPlaybook(args: {
   ctr?: number
   campaignName?: string
   businessId?: string
+  productCode?: string | null
+  imagePath?: string | null
 }): Promise<void> {
   if (args.roas < 2.0) return
   const heuristic =
@@ -87,6 +90,16 @@ export async function writeWinningAngleToPlaybook(args: {
     })
   } catch {
     /* best-effort */
+  }
+
+  if (args.roas >= 3.2) {
+    void promoteOwnWinnerReference({
+      productCode: args.productCode,
+      imagePath: args.imagePath,
+      roas: args.roas,
+      ctr: args.ctr,
+      angle: args.angle,
+    }).catch(() => {})
   }
 }
 

@@ -2253,6 +2253,23 @@ model AgentCreativePerformance {
   @@map("agent_creative_performance")
 }
 
+model ReferenceCreative {
+  id          String   @id @default(uuid())
+  source      String
+  imagePath   String?  @map("image_path")
+  sourceUrl   String?  @map("source_url")
+  brand       String?
+  attrs       Json     @default("{}")
+  whyItWorks  String?  @map("why_it_works")
+  productType String?  @map("product_type")
+  score       Int      @default(3)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([source, productType])
+  @@index([createdAt(sort: Desc)])
+  @@map("reference_creative")
+}
+
 model AgentKnowledge {
   id            String   @id @default(uuid())
   entityType    String   @map("entity_type")

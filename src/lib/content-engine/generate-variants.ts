@@ -11,6 +11,7 @@ import {
   type SavedModel,
 } from '@/lib/tryon/model-library'
 import { getDesignPlaybookLines } from '@/agent/lib/taste/distill'
+import { getTopReferences, buildReferencePromptBlock } from '@/agent/lib/reference/library'
 
 export type ContentVariant = 'single' | 'father_son' | 'mother_son' | 'full_family'
 export type RenderQuality = 'draft' | 'pro'
@@ -150,12 +151,17 @@ export async function buildVariantRenderSpec(
     ? (attrs?.garmentType ?? 'unknown')
     : 'family_matching_set'
 
+  const productType = product.category ?? attrs?.garmentType ?? 'panjabi'
+  const topRefs = await getTopReferences(productType, 3)
+  const referenceBlock = buildReferencePromptBlock(topRefs)
+
   const prompt = buildTryOnPrompt({
     style,
     pose,
     modelNotes,
     garmentType,
     attrs,
+    referenceBlock,
     extra: [familyExtra, seedNote].filter(Boolean).join(' '),
   })
 
