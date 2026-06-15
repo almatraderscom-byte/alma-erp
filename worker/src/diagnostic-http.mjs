@@ -85,6 +85,28 @@ export function startDiagnosticHttpServer() {
         return
       }
 
+      if (req.method === 'POST' && pathname === '/deploy') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        console.log('[diagnostic-http] deploy request received')
+        try {
+          const { execSync } = await import('child_process')
+          const output = execSync(
+            `cd ${repo} && git pull origin main 2>&1 && pm2 restart agent-worker 2>&1`,
+            { timeout: 90_000, encoding: 'utf8' },
+          )
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, output: output.slice(-500) }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message?.slice(0, 500) ?? 'deploy failed' }))
+        }
+        return
+      }
+
       if (req.method !== 'POST' || pathname !== '/code-search') {
         res.writeHead(404)
         res.end('not found')

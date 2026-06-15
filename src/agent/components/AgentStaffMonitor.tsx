@@ -268,8 +268,12 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
         body: JSON.stringify({ jobName }),
       })
       const json = await res.json()
-      if (res.ok) showToast(`✓ ${dutyKey} re-triggered`, 'ok')
-      else showToast(json.message ?? 'Retrigger failed', 'err')
+      if (res.ok) {
+        const mode = json.mode === 'instant' ? 'instantly' : 'queued (~2 min)'
+        showToast(`✓ ${dutyKey} — ${mode}`, 'ok')
+      } else {
+        showToast(json.message ?? 'Retrigger failed', 'err')
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Network error', 'err')
     } finally {
@@ -712,6 +716,8 @@ export default function AgentStaffMonitor() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [deploying, setDeploying] = useState(false)
+  const [deployMsg, setDeployMsg] = useState<string | null>(null)
   const [businessFilter, setBusinessFilter] = useState<'ALL' | 'ALMA_LIFESTYLE' | 'ALMA_TRADING'>('ALL')
 
   const loadLive = useCallback(async (manual = false) => {
@@ -862,6 +868,34 @@ export default function AgentStaffMonitor() {
               📅
             </button>
 
+            <button
+              type="button"
+              disabled={deploying}
+              onClick={async () => {
+                setDeploying(true)
+                setDeployMsg(null)
+                try {
+                  const res = await fetch('/api/agent/vps/deploy', { method: 'POST' })
+                  const json = await res.json()
+                  if (res.ok) setDeployMsg('✓ Worker deployed')
+                  else setDeployMsg(`✗ ${json.message ?? 'Deploy failed'}`)
+                } catch (e) {
+                  setDeployMsg(`✗ ${e instanceof Error ? e.message : 'Network error'}`)
+                } finally {
+                  setDeploying(false)
+                  setTimeout(() => setDeployMsg(null), 5000)
+                }
+              }}
+              className={cn(
+                'rounded-xl border px-3 py-1.5 text-[10px] font-bold transition-all',
+                deploying
+                  ? 'border-white/[0.06] text-white/15'
+                  : 'border-purple-500/25 bg-purple-500/[0.06] text-purple-300 hover:bg-purple-500/10',
+              )}
+            >
+              {deploying ? '⏳ Deploying…' : '🚀 Deploy Worker'}
+            </button>
+
             <Link
               href="/agent"
               className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[10px] font-bold text-white/20 transition-all hover:text-white/40"
@@ -870,6 +904,17 @@ export default function AgentStaffMonitor() {
             </Link>
           </div>
         </div>
+
+        {deployMsg && (
+          <div className={cn(
+            'rounded-xl border px-4 py-2 text-[11px] font-semibold backdrop-blur-md',
+            deployMsg.startsWith('✓')
+              ? 'border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300'
+              : 'border-red-500/25 bg-red-500/[0.06] text-red-300',
+          )}>
+            {deployMsg}
+          </div>
+        )}
 
         {displayData && <MonitorBody data={displayData} isLive={!viewingHistory} />}
 

@@ -2,9 +2,15 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 
+/**
+ * Retrigger a failed/missed agent duty.
+ * Two-tier: writes a DB request (worker polls every 2 min), then also tries
+ * the worker HTTP /retrigger for instant execution if available.
+ */
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -20,42 +26,65 @@ export async function POST(req: NextRequest) {
 
   const { jobName } = body as { jobName: string }
 
+  // 1. Write retrigger request to DB — worker polls this every 2 min
+  const kvKey = `retrigger:${jobName}`
+  const kvValue = JSON.stringify({
+    jobName,
+    status: 'pending',
+    requestedAt: new Date().toISOString(),
+  })
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO agent_kv_settings (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    kvKey,
+    kvValue,
+  )
+
+  // 2. Try instant execution via worker HTTP (best-effort)
+  let instant = false
   const workerUrl = process.env.AGENT_WORKER_DIAGNOSTIC_URL?.replace(/\/$/, '')
   const internalToken = process.env.AGENT_INTERNAL_TOKEN
 
-  if (!workerUrl || !internalToken) {
-    return Response.json({
-      error: 'config_missing',
-      message: 'AGENT_WORKER_DIAGNOSTIC_URL or AGENT_INTERNAL_TOKEN not configured',
-    }, { status: 503 })
-  }
-
-  try {
-    const res = await fetch(`${workerUrl}/retrigger`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${internalToken}`,
-      },
-      body: JSON.stringify({ jobName }),
-      signal: AbortSignal.timeout(30_000),
-    })
-
-    const data = await res.json().catch(() => ({}))
-
-    if (!res.ok) {
-      return Response.json({
-        error: 'worker_error',
-        message: data.error ?? `Worker returned ${res.status}`,
-      }, { status: 502 })
+  if (workerUrl && internalToken) {
+    try {
+      const res = await fetch(`${workerUrl}/retrigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${internalToken}`,
+        },
+        body: JSON.stringify({ jobName }),
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.ok) {
+        instant = true
+        // Mark DB request as done since worker already handled it
+        const doneValue = JSON.stringify({
+          jobName,
+          status: 'done',
+          requestedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          mode: 'instant',
+        })
+        await prisma.$executeRawUnsafe(
+          `UPDATE agent_kv_settings SET value = $1, updated_at = NOW() WHERE key = $2`,
+          doneValue,
+          kvKey,
+        )
+      }
+    } catch {
+      // Worker HTTP not available — DB request will be picked up by poller
     }
-
-    return Response.json({ ok: true, jobName, workerResponse: data })
-  } catch (err) {
-    console.error('[staff-monitor/retrigger]', err)
-    return Response.json({
-      error: 'retrigger_failed',
-      message: err instanceof Error ? err.message : 'Unknown error',
-    }, { status: 500 })
   }
+
+  return Response.json({
+    ok: true,
+    jobName,
+    mode: instant ? 'instant' : 'queued',
+    message: instant
+      ? 'Duty re-triggered instantly via worker'
+      : 'Queued — worker will pick up within 2 minutes',
+  })
 }

@@ -418,8 +418,43 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     console.warn('[schedulers] seedDailyDuties failed:', e.message)
   }
 
+  // Retrigger poller — checks DB every 2 min for manual retrigger requests from the web UI
+  const retriggerPoll = setInterval(async () => {
+    try {
+      const { data: rows } = await supabase
+        .from('agent_kv_settings')
+        .select('key, value')
+        .like('key', 'retrigger:%')
+      if (!rows?.length) return
+
+      for (const row of rows) {
+        let parsed
+        try { parsed = JSON.parse(row.value) } catch { continue }
+        if (parsed.status !== 'pending') continue
+
+        const jobName = parsed.jobName
+        console.log(`[retrigger-poll] processing: ${jobName}`)
+        try {
+          await runSchedulerJob(jobName, context, { catchUp: true })
+          await supabase.from('agent_kv_settings').update({
+            value: JSON.stringify({ ...parsed, status: 'done', completedAt: new Date().toISOString() }),
+          }).eq('key', row.key)
+          console.log(`[retrigger-poll] ✓ ${jobName} done`)
+        } catch (err) {
+          await supabase.from('agent_kv_settings').update({
+            value: JSON.stringify({ ...parsed, status: 'failed', error: err.message }),
+          }).eq('key', row.key)
+          console.error(`[retrigger-poll] ✗ ${jobName} failed:`, err.message)
+        }
+      }
+    } catch {
+      // Silently ignore polling errors
+    }
+  }, 120_000)
+
   return {
     schedulerQueue,
+    retriggerPoll,
     runSchedulerJob: (jobName, opts) => runSchedulerJob(jobName, context, opts),
   }
 }
