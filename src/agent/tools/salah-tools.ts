@@ -302,11 +302,12 @@ const get_salah_weekly_summary: AgentTool = {
 const request_salah_delay: AgentTool = {
   name: 'request_salah_delay',
   description:
-    'When the owner asks for extra time before salah reminder calls resume ("আমাকে ৩০ মিনিট সময় দাও", ' +
-    '"১৫ মিনিট পর কল করো"), use this. ONLY valid within the moral-duty window (15 min before prayer to ' +
-    '30 min after prayer = 45 min total). Locks salah calls for requested minutes (capped at 45 and window end). ' +
-    'Outside that window, do NOT use — normal flow applies. After window end (prayer+30), do NOT grant delay; ' +
-    'encourage owner to pray in Bangla instead.',
+    'When the owner asks for extra time before salah reminder/calls resume ("আমাকে ২০ মিনিট সময় দাও", ' +
+    '"১৫ মিনিট পর কল করো"). MANDATORY — NEVER claim lock/reminder-off/call-blocked without calling this tool ' +
+    'and reading success:true + resumeAt/resumeAtLabel from the result. Chat text does NOT lock anything. ' +
+    'ONLY valid within moral-duty window (15 min before jamat to 30 min after = 45 min). ' +
+    'Outside window → tool returns error; encourage prayer, do NOT pretend lock. ' +
+    'After success, confirm using tool resumeAtLabel only.',
   input_schema: {
     type: 'object' as const,
     properties: {
