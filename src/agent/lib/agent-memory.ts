@@ -1,5 +1,19 @@
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { blendedScore, rerankMemories } from '@/agent/lib/memory-rerank'
+import type { RelevantMemory } from '@/agent/lib/system-prompt'
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+
+const HIGH_IMPORTANCE = /(পছন্দ|না করবে|ভুল হয়েছিল|flop|late|deadline|promise|কথা দিয়েছ|target|loss)/i
+
+const SIMILARITY_THRESHOLD = 0.45
+const VECTOR_FETCH_LIMIT = 20
+const RERANK_TAKE = 6
+
+function resolveImportance(content: string, explicit?: number | null): number {
+  if (explicit != null && explicit >= 1 && explicit <= 5) return explicit
+  return HIGH_IMPORTANCE.test(content) ? 4 : 2
+}
 
 export async function attachMemoryEmbedding(
   memoryId: string,
@@ -30,6 +44,7 @@ export async function createOrUpdateAgentMemory(opts: {
   content: string
   pinned?: boolean
   metadata?: Record<string, unknown> | null
+  importance?: number | null
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
@@ -38,6 +53,7 @@ export async function createOrUpdateAgentMemory(opts: {
   const key = opts.key?.trim() || null
   const pinned = opts.pinned === true
   const metadata = opts.metadata ?? undefined
+  const importance = resolveImportance(content, opts.importance)
 
   let row: {
     id: string
@@ -56,7 +72,7 @@ export async function createOrUpdateAgentMemory(opts: {
     if (existing) {
       row = await db.agentMemory.update({
         where: { id: existing.id },
-        data: { content, pinned, ...(metadata !== undefined ? { metadata } : {}) },
+        data: { content, pinned, importance, ...(metadata !== undefined ? { metadata } : {}) },
         select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
       })
       const embedStatus = await attachMemoryEmbedding(row.id, content)
@@ -65,9 +81,92 @@ export async function createOrUpdateAgentMemory(opts: {
   }
 
   row = await db.agentMemory.create({
-    data: { scope, key, content, pinned, ...(metadata !== undefined ? { metadata } : {}) },
+    data: { scope, key, content, pinned, importance, ...(metadata !== undefined ? { metadata } : {}) },
     select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
   })
   const embedStatus = await attachMemoryEmbedding(row.id, content)
   return { ...row, embedStatus }
+}
+
+async function reinforceMemoriesOnUse(selectedIds: string[]): Promise<void> {
+  if (selectedIds.length === 0) return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (prisma as any).$executeRawUnsafe(
+    `UPDATE agent_memory
+     SET access_count = access_count + 1, last_used_at = NOW()
+     WHERE id = ANY($1::uuid[])`,
+    selectedIds,
+  )
+}
+
+export async function retrieveRelevantMemories(
+  userMessage: string,
+  personalMode: boolean,
+  businessId: AgentBusinessId,
+): Promise<RelevantMemory[]> {
+  try {
+    const embedResult = await embed(userMessage)
+    if (!embedResult.success) return []
+
+    const vec = vectorLiteral(embedResult.data)
+    const scopeClause = personalMode
+      ? `AND scope = 'personal'`
+      : `AND scope != 'personal'`
+    const businessClause = personalMode
+      ? ''
+      : businessId === 'ALMA_TRADING'
+        ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
+        : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+
+    const rows: Array<{
+      id: string
+      content: string
+      scope: string
+      score: number
+      importance: number
+      createdAt: Date
+      last_used_at: Date | null
+    }> =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).$queryRawUnsafe(
+        `SELECT id, content, scope, importance, "createdAt", last_used_at,
+                1 - (embedding <=> $1::vector) AS score
+         FROM agent_memory
+         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause} ${businessClause}
+         ORDER BY embedding <=> $1::vector
+         LIMIT ${VECTOR_FETCH_LIMIT}`,
+        vec,
+      )
+
+    const now = new Date()
+    const candidates = rows
+      .filter((r) => r.score >= SIMILARITY_THRESHOLD)
+      .map((r) => ({
+        id: r.id,
+        content: r.content,
+        scope: r.scope,
+        similarity: r.score,
+        importance: r.importance,
+        createdAt: r.createdAt,
+        lastUsedAt: r.last_used_at,
+      }))
+
+    const ranked = rerankMemories(candidates, RERANK_TAKE, now)
+    const selectedIds = ranked.map((m) => m.id)
+
+    try {
+      await reinforceMemoriesOnUse(selectedIds)
+    } catch {
+      /* reinforcement must never break the turn */
+    }
+
+    return ranked.map((m) => ({
+      id: m.id,
+      content: m.content,
+      scope: m.scope,
+      score: Math.round(blendedScore(m, now) * 100) / 100,
+    }))
+  } catch {
+    return []
+  }
 }

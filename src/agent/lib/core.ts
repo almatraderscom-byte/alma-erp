@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
-import { buildSystemPrompt, type PinnedMemory, type RelevantMemory } from '@/agent/lib/system-prompt'
+import { buildSystemPrompt, type PinnedMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -10,7 +10,7 @@ import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { TOOL_DEFINITIONS, TRADING_TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
-import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -220,45 +220,6 @@ async function loadPinnedMemories(
   }
 }
 
-const SIMILARITY_THRESHOLD = 0.45
-
-async function retrieveRelevantMemories(
-  userMessage: string,
-  personalMode: boolean,
-  businessId: AgentBusinessId,
-): Promise<RelevantMemory[]> {
-  try {
-    const embedResult = await embed(userMessage)
-    if (!embedResult.success) return []
-
-    const vec = vectorLiteral(embedResult.data)
-    const scopeClause = personalMode
-      ? `AND scope = 'personal'`
-      : `AND scope != 'personal'`
-    const businessClause = personalMode
-      ? ''
-      : businessId === 'ALMA_TRADING'
-        ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
-        : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
-    const rows: Array<{ id: string; content: string; scope: string; score: number }> =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (prisma as any).$queryRawUnsafe(
-        `SELECT id, content, scope,
-                1 - (embedding <=> $1::vector) AS score
-         FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause} ${businessClause}
-         ORDER BY embedding <=> $1::vector
-         LIMIT 3`,
-        vec,
-      )
-
-    return rows
-      .filter((r) => r.score >= SIMILARITY_THRESHOLD)
-      .map((r) => ({ ...r, score: Math.round(r.score * 100) / 100 }))
-  } catch {
-    return []
-  }
-}
 
 // ── Options ────────────────────────────────────────────────────────────────
 
