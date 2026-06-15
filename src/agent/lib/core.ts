@@ -1,13 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, calcCostUsd } from '@/agent/config'
-import { buildSystemPrompt, type PinnedMemory } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, type PinnedMemory } from '@/agent/lib/system-prompt'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { TOOL_DEFINITIONS, TRADING_TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { selectToolsForTurn } from '@/agent/tools/select-tools'
+import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -315,6 +316,26 @@ export async function* runAgentTurn(
   let memoryNudgeSent = false
   let verifyRetries = 0
 
+  const promptArgs = {
+    projectInstructions: projectSystemInstructions,
+    pinnedMemories,
+    relevantMemories,
+    salahContext: salahContext ?? undefined,
+    prayerTimeOnlyTurn: personalMode
+      ? false
+      : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
+    staffTaskPlanningTurn: personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
+    staffTaskStatusTurn: personalMode ? false : isStaffTaskStatusInquiry(lastUserText),
+    crossSurface,
+    salahStatusTurn: personalMode ? false : isSalahStatusInquiry(lastUserText),
+    personalMode,
+    businessId,
+    activePlaybook,
+  }
+  const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
+  const systemBlocks = [...stableSystem, ...volatileSystem]
+  const selectedTools = selectToolsForTurn(lastUserText, { personalMode, businessId })
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -326,25 +347,8 @@ export async function* runAgentTurn(
           model: AGENT_MODEL,
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
-          system: buildSystemPrompt(
-            projectSystemInstructions,
-            pinnedMemories,
-            relevantMemories,
-            salahContext ?? undefined,
-            personalMode
-              ? false
-              : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
-            personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
-            personalMode ? false : isStaffTaskStatusInquiry(lastUserText),
-            crossSurface,
-            personalMode ? false : isSalahStatusInquiry(lastUserText),
-            personalMode,
-            businessId,
-            activePlaybook,
-          ),
-          tools: personalMode
-            ? PERSONAL_TOOL_DEFINITIONS
-            : (businessId === 'ALMA_TRADING' ? TRADING_TOOL_DEFINITIONS : TOOL_DEFINITIONS),
+          system: systemBlocks,
+          tools: selectedTools,
           messages: apiMessages,
         },
         { signal: signal ?? undefined },

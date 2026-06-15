@@ -297,6 +297,176 @@ export interface CrossSurfaceSnippet {
   updatedAt: string
 }
 
+export interface SystemPromptSplit {
+  stable: Anthropic.Messages.TextBlockParam[]
+  volatile: Anthropic.Messages.TextBlockParam[]
+}
+
+export type BuildSystemPromptArgs = {
+  projectInstructions?: string | null
+  pinnedMemories?: PinnedMemory[]
+  relevantMemories?: RelevantMemory[]
+  salahContext?: SalahContext
+  prayerTimeOnlyTurn?: boolean
+  staffTaskPlanningTurn?: boolean
+  staffTaskStatusTurn?: boolean
+  crossSurface?: CrossSurfaceSnippet[]
+  salahStatusTurn?: boolean
+  personalMode?: boolean
+  businessId?: AgentBusinessId
+  activePlaybook?: ActivePlaybookEntry[]
+}
+
+function textBlock(text: string): Anthropic.Messages.TextBlockParam {
+  return { type: 'text', text }
+}
+
+/** Stable prefix (cached) vs volatile per-turn tail (uncached). */
+export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemPromptSplit {
+  const {
+    projectInstructions,
+    pinnedMemories,
+    relevantMemories,
+    salahContext,
+    prayerTimeOnlyTurn = false,
+    staffTaskPlanningTurn = false,
+    staffTaskStatusTurn = false,
+    crossSurface,
+    salahStatusTurn = false,
+    personalMode = false,
+    businessId = 'ALMA_LIFESTYLE',
+    activePlaybook,
+  } = args
+
+  const stableParts: string[] = []
+  const volatileParts: string[] = []
+
+  if (personalMode) {
+    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE)
+    if (pinnedMemories && pinnedMemories.length > 0) {
+      const pinned = pinnedMemories
+        .slice(0, 30)
+        .map((m) => `[${m.scope}] ${m.content}`)
+        .join('\n')
+      stableParts.push(`\n## স্থায়ী ব্যক্তিগত তথ্য (Pinned)\n${pinned}`)
+    }
+    if (relevantMemories && relevantMemories.length > 0) {
+      const relevant = relevantMemories
+        .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
+        .join('\n')
+      volatileParts.push(`\n## প্রাসঙ্গিক ব্যক্তিগত স্মৃতি\n${relevant}`)
+    }
+    if (projectInstructions?.trim()) {
+      volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
+    }
+  } else {
+    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : LIFESTYLE_STATIC_PROMPT
+    stableParts.push(corePrompt)
+
+    if (businessId === 'ALMA_TRADING') {
+      stableParts.push(
+        '\n## এই কথোপকথন: ALMA Trading (Binance P2P)\n' +
+          'Lifestyle vocabulary নিষিদ্ধ (orders, CRM, Messenger, FB, inventory, returns, catalog, website)। শুধু Trading concepts: account, USDT volume, merchant target, daily report, profit/loss, capital, screenshot। ' +
+          'Staff = AgentStaff (businessId=ALMA_TRADING) — Eyafi/Mustahid এখানে নেই। get_trading_dashboard প্রথম read। ' +
+          'Memory ও pending approvals শুধু Trading-scoped দেখাবে।',
+      )
+    }
+
+    if (activePlaybook && activePlaybook.length > 0) {
+      const playbookLines = activePlaybook
+        .map((h) => `- [${h.domain}] ${h.heuristic}`)
+        .join('\n')
+      stableParts.push(
+        `\n## শেখা নিয়ম (playbook)\n` +
+          `এই business সম্পর্কে আমি যা শিখেছি, সিদ্ধান্ত নেওয়ার সময় মাথায় রাখি (correlation, causation নয়):\n` +
+          playbookLines,
+      )
+    }
+
+    if (pinnedMemories && pinnedMemories.length > 0) {
+      const pinned = pinnedMemories
+        .slice(0, 30)
+        .map((m) => `[${m.scope}] ${m.content}`)
+        .join('\n')
+      stableParts.push(`\n## স্থায়ী গুরুত্বপূর্ণ তথ্য (Pinned)\n${pinned}`)
+    }
+
+    if (salahStatusTurn) {
+      volatileParts.push(
+        '\n## এই টার্ন: নামাজের স্ট্যাটাস\n' +
+          'get_salah_status প্রথমে — answerBangla/allDone; notYetDue ≠ পড়েছেন।',
+      )
+    } else if (prayerTimeOnlyTurn) {
+      volatileParts.push(
+        '\n## এই টার্ন: শুধু সময়সূচি\n' +
+          'get_prayer_times — get_salah_status/জবাবদিহিতা নয়।',
+      )
+    }
+
+    if (staffTaskStatusTurn) {
+      volatileParts.push(
+        '\n## এই টার্ন: স্টাফ টাস্ক স্ট্যাটাস\n' +
+          'get_staff_tasks বাধ্য — একজনের নাম থাকলে staffName=... filter। formattedBangla দেখান। ' +
+          'ইতিমধ্যে পাঠানো (sent/done) টাস্ক অবশ্য বলুন। prepare_staff_task_proposal / approval card নয়।',
+      )
+    } else if (staffTaskPlanningTurn) {
+      volatileParts.push(
+        '\n## এই টার্ন: স্টাফ টাস্ক প্ল্যান\n' +
+          'prepare_staff_task_proposal বাধ্য — generic প্রশ্ন নয়।',
+      )
+    }
+
+    if (salahStatusTurn && salahContext?.statusSummary) {
+      const { doneToday, upcomingToday, note } = salahContext.statusSummary
+      volatileParts.push(
+        `\n## নামাজ হিন্ট (verify via get_salah_status)\n` +
+          `আজ আদায়: ${doneToday.length ? doneToday.join(', ') : 'কিছুই না'}\n` +
+          `এখনো সময় হয়নি: ${upcomingToday.length ? upcomingToday.join(', ') : 'কিছুই না'}\n` +
+          note,
+      )
+    }
+
+    if (!prayerTimeOnlyTurn && !salahStatusTurn && salahContext?.pendingWaqts?.length) {
+      const waqtList = salahContext.pendingWaqts
+        .map((w) => `${w.waqt}${w.isMissed ? ' (MISSED)' : w.isOverdue ? ' (overdue)' : ''}`)
+        .join(', ')
+      volatileParts.push(`\n## ⚠️ নামাজ জবাবদিহিতা\nপেন্ডিং/মিস্ড: ${waqtList}`)
+    }
+
+    if (crossSurface && crossSurface.length > 0) {
+      const lines = crossSurface
+        .map((c) => `• [${c.title}] ${c.lastAssistantLine}`)
+        .join('\n')
+      volatileParts.push(
+        `\n## সাম্প্রতিক অন্য কথোপকথন\n${lines}\n` +
+          'বিস্তারিত → search_memory।',
+      )
+    }
+
+    if (relevantMemories && relevantMemories.length > 0) {
+      const relevant = relevantMemories
+        .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
+        .join('\n')
+      volatileParts.push(`\n## প্রাসঙ্গিক স্মৃতি\n${relevant}`)
+    }
+
+    if (projectInstructions?.trim()) {
+      volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
+    }
+  }
+
+  const stable: Anthropic.Messages.TextBlockParam[] = stableParts.length
+    ? [{ type: 'text', text: stableParts.join('\n'), cache_control: { type: 'ephemeral' } }]
+    : []
+
+  const volatile: Anthropic.Messages.TextBlockParam[] = volatileParts.length
+    ? [textBlock(volatileParts.join('\n'))]
+    : []
+
+  return { stable, volatile }
+}
+
+/** @deprecated Use buildSystemPromptBlocks — kept for callers that need a flat array. */
 export function buildSystemPrompt(
   projectInstructions?: string | null,
   pinnedMemories?: PinnedMemory[],
@@ -311,168 +481,20 @@ export function buildSystemPrompt(
   businessId: AgentBusinessId = 'ALMA_LIFESTYLE',
   activePlaybook?: ActivePlaybookEntry[],
 ): Anthropic.Messages.TextBlockParam[] {
-  if (personalMode) {
-    const blocks: Anthropic.Messages.TextBlockParam[] = [
-      {
-        type: 'text',
-        text: PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE,
-        cache_control: { type: 'ephemeral' },
-      },
-    ]
-    if (pinnedMemories && pinnedMemories.length > 0) {
-      const pinned = pinnedMemories
-        .slice(0, 30)
-        .map((m) => `[${m.scope}] ${m.content}`)
-        .join('\n')
-      blocks.push({
-        type: 'text',
-        text: `\n## স্থায়ী ব্যক্তিগত তথ্য (Pinned)\n${pinned}`,
-      })
-    }
-    if (relevantMemories && relevantMemories.length > 0) {
-      const relevant = relevantMemories
-        .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
-        .join('\n')
-      blocks.push({
-        type: 'text',
-        text: `\n## প্রাসঙ্গিক ব্যক্তিগত স্মৃতি\n${relevant}`,
-      })
-    }
-    if (projectInstructions?.trim()) {
-      blocks.push({
-        type: 'text',
-        text: `\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`,
-      })
-    }
-    return blocks
-  }
-
-  // Pick the right business surface. The base prompt is cached separately
-  // per business so cache hits stay stable within a project.
-  const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : LIFESTYLE_STATIC_PROMPT
-  const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: corePrompt, cache_control: { type: 'ephemeral' } },
-  ]
-
-  if (businessId === 'ALMA_TRADING') {
-    blocks.push({
-      type: 'text',
-      text:
-        '\n## এই কথোপকথন: ALMA Trading (Binance P2P)\n' +
-        'Lifestyle vocabulary নিষিদ্ধ (orders, CRM, Messenger, FB, inventory, returns, catalog, website)। শুধু Trading concepts: account, USDT volume, merchant target, daily report, profit/loss, capital, screenshot। ' +
-        'Staff = AgentStaff (businessId=ALMA_TRADING) — Eyafi/Mustahid এখানে নেই। get_trading_dashboard প্রথম read। ' +
-        'Memory ও pending approvals শুধু Trading-scoped দেখাবে।',
-    })
-  }
-
-  if (activePlaybook && activePlaybook.length > 0) {
-    const playbookLines = activePlaybook
-      .map((h) => `- [${h.domain}] ${h.heuristic}`)
-      .join('\n')
-    blocks.push({
-      type: 'text',
-      text:
-        `\n## শেখা নিয়ম (playbook)\n` +
-        `এই business সম্পর্কে আমি যা শিখেছি, সিদ্ধান্ত নেওয়ার সময় মাথায় রাখি (correlation, causation নয়):\n` +
-        playbookLines,
-      cache_control: { type: 'ephemeral' },
-    })
-  }
-
-  if (pinnedMemories && pinnedMemories.length > 0) {
-    const pinned = pinnedMemories
-      .slice(0, 30)
-      .map((m) => `[${m.scope}] ${m.content}`)
-      .join('\n')
-    blocks.push({
-      type: 'text',
-      text: `\n## স্থায়ী গুরুত্বপূর্ণ তথ্য (Pinned)\n${pinned}`,
-    })
-  }
-
-  if (salahStatusTurn) {
-    blocks.push({
-      type: 'text',
-      text:
-        '\n## এই টার্ন: নামাজের স্ট্যাটাস\n' +
-        'get_salah_status প্রথমে — answerBangla/allDone; notYetDue ≠ পড়েছেন।',
-    })
-  } else if (prayerTimeOnlyTurn) {
-    blocks.push({
-      type: 'text',
-      text:
-        '\n## এই টার্ন: শুধু সময়সূচি\n' +
-        'get_prayer_times — get_salah_status/জবাবদিহিতা নয়।',
-    })
-  }
-
-  if (staffTaskStatusTurn) {
-    blocks.push({
-      type: 'text',
-      text:
-        '\n## এই টার্ন: স্টাফ টাস্ক স্ট্যাটাস\n' +
-        'get_staff_tasks বাধ্য — একজনের নাম থাকলে staffName=... filter। formattedBangla দেখান। ' +
-        'ইতিমধ্যে পাঠানো (sent/done) টাস্ক অবশ্য বলুন। prepare_staff_task_proposal / approval card নয়।',
-    })
-  } else if (staffTaskPlanningTurn) {
-    blocks.push({
-      type: 'text',
-      text:
-        '\n## এই টার্ন: স্টাফ টাস্ক প্ল্যান\n' +
-        'prepare_staff_task_proposal বাধ্য — generic প্রশ্ন নয়।',
-    })
-  }
-
-  if (salahStatusTurn && salahContext?.statusSummary) {
-    const { doneToday, upcomingToday, note } = salahContext.statusSummary
-    blocks.push({
-      type: 'text',
-      text:
-        `\n## নামাজ হিন্ট (verify via get_salah_status)\n` +
-        `আজ আদায়: ${doneToday.length ? doneToday.join(', ') : 'কিছুই না'}\n` +
-        `এখনো সময় হয়নি: ${upcomingToday.length ? upcomingToday.join(', ') : 'কিছুই না'}\n` +
-        note,
-    })
-  }
-
-  if (!prayerTimeOnlyTurn && !salahStatusTurn && salahContext?.pendingWaqts?.length) {
-    const waqtList = salahContext.pendingWaqts
-      .map(w => `${w.waqt}${w.isMissed ? ' (MISSED)' : w.isOverdue ? ' (overdue)' : ''}`)
-      .join(', ')
-    blocks.push({
-      type: 'text',
-      text: `\n## ⚠️ নামাজ জবাবদিহিতা\nপেন্ডিং/মিস্ড: ${waqtList}`,
-    })
-  }
-
-  if (crossSurface && crossSurface.length > 0) {
-    const lines = crossSurface
-      .map((c) => `• [${c.title}] ${c.lastAssistantLine}`)
-      .join('\n')
-    blocks.push({
-      type: 'text',
-      text:
-        `\n## সাম্প্রতিক অন্য কথোপকথন\n${lines}\n` +
-        'বিস্তারিত → search_memory।',
-    })
-  }
-
-  if (relevantMemories && relevantMemories.length > 0) {
-    const relevant = relevantMemories
-      .map((m) => `[${m.scope}, score=${m.score}] ${m.content}`)
-      .join('\n')
-    blocks.push({
-      type: 'text',
-      text: `\n## প্রাসঙ্গিক স্মৃতি\n${relevant}`,
-    })
-  }
-
-  if (projectInstructions?.trim()) {
-    blocks.push({
-      type: 'text',
-      text: `\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`,
-    })
-  }
-
-  return blocks
+  const { stable, volatile } = buildSystemPromptBlocks({
+    projectInstructions,
+    pinnedMemories,
+    relevantMemories,
+    salahContext,
+    prayerTimeOnlyTurn,
+    staffTaskPlanningTurn,
+    staffTaskStatusTurn,
+    crossSurface,
+    salahStatusTurn,
+    personalMode,
+    businessId,
+    activePlaybook,
+  })
+  return [...stable, ...volatile]
 }
+

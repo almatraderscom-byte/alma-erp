@@ -330,13 +330,6 @@ export const PERSONAL_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = PERSONAL_SAF
   input_schema: t.input_schema,
 }))
 
-if (PERSONAL_TOOL_DEFINITIONS.length > 0) {
-  PERSONAL_TOOL_DEFINITIONS[PERSONAL_TOOL_DEFINITIONS.length - 1] = {
-    ...PERSONAL_TOOL_DEFINITIONS[PERSONAL_TOOL_DEFINITIONS.length - 1],
-    cache_control: { type: 'ephemeral' },
-  } as Anthropic.Messages.Tool
-}
-
 export async function executePersonalTool(
   name: string,
   input: Record<string, unknown>,
@@ -351,13 +344,41 @@ export async function executePersonalTool(
   }
 }
 
-export const TOOLS: AgentTool[] = [
+export const CORE_AGENT_TOOLS: AgentTool[] = [
   get_current_datetime,
   list_agent_projects,
   save_memory,
   search_memory,
   update_memory,
   delete_memory,
+]
+
+/** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */
+export const TRADING_EXTENSION_TOOLS: AgentTool[] = [
+  ...TRADING_READ_TOOLS,
+  ...STAFF_TOOLS,
+  ...CONFIRM_TOOLS,
+  ...SETTINGS_TOOLS,
+  ...SALAH_TOOLS,
+  ...FINANCE_TOOLS,
+  ...ADVISOR_TOOLS,
+  ...DIAGNOSTIC_TOOLS,
+  ...FAMILY_TOOLS,
+]
+
+/** Full execution pool for ALMA_TRADING (dynamic loading only affects model-facing definitions). */
+export const TRADING_TOOLS: AgentTool[] = [
+  ...CORE_AGENT_TOOLS,
+  ...TRADING_EXTENSION_TOOLS,
+  ...COST_TOOLS,
+  ...REMINDER_TOOLS,
+  ...ASK_TOOLS,
+  ...OWNER_TODO_TOOLS,
+  ...PLAYBOOK_TOOLS,
+]
+
+export const TOOLS: AgentTool[] = [
+  ...CORE_AGENT_TOOLS,
   ...ERP_TOOLS,
   ...CONFIRM_TOOLS,
   ...STAFF_TOOLS,
@@ -402,45 +423,6 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
   input_schema: t.input_schema,
 }))
 
-if (TOOL_DEFINITIONS.length > 0) {
-  TOOL_DEFINITIONS[TOOL_DEFINITIONS.length - 1] = {
-    ...TOOL_DEFINITIONS[TOOL_DEFINITIONS.length - 1],
-    cache_control: { type: 'ephemeral' },
-  } as Anthropic.Messages.Tool
-}
-
-// ── ALMA Trading tool registry (Phase 7) ────────────────────────────────────
-// Trading conversations get a focused tool surface:
-//   • Trading read tools (dashboard, accounts, trades, targets, reports)
-//   • Shared staff workflow (proposal/approve/dispatch/announcement) — already
-//     businessId-aware via server context
-//   • Salah, memory, reminders, cost, owner-todos, advisor, family, ask
-//   • Personal-mode-only tools and Lifestyle-only tools (orders/CRM/FB/inventory/
-//     content-engine/tryon/brand/competitor/cs/catalog/website) are EXCLUDED.
-
-export const TRADING_TOOLS: AgentTool[] = [
-  get_current_datetime,
-  list_agent_projects,
-  save_memory,
-  search_memory,
-  update_memory,
-  delete_memory,
-  ...TRADING_READ_TOOLS,
-  ...STAFF_TOOLS,
-  ...CONFIRM_TOOLS,
-  ...SETTINGS_TOOLS,
-  ...SALAH_TOOLS,
-  ...FINANCE_TOOLS,
-  ...COST_TOOLS,
-  ...REMINDER_TOOLS,
-  ...ASK_TOOLS,
-  ...ADVISOR_TOOLS,
-  ...OWNER_TODO_TOOLS,
-  ...PLAYBOOK_TOOLS,
-  ...DIAGNOSTIC_TOOLS,
-  ...FAMILY_TOOLS,
-]
-
 export const TRADING_TOOL_NAMES = TRADING_TOOLS.map((t) => t.name)
 
 export const TRADING_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TRADING_TOOLS.map((t) => ({
@@ -448,13 +430,6 @@ export const TRADING_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TRADING_TOOLS
   description: t.description,
   input_schema: t.input_schema,
 }))
-
-if (TRADING_TOOL_DEFINITIONS.length > 0) {
-  TRADING_TOOL_DEFINITIONS[TRADING_TOOL_DEFINITIONS.length - 1] = {
-    ...TRADING_TOOL_DEFINITIONS[TRADING_TOOL_DEFINITIONS.length - 1],
-    cache_control: { type: 'ephemeral' },
-  } as Anthropic.Messages.Tool
-}
 
 export async function executeTool(
   name: string,
