@@ -27,6 +27,7 @@ import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { BRAND_TOOLS } from './brand-tools'
 import { TRADING_READ_TOOLS } from './trading-tools'
+import { PLAYBOOK_TOOLS } from './playbook-tools'
 
 export interface ToolResult {
   success: boolean
@@ -376,6 +377,7 @@ export const TOOLS: AgentTool[] = [
   ...COMPETITOR_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,
+  ...PLAYBOOK_TOOLS,
   ...TRYON_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,
@@ -434,6 +436,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...ASK_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,
+  ...PLAYBOOK_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...FAMILY_TOOLS,
 ]

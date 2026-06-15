@@ -11,6 +11,7 @@ import { TOOL_DEFINITIONS, TRADING_TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, 
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -295,13 +296,14 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories and retrieve relevant memories in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
+    personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
   ])
 
   type ToolRecord = {
@@ -338,6 +340,7 @@ export async function* runAgentTurn(
             personalMode ? false : isSalahStatusInquiry(lastUserText),
             personalMode,
             businessId,
+            activePlaybook,
           ),
           tools: personalMode
             ? PERSONAL_TOOL_DEFINITIONS
@@ -480,6 +483,10 @@ export async function* runAgentTurn(
         })
 
         yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error }
+
+        if (result.success && !personalMode) {
+          void bumpPlaybookForTool(tb.name, businessId).catch(() => {})
+        }
 
         // Emit confirm_card only when the pending action is still awaiting owner approval
         if (result.success && result.data != null && typeof result.data === 'object') {

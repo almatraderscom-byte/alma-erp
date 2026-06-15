@@ -58,6 +58,7 @@ const lazy = {
   lunchWatch:         () => import('../staff/lunch-watch.mjs'),
   staffMorale:        () => import('../staff/morale.mjs'),
   contentEngine:      () => import('../content-engine/run.mjs'),
+  weeklyReflection:   () => import('../intelligence/reflection.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'messenger-scan',         cronUtc: '*/15 * * * *', description: 'Messenger unanswered scan (every 15 min)' },
   { name: 'session-summarizer',     cronUtc: '*/15 * * * *', description: 'Summarize ended owner chats into memory (every 15 min)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
+  { name: 'weekly-reflection',      cronUtc: '0 16 * * 5',   description: 'Weekly self-reflection → playbook proposals (22:00 Fri Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'customer-intel',         cronUtc: '0 4 * * 6',    description: 'Weekly customer win-back + loyalty digest (Sat 10:00 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
@@ -314,6 +316,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'knowledge-build': {
       const { runKnowledgeBuild } = await import('../intelligence/knowledge-build.mjs')
       await runKnowledgeBuild()
+      break
+    }
+    case 'weekly-reflection': {
+      const { runWeeklyReflection } = await lazy.weeklyReflection()
+      await runWeeklyReflection()
       break
     }
     default:

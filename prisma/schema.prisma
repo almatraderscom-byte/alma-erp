@@ -2201,6 +2201,23 @@ model AgentOutcome {
   @@map("agent_outcomes")
 }
 
+/// Owner-approved heuristics distilled from weekly reflection (correlation, not causation).
+model AgentPlaybook {
+  id           String    @id @default(uuid())
+  businessId   String    @map("business_id")
+  domain       String
+  heuristic    String
+  evidence     String
+  confidence   Int       @default(2)
+  status       String    @default("proposed")
+  timesApplied Int       @default(0) @map("times_applied")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  reviewedAt   DateTime? @map("reviewed_at")
+
+  @@index([businessId, status])
+  @@map("agent_playbook")
+}
+
 model AgentKnowledge {
   id            String   @id @default(uuid())
   entityType    String   @map("entity_type")

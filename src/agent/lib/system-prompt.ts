@@ -11,6 +11,8 @@ import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
 import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
 import { BRAND_ROLE_PROMPT } from '@/agent/tools/brand-tools'
 import { TRADING_READ_ROLE_PROMPT } from '@/agent/tools/trading-tools'
+import { PLAYBOOK_ROLE_PROMPT } from '@/agent/tools/playbook-tools'
+import type { ActivePlaybookEntry } from '@/agent/lib/playbook'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
@@ -231,6 +233,7 @@ const LIFESTYLE_STATIC_PROMPT =
   + `\n${COMPETITOR_ROLE_PROMPT}\n`
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${TRYON_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${CONTENT_ENGINE_ROLE_PROMPT}\n`
@@ -255,6 +258,7 @@ const TRADING_STATIC_PROMPT =
   + VERIFY_BEFORE_REPLY_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${TRADING_READ_ROLE_PROMPT}\n`
   + TRADING_OPERATIONS_RULE
@@ -305,6 +309,7 @@ export function buildSystemPrompt(
   salahStatusTurn = false,
   personalMode = false,
   businessId: AgentBusinessId = 'ALMA_LIFESTYLE',
+  activePlaybook?: ActivePlaybookEntry[],
 ): Anthropic.Messages.TextBlockParam[] {
   if (personalMode) {
     const blocks: Anthropic.Messages.TextBlockParam[] = [
@@ -357,6 +362,20 @@ export function buildSystemPrompt(
         'Lifestyle vocabulary নিষিদ্ধ (orders, CRM, Messenger, FB, inventory, returns, catalog, website)। শুধু Trading concepts: account, USDT volume, merchant target, daily report, profit/loss, capital, screenshot। ' +
         'Staff = AgentStaff (businessId=ALMA_TRADING) — Eyafi/Mustahid এখানে নেই। get_trading_dashboard প্রথম read। ' +
         'Memory ও pending approvals শুধু Trading-scoped দেখাবে।',
+    })
+  }
+
+  if (activePlaybook && activePlaybook.length > 0) {
+    const playbookLines = activePlaybook
+      .map((h) => `- [${h.domain}] ${h.heuristic}`)
+      .join('\n')
+    blocks.push({
+      type: 'text',
+      text:
+        `\n## শেখা নিয়ম (playbook)\n` +
+        `এই business সম্পর্কে আমি যা শিখেছি, সিদ্ধান্ত নেওয়ার সময় মাথায় রাখি (correlation, causation নয়):\n` +
+        playbookLines,
+      cache_control: { type: 'ephemeral' },
     })
   }
 
