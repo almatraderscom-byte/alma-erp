@@ -238,13 +238,13 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
         </div>
       )}
 
-      {data.failures.length > 0 && (
+      {(data.failures?.length ?? 0) > 0 && (
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
-          🔴 {data.failures.length}টি মেসেজ পৌঁছায়নি
+          🔴 {data.failures?.length ?? 0}টি মেসেজ পৌঁছায়নি
         </div>
       )}
 
-      {data.staffSummaries.length > 0 && (
+      {(data.staffSummaries?.length ?? 0) > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-bold text-zinc-300">স্টাফ</h2>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -266,10 +266,10 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
 
       <div className="space-y-2">
         <h2 className="text-sm font-bold text-zinc-300">মেসেজ ফিড</h2>
-        {data.feed.length === 0 ? (
+        {(data.feed?.length ?? 0) === 0 ? (
           <p className="text-xs text-muted">কোনো মেসেজ লগ নেই।</p>
         ) : (
-          data.feed.map((m) => {
+          data.feed?.map((m) => {
             const dot = m.status === 'delivered' ? '🟢' : m.status === 'failed' ? '🔴' : '🟡'
             return (
               <div
@@ -352,11 +352,11 @@ export default function AgentStaffMonitor() {
     if (!rawDisplay) return null
     if (businessFilter === 'ALL') return rawDisplay
     const keep = (b: string | null | undefined) => (b ?? 'ALMA_LIFESTYLE') === businessFilter
-    const feed = rawDisplay.feed.filter((r) => keep(r.businessId))
-    const unacked = rawDisplay.unackedMessages.filter((r) => keep(r.businessId))
-    const failures = rawDisplay.failures.filter((r) => keep(r.businessId))
+    const feed = (rawDisplay.feed ?? []).filter((r) => keep(r.businessId))
+    const unacked = (rawDisplay.unackedMessages ?? []).filter((r) => keep(r.businessId))
+    const failures = (rawDisplay.failures ?? []).filter((r) => keep(r.businessId))
     const stafffeedIds = new Set([...feed, ...unacked].map((r) => r.staffId).filter(Boolean))
-    const summaries = rawDisplay.staffSummaries.filter((s) => stafffeedIds.has(s.staffId))
+    const summaries = (rawDisplay.staffSummaries ?? []).filter((s) => stafffeedIds.has(s.staffId))
     return { ...rawDisplay, feed, unackedMessages: unacked, failures, staffSummaries: summaries }
   })()
 

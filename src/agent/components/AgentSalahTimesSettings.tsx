@@ -7,7 +7,7 @@ import {
   WAQT_LABELS,
   type SalahTimeConfig,
   type WaqtKey,
-} from '@/lib/salah/time-config'
+} from '@/lib/salah/time-config-shared'
 
 const FIELD_LABELS = {
   azan: 'আযান / ওয়াক্ত শুরু',
