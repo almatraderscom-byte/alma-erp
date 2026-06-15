@@ -221,11 +221,14 @@ async function processImageGen(job) {
     return
   }
 
-  const { prompt, quality, referenceImageId, secondReferenceImageId, conversationId } = payload
+  const { prompt, quality, referenceImageId, secondReferenceImageId, conversationId, aspectRatio, imageSize } = payload
 
   const modelName = quality === 'standard'
-    ? 'gemini-3.1-flash-image-preview'
-    : 'gemini-3-pro-image-preview'
+    ? 'gemini-3.1-flash-image'   // Nano Banana 2 (GA)
+    : 'gemini-3-pro-image'       // Nano Banana Pro (GA, highest quality)
+
+  const resolvedAspectRatio = aspectRatio ?? '4:5'
+  const resolvedImageSize = imageSize ?? '2K'
 
   async function toInlinePart(path) {
     const { data: fileData, error: dlErr } = await supabase.storage.from('agent-files').download(path)
@@ -250,7 +253,13 @@ async function processImageGen(job) {
   const response = await genai.models.generateContent({
     model: modelName,
     contents,
-    config: { responseModalities: ['IMAGE', 'TEXT'] },
+    config: {
+      responseModalities: ['IMAGE', 'TEXT'],
+      imageConfig: {
+        aspectRatio: resolvedAspectRatio,
+        imageSize: resolvedImageSize,
+      },
+    },
   })
 
   const parts = response?.candidates?.[0]?.content?.parts ?? []
@@ -288,8 +297,14 @@ async function processImageGen(job) {
   void logCost({
     provider: 'gemini',
     kind: 'image',
-    units: { quality, model: modelName, pendingActionId },
-    costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro'),
+    units: {
+      quality,
+      model: modelName,
+      aspectRatio: resolvedAspectRatio,
+      imageSize: resolvedImageSize,
+      pendingActionId,
+    },
+    costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize),
     conversationId: conversationId ?? undefined,
     jobId: pendingActionId,
     dedupKey: `image:${pendingActionId}`,

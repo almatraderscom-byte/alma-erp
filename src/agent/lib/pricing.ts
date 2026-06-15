@@ -51,20 +51,26 @@ export const PRICING_META = {
     perMinute: 0.006,
   },
   gemini_image_standard: {
-    model: 'gemini-3.1-flash-image-preview',
-    lastVerifiedAt: '2026-06-12',
+    model: 'gemini-3.1-flash-image',
+    lastVerifiedAt: '2026-06-15',
     verified: false,
     source: 'https://ai.google.dev/gemini-api/docs/pricing',
-    perImage: 0.039,
-    note: 'Flash image — verify on Google AI pricing page',
+    perImage1K: 0.067,
+    perImage2K: 0.101,
+    perImage4K: 0.151,
+    perImage: 0.101,
+    note: 'Flash image GA (Nano Banana 2) — per-image by output resolution; default 2K',
   },
   gemini_image_pro: {
-    model: 'gemini-3-pro-image-preview',
-    lastVerifiedAt: '2026-06-12',
+    model: 'gemini-3-pro-image',
+    lastVerifiedAt: '2026-06-15',
     verified: false,
     source: 'https://ai.google.dev/gemini-api/docs/pricing',
+    perImage1K: 0.134,
+    perImage2K: 0.134,
+    perImage4K: 0.24,
     perImage: 0.134,
-    note: 'Pro image — estimate; verify on Google AI pricing page',
+    note: 'Pro image GA (Nano Banana Pro) — 1K/2K same rate; default 2K',
   },
   google_tts: {
     model: 'bn-IN-Chirp3-HD-Charon',
@@ -127,9 +133,16 @@ export function calcTtsCostUsd(charCount: number): number {
   return roundUsd((charCount / 1_000_000) * PRICING_META.google_tts.perMillionChars)
 }
 
-export function calcGeminiImageCostUsd(quality: 'standard' | 'pro'): number {
+export function calcGeminiImageCostUsd(
+  quality: 'standard' | 'pro',
+  imageSize: '1K' | '2K' | '4K' = '2K',
+): number {
   const p = quality === 'standard' ? PRICING_META.gemini_image_standard : PRICING_META.gemini_image_pro
-  return roundUsd(p.perImage)
+  const rate =
+    imageSize === '1K' ? p.perImage1K
+      : imageSize === '4K' ? p.perImage4K
+        : p.perImage2K
+  return roundUsd(rate)
 }
 
 export function calcTwilioCallCostUsd(durationSeconds = 60): number {

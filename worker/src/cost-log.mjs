@@ -40,8 +40,12 @@ export const WORKER_PRICING = {
   anthropic_output_per_million: 15.0,
   anthropic_cache_write_per_million: 3.75,
   anthropic_cache_read_per_million: 0.3,
-  gemini_image_standard: 0.039,
-  gemini_image_pro: 0.134,
+  gemini_image_standard_1k: 0.067,
+  gemini_image_standard_2k: 0.101,
+  gemini_image_standard_4k: 0.151,
+  gemini_image_pro_1k: 0.134,
+  gemini_image_pro_2k: 0.134,
+  gemini_image_pro_4k: 0.24,
   google_tts_per_million_chars: 16.0,
   twilio_per_minute: 0.014,
   whisper_per_minute: 0.006,
@@ -66,8 +70,11 @@ export function calcTtsCostUsd(charCount) {
   return Math.round((charCount / 1_000_000) * WORKER_PRICING.google_tts_per_million_chars * 1e6) / 1e6
 }
 
-export function calcGeminiImageCostUsd(quality) {
-  const rate = quality === 'standard' ? WORKER_PRICING.gemini_image_standard : WORKER_PRICING.gemini_image_pro
+export function calcGeminiImageCostUsd(quality, imageSize = '2K') {
+  const q = quality === 'standard' ? 'standard' : 'pro'
+  const size = imageSize === '1K' ? '1k' : imageSize === '4K' ? '4k' : '2k'
+  const key = `gemini_image_${q}_${size}`
+  const rate = WORKER_PRICING[key] ?? WORKER_PRICING[`gemini_image_${q}_2k`]
   return Math.round(rate * 1e6) / 1e6
 }
 
