@@ -1,15 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { APP_BUILD_ID } from '@/lib/runtime-build'
 import {
   checkForAppUpdate,
   clearAppCaches,
   hardRefreshApp,
   isCapacitorNative,
-  isMeaningfulBuildId,
-  markBuildSynced,
-  readStoredBuildId,
   subscribeAppUpdateChecks,
 } from '@/lib/app-update'
 import { subscribeIosVisualViewport } from '@/lib/ios-modal-viewport'
@@ -48,6 +44,7 @@ export function PwaBootstrap() {
   const nativeShell = useMemo(() => isCapacitorNative(), [])
 
   const forceRefresh = useCallback(async () => {
+    setStaleBuild(false)
     await hardRefreshApp()
   }, [])
 
@@ -60,12 +57,12 @@ export function PwaBootstrap() {
         const worker = reg.installing
         if (!worker) return
         worker.addEventListener('statechange', () => {
-          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-            setStaleBuild(true)
-          }
+          if (worker.state !== 'installed' || !navigator.serviceWorker.controller) return
+          void checkForAppUpdate().then(({ updateAvailable }) => {
+            setStaleBuild(updateAvailable)
+          })
         })
       })
-      void reg.update()
     }).catch(() => {})
   }, [nativeShell])
 
@@ -172,18 +169,14 @@ export function PwaBootstrap() {
   useEffect(() => {
     if (typeof window === 'undefined') return
 
-    const stored = readStoredBuildId()
-    if (!stored && isMeaningfulBuildId(APP_BUILD_ID)) {
-      markBuildSynced(APP_BUILD_ID)
-    } else if (stored && isMeaningfulBuildId(APP_BUILD_ID) && stored !== APP_BUILD_ID) {
-      setStaleBuild(true)
-    }
-
     void checkForAppUpdate().then(({ updateAvailable }) => {
-      if (updateAvailable) setStaleBuild(true)
+      setStaleBuild(updateAvailable)
     })
 
-    return subscribeAppUpdateChecks(() => setStaleBuild(true))
+    return subscribeAppUpdateChecks(
+      () => setStaleBuild(true),
+      () => setStaleBuild(false),
+    )
   }, [])
 
   async function install() {

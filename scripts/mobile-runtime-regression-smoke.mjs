@@ -60,13 +60,13 @@ if (!checkinLog.includes('attendance.telegram_event_missing')) {
   fail('attendance-checkin-log missing attendance.telegram_event_missing')
 } else pass('telegram missing log event')
 
-if (!pwa.includes('staleBuild') || !pwa.includes('APP_BUILD_ID')) {
+if (!pwa.includes('staleBuild') || !pwa.includes('checkForAppUpdate')) {
   fail('PwaBootstrap missing stale build detection')
 } else pass('PWA stale build banner')
 
-if (!sw.includes('alma-erp-shell-v3') || !sw.includes('alma-erp-assets-v3')) {
-  fail('service worker cache version must be v3')
-} else pass('service worker cache v3')
+if (!sw.includes("SW_VERSION = 'v10'") || !sw.includes('alma-erp-shell-${SW_VERSION}')) {
+  fail('service worker cache version must be v10')
+} else pass('service worker cache v10')
 
 if (!nextCfg.includes('NEXT_PUBLIC_APP_BUILD_ID')) {
   fail('next.config must expose NEXT_PUBLIC_APP_BUILD_ID')
