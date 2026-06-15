@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
+import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -479,6 +480,9 @@ export async function POST(
         reason:       reason ?? null,
       },
     })
+    if (delayUntil) {
+      await setOwnerCallLockUntil(new Date(delayUntil))
+    }
     await db.agentPendingAction.update({
       where: { id: actionId },
       data:  { status: 'executed', resolvedAt: new Date() },

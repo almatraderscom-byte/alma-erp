@@ -23,6 +23,7 @@ import {
   salahChannelMessages,
 } from './reminder-messages.mjs'
 import { notify } from '../notify/index.mjs'
+import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 import { dutyWindowEnd } from './duty-window.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
@@ -226,8 +227,17 @@ async function deliverSalahAlert({
   withVoice = true,
   ntfyMode = 'critical',
 }) {
+  let effectiveTier = tier
+  if (tier >= 3) {
+    const lock = await isOwnerCallLocked()
+    if (lock.locked) {
+      console.log(`[salah] tier-3 suppressed — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+      effectiveTier = 2
+    }
+  }
+
   await notify({
-    tier,
+    tier: effectiveTier,
     title,
     message: msgs.ntfy,
     category: 'salah',
@@ -346,6 +356,15 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     // effect on this run, not tomorrow's init.
     const override = await getSalahOverride(supabase, today, waqt)
     if (override?.skip) continue
+
+    if (override?.delay_until) {
+      const delayUntil = new Date(override.delay_until)
+      if (Number.isFinite(delayUntil.getTime()) && now < delayUntil) {
+        console.log(`[salah] ${waqt} fully suppressed — delay lock until ${delayUntil.toISOString()}`)
+        continue
+      }
+    }
+
     const overrideStart = override?.override_time
       ? new Date(override.override_time)
       : override?.delay_until

@@ -18,6 +18,7 @@ import {
   buildTwimlSayOnlyUrl,
   getTwilioPublicBase,
 } from '../twilio-http.mjs'
+import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 
 const CALL_TEXT_LIMIT = 200
 /** Min gap between general outbound calls — reduces carrier spam-blocking */
@@ -121,6 +122,12 @@ async function placeSayOnlyRetry({
   statusCallbackUrl,
   skipCooldown = false,
 }) {
+  const lock = await isOwnerCallLocked()
+  if (lock.locked) {
+    console.log(`[twilio] retry blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+    return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
   if (!skipCooldown && Date.now() - lastCallPlacedAt < MIN_CALL_GAP_MS) {
     return { ok: false, error: 'call_cooldown', skipped: true }
   }
@@ -216,6 +223,12 @@ async function scheduleSalahCallRetries({
     console.log(`[twilio/salah] retry ${i + 1} in ${Math.round(delayMs / 1000)}s`)
     await new Promise((r) => setTimeout(r, delayMs))
 
+    const lock = await isOwnerCallLocked()
+    if (lock.locked) {
+      console.log(`[twilio/salah] retries aborted — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+      return
+    }
+
     const retry = await placeSayOnlyRetry({
       sayText,
       accountSid,
@@ -259,6 +272,13 @@ async function scheduleSalahCallRetries({
 export async function makeTwilioCall(text, opts = {}) {
   const force = Boolean(opts.force)
   const salah = Boolean(opts.salah || opts.purpose === 'salah')
+
+  const lock = await isOwnerCallLocked()
+  if (lock.locked) {
+    console.log(`[twilio] call blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+    return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
   const accountSid  = process.env.TWILIO_ACCOUNT_SID
   const authToken   = process.env.TWILIO_AUTH_TOKEN
   const { fromNumber, dedicatedSalah } = resolveTwilioFromNumber(opts)

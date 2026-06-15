@@ -13,6 +13,7 @@ import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
 import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
 import { computeLockUntil, MAX_DELAY_MIN } from '@/lib/salah/duty-window'
+import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import {
   getSalahTimeConfig,
   setSalahWaqtTimes,
@@ -351,6 +352,7 @@ const request_salah_delay: AgentTool = {
         delayUntil: lock.lockUntil,
         grantedMin: lock.grantedMin,
       })
+      await setOwnerCallLockUntil(lock.lockUntil)
 
       const resumeLabel = lock.lockUntil.toLocaleTimeString('bn-BD', {
         timeZone: 'Asia/Dhaka',
