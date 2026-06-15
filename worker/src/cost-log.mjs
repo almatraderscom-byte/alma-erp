@@ -36,11 +36,30 @@ export async function logCost(params) {
 
 /** Pricing mirrors src/agent/lib/pricing.ts (keep in sync). */
 export const WORKER_PRICING = {
+  anthropic_input_per_million: 3.0,
+  anthropic_output_per_million: 15.0,
+  anthropic_cache_write_per_million: 3.75,
+  anthropic_cache_read_per_million: 0.3,
   gemini_image_standard: 0.039,
   gemini_image_pro: 0.134,
   google_tts_per_million_chars: 16.0,
   twilio_per_minute: 0.014,
   whisper_per_minute: 0.006,
+}
+
+/**
+ * @param {{ input_tokens?: number, output_tokens?: number, cache_creation_input_tokens?: number, cache_read_input_tokens?: number }} usage
+ * @param {{ batch?: boolean }} [opts] — batch API = 50% of standard token price
+ */
+export function calcAnthropicChatCostUsd(usage, opts = {}) {
+  const p = WORKER_PRICING
+  const input = ((usage.input_tokens ?? 0) / 1_000_000) * p.anthropic_input_per_million
+  const output = ((usage.output_tokens ?? 0) / 1_000_000) * p.anthropic_output_per_million
+  const cacheWrite = ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) * p.anthropic_cache_write_per_million
+  const cacheRead = ((usage.cache_read_input_tokens ?? 0) / 1_000_000) * p.anthropic_cache_read_per_million
+  const base = input + output + cacheWrite + cacheRead
+  const discounted = opts.batch ? base * 0.5 : base
+  return Math.round(discounted * 1_000_000) / 1_000_000
 }
 
 export function calcTtsCostUsd(charCount) {

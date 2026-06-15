@@ -85,18 +85,23 @@ export const PRICING_META = {
 } as const
 
 /** Anthropic chat cost from token usage (matches legacy calcCostUsd). */
-export function calcAnthropicChatCostUsd(usage: {
-  input_tokens: number
-  output_tokens: number
-  cache_creation_input_tokens?: number | null
-  cache_read_input_tokens?: number | null
-}): number {
+export function calcAnthropicChatCostUsd(
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    cache_creation_input_tokens?: number | null
+    cache_read_input_tokens?: number | null
+  },
+  opts?: { batch?: boolean },
+): number {
   const p = PRICING_META.anthropic
   const input = (usage.input_tokens / 1_000_000) * p.inputPerMillion
   const output = (usage.output_tokens / 1_000_000) * p.outputPerMillion
   const cacheWrite = ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) * p.cacheWritePerMillion
   const cacheRead = ((usage.cache_read_input_tokens ?? 0) / 1_000_000) * p.cacheReadPerMillion
-  return roundUsd(input + output + cacheWrite + cacheRead)
+  const base = input + output + cacheWrite + cacheRead
+  const discounted = opts?.batch ? base * 0.5 : base
+  return roundUsd(discounted)
 }
 
 export function calcEmbeddingCostUsd(tokenCount: number): number {

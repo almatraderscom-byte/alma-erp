@@ -193,23 +193,27 @@ export async function runWeeklyReview({ supabase, bot }) {
     voice:    true,
   })
 
-  // ── Strategic altitude + agent self-review (Intelligence C) ───────────────
+  // ── Strategic altitude + agent self-review (Intelligence C) — Batch API ───
 
   try {
-    const stratRes = await fetch(`${APP_URL}/api/assistant/internal/weekly-strategic`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
-    })
-    const stratData = await stratRes.json().catch(() => ({}))
-    if (stratData.message) {
+    const { runWeeklyStrategicBatch, runWeeklyStrategicSync } = await import('../intelligence/weekly-strategic-batch.mjs')
+    let stratMessage = null
+    try {
+      stratMessage = await runWeeklyStrategicBatch({ appUrl: APP_URL, intToken: INT_TOKEN })
+      console.log('[weekly-review] strategic section via batch API')
+    } catch (batchErr) {
+      console.warn('[weekly-review] batch strategic failed, sync fallback:', batchErr?.message ?? batchErr)
+      stratMessage = await runWeeklyStrategicSync({ appUrl: APP_URL, intToken: INT_TOKEN })
+    }
+    if (stratMessage) {
       const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
       if (bot?.telegram && ownerChatId) {
-        await sendMarkdownSafe(bot.telegram, ownerChatId, stratData.message)
+        await sendMarkdownSafe(bot.telegram, ownerChatId, stratMessage)
       } else {
         await notify({
           tier:     1,
           title:    'সাপ্তাহিক স্ট্র্যাটেজিক রিভিউ',
-          message:  stratData.message,
+          message:  stratMessage,
           category: 'report',
         })
       }
