@@ -10,11 +10,42 @@ import {
 } from '@/agent/lib/salah-context'
 import { buildSalahStatusAnswer } from '@/agent/lib/salah-status-answer'
 import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
+import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
+import { computeLockUntil, MAX_DELAY_MIN } from '@/lib/salah/duty-window'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
+import type { WaqtKey } from '@/agent/lib/salah-times'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+async function resolvePrayerStartIso(waqt: string, dateYmd?: string): Promise<string | null> {
+  const ymd = dateYmd || todayYmdDhaka()
+  const schedule = await getDhakaSchedule(ymd)
+  const w = schedule[waqt as WaqtKey]
+  if (!w?.prayerStart) return null
+  return w.prayerStart.toISOString()
+}
+
+async function upsertSalahDelayOverride(args: {
+  dateYmd: string
+  waqt: string
+  delayUntil: Date
+  grantedMin: number
+}) {
+  const dateObj = dhakaMidnightUtc(args.dateYmd)
+  await db.agentSalahOverride.deleteMany({ where: { date: dateObj, waqt: args.waqt } })
+  await db.agentSalahOverride.create({
+    data: {
+      date: dateObj,
+      waqt: args.waqt,
+      delayUntil: args.delayUntil,
+      overrideTime: null,
+      skip: false,
+      reason: `owner requested ${args.grantedMin}min`,
+    },
+  })
+}
 
 // ── get_prayer_times ──────────────────────────────────────────────────────────
 
@@ -260,9 +291,91 @@ const get_salah_weekly_summary: AgentTool = {
   },
 }
 
+// ── request_salah_delay ───────────────────────────────────────────────────────
+
+const request_salah_delay: AgentTool = {
+  name: 'request_salah_delay',
+  description:
+    'When the owner asks for extra time before salah reminder calls resume ("আমাকে ৩০ মিনিট সময় দাও", ' +
+    '"১৫ মিনিট পর কল করো"), use this. ONLY valid within the moral-duty window (15 min before prayer to ' +
+    '30 min after prayer = 45 min total). Locks salah calls for requested minutes (capped at 45 and window end). ' +
+    'Outside that window, do NOT use — normal flow applies. After window end (prayer+30), do NOT grant delay; ' +
+    'encourage owner to pray in Bangla instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      waqt: {
+        type: 'string',
+        enum: ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'],
+        description: 'Which prayer — infer from current time if owner does not say',
+      },
+      minutes: {
+        type: 'number',
+        description: `Requested delay in minutes (capped at ${MAX_DELAY_MIN} and window end)`,
+      },
+      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+    },
+    required: ['waqt', 'minutes'],
+  },
+  handler: async (input) => {
+    try {
+      const waqt = String(input.waqt ?? '').trim()
+      const minutes = Number(input.minutes ?? 0)
+      const dateYmd = (input.date as string) || todayYmdDhaka()
+      if (!waqt || !Number.isFinite(minutes) || minutes < 1) {
+        return { success: false, error: 'waqt এবং minutes (১+) লাগবে।' }
+      }
+
+      const prayerStartIso = await resolvePrayerStartIso(waqt, dateYmd)
+      if (!prayerStartIso) {
+        return { success: false, error: 'নামাজের সময় পাওয়া যায়নি।' }
+      }
+
+      const lock = computeLockUntil(prayerStartIso, minutes)
+      if (!lock) {
+        return {
+          success: false,
+          error:
+            'এখন duty-window-এর বাইরে — এই মুহূর্তে সময় lock করা যাবে না। নামাজের সময়ের ১৫ মিনিট আগে থেকে ৩০ মিনিট পর পর্যন্ত (মোট ৪৫ মিনিট) এর মধ্যে অনুরোধ করুন। উইন্ডো শেষ হলে নামাজ পড়ার জন্য উৎসাহ দিন — delay দেবেন না।',
+        }
+      }
+
+      await upsertSalahDelayOverride({
+        dateYmd,
+        waqt,
+        delayUntil: lock.lockUntil,
+        grantedMin: lock.grantedMin,
+      })
+
+      const resumeLabel = lock.lockUntil.toLocaleTimeString('bn-BD', {
+        timeZone: 'Asia/Dhaka',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+
+      return {
+        success: true,
+        data: {
+          waqt,
+          grantedMinutes: lock.grantedMin,
+          resumeAt: lock.lockUntil.toISOString(),
+          resumeAtLabel: resumeLabel,
+          message:
+            `ঠিক আছে স্যার — ${lock.grantedMin} মিনিটের জন্য নামাজের কল বন্ধ রাখলাম (${resumeLabel} পর আবার মনে করিয়ে দেব)। ` +
+            `সর্বোচ্চ ${MAX_DELAY_MIN} মিনিট; নামাজের সময় + ৩০ মিনিটের পর আর delay হবে না।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const SALAH_TOOLS: AgentTool[] = [
   get_prayer_times,
   get_salah_status,
   mark_salah,
   get_salah_weekly_summary,
+  request_salah_delay,
 ]

@@ -17,6 +17,7 @@ export const SALAH_ACCOUNTABILITY_RULE = `
 - **স্ট্যাটাস/বাকি চাইলে:** get_salah_status বাধ্য — answerBangla ও allDone অনুসরণ; notYetDue ≠ পড়েছেন; allDone=false হলে "সব ৫ শেষ" নিষিদ্ধ।
 - **অন্য টার্ন:** ব্যবসার উত্তরের আগে get_salah_status; accountableWaqts (window শুরু/মিস) জিজ্ঞেস — carryover আগে; notYetDue-কে "পড়েননি" বলবেন না।
 - **"পড়েছি" বললে:** উত্তরের আগে mark_salah — ছাড়া confirm বলা নিষিদ্ধ।
+- **Delay ("আমাকে X মিনিট সময় দাও"):** নামাজের সময়ের ১৫ মিনিট আগে থেকে ৩০ মিনিট পর (৪৫ মিনিট window) এর মধ্যে হলে → request_salah_delay (X যেকোনো, সর্বোচ্চ ৪৫ ও window শেষ পর্যন্ত cap)। সম্মতি দিন, lock করুন। window শেষ (নামাজ+৩০) হয়ে গেলে → delay দেবেন না; বাংলায় ভালোবেসে নামাজ পড়ার জন্য উৎসাহ দিন — স্বাভাবিক reminder/call চলতে থাকবে। ৫ ওয়াক্ত একই নিয়ম।
 `
 
 export const HONESTY_ACCOUNTABILITY_RULE = `

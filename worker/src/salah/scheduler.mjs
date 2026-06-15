@@ -23,6 +23,7 @@ import {
   salahChannelMessages,
 } from './reminder-messages.mjs'
 import { notify } from '../notify/index.mjs'
+import { dutyWindowEnd } from './duty-window.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -350,8 +351,16 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       : override?.delay_until
         ? new Date(override.delay_until)
         : null
-    if (overrideStart && Number.isFinite(overrideStart.getTime()) && overrideStart < windowEnd) {
-      windowStart = overrideStart
+
+    const waqtScheduleForClamp = schedule[waqt] ?? prayerTimes[waqt]
+    const prayerStartForClamp = new Date(waqtScheduleForClamp?.prayerStart ?? windowStart)
+    const windowMaxEnd = dutyWindowEnd(prayerStartForClamp)
+    let clampedOverrideStart = overrideStart
+    if (clampedOverrideStart && clampedOverrideStart > windowMaxEnd) {
+      clampedOverrideStart = windowMaxEnd
+    }
+    if (clampedOverrideStart && Number.isFinite(clampedOverrideStart.getTime()) && clampedOverrideStart < windowEnd) {
+      windowStart = clampedOverrideStart
     }
 
     // Future waqt — do not remind or mark missed
