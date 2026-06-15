@@ -2,9 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 
+const recentCalls = new Map<string, number>()
+const RATE_WINDOW_MS = 60_000
+const MAX_PER_WINDOW = 5
+
 export async function POST(req: NextRequest) {
   const ctx = await getWalletContext(req)
   if ('error' in ctx) return ctx.error
+
+  const uid = ctx.userId
+  const ts = Date.now()
+  const last = recentCalls.get(uid) ?? 0
+  if (ts - last < RATE_WINDOW_MS / MAX_PER_WINDOW) {
+    return NextResponse.json({ error: 'rate_limited', retry_after: 12 }, { status: 429 })
+  }
+  recentCalls.set(uid, ts)
+  if (recentCalls.size > 5000) {
+    const cutoff = ts - RATE_WINDOW_MS
+    for (const [k, v] of recentCalls) if (v < cutoff) recentCalls.delete(k)
+  }
   const body = (await req.json()) as {
     provider?: string
     playerId?: string

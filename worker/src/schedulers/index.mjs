@@ -132,12 +132,12 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'approval-escalation': {
       const { runApprovalEscalation } = await lazy.approvalEscalation()
-      await runApprovalEscalation({ supabase, bot })
+      dutyResult = await runApprovalEscalation({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'approval-tracker': {
       const { runApprovalTracker } = await lazy.approvalTracker()
-      await runApprovalTracker({ supabase, bot })
+      dutyResult = await runApprovalTracker({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'catchup-scan': {
@@ -156,14 +156,12 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'owner-briefing': {
       const { runOwnerBriefing } = await lazy.ownerBriefing()
-      await runOwnerBriefing({ supabase, bot })
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runOwnerBriefing({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'order-watch': {
       const { runOrderWatch } = await lazy.orderWatch()
-      await runOrderWatch({ bot })
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runOrderWatch({ bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'morning-staff-reminder': {
@@ -181,7 +179,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'ads-monitor': {
       const { runAdsMonitor } = await lazy.adsMonitor()
-      await runAdsMonitor({ supabase })
+      dutyResult = await runAdsMonitor({ supabase }) ?? { dutyStatus: 'done' }
       break
     }
     case 'ads-optimizer': {
@@ -191,8 +189,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'midday-checkin': {
       const { runMiddayCheckin } = await lazy.middayCheckin()
-      await runMiddayCheckin(context)
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runMiddayCheckin(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'staff-morale': {
@@ -202,49 +199,47 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'staff-presence': {
       const { runStaffPresence } = await lazy.staffPresence()
-      await runStaffPresence(context)
+      dutyResult = await runStaffPresence(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'salah-escalation': {
       const { checkAndEscalateSalah } = await lazy.salahScheduler()
-      await checkAndEscalateSalah(context)
+      dutyResult = await checkAndEscalateSalah(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'messenger-scan': {
       const { runMessengerScan } = await lazy.messengerScan()
-      await runMessengerScan(context)
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runMessengerScan(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'session-summarizer': {
       const { runSessionSummarizer } = await lazy.sessionSummarizer()
-      await runSessionSummarizer()
+      dutyResult = await runSessionSummarizer() ?? { dutyStatus: 'done' }
       break
     }
     case 'night-report': {
       const { runNightReport } = await lazy.nightReport()
-      await runNightReport(context)
-      dutyResult = { dutyStatus: 'done' }
+      dutyResult = await runNightReport(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'weekly-review': {
       const { runWeeklyReview } = await lazy.weeklyReview()
-      await runWeeklyReview({ supabase, bot })
+      dutyResult = await runWeeklyReview({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'daily-summary': {
       const { runDailySummary } = await lazy.dailySummary()
-      await runDailySummary(context)
+      dutyResult = await runDailySummary(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'customer-intel': {
       const { runCustomerIntel } = await lazy.customerIntel()
-      await runCustomerIntel({ bot })
+      dutyResult = await runCustomerIntel({ bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'subscription-renewal': {
       const { runSubscriptionRenewalCheck } = await lazy.subscriptionRenewal()
-      await runSubscriptionRenewalCheck(context)
+      dutyResult = await runSubscriptionRenewalCheck(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'budget-check': {

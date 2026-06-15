@@ -52,6 +52,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...OWNER_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,
     ...COST_TOOLS,
+    ...SALAH_TOOLS,
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],

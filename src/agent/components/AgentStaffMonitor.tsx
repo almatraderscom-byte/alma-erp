@@ -318,9 +318,21 @@ function MonitorBody({ data, isLive }: { data: StaffMonitorData; isLive: boolean
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ staffName: m.staffName, messageType: typeLabel(m.type), outboxId: m.id }),
       })
-      const json = await res.json()
-      if (res.ok) showToast(`🔔 NTFY sent for ${m.staffName}`, 'ok')
-      else showToast(json.message ?? 'Escalation failed', 'err')
+      const json = await res.json() as { ok?: boolean; actions?: string[]; message?: string }
+      if (res.ok) {
+        const acts = json.actions ?? []
+        const resent = acts.includes('resent_to_staff')
+        const ntfy = acts.includes('owner_ntfy_sent')
+        showToast(
+          resent && ntfy ? `✅ ${m.staffName} — message re-sent + NTFY alert sent`
+            : resent ? `✅ ${m.staffName} — message re-sent to Telegram`
+            : ntfy ? `🔔 ${m.staffName} — NTFY alert sent (resend failed)`
+            : `⚠️ ${m.staffName} — action completed`,
+          'ok',
+        )
+      } else {
+        showToast(json.message ?? 'Escalation failed', 'err')
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Network error', 'err')
     } finally {
