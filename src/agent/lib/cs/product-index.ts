@@ -117,6 +117,7 @@ export async function searchVisualIndex(
 
 export async function runFullProductIndex(business = DEFAULT_CATALOG_BUSINESS): Promise<{
   indexed: number
+  failed: number
   skippedNoImage: number
   total: number
   missingByBusiness: Record<string, number>
@@ -131,15 +132,22 @@ export async function runFullProductIndex(business = DEFAULT_CATALOG_BUSINESS): 
   for (const r of imgRows) withImages.add(r.productCode)
 
   let indexed = 0
+  let failed = 0
   const stock = await loadCatalogStock(true)
   for (const row of stock) {
     if (!withImages.has(row.sku)) continue
-    const ok = await indexProductVisual(row.sku, business)
-    if (ok) indexed++
+    try {
+      const ok = await indexProductVisual(row.sku, business)
+      if (ok) indexed++
+    } catch (err) {
+      failed++
+      console.warn(`[product-index] skip ${row.sku}:`, err instanceof Error ? err.message : err)
+    }
   }
 
   return {
     indexed,
+    failed,
     skippedNoImage: status.missingCount,
     total: status.totalProducts,
     missingByBusiness: { [business]: status.missingCount },
