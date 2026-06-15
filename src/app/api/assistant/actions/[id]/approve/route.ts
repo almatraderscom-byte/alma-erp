@@ -323,7 +323,8 @@ export async function POST(
     await appendConversationNote(
       db,
       action,
-      `✅ Marketing plan approved — ${orch.creativeBriefs} ad brief(s), ${orch.organicTasks} organic task(s) queued (each needs separate approval — no auto-post).`,
+      `✅ Marketing plan approved — ${orch.creativeBriefs} ad brief(s), ${orch.organicTasks} organic task(s). ` +
+        `${orch.cardsDelivered}টি confirm card পাঠানো হয়েছে (Agent chat + Telegram) — প্রতিটি আলাদা approve লাগবে।`,
     )
     return Response.json({
       success: true,

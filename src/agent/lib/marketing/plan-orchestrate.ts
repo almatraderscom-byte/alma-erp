@@ -4,11 +4,18 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
-import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
+import { sendOwnerApprovalCard, sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { appendConfirmCardMessage } from '@/agent/lib/confirm-card-message'
 import type { MarketingPlanItem } from '@/agent/lib/marketing/planner'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+const CARD_DELAY_MS = 450
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
+}
 
 async function pickOrganicStaff(): Promise<{ id: string; name: string } | null> {
   const staff = await db.agentStaff.findMany({
@@ -21,15 +28,59 @@ async function pickOrganicStaff(): Promise<{ id: string; name: string } | null> 
   return eyafi ?? mustahid ?? staff[0] ?? null
 }
 
+async function deliverChildApprovalCard(
+  card: {
+    pendingActionId: string
+    summary: string
+    actionType: string
+    approveLabel: string
+    rejectLabel: string
+  },
+  conversationId?: string | null,
+): Promise<{ telegramOk: boolean; telegramError?: string; uiOk: boolean }> {
+  let uiOk = false
+  if (conversationId) {
+    try {
+      await appendConfirmCardMessage(conversationId, {
+        pendingActionId: card.pendingActionId,
+        summary: card.summary,
+        actionType: card.actionType,
+      })
+      uiOk = true
+    } catch (err) {
+      console.error('[marketing-plan] confirm card message failed:', err)
+    }
+  }
+
+  const tg = await sendOwnerApprovalCard({
+    summary: card.summary,
+    pendingActionId: card.pendingActionId,
+    approveLabel: card.approveLabel,
+    rejectLabel: card.rejectLabel,
+  })
+
+  return { telegramOk: tg.ok, telegramError: tg.error, uiOk }
+}
+
 export async function orchestrateMarketingPlanItems(
   items: MarketingPlanItem[],
   conversationId?: string | null,
-): Promise<{ creativeBriefs: number; organicTasks: number; actionIds: string[] }> {
+): Promise<{
+  creativeBriefs: number
+  organicTasks: number
+  actionIds: string[]
+  cardsDelivered: number
+  telegramFailures: string[]
+  uiCardsDelivered: number
+}> {
   const staff = await pickOrganicStaff()
   const date = todayYmdDhaka()
   const actionIds: string[] = []
+  const telegramFailures: string[] = []
   let creativeBriefs = 0
   let organicTasks = 0
+  let cardsDelivered = 0
+  let uiCardsDelivered = 0
 
   for (const item of items) {
     const needsPaid = item.channel === 'paid' || item.channel === 'both'
@@ -64,7 +115,20 @@ export async function orchestrateMarketingPlanItems(
       })
       actionIds.push(action.id)
       creativeBriefs += 1
-      void sendOwnerApprovalCard({ summary, pendingActionId: action.id }).catch(() => {})
+
+      const delivery = await deliverChildApprovalCard({
+        pendingActionId: action.id,
+        summary,
+        actionType: 'ads_creative_brief',
+        approveLabel: '✅ Creative brief',
+        rejectLabel: '❌ Skip',
+      }, conversationId)
+      if (delivery.telegramOk || delivery.uiOk) cardsDelivered += 1
+      if (delivery.uiOk) uiCardsDelivered += 1
+      if (!delivery.telegramOk && delivery.telegramError) {
+        telegramFailures.push(`${action.id}: ${delivery.telegramError}`)
+      }
+      await sleep(CARD_DELAY_MS)
     }
 
     if (needsOrganic && staff) {
@@ -99,9 +163,42 @@ export async function orchestrateMarketingPlanItems(
       })
       actionIds.push(action.id)
       organicTasks += 1
-      void sendOwnerApprovalCard({ summary, pendingActionId: action.id }).catch(() => {})
+
+      const delivery = await deliverChildApprovalCard({
+        pendingActionId: action.id,
+        summary,
+        actionType: 'add_staff_task_now',
+        approveLabel: '✅ Staff task',
+        rejectLabel: '❌ Skip',
+      }, conversationId)
+      if (delivery.telegramOk || delivery.uiOk) cardsDelivered += 1
+      if (delivery.uiOk) uiCardsDelivered += 1
+      if (!delivery.telegramOk && delivery.telegramError) {
+        telegramFailures.push(`${action.id}: ${delivery.telegramError}`)
+      }
+      await sleep(CARD_DELAY_MS)
     }
   }
 
-  return { creativeBriefs, organicTasks, actionIds }
+  if (cardsDelivered > 0) {
+    const lines = [
+      `📋 Marketing plan — ${cardsDelivered}টি follow-up approval card`,
+      conversationId
+        ? 'Agent chat-এ confirm card দেখুন (refresh/poll) + Telegram-এ বাটন।'
+        : 'Telegram-এ approve বাটন দেখুন।',
+    ]
+    if (telegramFailures.length) {
+      lines.push(`⚠️ Telegram ${telegramFailures.length}টি fail — Agent chat/UI cards check করুন।`)
+    }
+    void sendOwnerText(lines.join('\n')).catch(() => {})
+  }
+
+  return {
+    creativeBriefs,
+    organicTasks,
+    actionIds,
+    cardsDelivered,
+    telegramFailures,
+    uiCardsDelivered,
+  }
 }

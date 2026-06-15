@@ -43,7 +43,17 @@ async function readAssistantError(res: Response, fallback: string): Promise<stri
 type MessageRow = {
   id: string
   role: string
-  content: Array<{ type: string; text?: string; bucket?: string; path?: string; mediaType?: string }>
+  content: Array<{
+    type: string
+    text?: string
+    bucket?: string
+    path?: string
+    mediaType?: string
+    pendingActionId?: string
+    summary?: string
+    actionType?: string
+    costEstimate?: number
+  }>
   tokensIn: number | null
   tokensOut: number | null
   costUsd: string | null
@@ -53,6 +63,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
   return rows.map((r) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
+    const confirmBlock = r.content.find((b) => b.type === 'confirm_card' && b.pendingActionId)
     return {
       id: r.id,
       role: r.role as 'user' | 'assistant',
@@ -64,6 +75,14 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       tokensIn: r.tokensIn ?? undefined,
       tokensOut: r.tokensOut ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+      pendingAction: confirmBlock?.pendingActionId
+        ? {
+            id: confirmBlock.pendingActionId,
+            summary: confirmBlock.summary ?? '',
+            costEstimate: confirmBlock.costEstimate,
+            actionType: confirmBlock.actionType,
+          }
+        : undefined,
     }
   })
 }
