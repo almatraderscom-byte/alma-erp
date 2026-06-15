@@ -19,6 +19,7 @@ import {
   getTwilioPublicBase,
 } from '../twilio-http.mjs'
 import { isOwnerCallLocked } from '../owner-call-lock.mjs'
+import { isSalahCallBlocked } from '../salah-confirmed.mjs'
 
 const CALL_TEXT_LIMIT = 200
 /** Min gap between general outbound calls — reduces carrier spam-blocking */
@@ -121,11 +122,21 @@ async function placeSayOnlyRetry({
   appUrl,
   statusCallbackUrl,
   skipCooldown = false,
+  salahDate,
+  salahWaqt,
 }) {
   const lock = await isOwnerCallLocked()
   if (lock.locked) {
     console.log(`[twilio] retry blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
     return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
+  if (salahDate && salahWaqt) {
+    const salahBlock = await isSalahCallBlocked(salahDate, salahWaqt)
+    if (salahBlock.blocked) {
+      console.log(`[twilio/salah] retry blocked — ${salahWaqt} confirmed for ${salahDate}`)
+      return { ok: false, error: 'salah_confirmed', skipped: true }
+    }
   }
 
   if (!skipCooldown && Date.now() - lastCallPlacedAt < MIN_CALL_GAP_MS) {
@@ -200,7 +211,17 @@ async function scheduleSalahCallRetries({
   toNumber,
   appUrl,
   statusCallbackUrl,
+  salahDate,
+  salahWaqt,
 }) {
+  if (salahDate && salahWaqt) {
+    const preBlock = await isSalahCallBlocked(salahDate, salahWaqt)
+    if (preBlock.blocked) {
+      console.log(`[twilio/salah] retry loop skipped — ${salahWaqt} already confirmed for ${salahDate}`)
+      return
+    }
+  }
+
   let call = await waitForTerminalCall(initialCallSid, accountSid, authToken, 50_000)
   if (!call) {
     try {
@@ -213,6 +234,14 @@ async function scheduleSalahCallRetries({
   if (!callNeedsRetry(call)) {
     console.log(`[twilio/salah] initial call ok (${call?.status}, ${call?.duration ?? 0}s)`)
     return
+  }
+
+  if (salahDate && salahWaqt) {
+    const postBlock = await isSalahCallBlocked(salahDate, salahWaqt)
+    if (postBlock.blocked) {
+      console.log(`[twilio/salah] retries aborted after initial call — ${salahWaqt} confirmed for ${salahDate}`)
+      return
+    }
   }
 
   console.warn(`[twilio/salah] initial call needs retry (${call?.status}, ${call?.duration ?? 0}s) — ${SALAH_RETRY_DELAYS_MS.length} attempts scheduled`)
@@ -229,6 +258,14 @@ async function scheduleSalahCallRetries({
       return
     }
 
+    if (salahDate && salahWaqt) {
+      const salahBlock = await isSalahCallBlocked(salahDate, salahWaqt)
+      if (salahBlock.blocked) {
+        console.log(`[twilio/salah] retries aborted — ${salahWaqt} confirmed for ${salahDate}`)
+        return
+      }
+    }
+
     const retry = await placeSayOnlyRetry({
       sayText,
       accountSid,
@@ -238,6 +275,8 @@ async function scheduleSalahCallRetries({
       appUrl,
       statusCallbackUrl,
       skipCooldown: true,
+      salahDate,
+      salahWaqt,
     })
     if (!retry.ok) {
       console.warn(`[twilio/salah] retry ${i + 1} place failed:`, retry.error)
@@ -266,17 +305,27 @@ async function scheduleSalahCallRetries({
 
 /**
  * @param {string} text
- * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, toNumber?: string }} opts
+ * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, toNumber?: string, salahDate?: string, salahWaqt?: string }} opts
  * @returns {Promise<{ok:boolean, callSid?:string, error?:string, skipped?:boolean}>}
  */
 export async function makeTwilioCall(text, opts = {}) {
   const force = Boolean(opts.force)
   const salah = Boolean(opts.salah || opts.purpose === 'salah')
+  const salahDate = opts.salahDate
+  const salahWaqt = opts.salahWaqt
 
   const lock = await isOwnerCallLocked()
   if (lock.locked) {
     console.log(`[twilio] call blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
     return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
+  if (salah && salahDate && salahWaqt) {
+    const salahBlock = await isSalahCallBlocked(salahDate, salahWaqt)
+    if (salahBlock.blocked) {
+      console.log(`[twilio/salah] call blocked — ${salahWaqt} confirmed for ${salahDate}`)
+      return { ok: false, error: 'salah_confirmed', skipped: true }
+    }
   }
 
   const accountSid  = process.env.TWILIO_ACCOUNT_SID
@@ -353,7 +402,12 @@ export async function makeTwilioCall(text, opts = {}) {
         statusCallbackUrl,
       }
       if (salah) {
-        void scheduleSalahCallRetries({ initialCallSid: result.callSid, ...retryCtx })
+        void scheduleSalahCallRetries({
+          initialCallSid: result.callSid,
+          ...retryCtx,
+          salahDate,
+          salahWaqt,
+        })
       } else {
         void maybeRetrySayOnly(retryCtx)
       }

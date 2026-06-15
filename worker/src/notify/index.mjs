@@ -54,7 +54,9 @@ async function logNotification(tier, category, channels, statuses, title, messag
  *   message: string,
  *   category?: 'salah'|'urgent'|'task'|'report',
  *   voice?: boolean,
- *   skipTelegram?: boolean
+ *   skipTelegram?: boolean,
+ *   salahDate?: string,
+ *   salahWaqt?: string,
  * }} opts
  */
 /**
@@ -70,6 +72,8 @@ export async function notify({
   skipTelegram = false,
   ntfyMode = 'both',
   voiceMessage,
+  salahDate,
+  salahWaqt,
 }) {
   const channels = []
   const statuses = {}
@@ -124,6 +128,8 @@ export async function notify({
       force: true,
       salah: category === 'salah',
       purpose: category === 'salah' ? 'salah' : undefined,
+      salahDate: category === 'salah' ? salahDate : undefined,
+      salahWaqt: category === 'salah' ? salahWaqt : undefined,
     })
     statuses.twilio_call = callResult.ok ? `sent:${callResult.callSid}` : `error: ${callResult.error}`
   }

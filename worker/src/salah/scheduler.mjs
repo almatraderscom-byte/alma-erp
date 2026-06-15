@@ -24,6 +24,7 @@ import {
 } from './reminder-messages.mjs'
 import { notify } from '../notify/index.mjs'
 import { isOwnerCallLocked } from '../owner-call-lock.mjs'
+import { isSalahWaqtConfirmed } from '../salah-confirmed.mjs'
 import { dutyWindowEnd } from './duty-window.mjs'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
@@ -223,6 +224,7 @@ async function deliverSalahAlert({
   bot,
   ownerChatId,
   waqt,
+  salahDate,
   replyMarkup,
   withVoice = true,
   ntfyMode = 'critical',
@@ -232,6 +234,9 @@ async function deliverSalahAlert({
     const lock = await isOwnerCallLocked()
     if (lock.locked) {
       console.log(`[salah] tier-3 suppressed — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+      effectiveTier = 2
+    } else if (salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt))) {
+      console.log(`[salah] tier-3 suppressed — ${waqt} already confirmed for ${salahDate}`)
       effectiveTier = 2
     }
   }
@@ -245,6 +250,8 @@ async function deliverSalahAlert({
     voiceMessage: msgs.voice,
     skipTelegram: true,
     ntfyMode,
+    salahDate,
+    salahWaqt: waqt,
   })
   await sendTelegramSafe(
     bot,
@@ -411,6 +418,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         ntfyMode: escalationLevel >= 2 ? 'critical' : 'general',
       })
 
@@ -454,6 +462,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         ntfyMode: 'critical',
       })
       continue
@@ -485,6 +494,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         ntfyMode: 'critical',
       })
       continue
@@ -515,6 +525,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         withVoice: false,
         ntfyMode: 'critical',
       })
@@ -542,6 +553,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         ntfyMode: 'critical',
       })
       continue
@@ -568,6 +580,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         ntfyMode: 'critical',
       })
       continue
@@ -596,6 +609,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         bot,
         ownerChatId,
         waqt,
+        salahDate: today,
         replyMarkup: qazaButtons(waqt),
         withVoice: missedTier >= 3,
         ntfyMode: 'critical',
@@ -668,6 +682,7 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
       ? resolvePrayedStatus(windowEnd)
       : status
     await upsertSalahRecord({ date: recordDate, waqt, status: resolved })
+    console.log(`[salah] owner confirmed ${waqt} on ${recordDate} → ${resolved}`)
     const messages = {
       prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।`,
       prayed_late:    `✅ আলহামদুলিল্লাহ। পরের ওয়াক্ত সময়মতো পড়ার চেষ্টা করুন।`,
