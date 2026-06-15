@@ -37,6 +37,7 @@ async function listRecent() {
 }
 
 console.log('FROM:', maskPhone(process.env.TWILIO_FROM_NUMBER))
+console.log('SALAH FROM:', maskPhone(process.env.TWILIO_SALAH_FROM_NUMBER))
 console.log('TO:  ', maskPhone(process.env.TWILIO_TO_NUMBER))
 
 const recent = await listRecent()
@@ -56,16 +57,20 @@ for (const c of recent.calls ?? []) {
 
 const placeCall = process.argv.includes('--call')
 const forceCall = process.argv.includes('--force')
+const salahCall = process.argv.includes('--salah')
 if (placeCall) {
   if (!process.env.APP_URL) {
     console.error('APP_URL required for TwiML proxy (e.g. https://alma-erp-six.vercel.app)')
     process.exit(1)
   }
   console.log('APP_URL:', process.env.APP_URL)
-  console.log('\n--- Placing test call (Url TwiML + audio proxy) ---')
+  const mode = salahCall ? 'salah (dedicated FROM if set)' : 'general'
+  console.log(`\n--- Placing test call (${mode}) ---`)
   const result = await makeTwilioCall(
-    'আস্সালামু আলাইকুম স্যার। এটি ALMA টেস্ট কল। দয়া করে ফোন ধরুন।',
-    { force: forceCall },
+    salahCall
+      ? 'আস্সালামু আলাইকুম স্যার। এটি নামাজ রিমাইন্ডার টেস্ট কল। দয়া করে ফোন ধরুন।'
+      : 'আস্সালামু আলাইকুম স্যার। এটি ALMA টেস্ট কল। দয়া করে ফোন ধরুন।',
+    { force: forceCall, salah: salahCall, purpose: salahCall ? 'salah' : undefined },
   )
   console.log('place:', JSON.stringify(result))
   if (result.callSid) {
@@ -77,6 +82,9 @@ if (placeCall) {
       status: detail.status,
       to: maskPhone(detail.to),
       from: maskPhone(detail.from),
+      from_expected: salahCall
+        ? maskPhone(process.env.TWILIO_SALAH_FROM_NUMBER || process.env.TWILIO_FROM_NUMBER)
+        : maskPhone(process.env.TWILIO_FROM_NUMBER),
       duration: detail.duration,
       error_code: detail.error_code,
       error_message: detail.error_message,
