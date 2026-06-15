@@ -14,6 +14,11 @@ import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 import { compactConversationIfNeeded, COMPACT_THRESHOLD_USD } from '@/agent/lib/conversation-compact'
+import {
+  inheritConversationBusinessId,
+  isAgentBusinessId,
+  type AgentBusinessId,
+} from '@/lib/agent-api/business-context'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -97,13 +102,19 @@ export async function POST(req: NextRequest) {
   let projectSystemInstructions: string | null = null
   let personalMode = body.personalMode === true
   let requestedProjectId = typeof body.projectId === 'string' ? body.projectId : null
+  // Business scope for the turn — resolved from project or conversation row.
+  let businessId: AgentBusinessId | null = null
 
   if (requestedProjectId && !personalMode) {
-    const proj = await prisma.agentProject.findUnique({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proj = await (prisma as any).agentProject.findUnique({
       where: { id: requestedProjectId },
-      select: { name: true, systemInstructions: true },
+      select: { name: true, systemInstructions: true, businessId: true },
     })
     if (isPersonalProject(proj)) personalMode = true
+    if (!personalMode && isAgentBusinessId(proj?.businessId)) {
+      businessId = proj.businessId as AgentBusinessId
+    }
   }
 
   if (personalMode && !requestedProjectId) {
@@ -112,15 +123,36 @@ export async function POST(req: NextRequest) {
 
   try {
     if (conversationId) {
-      const conv = await prisma.agentConversation.findUnique({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const conv = await (prisma as any).agentConversation.findUnique({
         where: { id: conversationId },
-        select: { id: true, projectId: true, project: { select: { name: true, systemInstructions: true } } },
+        select: {
+          id: true,
+          projectId: true,
+          businessId: true,
+          project: { select: { name: true, systemInstructions: true, businessId: true } },
+        },
       })
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
       personalMode = isPersonalProject(conv.project) || personalMode
       projectSystemInstructions = personalMode
         ? null
         : (conv.project?.systemInstructions ?? null)
+      if (!personalMode) {
+        if (isAgentBusinessId(conv.businessId)) {
+          businessId = conv.businessId as AgentBusinessId
+        } else if (isAgentBusinessId(conv.project?.businessId)) {
+          businessId = conv.project!.businessId as AgentBusinessId
+          // Backfill on the conversation for future turns.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (prisma as any).agentConversation.update({
+              where: { id: conversationId },
+              data: { businessId },
+            })
+          } catch { /* non-critical */ }
+        }
+      }
       if (personalMode && conv.projectId !== requestedProjectId && requestedProjectId) {
         await prisma.agentConversation.update({
           where: { id: conversationId },
@@ -137,25 +169,44 @@ export async function POST(req: NextRequest) {
           : (message.slice(0, 60) || null)
 
       if (isInternalCall) {
-        const existing = await prisma.agentConversation.findFirst({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existing = await (prisma as any).agentConversation.findFirst({
           where: { title, source: 'telegram' },
           orderBy: { createdAt: 'desc' },
-          select: { id: true, projectId: true, project: { select: { name: true, systemInstructions: true } } },
+          select: {
+            id: true,
+            projectId: true,
+            businessId: true,
+            project: { select: { name: true, systemInstructions: true, businessId: true } },
+          },
         })
         if (existing) {
           conversationId = existing.id
           personalMode = isPersonalProject(existing.project) || personalMode
           projectSystemInstructions = personalMode ? null : (existing.project?.systemInstructions ?? null)
+          if (!personalMode) {
+            if (isAgentBusinessId(existing.businessId)) {
+              businessId = existing.businessId as AgentBusinessId
+            } else if (isAgentBusinessId(existing.project?.businessId)) {
+              businessId = existing.project!.businessId as AgentBusinessId
+            }
+          }
         }
       }
 
       if (!conversationId) {
-        const conv = await prisma.agentConversation.create({
+        const inherited = personalMode
+          ? null
+          : await inheritConversationBusinessId(requestedProjectId)
+        if (inherited) businessId = inherited
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const conv: { id: string } = await (prisma as any).agentConversation.create({
           data: {
             title,
             model: 'claude-sonnet-4-6',
             source,
             projectId: personalMode ? requestedProjectId : (requestedProjectId ?? null),
+            businessId: personalMode ? null : businessId,
           },
           select: { id: true },
         })
@@ -230,8 +281,17 @@ export async function POST(req: NextRequest) {
         projectSystemInstructions,
         personalMode,
         telegramFastPath,
+        businessId,
       })) {
         if (event.type === 'text_delta') finalText += event.delta
+        else if (event.type === 'verification_retry') {
+          // Drop the unverified draft so the final telegram reply is the truthful retry only.
+          finalText = ''
+          console.warn(
+            `[assistant/chat] verification retry ${event.attempt}/${event.maxAttempts}`,
+            { conversationId, categories: event.categories },
+          )
+        }
         else if (event.type === 'confirm_card') {
           pendingCards.push({
             pendingActionId: event.pendingActionId,
@@ -303,6 +363,7 @@ export async function POST(req: NextRequest) {
           personalMode,
           signal: req.signal,
           telegramFastPath,
+          businessId,
         })) {
           enqueue(event)
           if (event.type === 'done') {
@@ -354,6 +415,7 @@ export async function POST(req: NextRequest) {
       'Connection': 'keep-alive',
       'X-Conversation-Id': conversationId!,
       'X-Personal-Mode': personalMode ? 'true' : 'false',
+      'X-Business-Id': personalMode ? 'PERSONAL' : (businessId ?? 'ALMA_LIFESTYLE'),
     },
   })
 }

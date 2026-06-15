@@ -363,6 +363,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'verification_retry') {
+          // Server-side honesty check failed — discard streamed draft and start fresh.
+          setStreamMode('fetching')
+          setStreamStatus('🔁 verify করছি…')
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, text: '', toolActivity: [] }
+              : m
+          ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
           setStreamStatus(null)

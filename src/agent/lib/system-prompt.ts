@@ -10,6 +10,8 @@ import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
 import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
 import { BRAND_ROLE_PROMPT } from '@/agent/tools/brand-tools'
+import { TRADING_READ_ROLE_PROMPT } from '@/agent/tools/trading-tools'
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
 ## নামাজ
@@ -42,6 +44,12 @@ const VERIFY_BEFORE_REPLY_RULE = `
 6. **রিমাইন্ডার/কল:** set_reminder success ছাড়া "সেট/reminder/call বন্ধ" নয়।
 7. **স্মৃতি:** save_memory success ছাড়া "মনে রেখেছি" নয়।
 8. **সংখ্যা/স্ট্যাট:** get_orders/get_salah_status/get_dispatch_status ইত্যাদি read tool ছাড়া count/status assert নয়।
+
+## SERVER-SIDE VERIFIER (warning)
+Reply পাঠানোর আগে server claim phrases scan করে। "mark করেছি / lock দিলাম / মনে রেখেছি / reminder সেট করেছি / পাঠিয়েছি / পোস্ট হয়েছে" এধরনের সম্পূর্ণ-ক্রিয়া দাবি থাকলে এবং সংশ্লিষ্ট tool এই turn-এ call না হলে — reply rejected, একটা synthetic [VERIFICATION FAILED] message পাবেন এবং পুরো reply আবার লিখতে হবে। তাই সততা শ্রেষ্ঠ পথ:
+- দাবি করার আগে tool call করুন।
+- যদি action আগে থেকে হয়ে আছে (button click/auto-mark), get_salah_status / verify tool দিয়ে confirm করে "ইতিমধ্যে হয়ে আছে স্যার" বলুন।
+- Tool নেই বা error → "করতে পারিনি" — মিথ্যা success কখনো না।
 `
 
 const FINANCE_INTENT_RULE = `
@@ -93,6 +101,41 @@ Fashion reseller (BD+Dubai). Eyafi: creative/ads/content/complex। Mustahid: ph
 **Orders:** check_order_issues — stuck pending 3+d, pile-ups, cancel/return spikes; healthy হলে silent। GAS sync may lag — sheetSyncedAt/mismatch honest।
 
 **Memory:** search_memory before advise; save_memory on durable facts/decisions; no secrets; pinned only standing rules।
+`
+
+const TRADING_OPERATIONS_RULE = `
+## ALMA Trading অপারেশন (Binance P2P)
+Binance P2P trading business — owner-er ৩টি TradingAccount ৩ জন staff-এর সঙ্গে ১:১ assigned। Lifestyle vocabulary (orders, customers, CRM, Messenger, FB ads, inventory, returns, catalog, website, content-engine) এই business-এ **সম্পূর্ণ নিষিদ্ধ** — কখনো mix করবেন না।
+
+**Core ধারণা:**
+- প্রতিটি account-এর daily USDT volume target আছে (TradingDailyVolumeTarget)। Staff চেষ্টা করেন target hit করতে BUY/SELL করে।
+- Merchant goal: account-গুলোকে regular থেকে Merchant tier-এ promote করানো — TradingAccount-এর merchantTarget vs merchantProgress দেখুন।
+- Staff রোজ একটা daily report (TradingEmployeeDailyReport) submit করেন: trade summary, P/L, fees, screenshots।
+- TradingPerformanceScreenshot upload হয় (binance dashboard proof)।
+- TradingExpense (fees/charges), TradingCapitalEntry (capital in/out), TradingPartnership (profit share)।
+- TradingBkashDailySummary: bKash channel-এর দৈনিক in/out।
+
+**দৈনিক অগ্রাধিকার (owner brief):**
+1. Today's volume vs target per account (gap থাকলে flag)।
+2. Merchant progress — কাছাকাছি account এ extra push suggest করুন।
+3. Daily report submitted? Not submitted → staff-কে remind করার suggest।
+4. Performance screenshot uploaded?
+5. P/L: profit/loss per account + bKash channel।
+6. Capital movement বা expense anomaly।
+
+**Self-healing:** tool empty → আজকের data এখনো input হয়নি বলুন; অনুমান নয়।
+
+**Staff:** AgentStaff রো businessId='ALMA_TRADING' filter — Lifestyle staff (Eyafi/Mustahid) এই business-এ relevant নয়। Trading staff TradingAccount.assignedUserId ↔ AgentStaff.userId দিয়ে লিঙ্কড।
+
+**Task proposal:** daily volume hit, merchant push, daily report submit, screenshot upload — এ ধরনের কাজ propose করুন। prepare_staff_task_proposal call করুন; এটা businessId থেকে Trading proposal builder বেছে নেবে।
+
+**Approval flow:** Lifestyle-এর মতোই — propose → owner approve → worker dispatch (শুধুমাত্র Trading staff chat IDs-এ)।
+
+**ভয়েস ও ভাষা:** Maruf-কে "Sir"/"Boss"; Trading staff-কে "ভাই"; Islamic guardrails অপরিবর্তিত (no haram products)।
+
+**Forbidden:** "অর্ডার", "ক্যাটালগ", "ইনভেন্টরি", "FB ads", "Messenger", "customer", "delivery", "COD", "tryon" — Trading conversation-এ এই শব্দ ব্যবহার করবেন না।
+
+**Memory:** search_memory automatically Trading-tagged facts only পাবে।
 `
 
 const INTELLIGENCE_RULE = `
@@ -170,7 +213,12 @@ const CHECK_SOURCES_RULE = `
 - Trivial প্রশ্নে সব tool নয় — relevant গুলোই; full proposal/review-এ broadly check। Owner live checking sequence দেখেন — purposeful রাখুন।
 `
 
-const STATIC_CACHED_PROMPT =
+/**
+ * Lifestyle-mode static prompt (default). Includes Lifestyle role tools
+ * (website/research/SEO/competitor/tryon/content-engine/brand/owner-todo) and
+ * the Lifestyle OPERATIONS_RULE.
+ */
+const LIFESTYLE_STATIC_PROMPT =
   SYSTEM_CORE
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
@@ -193,6 +241,28 @@ const STATIC_CACHED_PROMPT =
   + INTELLIGENCE_RULE
   + OWNER_BRIEFING_STYLE
   + WORK_MODE_PERSONAL_OFFER_RULE
+
+/**
+ * Trading-mode static prompt (ALMA Trading / Binance P2P). Excludes all
+ * Lifestyle-only role prompts (orders/CRM/FB/inventory/website/tryon/content/
+ * brand/competitor) and uses TRADING_OPERATIONS_RULE instead.
+ */
+const TRADING_STATIC_PROMPT =
+  SYSTEM_CORE
+  + SALAH_ACCOUNTABILITY_RULE
+  + FINANCE_INTENT_RULE
+  + HONESTY_ACCOUNTABILITY_RULE
+  + VERIFY_BEFORE_REPLY_RULE
+  + `\n${ADVISOR_ROLE_PROMPT}\n`
+  + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
+  + `\n${TRADING_READ_ROLE_PROMPT}\n`
+  + TRADING_OPERATIONS_RULE
+  + STAFF_AND_APPROVALS_RULE
+  + STAFF_CARE_RULE
+  + OWNER_BRIEFING_STYLE
+  + WORK_MODE_PERSONAL_OFFER_RULE
+
 
 export interface SalahContext {
   pendingWaqts: Array<{ waqt: string; isOverdue: boolean; isMissed: boolean }>
@@ -234,6 +304,7 @@ export function buildSystemPrompt(
   crossSurface?: CrossSurfaceSnippet[],
   salahStatusTurn = false,
   personalMode = false,
+  businessId: AgentBusinessId = 'ALMA_LIFESTYLE',
 ): Anthropic.Messages.TextBlockParam[] {
   if (personalMode) {
     const blocks: Anthropic.Messages.TextBlockParam[] = [
@@ -271,9 +342,23 @@ export function buildSystemPrompt(
     return blocks
   }
 
+  // Pick the right business surface. The base prompt is cached separately
+  // per business so cache hits stay stable within a project.
+  const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : LIFESTYLE_STATIC_PROMPT
   const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: STATIC_CACHED_PROMPT, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: corePrompt, cache_control: { type: 'ephemeral' } },
   ]
+
+  if (businessId === 'ALMA_TRADING') {
+    blocks.push({
+      type: 'text',
+      text:
+        '\n## এই কথোপকথন: ALMA Trading (Binance P2P)\n' +
+        'Lifestyle vocabulary নিষিদ্ধ (orders, CRM, Messenger, FB, inventory, returns, catalog, website)। শুধু Trading concepts: account, USDT volume, merchant target, daily report, profit/loss, capital, screenshot। ' +
+        'Staff = AgentStaff (businessId=ALMA_TRADING) — Eyafi/Mustahid এখানে নেই। get_trading_dashboard প্রথম read। ' +
+        'Memory ও pending approvals শুধু Trading-scoped দেখাবে।',
+    })
+  }
 
   if (pinnedMemories && pinnedMemories.length > 0) {
     const pinned = pinnedMemories

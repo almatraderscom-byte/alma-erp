@@ -7,7 +7,8 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { TOOL_DEFINITIONS, TRADING_TOOL_DEFINITIONS, PERSONAL_TOOL_DEFINITIONS, executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
@@ -16,6 +17,12 @@ import { notifyOwner } from '@/agent/lib/notify-owner'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
+import {
+  detectClaimViolations,
+  buildVerificationReminder,
+  MAX_VERIFY_RETRIES,
+  type ClaimViolation,
+} from '@/agent/lib/claim-verifier'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -25,6 +32,13 @@ export type AgentEvent =
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  | {
+      type: 'verification_retry'
+      attempt: number
+      maxAttempts: number
+      categories: string[]
+      snippets: string[]
+    }
   | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
   | { type: 'error'; message: string }
 
@@ -171,18 +185,36 @@ function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
 
 // ── Memory helpers ─────────────────────────────────────────────────────────
 
-async function loadPinnedMemories(personalMode: boolean): Promise<PinnedMemory[]> {
+async function loadPinnedMemories(
+  personalMode: boolean,
+  businessId: AgentBusinessId,
+): Promise<PinnedMemory[]> {
   try {
+    // Filter business-scoped memories by current business; untagged legacy
+    // rows are treated as Lifestyle. Personal scope is cross-business.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = await (prisma as any).agentMemory.findMany({
-      where: personalMode
-        ? { pinned: true, scope: 'personal' }
-        : { pinned: true, scope: { not: 'personal' } },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-      select: { id: true, content: true, scope: true },
-    })
-    return rows as PinnedMemory[]
+    const rows: Array<{ id: string; content: string; scope: string; metadata: unknown }> =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).agentMemory.findMany({
+        where: personalMode
+          ? { pinned: true, scope: 'personal' }
+          : { pinned: true, scope: { not: 'personal' } },
+        orderBy: { createdAt: 'desc' },
+        take: 60,
+        select: { id: true, content: true, scope: true, metadata: true },
+      })
+
+    const filtered = personalMode
+      ? rows
+      : rows.filter((r) => {
+          const tag = (r.metadata && typeof r.metadata === 'object'
+            ? (r.metadata as Record<string, unknown>).businessId
+            : undefined) as string | undefined
+          if (businessId === 'ALMA_TRADING') return tag === 'ALMA_TRADING'
+          return !tag || tag === 'ALMA_LIFESTYLE'
+        })
+
+    return filtered.slice(0, 30).map((r) => ({ id: r.id, content: r.content, scope: r.scope })) as PinnedMemory[]
   } catch {
     return []
   }
@@ -190,7 +222,11 @@ async function loadPinnedMemories(personalMode: boolean): Promise<PinnedMemory[]
 
 const SIMILARITY_THRESHOLD = 0.45
 
-async function retrieveRelevantMemories(userMessage: string, personalMode: boolean): Promise<RelevantMemory[]> {
+async function retrieveRelevantMemories(
+  userMessage: string,
+  personalMode: boolean,
+  businessId: AgentBusinessId,
+): Promise<RelevantMemory[]> {
   try {
     const embedResult = await embed(userMessage)
     if (!embedResult.success) return []
@@ -199,13 +235,18 @@ async function retrieveRelevantMemories(userMessage: string, personalMode: boole
     const scopeClause = personalMode
       ? `AND scope = 'personal'`
       : `AND scope != 'personal'`
+    const businessClause = personalMode
+      ? ''
+      : businessId === 'ALMA_TRADING'
+        ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
+        : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
     const rows: Array<{ id: string; content: string; scope: string; score: number }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).$queryRawUnsafe(
         `SELECT id, content, scope,
                 1 - (embedding <=> $1::vector) AS score
          FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause}
+         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause} ${businessClause}
          ORDER BY embedding <=> $1::vector
          LIMIT 3`,
         vec,
@@ -230,6 +271,8 @@ export interface RunAgentTurnOptions {
   telegramFastPath?: boolean
   /** AbortSignal from the HTTP request — cancels the stream early if client disconnects. */
   signal?: AbortSignal
+  /** Business scope — drives prompt operations rule, tool registry, staff/dispatch filters. */
+  businessId?: AgentBusinessId | null
 }
 
 // ── Main agent turn ────────────────────────────────────────────────────────
@@ -240,6 +283,10 @@ export async function* runAgentTurn(
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
   const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
+  // Resolve business scope: personal mode is always cross-business; otherwise default to Lifestyle.
+  const businessId: AgentBusinessId = personalMode
+    ? 'ALMA_LIFESTYLE'
+    : normalizeBusinessId(options.businessId)
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
@@ -288,8 +335,8 @@ export async function* runAgentTurn(
 
   // Load pinned memories and retrieve relevant memories in parallel
   const [pinnedMemories, relevantMemories, salahContext, crossSurface] = await Promise.all([
-    loadPinnedMemories(personalMode),
-    lastUserText ? retrieveRelevantMemories(lastUserText, personalMode) : Promise.resolve([]),
+    loadPinnedMemories(personalMode, businessId),
+    lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
@@ -303,6 +350,7 @@ export async function* runAgentTurn(
   }
   const toolRecords: ToolRecord[] = []
   let memoryNudgeSent = false
+  let verifyRetries = 0
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -328,8 +376,11 @@ export async function* runAgentTurn(
             crossSurface,
             personalMode ? false : isSalahStatusInquiry(lastUserText),
             personalMode,
+            businessId,
           ),
-          tools: personalMode ? PERSONAL_TOOL_DEFINITIONS : TOOL_DEFINITIONS,
+          tools: personalMode
+            ? PERSONAL_TOOL_DEFINITIONS
+            : (businessId === 'ALMA_TRADING' ? TRADING_TOOL_DEFINITIONS : TOOL_DEFINITIONS),
           messages: apiMessages,
         },
         { signal: signal ?? undefined },
@@ -390,6 +441,39 @@ export async function* runAgentTurn(
       )
 
       if (toolUseBlocks.length === 0 || signal?.aborted) {
+        if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES) {
+          const finalText = currentBlocks
+            .filter((b): b is Extract<CollectedBlock, { type: 'text' }> => b.type === 'text')
+            .map((b) => b.text)
+            .join('\n')
+            .trim()
+          const calledTools = toolRecords.map((r) => r.toolName)
+          const violations: ClaimViolation[] = finalText
+            ? detectClaimViolations(finalText, calledTools)
+            : []
+          if (violations.length > 0) {
+            verifyRetries++
+            yield {
+              type: 'verification_retry',
+              attempt: verifyRetries,
+              maxAttempts: MAX_VERIFY_RETRIES,
+              categories: Array.from(new Set(violations.map((v) => v.category))),
+              snippets: violations.map((v) => v.matchedSnippet),
+            }
+            assistantTurns.pop()
+            const reminder = buildVerificationReminder(violations)
+            messages = [
+              ...messages,
+              {
+                role: 'assistant',
+                content: currentBlocks as unknown as Anthropic.Messages.ContentBlockParam[],
+              },
+              { role: 'user', content: [{ type: 'text', text: reminder }] },
+            ]
+            continue
+          }
+        }
+
         if (
           !signal?.aborted
           && !memoryNudgeSent
@@ -416,8 +500,8 @@ export async function* runAgentTurn(
       for (const tb of toolUseBlocks) {
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId })
-          : await executeTool(tb.name, tb.input, { conversationId })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId })
         const durationMs = Date.now() - started
 
         if (!result.success) {
