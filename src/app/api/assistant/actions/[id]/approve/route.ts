@@ -282,6 +282,40 @@ export async function POST(
     })
   }
 
+  if (action.type === 'video_gen') {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+
+    return Response.json({
+      success: true,
+      queued: true,
+      message: 'Video reel generation approved. The VPS worker will process it shortly — reel approval card will follow.',
+    })
+  }
+
+  if (action.type === 'video_reel_gate') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const reelPayload = payload as { storagePath?: string; productCode?: string }
+    await appendConversationNote(
+      db,
+      action,
+      `✅ Product reel approved — ready for Reels/Stories post (${reelPayload.productCode ?? 'reel'}). Path: ${reelPayload.storagePath ?? ''}`,
+    )
+    return Response.json({
+      success: true,
+      message: 'Reel approved for use. Posting still requires separate owner action.',
+      storagePath: reelPayload.storagePath,
+    })
+  }
+
   // ── Phase 6 action types ───────────────────────────────────────────────────
 
   if (action.type === 'dispatch_staff_tasks') {

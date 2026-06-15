@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
-    "@google/genai": "^1.0.0",
+    "@google/genai": "^2.8.0",
     "@sentry/node": "^8.55.2",
     "@supabase/supabase-js": "^2.45.0",
     "adhan": "^4.4.3",

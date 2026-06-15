@@ -20,8 +20,8 @@ function verifyToken(provided: string): boolean {
   } catch { return false }
 }
 
-const PROVIDERS = new Set<CostProvider>(['anthropic', 'openai', 'gemini', 'google_tts', 'twilio', 'elevenlabs'])
-const KINDS = new Set<CostKind>(['chat', 'embedding', 'transcribe', 'tts', 'image', 'call'])
+const PROVIDERS = new Set<CostProvider>(['anthropic', 'openai', 'gemini', 'veo', 'google_tts', 'twilio', 'elevenlabs'])
+const KINDS = new Set<CostKind>(['chat', 'embedding', 'transcribe', 'tts', 'image', 'video', 'call'])
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()

@@ -106,8 +106,9 @@ export async function POST(req: NextRequest) {
     pushTelegram = true
   } else if (status === 'success' && (data?.storagePath || data?.imageUrl)) {
     const storagePath = typeof data?.storagePath === 'string' ? data.storagePath.trim() : ''
+    const isVideo = action.type === 'video_gen' || storagePath.endsWith('.mp4') || data?.mediaType === 'video'
     const cp = payload.contentPipeline as { gate1Id?: string } | undefined
-    if (cp?.gate1Id && storagePath) {
+    if (cp?.gate1Id && storagePath && !isVideo) {
       try {
         const { onPipelineRenderComplete } = await import('@/lib/content-engine/pipeline')
         await onPipelineRenderComplete(pendingActionId, storagePath)
@@ -115,6 +116,27 @@ export async function POST(req: NextRequest) {
         console.error('[job-result] content pipeline advance failed:', pipeErr)
       }
       messageText = null
+    } else if (isVideo && storagePath) {
+      try {
+        const { createVideoReelGate } = await import('@/lib/content-engine/video-reel-gate')
+        const videoUrl = await agentStorageSignedUrl(storagePath, IMAGE_SIGNED_URL_TTL_SEC)
+        await createVideoReelGate({
+          storagePath,
+          productCode: typeof data?.productCode === 'string' ? data.productCode : null,
+          aspect: typeof data?.aspect === 'string' ? data.aspect : '9:16',
+          durationSec: typeof data?.durationSec === 'number' ? data.durationSec : 6,
+          conversationId: convId,
+          sourceActionId: pendingActionId,
+        })
+        messageText =
+          `🎬 Product reel generated (${data?.durationSec ?? 6}s).\n` +
+          `[Watch preview](${videoUrl})\n\n` +
+          'Owner approval card sent — nothing auto-posted.'
+      } catch (gateErr) {
+        const detail = gateErr instanceof Error ? gateErr.message : String(gateErr)
+        console.error('[job-result] video reel gate failed:', detail)
+        messageText = `✅ Reel saved: \`${storagePath}\` (approval card failed: ${detail})`
+      }
     } else {
       try {
         const imageUrl = storagePath

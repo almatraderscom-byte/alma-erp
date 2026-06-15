@@ -46,6 +46,7 @@ export const WORKER_PRICING = {
   gemini_image_pro_1k: 0.134,
   gemini_image_pro_2k: 0.134,
   gemini_image_pro_4k: 0.24,
+  veo_per_second: 0.15,
   google_tts_per_million_chars: 16.0,
   twilio_per_minute: 0.014,
   whisper_per_minute: 0.006,
@@ -76,6 +77,11 @@ export function calcGeminiImageCostUsd(quality, imageSize = '2K') {
   const key = `gemini_image_${q}_${size}`
   const rate = WORKER_PRICING[key] ?? WORKER_PRICING[`gemini_image_${q}_2k`]
   return Math.round(rate * 1e6) / 1e6
+}
+
+export function calcVeoCostUsd(durationSeconds = 6) {
+  const secs = Math.max(1, Math.round(Number(durationSeconds)))
+  return Math.round(secs * WORKER_PRICING.veo_per_second * 1e6) / 1e6
 }
 
 export function calcTwilioCostUsd(seconds = 60) {

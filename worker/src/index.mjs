@@ -30,6 +30,7 @@ import { initializeDailySalahRecords } from './salah/scheduler.mjs'
 import { startTwilioHttpServer } from './twilio-http.mjs'
 import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
+import { processVideoGen } from './video-gen.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -69,6 +70,11 @@ const connection = { url: REDIS_URL }
 const imageGenQueue = new Queue('image-gen', {
   connection,
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+})
+
+const videoGenQueue = new Queue('video-gen', {
+  connection,
+  defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 15000 } },
 })
 
 const longTaskQueue = new Queue('long-agent-task', {
@@ -182,6 +188,9 @@ async function pollPendingJobs() {
       if (job.type === 'image_gen') {
         await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
+      } else if (job.type === 'video_gen') {
+        await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued video-gen job for action ${job.id}`)
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
@@ -313,6 +322,8 @@ async function processImageGen(job) {
   console.log(`[worker] image-gen ${pendingActionId} — done → ${storagePath}`)
 }
 
+// ── Video generation handler (Veo 3.1) — see video-gen.mjs ───────────────────
+
 // ── Callback ───────────────────────────────────────────────────────────────
 
 async function callJobResult(pendingActionId, status, data, error) {
@@ -340,6 +351,16 @@ const imageGenWorker = new Worker('image-gen', processImageGen, {
   connection,
   concurrency: 2,
 })
+
+const videoGenWorker = new Worker(
+  'video-gen',
+  (job) => processVideoGen(job, { supabase, genai, callJobResult }),
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 15 * 60 * 1000,
+  },
+)
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
   console.log(`[worker] long-agent-task ${job.id} — not yet implemented`)
@@ -429,6 +450,15 @@ imageGenWorker.on('completed', (job) => console.log(`[worker] image-gen ${job.id
 imageGenWorker.on('failed', (job, err) => {
   console.error(`[worker] image-gen ${job?.id} failed:`, err.message)
   captureWorkerError(err, 'worker.image_gen.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
+videoGenWorker.on('completed', (job) => console.log(`[worker] video-gen ${job.id} completed`))
+videoGenWorker.on('failed', (job, err) => {
+  console.error(`[worker] video-gen ${job?.id} failed:`, err.message)
+  captureWorkerError(err, 'worker.video_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
   }

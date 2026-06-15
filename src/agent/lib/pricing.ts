@@ -8,6 +8,7 @@ export type CostProvider =
   | 'anthropic'
   | 'openai'
   | 'gemini'
+  | 'veo'
   | 'google_tts'
   | 'twilio'
   | 'elevenlabs'
@@ -19,6 +20,7 @@ export type CostKind =
   | 'transcribe'
   | 'tts'
   | 'image'
+  | 'video'
   | 'call'
   | 'cs_chat'
   | 'cs_vision'
@@ -71,6 +73,14 @@ export const PRICING_META = {
     perImage4K: 0.24,
     perImage: 0.134,
     note: 'Pro image GA (Nano Banana Pro) — 1K/2K same rate; default 2K',
+  },
+  veo_video: {
+    model: 'veo-3.1-generate-preview',
+    lastVerifiedAt: '2026-06-15',
+    verified: false,
+    source: 'https://ai.google.dev/gemini-api/docs/pricing',
+    perSecond: 0.15,
+    note: 'Veo 3.1 image-to-video estimate ~$0.15/sec — hero reels only',
   },
   google_tts: {
     model: 'bn-IN-Chirp3-HD-Charon',
@@ -143,6 +153,12 @@ export function calcGeminiImageCostUsd(
       : imageSize === '4K' ? p.perImage4K
         : p.perImage2K
   return roundUsd(rate)
+}
+
+/** Veo 3.1 video — ~$0.15 per second (estimate). */
+export function calcVeoCostUsd(durationSeconds: number): number {
+  const secs = Math.max(1, Math.round(durationSeconds))
+  return roundUsd(secs * PRICING_META.veo_video.perSecond)
 }
 
 export function calcTwilioCallCostUsd(durationSeconds = 60): number {
