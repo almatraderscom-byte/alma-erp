@@ -17,13 +17,19 @@ function sb() {
  * @param {object} params.payload
  */
 export async function sendStaffAnnouncement({ bot, payload }) {
-  const { message, staffChatIds, sendVoice } = payload ?? {}
+  const { message, staffChatIds, sendVoice, businessId } = payload ?? {}
   if (!message?.trim() || !staffChatIds?.length) {
     throw new Error('message and staffChatIds required')
   }
 
   const supabase = sb()
   const voice = sendVoice !== false
+  // Default to Lifestyle for backward compat; agent passes the active project's
+  // businessId so Telegram logs/outbox stay business-scoped.
+  const payloadBusinessId =
+    businessId === 'ALMA_TRADING' || businessId === 'ALMA_LIFESTYLE'
+      ? businessId
+      : 'ALMA_LIFESTYLE'
   let sentCount = 0
 
   for (const { id, name, chatId } of staffChatIds) {
@@ -33,7 +39,7 @@ export async function sendStaffAnnouncement({ bot, payload }) {
         supabase,
         staffId: id,
         staffName: name,
-        businessId: 'ALMA_LIFESTYLE',
+        businessId: payloadBusinessId,
         type: 'announcement',
         content: message,
         chatId,

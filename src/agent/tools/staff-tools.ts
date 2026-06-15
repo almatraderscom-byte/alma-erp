@@ -2,17 +2,22 @@
  * Phase 6A — Staff manager agent tools.
  * These run in the agent's tool-call loop (Vercel, not worker).
  * The agent proposes/approves tasks; the worker handles dispatch timing.
+ *
+ * Phase 7: All queries are scoped to `businessId` from the server context
+ * (defaults to ALMA_LIFESTYLE). Trading conversations route here too — they
+ * just get a Trading-only staff pool and Trading-only pending actions.
  */
 import { prisma } from '@/lib/prisma'
 import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
+import { buildTradingTaskProposal } from '@/agent/lib/trading-task-proposal'
 import {
   syncPendingDispatchAction,
   refreshAndApproveDispatch,
   prepareCorrectedDispatchPending,
   loadProposedTasksForDate,
-  loadPriorActiveTasksForDate,
   buildDispatchSummary,
   getDispatchBreakdownForDate,
+  loadPriorActiveTasksForDate,
 } from '@/agent/lib/staff-dispatch-sync'
 import {
   buildMergeOwnerFocusReply,
@@ -31,20 +36,32 @@ import type { AgentTool } from './registry'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+// ── Business context helpers ────────────────────────────────────────────────
+
+type BusinessId = 'ALMA_LIFESTYLE' | 'ALMA_TRADING'
+
+/**
+ * Resolve businessId from tool input (server context overrides any model value).
+ * Returns 'ALMA_LIFESTYLE' as the safe default for legacy callers.
+ */
+function bizFrom(input: Record<string, unknown> | undefined): BusinessId {
+  const raw = input?.businessId
+  return raw === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function dhakaToday(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' }) // YYYY-MM-DD
 }
 
-function dhakaDateStr(d: Date): string {
-  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
-}
-
-async function resolveActiveProposalDate(explicit?: string): Promise<string> {
+async function resolveActiveProposalDate(
+  explicit: string | undefined,
+  businessId: BusinessId,
+): Promise<string> {
   if (explicit) return explicit
   const pending = await db.agentPendingAction.findFirst({
-    where: { type: 'dispatch_staff_tasks', status: 'pending' },
+    where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
     orderBy: { createdAt: 'desc' },
     select: { payload: true },
   })
@@ -52,16 +69,24 @@ async function resolveActiveProposalDate(explicit?: string): Promise<string> {
   return payloadDate || dhakaToday()
 }
 
-async function findStaffByName(staffName: string) {
+async function findStaffByName(staffName: string, businessId: BusinessId) {
   const trimmed = staffName.trim()
   if (!trimmed) return null
   const exact = await db.agentStaff.findFirst({
-    where: { name: { equals: trimmed, mode: 'insensitive' }, active: true },
+    where: {
+      name: { equals: trimmed, mode: 'insensitive' },
+      active: true,
+      businessId,
+    },
     select: { id: true, name: true },
   })
   if (exact) return exact
   return db.agentStaff.findFirst({
-    where: { name: { contains: trimmed, mode: 'insensitive' }, active: true },
+    where: {
+      name: { contains: trimmed, mode: 'insensitive' },
+      active: true,
+      businessId,
+    },
     select: { id: true, name: true },
   })
 }
@@ -89,6 +114,7 @@ async function createStaffAnnouncementPending(opts: {
   sendVoice: boolean
   conversationId?: string
   label?: string
+  businessId: BusinessId
 }) {
   const prepared = prepareStaffOutboundMessage(opts.message)
   const summary = buildStaffMessageDraftSummary(
@@ -101,6 +127,7 @@ async function createStaffAnnouncementPending(opts: {
     data: {
       conversationId: opts.conversationId ? String(opts.conversationId) : null,
       type: 'staff_announcement',
+      businessId: opts.businessId,
       payload: {
         message: prepared,
         staffChatIds: opts.staff.map((s) => ({
@@ -109,6 +136,7 @@ async function createStaffAnnouncementPending(opts: {
           chatId: s.telegramChatId,
         })),
         sendVoice: opts.sendVoice,
+        businessId: opts.businessId,
       },
       summary,
       costEstimate: 0,
@@ -123,7 +151,9 @@ async function createStaffAnnouncementPending(opts: {
 const prepare_staff_task_proposal: AgentTool = {
   name: 'prepare_staff_task_proposal',
   description:
-    'Build a NEW full-team task plan for dispatch (all active staff). ' +
+    'Build a NEW full-team task plan for dispatch (all active staff in the current business). ' +
+    'Lifestyle conversation → Lifestyle staff + orders/inventory/marketing focus. ' +
+    'Trading conversation → Trading staff + USDT volume/merchant/report focus (Lifestyle staff NEVER included). ' +
     'Use ONLY when owner wants to CREATE/plan/dispatch tasks — NOT when asking what tasks already exist. ' +
     'For status questions ("Eyafi ke ki task dewa hoise") use get_staff_tasks(staffName=...) instead. ' +
     'FIRST announce checking sources, call read tools, THEN this tool.',
@@ -138,10 +168,60 @@ const prepare_staff_task_proposal: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const save = input.saveProposal !== false
       const createCard = input.createApprovalCard !== false
 
+      // Trading branch — uses TradingAccount/volume/report data.
+      if (businessId === 'ALMA_TRADING') {
+        const proposal = await buildTradingTaskProposal(date)
+        if (!proposal.success) return { success: false, error: proposal.error }
+
+        if (save) {
+          await db.agentStaffTask.deleteMany({
+            where: { proposedFor: new Date(date), status: 'proposed', businessId },
+          })
+          await db.agentStaffTask.createMany({
+            data: proposal.tasks.map((t) => ({
+              staffId: t.staffId,
+              businessId,
+              title: t.title,
+              detail: t.detail ?? null,
+              type: t.type,
+              source: t.source,
+              status: 'proposed',
+              proposedFor: new Date(date),
+            })),
+          })
+        }
+
+        let pendingActionId: string | undefined
+        if (createCard && save) {
+          await db.agentPendingAction.updateMany({
+            where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
+            data: { status: 'superseded', resolvedAt: new Date() },
+          })
+          pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId)) ?? undefined
+        }
+
+        return {
+          success: true,
+          data: {
+            businessId,
+            date,
+            taskCount: proposal.tasks.length,
+            tasks: proposal.tasks,
+            perStaff: proposal.perStaff,
+            summaryBangla: proposal.summaryBangla,
+            pendingActionId,
+            message:
+              'Trading প্রস্তাব তৈরি। Owner Approve করলে worker শুধুমাত্র Trading staff (ALMA_TRADING) এর Telegram-এ পাঠাবে।',
+          },
+        }
+      }
+
+      // Lifestyle branch (existing behaviour).
       const proposal = await buildStaffTaskProposal(date)
       if (!proposal.success) return { success: false, error: proposal.error }
 
@@ -151,11 +231,12 @@ const prepare_staff_task_proposal: AgentTool = {
 
       if (save) {
         await db.agentStaffTask.deleteMany({
-          where: { proposedFor: new Date(date), status: 'proposed' },
+          where: { proposedFor: new Date(date), status: 'proposed', businessId },
         })
         await db.agentStaffTask.createMany({
           data: proposal.tasks.map((t) => ({
             staffId: t.staffId,
+            businessId,
             title: t.title,
             detail: t.detail ?? null,
             type: t.type,
@@ -170,15 +251,16 @@ const prepare_staff_task_proposal: AgentTool = {
       let pendingActionId: string | undefined
       if (createCard && save) {
         await db.agentPendingAction.updateMany({
-          where: { type: 'dispatch_staff_tasks', status: 'pending' },
+          where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
           data: { status: 'superseded', resolvedAt: new Date() },
         })
-        pendingActionId = (await syncPendingDispatchAction(date)) ?? undefined
+        pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId)) ?? undefined
       }
 
       return {
         success: true,
         data: {
+          businessId,
           date,
           taskCount: proposal.tasks.length,
           tasks: proposal.tasks,
@@ -218,13 +300,14 @@ const get_staff_tasks: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
-      const where: Record<string, unknown> = { proposedFor: new Date(date) }
+      const where: Record<string, unknown> = { proposedFor: new Date(date), businessId }
 
       if (input.staffId) {
         where.staffId = String(input.staffId)
       } else if (input.staffName) {
-        const staff = await findStaffByName(String(input.staffName))
+        const staff = await findStaffByName(String(input.staffName), businessId)
         if (!staff) {
           return { success: false, error: `"${input.staffName}" পাওয়া যায়নি। get_all_staff দিয়ে নাম চেক করুন।` }
         }
@@ -302,13 +385,15 @@ const get_staff_tasks: AgentTool = {
 
 const get_all_staff: AgentTool = {
   name: 'get_all_staff',
-  description: 'Returns all active staff members with their IDs and Telegram link status.',
+  description:
+    'Returns all active staff members scoped to the current business (ALMA_LIFESTYLE or ALMA_TRADING) with IDs + Telegram link status. Cross-business staff are NEVER returned.',
   input_schema: { type: 'object' as const, properties: {} },
-  handler: async () => {
+  handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const staff = await db.agentStaff.findMany({
-        where: { active: true },
-        select: { id: true, name: true, role: true, telegramChatId: true },
+        where: { active: true, businessId },
+        select: { id: true, name: true, role: true, telegramChatId: true, businessId: true, userId: true },
         orderBy: { name: 'asc' },
       })
       return { success: true, data: staff }
@@ -351,6 +436,7 @@ const propose_staff_tasks: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const tasks = input.tasks as Array<{
         staffId: string; title: string; detail?: string;
@@ -360,12 +446,13 @@ const propose_staff_tasks: AgentTool = {
 
       // Clear existing proposed tasks for this date (only proposed — don't touch approved/sent)
       await db.agentStaffTask.deleteMany({
-        where: { proposedFor: new Date(date), status: 'proposed' },
+        where: { proposedFor: new Date(date), status: 'proposed', businessId },
       })
 
       const created = await db.agentStaffTask.createMany({
         data: tasks.map(t => ({
           staffId:    t.staffId,
+          businessId,
           title:      t.title,
           detail:     t.detail ?? null,
           type:       t.type || 'misc',
@@ -376,7 +463,7 @@ const propose_staff_tasks: AgentTool = {
         })),
       })
 
-      const pendingActionId = await syncPendingDispatchAction(date)
+      const pendingActionId = await syncPendingDispatchAction(date, undefined, businessId)
 
       return {
         success: true,
@@ -445,10 +532,11 @@ const merge_into_proposal: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const date = await resolveActiveProposalDate(input.date as string | undefined)
+      const businessId = bizFrom(input)
+      const date = await resolveActiveProposalDate(input.date as string | undefined, businessId)
       const staffName = String(input.staffName)
-      const staff = await findStaffByName(staffName)
-      if (!staff) return { success: false, error: `Staff "${staffName}" not found.` }
+      const staff = await findStaffByName(staffName, businessId)
+      if (!staff) return { success: false, error: `Staff "${staffName}" not found in ${businessId}.` }
 
       const additions = (input.additions ?? []) as Array<{ title: string; detail?: string; type?: string }>
       const edits = (input.edits ?? []) as Array<{ taskId: string; newTitle?: string; newDetail?: string }>
@@ -458,13 +546,14 @@ const merge_into_proposal: AgentTool = {
         return { success: false, error: 'No additions, edits, or removals specified.' }
       }
 
-      const beforeProposed = await loadProposedTasksForDate(date)
+      const beforeProposed = await loadProposedTasksForDate(date, businessId)
       const beforeIds = new Set(beforeProposed.map((t) => t.id))
 
       if (additions.length) {
         await db.agentStaffTask.createMany({
           data: additions.map((t) => ({
             staffId: staff.id,
+            businessId,
             title: t.title,
             detail: t.detail ?? null,
             type: t.type ?? 'misc',
@@ -486,6 +575,7 @@ const merge_into_proposal: AgentTool = {
               staffId: staff.id,
               status: 'proposed',
               proposedFor: new Date(date),
+              businessId,
             },
             data: patch,
           })
@@ -499,23 +589,24 @@ const merge_into_proposal: AgentTool = {
             staffId: staff.id,
             status: 'proposed',
             proposedFor: new Date(date),
+            businessId,
           },
         })
       }
 
       const staffTasks = await db.agentStaffTask.findMany({
-        where: { staffId: staff.id, status: 'proposed', proposedFor: new Date(date) },
+        where: { staffId: staff.id, status: 'proposed', proposedFor: new Date(date), businessId },
         select: { id: true, title: true, detail: true, type: true },
         orderBy: { createdAt: 'asc' },
       })
 
-      const allProposed = await loadProposedTasksForDate(date)
+      const allProposed = await loadProposedTasksForDate(date, businessId)
       const newTaskIds = allProposed.filter((t) => !beforeIds.has(t.id)).map((t) => t.id)
       const newCountForStaff = allProposed.filter(
         (t) => !beforeIds.has(t.id) && t.staff.name === staff.name,
       ).length
 
-      const priorActive = await loadPriorActiveTasksForDate(date)
+      const priorActive = await loadPriorActiveTasksForDate(date, businessId)
       const allStaffNames = [
         ...new Set([
           ...priorActive.map((t) => t.staff.name),
@@ -523,10 +614,12 @@ const merge_into_proposal: AgentTool = {
         ]),
       ]
 
-      const summaryBangla = await buildDispatchSummary(date, allProposed, {
-        changedStaff: staff.name,
-        newTaskIds,
-      })
+      const summaryBangla = await buildDispatchSummary(
+        date,
+        allProposed,
+        { changedStaff: staff.name, newTaskIds },
+        businessId,
+      )
 
       const ownerFocusBangla = buildMergeOwnerFocusReply(
         staff.name,
@@ -535,10 +628,11 @@ const merge_into_proposal: AgentTool = {
         allStaffNames,
       )
 
-      const pendingActionId = await syncPendingDispatchAction(date, {
-        changedStaff: staff.name,
-        newTaskIds,
-      })
+      const pendingActionId = await syncPendingDispatchAction(
+        date,
+        { changedStaff: staff.name, newTaskIds },
+        businessId,
+      )
 
       return {
         success: true,
@@ -587,9 +681,10 @@ const approve_pending_dispatch: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || undefined
       const pending = await db.agentPendingAction.findFirst({
-        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
         orderBy: { createdAt: 'desc' },
         select: { payload: true },
       })
@@ -603,7 +698,7 @@ const approve_pending_dispatch: AgentTool = {
         }
       }
 
-      const result = await refreshAndApproveDispatch(actionDate)
+      const result = await refreshAndApproveDispatch(actionDate, undefined, businessId)
       if (!result.ok) {
         return {
           success: true,
@@ -614,7 +709,7 @@ const approve_pending_dispatch: AgentTool = {
         }
       }
 
-      const breakdown = await getDispatchBreakdownForDate(result.date)
+      const breakdown = await getDispatchBreakdownForDate(result.date, businessId)
       const summaryBangla = buildApproveResultBangla(breakdown, result.taskCount)
 
       return {
@@ -652,12 +747,13 @@ const get_dispatch_status: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const proposedFor = new Date(date)
 
       const statusRows = await db.agentStaffTask.groupBy({
         by: ['status'],
-        where: { proposedFor },
+        where: { proposedFor, businessId },
         _count: { _all: true },
       })
 
@@ -686,13 +782,13 @@ const get_dispatch_status: AgentTool = {
       }
 
       const pendingAction = await db.agentPendingAction.findFirst({
-        where: { type: 'dispatch_staff_tasks' },
+        where: { type: 'dispatch_staff_tasks', businessId },
         orderBy: { createdAt: 'desc' },
         select: { status: true, createdAt: true },
       })
 
       const correctionContext = await getStaffDispatchCorrectionContext(date)
-      const breakdown = await getDispatchBreakdownForDate(date)
+      const breakdown = await getDispatchBreakdownForDate(date, businessId)
 
       return {
         success: true,
@@ -739,11 +835,12 @@ const get_lunch_status: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const now = Date.now()
 
       const rows = await db.staffLunch.findMany({
-        where: { lunchDate: date },
+        where: { lunchDate: date, businessId },
         orderBy: { startedAt: 'desc' },
         select: {
           staffId: true,
@@ -813,8 +910,9 @@ const get_current_proposal: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
-      const proposed = await loadProposedTasksForDate(date)
+      const proposed = await loadProposedTasksForDate(date, businessId)
       const byStaff: Record<string, Array<{ id: string; title: string; type: string }>> = {}
       for (const t of proposed) {
         const name = t.staff.name
@@ -827,7 +925,7 @@ const get_current_proposal: AgentTool = {
           date,
           totalTasks: proposed.length,
           byStaff,
-          summaryBangla: await buildDispatchSummary(date, proposed),
+          summaryBangla: await buildDispatchSummary(date, proposed, undefined, businessId),
           note: 'This DB snapshot is dispatched on approve — never show the owner a list you have not saved via merge_into_proposal / propose_staff_tasks.',
         },
       }
@@ -855,8 +953,9 @@ const correct_and_redispatch_staff_tasks: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
-      const proposed = await loadProposedTasksForDate(date)
+      const proposed = await loadProposedTasksForDate(date, businessId)
       if (!proposed.length) {
         return {
           success: false,
@@ -864,7 +963,7 @@ const correct_and_redispatch_staff_tasks: AgentTool = {
         }
       }
 
-      const result = await prepareCorrectedDispatchPending(date)
+      const result = await prepareCorrectedDispatchPending(date, businessId)
       if (!result.ok) {
         return { success: false, error: 'Redispatch prep failed — no proposed tasks after cancel.' }
       }
@@ -908,15 +1007,16 @@ const approve_and_dispatch_tasks: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const proposed = await db.agentStaffTask.findMany({
-        where: { proposedFor: new Date(date), status: 'proposed' },
+        where: { proposedFor: new Date(date), status: 'proposed', businessId },
         include: { staff: { select: { name: true } } },
       })
       if (!proposed.length) return { success: false, error: `No proposed tasks found for ${date}` }
 
       const existingPending = await db.agentPendingAction.findFirst({
-        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
         orderBy: { createdAt: 'desc' },
         select: { id: true },
       })
@@ -931,7 +1031,7 @@ const approve_and_dispatch_tasks: AgentTool = {
 
       // Resolve any stale pending dispatch actions
       await db.agentPendingAction.updateMany({
-        where: { type: 'dispatch_staff_tasks', status: 'pending' },
+        where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
         data: { status: 'superseded', resolvedAt: new Date() },
       })
 
@@ -944,7 +1044,8 @@ const approve_and_dispatch_tasks: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type:     'dispatch_staff_tasks',
-          payload:  { date, taskIds: proposed.map((t: { id: string }) => t.id) },
+          businessId,
+          payload:  { date, taskIds: proposed.map((t: { id: string }) => t.id), businessId },
           summary:  `স্টাফ টাস্ক ডিসপ্যাচ — ${date}\n\n${summary}`,
           costEstimate: 0,
           status:   'pending',
@@ -989,9 +1090,15 @@ const add_staff_task_now: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const staffId = String(input.staffId)
-      const staff = await db.agentStaff.findUnique({ where: { id: staffId }, select: { name: true } })
-      if (!staff) return { success: false, error: `Staff ${staffId} not found` }
+      const staff = await db.agentStaff.findFirst({
+        where: { id: staffId, businessId },
+        select: { name: true, businessId: true },
+      })
+      if (!staff) {
+        return { success: false, error: `Staff ${staffId} not found in ${businessId}.` }
+      }
 
       const summary = `${staff.name}-কে নতুন টাস্ক যোগ: "${input.title}" (${input.type})`
 
@@ -999,12 +1106,14 @@ const add_staff_task_now: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type:     'add_staff_task_now',
+          businessId,
           payload:  {
             staffId, staffName: staff.name,
             title: String(input.title),
             type:  String(input.type),
             detail: input.detail ? String(input.detail) : null,
             date:  dhakaToday(),
+            businessId,
           },
           summary,
           costEstimate: 0,
@@ -1047,6 +1156,7 @@ const send_dispatch_correction_notice: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const date = (input.date as string) || dhakaToday()
       const staffIds = input.staffIds as string[] | undefined
       const sendVoice = input.sendVoice !== false
@@ -1062,6 +1172,7 @@ const send_dispatch_correction_notice: AgentTool = {
       const staffRows = await db.agentStaff.findMany({
         where: {
           active: true,
+          businessId,
           telegramChatId: { not: null },
           id: {
             in: ctx.map((c) => c.staffId).filter((id): id is string => Boolean(id)),
@@ -1095,6 +1206,7 @@ const send_dispatch_correction_notice: AgentTool = {
           sendVoice,
           conversationId: input.conversationId as string | undefined,
           label: 'ডিসপ্যাচ সংশোধন নোটিশ',
+          businessId,
         })
         const sample = ctx.find((c) => c.staffId === group[0]?.id)
         sent.push({
@@ -1162,6 +1274,7 @@ const send_staff_announcement: AgentTool = {
       const message = String(input.message ?? '').trim()
       if (!message) return { success: false, error: 'message is required' }
 
+      const businessId = bizFrom(input)
       const sendVoice = input.sendVoice !== false
       const staffIds = input.staffIds as string[] | undefined
       const date = dhakaToday()
@@ -1173,6 +1286,7 @@ const send_staff_announcement: AgentTool = {
 
       const where: Record<string, unknown> = {
         active: true,
+        businessId,
         telegramChatId: { not: null },
       }
       if (staffIds?.length) {
@@ -1185,7 +1299,13 @@ const send_staff_announcement: AgentTool = {
       })
 
       if (!staff.length) {
-        return { success: true, data: { status: 'no_staff', message: 'No active staff with Telegram linked found.' } }
+        return {
+          success: true,
+          data: {
+            status: 'no_staff',
+            message: `No active staff with Telegram linked found in ${businessId}.`,
+          },
+        }
       }
 
       const { pendingActionId, summary } = await createStaffAnnouncementPending({
@@ -1193,6 +1313,7 @@ const send_staff_announcement: AgentTool = {
         message,
         sendVoice,
         conversationId: input.conversationId as string | undefined,
+        businessId,
       })
 
       return {
@@ -1360,16 +1481,23 @@ const approve_pending_staff_message: AgentTool = {
   },
   handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const explicitId = input.pendingActionId as string | undefined
       const row = explicitId
         ? await db.agentPendingAction.findUnique({ where: { id: explicitId } })
         : await db.agentPendingAction.findFirst({
-            where: { type: 'staff_announcement', status: 'pending' },
+            where: { type: 'staff_announcement', status: 'pending', businessId },
             orderBy: { createdAt: 'desc' },
           })
 
       if (!row || row.type !== 'staff_announcement') {
         return { success: false, error: 'কোনো pending staff message draft পাওয়া যায়নি।' }
+      }
+      if (explicitId && row.businessId && row.businessId !== businessId) {
+        return {
+          success: false,
+          error: `Pending message is for ${row.businessId}, not ${businessId}. Cross-business approval blocked.`,
+        }
       }
       if (row.status !== 'pending') {
         return {
@@ -1423,7 +1551,8 @@ const set_staff_leave: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const staff = await findStaffByName(input.staffName as string)
+      const businessId = bizFrom(input)
+      const staff = await findStaffByName(input.staffName as string, businessId)
       if (!staff) {
         return { success: false, error: `"${input.staffName}" পাওয়া যায়নি।` }
       }
@@ -1433,7 +1562,7 @@ const set_staff_leave: AgentTool = {
         data: {
           staffId: staff.id,
           staffName: staff.name,
-          businessId: 'ALMA_LIFESTYLE',
+          businessId,
           startDate,
           endDate,
           type: (input.type as string) ?? 'leave',
@@ -1461,11 +1590,12 @@ const list_staff_leave: AgentTool = {
   name: 'list_staff_leave',
   description: 'List upcoming/active staff leave. Use when owner asks "ke chhuti te ache", or before planning tasks.',
   input_schema: { type: 'object' as const, properties: {} },
-  handler: async () => {
+  handler: async (input) => {
     try {
+      const businessId = bizFrom(input)
       const today = dhakaToday()
       const rows = await db.staffLeave.findMany({
-        where: { status: 'approved', endDate: { gte: today } },
+        where: { status: 'approved', endDate: { gte: today }, businessId },
         orderBy: { startDate: 'asc' },
       })
       return {

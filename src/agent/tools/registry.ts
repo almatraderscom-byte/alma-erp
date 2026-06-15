@@ -26,6 +26,7 @@ import { TRYON_TOOLS } from './tryon-tools'
 import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { BRAND_TOOLS } from './brand-tools'
+import { TRADING_READ_TOOLS } from './trading-tools'
 
 export interface ToolResult {
   success: boolean
@@ -94,7 +95,7 @@ type MemoryScope = typeof MEMORY_SCOPES[number]
 const save_memory: AgentTool = {
   name: 'save_memory',
   description:
-    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Use scope=business + key (e.g. contact_phone, contact_website) + pinned=true for standing contact info. Never save secrets or API keys.',
+    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Use scope=business + key (e.g. contact_phone, contact_website) + pinned=true for standing contact info. Never save secrets or API keys. Business scope (Lifestyle vs Trading) is auto-tagged from server context.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -114,9 +115,15 @@ const save_memory: AgentTool = {
     const content = String(input.content ?? '')
     const key = input.key ? String(input.key) : null
     const pinned = input.pinned === true
-    const metadata = input.metadata && typeof input.metadata === 'object'
+    const businessId = input.businessId === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
+    const rawMeta = input.metadata && typeof input.metadata === 'object'
       ? (input.metadata as Record<string, unknown>)
-      : undefined
+      : {}
+    // Tag with businessId for business/staff scopes; personal stays cross-business.
+    const metadata: Record<string, unknown> | undefined =
+      scope === 'personal'
+        ? (Object.keys(rawMeta).length ? rawMeta : undefined)
+        : { ...rawMeta, businessId }
 
     if (!content.trim()) return { success: false, error: 'content is empty' }
     if (!MEMORY_SCOPES.includes(scope)) return { success: false, error: `invalid scope: ${scope}` }
@@ -130,6 +137,7 @@ const save_memory: AgentTool = {
           scope: mem.scope,
           key: mem.key,
           pinned: mem.pinned,
+          businessId: scope === 'personal' ? null : businessId,
           preview: content.slice(0, 80),
           embedded: mem.embedStatus.embedded,
         },
@@ -157,22 +165,43 @@ const search_memory: AgentTool = {
     const query = String(input.query ?? '')
     const scope = input.scope as MemoryScope | undefined
     const limit = Math.min(Number(input.limit ?? 5), 20)
+    const businessId = input.businessId === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
 
     if (!query.trim()) return { success: false, error: 'query is empty' }
+
+    /**
+     * Business filter: Trading context should NOT see Lifestyle-tagged memories
+     * (and vice versa). Personal-scope memories are cross-business (no filter).
+     * Untagged legacy memories default to ALMA_LIFESTYLE — included only when
+     * the current context is ALMA_LIFESTYLE.
+     */
+    const businessFilterClause =
+      scope === 'personal'
+        ? ''
+        : businessId === 'ALMA_TRADING'
+          ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
+          : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
 
     try {
       const embedResult = await embed(query)
       if (!embedResult.success) {
-        // Fallback: text search without embeddings
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const db = prisma as any
-        const rows = await db.agentMemory.findMany({
-          where: { ...(scope ? { scope } : {}), content: { contains: query, mode: 'insensitive' } },
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-          select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
-        })
-        return { success: true, data: rows.map((r: { id: string; scope: string; key: string|null; content: string; pinned: boolean; createdAt: Date }) => ({ ...r, score: null })) }
+        const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date }> =
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (prisma as any).$queryRawUnsafe(
+            `SELECT id, scope, key, content, pinned, created_at
+             FROM agent_memory
+             WHERE content ILIKE $1
+               ${scope ? `AND scope = $2` : ''}
+               ${businessFilterClause}
+             ORDER BY created_at DESC
+             LIMIT ${limit}`,
+            ...(scope ? [`%${query}%`, scope] : [`%${query}%`]),
+          )
+        return {
+          success: true,
+          data: rows.map((r) => ({ ...r, businessId, score: null })),
+        }
       }
 
       const vec = vectorLiteral(embedResult.data)
@@ -183,7 +212,7 @@ const search_memory: AgentTool = {
           `SELECT id, scope, key, content, pinned, created_at,
                   1 - (embedding <=> $1::vector) AS score
            FROM agent_memory
-           WHERE embedding IS NOT NULL ${scopeClause}
+           WHERE embedding IS NOT NULL ${scopeClause} ${businessFilterClause}
            ORDER BY embedding <=> $1::vector
            LIMIT $2`,
           vec,
@@ -197,7 +226,7 @@ const search_memory: AgentTool = {
           pinned: r.pinned, score: Math.round(r.score * 100) / 100,
         }))
 
-      return { success: true, data: results }
+      return { success: true, data: { businessId, scope: scope ?? 'all', results } }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -378,13 +407,73 @@ if (TOOL_DEFINITIONS.length > 0) {
   } as Anthropic.Messages.Tool
 }
 
+// ── ALMA Trading tool registry (Phase 7) ────────────────────────────────────
+// Trading conversations get a focused tool surface:
+//   • Trading read tools (dashboard, accounts, trades, targets, reports)
+//   • Shared staff workflow (proposal/approve/dispatch/announcement) — already
+//     businessId-aware via server context
+//   • Salah, memory, reminders, cost, owner-todos, advisor, family, ask
+//   • Personal-mode-only tools and Lifestyle-only tools (orders/CRM/FB/inventory/
+//     content-engine/tryon/brand/competitor/cs/catalog/website) are EXCLUDED.
+
+export const TRADING_TOOLS: AgentTool[] = [
+  get_current_datetime,
+  list_agent_projects,
+  save_memory,
+  search_memory,
+  update_memory,
+  delete_memory,
+  ...TRADING_READ_TOOLS,
+  ...STAFF_TOOLS,
+  ...CONFIRM_TOOLS,
+  ...SETTINGS_TOOLS,
+  ...SALAH_TOOLS,
+  ...FINANCE_TOOLS,
+  ...COST_TOOLS,
+  ...REMINDER_TOOLS,
+  ...ASK_TOOLS,
+  ...ADVISOR_TOOLS,
+  ...OWNER_TODO_TOOLS,
+  ...DIAGNOSTIC_TOOLS,
+  ...FAMILY_TOOLS,
+]
+
+export const TRADING_TOOL_NAMES = TRADING_TOOLS.map((t) => t.name)
+
+export const TRADING_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TRADING_TOOLS.map((t) => ({
+  name: t.name,
+  description: t.description,
+  input_schema: t.input_schema,
+}))
+
+if (TRADING_TOOL_DEFINITIONS.length > 0) {
+  TRADING_TOOL_DEFINITIONS[TRADING_TOOL_DEFINITIONS.length - 1] = {
+    ...TRADING_TOOL_DEFINITIONS[TRADING_TOOL_DEFINITIONS.length - 1],
+    cache_control: { type: 'ephemeral' },
+  } as Anthropic.Messages.Tool
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   serverContext: Record<string, unknown> = {},
 ): Promise<ToolResult> {
-  const tool = TOOLS.find((t) => t.name === name)
-  if (!tool) return { success: false, error: `Unknown tool: ${name}` }
+  const businessId = (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
+  const pool = businessId === 'ALMA_TRADING' ? TRADING_TOOLS : TOOLS
+  const tool = pool.find((t) => t.name === name)
+  if (!tool) {
+    // Fall back to full registry to surface a clearer error and avoid hard-fails
+    // when a shared tool is somehow renamed; the not-found path is still safe.
+    const anyTool = TOOLS.find((t) => t.name === name)
+    if (!anyTool) return { success: false, error: `Unknown tool: ${name}` }
+    if (businessId === 'ALMA_TRADING') {
+      return {
+        success: false,
+        error: `Tool "${name}" Trading registry-এ available নয় — Lifestyle conversation এ চেষ্টা করুন।`,
+      }
+    }
+    return await anyTool.handler({ ...input, ...serverContext })
+  }
   try {
     return await tool.handler({ ...input, ...serverContext })
   } catch (err) {

@@ -9,6 +9,7 @@ export interface Project {
   name: string
   description: string | null
   systemInstructions: string | null
+  businessId?: string | null
 }
 
 export interface Conversation {
@@ -17,6 +18,17 @@ export interface Conversation {
   projectId: string | null
   archived: boolean
   updatedAt: string
+  businessId?: string | null
+}
+
+function businessBadgeStyle(businessId: string | null | undefined): { label: string; cls: string } | null {
+  if (businessId === 'ALMA_TRADING') {
+    return { label: 'Trading', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' }
+  }
+  if (businessId === 'ALMA_LIFESTYLE') {
+    return { label: 'Lifestyle', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' }
+  }
+  return null
 }
 
 interface AgentSidebarProps {
@@ -141,6 +153,9 @@ export default function AgentSidebar({
           <a href="/agent/staff-monitor" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-gold-lt" title="স্টাফ মনিটর">
             👥
           </a>
+          <a href="/agent/trading-staff" className="rounded-md border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-amber-300" title="Trading Staff">
+            ₿
+          </a>
         </div>
         {isMobile && (
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-cream">✕</button>
@@ -193,10 +208,25 @@ export default function AgentSidebar({
           className="w-full rounded-xl bg-card border border-border px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold-dim/60"
         >
           <option value={PROJECT_NONE}>সব কথোপকথন</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
+          {projects.map((p) => {
+            const badge = businessBadgeStyle(p.businessId)
+            return (
+              <option key={p.id} value={p.id}>
+                {p.name}{badge ? ` · ${badge.label}` : ''}
+              </option>
+            )
+          })}
         </select>
+        {(() => {
+          const active = projects.find((p) => p.id === activeProject)
+          const badge = active ? businessBadgeStyle(active.businessId) : null
+          if (!badge) return null
+          return (
+            <div className={cn('mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border', badge.cls)}>
+              <span>{badge.label}</span>
+            </div>
+          )
+        })()}
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => onNewConv(activeProject === PROJECT_NONE ? undefined : activeProject)}
@@ -616,23 +646,30 @@ function ProjectDialog({
   const [name, setName] = useState(project?.name ?? '')
   const [description, setDescription] = useState(project?.description ?? '')
   const [sysInstructions, setSysInstructions] = useState(project?.systemInstructions ?? '')
+  const [businessId, setBusinessId] = useState<string>(project?.businessId ?? '')
   const [saving, setSaving] = useState(false)
 
   async function save() {
     if (!name.trim()) return
     setSaving(true)
     try {
+      const payload = {
+        name,
+        description,
+        systemInstructions: sysInstructions,
+        businessId: businessId === '' ? null : businessId,
+      }
       if (project) {
         await fetch(`/api/assistant/projects/${project.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, systemInstructions: sysInstructions }),
+          body: JSON.stringify(payload),
         })
       } else {
         await fetch('/api/assistant/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description, systemInstructions: sysInstructions }),
+          body: JSON.stringify(payload),
         })
       }
       onSaved()
@@ -669,6 +706,21 @@ function ProjectDialog({
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="সংক্ষিপ্ত বিবরণ"
               className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60"
             />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">ব্যবসা (business scope)</label>
+            <select
+              value={businessId}
+              onChange={(e) => setBusinessId(e.target.value)}
+              className="w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream focus:outline-none focus:border-gold-dim/60"
+            >
+              <option value="">— Personal / cross-business —</option>
+              <option value="ALMA_LIFESTYLE">ALMA Lifestyle</option>
+              <option value="ALMA_TRADING">ALMA Trading (Binance P2P)</option>
+            </select>
+            <p className="mt-1 text-[11px] text-muted">
+              Trading select করলে agent শুধু trading tools, staff, ও memory ব্যবহার করবে।
+            </p>
           </div>
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">সিস্টেম নির্দেশনা</label>

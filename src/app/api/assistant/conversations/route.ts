@@ -63,6 +63,7 @@ export async function GET(req: NextRequest) {
       id: true,
       title: true,
       projectId: true,
+      businessId: true,
       model: true,
       archived: true,
       createdAt: true,

@@ -572,8 +572,9 @@ async function detectWebsiteMarketingPattern(
 }
 
 export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
+  // Lifestyle staff only — Trading staff are handled by buildTradingTaskProposal.
   const staffList = await db.agentStaff.findMany({
-    where: { active: true },
+    where: { active: true, businessId: 'ALMA_LIFESTYLE' },
     select: { id: true, name: true, role: true, telegramChatId: true },
     orderBy: { name: 'asc' },
   })
@@ -590,6 +591,7 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
       where: {
         proposedFor: new Date(`${yesterday}T00:00:00+06:00`),
         status: { in: ['sent', 'approved'] },
+        businessId: 'ALMA_LIFESTYLE',
       },
       select: { staffId: true, title: true, detail: true, type: true, productRef: true },
     }),
