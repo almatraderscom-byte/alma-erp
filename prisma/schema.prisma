@@ -2951,3 +2951,21 @@ model AgentTodo {
   @@index([businessId, status])
   @@map("agent_todos")
 }
+
+model AgentToolEvent {
+  id             String   @id @default(uuid())
+  ts             DateTime @default(now())
+  surface        String   @default("owner")
+  toolName       String   @map("tool_name")
+  success        Boolean
+  verified       Boolean  @default(false)
+  errorClass     String?  @map("error_class")
+  latencyMs      Int      @default(0) @map("latency_ms")
+  conversationId String?  @map("conversation_id")
+  businessId     String   @default("ALMA_LIFESTYLE") @map("business_id")
+
+  @@index([ts])
+  @@index([toolName, ts])
+  @@index([businessId, ts])
+  @@map("agent_tool_events")
+}

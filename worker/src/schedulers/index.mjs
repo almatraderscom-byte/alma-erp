@@ -67,6 +67,7 @@ const lazy = {
   dayShift:           () => import('../intelligence/day-shift.mjs'),
   weeklyBusinessIntel: () => import('../reports/weekly-business-intel.mjs'),
   securityAudit:       () => import('../security/audit-scan.mjs'),
+  agentScorecard:      () => import('./agent-scorecard.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'day-shift-tick',          cronUtc: '*/12 * * * *', description: 'Agent day shift — tick every 12 min (24h office + patrol)' },
   { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
   { name: 'todo-reconcile',          cronUtc: '55 17 * * *',  description: 'End-of-day: cancel agent todos not done today (23:55 Dhaka)' },
+  { name: 'agent-scorecard',        cronUtc: '30 3 * * 6',  description: 'Weekly agent tool scorecard (Sat 09:30 Dhaka)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -433,6 +435,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'todo-reconcile': {
       const { runEndOfDayTodoReconcile } = await lazy.todoReminder()
       dutyResult = await runEndOfDayTodoReconcile(context) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'agent-scorecard': {
+      const { runAgentScorecard } = await lazy.agentScorecard()
+      dutyResult = await runAgentScorecard() ?? { dutyStatus: 'done' }
       break
     }
     default:

@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { logToolEvent } from '@/agent/lib/tool-telemetry'
 import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
@@ -455,24 +456,33 @@ export async function executeTool(
   serverContext: Record<string, unknown> = {},
 ): Promise<ToolResult> {
   const businessId = (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
+  const conversationId = serverContext.conversationId as string | undefined
+  const started = Date.now()
   const pool = businessId === 'ALMA_TRADING' ? TRADING_TOOLS : TOOLS
   const tool = pool.find((t) => t.name === name)
   if (!tool) {
-    // Fall back to full registry to surface a clearer error and avoid hard-fails
-    // when a shared tool is somehow renamed; the not-found path is still safe.
     const anyTool = TOOLS.find((t) => t.name === name)
-    if (!anyTool) return { success: false, error: `Unknown tool: ${name}` }
+    if (!anyTool) {
+      void logToolEvent({ toolName: name, success: false, errorClass: 'unknown_tool', latencyMs: Date.now() - started, conversationId, businessId })
+      return { success: false, error: `Unknown tool: ${name}` }
+    }
     if (businessId === 'ALMA_TRADING') {
+      void logToolEvent({ toolName: name, success: false, errorClass: 'wrong_business', latencyMs: Date.now() - started, conversationId, businessId })
       return {
         success: false,
         error: `Tool "${name}" Trading registry-এ available নয় — Lifestyle conversation এ চেষ্টা করুন।`,
       }
     }
-    return await anyTool.handler({ ...input, ...serverContext })
+    const result = await anyTool.handler({ ...input, ...serverContext })
+    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
+    return result
   }
   try {
-    return await tool.handler({ ...input, ...serverContext })
+    const result = await tool.handler({ ...input, ...serverContext })
+    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
+    return result
   } catch (err) {
+    void logToolEvent({ toolName: name, success: false, errorClass: 'uncaught_exception', latencyMs: Date.now() - started, conversationId, businessId })
     return { success: false, error: String(err) }
   }
 }
