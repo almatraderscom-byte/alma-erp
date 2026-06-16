@@ -7,11 +7,11 @@ import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
 import type { PayrollWallet, WalletEntryDto } from '@/types/payroll-wallet'
 
-const GOLD = '#c9a84c'
-const BG = '#0a0a0c'
-const TEXT = '#f2f0ea'
-const MUTED = '#9a968c'
-const LINE = 'rgba(201,168,76,0.22)'
+const GOLD = '#E07A5F'
+const BG = '#FFFFFF'
+const TEXT = '#1a1a2e'
+const MUTED = '#6b7280'
+const LINE = 'rgba(224,122,95,0.22)'
 
 const styles = StyleSheet.create({
   page: {

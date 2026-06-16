@@ -72,7 +72,7 @@ export function MySalarySlipCard({
     : null
 
   return (
-    <Card className="p-5 border-gold-dim/25 bg-[#0c0c10] space-y-4">
+    <Card className="p-5 border-gold-dim/25 bg-card space-y-4">
       <div>
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">My salary slip</p>
         <p className="mt-1 text-[11px] text-zinc-500">Download your monthly salary statement</p>
@@ -99,7 +99,7 @@ export function MySalarySlipCard({
               <select
                 value={slipPeriodYm}
                 onChange={e => setSlipPeriodYm(e.target.value)}
-                className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] text-cream"
+                className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] text-cream"
               >
                 <option value={slipPeriodOptions.current}>
                   This month ({formatSalarySlipPeriodLabel(slipPeriodOptions.current)})
@@ -113,12 +113,12 @@ export function MySalarySlipCard({
               type="month"
               value={slipPeriodYm}
               onChange={e => setSlipPeriodYm(e.target.value || slipPeriodOptions.current)}
-              className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] font-mono text-cream"
+              className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] font-mono text-cream"
               aria-label="Custom slip period"
             />
           </div>
 
-          <div className="rounded-xl border border-border bg-black/25 px-4 py-3 space-y-2 text-[11px]">
+          <div className="rounded-xl border border-border bg-black/[0.03] px-4 py-3 space-y-2 text-[11px]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-zinc-500">Period</span>
               <span className="font-medium text-cream">{slipBreakdown.periodLabel}</span>

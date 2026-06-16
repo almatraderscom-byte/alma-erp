@@ -114,7 +114,7 @@ export function TelegramUsersTab({
             />
           </div>
           {newUser.defaultTradingAccountId && (
-            <div className="sm:col-span-2 rounded-xl border border-border/60 bg-black/20 px-3 py-2">
+            <div className="sm:col-span-2 rounded-xl border border-border/60 bg-black/[0.03] px-3 py-2">
               <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Default alias (auto-filled)</p>
               <p className="text-sm text-cream">
                 {newUser.defaultAccountAlias
@@ -137,7 +137,7 @@ export function TelegramUsersTab({
         <Empty icon="👤" title="No Telegram users linked yet" desc="Add a mapping above to allow draft trades from Telegram." />
       ) : (
         <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
-          <div className="hidden gap-2 bg-black/30 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
+          <div className="hidden gap-2 bg-black/[0.03] px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
             <span>Telegram</span>
             <span>ERP staff</span>
             <span>Status</span>

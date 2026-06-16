@@ -168,7 +168,7 @@ export function OperationalTaskHero({
   )
 
   const actionBlock = (
-    <div className="shrink-0 border-t border-white/5 bg-black px-6 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+    <div className="shrink-0 border-t border-slate-200 bg-card px-6 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         className="w-full rounded-xl bg-gold py-4 text-center text-base font-black text-black transition hover:bg-gold-lt disabled:opacity-60"

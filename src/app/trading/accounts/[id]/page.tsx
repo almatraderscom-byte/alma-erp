@@ -228,7 +228,7 @@ export default function TradingAccountDetailPage() {
           <Card className="overflow-hidden">
             <div className="flex gap-1 overflow-x-auto border-b border-border p-2">
               {visibleTabs.map(t => (
-                <button key={t} onClick={() => setTab(t)} className={`rounded-xl px-3 py-2 text-xs font-bold ${tab === t ? 'bg-gold/15 text-gold-lt' : 'text-zinc-500 hover:bg-white/[0.04]'}`}>{t === 'SETTLEMENT' ? 'SETTLEMENT' : t.replace('_', ' ')}</button>
+                <button key={t} onClick={() => setTab(t)} className={`rounded-xl px-3 py-2 text-xs font-bold ${tab === t ? 'bg-gold/15 text-gold-lt' : 'text-zinc-500 hover:bg-black/[0.04]'}`}>{t === 'SETTLEMENT' ? 'SETTLEMENT' : t.replace('_', ' ')}</button>
               ))}
             </div>
             {tab === 'TRADES' && <TradeList rows={trades} isSuperAdmin={role === 'SUPER_ADMIN'} onAction={(mode, trade) => setTradeAction({ mode, trade })} />}
@@ -351,7 +351,7 @@ function tradeStatusClass(status: ReturnType<typeof tradeStatus>) {
 
 function TodayCell({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-black/20 p-3">
+    <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
       <p className={`mt-2 text-lg font-black ${className || 'text-cream'}`}>{value}</p>
     </div>
@@ -465,7 +465,7 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
         {mode === 'audit' ? (
           <div className="mobile-modal-body space-y-3 px-5 pb-4">
             {!history.length ? <Empty icon="◇" title="No audit history yet" /> : history.slice().reverse().map((row, idx) => (
-              <div key={`${row.timestamp}-${idx}`} className="rounded-2xl border border-border bg-black/20 p-3 text-xs">
+              <div key={`${row.timestamp}-${idx}`} className="rounded-2xl border border-border bg-black/[0.03] p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-black text-gold-lt">{row.action}</span>
                   <span className="text-zinc-500">{new Date(row.timestamp).toLocaleString()}</span>
@@ -659,7 +659,7 @@ function SettlementKpi({ label, value, highlight, negativeIsBad }: { label: stri
       ? 'text-red-400'
       : 'text-cream'
   return (
-    <div className="rounded-xl border border-border bg-black/20 p-3">
+    <div className="rounded-xl border border-border bg-black/[0.03] p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">{label}</p>
       <p className={`mt-1 text-lg font-black ${color}`}><Money amount={value} /></p>
     </div>
@@ -698,12 +698,12 @@ function DailySummaryPanel({ accountId, rows, onCreated }: { accountId: string; 
         <p className="text-sm font-black text-cream">Bkash Daily Summary</p>
         <p className="mt-1 text-xs text-zinc-500">Quick result mode for high-volume Bkash micro-trading. Net result is profit minus loss.</p>
         <div className="mt-4 grid gap-3">
-          <label className="text-xs font-bold text-zinc-400">Date<input type="date" value={summaryDate} onChange={e => setSummaryDate(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" /></label>
-          <label className="text-xs font-bold text-zinc-400">Total Orders<input type="number" min="0" step="1" value={totalOrders} onChange={e => setTotalOrders(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" /></label>
-          <label className="text-xs font-bold text-zinc-400">Total Profit (BDT)<input type="number" min="0" step="0.01" value={totalProfitBdt} onChange={e => setTotalProfitBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" /></label>
-          <label className="text-xs font-bold text-zinc-400">Total Loss (BDT)<input type="number" min="0" step="0.01" value={totalLossBdt} onChange={e => setTotalLossBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" /></label>
-          <label className="text-xs font-bold text-zinc-400">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" /></label>
-          <div className={`rounded-2xl border border-border bg-black/20 p-3 text-sm font-black ${signedClass(netResult)}`}>Net Result: ৳{netResult.toLocaleString('en-BD')}</div>
+          <label className="text-xs font-bold text-zinc-400">Date<input type="date" value={summaryDate} onChange={e => setSummaryDate(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" /></label>
+          <label className="text-xs font-bold text-zinc-400">Total Orders<input type="number" min="0" step="1" value={totalOrders} onChange={e => setTotalOrders(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" /></label>
+          <label className="text-xs font-bold text-zinc-400">Total Profit (BDT)<input type="number" min="0" step="0.01" value={totalProfitBdt} onChange={e => setTotalProfitBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" /></label>
+          <label className="text-xs font-bold text-zinc-400">Total Loss (BDT)<input type="number" min="0" step="0.01" value={totalLossBdt} onChange={e => setTotalLossBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" /></label>
+          <label className="text-xs font-bold text-zinc-400">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" /></label>
+          <div className={`rounded-2xl border border-border bg-black/[0.03] p-3 text-sm font-black ${signedClass(netResult)}`}>Net Result: ৳{netResult.toLocaleString('en-BD')}</div>
           <Button variant="gold" onClick={submit} disabled={mutation.loading}>Save Bkash Summary</Button>
           {mutation.error && <p className="text-xs text-red-300">{mutation.error}</p>}
         </div>
@@ -748,16 +748,16 @@ function PerformancePanel({ accountId, rows, onUploaded }: { accountId: string; 
         <p className="text-sm font-black text-cream">Performance Timeline</p>
         <p className="mt-1 text-xs text-zinc-500">Upload daily Binance profile screenshots. Only the latest 7 stay visible; older images are archived and paginated by the API.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_2fr_auto]">
-          <input type="date" value={shotDate} onChange={e => setShotDate(e.target.value)} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream" />
-          <input type="file" accept="image/*" onChange={e => { setFile(e.target.files?.[0] ?? null); e.target.value = '' }} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-zinc-300" />
-          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Growth note, order count, completion rate..." className="rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream" />
+          <input type="date" value={shotDate} onChange={e => setShotDate(e.target.value)} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream" />
+          <input type="file" accept="image/*" onChange={e => { setFile(e.target.files?.[0] ?? null); e.target.value = '' }} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-zinc-300" />
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Growth note, order count, completion rate..." className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream" />
           <Button variant="gold" onClick={submit} disabled={!file || mutation.loading}>Upload</Button>
         </div>
         {mutation.error && <p className="mt-2 text-xs text-red-300">{mutation.error}</p>}
       </Card>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {!rows.length ? <Empty icon="◇" title="No screenshots yet" /> : rows.map(shot => (
-          <a key={shot.id} href={shot.signedUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-2xl border border-border bg-black/20">
+          <a key={shot.id} href={shot.signedUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-2xl border border-border bg-black/[0.03]">
             {shot.signedUrl && <img src={shot.signedUrl} alt={shot.note || 'Performance screenshot'} loading="lazy" className="aspect-[4/3] w-full object-cover" />}
             <div className="p-3 text-xs">
               <p className="font-black text-cream">{new Date(shot.shotDate).toLocaleDateString()}</p>
@@ -781,7 +781,7 @@ function PerformancePanel({ accountId, rows, onUploaded }: { accountId: string; 
 
 function ComparisonShot({ label, shot }: { label: string; shot: TradingPerformanceScreenshot }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-black/20">
+    <div className="overflow-hidden rounded-2xl border border-border bg-black/[0.03]">
       {shot.signedUrl && <img src={shot.signedUrl} alt={`${label} merchant profile`} loading="lazy" className="aspect-[16/10] w-full object-cover" />}
       <div className="p-3 text-xs"><span className="font-black text-gold-lt">{label}</span> · {new Date(shot.shotDate).toLocaleDateString()}</div>
     </div>

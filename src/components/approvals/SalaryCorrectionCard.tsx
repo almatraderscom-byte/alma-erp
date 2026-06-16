@@ -56,7 +56,7 @@ export function SalaryCorrectionCard({
   }
 
   return (
-    <div className="space-y-3 rounded-2xl border border-gold-dim/25 bg-black/25 p-4 text-xs">
+    <div className="space-y-3 rounded-2xl border border-gold-dim/25 bg-black/[0.03] p-4 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold-lt">Salary correction</p>
         {priority ? (
@@ -75,7 +75,7 @@ export function SalaryCorrectionCard({
         <InfoRow label="Accrual entry" value={payload.accrualEntryId.slice(0, 12) + '…'} mono />
       </div>
 
-      <div className="rounded-xl border border-border bg-black/30 p-3 space-y-2 font-mono">
+      <div className="rounded-xl border border-border bg-black/[0.03] p-3 space-y-2 font-mono">
         <div className="flex justify-between gap-3">
           <span className="text-zinc-500">Current accrual</span>
           <span className="text-cream">{formatMoneyBDT(current)}</span>
@@ -97,7 +97,7 @@ export function SalaryCorrectionCard({
           </p>
           <ul className="space-y-2">
             {reversals.map((rev, i) => (
-              <li key={`${rev.ledgerEntryId}-${i}`} className="rounded-lg border border-border/70 bg-black/20 px-3 py-2">
+              <li key={`${rev.ledgerEntryId}-${i}`} className="rounded-lg border border-border/70 bg-black/[0.03] px-3 py-2">
                 <p className={`font-mono font-bold ${rev.amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {rev.amount >= 0 ? '+' : ''}
                   {formatMoneyBDT(Math.abs(rev.amount))}
@@ -110,7 +110,7 @@ export function SalaryCorrectionCard({
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-border bg-black/20 p-3">
+      <div className="rounded-xl border border-border bg-black/[0.03] p-3">
         <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Reason</p>
         <p className="mt-1 text-cream leading-relaxed">{reason || payload.requestedReason}</p>
       </div>

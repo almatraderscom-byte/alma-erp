@@ -127,7 +127,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
   }
 
   return (
-    <Card className="p-5 border-gold-dim/25 bg-[#0c0c10] space-y-4">
+    <Card className="p-5 border-gold-dim/25 bg-card space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payment accounts</p>
@@ -148,7 +148,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
             <div
               key={m.id}
               className={`rounded-2xl border px-4 py-3 ${
-                m.isPrimary ? 'border-gold/45 bg-gold/5' : 'border-border bg-black/25'
+                m.isPrimary ? 'border-gold/45 bg-gold/5' : 'border-border bg-black/[0.03]'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -218,7 +218,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
       </div>
 
       {form === 'MOBILE_BANKING' && (
-        <form onSubmit={submitMobile} className="grid gap-3 rounded-2xl border border-border bg-black/30 p-4">
+        <form onSubmit={submitMobile} className="grid gap-3 rounded-2xl border border-border bg-black/[0.03] p-4">
           <label className="block text-[11px] text-zinc-500">
             Provider
             <select name="provider" className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-cream">
@@ -249,7 +249,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
       )}
 
       {form === 'BANK_ACCOUNT' && (
-        <form onSubmit={submitBank} className="grid gap-3 rounded-2xl border border-border bg-black/30 p-4">
+        <form onSubmit={submitBank} className="grid gap-3 rounded-2xl border border-border bg-black/[0.03] p-4">
           <label className="block text-[11px] text-zinc-500">Bank name<Input name="bank_name" className="mt-1" required /></label>
           <label className="block text-[11px] text-zinc-500">Branch<Input name="branch_name" className="mt-1" /></label>
           <label className="block text-[11px] text-zinc-500">Account name<Input name="account_holder_name" className="mt-1" required /></label>

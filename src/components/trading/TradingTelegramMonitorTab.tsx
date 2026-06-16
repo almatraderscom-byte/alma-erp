@@ -101,7 +101,7 @@ export function TradingTelegramMonitorTab({
         ) : (
           <div className="max-h-48 space-y-2 overflow-y-auto">
             {data.suspiciousAudits.map(a => (
-              <div key={a.id} className="rounded-lg bg-black/30 p-2 text-[11px]">
+              <div key={a.id} className="rounded-lg bg-black/[0.03] p-2 text-[11px]">
                 <p className="font-bold text-amber-200">{a.eventType}</p>
                 <p className="text-zinc-500">{a.detail || a.rawMessage || '—'}</p>
               </div>

@@ -161,7 +161,7 @@ export default function BrandingSettingsPage() {
   const draftUrlsRef = useRef<string[]>([])
   const [form, setForm] = useState({
     company_name: '', tagline: '', phone: '', email: '', website: '', address: '', facebook: '',
-    color_primary: '#C9A84C', color_secondary: '#8B6914', color_accent: '#F0D080',
+    color_primary: '#E07A5F', color_secondary: '#C45A3C', color_accent: '#F4A28C',
     invoice_footer_thanks: '', invoice_footer_policy: '', invoice_footer_note: '',
     invoice_prefix: '',
     invoice_watermark_enabled: true,
@@ -178,8 +178,8 @@ export default function BrandingSettingsPage() {
       website: branding.website || '',
       address: branding.address || '',
       facebook: branding.facebook || '',
-      color_primary: branding.color_primary || '#C9A84C',
-      color_secondary: branding.color_secondary || '#8B6914',
+      color_primary: branding.color_primary || '#E07A5F',
+      color_secondary: branding.color_secondary || '#C45A3C',
       color_accent: branding.color_accent || '#F0D080',
       invoice_footer_thanks: branding.invoice_footer_thanks || '',
       invoice_footer_policy: branding.invoice_footer_policy || '',

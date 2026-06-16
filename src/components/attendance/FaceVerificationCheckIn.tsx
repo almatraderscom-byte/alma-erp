@@ -408,13 +408,13 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               <p className="mt-2 text-xs text-zinc-500">Your photo is still ready — tap Retry check-in below.</p>
             </div>
           ) : processingPhoto ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/30">
+            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/[0.03]">
               <Spinner />
               <p className="text-xs font-bold text-zinc-400">Processing photo…</p>
             </div>
           ) : preview ? (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/40">
+              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/[0.04]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview}
@@ -438,7 +438,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   {gpsError}
                 </p>
               )}
-              <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/30 px-4 text-center">
+              <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/[0.03] px-4 text-center">
                 <span className="text-3xl opacity-60">📷</span>
                 <p className="text-xs font-bold text-zinc-500">Front camera required</p>
                 <p className="text-[11px] text-zinc-600">After capture, a large Confirm button appears at the bottom</p>
@@ -517,7 +517,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               <div className="grid grid-cols-2 gap-2">
                 <label
                   htmlFor="attendance-face-input"
-                  className={`inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-border bg-transparent text-xs font-semibold text-zinc-400 transition-all hover:bg-white/[0.04] hover:text-cream active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
+                  className={`inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-border bg-transparent text-xs font-semibold text-zinc-400 transition-all hover:bg-black/[0.04] hover:text-cream active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
                   aria-disabled={busy}
                 >
                   Retake

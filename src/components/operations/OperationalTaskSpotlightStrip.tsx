@@ -18,13 +18,13 @@ type Props = {
 export function OperationalTaskSpotlightStrip({ tasks, loading, onOpenSpotlight }: Props) {
   if (loading) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 animate-pulse h-24" />
+      <div className="rounded-2xl border border-slate-200 bg-black/[0.03] p-4 animate-pulse h-24" />
     )
   }
   if (!tasks.length) return null
 
   return (
-    <div className="rounded-2xl border border-gold-dim/25 bg-gradient-to-br from-gold/10 via-[#0c0c12] to-black/40 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+    <div className="rounded-2xl border border-gold-dim/25 bg-gradient-to-br from-gold/10 via-card to-black/[0.04] p-4 shadow-[inset_0_1px_0_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Active operations</p>
         <span className="text-[10px] text-zinc-500">{tasks.length} open</span>
@@ -34,7 +34,7 @@ export function OperationalTaskSpotlightStrip({ tasks, loading, onOpenSpotlight 
           <li key={a.id}>
             <button
               type="button"
-              className="flex w-full items-start gap-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-left transition hover:border-gold/30 hover:bg-black/50"
+              className="flex w-full items-start gap-3 rounded-xl border border-slate-200 bg-black/[0.03] px-3 py-2.5 text-left transition hover:border-gold/30 hover:bg-black/[0.06]"
               onClick={() => onOpenSpotlight(a)}
             >
               <span

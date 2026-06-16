@@ -33,7 +33,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             <button
               type="button"
               onClick={onClose}
-              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-zinc-400 hover:text-cream hover:bg-white/[0.04] transition-colors text-lg"
+              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-zinc-400 hover:text-cream hover:bg-black/[0.04] transition-colors text-lg"
             >
               ×
             </button>

@@ -189,7 +189,7 @@ export function NewOrderFormFields({
               ? getCollectionVariantOptions(stockItems, collection)
               : []
             return (
-              <div key={item.id} className="rounded-2xl border border-border bg-black/20 p-3 space-y-2">
+              <div key={item.id} className="rounded-2xl border border-border bg-black/[0.03] p-3 space-y-2">
                 {collection && isCustomCollection && (
                   <CustomVariantAutoSelect
                     index={index}
@@ -316,13 +316,13 @@ export function NewOrderFormFields({
                   </NewOrderField>
                   {isMenCollection ? (
                     <NewOrderField label="Size Group">
-                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/30 px-3 text-xs text-zinc-500">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/[0.03] px-3 text-xs text-zinc-500">
                         {item.size_group || 'Auto'}
                       </div>
                     </NewOrderField>
                   ) : isCustomCollection ? (
                     <NewOrderField label="Stock pool">
-                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/30 px-3 text-xs text-zinc-500 truncate">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/[0.03] px-3 text-xs text-zinc-500 truncate">
                         {item.variant || 'Select variant/size'}
                       </div>
                     </NewOrderField>
@@ -368,7 +368,7 @@ export function NewOrderFormFields({
                     />
                   </NewOrderField>
                   <NewOrderField label="Subtotal">
-                    <div className="flex h-10 items-center justify-end rounded-xl border border-border bg-black/30 px-3 text-xs font-bold text-gold-lt">
+                    <div className="flex h-10 items-center justify-end rounded-xl border border-border bg-black/[0.03] px-3 text-xs font-bold text-gold-lt">
                       <Money amount={subtotal} />
                     </div>
                   </NewOrderField>
@@ -378,7 +378,7 @@ export function NewOrderFormFields({
                   {item.available != null && <span>Available: {item.available}</span>}
                 </div>
                 {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) > 0 && (
-                  <div className="flex items-center justify-between rounded-xl border border-border bg-black/20 px-3 py-2 text-[11px]">
+                  <div className="flex items-center justify-between rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]">
                     <span className="text-zinc-500">Item profit preview</span>
                     <span className={`font-bold ${itemProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
                       {itemProfit >= 0 ? '+' : ''}<Money amount={itemProfit} /> {itemProfit >= 0 ? 'PROFIT' : 'LOSS'}

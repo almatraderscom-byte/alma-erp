@@ -36,7 +36,7 @@ export function BrandingHead() {
     }
     if (iconHref) apple.href = iconHref
 
-    const theme = branding.color_primary || '#C9A84C'
+    const theme = branding.color_primary || '#E07A5F'
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-brand]')
     if (!meta) {
       meta = document.createElement('meta')
@@ -47,7 +47,7 @@ export function BrandingHead() {
     meta.content = theme
 
     document.documentElement.style.setProperty('--brand-primary', theme)
-    document.documentElement.style.setProperty('--brand-secondary', branding.color_secondary || '#8B6914')
+    document.documentElement.style.setProperty('--brand-secondary', branding.color_secondary || '#C45A3C')
     document.documentElement.style.setProperty('--brand-accent', branding.color_accent || '#F0D080')
   }, [branding, business.name])
 

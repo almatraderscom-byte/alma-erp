@@ -77,7 +77,7 @@ export function SearchableSelect({
         aria-haspopup="listbox"
         onClick={() => setOpen(v => !v)}
         className={cn(
-          'flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-black/30 px-3 py-2.5 text-left text-sm transition-colors',
+          'flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 text-left text-sm transition-colors',
           'focus:outline-none focus:border-gold-dim/60 focus:ring-1 focus:ring-gold-dim/30',
           disabled && 'opacity-50',
         )}
@@ -114,7 +114,7 @@ export function SearchableSelect({
               placeholder="Type to filter…"
               autoFocus
               required={required && !value}
-              className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/50"
+              className="w-full rounded-lg border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/50"
             />
           </div>
           <ul className="max-h-44 overflow-y-auto overscroll-contain py-1">
@@ -132,7 +132,7 @@ export function SearchableSelect({
                       setOpen(false)
                     }}
                     className={cn(
-                      'w-full px-3 py-2.5 text-left transition-colors hover:bg-white/5',
+                      'w-full px-3 py-2.5 text-left transition-colors hover:bg-black/[0.04]',
                       o.value === value && 'bg-gold/10',
                     )}
                   >

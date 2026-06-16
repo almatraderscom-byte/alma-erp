@@ -211,14 +211,14 @@ export default function SupplierImportPage() {
             <ol className="list-decimal pl-4 space-y-2 text-zinc-500">
               <li>
                 Quit Chrome, then start it with remote debugging (macOS example):
-                <pre className="mt-1 p-2 rounded-lg bg-black/40 border border-border text-[10px] text-gold/90 overflow-x-auto whitespace-pre-wrap">
+                <pre className="mt-1 p-2 rounded-lg bg-black/[0.04] border border-border text-[10px] text-gold/90 overflow-x-auto whitespace-pre-wrap">
                   /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=9222
                 </pre>
               </li>
               <li>In that window, open Smart China Hub and confirm you are logged in.</li>
               <li>
                 From the Alma project folder, run:
-                <pre className="mt-1 p-2 rounded-lg bg-black/40 border border-border text-[10px] text-gold/90 overflow-x-auto">
+                <pre className="mt-1 p-2 rounded-lg bg-black/[0.04] border border-border text-[10px] text-gold/90 overflow-x-auto">
                   {cdpCommand}
                 </pre>
                 <Button variant="gold" size="xs" className="mt-2" onClick={() => void copyText(cdpCommand, 'scrape command')}>
@@ -243,7 +243,7 @@ export default function SupplierImportPage() {
             value={rawJson}
             onChange={e => setRawJson(e.target.value)}
             placeholder='[ { "name": "…", "supplier_product_id": "…", "price": 0, … } ]'
-            className="w-full min-h-[140px] bg-black/30 border border-border rounded-xl p-3 text-xs font-mono text-cream focus:outline-none focus:border-gold-dim/50"
+            className="w-full min-h-[140px] bg-black/[0.03] border border-border rounded-xl p-3 text-xs font-mono text-cream focus:outline-none focus:border-gold-dim/50"
           />
           <div className="flex flex-wrap gap-2 mt-3">
             <Button variant="gold" size="sm" onClick={applyParse}>
@@ -344,7 +344,7 @@ export default function SupplierImportPage() {
                       dup === 'invalid' ||
                       r._issues.length > 0
                     return (
-                      <tr key={r._rowId} className="border-b border-border/40 hover:bg-white/[0.02]">
+                      <tr key={r._rowId} className="border-b border-border/40 hover:bg-black/[0.02]">
                         <td className="px-2 py-2">
                           <input
                             type="checkbox"
@@ -379,7 +379,7 @@ export default function SupplierImportPage() {
                               alt=""
                               width={40}
                               height={40}
-                              className="rounded-md object-cover border border-border bg-black/20"
+                              className="rounded-md object-cover border border-border bg-black/[0.03]"
                               loading="lazy"
                             />
                           ) : (

@@ -263,13 +263,13 @@ export function SelfieVerificationModal({
               <p className="mt-2 text-sm text-zinc-400">You can continue working while admin reviews.</p>
             </div>
           ) : processingPhoto ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/30">
+            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/[0.03]">
               <Spinner />
               <p className="text-xs font-bold text-zinc-400">Processing photo…</p>
             </div>
           ) : preview ? (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/40">
+              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/[0.04]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview}
@@ -287,7 +287,7 @@ export function SelfieVerificationModal({
               )}
             </div>
           ) : (
-            <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/30 px-4 text-center">
+            <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/[0.03] px-4 text-center">
               <span className="text-3xl opacity-60">📷</span>
               <p className="text-xs font-bold text-zinc-500">Front camera required</p>
               <p className="text-[11px] text-zinc-600">After capture, review your photo and submit</p>

@@ -120,7 +120,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
               <label
                 key={opt.id}
                 className={`flex cursor-pointer flex-col rounded-xl border px-3 py-2.5 transition-colors ${
-                  requestType === opt.id ? 'border-gold-dim/50 bg-gold/10' : 'border-border bg-black/20'
+                  requestType === opt.id ? 'border-gold-dim/50 bg-gold/10' : 'border-border bg-black/[0.03]'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -148,7 +148,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
                 step={1}
                 value={partialAmount}
                 onChange={e => setPartialAmount(e.target.value)}
-                className="w-full rounded-xl border border-border bg-black/30 px-3 py-2.5 font-mono text-cream"
+                className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 font-mono text-cream"
                 placeholder={String(Math.round(penalty / 2))}
               />
             </label>
@@ -162,7 +162,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
               rows={4}
               maxLength={1200}
               placeholder="Traffic, emergency, approved delay, transport issue..."
-              className="w-full rounded-xl border border-border bg-black/30 px-3 py-2.5 text-sm text-cream"
+              className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 text-sm text-cream"
             />
           </label>
 

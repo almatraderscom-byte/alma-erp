@@ -113,7 +113,7 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
           This part of My Desk could not load. Account details and the rest of the app still work.
         </p>
         {this.state.message && (
-          <p className="rounded-lg border border-border bg-black/30 px-3 py-2 text-[10px] font-mono text-zinc-500 break-all">
+          <p className="rounded-lg border border-border bg-black/[0.03] px-3 py-2 text-[10px] font-mono text-zinc-500 break-all">
             {this.state.message.slice(0, 200)}
           </p>
         )}

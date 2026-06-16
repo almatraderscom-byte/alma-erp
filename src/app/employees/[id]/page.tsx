@@ -561,7 +561,7 @@ export default function EmployeeDetailPage() {
                   <select
                     value={slipPeriodYm}
                     onChange={e => setSlipPeriodYm(e.target.value)}
-                    className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] text-cream"
+                    className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] text-cream"
                   >
                     <option value={slipPeriodOptions.current}>
                       This month ({formatSalarySlipPeriodLabel(slipPeriodOptions.current)})
@@ -575,7 +575,7 @@ export default function EmployeeDetailPage() {
                   type="month"
                   value={slipPeriodYm}
                   onChange={e => setSlipPeriodYm(e.target.value || slipPeriodOptions.current)}
-                  className="rounded-lg border border-border bg-black/30 px-2 py-1 text-[11px] font-mono text-cream"
+                  className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] font-mono text-cream"
                   aria-label="Custom slip period"
                 />
                 <button
@@ -834,7 +834,7 @@ export default function EmployeeDetailPage() {
                   <input
                     readOnly
                     value={formatMoneyBDT(employee.monthly_salary)}
-                    className="w-full rounded-xl bg-black/30 border border-border px-3 py-2 font-mono text-sm text-zinc-400"
+                    className="w-full rounded-xl bg-black/[0.03] border border-border px-3 py-2 font-mono text-sm text-zinc-400"
                   />
                 </label>
                 <label className="block space-y-1">
@@ -958,7 +958,7 @@ export default function EmployeeDetailPage() {
                       return (
                         <label
                           key={entry.id}
-                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${selected ? 'border-gold-dim/60 bg-gold/5' : 'border-border bg-black/20'}`}
+                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${selected ? 'border-gold-dim/60 bg-gold/5' : 'border-border bg-black/[0.03]'}`}
                         >
                           <input
                             type="radio"
@@ -1011,7 +1011,7 @@ export default function EmployeeDetailPage() {
                 ) : (
                   <div className="space-y-3">
                     {correctionReversals.map(row => (
-                      <div key={row.key} className="rounded-xl border border-border bg-black/20 p-3 space-y-2">
+                      <div key={row.key} className="rounded-xl border border-border bg-black/[0.03] p-3 space-y-2">
                         <div className="flex justify-between items-center gap-2">
                           <span className="text-zinc-500">Reversal</span>
                           <button
@@ -1156,7 +1156,7 @@ export default function EmployeeDetailPage() {
 
 function MiniStat({ label, value = 0, valueLabel, color = 'text-cream' }: { label: string; value?: number; valueLabel?: string; color?: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-black/20 p-3">
+    <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
       <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-600">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${color}`}>{valueLabel ?? `৳ ${Number(value || 0).toLocaleString('en-BD')}`}</p>
     </div>

@@ -17,7 +17,7 @@ import toast from 'react-hot-toast'
 const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
 const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
 
-const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020','#2a1a08']
+const PALETTE = ['#E07A5F','#C45A3C','#F4A28C','#B84A30','#8B3A24','#D4694F','#6B2A18']
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024
 
 type ReceiptUpload = {
@@ -299,7 +299,7 @@ export default function ExpensesPage() {
                         onDragOver={e => { e.preventDefault(); setDragActive(true) }}
                         onDragLeave={() => setDragActive(false)}
                         onDrop={handleDrop}
-                        className={`rounded-2xl border border-dashed p-4 text-center transition-colors ${dragActive ? 'border-gold-dim/70 bg-gold/10' : 'border-border bg-black/20'}`}
+                        className={`rounded-2xl border border-dashed p-4 text-center transition-colors ${dragActive ? 'border-gold-dim/70 bg-gold/10' : 'border-border bg-black/[0.03]'}`}
                       >
                         <input
                           ref={fileInputRef}

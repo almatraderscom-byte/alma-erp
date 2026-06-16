@@ -6,12 +6,12 @@ import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
 import type { ERPFinanceExpense } from '@/types/hr'
 
-const BG = '#0a0a0c'
-const TEXT = '#f2f0ea'
-const MUTED = '#9a968c'
-const GOLD = '#c9a84c'
-const LINE = 'rgba(201,168,76,0.22)'
-const HEAD_BG = 'rgba(201,168,76,0.12)'
+const BG = '#FFFFFF'
+const TEXT = '#1a1a2e'
+const MUTED = '#6b7280'
+const GOLD = '#E07A5F'
+const LINE = 'rgba(224,122,95,0.22)'
+const HEAD_BG = 'rgba(224,122,95,0.12)'
 
 const styles = StyleSheet.create({
   page: {
@@ -25,7 +25,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 16, fontWeight: 700, color: GOLD, marginBottom: 4 },
   sub: { fontSize: 9, color: MUTED, marginBottom: 12 },
-  row: { flexDirection: 'row', borderBottomWidth: 0.5, borderBottomColor: LINE, paddingVertical: 3.5, backgroundColor: 'rgba(255,255,255,0.02)' },
+  row: { flexDirection: 'row', borderBottomWidth: 0.5, borderBottomColor: LINE, paddingVertical: 3.5, backgroundColor: 'rgba(0,0,0,0.02)' },
   cellD: { width: '13%' },
   cellT: { width: '24%' },
   cellC: { width: '16%' },

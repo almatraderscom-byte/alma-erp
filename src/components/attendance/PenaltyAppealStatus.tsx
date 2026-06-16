@@ -32,7 +32,7 @@ const STATUS_STYLE: Record<string, string> = {
   APPROVED: 'text-green-300 border-green-500/30 bg-green-500/10',
   FULLY_APPROVED: 'text-green-300 border-green-500/30 bg-green-500/10',
   REJECTED: 'text-red-300 border-red-500/30 bg-red-500/10',
-  CANCELLED: 'text-zinc-400 border-border bg-black/20',
+  CANCELLED: 'text-zinc-400 border-border bg-black/[0.03]',
 }
 
 export function PenaltyAppealStatus({

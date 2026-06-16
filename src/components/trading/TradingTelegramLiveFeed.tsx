@@ -76,7 +76,7 @@ export function TradingTelegramLiveFeed() {
             <p className="text-xs text-zinc-500">No recent drafts</p>
           ) : (
             feed.drafts.map(d => (
-              <div key={d.id} className="flex gap-2 rounded-lg bg-black/30 p-2 text-xs">
+              <div key={d.id} className="flex gap-2 rounded-lg bg-black/[0.03] p-2 text-xs">
                 <EmployeeAvatar
                   userId={d.user?.id}
                   name={d.user?.name}
@@ -107,7 +107,7 @@ export function TradingTelegramLiveFeed() {
             <p className="text-xs text-zinc-500">No recent events</p>
           ) : (
             feed.audits.map(a => (
-              <div key={a.id} className="rounded-lg bg-black/20 p-2 text-[11px] text-zinc-300">
+              <div key={a.id} className="rounded-lg bg-black/[0.03] p-2 text-[11px] text-zinc-300">
                 <span className="font-bold text-gold-lt">{a.eventType}</span>
                 {' · '}
                 @{a.telegramUsername || a.telegramUserId}

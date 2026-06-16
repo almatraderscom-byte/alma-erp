@@ -163,7 +163,7 @@ export function BkashDailySummaryModal({
           onChange={e => setNotes(e.target.value)}
           rows={2}
           placeholder="Optional notes"
-          className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+          className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
         />
       </form>
     </ModalFrame>

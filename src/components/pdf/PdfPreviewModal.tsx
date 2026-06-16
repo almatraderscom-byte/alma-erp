@@ -418,7 +418,7 @@ export function PdfPreviewModal({
               <p className="text-sm font-bold text-red-400">Could not render PDF</p>
               <p className="text-xs text-zinc-400">{error}</p>
               {errorDetails && pdfDebugEnabled() && (
-                <pre className="text-[9px] text-left text-zinc-600 overflow-auto max-h-24 p-2 bg-black/40 rounded">{errorDetails}</pre>
+                <pre className="text-[9px] text-left text-zinc-600 overflow-auto max-h-24 p-2 bg-black/[0.04] rounded">{errorDetails}</pre>
               )}
               <div className="flex gap-2 justify-center">
                 <Button variant="gold" size="sm" onClick={retry}>Retry</Button>
