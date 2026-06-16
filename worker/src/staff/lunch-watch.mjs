@@ -5,6 +5,7 @@
  */
 
 import { sendNtfyToTopic, sendNtfy } from '../notify/ntfy.mjs'
+import { staffNtfyTopic, staffTelegramChatId } from './staff-fields.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { dhakaLunchDate } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
@@ -32,22 +33,24 @@ export async function runLunchWatch({ supabase, bot }) {
     if (mins > 45 && !l.warned_45) {
       const { data: staff } = await supabase
         .from('agent_staff')
-        .select('telegramChatId, ntfyTopic, name')
+        .select('telegramChatId, ntfy_topic, name')
         .eq('id', l.staff_id)
         .maybeSingle()
 
-      if (staff?.ntfyTopic) {
+      const topic = staffNtfyTopic(staff)
+      if (topic) {
         await sendNtfyToTopic(
-          staff.ntfyTopic,
+          topic,
           'লাঞ্চ শেষ',
-          `${staff.name}, ৪৫ মিনিট হয়ে গেছে — ফিরে আসুন।`,
+          `${staff?.name ?? 'স্টাফ'}, ৪৫ মিনিট হয়ে গেছে — ফিরে আসুন।`,
           'urgent',
         ).catch(() => {})
       }
-      if (staff?.telegramChatId) {
+      const chatId = staffTelegramChatId(staff)
+      if (chatId) {
         await sendMarkdownSafe(
           bot.telegram,
-          staff.telegramChatId,
+          chatId,
           `⏰ ${staff.name} ভাই, ৪৫ মিনিট হয়ে গেছে — কাজে ফিরে "ফিরেছি" লিখুন। 🙂`,
         ).catch(() => {})
       }

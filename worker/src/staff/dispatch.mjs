@@ -8,6 +8,7 @@ import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { sendDispatchVoiceHeadline } from './staff-voice-nudge.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
+import { staffNtfyTopic } from './staff-fields.mjs'
 import { lunchButtonRow } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
 import { leaveRequestButton } from './leave.mjs'
@@ -202,19 +203,25 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
       const { data: staffRow } = await supabase
         .from('agent_staff')
-        .select('ntfyTopic, name')
+        .select('ntfy_topic, name')
         .eq('id', staff.id)
         .maybeSingle()
-      if (staffRow?.ntfyTopic) {
+      const topic = staffNtfyTopic(staffRow)
+      if (topic) {
         const ntfyMsg = isUpdate
           ? `${staffRow.name ?? staffName}, ${staffTasks.length}টি নতুন কাজ যোগ — মোট ${combinedTasks.length}টি। Telegram দেখুন।`
           : `${staffRow.name ?? staffName}, ${combinedTasks.length}টি নতুন কাজ — Telegram দেখুন।`
-        await sendNtfyToTopic(
-          staffRow.ntfyTopic,
+        const ntfyResult = await sendNtfyToTopic(
+          topic,
           'আজকের কাজ',
           ntfyMsg,
           'task',
-        ).catch((err) => console.warn(`[dispatch] ntfy failed for ${staffName}:`, err.message))
+        ).catch((err) => ({ ok: false, error: err.message }))
+        if (!ntfyResult?.ok) {
+          console.warn(`[dispatch] ntfy failed for ${staffName} (${topic}):`, ntfyResult?.error)
+        } else {
+          console.log(`[dispatch] ntfy sent to ${staffName} topic=${topic}`)
+        }
       }
     } catch (err) {
       console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)

@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { notifyOwner } from '@/agent/lib/notify-owner'
+import { notifyOwner, sendStaffNtfy } from '@/agent/lib/notify-owner'
 import { prisma } from '@/lib/prisma'
 import { enqueueTelegramNotification } from '@/lib/telegram-notification/queue'
 
@@ -42,8 +42,8 @@ export async function POST(req: NextRequest) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const staff = await (prisma as any).agentStaff.findUnique({
           where: { id: outbox.staffId },
-          select: { telegramChatId: true },
-        }) as { telegramChatId: string | null } | null
+          select: { telegramChatId: true, ntfyTopic: true, name: true },
+        }) as { telegramChatId: string | null; ntfyTopic: string | null; name: string } | null
 
         if (staff?.telegramChatId && outbox.content) {
           const resendMsg = `🔔 *রিমাইন্ডার — অনুগ্রহ করে নিচের মেসেজটি দেখুন:*\n\n${outbox.content.slice(0, 1000)}`
@@ -56,6 +56,21 @@ export async function POST(req: NextRequest) {
             metadata: { force: true, escalation: true },
           })
           actions.push('resent_to_staff')
+        }
+
+        if (staff?.ntfyTopic) {
+          try {
+            await sendStaffNtfy(
+              staff.ntfyTopic,
+              'নতুন মেসেজ',
+              `${staff.name ?? staffName}, একটি মেসেজ অপেক্ষা করছে — Telegram দেখুন।`,
+              'task',
+            )
+            actions.push('staff_ntfy_sent')
+          } catch (err) {
+            console.error('[escalate] staff ntfy failed:', err)
+            actions.push('staff_ntfy_failed')
+          }
         }
       }
     } catch (err) {

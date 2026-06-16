@@ -3,6 +3,7 @@
  * Owner alerts fire anytime; staff NTFY fires anytime (office hours only limits Telegram re-ping).
  */
 import { sendNtfy, sendNtfyToTopic } from '../notify/ntfy.mjs'
+import { staffNtfyTopic, staffTelegramChatId } from './staff-fields.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
 import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
@@ -75,22 +76,27 @@ export async function runAckEscalation({ supabase, bot }) {
     if (!onLeave && m.staff_id) {
       const { data: staff } = await supabase
         .from('agent_staff')
-        .select('telegramChatId, ntfyTopic, name')
+        .select('telegramChatId, ntfy_topic, name')
         .eq('id', m.staff_id)
         .maybeSingle()
 
-      if (staff?.ntfyTopic) {
-        await sendNtfyToTopic(
-          staff.ntfyTopic,
+      const topic = staffNtfyTopic(staff)
+      if (topic) {
+        const ntfyResult = await sendNtfyToTopic(
+          topic,
           'নতুন কাজ',
-          `${staff.name}, একটি মেসেজ অপেক্ষা করছে — দেখুন।`,
+          `${staff?.name ?? 'স্টাফ'}, একটি মেসেজ অপেক্ষা করছে — দেখুন।`,
           'task',
-        ).catch(() => {})
+        ).catch((err) => ({ ok: false, error: err.message }))
+        if (!ntfyResult?.ok) {
+          console.warn(`[ack-escalation] staff ntfy failed (${topic}):`, ntfyResult?.error)
+        }
       }
-      if (duringOffice && staff?.telegramChatId) {
+      const chatId = staffTelegramChatId(staff)
+      if (duringOffice && chatId) {
         await sendMarkdownSafe(
           bot.telegram,
-          staff.telegramChatId,
+          chatId,
           `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
         ).catch(() => {})
       }

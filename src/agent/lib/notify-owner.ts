@@ -27,6 +27,27 @@ async function sendNtfy(topic: 'general' | 'critical', title: string, message: s
   if (!res.ok) throw new Error(`ntfy ${topic} returned ${res.status}`)
 }
 
+/** Push to a staff member's personal ntfy topic (e.g. alma-staff-eyafi). */
+export async function sendStaffNtfy(topic: string, title: string, message: string, category?: string) {
+  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
+  const asciiTitle = String(title).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim() || 'ALMA'
+  const tags = category === 'urgent' ? 'rotating_light,sos' : category === 'task' ? 'white_check_mark' : ''
+
+  const res = await resilientFetch(`${server}/${topic}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      Title: asciiTitle,
+      Priority: category === 'urgent' ? '5' : '4',
+      ...(tags ? { Tags: tags } : {}),
+    },
+    body: message,
+    timeoutMs: 15_000,
+    retries: 1,
+  })
+  if (!res.ok) throw new Error(`ntfy staff topic ${topic} returned ${res.status}`)
+}
+
 export async function notifyOwner(opts: {
   tier: 1 | 2 | 3
   title: string
