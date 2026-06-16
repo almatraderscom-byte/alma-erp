@@ -619,7 +619,8 @@ export function createTelegramBot() {
   const token = process.env.ASSISTANT_BOT_TOKEN
   if (!token) throw new Error('ASSISTANT_BOT_TOKEN is not set')
 
-  const bot = new Telegraf(token)
+  const apiRoot = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '') || 'https://api.telegram.org'
+  const bot = new Telegraf(token, { telegram: { apiRoot } })
 
   bot.use(async (ctx, next) => {
     try {

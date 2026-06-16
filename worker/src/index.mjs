@@ -16,6 +16,9 @@ import { dirname, join } from 'path'
 const __workerDir = dirname(fileURLToPath(import.meta.url))
 // PM2 may cache stale env vars — worker/.env must always win (e.g. rotated FB tokens).
 dotenv.config({ path: join(__workerDir, '../.env'), override: true })
+// CRITICAL: Install Telegram proxy BEFORE any module that does fetch to api.telegram.org.
+import { installTelegramProxy } from './telegram-proxy.mjs'
+installTelegramProxy()
 import { initWorkerSentry, captureWorkerError } from './sentry.mjs'
 import { startHeartbeatLoop } from './heartbeat.mjs'
 import { startHealthPingLoop } from './health-ping.mjs'
