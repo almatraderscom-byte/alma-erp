@@ -19,26 +19,31 @@ export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) 
       {/* Greeting */}
       <div className="flex flex-col items-center text-center mb-6">
         <motion.div
-          className="relative mb-3 flex h-36 w-full items-center justify-center"
+          className="relative mb-2 flex h-40 w-full items-center justify-center"
           initial={{ opacity: 0, scale: 0.85 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
         >
-          {/* Breathing teal-green glow behind the orb */}
+          {/* Breathing teal glow — gives the orb living, pulsing energy */}
           <motion.div
-            className="absolute h-32 w-32 rounded-full blur-3xl"
-            style={{ background: 'radial-gradient(circle, rgba(45,212,191,0.4) 0%, rgba(56,189,248,0.18) 50%, transparent 72%)' }}
-            animate={{ opacity: [0.4, 0.75, 0.4], scale: [0.9, 1.12, 0.9] }}
+            className="absolute h-40 w-40 rounded-full blur-3xl"
+            style={{ background: 'radial-gradient(circle, rgba(45,212,191,0.30) 0%, rgba(56,189,248,0.12) 55%, transparent 75%)' }}
+            animate={{ opacity: [0.35, 0.7, 0.35], scale: [0.92, 1.1, 0.92] }}
             transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
           />
-          {/* The iridescent synthesis orb — pulses with contained energy */}
+          {/* The iridescent synthesis orb. Radial mask feathers the edges so the
+              cream backdrop dissolves seamlessly into the page (no hard rectangle). */}
           <motion.img
             src="/agent-orb.png"
             alt=""
             aria-hidden
             draggable={false}
-            className="relative h-36 w-auto select-none drop-shadow-[0_6px_24px_rgba(13,148,136,0.35)]"
-            animate={{ scale: [1, 1.045, 1] }}
+            className="relative h-40 w-auto select-none"
+            style={{
+              WebkitMaskImage: 'radial-gradient(circle, #000 56%, transparent 74%)',
+              maskImage: 'radial-gradient(circle, #000 56%, transparent 74%)',
+            }}
+            animate={{ scale: [1, 1.04, 1] }}
             transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
           />
         </motion.div>
