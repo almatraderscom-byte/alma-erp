@@ -12,8 +12,9 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
+import { selectToolsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -29,10 +30,11 @@ import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import {
-  detectClaimViolations,
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
+  type ToolLedgerEntry,
+  verifyClaimsAgainstLedger,
 } from '@/agent/lib/claim-verifier'
 
 // ── Event types ────────────────────────────────────────────────────────────
@@ -511,9 +513,13 @@ export async function* runAgentTurn(
             .map((b) => b.text)
             .join('\n')
             .trim()
-          const calledTools = toolRecords.map((r) => r.toolName)
+          const ledger: ToolLedgerEntry[] = toolRecords.map((r) => ({
+            toolName: r.toolName,
+            success: r.status === 'success',
+            error: r.error ?? undefined,
+          }))
           const violations: ClaimViolation[] = finalText
-            ? detectClaimViolations(finalText, calledTools)
+            ? verifyClaimsAgainstLedger(finalText, ledger)
             : []
           if (violations.length > 0) {
             verifyRetries++
@@ -552,6 +558,22 @@ export async function* runAgentTurn(
           ]
           continue
         }
+
+        // Wrong-refusal detection: agent said "can't" but relevant tool group wasn't loaded
+        if (!signal?.aborted && !personalMode && lastUserText) {
+          const finalTextForRefusal = currentBlocks
+            .filter((b): b is Extract<CollectedBlock, { type: 'text' }> => b.type === 'text')
+            .map((b) => b.text)
+            .join('\n')
+          const REFUSAL_RE = /পারব\s*না|পারি\s*না|পারছি\s*না|parbo\s*na|pari\s*na|সেই\s*সুবিধা\s*নেই|available\s*নেই|এটা\s*করতে\s*পারি?\s*না/i
+          if (REFUSAL_RE.test(finalTextForRefusal)) {
+            const { groups: loadedGroups } = selectToolGroupsSync(lastUserText, { personalMode, businessId })
+            if (loadedGroups.length <= 3 && loadedGroups.every(g => g === 'base' || g === 'erp' || g === 'staff')) {
+              void logRefusalEvent({ conversationId, businessId })
+            }
+          }
+        }
+
         break
       }
 

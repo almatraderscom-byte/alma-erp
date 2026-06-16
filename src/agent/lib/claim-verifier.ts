@@ -1,15 +1,13 @@
 /**
  * Tool-claim verifier — server-side enforcement of HONESTY rule.
  *
- * Scans the agent's final reply text for action-completion claims (Bangla/Banglish)
- * and verifies that the corresponding tool was actually called this turn.
- * If a claim is detected without the matching tool call, a synthetic reminder
- * is injected so the model either calls the tool or revises the reply.
- *
- * Conservative regexes — match only past-tense completion claims, not questions
- * or future intents. False positives just trigger one extra retry; false
- * negatives let lies through. Recall on damaging claims (mark/lock) >> precision.
+ * Two layers:
+ *  1. Specific regex rules (original 6 categories) — high-recall for critical actions.
+ *  2. General ledger-based check — catches completion claims for ANY tool category
+ *     that wasn't backed by a successful call this turn.
  */
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 export type ClaimViolationCategory =
   | 'salah_mark'
@@ -18,6 +16,7 @@ export type ClaimViolationCategory =
   | 'reminder_set'
   | 'staff_dispatch'
   | 'fb_post'
+  | 'general_write'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -26,21 +25,28 @@ export interface ClaimViolation {
   requiredTools: string[]
 }
 
+export interface ToolLedgerEntry {
+  toolName: string
+  success: boolean
+  error?: string
+}
+
 interface ClaimRule {
   id: string
   category: ClaimViolationCategory
-  /** Pattern that matches a clear past-tense completion claim */
   pattern: RegExp
-  /** Optional regex that, if matched, suppresses the claim (e.g. question form) */
   negationPattern?: RegExp
   requiredTools: string[]
 }
 
-// Bangla \b doesn't work (non-ASCII), so anchor with whitespace/punctuation/string boundaries.
+// ── Patterns ────────────────────────────────────────────────────────────────
+
 const FUTURE_INTENT = /(?:^|[\s,।.!?])(?:করব|করবো|রাখব|রাখবো|দেব|দেবো|পাঠাব|পাঠাবো|will\s+|going\s*to\s+|করার\s*চেষ্টা)(?:[\s,।.!?]|$)/i
 const QUESTION_FORM = /পড়েছেন\s*কি|পড়লেন\s*কি|করেছেন\s*কি|\?\s*$/
 
 const SALAH_NAME = /(?:যোহর|জোহর|জুহর|আসর|ফজর|ফোজর|মাগরিব|ইশা|ইশার|fajr|fojr|dhuhr|zuhr|asr|maghrib|isha)/i
+
+// ── Specific regex rules (Layer 1 — original 6 categories) ────────────────
 
 const RULES: ClaimRule[] = [
   {
@@ -69,14 +75,14 @@ const RULES: ClaimRule[] = [
   {
     id: 'memory_saved',
     category: 'memory_save',
-    pattern: /(?:মনে\s*রাখলাম|মনে\s*রেখেছি|মনে\s*রাখা\s*হয়েছে|memory\s*[-_]?এ?\s*(?:সেভ|save|রাখ[লোছিা]+)|saved\s*(?:to\s*)?memory|মেমোরিতে\s*রাখলাম|মেমোরি\s*তে\s*সেভ)/i,
+    pattern: /(?:মনে\s*রাখলাম|মনে\s*রেখেছি|মনে\s*রাখা\s*হয়েছে|memory\s*[-_]?এ?\s*(?:সেভ|save|রাখ[লোছিা]+)|saved\s*(?:to\s*)?memory|মেমোরিতে\s*রাখলাম|মেমোরি\s*তে\s*সেভ)/i,
     negationPattern: FUTURE_INTENT,
     requiredTools: ['save_memory'],
   },
   {
     id: 'reminder_set',
     category: 'reminder_set',
-    pattern: /(?:reminder\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|রিমাইন্ডার\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|alarm\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|reminder\s*added|মনে\s*করিয়ে\s*দেব[ো]?\s*\d)/i,
+    pattern: /(?:reminder\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|রিমাইন্ডার\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|alarm\s*সেট\s*(?:কর[লোছিা]+|হয়েছে)|reminder\s*added|মনে\s*করিয়ে\s*দেব[ো]?\s*\d)/i,
     negationPattern: FUTURE_INTENT,
     requiredTools: ['set_reminder'],
   },
@@ -95,19 +101,78 @@ const RULES: ClaimRule[] = [
   {
     id: 'fb_posted',
     category: 'fb_post',
-    pattern: /(?:facebook\s*(?:এ\s*)?পোস্ট\s*(?:কর[লোছিা]+|হয়েছে|করে\s*দি[লেছিা]+)|FB\s*এ?\s*পোস্ট\s*(?:কর[লোছিা]+|হয়েছে)|পোস্ট\s*(?:করে\s*ফেলেছি|করে\s*দিয়েছি|করে\s*দিলাম|হয়ে\s*গেছে))/i,
+    pattern: /(?:facebook\s*(?:এ\s*)?পোস্ট\s*(?:কর[লোছিা]+|হয়েছে|করে\s*দি[লেছিা]+)|FB\s*এ?\s*পোস্ট\s*(?:কর[লোছিা]+|হয়েছে)|পোস্ট\s*(?:করে\s*ফেলেছি|করে\s*দিয়েছি|করে\s*দিলাম|হয়ে\s*গেছে))/i,
     negationPattern: FUTURE_INTENT,
     requiredTools: ['post_to_facebook'],
   },
 ]
+
+// ── Tool → Category mapping (Layer 2 — general ledger check) ──────────────
+
+type ToolActionCategory =
+  | 'write' | 'send' | 'mark' | 'post' | 'update'
+  | 'save' | 'delete' | 'approve' | 'set' | 'log'
+  | 'create' | 'dispatch' | 'generic'
+
+export const TOOL_CATEGORY: Record<string, ToolActionCategory> = {}
+
+// Auto-classify by prefix
+const CATEGORY_PREFIXES: [string, ToolActionCategory][] = [
+  ['mark_', 'mark'], ['save_', 'save'], ['send_', 'send'],
+  ['post_', 'post'], ['update_', 'update'], ['set_', 'set'],
+  ['log_', 'log'], ['add_', 'create'], ['create_', 'create'],
+  ['delete_', 'delete'], ['edit_', 'update'], ['approve_', 'approve'],
+  ['reject_', 'approve'], ['dispatch', 'dispatch'], ['publish', 'post'],
+  ['unpublish', 'post'], ['run_', 'write'], ['make_', 'write'],
+  ['generate_', 'write'], ['manage_', 'write'], ['pause_', 'update'],
+  ['resume_', 'update'], ['snooze_', 'update'], ['cancel_', 'delete'],
+  ['forget_', 'delete'], ['retire_', 'delete'], ['duplicate_', 'create'],
+  ['merge_', 'write'], ['correct_', 'update'], ['confirm_', 'approve'],
+  ['prepare_', 'write'], ['propose_', 'write'], ['call_', 'send'],
+  ['outbound_', 'send'], ['delegate_', 'dispatch'], ['request_', 'write'],
+  ['web_research', 'write'],
+]
+
+function classifyTool(name: string): ToolActionCategory {
+  if (TOOL_CATEGORY[name]) return TOOL_CATEGORY[name]
+  for (const [prefix, cat] of CATEGORY_PREFIXES) {
+    if (name.startsWith(prefix)) {
+      TOOL_CATEGORY[name] = cat
+      return cat
+    }
+  }
+  TOOL_CATEGORY[name] = 'generic'
+  return 'generic'
+}
+
+// ── Completion lexicon (Banglish/Bangla past-tense done-words) ──────────────
+
+const COMPLETION_CLAIMS = /(?:করেছি|করে\s*দিয়েছি|করে\s*দিলাম|করে\s*ফেলেছি|পাঠিয়েছি|পাঠিয়ে\s*দিয়েছি|সেভ\s*করেছি|save\s*করেছি|mark\s*করেছি|post\s*করেছি|update\s*করেছি|delete\s*করেছি|set\s*করেছি|send\s*করেছি|log\s*করেছি|create\s*করেছি|dispatch\s*করেছি|approve\s*করেছি|publish\s*করেছি|done\s*হয়েছে|হয়ে\s*গেছে|সম্পন্ন\s*হয়েছে|completed|successfully|hoye\s*g[ae]che|kore\s*diyechi|kore\s*felesi|pathiyechi|save\s*korechi|set\s*korechi)/i
+
+const CATEGORY_CLAIM_KEYWORDS: Record<ToolActionCategory, RegExp | null> = {
+  mark: /mark|মার্ক|রেকর্ড/i,
+  save: /save|সেভ|মনে\s*রাখ|memory/i,
+  send: /send|পাঠা|pathao|message/i,
+  post: /post|পোস্ট|publish|আপলোড/i,
+  update: /update|আপডেট|edit|পরিবর্তন|change/i,
+  set: /set|সেট|configure/i,
+  log: /log|লগ|entry|রেকর্ড/i,
+  create: /create|তৈরি|banao|বানা|add|যুক্ত/i,
+  delete: /delete|মুছে|remove|সরিয়ে|বাদ/i,
+  approve: /approve|অনুমোদন|reject/i,
+  dispatch: /dispatch|পাঠিয়ে|ডিসপ্যাচ/i,
+  write: null,
+  generic: null,
+}
+
+// ── Core detection functions ─────────────────────────────────────────────────
 
 function stripWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
 /**
- * Scan reply text for action claims unbacked by tool calls in this turn.
- * Returns empty array when reply is honest.
+ * Layer 1: Scan reply text for specific action claims unbacked by tool calls.
  */
 export function detectClaimViolations(
   replyText: string,
@@ -125,7 +190,6 @@ export function detectClaimViolations(
 
     if (rule.negationPattern && rule.negationPattern.test(text)) continue
 
-    // If any required tool was called, the claim is satisfied.
     const satisfied = rule.requiredTools.some((t) => calledSet.has(t))
     if (satisfied) continue
 
@@ -139,6 +203,86 @@ export function detectClaimViolations(
 
   return violations
 }
+
+/**
+ * Layer 2: Ledger-based general verification.
+ * Detects completion claims in text that don't have a matching successful
+ * write-category tool call in the ledger.
+ */
+export function detectLedgerViolations(
+  replyText: string,
+  ledger: ToolLedgerEntry[],
+): ClaimViolation[] {
+  const text = replyText.trim()
+  if (!text || text.length < 20) return []
+
+  if (FUTURE_INTENT.test(text)) return []
+
+  const claimMatch = COMPLETION_CLAIMS.exec(text)
+  if (!claimMatch) return []
+
+  const successfulCategories = new Set<ToolActionCategory>()
+  for (const entry of ledger) {
+    if (entry.success) {
+      successfulCategories.add(classifyTool(entry.toolName))
+    }
+  }
+
+  // If any write-category tool succeeded, the general claim is likely honest
+  const writeCategories: ToolActionCategory[] = [
+    'write', 'send', 'mark', 'post', 'update', 'save',
+    'delete', 'approve', 'set', 'log', 'create', 'dispatch',
+  ]
+  const anyWriteSucceeded = writeCategories.some(c => successfulCategories.has(c))
+  if (anyWriteSucceeded) return []
+
+  // No write tool succeeded but the reply claims completion
+  // Check if the claim specifically references an action category
+  for (const [cat, re] of Object.entries(CATEGORY_CLAIM_KEYWORDS) as [ToolActionCategory, RegExp | null][]) {
+    if (!re) continue
+    if (re.test(text)) {
+      const failedInCategory = ledger.filter(
+        e => !e.success && classifyTool(e.toolName) === cat,
+      )
+      if (failedInCategory.length > 0) {
+        return [{
+          category: 'general_write',
+          ruleId: `ledger_failed_${cat}`,
+          matchedSnippet: stripWhitespace(claimMatch[0]).slice(0, 120),
+          requiredTools: failedInCategory.map(e => e.toolName),
+        }]
+      }
+    }
+  }
+
+  // Generic: claimed completion but no write tool ran at all
+  if (ledger.length === 0 || !anyWriteSucceeded) {
+    return [{
+      category: 'general_write',
+      ruleId: 'ledger_no_write_tool',
+      matchedSnippet: stripWhitespace(claimMatch[0]).slice(0, 120),
+      requiredTools: [],
+    }]
+  }
+
+  return []
+}
+
+/**
+ * Combined verification: Layer 1 (regex) + Layer 2 (ledger).
+ */
+export function verifyClaimsAgainstLedger(
+  replyText: string,
+  ledger: ToolLedgerEntry[],
+): ClaimViolation[] {
+  const toolNames = ledger.map(e => e.toolName)
+  const regexViolations = detectClaimViolations(replyText, toolNames)
+  if (regexViolations.length > 0) return regexViolations
+
+  return detectLedgerViolations(replyText, ledger)
+}
+
+// ── Guidance + reminder builder ──────────────────────────────────────────────
 
 const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   salah_mark:
@@ -157,22 +301,24 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'এখনই set_reminder call করুন (title + dueAt ISO), success পেলে confirm দিন।',
   staff_dispatch:
     'স্টাফকে পাঠানোর দাবি দিয়েছেন কিন্তু এই turn-এ approve_pending_dispatch / approve_pending_staff_message / add_staff_task_now কোনোটাই হয়নি। ' +
-    'হয় এখনই uupropriate approve/dispatch tool call করুন, নয়তো honest বলুন: "ড্রাফট তৈরি — Approve কার্ড থেকে অনুমোদন দিলে পাঠাব"।',
+    'হয় এখনই appropriate approve/dispatch tool call করুন, নয়তো honest বলুন: "ড্রাফট তৈরি — Approve কার্ড থেকে অনুমোদন দিলে পাঠাব"।',
   fb_post:
     'Facebook পোস্ট করার দাবি দিয়েছেন কিন্তু এই turn-এ post_to_facebook tool call হয়নি। ' +
     'এখনই post_to_facebook call করুন বা confirm card-এর জন্য অপেক্ষা করতে বলুন — পাঠানোর আগে "পোস্ট হয়েছে" বলবেন না।',
+  general_write:
+    'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
+    'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +
+    'যদি tool call ব্যর্থ হয়ে থাকে → সততা সঙ্গে ব্যর্থতা স্বীকার করুন।',
 }
 
-/**
- * Build the synthetic reminder message to push the model into corrective behavior.
- * Treated as a "user" turn but framed as system verification — Bangla wording so
- * the model stays in language and tone.
- */
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
   const lines: string[] = ['[VERIFICATION FAILED — সিস্টেম চেক]', '']
   lines.push('আপনার শেষ উত্তরে নিম্নলিখিত দাবি ধরা পড়েছে যা corresponding tool ছাড়াই বলা হয়েছে:')
   for (const v of violations) {
-    lines.push(`- "${v.matchedSnippet}" → প্রয়োজন: ${v.requiredTools.join(' বা ')}`)
+    const toolHint = v.requiredTools.length > 0
+      ? ` → প্রয়োজন: ${v.requiredTools.join(' বা ')}`
+      : ''
+    lines.push(`- "${v.matchedSnippet}"${toolHint}`)
   }
   lines.push('')
   lines.push('নিয়ম (HARD):')
@@ -192,7 +338,4 @@ export function buildVerificationReminder(violations: ClaimViolation[]): string 
   return lines.join('\n')
 }
 
-/**
- * Hard cap on retries to avoid infinite loops if the model keeps lying.
- */
 export const MAX_VERIFY_RETRIES = 2
