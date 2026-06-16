@@ -393,6 +393,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     defaultJobOptions: {
       removeOnComplete: { count: 10 },
       removeOnFail:     { count: 20 },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30_000 },
     },
   })
 
@@ -439,8 +441,25 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     concurrency: 2,
   })
 
-  schedulerWorker.on('failed', (job, err) => {
-    console.error(`[schedulers] ${job?.name} failed:`, err.message)
+  const CRITICAL_JOBS = new Set([
+    'owner-briefing', 'night-report', 'evening-proposal', 'morning-staff-reminder',
+    'daily-summary', 'salah-init', 'weekly-review',
+  ])
+
+  schedulerWorker.on('failed', async (job, err) => {
+    const name = job?.name ?? 'unknown'
+    const attemptsMade = job?.attemptsMade ?? 0
+    const maxAttempts = job?.opts?.attempts ?? 3
+    const isFinal = attemptsMade >= maxAttempts
+
+    console.error(`[schedulers] ${name} failed (attempt ${attemptsMade}/${maxAttempts}):`, err.message)
+
+    if (isFinal && CRITICAL_JOBS.has(name) && bot && process.env.OWNER_TELEGRAM_CHAT_ID) {
+      const msg = `⚠️ *Scheduler FAILED* (${maxAttempts} attempts exhausted)\n\nJob: \`${name}\`\nError: ${err.message?.slice(0, 200)}\n\nCatch-up scan will retry at 10:00 Dhaka.`
+      try {
+        await bot.telegram.sendMessage(process.env.OWNER_TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' })
+      } catch { /* notification best-effort */ }
+    }
   })
 
   console.log(`[schedulers] ${SCHEDULER_REGISTRY.length} jobs registered`)

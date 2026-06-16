@@ -30,6 +30,7 @@ import { REFERENCE_TOOLS } from './reference-tools'
 import { QC_TOOLS } from './qc-tools'
 import { COST_TOOLS } from './cost-tools'
 import { LOCATION_TOOLS } from './location-tools'
+import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 
 export const TOOL_GROUP_NAMES = [
@@ -55,6 +56,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...ASK_TOOLS,
     ...REMINDER_TOOLS,
     ...OWNER_TODO_TOOLS,
+    ...WORK_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,
     ...LEARNING_TOOLS,
     ...COST_TOOLS,
