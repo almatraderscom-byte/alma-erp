@@ -32,6 +32,7 @@ import { COST_TOOLS } from './cost-tools'
 import { LOCATION_TOOLS } from './location-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
+import { VISION_TOOLS } from './vision-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 
 export const TOOL_GROUP_NAMES = [
@@ -45,6 +46,7 @@ export const TOOL_GROUP_NAMES = [
   'website',
   'salah',
   'diag',
+  'vision',
   'trading',
   'personal',
 ] as const
@@ -73,6 +75,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],
   diag: [...DIAGNOSTIC_TOOLS],
+  vision: [...VISION_TOOLS],
   trading: [...TRADING_EXTENSION_TOOLS],
   personal: [...PERSONAL_SAFE_TOOLS],
 }

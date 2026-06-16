@@ -46,6 +46,11 @@ const GROUP_PROFILES: Partial<Record<ToolGroupName, string>> = {
   diag:
     'error bug diagnose health scan watchdog সমস্যা, ' +
     'system problem, API error, debug, somossa ki, ki hocche',
+  vision:
+    'QC quality check inspect photo image screenshot invoice receipt রসিদ poster competitor, ' +
+    'brand check ব্র্যান্ড palette color font, product photo listing check, ' +
+    'ছবি দেখ check koro photo qc inspect, payment screenshot p2p trade, ' +
+    'extract data from image, compare brand guidelines, ei chobi ta ki thik ache',
 }
 
 const MIN_SIMILARITY = 0.18

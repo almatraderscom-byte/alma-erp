@@ -35,6 +35,7 @@ import { PLAYBOOK_TOOLS } from './playbook-tools'
 import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
 import { QC_TOOLS } from './qc-tools'
+import { VISION_TOOLS } from './vision-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 
@@ -414,6 +415,7 @@ export const TOOLS: AgentTool[] = [
   ...LEARNING_TOOLS,
   ...REFERENCE_TOOLS,
   ...QC_TOOLS,
+  ...VISION_TOOLS,
   ...TRYON_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,

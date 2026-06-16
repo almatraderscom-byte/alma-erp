@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { AGENT_MODEL } from '@/agent/config'
+import { runAutoQc, formatQcNotification, SHADOW_MODE } from '@/agent/lib/auto-qc'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -101,11 +102,44 @@ export async function POST(req: NextRequest) {
       note?: string
     }
 
-    return NextResponse.json({
+    const result = {
       matches: json.matches !== false,
       confidence: json.confidence === 'high' ? 'high' : 'low',
       note: typeof json.note === 'string' ? json.note : '',
-    })
+      autoQc: undefined as { score?: number; verdict?: string; issues?: string[]; notification?: string } | undefined,
+    }
+
+    // Auto-QC hook (shadow mode): for product_photo tasks with image proof
+    if (taskType === 'product_photo' && proofImageUrl) {
+      try {
+        const imgRes2 = await fetch(proofImageUrl)
+        if (imgRes2.ok) {
+          const buf2 = Buffer.from(await imgRes2.arrayBuffer())
+          const mime2 = imgRes2.headers.get('content-type')?.startsWith('image/')
+            ? imgRes2.headers.get('content-type')!
+            : 'image/jpeg'
+          const qcResult = await runAutoQc(buf2.toString('base64'), mime2)
+          if (qcResult.ran) {
+            result.autoQc = {
+              score: qcResult.score,
+              verdict: qcResult.verdict,
+              issues: qcResult.issues,
+              notification: qcResult.belowThreshold
+                ? formatQcNotification(qcResult, body.taskTitle)
+                : undefined,
+            }
+            if (qcResult.belowThreshold && !SHADOW_MODE) {
+              result.matches = false
+              result.note = `QC score ${qcResult.score}/100 — threshold এর নিচে`
+            }
+          }
+        }
+      } catch (qcErr) {
+        console.error('[assess-task-proof] auto-qc error:', qcErr)
+      }
+    }
+
+    return NextResponse.json(result)
   } catch (err) {
     console.error('[assess-task-proof]', err)
     return NextResponse.json({ matches: true, confidence: 'low', note: 'assessment_failed' })

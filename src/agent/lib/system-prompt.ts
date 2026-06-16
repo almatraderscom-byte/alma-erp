@@ -16,6 +16,7 @@ import { VIDEO_ROLE_PROMPT } from '@/agent/tools/video-tools'
 import { BRAND_ROLE_PROMPT } from '@/agent/tools/brand-tools'
 import { TRADING_READ_ROLE_PROMPT } from '@/agent/tools/trading-tools'
 import { PLAYBOOK_ROLE_PROMPT } from '@/agent/tools/playbook-tools'
+import { VISION_ROLE_PROMPT } from '@/agent/tools/vision-tools'
 import type { ActivePlaybookEntry } from '@/agent/lib/playbook'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import type { ConflictSignal } from '@/agent/lib/intelligence/counter-propose'
@@ -352,6 +353,7 @@ const LIFESTYLE_STATIC_PROMPT =
   + `\n${VIDEO_ROLE_PROMPT}\n`
   + `\n${ADS_ROLE_PROMPT}\n`
   + `\n${BRAND_ROLE_PROMPT}\n`
+  + `\n${VISION_ROLE_PROMPT}\n`
   + OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE
