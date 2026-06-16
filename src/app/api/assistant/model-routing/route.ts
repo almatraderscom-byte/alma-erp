@@ -22,9 +22,12 @@ import {
   ROUTING_DEFAULTS,
   type ModelRoutingConfig,
 } from '@/agent/lib/models/routing-config'
-import { getModel } from '@/agent/lib/models/registry'
+import { getModel, MODEL_REGISTRY } from '@/agent/lib/models/registry'
 
 export const runtime = 'nodejs'
+
+/** Models the owner may pick as the premium escalation target (strong tiers only). */
+const ESCALATION_CANDIDATE_IDS = ['claude-opus-4-8', 'gemini-3.1-pro', 'gpt-5.5', 'gpt-5.4']
 
 /** Friendly identity for each underlying provider — the owner's "agents". */
 const AGENT_PROFILE: Record<string, { emoji: string; label: string; role: string }> = {
@@ -96,9 +99,18 @@ export async function GET(req: NextRequest) {
     conversations: Number(r.conversations) || 0,
   }))
 
+  const criticalModelOptions = ESCALATION_CANDIDATE_IDS.map((id) => {
+    const m = getModel(id)
+    return { id: m.id, label: m.label, provider: m.provider, inPerM: m.inPerM, outPerM: m.outPerM }
+  })
+  // Head/default model price for an at-a-glance cost comparison in the UI.
+  const headModel = MODEL_REGISTRY.find((m) => m.default) ?? MODEL_REGISTRY[0]
+
   return Response.json({
     config,
     defaults: ROUTING_DEFAULTS,
+    criticalModelOptions,
+    headModel: { id: headModel.id, label: headModel.label, inPerM: headModel.inPerM, outPerM: headModel.outPerM },
     opusUsedToday,
     opusRemainingToday: Math.max(0, config.opusDailyCap - opusUsedToday),
     agentsToday,
@@ -125,6 +137,7 @@ export async function POST(req: NextRequest) {
   if (Number.isFinite(body.opusDailyCap)) patch.opusDailyCap = Number(body.opusDailyCap)
   if (Number.isFinite(body.opusConfidenceThreshold)) patch.opusConfidenceThreshold = Number(body.opusConfidenceThreshold)
   if (Number.isFinite(body.opusCriticalTaka)) patch.opusCriticalTaka = Number(body.opusCriticalTaka)
+  if (typeof body.criticalModelId === 'string') patch.criticalModelId = body.criticalModelId
 
   if (Object.keys(patch).length === 0) {
     return Response.json({ error: 'no_valid_fields' }, { status: 400 })

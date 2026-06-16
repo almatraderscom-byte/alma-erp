@@ -11,6 +11,15 @@ interface RoutingConfig {
   opusDailyCap: number
   opusConfidenceThreshold: number
   opusCriticalTaka: number
+  criticalModelId: string
+}
+
+interface ModelOption {
+  id: string
+  label: string
+  provider: string
+  inPerM: number
+  outPerM: number
 }
 
 interface AgentToday {
@@ -31,6 +40,8 @@ interface ModelToday {
 interface RoutingResponse {
   config: RoutingConfig
   defaults: RoutingConfig
+  criticalModelOptions: ModelOption[]
+  headModel: ModelOption
   opusUsedToday: number
   opusRemainingToday: number
   agentsToday: AgentToday[]
@@ -88,7 +99,8 @@ export function MonitorAgentsPanel({
     (draft.opusEnabled !== data.config.opusEnabled ||
       draft.opusDailyCap !== data.config.opusDailyCap ||
       draft.opusConfidenceThreshold !== data.config.opusConfidenceThreshold ||
-      draft.opusCriticalTaka !== data.config.opusCriticalTaka)
+      draft.opusCriticalTaka !== data.config.opusCriticalTaka ||
+      draft.criticalModelId !== data.config.criticalModelId)
 
   async function save() {
     if (!draft) return
@@ -179,6 +191,43 @@ export function MonitorAgentsPanel({
 
           {/* The rest only matters when Opus is on */}
           <div className={cn('space-y-4 transition-opacity', !draft.opusEnabled && 'pointer-events-none opacity-40')}>
+            {/* Premium model selector — owner picks cost vs power */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-[12px] font-semibold text-[#1a1a2e]/75">কোন প্রিমিয়াম মডেল</label>
+                <span className="text-[10px] text-[#94a3b8]">দাম: in/out · $ প্রতি 1M টোকেন</span>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {data.criticalModelOptions.map((m) => {
+                  const active = draft.criticalModelId === m.id
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setDraft({ ...draft, criticalModelId: m.id })}
+                      className={cn(
+                        'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition-all',
+                        active
+                          ? 'border-[#E07A5F]/40 bg-[#E07A5F]/[0.08]'
+                          : 'border-black/[0.08] bg-white hover:bg-black/[0.03]',
+                      )}
+                    >
+                      <span className={cn('text-[12px] font-bold', active ? 'text-[#E07A5F]' : 'text-[#1a1a2e]/80')}>
+                        {active ? '● ' : '○ '}
+                        {m.label}
+                      </span>
+                      <span className="ml-2 shrink-0 text-[10px] font-semibold tabular-nums text-[#94a3b8]">
+                        ${m.inPerM}/${m.outPerM}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-1 text-[10px] text-[#94a3b8]">
+                হেড: {data.headModel.label} (${data.headModel.inPerM}/${data.headModel.outPerM}) — সস্তা, ৯০% কাজ এতেই
+              </p>
+            </div>
+
             {/* Daily cap stepper */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">

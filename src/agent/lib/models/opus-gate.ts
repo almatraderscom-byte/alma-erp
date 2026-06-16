@@ -44,15 +44,16 @@ export function evaluateOpusEscalation(
   if (opusUsedToday >= config.opusDailyCap) {
     return { model: DEFAULT_MODEL_ID, escalated: false, reason: `opus daily cap reached (${config.opusDailyCap})` }
   }
+  const premiumModel = config.criticalModelId || OPUS_MODEL_ID
   const highRiskLowConf =
     signal.risk === 'high' && (signal.confidence ?? 1) < config.opusConfidenceThreshold
   const bigMoney = (signal.amountTaka ?? 0) >= config.opusCriticalTaka
   if (bigMoney) {
-    return { model: OPUS_MODEL_ID, escalated: true, reason: `money ≥ ৳${config.opusCriticalTaka}` }
+    return { model: premiumModel, escalated: true, reason: `money ≥ ৳${config.opusCriticalTaka}` }
   }
   if (highRiskLowConf) {
     return {
-      model: OPUS_MODEL_ID,
+      model: premiumModel,
       escalated: true,
       reason: `high risk, confidence ${(signal.confidence ?? 0).toFixed(2)} < ${config.opusConfidenceThreshold}`,
     }

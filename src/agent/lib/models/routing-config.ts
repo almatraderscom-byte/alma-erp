@@ -8,6 +8,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { isKnownModelId } from '@/agent/lib/models/registry'
 
 export interface ModelRoutingConfig {
   /** Master switch: when false, everything stays on Sonnet. */
@@ -18,6 +19,8 @@ export interface ModelRoutingConfig {
   opusConfidenceThreshold: number
   /** Escalate any money decision at/above this taka amount, regardless of confidence. */
   opusCriticalTaka: number
+  /** Which premium model the gate escalates to (owner-chosen — cost vs power). */
+  criticalModelId: string
 }
 
 const KEYS = {
@@ -25,6 +28,7 @@ const KEYS = {
   opusDailyCap: 'model.routing.opusDailyCap',
   opusConfidenceThreshold: 'model.routing.opusConfidenceThreshold',
   opusCriticalTaka: 'model.routing.opusCriticalTaka',
+  criticalModelId: 'model.routing.criticalModelId',
 } as const
 
 export const ROUTING_DEFAULTS: ModelRoutingConfig = {
@@ -32,6 +36,7 @@ export const ROUTING_DEFAULTS: ModelRoutingConfig = {
   opusDailyCap: 15,
   opusConfidenceThreshold: 0.8,
   opusCriticalTaka: 20_000,
+  criticalModelId: 'claude-opus-4-8',
 }
 
 export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
@@ -44,11 +49,14 @@ export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
       const v = int ? parseInt(raw, 10) : parseFloat(raw)
       return Number.isFinite(v) ? v : fallback
     }
+    const rawModel = map.get(KEYS.criticalModelId)
+    const criticalModelId = rawModel && isKnownModelId(rawModel) ? rawModel : ROUTING_DEFAULTS.criticalModelId
     return {
       opusEnabled: map.has(KEYS.opusEnabled) ? map.get(KEYS.opusEnabled) === 'true' : ROUTING_DEFAULTS.opusEnabled,
       opusDailyCap: num(KEYS.opusDailyCap, ROUTING_DEFAULTS.opusDailyCap, true),
       opusConfidenceThreshold: num(KEYS.opusConfidenceThreshold, ROUTING_DEFAULTS.opusConfidenceThreshold),
       opusCriticalTaka: num(KEYS.opusCriticalTaka, ROUTING_DEFAULTS.opusCriticalTaka, true),
+      criticalModelId,
     }
   } catch {
     return { ...ROUTING_DEFAULTS }
@@ -64,6 +72,9 @@ export async function setModelRoutingConfig(patch: Partial<ModelRoutingConfig>):
     entries.push([KEYS.opusConfidenceThreshold, String(clamped)])
   }
   if (patch.opusCriticalTaka !== undefined) entries.push([KEYS.opusCriticalTaka, String(Math.max(0, Math.round(patch.opusCriticalTaka)))])
+  if (patch.criticalModelId !== undefined && isKnownModelId(patch.criticalModelId)) {
+    entries.push([KEYS.criticalModelId, patch.criticalModelId])
+  }
   await Promise.all(
     entries.map(([key, value]) =>
       prisma.agentKvSetting.upsert({ where: { key }, create: { key, value }, update: { value } }),
