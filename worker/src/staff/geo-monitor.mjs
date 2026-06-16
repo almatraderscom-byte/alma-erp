@@ -13,7 +13,7 @@ import { bnNum } from './bn-format.mjs'
 const OFFICE_LAT = Number(process.env.OFFICE_ALMA_LIFESTYLE_LAT || process.env.OFFICE_LAT || 0)
 const OFFICE_LNG = Number(process.env.OFFICE_ALMA_LIFESTYLE_LNG || process.env.OFFICE_LNG || 0)
 const OFFICE_RADIUS_M = Number(process.env.OFFICE_ALMA_LIFESTYLE_RADIUS_M || process.env.OFFICE_RADIUS_M || 300)
-const OWNER_CHAT_ID = process.env.OWNER_TELEGRAM_CHAT_ID
+const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 
 const STALE_LOCATION_MINUTES = 10
 const GRACE_PERIOD_MS = 5 * 60 * 1000

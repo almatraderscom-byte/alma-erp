@@ -14,7 +14,7 @@ import { isWithinOfficeHours } from './office-hours.mjs'
 import { notify } from '../notify/index.mjs'
 import { bnNum, formatDhakaTimeBn } from './bn-format.mjs'
 
-const OWNER_CHAT_ID = process.env.OWNER_TELEGRAM_CHAT_ID
+const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 const PROOF_MAX_PER_DAY = 4
 const PROOF_REPLY_TIMEOUT_MS = 5 * 60 * 1000
 const IDLE_THRESHOLD_MINUTES = 120

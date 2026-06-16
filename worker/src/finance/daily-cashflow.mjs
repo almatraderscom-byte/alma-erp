@@ -11,7 +11,7 @@
 import { notify } from '../notify/index.mjs'
 import { bnNum } from '../staff/bn-format.mjs'
 
-const OWNER_CHAT_ID = process.env.OWNER_TELEGRAM_CHAT_ID
+const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 
 function dhakaYmd(daysAgo = 0) {
   const d = new Date(Date.now() - daysAgo * 86400_000)

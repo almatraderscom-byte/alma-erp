@@ -11,7 +11,7 @@
  */
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
-const OWNER_CHAT_ID = process.env.OWNER_TELEGRAM_CHAT_ID
+const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 
 const SENSITIVE_TOOLS = new Set([
   'outbound_phone_call', 'call_family_member', 'send_urgent_alert',

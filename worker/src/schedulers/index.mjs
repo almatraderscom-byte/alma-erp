@@ -506,10 +506,10 @@ export async function setupSchedulers({ connection, supabase, bot }) {
 
     console.error(`[schedulers] ${name} failed (attempt ${attemptsMade}/${maxAttempts}):`, err.message)
 
-    if (isFinal && CRITICAL_JOBS.has(name) && bot && process.env.OWNER_TELEGRAM_CHAT_ID) {
+    if (isFinal && CRITICAL_JOBS.has(name) && bot && process.env.TELEGRAM_OWNER_CHAT_ID) {
       const msg = `⚠️ *Scheduler FAILED* (${maxAttempts} attempts exhausted)\n\nJob: \`${name}\`\nError: ${err.message?.slice(0, 200)}\n\nCatch-up scan will retry at 10:00 Dhaka.`
       try {
-        await bot.telegram.sendMessage(process.env.OWNER_TELEGRAM_CHAT_ID, msg, { parse_mode: 'Markdown' })
+        await bot.telegram.sendMessage(process.env.TELEGRAM_OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' })
       } catch { /* notification best-effort */ }
     }
   })
