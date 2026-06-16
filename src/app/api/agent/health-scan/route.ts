@@ -11,9 +11,15 @@ export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const bearer = req.headers.get('authorization')?.replace('Bearer ', '')
+  const internalToken = process.env.AGENT_INTERNAL_TOKEN
+  const isInternalAuth = bearer && internalToken && bearer === internalToken
+
+  if (!isInternalAuth) {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   try {
     const report = await runHealthScan()

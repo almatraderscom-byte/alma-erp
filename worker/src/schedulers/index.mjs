@@ -62,6 +62,7 @@ const lazy = {
   contentEngine:      () => import('../content-engine/run.mjs'),
   weeklyReflection:   () => import('../intelligence/reflection.mjs'),
   dailyStrategist:    () => import('../intelligence/strategist.mjs'),
+  todoReminder:       () => import('./todo-reminder.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -113,6 +114,8 @@ export const SCHEDULER_REGISTRY = [
   { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
   { name: 'staff-approval-escalation', cronUtc: '* * * * *',  description: 'Escalate unapproved staff messages (every minute)' },
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
+  { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
+  { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -349,6 +352,16 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'daily-strategist': {
       const { runDailyStrategist } = await lazy.dailyStrategist()
       await runDailyStrategist()
+      break
+    }
+    case 'morning-todo-reminder': {
+      const { runMorningTodoReminder } = await lazy.todoReminder()
+      dutyResult = await runMorningTodoReminder(context) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'evening-todo-summary': {
+      const { runEveningTodoSummary } = await lazy.todoReminder()
+      dutyResult = await runEveningTodoSummary(context) ?? { dutyStatus: 'done' }
       break
     }
     default:

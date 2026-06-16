@@ -4,17 +4,34 @@ import { authOptions } from '@/lib/auth'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(req: NextRequest) {
+function isInternalToken(req: NextRequest): boolean {
+  const token = req.headers.get('authorization')?.replace('Bearer ', '')
+  return !!token && token === process.env.AGENT_INTERNAL_TOKEN
+}
+
+async function checkAuth(req: NextRequest): Promise<boolean> {
+  if (isInternalToken(req)) return true
   const session = await getServerSession(authOptions)
-  if (!session || !isSystemOwner(session)) {
+  return !!(session && isSystemOwner(session))
+}
+
+export async function GET(req: NextRequest) {
+  if (!(await checkAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const businessId = req.nextUrl.searchParams.get('business_id') || 'ALMA_LIFESTYLE'
-  const status = req.nextUrl.searchParams.get('status')
+  const statusParam = req.nextUrl.searchParams.get('status')
+  const includeCompleted = req.nextUrl.searchParams.get('includeCompleted') === 'true'
 
   const where: Record<string, unknown> = { businessId }
-  if (status) where.status = status
+
+  if (statusParam) {
+    const statuses = statusParam.split(',').map(s => s.trim())
+    where.status = statuses.length === 1 ? statuses[0] : { in: statuses }
+  } else if (!includeCompleted) {
+    where.status = { notIn: ['completed', 'cancelled'] }
+  }
 
   const todos = await prisma.agentTodo.findMany({
     where,
@@ -29,8 +46,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session || !isSystemOwner(session)) {
+  if (!(await checkAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -62,8 +78,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session || !isSystemOwner(session)) {
+  if (!(await checkAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -100,8 +115,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session || !isSystemOwner(session)) {
+  if (!(await checkAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

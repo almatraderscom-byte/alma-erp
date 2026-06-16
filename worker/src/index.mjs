@@ -437,8 +437,42 @@ const videoGenWorker = new Worker(
 )
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
-  console.log(`[worker] long-agent-task ${job.id} — not yet implemented`)
-}, { connection, concurrency: 1 })
+  const { pendingActionId, payload } = job.data
+  const taskPrompt = payload?.prompt || payload?.task || payload?.message
+  if (!taskPrompt) {
+    console.warn(`[worker] long-agent-task ${job.id} — no prompt in payload`)
+    await callJobResult(pendingActionId, 'failed', undefined, 'no_prompt_in_payload')
+    return
+  }
+  console.log(`[worker] long-agent-task ${pendingActionId} starting: ${String(taskPrompt).slice(0, 80)}...`)
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${INTERNAL_TOKEN}`,
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: taskPrompt }],
+        systemOverride: payload?.systemOverride,
+        tools: payload?.tools,
+      }),
+      signal: AbortSignal.timeout(5 * 60 * 1000),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => 'no body')
+      throw new Error(`chat API ${res.status}: ${text.slice(0, 200)}`)
+    }
+    const result = await res.json()
+    await callJobResult(pendingActionId, 'success', {
+      response: result.content || result.text || result,
+    })
+    console.log(`[worker] long-agent-task ${pendingActionId} — done`)
+  } catch (err) {
+    console.error(`[worker] long-agent-task ${pendingActionId} failed:`, err.message)
+    await callJobResult(pendingActionId, 'failed', undefined, err.message)
+  }
+}, { connection, concurrency: 1, lockDuration: 6 * 60 * 1000 })
 
 // ── Staff dispatch worker ──────────────────────────────────────────────────────
 

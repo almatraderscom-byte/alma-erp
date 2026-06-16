@@ -1,0 +1,119 @@
+/**
+ * Todo Reminder Jobs — morning 08:00 + evening 20:30 Asia/Dhaka
+ * Fetches agent todos from Vercel API and sends Bangla Telegram summaries.
+ */
+
+import { sendMarkdownSafe, escapeMarkdown } from '../telegram/markdown-safe.mjs'
+
+const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const OWNER_ID  = process.env.TELEGRAM_OWNER_CHAT_ID ?? ''
+
+const PRIORITY_EMOJI = { urgent: '🔴', high: '🟡', normal: '🔵', low: '⚪' }
+
+/** @param {{ priority?: string, title?: string }} todo */
+function formatTodoLine(todo) {
+  const emoji = PRIORITY_EMOJI[todo.priority] ?? '⚪'
+  const title = escapeMarkdown(todo.title ?? 'Untitled')
+  return `  ${emoji} ${title}`
+}
+
+/**
+ * Fetch todos from Vercel API with timeout.
+ * @param {string} query
+ * @returns {Promise<any[]|null>} array of todos, or null on failure
+ */
+async function fetchTodos(query) {
+  const url = `${APP_URL}/api/assistant/todos${query}`
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) {
+      console.warn(`[todo-reminder] API ${res.status}: ${url}`)
+      return null
+    }
+    const body = await res.json()
+    return Array.isArray(body) ? body : body.todos ?? body.data ?? null
+  } catch (err) {
+    console.warn(`[todo-reminder] fetch failed: ${err.message}`)
+    return null
+  }
+}
+
+// ── Morning Reminder (08:00) ─────────────────────────────────────────────────
+
+export async function runMorningTodoReminder({ bot }) {
+  console.log('[todo-reminder] morning check...')
+
+  const todos = await fetchTodos('?status=pending,in_progress')
+
+  if (todos === null) {
+    return { dutyStatus: 'skipped', dutyDetail: 'API error' }
+  }
+
+  if (todos.length === 0) {
+    console.log('[todo-reminder] no pending todos — skipping message')
+    return { dutyStatus: 'done', dutyDetail: 'কোনো todo নেই' }
+  }
+
+  const lines = [
+    '🌅 *সুপ্রভাত Sir!* আজকের Agent কাজের তালিকা:',
+    '',
+    ...todos.map(formatTodoLine),
+    '',
+    `মোট *${todos.length}টি* কাজ বাকি আছে।`,
+  ]
+
+  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+
+  console.log(`[todo-reminder] morning: sent ${todos.length} todos`)
+  return {
+    dutyStatus: 'done',
+    dutyDetail: `${todos.length}টি todo reminder পাঠানো হয়েছে`,
+  }
+}
+
+// ── Evening Summary (20:30) ──────────────────────────────────────────────────
+
+export async function runEveningTodoSummary({ bot }) {
+  console.log('[todo-reminder] evening summary...')
+
+  const todos = await fetchTodos('?includeCompleted=true')
+
+  if (todos === null) {
+    return { dutyStatus: 'skipped', dutyDetail: 'API error' }
+  }
+
+  const completed = todos.filter(t => t.status === 'completed' || t.status === 'done')
+  const pending   = todos.filter(t => t.status !== 'completed' && t.status !== 'done')
+
+  const lines = ['🌙 *আজকের Agent কাজের সারসংক্ষেপ:*', '']
+
+  if (completed.length > 0) {
+    lines.push(`✅ *সম্পন্ন: ${completed.length} টি*`)
+    completed.forEach(t => lines.push(`  ✓ ${escapeMarkdown(t.title ?? 'Untitled')}`))
+    lines.push('')
+  }
+
+  if (pending.length > 0) {
+    lines.push(`⏳ *বাকি: ${pending.length} টি*`)
+    pending.forEach(t => lines.push(formatTodoLine(t)))
+    lines.push('')
+  }
+
+  if (pending.length === 0 && completed.length > 0) {
+    lines.push('🎉 আলহামদুলিল্লাহ! আজকের সব কাজ সম্পন্ন হয়েছে।')
+  }
+
+  if (todos.length === 0) {
+    lines.push('আজ কোনো কাজ ছিল না।')
+  }
+
+  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+
+  const detail = `done=${completed.length} pending=${pending.length}`
+  console.log(`[todo-reminder] evening: ${detail}`)
+  return { dutyStatus: 'done', dutyDetail: detail }
+}
