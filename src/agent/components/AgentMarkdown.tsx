@@ -29,7 +29,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-export default function AgentMarkdown({ content, className }: AgentMarkdownProps) {
+function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
   return (
     <div className={cn('prose-agent select-text text-[#1a1a2e]', className)}>
       <ReactMarkdown
@@ -110,3 +110,13 @@ export default function AgentMarkdown({ content, className }: AgentMarkdownProps
     </div>
   )
 }
+
+/**
+ * Memoize on `content` so finalized messages above a streaming one don't re-parse
+ * markdown on every text_delta. ~10x render reduction during streaming.
+ */
+const AgentMarkdown = React.memo(AgentMarkdownInner, (prev, next) =>
+  prev.content === next.content && prev.className === next.className,
+)
+
+export default AgentMarkdown

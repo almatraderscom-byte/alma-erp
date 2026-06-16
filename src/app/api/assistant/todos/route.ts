@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
+import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
 function isInternalToken(req: NextRequest): boolean {
   return verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))
@@ -95,6 +96,13 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'id is required' }, { status: 400 })
   }
 
+  // Capture pre-update state so we can detect "just completed" transitions
+  // and send the owner a Telegram completion ping (Cursor-style "task done" feedback).
+  const before = await prisma.agentTodo.findUnique({ where: { id: body.id } })
+  if (!before) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
   const data: Record<string, unknown> = {}
   if (body.title !== undefined) data.title = body.title.trim()
   if (body.description !== undefined) data.description = body.description?.trim() || null
@@ -110,6 +118,17 @@ export async function PATCH(req: NextRequest) {
     where: { id: body.id },
     data,
   })
+
+  // Fire-and-forget Telegram ping when a task transitions into the "completed"
+  // state. Only pings for agent-completed tasks (not when the owner ticks off
+  // their own task in the UI) to avoid notification spam.
+  if (
+    body.status === 'completed' &&
+    before.status !== 'completed' &&
+    before.source === 'agent'
+  ) {
+    void sendOwnerText(`✅ কাজ সম্পন্ন: ${todo.title}`).catch(() => {})
+  }
 
   return NextResponse.json({ todo })
 }

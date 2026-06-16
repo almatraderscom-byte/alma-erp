@@ -132,7 +132,7 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
                 </div>
               </div>
 
-              <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="absolute right-3 top-3 opacity-70 transition-opacity group-hover:opacity-100">
                 <ProgressRing percent={s.completionPct} size={28} />
               </div>
             </motion.div>

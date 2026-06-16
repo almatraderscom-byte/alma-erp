@@ -275,7 +275,7 @@ export default function AgentSidebar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="খুঁজুন…"
-          className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-3 py-2 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20"
+          className="w-full rounded-xl bg-gray-50 border border-black/[0.06] px-3 py-2 text-base text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#E07A5F]/30 focus:ring-1 focus:ring-[#E07A5F]/20 md:text-xs"
         />
       </div>
 

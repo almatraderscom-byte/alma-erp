@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import type { AgentTool } from './registry'
 
 const manage_work_todos: AgentTool = {
@@ -112,6 +113,15 @@ const manage_work_todos: AgentTool = {
             ...(result ? { description: result } : {}),
           },
         })
+
+        // Telegram completion feedback to owner — fire-and-forget so the tool
+        // result returns immediately. Only pings if the owner is offline /
+        // outside the chat surface (Telegram is the always-on channel).
+        const completionLine = result
+          ? `✅ ${todo.title}\n\n📋 ${result}`
+          : `✅ ${todo.title}`
+        void sendOwnerText(completionLine).catch(() => {})
+
         return {
           success: true,
           data: {

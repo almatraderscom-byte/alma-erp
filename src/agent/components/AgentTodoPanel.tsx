@@ -2,18 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-
-interface Todo {
-  id: string
-  title: string
-  description: string | null
-  priority: string
-  status: string
-  dueDate: string | null
-  source: string
-  createdAt: string
-  completedAt: string | null
-}
+import { useAgentTodosOptional, type Todo } from './AgentTodoContext'
 
 const PRIORITY_COLORS: Record<string, string> = {
   urgent: 'bg-red-500',
@@ -30,51 +19,61 @@ const PRIORITY_LABELS: Record<string, string> = {
 }
 
 export function AgentTodoPanel() {
-  const [todos, setTodos] = useState<Todo[]>([])
-  const [loading, setLoading] = useState(true)
+  const ctx = useAgentTodosOptional()
+  // Local fallback state when no provider is mounted (e.g. inside the
+  // EmptyState before the global provider is wired). Eventually all callers
+  // will be inside the provider; until then we keep this dual-mode safe.
+  const [localTodos, setLocalTodos] = useState<Todo[]>([])
+  const [localLoading, setLocalLoading] = useState(!ctx)
+
   const [showAdd, setShowAdd] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newPriority, setNewPriority] = useState('normal')
   const [adding, setAdding] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
 
-  const load = useCallback(async () => {
+  const localLoad = useCallback(async () => {
     try {
-      const res = await fetch('/api/assistant/todos')
+      const res = await fetch('/api/assistant/todos?includeCompleted=true', { cache: 'no-store' })
       if (!res.ok) return
       const data = await res.json() as { todos: Todo[] }
-      setTodos(data.todos ?? [])
+      setLocalTodos(data.todos ?? [])
     } catch { /* ignore */ } finally {
-      setLoading(false)
+      setLocalLoading(false)
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { if (!ctx) void localLoad() }, [ctx, localLoad])
 
-  const activeTodos = todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
-  const completedTodos = todos.filter(t => t.status === 'completed')
+  const todos = ctx?.todos ?? localTodos
+  const loading = ctx?.loading ?? localLoading
+  const activeTodos = ctx?.active ?? todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
+  const completedTodos = ctx?.completed ?? todos.filter(t => t.status === 'completed')
 
   async function addTodo() {
     if (!newTitle.trim() || adding) return
     setAdding(true)
     try {
-      const res = await fetch('/api/assistant/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle.trim(), priority: newPriority }),
-      })
-      if (res.ok) {
-        setNewTitle('')
-        setNewPriority('normal')
-        setShowAdd(false)
-        void load()
+      if (ctx) {
+        await ctx.add({ title: newTitle.trim(), priority: newPriority })
+      } else {
+        const res = await fetch('/api/assistant/todos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle.trim(), priority: newPriority }),
+        })
+        if (res.ok) void localLoad()
       }
+      setNewTitle('')
+      setNewPriority('normal')
+      setShowAdd(false)
     } catch { /* ignore */ } finally {
       setAdding(false)
     }
   }
 
   async function toggleTodo(todo: Todo) {
+    if (ctx) return ctx.toggle(todo)
     const newStatus = todo.status === 'completed' ? 'pending' : 'completed'
     try {
       await fetch('/api/assistant/todos', {
@@ -82,14 +81,15 @@ export function AgentTodoPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: todo.id, status: newStatus }),
       })
-      void load()
+      void localLoad()
     } catch { /* ignore */ }
   }
 
   async function deleteTodo(id: string) {
+    if (ctx) return ctx.remove(id)
     try {
       await fetch(`/api/assistant/todos?id=${id}`, { method: 'DELETE' })
-      void load()
+      void localLoad()
     } catch { /* ignore */ }
   }
 
@@ -139,7 +139,7 @@ export function AgentTodoPanel() {
                 value={newTitle}
                 onChange={e => setNewTitle(e.target.value)}
                 placeholder="What needs to be done?"
-                className="w-full bg-slate-50 border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
+                className="w-full bg-slate-50 border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-base text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 md:text-sm"
                 onKeyDown={e => { if (e.key === 'Enter') void addTodo() }}
                 autoFocus
               />

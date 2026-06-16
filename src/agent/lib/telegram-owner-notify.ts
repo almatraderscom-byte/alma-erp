@@ -1,7 +1,15 @@
 /**
- * Push an approval card to the owner's Telegram (Vercel / internal routes).
+ * Push an approval card / status text to the owner's Telegram (Vercel / internal routes).
  * Plain text only — avoids Markdown parse errors on phone numbers and quotes.
+ *
+ * Honors `TELEGRAM_API_BASE` env var so calls can be routed through the same
+ * Cloudflare proxy used by the VPS worker. Falls back to api.telegram.org direct.
  */
+
+function telegramApiBase(): string {
+  const override = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '')
+  return override || 'https://api.telegram.org'
+}
 
 export async function sendOwnerApprovalCard(input: {
   summary: string
@@ -23,7 +31,7 @@ export async function sendOwnerApprovalCard(input: {
     ]],
   } : undefined)
 
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const res = await fetch(`${telegramApiBase()}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -31,6 +39,7 @@ export async function sendOwnerApprovalCard(input: {
       text: `📋 অনুমোদন প্রয়োজন\n\n${input.summary}`,
       reply_markup,
     }),
+    signal: AbortSignal.timeout(8_000),
   })
 
   const data = await res.json() as { ok?: boolean; description?: string }
@@ -48,10 +57,11 @@ export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or TELEGRAM_OWNER_CHAT_ID not set' }
   }
 
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const res = await fetch(`${telegramApiBase()}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text }),
+    signal: AbortSignal.timeout(8_000),
   })
 
   const data = await res.json() as { ok?: boolean; description?: string }

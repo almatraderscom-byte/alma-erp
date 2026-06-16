@@ -10,6 +10,7 @@ import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
+import { ScrollAffordances } from './ScrollAffordances'
 
 export interface ChatMessage {
   id: string
@@ -177,14 +178,17 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, streamStatus, streamMode, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [showJumpBtn, setShowJumpBtn] = useState(false)
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
+
+  // When user manually scrolls up during streaming, stop force-tailing them.
+  const stickToBottomRef = useRef(true)
 
   const checkScrollPosition = useCallback(() => {
     const container = containerRef.current
     if (!container) return
     const { scrollTop, scrollHeight, clientHeight } = container
-    setShowJumpBtn(scrollHeight - scrollTop - clientHeight > 80)
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+    stickToBottomRef.current = distanceFromBottom < 60
   }, [])
 
   useEffect(() => {
@@ -196,15 +200,19 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   }, [checkScrollPosition])
 
   useEffect(() => {
-    checkScrollPosition()
     const last = messages[messages.length - 1]
-    if (last?.streaming || last?.role === 'user') {
-      bottomRef.current?.scrollIntoView({
-        behavior: last?.role === 'user' ? 'auto' : 'smooth',
-        block: 'end',
-      })
+    if (!last) return
+    // Always scroll on the user's own send (block:end, instant).
+    if (last.role === 'user') {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+      stickToBottomRef.current = true
+      return
     }
-  }, [messages, checkScrollPosition])
+    // During streaming, only auto-scroll if the user is already near bottom.
+    if (last.streaming && stickToBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+    }
+  }, [messages])
 
   function saveArtifact(msg: ChatMessage) {
     const detected = detectArtifact(msg.text)
@@ -376,24 +384,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         <div ref={bottomRef} />
       </div>
 
-      <AnimatePresence>
-        {showJumpBtn && (
-          <motion.button
-            type="button"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            onClick={() => {
-              bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-              setTimeout(checkScrollPosition, 400)
-            }}
-            className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-black/[0.08] bg-white px-4 py-2 text-xs font-medium text-gray-500 shadow-lg backdrop-blur-2xl transition-all hover:text-gray-700 hover:shadow-xl"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
-            নিচে যান
-          </motion.button>
-        )}
-      </AnimatePresence>
+      <ScrollAffordances containerRef={containerRef} topThreshold={400} bottomThreshold={120} />
     </div>
   )
 }

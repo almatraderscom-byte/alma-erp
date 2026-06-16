@@ -43,8 +43,12 @@ export default function AgentComposer({
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, isMobile ? 120 : 160)}px`
+    const cap = isMobile ? 120 : 160
+    const raf = requestAnimationFrame(() => {
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, cap)}px`
+    })
+    return () => cancelAnimationFrame(raf)
   }, [text, isMobile])
 
   const send = useCallback(() => {
@@ -211,7 +215,7 @@ export default function AgentComposer({
           disabled={disabled || recording || streaming}
           placeholder={recording ? '' : 'বার্তা লিখুন…'}
           rows={1}
-          className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[15px] leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
+          className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
         />
 
         {/* Mic */}

@@ -4,11 +4,10 @@
   background: #FAF9F6;
 }
 
-/* GPU acceleration hints for iOS WebView smooth scrolling */
+/* iOS WebView smooth scrolling. translateZ/will-change removed — they caused
+ * touch wobble during streaming + scrolling on iPhone. */
 .agent-chat-root {
   -webkit-overflow-scrolling: touch;
-  transform: translateZ(0);
-  will-change: transform;
 }
 
 /* Layout: account for fixed bottom nav on mobile + iOS safe area */

@@ -92,13 +92,63 @@ function SectionCard({ title, icon, badge, children, className, accent, actions 
   }
   return (
     <div className={cn('rounded-2xl border bg-white overflow-hidden shadow-sm', accent ? accentColors[accent] : 'border-black/[0.06]', className)}>
-      <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
-        {icon && <span className="text-sm">{icon}</span>}
-        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">{title}</h3>
+      <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-3">
+        {icon && <span className="text-base">{icon}</span>}
+        <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-[#64748b] sm:text-[11px]">{title}</h3>
         {badge}
         {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
       </div>
       <div className="p-3">{children}</div>
+    </div>
+  )
+}
+
+type MonitorTab = 'overview' | 'staff' | 'feed' | 'system'
+
+function MonitorTabs({
+  tab, setTab, alertCount, feedCount, staffCount,
+}: {
+  tab: MonitorTab
+  setTab: (t: MonitorTab) => void
+  alertCount: number
+  feedCount: number
+  staffCount: number
+}) {
+  const tabs: Array<{ id: MonitorTab; label: string; icon: string; badge?: number }> = [
+    { id: 'overview', label: 'Overview', icon: '📊', badge: alertCount > 0 ? alertCount : undefined },
+    { id: 'staff', label: 'Staff', icon: '👥', badge: staffCount > 0 ? staffCount : undefined },
+    { id: 'feed', label: 'Feed', icon: '📨', badge: feedCount > 0 ? feedCount : undefined },
+    { id: 'system', label: 'System', icon: '⚙️' },
+  ]
+  return (
+    <div className="sticky top-0 z-30 -mx-3 mb-3 flex gap-1 overflow-x-auto border-b border-black/[0.06] bg-white/95 px-3 py-2 backdrop-blur-md sm:-mx-4 sm:px-4">
+      {tabs.map(t => {
+        const active = tab === t.id
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-semibold transition-all',
+              active
+                ? 'bg-[#E07A5F]/12 text-[#E07A5F]'
+                : 'text-[#64748b] hover:bg-black/[0.04] hover:text-[#1a1a2e]',
+            )}
+          >
+            <span aria-hidden>{t.icon}</span>
+            <span>{t.label}</span>
+            {t.badge != null && (
+              <span className={cn(
+                'rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums',
+                active ? 'bg-[#E07A5F]/20 text-[#E07A5F]' : 'bg-black/[0.06] text-[#64748b]',
+              )}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -171,6 +221,7 @@ export default function AgentStaffMonitor() {
   const [staffCaps, setStaffCaps] = useState<StaffCap[]>([])
   const [capsOpen, setCapsOpen] = useState(false)
   const [feedExpanded, setFeedExpanded] = useState(false)
+  const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview')
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
@@ -466,32 +517,71 @@ export default function AgentStaffMonitor() {
 
         {displayData && (
           <motion.div className="space-y-3" variants={staggerContainer} initial="hidden" animate="show">
-            {/* ── Alert Panel ── */}
-            <MonitorAlertPanel data={displayData} isLive={isLive} onEscalate={handleEscalate} escalating={escalating} />
+            {/* ── Tab Navigation ── */}
+            <MonitorTabs
+              tab={monitorTab}
+              setTab={setMonitorTab}
+              alertCount={
+                (displayData.unackedMessages?.length ?? 0) +
+                (displayData.pendingApprovals?.length ?? 0) +
+                (displayData.failures?.length ?? 0)
+              }
+              feedCount={feedItems.length}
+              staffCount={displayData.staffSummaries?.length ?? 0}
+            />
 
-            {/* ── KPI Strip ── */}
-            <MonitorKPIStrip data={displayData} brainStats={brainStats} />
-
-            {/* ── Quick Actions ── */}
-            {isLive && (
-              <MonitorQuickActions
-                data={displayData}
-                isLive={isLive}
-                onDeploy={handleDeploy}
-                deploying={deploying}
-                lastDeploy={lastDeploy}
-                onRetrigger={handleRetrigger}
-                retriggering={retriggering}
-                onApprove={handleApproval}
-                onEscalateAll={async () => { for (const m of displayData.unackedMessages ?? []) await handleEscalate(m) }}
-              />
+            {/* ── OVERVIEW: Alerts + KPI + Quick Actions + Top Staff ── */}
+            {monitorTab === 'overview' && (
+              <>
+                <MonitorAlertPanel data={displayData} isLive={isLive} onEscalate={handleEscalate} escalating={escalating} />
+                <MonitorKPIStrip data={displayData} brainStats={brainStats} />
+                {isLive && (
+                  <MonitorQuickActions
+                    data={displayData}
+                    isLive={isLive}
+                    onDeploy={handleDeploy}
+                    deploying={deploying}
+                    lastDeploy={lastDeploy}
+                    onRetrigger={handleRetrigger}
+                    retriggering={retriggering}
+                    onApprove={handleApproval}
+                    onEscalateAll={async () => { for (const m of displayData.unackedMessages ?? []) await handleEscalate(m) }}
+                  />
+                )}
+                <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
+              </>
             )}
 
-            {/* ── Staff Cards ── */}
-            <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
+            {/* ── STAFF tab: full staff cards, capabilities, geo + productivity ── */}
+            {monitorTab === 'staff' && (
+              <>
+                <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
+                {isLive && staffCaps.length > 0 && (
+                  <motion.div variants={fadeIn}>
+                    <SectionCard title="স্টাফ সক্ষমতা" icon="📊" accent="emerald">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {staffCaps.map(sc => (
+                          <div key={sc.staffId} className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[12px] font-bold text-[#1a1a2e]/80">{sc.staffName}</p>
+                              <span className={cn('text-xs font-black tabular-nums',
+                                sc.overallCompletionRate >= 80 ? 'text-emerald-600' : sc.overallCompletionRate >= 50 ? 'text-amber-600' : 'text-red-600')}>
+                                {sc.overallCompletionRate}%
+                              </span>
+                            </div>
+                            {sc.strongTypes.length > 0 && <p className="mt-1 text-[10px] text-emerald-600/70">💪 {sc.strongTypes.join(', ')}</p>}
+                            {sc.weakTypes.length > 0 && <p className="mt-0.5 text-[10px] text-red-500/70">📈 {sc.weakTypes.join(', ')}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+                  </motion.div>
+                )}
+              </>
+            )}
 
-            {/* ── Live Surveillance (Geo + Productivity) ── */}
-            {isLive && (displayData.geoStatus?.length || displayData.productivityAlerts?.length) ? (
+            {/* ── Live Surveillance (Geo + Productivity) — STAFF tab only ── */}
+            {monitorTab === 'staff' && isLive && (displayData.geoStatus?.length || displayData.productivityAlerts?.length) ? (
               <motion.div variants={fadeIn}>
                 <SectionCard title="Live Surveillance" icon="📡" accent="red">
                   {displayData.geoStatus?.length ? (
@@ -538,28 +628,28 @@ export default function AgentStaffMonitor() {
               </motion.div>
             ) : null}
 
-            {/* ── Duty Timeline ── */}
-            <MonitorDutyTimeline
-              data={displayData.agentDuties}
-              onRetrigger={handleRetrigger}
-              retriggering={retriggering}
-              isLive={isLive}
-              dutyTimeOverrides={displayData.dutyTimeOverrides}
-            />
-
-            {/* ── Salah ── */}
-            {isLive && <MonitorSalahTimeline salahDuties={displayData.salahDuties} />}
-
-            {/* ── Brain + Trust side-by-side ── */}
-            {isLive && (
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                <MonitorTrustEngine rules={trustRules} onUpdateTier={updateTrustTier} />
-                <MonitorBrainCard stats={brainStats} />
-              </div>
+            {/* ── Duty Timeline + Salah + Brain/Trust — SYSTEM tab ── */}
+            {monitorTab === 'system' && (
+              <>
+                <MonitorDutyTimeline
+                  data={displayData.agentDuties}
+                  onRetrigger={handleRetrigger}
+                  retriggering={retriggering}
+                  isLive={isLive}
+                  dutyTimeOverrides={displayData.dutyTimeOverrides}
+                />
+                {isLive && <MonitorSalahTimeline salahDuties={displayData.salahDuties} />}
+                {isLive && (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <MonitorTrustEngine rules={trustRules} onUpdateTier={updateTrustTier} />
+                    <MonitorBrainCard stats={brainStats} />
+                  </div>
+                )}
+              </>
             )}
 
-            {/* ── Health Scan ── */}
-            {isLive && (
+            {/* ── Health Scan — SYSTEM tab ── */}
+            {monitorTab === 'system' && isLive && (
               <motion.div variants={fadeIn}>
                 <SectionCard title="System Health" icon="🔍"
                   accent={healthReport?.ok ? 'emerald' : healthReport ? 'red' : undefined}
@@ -617,8 +707,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Auto-Fix Pipeline ── */}
-            {isLive && autoFixActions.length > 0 && (
+            {/* ── Auto-Fix Pipeline — SYSTEM tab ── */}
+            {monitorTab === 'system' && isLive && autoFixActions.length > 0 && (
               <motion.div variants={fadeIn}>
                 <SectionCard title={`Auto-Fix Pipeline (${autoFixActions.length})`} icon="🤖" accent="teal"
                   actions={<button type="button" onClick={() => void loadAutoFixActions()} className="rounded-lg border border-[#81B29A]/25 bg-[#81B29A]/[0.08] px-2 py-1 text-[9px] font-bold text-[#81B29A] hover:bg-[#81B29A]/15 transition-all">🔄 Refresh</button>}>
@@ -647,31 +737,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Staff Capabilities ── */}
-            {isLive && staffCaps.length > 0 && (
-              <motion.div variants={fadeIn}>
-                <SectionCard title="স্টাফ সক্ষমতা" icon="📊" accent="emerald">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {staffCaps.map(sc => (
-                      <div key={sc.staffId} className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[11px] font-bold text-[#1a1a2e]/80">{sc.staffName}</p>
-                          <span className={cn('text-xs font-black tabular-nums',
-                            sc.overallCompletionRate >= 80 ? 'text-emerald-600' : sc.overallCompletionRate >= 50 ? 'text-amber-600' : 'text-red-600')}>
-                            {sc.overallCompletionRate}%
-                          </span>
-                        </div>
-                        {sc.strongTypes.length > 0 && <p className="mt-1 text-[9px] text-emerald-600/70">💪 {sc.strongTypes.join(', ')}</p>}
-                        {sc.weakTypes.length > 0 && <p className="mt-0.5 text-[9px] text-red-500/70">📈 {sc.weakTypes.join(', ')}</p>}
-                      </div>
-                    ))}
-                  </div>
-                </SectionCard>
-              </motion.div>
-            )}
-
-            {/* ── Continuous Services ── */}
-            {isLive && (displayData.continuousServices?.length ?? 0) > 0 && (
+            {/* ── Continuous Services — SYSTEM tab ── */}
+            {monitorTab === 'system' && isLive && (displayData.continuousServices?.length ?? 0) > 0 && (
               <motion.div variants={fadeIn}>
                 <SectionCard title={`Background Services (${displayData.continuousServices.length})`} icon="⚡" accent="teal">
                   <div className="flex flex-wrap gap-2">
@@ -687,8 +754,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Unacked Messages ── */}
-            {isLive && (displayData.unackedMessages?.length ?? 0) > 0 && (
+            {/* ── Unacked Messages — FEED tab ── */}
+            {monitorTab === 'feed' && isLive && (displayData.unackedMessages?.length ?? 0) > 0 && (
               <motion.div variants={fadeIn}>
                 <SectionCard title={`Pending Ack (${displayData.unackedMessages.length})`} icon="⏳" accent="amber"
                   actions={
@@ -723,8 +790,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Pending Approvals ── */}
-            {(displayData.pendingApprovals?.length ?? 0) > 0 && (
+            {/* ── Pending Approvals — FEED tab ── */}
+            {monitorTab === 'feed' && (displayData.pendingApprovals?.length ?? 0) > 0 && (
               <motion.div variants={fadeIn}>
                 <SectionCard title="Pending Approvals (48h)" icon="⏳" accent="amber"
                   badge={<span className="rounded-full bg-[#D4A84B]/10 px-2 py-0.5 text-[9px] font-bold text-[#D4A84B]">{displayData.pendingApprovals!.length}</span>}>
@@ -753,7 +820,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Message Feed ── */}
+            {/* ── Message Feed — FEED tab ── */}
+            {monitorTab === 'feed' && (
             <motion.div variants={fadeIn}>
               <SectionCard title="Message Feed" icon="📨" accent="teal">
                 {feedItems.length === 0 ? (
@@ -788,9 +856,10 @@ export default function AgentStaffMonitor() {
                 )}
               </SectionCard>
             </motion.div>
+            )}
 
-            {/* ── Live Tasks & Reminders ── */}
-            {((displayData.activeReminders?.length ?? 0) > 0 || (displayData.activeTodos?.length ?? 0) > 0) && (
+            {/* ── Live Tasks & Reminders — FEED tab ── */}
+            {monitorTab === 'feed' && ((displayData.activeReminders?.length ?? 0) > 0 || (displayData.activeTodos?.length ?? 0) > 0) && (
               <motion.div variants={fadeIn}>
                 <SectionCard title="Live Tasks & Reminders" icon="📌" accent="teal">
                   {(displayData.activeReminders?.length ?? 0) > 0 && (
@@ -834,7 +903,8 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
 
-            {/* ── Agent Capabilities ── */}
+            {/* ── Agent Capabilities — SYSTEM tab ── */}
+            {monitorTab === 'system' && (
             <motion.div variants={fadeIn}>
               <SectionCard title="Agent Capabilities" icon="🧠" accent="coral"
                 actions={<button type="button" onClick={() => setCapsOpen(v => !v)} className="text-[10px] font-bold text-[#94a3b8] hover:text-[#64748b] transition-colors">{capsOpen ? '▴ Hide' : '▾ Show'}</button>}>
@@ -869,10 +939,11 @@ export default function AgentStaffMonitor() {
                 </AnimatePresence>
               </SectionCard>
             </motion.div>
+            )}
           </motion.div>
         )}
 
-        {!viewingHistory && (
+        {monitorTab === 'system' && !viewingHistory && (
           <div className="mt-4">
             <AgentSalahTimesSettings />
           </div>

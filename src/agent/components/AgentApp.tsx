@@ -132,6 +132,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  /**
+   * Streaming text-delta batcher: Anthropic emits a `text_delta` per token. Calling
+   * setMessages() on every event was the root cause of streaming jank. We now
+   * accumulate the streamed text in a ref and flush to React state at most once
+   * per animation frame (~60fps), matching how Claude.ai / Cursor render.
+   */
+  const streamBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean } | null>(null)
+
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
   useEffect(() => {
@@ -311,6 +319,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       let gotStreamDone = false
       let toolInFlight = false
 
+      const flushStreamBuffer = () => {
+        const buf = streamBufferRef.current
+        if (!buf || !buf.pending) {
+          if (buf) buf.flushScheduled = false
+          return
+        }
+        const chunk = buf.pending
+        buf.pending = ''
+        buf.flushScheduled = false
+        setMessages((prev) => prev.map((m) =>
+          m.id === buf.msgId ? { ...m, text: m.text + chunk } : m,
+        ))
+      }
+
       const applySseEvent = (evt: Record<string, unknown>) => {
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
@@ -322,9 +344,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             setStreamMode('writing')
             setStreamStatus('✍️ উত্তর লিখছি…')
           }
-          setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, text: m.text + (evt.delta as string) } : m
-          ))
+          if (!streamBufferRef.current || streamBufferRef.current.msgId !== assistantMsgId) {
+            streamBufferRef.current = { msgId: assistantMsgId, pending: '', flushScheduled: false }
+          }
+          streamBufferRef.current.pending += evt.delta as string
+          if (!streamBufferRef.current.flushScheduled) {
+            streamBufferRef.current.flushScheduled = true
+            requestAnimationFrame(flushStreamBuffer)
+          }
         } else if (evt.type === 'tool_start') {
           toolInFlight = true
           const d = toolDisplay(String(evt.name))
@@ -391,6 +418,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           gotStreamDone = true
           setStreamStatus(null)
           setStreamMode('writing')
+          flushStreamBuffer()
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {
@@ -414,6 +442,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setCompacting(true)
         } else if (evt.type === 'error') {
           gotStreamDone = true
+          flushStreamBuffer()
           const errText = evt.message as string
           let banglaMsg = errText
           if (errText.includes('কোটা') || /quota|credit|billing/i.test(errText)) {
@@ -448,6 +477,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           break
         }
       }
+      // Final flush in case stream ended without 'done' event
+      flushStreamBuffer()
+      streamBufferRef.current = null
 
       if (finalConvId && !gotStreamDone) {
         try {
@@ -459,6 +491,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } catch { /* ignore */ }
       }
     } catch (err) {
+      const buf = streamBufferRef.current
+      if (buf) {
+        const pending = buf.pending
+        streamBufferRef.current = null
+        if (pending) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, text: m.text + pending } : m,
+          ))
+        }
+      }
       if ((err as Error).name === 'AbortError') {
         setMessages((prev) => prev.map((m) =>
           m.id === assistantMsgId ? { ...m, streaming: false, text: m.text || '(বাতিল করা হয়েছে)' } : m
