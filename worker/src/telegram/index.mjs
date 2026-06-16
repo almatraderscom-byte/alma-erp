@@ -929,6 +929,10 @@ export function createTelegramBot() {
       const { handleStaffProofMessage } = await import('../staff/task-verification.mjs')
       const proofHandled = await handleStaffProofMessage(ctx, supabase, staff, { photo: ctx.message.photo })
       if (proofHandled) return
+
+      const { markProofReceived } = await import('../staff/productivity-monitor.mjs')
+      await markProofReceived(supabase, staff.id).catch(() => {})
+
       await handleCatalogPhotoMessage(ctx, { isOwner: false })
     } catch (err) {
       console.error('[telegram] catalog photo (staff) error:', err.message)
@@ -950,6 +954,9 @@ export function createTelegramBot() {
         await ctx.reply('⚠️ লোকেশন শেয়ার *বাধ্যতামূলক*। 📍 বাটন চাপুন বা Attachment → Location শেয়ার করুন।', { parse_mode: 'Markdown' })
         return
       }
+
+      const { markProofReceived } = await import('../staff/productivity-monitor.mjs')
+      await markProofReceived(supabase, staff.id).catch(() => {})
 
       const { captureStaffFeedback } = await import('../staff/staff-feedback.mjs')
       const feedbackHandled = await captureStaffFeedback(ctx, supabase, staff, text)
