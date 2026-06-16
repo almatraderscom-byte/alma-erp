@@ -1,6 +1,5 @@
-/** Client-side TTS playback for voice conversation mode. */
-
-export async function speakAgentText(text: string): Promise<HTMLAudioElement> {
+/** Fetch TTS audio from server, return an HTMLAudioElement ready to play. */
+export async function fetchTtsAudio(text: string): Promise<HTMLAudioElement> {
   const clean = text.replace(/\s+/g, ' ').trim().slice(0, 1200)
   if (!clean) throw new Error('empty text')
 
@@ -18,6 +17,5 @@ export async function speakAgentText(text: string): Promise<HTMLAudioElement> {
   const audio = new Audio(url)
   audio.onended = () => URL.revokeObjectURL(url)
   audio.onerror = () => URL.revokeObjectURL(url)
-  await audio.play()
   return audio
 }

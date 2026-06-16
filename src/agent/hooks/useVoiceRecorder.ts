@@ -1,104 +1,96 @@
 'use client'
 
 import { useRef, useState, useCallback, useEffect } from 'react'
-import toast from 'react-hot-toast'
-
-export type VoicePhase = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'talking'
 
 export function useVoiceRecorder(opts: {
   onTranscribed: (text: string) => void
-  onPhaseChange?: (phase: VoicePhase) => void
+  onError?: (msg: string) => void
+  onRecordingStart?: () => void
+  onRecordingStop?: () => void
 }) {
   const [recording, setRecording] = useState(false)
   const [recordSecs, setRecordSecs] = useState(0)
   const [stream, setStream] = useState<MediaStream | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const onTranscribedRef = useRef(opts.onTranscribed)
-  const onPhaseChangeRef = useRef(opts.onPhaseChange)
 
-  useEffect(() => { onTranscribedRef.current = opts.onTranscribed }, [opts.onTranscribed])
-  useEffect(() => { onPhaseChangeRef.current = opts.onPhaseChange }, [opts.onPhaseChange])
+  const mrRef = useRef<MediaRecorder | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const callbacksRef = useRef(opts)
+  useEffect(() => { callbacksRef.current = opts }, [opts])
 
-  const setPhase = useCallback((p: VoicePhase) => {
-    onPhaseChangeRef.current?.(p)
+  const cleanup = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    mrRef.current?.stream?.getTracks().forEach(t => t.stop())
+    mrRef.current = null
+    setStream(null)
+    setRecording(false)
+    setRecordSecs(0)
   }, [])
 
-  const startRecording = useCallback(async () => {
+  const start = useCallback(async () => {
+    if (mrRef.current) return
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      setStream(mediaStream)
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      const ms = await navigator.mediaDevices.getUserMedia({ audio: true })
+      setStream(ms)
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
           ? 'audio/webm'
           : ''
-      const mr = mimeType
-        ? new MediaRecorder(mediaStream, { mimeType })
-        : new MediaRecorder(mediaStream)
-      mediaRecorderRef.current = mr
+      const mr = mime ? new MediaRecorder(ms, { mimeType: mime }) : new MediaRecorder(ms)
+      mrRef.current = mr
       const chunks: Blob[] = []
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
       mr.onstop = async () => {
-        mediaStream.getTracks().forEach((t) => t.stop())
+        ms.getTracks().forEach(t => t.stop())
         setStream(null)
-        if (recordTimerRef.current) clearInterval(recordTimerRef.current)
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
         setRecording(false)
         setRecordSecs(0)
+        callbacksRef.current.onRecordingStop?.()
+
         const blob = new Blob(chunks, { type: 'audio/webm' })
         if (blob.size < 800) {
-          setPhase('idle')
-          toast.error('অডিও খুব ছোট — আবার বলুন।')
+          callbacksRef.current.onError?.('অডিও খুব ছোট — আবার বলুন।')
           return
         }
-        setPhase('transcribing')
         const fd = new FormData()
         fd.append('audio', blob, 'recording.webm')
         try {
           const res = await fetch('/api/assistant/transcribe', { method: 'POST', body: fd })
           const data = await res.json() as { text?: string; error?: string }
           if (res.ok && data.text?.trim()) {
-            onTranscribedRef.current(data.text.trim())
+            callbacksRef.current.onTranscribed(data.text.trim())
           } else {
-            toast.error(data.error ?? 'ট্রান্সক্রিপশন ব্যর্থ।')
-            setPhase('idle')
+            callbacksRef.current.onError?.(data.error ?? 'ট্রান্সক্রিপশন ব্যর্থ।')
           }
         } catch {
-          toast.error('ট্রান্সক্রিপশন ব্যর্থ।')
-          setPhase('idle')
+          callbacksRef.current.onError?.('ট্রান্সক্রিপশন ব্যর্থ।')
         }
       }
       mr.start()
       setRecording(true)
       setRecordSecs(0)
-      setPhase('listening')
-      recordTimerRef.current = setInterval(() => setRecordSecs((s) => s + 1), 1000)
+      callbacksRef.current.onRecordingStart?.()
+      timerRef.current = setInterval(() => setRecordSecs(s => s + 1), 1000)
     } catch {
-      toast.error('মাইক্রোফোন ব্যবহার করা যাচ্ছে না')
-      setPhase('idle')
+      callbacksRef.current.onError?.('মাইক্রোফোন ব্যবহার করা যাচ্ছে না')
     }
-  }, [setPhase])
-
-  const stopRecording = useCallback(() => {
-    mediaRecorderRef.current?.stop()
   }, [])
 
-  const cancelRecording = useCallback(() => {
-    if (recordTimerRef.current) clearInterval(recordTimerRef.current)
-    mediaRecorderRef.current?.stream.getTracks().forEach((t) => t.stop())
-    mediaRecorderRef.current = null
-    setStream(null)
-    setRecording(false)
-    setRecordSecs(0)
-    setPhase('idle')
-  }, [setPhase])
+  const stop = useCallback(() => {
+    if (mrRef.current?.state === 'recording') mrRef.current.stop()
+  }, [])
 
-  return {
-    recording,
-    recordSecs,
-    stream,
-    startRecording,
-    stopRecording,
-    cancelRecording,
-  }
+  const cancel = useCallback(() => {
+    if (mrRef.current) {
+      mrRef.current.ondataavailable = null
+      mrRef.current.onstop = null
+      if (mrRef.current.state === 'recording') {
+        try { mrRef.current.stop() } catch { /* ignore */ }
+      }
+    }
+    cleanup()
+  }, [cleanup])
+
+  return { recording, recordSecs, stream, start, stop, cancel }
 }

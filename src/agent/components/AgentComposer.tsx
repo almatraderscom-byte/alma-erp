@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import AgentModelSelector from './AgentModelSelector'
-import type { VoiceMode } from '@/agent/lib/voice-types'
 
 export interface PendingFile {
   file: File
@@ -19,13 +18,7 @@ interface AgentComposerProps {
   isMobile?: boolean
   activeModelId?: string
   onModelChange?: (modelId: string) => void
-  voiceMode?: VoiceMode
-  voiceRecording?: boolean
-  voiceRecordSecs?: number
   onVoiceStart?: () => void
-  onVoiceStop?: () => void
-  onVoiceCancel?: () => void
-  onVoiceModeCycle?: () => void
 }
 
 export default function AgentComposer({
@@ -37,13 +30,7 @@ export default function AgentComposer({
   isMobile = false,
   activeModelId,
   onModelChange,
-  voiceMode = 'off',
-  voiceRecording = false,
-  voiceRecordSecs = 0,
   onVoiceStart,
-  onVoiceStop,
-  onVoiceCancel,
-  onVoiceModeCycle,
 }: AgentComposerProps) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<PendingFile[]>([])
@@ -115,17 +102,6 @@ export default function AgentComposer({
         </div>
       )}
 
-      {voiceRecording && (
-        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-[#E07A5F]/25 bg-[#E07A5F]/5 px-4 py-2.5">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-[#E07A5F]" />
-          <span className="flex-1 text-sm font-medium text-[#E07A5F]">
-            {Math.floor(voiceRecordSecs / 60).toString().padStart(2, '0')}:{(voiceRecordSecs % 60).toString().padStart(2, '0')}
-          </span>
-          <button type="button" onClick={onVoiceCancel} className="text-xs text-gray-500">বাতিল</button>
-          <button type="button" onClick={onVoiceStop} className="rounded-lg bg-[#E07A5F]/15 px-3 py-1 text-xs font-medium text-[#E07A5F]">শেষ</button>
-        </div>
-      )}
-
       <div
         className={cn(
           'flex flex-col gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
@@ -151,23 +127,18 @@ export default function AgentComposer({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={disabled || voiceRecording || streaming}
-            placeholder={voiceRecording ? '' : 'বার্তা লিখুন…'}
+            disabled={disabled || streaming}
+            placeholder="বার্তা লিখুন…"
             rows={1}
             className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
           />
 
-          {!voiceRecording && !streaming && (
+          {!streaming && onVoiceStart && (
             <button
               type="button"
               onClick={onVoiceStart}
               disabled={disabled}
-              className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-30 md:h-9 md:w-9',
-                voiceMode !== 'off'
-                  ? 'bg-[#E07A5F]/12 text-[#E07A5F]'
-                  : 'text-gray-400 hover:bg-black/[0.04] hover:text-gray-600',
-              )}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-[#E07A5F]/8 hover:text-[#E07A5F] disabled:opacity-30 md:h-9 md:w-9"
               aria-label="ভয়েস"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -195,31 +166,13 @@ export default function AgentComposer({
         </div>
 
         {activeModelId && onModelChange && (
-          <div className="flex items-center justify-between border-t border-black/[0.04] px-1 pt-1">
-            <div className="flex items-center gap-2">
-              <AgentModelSelector
-                conversationId={conversationId}
-                modelId={activeModelId}
-                onModelChange={onModelChange}
-                disabled={streaming}
-              />
-              {onVoiceModeCycle && (
-                <button
-                  type="button"
-                  onClick={onVoiceModeCycle}
-                  className={cn(
-                    'rounded-lg px-2 py-0.5 text-[10px] font-medium',
-                    voiceMode === 'conversation'
-                      ? 'bg-[#E07A5F]/12 text-[#E07A5F]'
-                      : voiceMode === 'dictation'
-                        ? 'bg-sky-50 text-sky-700'
-                        : 'text-gray-400 hover:bg-black/[0.04]',
-                  )}
-                >
-                  {voiceMode === 'conversation' ? '🎙️ Voice' : voiceMode === 'dictation' ? '🎤 Dictate' : 'Voice off'}
-                </button>
-              )}
-            </div>
+          <div className="flex items-center border-t border-black/[0.04] px-1 pt-1">
+            <AgentModelSelector
+              conversationId={conversationId}
+              modelId={activeModelId}
+              onModelChange={onModelChange}
+              disabled={streaming}
+            />
           </div>
         )}
       </div>
