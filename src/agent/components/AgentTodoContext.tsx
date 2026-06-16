@@ -29,6 +29,8 @@ interface TodoContextValue {
   loading: boolean
   active: Todo[]
   completed: Todo[]
+  /** Tasks the agent did NOT finish today — marked cancelled by end-of-day reconcile. */
+  cancelled: Todo[]
   /** Force re-fetch from server. */
   refresh: () => Promise<void>
   add: (input: { title: string; priority?: string; description?: string }) => Promise<void>
@@ -129,6 +131,10 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
     () => todos.filter(t => t.status === 'completed'),
     [todos],
   )
+  const cancelled = useMemo(
+    () => todos.filter(t => t.status === 'cancelled'),
+    [todos],
+  )
 
   const add = useCallback(
     async (input: { title: string; priority?: string; description?: string }) => {
@@ -192,8 +198,8 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
   )
 
   const value: TodoContextValue = useMemo(
-    () => ({ todos, loading, active, completed, refresh, add, toggle, remove }),
-    [todos, loading, active, completed, refresh, add, toggle, remove],
+    () => ({ todos, loading, active, completed, cancelled, refresh, add, toggle, remove }),
+    [todos, loading, active, completed, cancelled, refresh, add, toggle, remove],
   )
 
   return <TodoContext.Provider value={value}>{children}</TodoContext.Provider>

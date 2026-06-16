@@ -82,6 +82,27 @@ async function seedDailyTodos() {
   }
 }
 
+/**
+ * PATCH a single todo's fields via the Vercel API.
+ * @param {string} id
+ * @param {Record<string, unknown>} patch
+ * @returns {Promise<boolean>}
+ */
+async function patchTodo(id, patch) {
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/todos`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${INT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...patch }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    return res.ok
+  } catch (err) {
+    console.warn(`[todo-reminder] patch failed (${id}): ${err.message}`)
+    return false
+  }
+}
+
 // ── Morning Reminder (08:00) ─────────────────────────────────────────────────
 
 export async function runMorningTodoReminder({ bot }) {
@@ -158,4 +179,45 @@ export async function runEveningTodoSummary({ bot }) {
   const detail = `done=${completed.length} pending=${pending.length}`
   console.log(`[todo-reminder] evening: ${detail}`)
   return { dutyStatus: 'done', dutyDetail: detail }
+}
+
+// ── End-of-Day Reconcile (23:55) ─────────────────────────────────────────────
+// Whatever the agent did NOT finish today is marked `cancelled` so it stays
+// visible in the todo list as cancelled (owner confirms the loop is working),
+// and the next morning starts with a fresh seeded list. Owner-created tasks are
+// left untouched — the owner manages those.
+
+export async function runEndOfDayTodoReconcile({ bot }) {
+  console.log('[todo-reminder] end-of-day reconcile...')
+
+  const todos = await fetchTodos('?status=pending,in_progress')
+  if (todos === null) {
+    return { dutyStatus: 'skipped', dutyDetail: 'API error' }
+  }
+
+  const toCancel = todos.filter((t) => t.source !== 'owner')
+  if (toCancel.length === 0) {
+    console.log('[todo-reminder] reconcile: nothing to cancel')
+    return { dutyStatus: 'done', dutyDetail: 'cancelled=0' }
+  }
+
+  let cancelled = 0
+  for (const t of toCancel) {
+    const ok = await patchTodo(t.id, { status: 'cancelled' })
+    if (ok) cancelled++
+  }
+
+  const lines = [
+    '🌃 *দিনশেষ — Agent টাস্ক রিকনসিলিয়েশন*',
+    '',
+    `আজ যেসব কাজ সম্পন্ন হয়নি, সেগুলো *বাতিল (cancelled)* হিসেবে চিহ্নিত করা হলো — মোট ${cancelled}টি:`,
+    '',
+    ...toCancel.slice(0, 10).map((t) => `  ✕ ${escapeMarkdown(t.title ?? 'Untitled')}`),
+    '',
+    'কালকে সকালে নতুন তালিকা তৈরি হবে, ইনশাআল্লাহ।',
+  ]
+  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+
+  console.log(`[todo-reminder] reconcile: cancelled ${cancelled}/${toCancel.length}`)
+  return { dutyStatus: 'done', dutyDetail: `cancelled=${cancelled}` }
 }

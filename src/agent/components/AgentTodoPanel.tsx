@@ -91,6 +91,7 @@ export function AgentTodoPanel() {
   const [newPriority, setNewPriority] = useState('normal')
   const [adding, setAdding] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [showCancelled, setShowCancelled] = useState(false)
 
   const localLoad = useCallback(async () => {
     try {
@@ -109,6 +110,7 @@ export function AgentTodoPanel() {
   const loading = ctx?.loading ?? localLoading
   const activeTodos = ctx?.active ?? todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
   const completedTodos = ctx?.completed ?? todos.filter(t => t.status === 'completed')
+  const cancelledTodos = ctx?.cancelled ?? todos.filter(t => t.status === 'cancelled')
 
   async function addTodo() {
     if (!newTitle.trim() || adding) return
@@ -333,6 +335,56 @@ export function AgentTodoPanel() {
                       </svg>
                     </button>
                     <p className="text-sm text-slate-400 line-through flex-1">{todo.title}</p>
+                    <button
+                      onClick={() => void deleteTodo(todo.id)}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all shrink-0"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                        <path d="M3 3l6 6M9 3l-6 6" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Cancelled — tasks the agent didn't finish today (end-of-day reconcile) */}
+      {cancelledTodos.length > 0 && (
+        <div className="mt-5">
+          <button
+            onClick={() => setShowCancelled(!showCancelled)}
+            className="flex items-center gap-2 text-xs text-slate-500 font-semibold hover:text-slate-700 transition-colors mb-2"
+          >
+            <svg
+              width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
+              className={`transition-transform ${showCancelled ? 'rotate-90' : ''}`}
+            >
+              <path d="M4.5 2.5l4 3.5-4 3.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {cancelledTodos.length} বাতিল · আজ করা হয়নি
+          </button>
+          <AnimatePresence>
+            {showCancelled && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden space-y-1.5"
+              >
+                {cancelledTodos.slice(0, 12).map(todo => (
+                  <div
+                    key={todo.id}
+                    className="group flex items-center gap-3 rounded-xl px-3.5 py-2.5 hover:bg-slate-50 transition-colors"
+                  >
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-red-200 bg-red-50">
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round">
+                        <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                      </svg>
+                    </span>
+                    <p className="flex-1 text-sm text-slate-400 line-through">{todo.title}</p>
                     <button
                       onClick={() => void deleteTodo(todo.id)}
                       className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all shrink-0"

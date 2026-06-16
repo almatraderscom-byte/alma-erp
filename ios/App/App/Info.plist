@@ -45,5 +45,9 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>ALMA ERP needs your location to verify office attendance check-in/out and staff geo-fencing.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>ALMA ERP needs your location to verify office attendance and staff geo-fencing during work hours.</string>
 </dict>
 </plist>
