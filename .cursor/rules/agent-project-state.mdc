@@ -1,0 +1,72 @@
+---
+description: Current state of the ALMA Agent project — what's done, what's wired, what's pending. Read this before any agent-related work.
+alwaysApply: true
+---
+
+# Agent Project State (last updated: 2026-06-16)
+
+## Architecture Summary
+
+- **Vercel (Next.js 14):** 176 API routes — ERP + agent UI + internal worker endpoints
+- **VPS Worker (31.97.237.40):** BullMQ + 47 cron schedulers + Telegram bot
+- **Auth:** Worker→Vercel uses `Bearer AGENT_INTERNAL_TOKEN`. UI uses NextAuth session.
+- **Middleware bypass:** `/api/agent/*`, `/api/assistant/internal/*`, `/api/assistant/chat`, `/api/assistant/conversations`, `/api/assistant/todos`, and action approve/reject paths pass through with Bearer token.
+
+## What's Working (verified 2026-06-16)
+
+### Scheduler (SCHEDULERS_ENABLED=true on VPS — confirmed active)
+- 47 cron jobs registered and running
+- Morning: owner-briefing (07:30), todo-reminder (08:00), strategist (08:00), staff-dispatch (09:00)
+- Midday: staff-presence (11:00/17:00), morale (13:00), midday-checkin (13:30)
+- Evening: todo-summary (20:30), night-report (21:00), evening-proposal (21:05), daily-summary (23:30)
+- Continuous: salah-escalation (5min), proof-timeout (5min), auto-fix-scan (15min), cs-escalation (1min)
+
+### Intelligence Features (all wired to worker)
+- `/api/agent/trust-check` → `staff-approval-gate.mjs` (auto/notify/approve tiers)
+- `/api/agent/staff-context` → `dispatch.mjs` (contextual Bangla greetings)
+- `/api/agent/staff-capabilities` → `evening-proposal.mjs` (skill profiles)
+- `/api/agent/smart-task` → `evening-proposal.mjs` (AI task briefs with difficulty levels)
+- `/api/agent/health-scan` → `error-collector.mjs` (dual auth: Bearer + session)
+
+### Agent Todo System
+- `agent_todos` Prisma model in DB
+- `/api/assistant/todos` — CRUD, dual auth (Bearer + session)
+- `AgentTodoPanel` component on agent homepage
+- `manage_work_todos` agent tool (list/add/update/complete/summary)
+- `todo-reminder.mjs` scheduler: morning 08:00 + evening 20:30 Telegram messages
+- System prompt includes todo-driven daily workflow instructions
+
+### Long Agent Tasks
+- `long_agent_task` BullMQ processor implemented — calls `/api/assistant/chat` with 5-min timeout
+
+## VPS Deploy Process
+- SSH: `root@31.97.237.40`, repo at `/opt/alma-erp`, PM2 process: `agent-worker`
+- From ERP: Staff Monitor → Deploy Worker button
+- Direct: `cd /opt/alma-erp && git pull origin main && cd worker && npm ci --omit=dev && pm2 restart agent-worker --update-env`
+
+## Known Patterns & Gotchas
+- Vercel `env pull` shows AGENT_INTERNAL_TOKEN as empty (encrypted) — use VPS .env directly
+- Middleware blocks non-internal paths even if route handler has Bearer auth — must add to `isAssistantWorkerBypassPath()` in `src/lib/agent-internal-auth.ts`
+- Local `next build` exits 1 due to missing DATABASE_URL — expected, Vercel has it
+- PWA service worker can cache stale builds — users may need hard refresh after deploy
+
+## Staff Info
+- 2 active staff: Mohammad Eyafi (content/ads/creative), Mustahid (photo/video/office)
+- Staff profiles in `agent_kv_settings` key `staff_task_profiles`
+- Learning curriculum rotates daily per staff
+
+## Owner Preferences
+- Language: Bangla in agent runtime, English in code/reports
+- Address owner as "Sir"/"Boss"
+- Islamic guardrails (no haram products/imagery)
+- Wants agent to be indistinguishable from a human partner
+- Claude AI / Gemini-style smooth app interface
+- Warm gradient modern theme (cream/coral, not dark)
+
+## Pending / Future Work
+- iOS Capacitor build + App Store
+- RAG memory system (Phase 3 pgvector)
+- Orders page layout modernization
+- Facebook Messenger auto-CS pipeline tuning
+- Content engine with real creative generation
+- More todo sources (from strategist directives, night-report carry)
