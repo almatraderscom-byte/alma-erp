@@ -42,10 +42,52 @@ async function fetchTodos(query) {
   }
 }
 
+// ── Daily todo seed — ensures there are always tasks for today ───────────────
+
+const DAILY_SEED_TASKS = [
+  { title: 'স্টাফ টাস্ক প্রোগ্রেস চেক ও ফলো-আপ', priority: 'high' },
+  { title: 'Messenger inbox — unreplied messages রিভিউ', priority: 'high' },
+  { title: 'সেলস ডেটা রিভিউ ও অর্ডার ট্র্যাকিং', priority: 'normal' },
+  { title: 'ইনভেন্টরি স্ট্যাটাস ও রিঅর্ডার চেক', priority: 'normal' },
+  { title: 'কন্টেন্ট/পোস্ট প্ল্যানিং ও শিডিউলিং', priority: 'normal' },
+]
+
+async function seedDailyTodos() {
+  try {
+    const url = `${APP_URL}/api/assistant/todos`
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) return
+    const body = await res.json()
+    const existing = Array.isArray(body) ? body : body.todos ?? body.data ?? []
+    const pendingCount = existing.filter(t => t.status === 'pending' || t.status === 'in_progress').length
+
+    if (pendingCount >= 3) return
+
+    for (const task of DAILY_SEED_TASKS) {
+      const already = existing.some(t => t.title?.includes(task.title.slice(0, 15)))
+      if (already) continue
+      await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${INT_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: task.title, priority: task.priority, status: 'pending', source: 'scheduler' }),
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => {})
+    }
+    console.log('[todo-reminder] seeded daily tasks')
+  } catch (err) {
+    console.warn('[todo-reminder] seed failed:', err.message)
+  }
+}
+
 // ── Morning Reminder (08:00) ─────────────────────────────────────────────────
 
 export async function runMorningTodoReminder({ bot }) {
   console.log('[todo-reminder] morning check...')
+
+  await seedDailyTodos()
 
   const todos = await fetchTodos('?status=pending,in_progress')
 
