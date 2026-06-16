@@ -103,6 +103,9 @@ export const SCHEDULER_REGISTRY = [
   { name: 'lunch-watch',            cronUtc: '*/5 * * * *',    description: 'Check overdue staff lunches (every 5 min)' },
   { name: 'geo-monitor',            cronUtc: '*/2 * * * *',    description: 'Staff geo-fence monitor (every 2 min during office hours)' },
   { name: 'productivity-monitor',   cronUtc: '*/10 * * * *',   description: 'Staff productivity surveillance (every 10 min office hours)' },
+  { name: 'daily-cashflow',         cronUtc: '30 2 * * *',     description: 'Daily cash-flow summary to owner (08:30 Dhaka)' },
+  { name: 'payment-reminders',      cronUtc: '0 6 * * *',      description: 'Overdue payment reminders (12:00 Dhaka)' },
+  { name: 'staff-performance',      cronUtc: '0 16 * * 0',     description: 'Weekly staff performance scoring (Sun 22:00 Dhaka)' },
   { name: 'personal-checkin',       cronUtc: '0 15 * * *',     description: 'Evening personal/family check-in (21:00 Dhaka)' },
   { name: 'personal-midday',        cronUtc: '0 8 * * *',      description: 'Brief daytime personal check-in (14:00 Dhaka)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
@@ -290,6 +293,21 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'productivity-monitor': {
       const { runProductivityMonitor } = await import('../staff/productivity-monitor.mjs')
       dutyResult = await runProductivityMonitor(context)
+      break
+    }
+    case 'daily-cashflow': {
+      const { runDailyCashflow } = await import('../finance/daily-cashflow.mjs')
+      dutyResult = await runDailyCashflow(context)
+      break
+    }
+    case 'payment-reminders': {
+      const { runPaymentReminders } = await import('../finance/daily-cashflow.mjs')
+      dutyResult = await runPaymentReminders(context)
+      break
+    }
+    case 'staff-performance': {
+      const { runWeeklyPerformanceScore } = await import('../staff/performance-score.mjs')
+      dutyResult = await runWeeklyPerformanceScore(context)
       break
     }
     case 'personal-checkin': {

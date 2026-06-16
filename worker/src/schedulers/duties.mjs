@@ -10,6 +10,8 @@ export const DAILY_DUTIES = [
   { duty: 'owner_briefing', label: '☀️ সকালের ব্রিফিং', job: 'owner-briefing', time: '07:30' },
   { duty: 'daily_strategist', label: '🎯 ডেইলি স্ট্র্যাটেজি পাস', job: 'daily-strategist', time: '08:00' },
   { duty: 'cost_reconcile', label: '🧮 কস্ট রিকনসাইল', job: 'cost-reconcile', time: '08:15' },
+  { duty: 'daily_cashflow', label: '💰 ডেইলি ক্যাশফ্লো', job: 'daily-cashflow', time: '08:30' },
+  { duty: 'payment_reminders', label: '💳 পেমেন্ট রিমাইন্ডার', job: 'payment-reminders', time: '12:00' },
   { duty: 'morning_dispatch', label: '📤 স্টাফ টাস্ক ডিসপ্যাচ', job: 'morning-staff-reminder', time: '09:00' },
   { duty: 'ads_monitor', label: '📢 অ্যাড মনিটর', job: 'ads-monitor', time: '09:30' },
   { duty: 'ads_optimizer', label: '🎯 অ্যাড অপটিমাইজার', job: 'ads-optimizer', time: '09:45' },
