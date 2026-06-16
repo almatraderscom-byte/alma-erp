@@ -33,6 +33,7 @@ import { LOCATION_TOOLS } from './location-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { VISION_TOOLS } from './vision-tools'
+import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 
 export const TOOL_GROUP_NAMES = [
@@ -68,10 +69,10 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],
-  finance: [...FINANCE_TOOLS],
+  finance: [...FINANCE_TOOLS, ...SIMULATE_TOOLS],
   cs: [...OWNER_CUSTOMER_INTEL_TOOLS],
   content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS, ...QC_TOOLS],
-  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS],
+  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS, ...SIMULATE_TOOLS],
   website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],
   diag: [...DIAGNOSTIC_TOOLS],
