@@ -56,10 +56,10 @@ const staggerContainer = { hidden: {}, show: { transition: { staggerChildren: 0.
 
 function LivePulse() {
   return (
-    <span className="relative inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+    <span className="relative inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600">
       <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
       </span>
       Live
     </span>
@@ -68,8 +68,8 @@ function LivePulse() {
 
 function ArchiveBadge({ date }: { date: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-600/30 bg-zinc-800/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-      <span className="inline-flex h-2 w-2 rounded-full bg-zinc-500" />
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+      <span className="inline-flex h-2 w-2 rounded-full bg-zinc-400" />
       {date}
     </span>
   )
@@ -79,22 +79,22 @@ function ArchiveBadge({ date }: { date: string }) {
 
 function SectionCard({ title, icon, badge, children, className, accent, actions }: {
   title: string; icon?: string; badge?: React.ReactNode; children: React.ReactNode; className?: string
-  accent?: 'gold' | 'emerald' | 'amber' | 'red' | 'blue' | 'purple'
+  accent?: 'coral' | 'emerald' | 'amber' | 'red' | 'teal' | 'gold'
   actions?: React.ReactNode
 }) {
   const accentColors = {
-    gold: 'border-[#C9A84C]/20 shadow-[0_0_24px_rgba(201,168,76,0.04)]',
-    emerald: 'border-emerald-500/20 shadow-[0_0_24px_rgba(16,185,129,0.04)]',
-    amber: 'border-amber-500/20 shadow-[0_0_24px_rgba(245,158,11,0.04)]',
-    red: 'border-red-500/20 shadow-[0_0_24px_rgba(239,68,68,0.04)]',
-    blue: 'border-blue-500/20 shadow-[0_0_24px_rgba(59,130,246,0.04)]',
-    purple: 'border-purple-500/20 shadow-[0_0_24px_rgba(168,85,247,0.04)]',
+    coral: 'border-[#E07A5F]/20 shadow-sm',
+    emerald: 'border-emerald-500/20 shadow-sm',
+    amber: 'border-[#D4A84B]/20 shadow-sm',
+    red: 'border-red-500/20 shadow-sm',
+    teal: 'border-[#81B29A]/20 shadow-sm',
+    gold: 'border-[#D4A84B]/20 shadow-sm',
   }
   return (
-    <div className={cn('rounded-2xl border bg-white/[0.02] backdrop-blur-xl overflow-hidden', accent ? accentColors[accent] : 'border-white/[0.06]', className)}>
-      <div className="flex items-center gap-2 border-b border-white/[0.04] px-4 py-2.5">
+    <div className={cn('rounded-2xl border bg-white overflow-hidden shadow-sm', accent ? accentColors[accent] : 'border-black/[0.06]', className)}>
+      <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
         {icon && <span className="text-sm">{icon}</span>}
-        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/50">{title}</h3>
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">{title}</h3>
         {badge}
         {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
       </div>
@@ -111,13 +111,13 @@ function FeedMessage({ content }: { content: string }) {
     <div className="mt-1.5">
       <div className={cn(!expanded && needsMore && 'line-clamp-2')}>
         {expanded || !needsMore ? (
-          <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-white/80">{text}</pre>
+          <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-[#1a1a2e]/90">{text}</pre>
         ) : (
-          <span className="text-[11px] text-white/80">{text.slice(0, 120)}…</span>
+          <span className="text-[11px] text-[#1a1a2e]/90">{text.slice(0, 120)}…</span>
         )}
       </div>
       {needsMore && (
-        <button type="button" onClick={() => setExpanded(v => !v)} className="mt-1 text-[10px] font-semibold text-[#C9A84C] hover:text-[#E8C96A] transition-colors">
+        <button type="button" onClick={() => setExpanded(v => !v)} className="mt-1 text-[10px] font-semibold text-[#E07A5F] hover:text-[#E07A5F]/80 transition-colors">
           {expanded ? '▴ কম' : '▾ আরও'}
         </button>
       )}
@@ -127,9 +127,9 @@ function FeedMessage({ content }: { content: string }) {
 
 function AckBadge({ m }: { m: StaffMonitorRow }) {
   if (!tracksAck(m)) return null
-  if (m.acknowledgedAt) return <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/25 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300">✓ {fmtTime(m.acknowledgedAt)}</span>
-  if (m.status === 'delivered' || m.status === 'sent') return <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">⏳ unseen</span>
-  if (m.status === 'queued' || m.status === 'pending') return <span className="inline-flex items-center rounded-md border border-zinc-600/30 bg-white/5 px-1.5 py-0.5 text-[9px] text-zinc-400">sending…</span>
+  if (m.acknowledgedAt) return <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/25 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-600">✓ {fmtTime(m.acknowledgedAt)}</span>
+  if (m.status === 'delivered' || m.status === 'sent') return <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600">⏳ unseen</span>
+  if (m.status === 'queued' || m.status === 'pending') return <span className="inline-flex items-center rounded-md border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[9px] text-zinc-500">sending…</span>
   return null
 }
 
@@ -162,7 +162,6 @@ export default function AgentStaffMonitor() {
   const [retriggering, setRetriggering] = useState(false)
   const [escalating, setEscalating] = useState<string | null>(null)
 
-  // Sub-section state
   const [brainStats, setBrainStats] = useState<BrainStats | null>(null)
   const [trustRules, setTrustRules] = useState<TrustRule[]>([])
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
@@ -368,10 +367,10 @@ export default function AgentStaffMonitor() {
   if (err && !displayData) {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
-        <div className="rounded-xl border border-red-500/20 bg-red-500/[0.04] px-6 py-4 text-center text-sm text-red-300">
+        <div className="rounded-xl border border-red-500/20 bg-red-50 px-6 py-4 text-center text-sm text-red-700">
           লোড করা যায়নি: {err}
         </div>
-        <button type="button" onClick={() => void loadLive()} className="rounded-xl border border-[#C9A84C]/30 bg-[#C9A84C]/[0.06] px-4 py-2 text-xs font-semibold text-[#C9A84C] hover:bg-[#C9A84C]/10 transition-all">
+        <button type="button" onClick={() => void loadLive()} className="rounded-xl border border-[#E07A5F]/30 bg-[#E07A5F]/[0.08] px-4 py-2 text-xs font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/15 transition-all">
           আবার চেষ্টা
         </button>
       </div>
@@ -381,8 +380,8 @@ export default function AgentStaffMonitor() {
   if (!liveData) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
-        <div className="flex items-center gap-3 text-white/30">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#C9A84C]/30 border-t-[#C9A84C]" />
+        <div className="flex items-center gap-3 text-[#94a3b8]">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
           <span className="text-sm">Loading command center…</span>
         </div>
       </div>
@@ -401,10 +400,10 @@ export default function AgentStaffMonitor() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-black tracking-tight text-white/90">CC Camera Room</h1>
+              <h1 className="text-xl font-black tracking-tight text-[#1a1a2e]">CC Camera Room</h1>
               {viewingHistory ? <ArchiveBadge date={selectedDate!} /> : <LivePulse />}
             </div>
-            <p className="mt-1 text-[11px] text-white/25">
+            <p className="mt-1 text-[11px] text-[#94a3b8]">
               {viewingHistory ? 'Viewing archive · press "Today" to return' : (
                 <>{liveData.today} · auto-refresh 10s{liveData.generatedAt && <> · last {fmtTime(liveData.generatedAt)}</>}</>
               )}
@@ -412,11 +411,11 @@ export default function AgentStaffMonitor() {
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md p-0.5">
+            <div className="inline-flex rounded-xl border border-black/[0.06] bg-[#FAF9F6] p-0.5">
               {(['ALL', 'ALMA_LIFESTYLE', 'ALMA_TRADING'] as const).map(b => (
                 <button key={b} type="button" onClick={() => setBusinessFilter(b)}
                   className={cn('rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-all',
-                    businessFilter === b ? 'bg-[rgba(201,168,76,0.12)] text-[#E8C96A] shadow-[0_0_10px_rgba(201,168,76,0.08)]' : 'text-white/20 hover:text-white/40')}>
+                    businessFilter === b ? 'bg-[#E07A5F]/12 text-[#E07A5F] shadow-sm' : 'text-[#94a3b8] hover:text-[#64748b]')}>
                   {b === 'ALL' ? 'All' : b === 'ALMA_LIFESTYLE' ? 'Life' : 'Trade'}
                 </button>
               ))}
@@ -424,23 +423,23 @@ export default function AgentStaffMonitor() {
 
             {viewingHistory ? (
               <button type="button" onClick={() => { setSelectedDate(null); setHistoryData(null) }}
-                className="rounded-xl border border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] px-3 py-1.5 text-[10px] font-bold text-[#C9A84C] transition-all hover:bg-[#C9A84C]/10">
+                className="rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.08] px-3 py-1.5 text-[10px] font-bold text-[#E07A5F] transition-all hover:bg-[#E07A5F]/15">
                 ← Today
               </button>
             ) : (
               <button type="button" onClick={() => void loadLive(true)} disabled={syncing}
                 className={cn('rounded-xl border px-3 py-1.5 text-[10px] font-bold transition-all',
-                  syncing ? 'border-white/[0.06] text-white/15' : 'border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10')}>
+                  syncing ? 'border-black/[0.06] text-[#94a3b8]' : 'border-[#E07A5F]/25 bg-[#E07A5F]/[0.08] text-[#E07A5F] hover:bg-[#E07A5F]/15')}>
                 {syncing ? '…' : '↻ Sync'}
               </button>
             )}
 
             <button type="button" onClick={() => setHistoryOpen(v => !v)}
-              className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[10px] font-bold text-white/20 transition-all hover:text-white/40 lg:hidden">
+              className="rounded-xl border border-black/[0.06] bg-white px-3 py-1.5 text-[10px] font-bold text-[#94a3b8] transition-all hover:text-[#64748b] lg:hidden">
               📅
             </button>
 
-            <Link href="/agent" className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[10px] font-bold text-white/20 transition-all hover:text-white/40">
+            <Link href="/agent" className="rounded-xl border border-black/[0.06] bg-white px-3 py-1.5 text-[10px] font-bold text-[#94a3b8] transition-all hover:text-[#64748b]">
               ← Chat
             </Link>
           </div>
@@ -448,8 +447,8 @@ export default function AgentStaffMonitor() {
 
         {/* Deploy message */}
         {deployMsg && (
-          <div className={cn('rounded-xl border px-4 py-2 text-[11px] font-semibold backdrop-blur-md',
-            deployMsg.startsWith('✓') ? 'border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300' : 'border-red-500/25 bg-red-500/[0.06] text-red-300')}>
+          <div className={cn('rounded-xl border px-4 py-2 text-[11px] font-semibold',
+            deployMsg.startsWith('✓') ? 'border-emerald-500/25 bg-emerald-50 text-emerald-700' : 'border-red-500/25 bg-red-50 text-red-700')}>
             {deployMsg}
           </div>
         )}
@@ -458,8 +457,8 @@ export default function AgentStaffMonitor() {
         <AnimatePresence>
           {toast && (
             <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-              className={cn('fixed top-4 right-4 z-50 rounded-xl border px-4 py-2.5 text-[12px] font-semibold shadow-lg backdrop-blur-xl',
-                toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-red-500/30 bg-red-500/10 text-red-300')}>
+              className={cn('fixed top-4 right-4 z-50 rounded-xl border px-4 py-2.5 text-[12px] font-semibold shadow-lg',
+                toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-50 text-emerald-700' : 'border-red-500/30 bg-red-50 text-red-700')}>
               {toast.msg}
             </motion.div>
           )}
@@ -518,46 +517,46 @@ export default function AgentStaffMonitor() {
                   accent={healthReport?.ok ? 'emerald' : healthReport ? 'red' : undefined}
                   badge={healthReport && (
                     <span className={cn('rounded-md px-1.5 py-0.5 text-[9px] font-bold',
-                      healthReport.ok ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300')}>
+                      healthReport.ok ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600')}>
                       {healthReport.ok ? '✅ Healthy' : `⚠️ ${healthReport.issues.length} issues`}
                     </span>
                   )}
                   actions={
                     <button type="button" disabled={healthScanning} onClick={() => void loadHealthScan()}
                       className={cn('rounded-lg border px-2 py-1 text-[9px] font-bold transition-all',
-                        healthScanning ? 'border-white/[0.06] text-white/20' : 'border-[#C9A84C]/25 bg-[#C9A84C]/[0.06] text-[#C9A84C] hover:bg-[#C9A84C]/10')}>
+                        healthScanning ? 'border-black/[0.06] text-[#94a3b8]' : 'border-[#E07A5F]/25 bg-[#E07A5F]/[0.08] text-[#E07A5F] hover:bg-[#E07A5F]/15')}>
                       {healthScanning ? '⏳ Scanning…' : '🔍 Scan Now'}
                     </button>
                   }
                 >
                   {!healthReport ? (
-                    <p className="py-2 text-[10px] text-white/20">Loading health scan…</p>
+                    <p className="py-2 text-[10px] text-[#94a3b8]">Loading health scan…</p>
                   ) : healthReport.ok ? (
-                    <div className="flex items-center gap-2 py-1 text-[11px] text-emerald-300/80">
-                      <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                    <div className="flex items-center gap-2 py-1 text-[11px] text-emerald-700">
+                      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
                       {healthReport.summary}
                     </div>
                   ) : (
                     <div className="space-y-1.5">
                       {healthReport.issues.map((issue, i) => (
                         <div key={i} className={cn('rounded-lg border p-2 text-[11px]',
-                          issue.severity === 'high' ? 'border-red-500/20 bg-red-500/[0.04]' :
-                          issue.severity === 'medium' ? 'border-amber-500/20 bg-amber-500/[0.04]' :
-                          'border-white/[0.06] bg-white/[0.01]')}>
+                          issue.severity === 'high' ? 'border-red-500/20 bg-red-50' :
+                          issue.severity === 'medium' ? 'border-amber-500/20 bg-amber-50' :
+                          'border-black/[0.06] bg-[#FAF9F6]')}>
                           <div className="flex items-center gap-2">
                             <span className={cn('shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase',
-                              issue.severity === 'high' ? 'bg-red-500/20 text-red-300' :
-                              issue.severity === 'medium' ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 text-white/40')}>
+                              issue.severity === 'high' ? 'bg-red-100 text-red-600' :
+                              issue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-zinc-100 text-[#64748b]')}>
                               {issue.severity}
                             </span>
-                            <span className="font-semibold text-white/70">{issue.title}</span>
+                            <span className="font-semibold text-[#1a1a2e]/80">{issue.title}</span>
                           </div>
                           <div className="mt-1 flex items-center justify-between">
-                            <p className="text-[10px] text-white/40">{issue.detail}</p>
+                            <p className="text-[10px] text-[#64748b]">{issue.detail}</p>
                             {issue.severity === 'high' && (
                               <button type="button" disabled={fixingIssue === issue.title} onClick={() => void requestFix(issue)}
                                 className={cn('ml-2 shrink-0 rounded-md border px-2 py-0.5 text-[9px] font-bold transition-all',
-                                  fixingIssue === issue.title ? 'border-white/[0.06] text-white/20' : 'border-blue-400/30 bg-blue-400/[0.08] text-blue-300 hover:bg-blue-400/15')}>
+                                  fixingIssue === issue.title ? 'border-black/[0.06] text-[#94a3b8]' : 'border-[#81B29A]/30 bg-[#81B29A]/[0.08] text-[#81B29A] hover:bg-[#81B29A]/15')}>
                                 {fixingIssue === issue.title ? '⏳...' : '🤖 Fix This'}
                               </button>
                             )}
@@ -573,23 +572,23 @@ export default function AgentStaffMonitor() {
             {/* ── Auto-Fix Pipeline ── */}
             {isLive && autoFixActions.length > 0 && (
               <motion.div variants={fadeIn}>
-                <SectionCard title={`Auto-Fix Pipeline (${autoFixActions.length})`} icon="🤖" accent="blue"
-                  actions={<button type="button" onClick={() => void loadAutoFixActions()} className="rounded-lg border border-blue-400/25 bg-blue-400/[0.06] px-2 py-1 text-[9px] font-bold text-blue-300 hover:bg-blue-400/10 transition-all">🔄 Refresh</button>}>
+                <SectionCard title={`Auto-Fix Pipeline (${autoFixActions.length})`} icon="🤖" accent="teal"
+                  actions={<button type="button" onClick={() => void loadAutoFixActions()} className="rounded-lg border border-[#81B29A]/25 bg-[#81B29A]/[0.08] px-2 py-1 text-[9px] font-bold text-[#81B29A] hover:bg-[#81B29A]/15 transition-all">🔄 Refresh</button>}>
                   <div className="space-y-2">
                     {autoFixActions.map(a => {
-                      const sc = a.status === 'pending' ? 'text-amber-300 bg-amber-500/15' : a.status === 'approved' || a.status === 'in_progress' ? 'text-blue-300 bg-blue-500/15' : a.status === 'completed' ? 'text-emerald-300 bg-emerald-500/15' : a.status === 'rejected' ? 'text-white/30 bg-white/5' : 'text-red-300 bg-red-500/15'
+                      const sc = a.status === 'pending' ? 'text-[#D4A84B] bg-[#D4A84B]/10' : a.status === 'approved' || a.status === 'in_progress' ? 'text-[#81B29A] bg-[#81B29A]/10' : a.status === 'completed' ? 'text-emerald-600 bg-emerald-50' : a.status === 'rejected' ? 'text-[#94a3b8] bg-zinc-100' : 'text-red-600 bg-red-50'
                       const sl = a.status === 'pending' ? '⏳ Approval Pending' : a.status === 'approved' ? '🚀 Dispatching...' : a.status === 'in_progress' ? '🤖 Working...' : a.status === 'completed' ? '✅ Fixed' : a.status === 'rejected' ? '❌ Rejected' : '⚠️ Failed'
                       return (
-                        <div key={a.id} className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-2.5 text-[11px]">
+                        <div key={a.id} className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] p-2.5 text-[11px]">
                           <div className="flex items-center gap-2">
                             <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold', sc)}>{sl}</span>
-                            <span className="font-semibold text-white/70 truncate">{a.payload?.title ?? 'Unknown'}</span>
-                            <span className="ml-auto text-[9px] text-white/20">${(a.costEstimate ?? 0).toFixed(2)}</span>
+                            <span className="font-semibold text-[#1a1a2e]/80 truncate">{a.payload?.title ?? 'Unknown'}</span>
+                            <span className="ml-auto text-[9px] text-[#94a3b8]">${(a.costEstimate ?? 0).toFixed(2)}</span>
                           </div>
                           {a.status === 'pending' && (
                             <div className="mt-1.5 flex gap-2">
-                              <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'approve')} className="rounded border border-emerald-400/30 bg-emerald-400/[0.08] px-2 py-0.5 text-[9px] font-bold text-emerald-300 hover:bg-emerald-400/15 transition-all">✅ Approve</button>
-                              <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'reject')} className="rounded border border-red-400/30 bg-red-400/[0.08] px-2 py-0.5 text-[9px] font-bold text-red-300 hover:bg-red-400/15 transition-all">❌ Reject</button>
+                              <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'approve')} className="rounded border border-emerald-400/30 bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-600 hover:bg-emerald-100 transition-all">✅ Approve</button>
+                              <button type="button" onClick={() => void handleAutoFixDecision(a.id, 'reject')} className="rounded border border-red-400/30 bg-red-50 px-2 py-0.5 text-[9px] font-bold text-red-600 hover:bg-red-100 transition-all">❌ Reject</button>
                             </div>
                           )}
                         </div>
@@ -606,16 +605,16 @@ export default function AgentStaffMonitor() {
                 <SectionCard title="স্টাফ সক্ষমতা" icon="📊" accent="emerald">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {staffCaps.map(sc => (
-                      <div key={sc.staffId} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3 py-2.5">
+                      <div key={sc.staffId} className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5">
                         <div className="flex items-center justify-between">
-                          <p className="text-[11px] font-bold text-white/70">{sc.staffName}</p>
+                          <p className="text-[11px] font-bold text-[#1a1a2e]/80">{sc.staffName}</p>
                           <span className={cn('text-xs font-black tabular-nums',
-                            sc.overallCompletionRate >= 80 ? 'text-emerald-400' : sc.overallCompletionRate >= 50 ? 'text-amber-400' : 'text-red-400')}>
+                            sc.overallCompletionRate >= 80 ? 'text-emerald-600' : sc.overallCompletionRate >= 50 ? 'text-amber-600' : 'text-red-600')}>
                             {sc.overallCompletionRate}%
                           </span>
                         </div>
-                        {sc.strongTypes.length > 0 && <p className="mt-1 text-[9px] text-emerald-400/60">💪 {sc.strongTypes.join(', ')}</p>}
-                        {sc.weakTypes.length > 0 && <p className="mt-0.5 text-[9px] text-red-400/60">📈 {sc.weakTypes.join(', ')}</p>}
+                        {sc.strongTypes.length > 0 && <p className="mt-1 text-[9px] text-emerald-600/70">💪 {sc.strongTypes.join(', ')}</p>}
+                        {sc.weakTypes.length > 0 && <p className="mt-0.5 text-[9px] text-red-500/70">📈 {sc.weakTypes.join(', ')}</p>}
                       </div>
                     ))}
                   </div>
@@ -626,12 +625,12 @@ export default function AgentStaffMonitor() {
             {/* ── Continuous Services ── */}
             {isLive && (displayData.continuousServices?.length ?? 0) > 0 && (
               <motion.div variants={fadeIn}>
-                <SectionCard title={`Background Services (${displayData.continuousServices.length})`} icon="⚡" accent="blue">
+                <SectionCard title={`Background Services (${displayData.continuousServices.length})`} icon="⚡" accent="teal">
                   <div className="flex flex-wrap gap-2">
                     {displayData.continuousServices.map(s => (
-                      <span key={s.key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2 py-1 text-[10px] text-white/40">
+                      <span key={s.key} className="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2 py-1 text-[10px] text-[#64748b]">
                         <span className={cn('inline-block h-1.5 w-1.5 rounded-full',
-                          s.healthy ? 'bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.6)]' : 'bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.6)]')} />
+                          s.healthy ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.5)]' : 'bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.5)]')} />
                         {s.label}
                       </span>
                     ))}
@@ -647,25 +646,25 @@ export default function AgentStaffMonitor() {
                   actions={
                     <button type="button" disabled={escalating !== null}
                       onClick={async () => { for (const m of displayData.unackedMessages) await handleEscalate(m) }}
-                      className="rounded-lg border border-red-500/25 bg-red-500/[0.06] px-2 py-1 text-[9px] font-bold text-red-300 transition-all hover:bg-red-500/10 disabled:opacity-40">
+                      className="rounded-lg border border-red-500/25 bg-red-50 px-2 py-1 text-[9px] font-bold text-red-600 transition-all hover:bg-red-100 disabled:opacity-40">
                       🔔 Notify All
                     </button>
                   }>
                   <div className="space-y-1.5">
                     {displayData.unackedMessages.map(m => (
-                      <div key={m.id} className="rounded-lg border border-amber-500/10 bg-amber-500/[0.03] p-2 text-[11px]">
+                      <div key={m.id} className="rounded-lg border border-[#D4A84B]/15 bg-[#D4A84B]/[0.04] p-2 text-[11px]">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate font-medium text-amber-100/80">{m.staffName ?? '—'}</span>
+                          <span className="truncate font-medium text-[#1a1a2e]/90">{m.staffName ?? '—'}</span>
                           <div className="flex shrink-0 items-center gap-1.5">
-                            <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[9px] font-semibold text-amber-300">{typeLabel(m.type)}</span>
-                            <span className="tabular-nums text-[10px] text-white/25">{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
+                            <span className="rounded bg-[#D4A84B]/10 px-1 py-0.5 text-[9px] font-semibold text-[#D4A84B]">{typeLabel(m.type)}</span>
+                            <span className="tabular-nums text-[10px] text-[#94a3b8]">{m.sentAt ? fmtTime(m.sentAt) : fmtTime(m.createdAt)}</span>
                           </div>
                         </div>
                         <FeedMessage content={m.content ?? ''} />
                         <div className="mt-1.5 flex items-center justify-end">
                           <button type="button" disabled={escalating === m.id} onClick={() => handleEscalate(m)}
                             className={cn('rounded-md border px-2 py-1 text-[9px] font-bold transition-all',
-                              escalating === m.id ? 'border-white/[0.06] text-white/20' : 'border-red-500/25 bg-red-500/[0.06] text-red-300 hover:bg-red-500/10')}>
+                              escalating === m.id ? 'border-black/[0.06] text-[#94a3b8]' : 'border-red-500/25 bg-red-50 text-red-600 hover:bg-red-100')}>
                             {escalating === m.id ? '⏳…' : '🔔 Critical NTFY'}
                           </button>
                         </div>
@@ -680,22 +679,22 @@ export default function AgentStaffMonitor() {
             {(displayData.pendingApprovals?.length ?? 0) > 0 && (
               <motion.div variants={fadeIn}>
                 <SectionCard title="Pending Approvals (48h)" icon="⏳" accent="amber"
-                  badge={<span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold text-amber-300">{displayData.pendingApprovals!.length}</span>}>
+                  badge={<span className="rounded-full bg-[#D4A84B]/10 px-2 py-0.5 text-[9px] font-bold text-[#D4A84B]">{displayData.pendingApprovals!.length}</span>}>
                   <div className="space-y-1.5">
                     {displayData.pendingApprovals!.map(a => {
                       const ageH = (Date.now() - new Date(a.createdAt).getTime()) / 3_600_000
-                      const ageColor = ageH > 12 ? 'border-red-500/20 bg-red-500/[0.03]' : ageH > 2 ? 'border-amber-500/20 bg-amber-500/[0.03]' : 'border-white/[0.06] bg-white/[0.01]'
+                      const ageColor = ageH > 12 ? 'border-red-500/20 bg-red-50' : ageH > 2 ? 'border-[#D4A84B]/20 bg-[#D4A84B]/[0.04]' : 'border-black/[0.06] bg-[#FAF9F6]'
                       return (
                         <div key={a.id} className={cn('rounded-lg border px-3 py-2', ageColor)}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-[10px] font-bold text-white/40">{a.type.replace(/_/g, ' ')}</p>
-                              <p className="mt-0.5 text-[11px] text-white/50 line-clamp-2">{a.summary}</p>
-                              <span className="text-[9px] text-white/20">{ageH < 1 ? `${Math.round(ageH * 60)}m ago` : `${ageH.toFixed(1)}h ago`}</span>
+                              <p className="text-[10px] font-bold text-[#64748b]">{a.type.replace(/_/g, ' ')}</p>
+                              <p className="mt-0.5 text-[11px] text-[#64748b] line-clamp-2">{a.summary}</p>
+                              <span className="text-[9px] text-[#94a3b8]">{ageH < 1 ? `${Math.round(ageH * 60)}m ago` : `${ageH.toFixed(1)}h ago`}</span>
                             </div>
                             <div className="flex shrink-0 gap-1">
-                              <button type="button" onClick={() => void handleApproval(a.id, 'approve')} className="rounded-lg border border-emerald-400/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[10px] font-bold text-emerald-300 hover:bg-emerald-500/15">✓</button>
-                              <button type="button" onClick={() => void handleApproval(a.id, 'reject')} className="rounded-lg border border-red-400/30 bg-red-500/[0.08] px-2.5 py-1 text-[10px] font-bold text-red-300 hover:bg-red-500/15">✗</button>
+                              <button type="button" onClick={() => void handleApproval(a.id, 'approve')} className="rounded-lg border border-emerald-400/30 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-600 hover:bg-emerald-100">✓</button>
+                              <button type="button" onClick={() => void handleApproval(a.id, 'reject')} className="rounded-lg border border-red-400/30 bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-600 hover:bg-red-100">✗</button>
                             </div>
                           </div>
                         </div>
@@ -708,23 +707,23 @@ export default function AgentStaffMonitor() {
 
             {/* ── Message Feed ── */}
             <motion.div variants={fadeIn}>
-              <SectionCard title="Message Feed" icon="📨" accent="blue">
+              <SectionCard title="Message Feed" icon="📨" accent="teal">
                 {feedItems.length === 0 ? (
-                  <p className="py-4 text-center text-[11px] text-white/20">কোনো মেসেজ লগ নেই</p>
+                  <p className="py-4 text-center text-[11px] text-[#94a3b8]">কোনো মেসেজ লগ নেই</p>
                 ) : (
                   <>
                     <div className="space-y-1.5">
                       {visibleFeed.map(m => (
                         <div key={m.id} className={cn('flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-[11px] transition-all',
-                          m.status === 'failed' ? 'bg-red-500/[0.04] border-l-2 border-l-red-400/50' :
-                          m.status === 'delivered' ? 'bg-white/[0.01] border-l-2 border-l-emerald-400/30' :
-                          'bg-white/[0.01] border-l-2 border-l-amber-400/25')}>
+                          m.status === 'failed' ? 'bg-red-50 border-l-2 border-l-red-500/50' :
+                          m.status === 'delivered' ? 'bg-[#FAF9F6] border-l-2 border-l-emerald-500/30' :
+                          'bg-[#FAF9F6] border-l-2 border-l-amber-500/25')}>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-white/60">{m.staffName ?? '—'}</span>
-                              <span className="rounded bg-white/[0.04] px-1 py-0.5 text-[9px] font-semibold text-white/30">{typeLabel(m.type)}</span>
+                              <span className="font-medium text-[#1a1a2e]/70">{m.staffName ?? '—'}</span>
+                              <span className="rounded bg-black/[0.04] px-1 py-0.5 text-[9px] font-semibold text-[#94a3b8]">{typeLabel(m.type)}</span>
                               <AckBadge m={m} />
-                              <span className="ml-auto shrink-0 tabular-nums text-[10px] text-white/20">{fmtTime(m.createdAt)}</span>
+                              <span className="ml-auto shrink-0 tabular-nums text-[10px] text-[#94a3b8]">{fmtTime(m.createdAt)}</span>
                             </div>
                             <FeedMessage content={m.content ?? ''} />
                           </div>
@@ -733,7 +732,7 @@ export default function AgentStaffMonitor() {
                     </div>
                     {feedItems.length > 6 && (
                       <button type="button" onClick={() => setFeedExpanded(v => !v)}
-                        className="mt-2 w-full rounded-lg border border-white/[0.04] bg-white/[0.02] py-2 text-[10px] font-semibold text-white/30 transition-all hover:text-white/50 hover:border-[#C9A84C]/15">
+                        className="mt-2 w-full rounded-lg border border-black/[0.06] bg-[#FAF9F6] py-2 text-[10px] font-semibold text-[#94a3b8] transition-all hover:text-[#64748b] hover:border-[#E07A5F]/15">
                         {feedExpanded ? '▴ Show less' : `▾ Show all ${feedItems.length} messages`}
                       </button>
                     )}
@@ -745,22 +744,22 @@ export default function AgentStaffMonitor() {
             {/* ── Live Tasks & Reminders ── */}
             {((displayData.activeReminders?.length ?? 0) > 0 || (displayData.activeTodos?.length ?? 0) > 0) && (
               <motion.div variants={fadeIn}>
-                <SectionCard title="Live Tasks & Reminders" icon="📌" accent="blue">
+                <SectionCard title="Live Tasks & Reminders" icon="📌" accent="teal">
                   {(displayData.activeReminders?.length ?? 0) > 0 && (
                     <div className="mb-3">
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-white/25 mb-1.5">Reminders</p>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-[#94a3b8] mb-1.5">Reminders</p>
                       <div className="space-y-1">
                         {displayData.activeReminders!.map(r => (
-                          <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-1.5">
+                          <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-1.5">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
-                                <span className={cn('inline-block h-1.5 w-1.5 rounded-full', r.tier >= 3 ? 'bg-red-400' : r.tier >= 2 ? 'bg-amber-400' : 'bg-blue-400')} />
-                                <span className="truncate text-[11px] font-medium text-white/60">{r.title}</span>
+                                <span className={cn('inline-block h-1.5 w-1.5 rounded-full', r.tier >= 3 ? 'bg-red-500' : r.tier >= 2 ? 'bg-amber-500' : 'bg-[#81B29A]')} />
+                                <span className="truncate text-[11px] font-medium text-[#1a1a2e]/70">{r.title}</span>
                               </div>
                             </div>
                             <div className="shrink-0 text-right">
-                              <div className="text-[10px] font-medium text-white/40">{fmtTime(r.dueAt)}</div>
-                              <div className={cn('text-[9px]', r.status === 'snoozed' ? 'text-amber-300/60' : r.status === 'sent' ? 'text-emerald-300/60' : 'text-white/20')}>{r.status}</div>
+                              <div className="text-[10px] font-medium text-[#64748b]">{fmtTime(r.dueAt)}</div>
+                              <div className={cn('text-[9px]', r.status === 'snoozed' ? 'text-[#D4A84B]' : r.status === 'sent' ? 'text-emerald-600' : 'text-[#94a3b8]')}>{r.status}</div>
                             </div>
                           </div>
                         ))}
@@ -769,13 +768,13 @@ export default function AgentStaffMonitor() {
                   )}
                   {(displayData.activeTodos?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-white/25 mb-1.5">Owner Todos</p>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-[#94a3b8] mb-1.5">Owner Todos</p>
                       <div className="space-y-1">
                         {displayData.activeTodos!.map(t => (
-                          <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.04] bg-white/[0.01] px-2.5 py-1.5">
-                            <span className="text-[11px] font-medium text-white/60 truncate">{t.title}</span>
+                          <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-1.5">
+                            <span className="text-[11px] font-medium text-[#1a1a2e]/70 truncate">{t.title}</span>
                             <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-bold',
-                              t.priority === 'high' ? 'bg-red-500/15 text-red-300' : t.priority === 'urgent' ? 'bg-red-500/20 text-red-200' : 'bg-white/5 text-white/30')}>
+                              t.priority === 'high' ? 'bg-red-50 text-red-600' : t.priority === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-zinc-100 text-[#94a3b8]')}>
                               {t.priority}
                             </span>
                           </div>
@@ -789,25 +788,25 @@ export default function AgentStaffMonitor() {
 
             {/* ── Agent Capabilities ── */}
             <motion.div variants={fadeIn}>
-              <SectionCard title="Agent Capabilities" icon="🧠" accent="purple"
-                actions={<button type="button" onClick={() => setCapsOpen(v => !v)} className="text-[10px] font-bold text-white/25 hover:text-white/50 transition-colors">{capsOpen ? '▴ Hide' : '▾ Show'}</button>}>
+              <SectionCard title="Agent Capabilities" icon="🧠" accent="coral"
+                actions={<button type="button" onClick={() => setCapsOpen(v => !v)} className="text-[10px] font-bold text-[#94a3b8] hover:text-[#64748b] transition-colors">{capsOpen ? '▴ Hide' : '▾ Show'}</button>}>
                 <AnimatePresence>
                   {capsOpen ? (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         {AGENT_CAPABILITIES.map(cap => (
-                          <div key={cap.category} className="rounded-xl border border-white/[0.04] bg-white/[0.01] p-3">
+                          <div key={cap.category} className="rounded-xl border border-black/[0.06] bg-[#FAF9F6] p-3">
                             <div className="mb-2 flex items-center gap-2">
                               <span>{cap.icon}</span>
-                              <span className="text-[11px] font-bold text-white/60">{cap.category}</span>
+                              <span className="text-[11px] font-bold text-[#1a1a2e]/70">{cap.category}</span>
                             </div>
                             <ul className="space-y-1.5">
                               {cap.items.map(item => (
                                 <li key={item.name} className="flex items-start gap-1.5">
-                                  <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[#C9A84C]/40" />
+                                  <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[#E07A5F]/40" />
                                   <div>
-                                    <span className="text-[10px] text-white/35">{item.name}</span>
-                                    <div className="text-[10px] text-white/40 mt-0.5">💬 {item.command}</div>
+                                    <span className="text-[10px] text-[#64748b]">{item.name}</span>
+                                    <div className="text-[10px] text-[#64748b] mt-0.5">💬 {item.command}</div>
                                   </div>
                                 </li>
                               ))}
@@ -817,7 +816,7 @@ export default function AgentStaffMonitor() {
                       </div>
                     </motion.div>
                   ) : (
-                    <p className="text-[10px] text-white/20">9 categories · ~100+ tools — ERP, Staff, Trading, Finance, Content, CS, Website, Personal, Diagnostics</p>
+                    <p className="text-[10px] text-[#94a3b8]">9 categories · ~100+ tools — ERP, Staff, Trading, Finance, Content, CS, Website, Personal, Diagnostics</p>
                   )}
                 </AnimatePresence>
               </SectionCard>
@@ -834,24 +833,24 @@ export default function AgentStaffMonitor() {
 
       {/* ── History Sidebar ── */}
       <aside className={cn(
-        'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-white/[0.06] lg:bg-white/[0.02] lg:backdrop-blur-xl lg:p-3',
-        historyOpen ? 'fixed inset-y-0 right-0 z-40 w-64 border-l border-white/[0.06] bg-[#08080A]/95 backdrop-blur-2xl p-4 shadow-[0_0_40px_rgba(0,0,0,0.6)]' : 'hidden',
+        'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-black/[0.06] lg:bg-white lg:shadow-sm lg:p-3',
+        historyOpen ? 'fixed inset-y-0 right-0 z-40 w-64 border-l border-black/[0.06] bg-white/95 backdrop-blur-2xl p-4 shadow-xl' : 'hidden',
       )}>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/40">History</h2>
-          <button type="button" onClick={() => setHistoryOpen(false)} className="text-xs text-white/20 hover:text-white/50 lg:hidden">✕</button>
+          <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">History</h2>
+          <button type="button" onClick={() => setHistoryOpen(false)} className="text-xs text-[#94a3b8] hover:text-[#64748b] lg:hidden">✕</button>
         </div>
-        <p className="mb-3 text-[10px] text-white/15">Last {liveData.feedDays ?? 7} days</p>
+        <p className="mb-3 text-[10px] text-[#94a3b8]">Last {liveData.feedDays ?? 7} days</p>
         <div className="space-y-0.5">
           <button type="button" onClick={() => { setSelectedDate(null); setHistoryData(null); setHistoryOpen(false) }}
             className={cn('w-full rounded-lg px-2.5 py-2 text-left text-[11px] font-medium transition-all',
-              !viewingHistory ? 'bg-[rgba(201,168,76,0.1)] text-[#E8C96A]' : 'text-white/25 hover:bg-white/[0.03] hover:text-white/40')}>
+              !viewingHistory ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-[#94a3b8] hover:bg-black/[0.02] hover:text-[#64748b]')}>
             Today (live)
           </button>
           {(liveData.historyDates ?? []).map(date => (
             <button key={date} type="button" onClick={() => { void loadHistoryDay(date); setHistoryOpen(false) }}
               className={cn('w-full rounded-lg px-2.5 py-2 text-left text-[11px] font-medium tabular-nums transition-all',
-                selectedDate === date ? 'bg-white/[0.05] text-white/70' : 'text-white/20 hover:bg-white/[0.03] hover:text-white/35')}>
+                selectedDate === date ? 'bg-black/[0.04] text-[#1a1a2e]/80' : 'text-[#94a3b8] hover:bg-black/[0.02] hover:text-[#64748b]')}>
               {date}{historyLoading && selectedDate === date ? ' …' : ''}
             </button>
           ))}

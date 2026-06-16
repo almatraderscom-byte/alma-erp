@@ -23,21 +23,21 @@ function dutyTimeSlot(d: AgentDutyRow): 'morning' | 'afternoon' | 'evening' | 'n
 }
 
 const slotConfig = {
-  morning: { label: 'সকাল', icon: '🌅', color: 'text-amber-300/60' },
-  afternoon: { label: 'দুপুর', icon: '☀️', color: 'text-yellow-300/60' },
-  evening: { label: 'সন্ধ্যা', icon: '🌆', color: 'text-orange-300/60' },
-  night: { label: 'রাত', icon: '🌙', color: 'text-blue-300/60' },
+  morning: { label: 'সকাল', icon: '🌅', color: 'text-amber-600' },
+  afternoon: { label: 'দুপুর', icon: '☀️', color: 'text-[#D4A84B]' },
+  evening: { label: 'সন্ধ্যা', icon: '🌆', color: 'text-[#E07A5F]' },
+  night: { label: 'রাত', icon: '🌙', color: 'text-blue-500' },
 }
 
 function DutyDot({ duty, isExpanded, onClick }: {
   duty: AgentDutyRow; isExpanded: boolean; onClick: () => void
 }) {
   const statusClasses = {
-    done: 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]',
-    failed: 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.6)]',
-    missed: 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.6)]',
-    skipped: 'bg-zinc-500',
-    pending: 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse',
+    done: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]',
+    failed: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]',
+    missed: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]',
+    skipped: 'bg-zinc-400',
+    pending: 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
   }
 
   return (
@@ -53,12 +53,12 @@ function DutyDot({ duty, isExpanded, onClick }: {
         'h-3.5 w-3.5 rounded-full transition-transform duration-200',
         statusClasses[duty.status] ?? statusClasses.pending,
         'group-hover/dot:scale-150',
-        isExpanded && 'scale-150 ring-2 ring-white/20',
+        isExpanded && 'scale-150 ring-2 ring-black/10',
       )} />
       <span className={cn(
-        'absolute -bottom-5 whitespace-nowrap text-[8px] text-white/0 transition-all',
-        'group-hover/dot:text-white/40',
-        isExpanded && 'text-white/50',
+        'absolute -bottom-5 whitespace-nowrap text-[8px] text-transparent transition-all',
+        'group-hover/dot:text-[#94a3b8]',
+        isExpanded && 'text-[#64748b]',
       )}>
         {duty.time ?? '—'}
       </span>
@@ -82,23 +82,23 @@ function DutyDetailInline({ duty, onRetrigger, retriggering }: {
     >
       <div className={cn(
         'mt-2 rounded-xl border px-3 py-2.5 text-[11px]',
-        isFailed ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/[0.06] bg-white/[0.02]',
+        isFailed ? 'border-red-500/20 bg-red-50' : 'border-black/[0.06] bg-[#FAF9F6]',
       )}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-white/70">{duty.label}</span>
+          <span className="font-semibold text-[#1a1a2e]/80">{duty.label}</span>
           <span className={cn(
             'rounded px-1.5 py-0.5 text-[9px] font-bold uppercase',
-            duty.status === 'done' ? 'bg-emerald-500/15 text-emerald-300' :
-            isFailed ? 'bg-red-500/15 text-red-300' :
-            duty.status === 'skipped' ? 'bg-zinc-500/15 text-zinc-300' :
-            'bg-amber-500/15 text-amber-300',
+            duty.status === 'done' ? 'bg-emerald-500/15 text-emerald-600' :
+            isFailed ? 'bg-red-500/15 text-red-600' :
+            duty.status === 'skipped' ? 'bg-zinc-200 text-zinc-500' :
+            'bg-amber-500/15 text-amber-600',
           )}>
             {duty.status}
           </span>
-          {duty.ranAt && <span className="text-[10px] text-white/25">at {fmtTime(duty.ranAt)}</span>}
+          {duty.ranAt && <span className="text-[10px] text-[#94a3b8]">at {fmtTime(duty.ranAt)}</span>}
         </div>
         {duty.detail && (
-          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'text-red-300/70' : 'text-white/40')}>{duty.detail}</p>
+          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'text-red-600/70' : 'text-[#64748b]')}>{duty.detail}</p>
         )}
         <div className="mt-2 flex items-center gap-2">
           <button
@@ -108,10 +108,10 @@ function DutyDetailInline({ duty, onRetrigger, retriggering }: {
             className={cn(
               'rounded-lg border px-2.5 py-1 text-[9px] font-bold transition-all',
               retriggering
-                ? 'border-white/[0.06] text-white/20 cursor-wait'
+                ? 'border-black/[0.06] text-[#94a3b8] cursor-wait'
                 : isFailed
-                  ? 'border-red-400/30 bg-red-500/[0.08] text-red-300 hover:bg-red-500/15'
-                  : 'border-[#C9A84C]/30 bg-[#C9A84C]/[0.08] text-[#E8C96A] hover:bg-[#C9A84C]/15',
+                  ? 'border-red-400/30 bg-red-50 text-red-600 hover:bg-red-100'
+                  : 'border-[#E07A5F]/30 bg-[#E07A5F]/[0.08] text-[#E07A5F] hover:bg-[#E07A5F]/15',
             )}
           >
             {retriggering ? '⏳ Running…' : '⟳ Retrigger'}
@@ -146,22 +146,21 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#C9A84C]/20 bg-white/[0.02] backdrop-blur-xl overflow-hidden shadow-[0_0_24px_rgba(201,168,76,0.04)]">
-        <div className="flex items-center gap-2 border-b border-white/[0.04] px-4 py-2.5">
+      <div className="rounded-2xl border border-[#E07A5F]/20 bg-white overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
           <span className="text-sm">🤖</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/50">Agent Duties</h3>
-          <span className="rounded-md bg-[#C9A84C]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#C9A84C]">
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Agent Duties</h3>
+          <span className="rounded-md bg-[#E07A5F]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#E07A5F]">
             {doneDuties}/{totalDuties} done
           </span>
           {failedDuties > 0 && (
-            <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300">
+            <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold text-red-600">
               {failedDuties} failed
             </span>
           )}
         </div>
 
         <div className="p-3">
-          {/* Timeline dots view */}
           <div className="mb-4 overflow-x-auto pb-2">
             <div className="flex min-w-[600px] items-end gap-1 px-2">
               {(['morning', 'afternoon', 'evening', 'night'] as const).map(slot => {
@@ -173,7 +172,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                     <span className={cn('text-[9px] font-bold uppercase tracking-wider', cfg.color)}>
                       {cfg.icon} {cfg.label}
                     </span>
-                    <div className="flex items-center gap-1.5 rounded-xl border border-white/[0.04] bg-white/[0.01] px-2 py-2">
+                    <div className="flex items-center gap-1.5 rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-2 py-2">
                       {slotDuties.map(d => (
                         <DutyDot
                           key={d.id}
@@ -189,7 +188,6 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
             </div>
           </div>
 
-          {/* Expanded duty detail */}
           <AnimatePresence>
             {expandedDuty && duties.find(d => d.duty === expandedDuty) && (
               <DutyDetailInline
@@ -200,7 +198,6 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
             )}
           </AnimatePresence>
 
-          {/* List view */}
           <div className="mt-2 space-y-0.5">
             {duties.map(d => {
               const isFailed = d.status === 'failed' || d.status === 'missed'
@@ -211,22 +208,22 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                   type="button"
                   onClick={() => setExpandedDuty(isActive ? null : d.duty)}
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-all hover:bg-white/[0.03]',
-                    isFailed ? 'border-l-2 border-l-red-400/60' :
-                    d.status === 'done' ? 'border-l-2 border-l-emerald-400/40' :
-                    'border-l-2 border-l-amber-400/30',
-                    isActive && 'bg-white/[0.03]',
+                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-all hover:bg-black/[0.02]',
+                    isFailed ? 'border-l-2 border-l-red-500/60' :
+                    d.status === 'done' ? 'border-l-2 border-l-emerald-500/40' :
+                    'border-l-2 border-l-amber-500/30',
+                    isActive && 'bg-black/[0.02]',
                   )}
                 >
                   <span className={cn(
                     'inline-block h-2 w-2 shrink-0 rounded-full',
-                    d.status === 'done' ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' :
-                    isFailed ? 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]' :
-                    d.status === 'skipped' ? 'bg-zinc-500' :
-                    'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse',
+                    d.status === 'done' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]' :
+                    isFailed ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]' :
+                    d.status === 'skipped' ? 'bg-zinc-400' :
+                    'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
                   )} />
-                  <span className="min-w-0 flex-1 truncate text-white/70">{d.label}</span>
-                  <span className="shrink-0 text-[10px] tabular-nums text-white/25">
+                  <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/80">{d.label}</span>
+                  <span className="shrink-0 text-[10px] tabular-nums text-[#94a3b8]">
                     {(dutyTimeOverrides ?? {})[d.duty] ?? (d.ranAt ? fmtTime(d.ranAt) : d.time ?? '')}
                   </span>
                 </button>
@@ -244,25 +241,25 @@ export function MonitorSalahTimeline({ salahDuties }: { salahDuties: SalahDutyRo
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-emerald-500/20 bg-white/[0.02] backdrop-blur-xl overflow-hidden shadow-[0_0_24px_rgba(16,185,129,0.04)]">
-        <div className="flex items-center gap-2 border-b border-white/[0.04] px-4 py-2.5">
+      <div className="rounded-2xl border border-emerald-500/20 bg-white overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
           <span className="text-sm">🕌</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/50">Salah Reminders</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Salah Reminders</h3>
         </div>
         <div className="p-3 space-y-1">
           {salahDuties.map(s => (
-            <div key={s.waqt} className="flex items-center gap-2.5 rounded-lg bg-white/[0.01] px-2.5 py-2 text-[12px]">
+            <div key={s.waqt} className="flex items-center gap-2.5 rounded-lg bg-[#FAF9F6] px-2.5 py-2 text-[12px]">
               <span className={cn(
                 'inline-block h-2 w-2 shrink-0 rounded-full',
-                s.status === 'done' ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' :
-                s.status === 'missed' ? 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]' :
-                'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse',
+                s.status === 'done' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]' :
+                s.status === 'missed' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]' :
+                'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
               )} />
-              <span className="min-w-0 flex-1 truncate text-white/80">
+              <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/90">
                 {s.label}
-                {s.reminders ? <span className="ml-1 text-[10px] text-white/30">({s.reminders}×)</span> : null}
+                {s.reminders ? <span className="ml-1 text-[10px] text-[#94a3b8]">({s.reminders}×)</span> : null}
               </span>
-              <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/30">
+              <span className="shrink-0 text-[10px] font-medium tabular-nums text-[#94a3b8]">
                 {s.status === 'done' && s.doneTime ? s.doneTime : s.scheduledTime}
               </span>
             </div>

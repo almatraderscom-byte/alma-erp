@@ -87,10 +87,10 @@ export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
             exit={{ opacity: 0, height: 0, y: -8 }}
             transition={{ duration: 0.25 }}
             className={cn(
-              'flex items-start gap-3 rounded-xl border px-4 py-2.5 text-[12px] backdrop-blur-xl',
+              'flex items-start gap-3 rounded-xl border px-4 py-2.5 text-[12px]',
               alert.severity === 'critical'
-                ? 'border-red-500/30 bg-red-500/[0.06] text-red-100 shadow-[0_0_20px_rgba(239,68,68,0.08)]'
-                : 'border-amber-500/25 bg-amber-500/[0.05] text-amber-100',
+                ? 'border-red-500/30 bg-red-50 text-red-800 shadow-sm'
+                : 'border-amber-500/25 bg-amber-50 text-amber-800',
             )}
           >
             <span className="mt-0.5 shrink-0 text-base">
@@ -103,7 +103,7 @@ export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
             <button
               type="button"
               onClick={() => setDismissed(prev => new Set([...prev, alert.id]))}
-              className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-white/20 transition-colors hover:bg-white/[0.05] hover:text-white/40"
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-[#94a3b8] transition-colors hover:bg-black/[0.04] hover:text-[#64748b]"
             >
               ✕
             </button>

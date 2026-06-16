@@ -49,11 +49,11 @@ type BalanceData = {
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
-  anthropic: '#C9A84C',
-  openai: '#10B981',
+  anthropic: '#E07A5F',
+  openai: '#81B29A',
   gemini: '#3B82F6',
   google_tts: '#8B5CF6',
-  twilio: '#F59E0B',
+  twilio: '#D4A84B',
   elevenlabs: '#EC4899',
 }
 
@@ -65,10 +65,10 @@ function renewalBadge(dateStr: string) {
   const today = new Date()
   const renewal = new Date(dateStr + 'T00:00:00')
   const days = Math.ceil((renewal.getTime() - today.getTime()) / 86400000)
-  if (days < 0) return { label: 'মেয়াদোত্তীর্ণ', cls: 'bg-red-500/15 border border-red-500/30 text-red-300 shadow-[0_0_8px_rgba(239,68,68,0.1)]' }
-  if (days <= 3) return { label: `${days} দিন`, cls: 'bg-amber-500/15 border border-amber-500/30 text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.1)]' }
-  if (days <= 14) return { label: `${days} দিন`, cls: 'bg-[#C9A84C]/10 border border-[#C9A84C]/25 text-[#E8C96A]' }
-  return { label: `${days} দিন`, cls: 'bg-white/5 border border-white/[0.08] text-[#6B6B72]' }
+  if (days < 0) return { label: 'মেয়াদোত্তীর্ণ', cls: 'bg-red-50 border border-red-200 text-red-600 shadow-sm' }
+  if (days <= 3) return { label: `${days} দিন`, cls: 'bg-amber-50 border border-amber-200 text-amber-700 shadow-sm' }
+  if (days <= 14) return { label: `${days} দিন`, cls: 'bg-[#E07A5F]/10 border border-[#E07A5F]/20 text-[#E07A5F]' }
+  return { label: `${days} দিন`, cls: 'bg-[#FAF9F6] border border-black/[0.06] text-[#94a3b8]' }
 }
 
 function fmtBalanceCell(row: BalanceProviderRow) {
@@ -96,11 +96,11 @@ function fmtCheckedAt(iso: string) {
 }
 
 function balanceColor(row: BalanceProviderRow): string {
-  if (row.free) return 'text-emerald-300'
-  if (row.balanceUsd == null) return 'text-[#6B6B72]'
-  if (row.balanceUsd < 1) return 'text-red-300'
-  if (row.balanceUsd < 5) return 'text-amber-300'
-  return 'text-emerald-300'
+  if (row.free) return 'text-emerald-600'
+  if (row.balanceUsd == null) return 'text-[#94a3b8]'
+  if (row.balanceUsd < 1) return 'text-red-500'
+  if (row.balanceUsd < 5) return 'text-amber-600'
+  return 'text-emerald-600'
 }
 
 const staggerContainer = {
@@ -117,10 +117,10 @@ const staggerItem = {
 }
 
 const STAT_GLOWS = [
-  'shadow-[0_0_24px_rgba(201,168,76,0.08)]',
-  'shadow-[0_0_24px_rgba(201,168,76,0.06)]',
-  'shadow-[0_0_24px_rgba(59,130,246,0.08)]',
-  'shadow-[0_0_24px_rgba(139,92,246,0.08)]',
+  'shadow-[0_2px_12px_rgba(224,122,95,0.08)]',
+  'shadow-[0_2px_12px_rgba(212,168,75,0.08)]',
+  'shadow-[0_2px_12px_rgba(129,178,154,0.08)]',
+  'shadow-[0_2px_12px_rgba(59,130,246,0.08)]',
 ]
 
 export default function AgentCostsDashboard() {
@@ -214,7 +214,7 @@ export default function AgentCostsDashboard() {
 
   if (loading) {
     return (
-      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6">
+      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-screen">
         <div className="skeleton h-8 w-48 rounded-lg" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {[0, 1, 2].map((i) => (
@@ -228,9 +228,9 @@ export default function AgentCostsDashboard() {
 
   if (error || !data) {
     return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
-        <p className="text-sm text-red-400">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
-        <button onClick={() => void load()} className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-4 py-2 text-xs text-[#9B9BA4] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all">
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center bg-[#FAF9F6]">
+        <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
+        <button onClick={() => void load()} className="rounded-xl border border-black/[0.06] bg-white px-4 py-2 text-xs text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 shadow-sm transition-all">
           আবার চেষ্টা
         </button>
       </div>
@@ -238,19 +238,19 @@ export default function AgentCostsDashboard() {
   }
 
   return (
-    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md px-4 py-3">
+    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-screen">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/[0.06] bg-white px-4 py-3 shadow-sm">
         <div>
-          <h1 className="text-lg font-bold text-[#FAFAF8]">AI খরচ <span className="text-[#C9A84C]">ড্যাশবোর্ড</span></h1>
-          <p className="text-[11px] text-[#6B6B72]">API + সাবস্ক্রিপশন — এক জায়গায়</p>
+          <h1 className="text-lg font-bold text-[#1a1a2e]">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
+          <p className="text-[11px] text-[#94a3b8]">API + সাবস্ক্রিপশন — এক জায়গায়</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/agent" className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-2 text-xs text-[#9B9BA4] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 transition-all">
+          <Link href="/agent" className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-xs text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 shadow-sm transition-all">
             ← চ্যাট
           </Link>
           <a
             href="/api/assistant/costs/export"
-            className="rounded-xl bg-[#C9A84C]/[0.08] border border-[#C9A84C]/25 backdrop-blur-sm px-3 py-2 text-xs font-semibold text-[#E8C96A] hover:bg-[#C9A84C]/15 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
+            className="rounded-xl bg-[#E07A5F]/10 border border-[#E07A5F]/20 px-3 py-2 text-xs font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/15 hover:shadow-[0_2px_12px_rgba(224,122,95,0.12)] transition-all"
           >
             CSV ডাউনলোড
           </a>
@@ -258,53 +258,53 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* API balances */}
-      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
+      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-[#E8C96A]">💳 API ব্যালেন্স</p>
+          <p className="text-xs font-semibold text-[#E07A5F]">💳 API ব্যালেন্স</p>
           <div className="flex items-center gap-2">
             {balances?.checkedAt && (
-              <p className="text-[10px] text-[#6B6B72]">
+              <p className="text-[10px] text-[#94a3b8]">
                 শেষ চেক: {fmtCheckedAt(balances.checkedAt)}
               </p>
             )}
             <button
               onClick={() => void refreshBalances()}
               disabled={refreshingBalances}
-              className="rounded-lg border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-2.5 py-1 text-[10px] text-[#9B9BA4] hover:text-[#FAFAF8] hover:border-[#C9A84C]/20 disabled:opacity-50 transition-all"
+              className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-1 text-[10px] text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 disabled:opacity-50 transition-all"
             >
               {refreshingBalances ? 'রিফ্রেশ…' : '🔄 Refresh'}
             </button>
           </div>
         </div>
         {!balances?.providers?.length ? (
-          <p className="py-4 text-center text-[11px] text-[#6B6B72]">ব্যালেন্স লোড হচ্ছে…</p>
+          <p className="py-4 text-center text-[11px] text-[#94a3b8]">ব্যালেন্স লোড হচ্ছে…</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-left text-[11px]">
               <thead>
-                <tr className="border-b border-white/[0.08]">
-                  <th className="py-2.5 pr-3 font-medium text-[#C9A84C]">Provider</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#C9A84C]">ব্যালেন্স</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#C9A84C]">আজ খরচ</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#C9A84C]">এই মাসে</th>
-                  <th className="py-2.5 font-medium text-[#C9A84C]">সূত্র</th>
+                <tr className="border-b border-black/[0.06]">
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">Provider</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">ব্যালেন্স</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">আজ খরচ</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">এই মাসে</th>
+                  <th className="py-2.5 font-medium text-[#E07A5F]">সূত্র</th>
                 </tr>
               </thead>
               <tbody>
                 {balances.providers.map((row) => (
-                  <tr key={row.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
-                    <td className="py-2.5 pr-3 text-[#FAFAF8]">{row.label}</td>
+                  <tr key={row.id} className="border-b border-black/[0.04] last:border-0 hover:bg-[#FAF9F6] transition-colors">
+                    <td className="py-2.5 pr-3 text-[#1a1a2e]">{row.label}</td>
                     <td className={cn('py-2.5 pr-3 font-medium', balanceColor(row))}>
                       {fmtBalanceCell(row)}
                       {row.free && (
-                        <span className="ml-1.5 inline-flex items-center rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-300">
+                        <span className="ml-1.5 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-600">
                           Free
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-3 text-[#9B9BA4]">{fmtSpendCell(row.todayUsd, row.id)}</td>
-                    <td className="py-2.5 pr-3 text-[#9B9BA4]">{fmtSpendCell(row.monthUsd, row.id)}</td>
-                    <td className="py-2.5 text-[#6B6B72]">{row.source}</td>
+                    <td className="py-2.5 pr-3 text-[#64748b]">{fmtSpendCell(row.todayUsd, row.id)}</td>
+                    <td className="py-2.5 pr-3 text-[#64748b]">{fmtSpendCell(row.monthUsd, row.id)}</td>
+                    <td className="py-2.5 text-[#94a3b8]">{row.source}</td>
                   </tr>
                 ))}
               </tbody>
@@ -338,71 +338,71 @@ export default function AgentCostsDashboard() {
             key={c.label}
             variants={staggerItem}
             className={cn(
-              'rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4 transition-all hover:border-white/[0.12]',
+              'rounded-2xl border border-black/[0.06] bg-white p-4 transition-all hover:border-black/[0.1] shadow-sm',
               STAT_GLOWS[idx],
             )}
           >
-            <p className="text-[10px] uppercase tracking-wider text-[#6B6B72]">{c.label}</p>
-            <p className="mt-1 text-2xl font-bold text-[#FAFAF8]">{c.value}</p>
-            {c.sub && <p className="mt-1 text-[10px] text-[#6B6B72]/70">{c.sub}</p>}
+            <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">{c.label}</p>
+            <p className="mt-1 text-2xl font-bold text-[#1a1a2e]">{c.value}</p>
+            {c.sub && <p className="mt-1 text-[10px] text-[#94a3b8]">{c.sub}</p>}
           </motion.div>
         ))}
       </motion.div>
 
       {/* Budget settings */}
-      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-        <p className="text-xs font-semibold text-[#E8C96A] mb-3">বাজেট সতর্কতা (USD)</p>
+      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <p className="text-xs font-semibold text-[#E07A5F] mb-3">বাজেট সতর্কতা (USD)</p>
         <div className="flex flex-wrap gap-3 items-end">
-          <label className="text-[11px] text-[#6B6B72]">
+          <label className="text-[11px] text-[#94a3b8]">
             দৈনিক
             <input
               type="number"
               step="0.01"
               value={budgetDaily}
               onChange={(e) => setBudgetDaily(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2 py-1.5 text-xs text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-1.5 text-xs text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>
-          <label className="text-[11px] text-[#6B6B72]">
+          <label className="text-[11px] text-[#94a3b8]">
             মাসিক
             <input
               type="number"
               step="0.01"
               value={budgetMonthly}
               onChange={(e) => setBudgetMonthly(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-white/[0.03] border border-white/[0.1] backdrop-blur-sm px-2 py-1.5 text-xs text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-1.5 text-xs text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>
           <button
             onClick={() => void saveBudget()}
             disabled={savingBudget}
-            className="rounded-lg bg-[#C9A84C]/10 border border-[#C9A84C]/30 backdrop-blur-sm px-3 py-1.5 text-xs text-[#E8C96A] font-semibold disabled:opacity-50 hover:bg-[#C9A84C]/15 hover:shadow-[0_0_12px_rgba(201,168,76,0.1)] transition-all"
+            className="rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/20 px-3 py-1.5 text-xs text-[#E07A5F] font-semibold disabled:opacity-50 hover:bg-[#E07A5F]/15 hover:shadow-[0_2px_8px_rgba(224,122,95,0.12)] transition-all"
           >
             {savingBudget ? 'সংরক্ষণ…' : 'সংরক্ষণ'}
           </button>
         </div>
-        <p className="mt-2 text-[10px] text-[#6B6B72]/70">৮০% → Tier 1 সতর্কতা | ১০০% → Tier 2 critical</p>
+        <p className="mt-2 text-[10px] text-[#94a3b8]">৮০% → Tier 1 সতর্কতা | ১০০% → Tier 2 critical</p>
         {(data.dailyBudgetPct != null || data.monthlyBudgetPct != null) && (
           <div className="mt-3 space-y-2 text-[11px]">
             {data.dailyBudgetPct != null && data.budgets.dailyUsd != null && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-[#9B9BA4]">
+                <div className="flex items-center justify-between text-[#64748b]">
                   <span>আজকের বাজেট ব্যবহার</span>
-                  <span className={data.dailyBudgetPct >= 100 ? 'text-red-300' : data.dailyBudgetPct >= 80 ? 'text-amber-200' : 'text-[#FAFAF8]'}>
+                  <span className={data.dailyBudgetPct >= 100 ? 'text-red-500' : data.dailyBudgetPct >= 80 ? 'text-amber-600' : 'text-[#1a1a2e]'}>
                     {data.dailyBudgetPct}% ({fmtUsd(data.todayUsd)} / {fmtUsd(data.budgets.dailyUsd)})
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.04]">
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-500',
                       data.dailyBudgetPct >= 100
-                        ? 'bg-gradient-to-r from-red-600 to-red-400'
+                        ? 'bg-gradient-to-r from-red-500 to-red-400'
                         : data.dailyBudgetPct >= 80
-                          ? 'bg-gradient-to-r from-amber-600 to-amber-400'
-                          : 'bg-gradient-to-r from-[#8B6914] to-[#E8C96A]',
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-400'
+                          : 'bg-gradient-to-r from-[#E07A5F] to-[#D4A84B]',
                     )}
                     style={{ width: `${Math.min(data.dailyBudgetPct, 100)}%` }}
                   />
@@ -411,21 +411,21 @@ export default function AgentCostsDashboard() {
             )}
             {data.monthlyBudgetPct != null && data.budgets.monthlyUsd != null && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-[#9B9BA4]">
+                <div className="flex items-center justify-between text-[#64748b]">
                   <span>মাসিক বাজেট ব্যবহার</span>
-                  <span className={data.monthlyBudgetPct >= 100 ? 'text-red-300' : data.monthlyBudgetPct >= 80 ? 'text-amber-200' : 'text-[#FAFAF8]'}>
+                  <span className={data.monthlyBudgetPct >= 100 ? 'text-red-500' : data.monthlyBudgetPct >= 80 ? 'text-amber-600' : 'text-[#1a1a2e]'}>
                     {data.monthlyBudgetPct}% ({fmtUsd(data.monthUsd)} / {fmtUsd(data.budgets.monthlyUsd)})
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.04]">
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-500',
                       data.monthlyBudgetPct >= 100
-                        ? 'bg-gradient-to-r from-red-600 to-red-400'
+                        ? 'bg-gradient-to-r from-red-500 to-red-400'
                         : data.monthlyBudgetPct >= 80
-                          ? 'bg-gradient-to-r from-amber-600 to-amber-400'
-                          : 'bg-gradient-to-r from-[#8B6914] to-[#E8C96A]',
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-400'
+                          : 'bg-gradient-to-r from-[#E07A5F] to-[#D4A84B]',
                     )}
                     style={{ width: `${Math.min(data.monthlyBudgetPct, 100)}%` }}
                   />
@@ -438,20 +438,20 @@ export default function AgentCostsDashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-3">দৈনিক খরচ (৩০ দিন)</p>
+        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-[#64748b] mb-3">দৈনিক খরচ (৩০ দিন)</p>
           {chartData.length === 0 ? (
-            <p className="py-12 text-center text-[11px] text-[#6B6B72]">এখনো কোনো ইভেন্ট নেই</p>
+            <p className="py-12 text-center text-[11px] text-[#94a3b8]">এখনো কোনো ইভেন্ট নেই</p>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={chartData}>
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#6B6B72' }} axisLine={{ stroke: '#1E1E24' }} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: '#6B6B72' }} axisLine={{ stroke: '#1E1E24' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} />
+                <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
                 <Tooltip
                   formatter={(v: number) => fmtUsd(v)}
-                  contentStyle={{ backgroundColor: 'rgba(20,20,24,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', backdropFilter: 'blur(12px)' }}
-                  labelStyle={{ color: '#FAFAF8' }}
-                  itemStyle={{ color: '#9B9BA4' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid rgba(0,0,0,0.06)', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                  labelStyle={{ color: '#1a1a2e' }}
+                  itemStyle={{ color: '#64748b' }}
                 />
                 <Bar dataKey="anthropic" stackId="a" fill={PROVIDER_COLORS.anthropic} radius={[0, 0, 0, 0]} />
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
@@ -463,25 +463,25 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-3">প্রোভাইডার (এই মাস)</p>
+        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-[#64748b] mb-3">প্রোভাইডার (এই মাস)</p>
           {pieData.length === 0 ? (
-            <p className="py-12 text-center text-[11px] text-[#6B6B72]">ডেটা নেই</p>
+            <p className="py-12 text-center text-[11px] text-[#94a3b8]">ডেটা নেই</p>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name }) => name}>
                   {pieData.map((e) => (
-                    <Cell key={e.name} fill={PROVIDER_COLORS[e.name] ?? '#52525b'} />
+                    <Cell key={e.name} fill={PROVIDER_COLORS[e.name] ?? '#94a3b8'} />
                   ))}
                 </Pie>
                 <Tooltip
                   formatter={(v: number) => fmtUsd(v)}
-                  contentStyle={{ backgroundColor: 'rgba(20,20,24,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', backdropFilter: 'blur(12px)' }}
-                  labelStyle={{ color: '#FAFAF8' }}
-                  itemStyle={{ color: '#9B9BA4' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid rgba(0,0,0,0.06)', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                  labelStyle={{ color: '#1a1a2e' }}
+                  itemStyle={{ color: '#64748b' }}
                 />
-                <Legend wrapperStyle={{ fontSize: 10, color: '#9B9BA4' }} />
+                <Legend wrapperStyle={{ fontSize: 10, color: '#64748b' }} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -490,39 +490,39 @@ export default function AgentCostsDashboard() {
 
       {/* Top conversations */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
+        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-[#64748b] mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
           {data.topConversations.length === 0 ? (
-            <p className="text-[11px] text-[#6B6B72] py-4 text-center">এখনো নেই</p>
+            <p className="text-[11px] text-[#94a3b8] py-4 text-center">এখনো নেই</p>
           ) : (
             <ul className="space-y-2">
               {data.topConversations.map((c) => (
-                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.03] transition-colors">
-                  <Link href="/agent" className="truncate text-[#9B9BA4] hover:text-[#E8C96A] transition-colors">
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-[#FAF9F6] transition-colors">
+                  <Link href="/agent" className="truncate text-[#64748b] hover:text-[#E07A5F] transition-colors">
                     {c.title ?? c.conversationId.slice(0, 8)}
                   </Link>
-                  <span className="shrink-0 text-[#C9A84C] font-medium">{fmtUsd(c.totalUsd)}</span>
+                  <span className="shrink-0 text-[#E07A5F] font-medium">{fmtUsd(c.totalUsd)}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
 
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
-          <p className="text-[10px] text-[#6B6B72] mb-3">
+        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-[#64748b] mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
+          <p className="text-[10px] text-[#94a3b8] mb-3">
             আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
           </p>
           {data.topTelegramConversations.length === 0 ? (
-            <p className="text-[11px] text-[#6B6B72] py-4 text-center">
+            <p className="text-[11px] text-[#94a3b8] py-4 text-center">
               এখনো Telegram ট্যাগ করা কথোপকথন নেই — নতুন মেসেজ থেকে ট্র্যাক হবে
             </p>
           ) : (
             <ul className="space-y-2">
               {data.topTelegramConversations.map((c) => (
-                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.03] transition-colors">
-                  <span className="truncate text-[#9B9BA4]">{c.title ?? c.conversationId.slice(0, 8)}</span>
-                  <span className="shrink-0 text-[#C9A84C] font-medium">{fmtUsd(c.totalUsd)}</span>
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-[#FAF9F6] transition-colors">
+                  <span className="truncate text-[#64748b]">{c.title ?? c.conversationId.slice(0, 8)}</span>
+                  <span className="shrink-0 text-[#E07A5F] font-medium">{fmtUsd(c.totalUsd)}</span>
                 </li>
               ))}
             </ul>
@@ -532,32 +532,32 @@ export default function AgentCostsDashboard() {
 
       {/* Telegram daily chart */}
       {(data.telegramDailyLast30?.length ?? 0) > 0 && (
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-          <p className="text-xs font-semibold text-[#9B9BA4] mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
+        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-[#64748b] mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={data.telegramDailyLast30.map((d) => ({
               date: d.date.slice(5),
               total: d.totalUsd,
             }))}>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#6B6B72' }} axisLine={{ stroke: '#1E1E24' }} tickLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#6B6B72' }} axisLine={{ stroke: '#1E1E24' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
               <Tooltip
                 formatter={(v: number) => fmtUsd(v)}
-                contentStyle={{ backgroundColor: 'rgba(20,20,24,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', backdropFilter: 'blur(12px)' }}
-                labelStyle={{ color: '#FAFAF8' }}
-                itemStyle={{ color: '#9B9BA4' }}
+                contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid rgba(0,0,0,0.06)', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                labelStyle={{ color: '#1a1a2e' }}
+                itemStyle={{ color: '#64748b' }}
               />
-              <Bar dataKey="total" fill="#3B82F6" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="total" fill="#81B29A" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       )}
 
       {/* Subscriptions */}
-      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md p-4">
-        <p className="text-xs font-semibold text-[#9B9BA4] mb-3">সাবস্ক্রিপশন</p>
+      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <p className="text-xs font-semibold text-[#64748b] mb-3">সাবস্ক্রিপশন</p>
         {data.subscriptions.length === 0 ? (
-          <p className="text-[11px] text-[#6B6B72] py-4 text-center">
+          <p className="text-[11px] text-[#94a3b8] py-4 text-center">
             কোনো সাবস্ক্রিপশন নেই — এজেন্টকে বলুন: &quot;ChatGPT subscription add koro…&quot;
           </p>
         ) : (
@@ -565,10 +565,10 @@ export default function AgentCostsDashboard() {
             {data.subscriptions.map((s) => {
               const badge = renewalBadge(s.nextRenewalAt)
               return (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm px-3 py-2.5 hover:bg-white/[0.04] transition-all">
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5 hover:bg-white hover:shadow-sm transition-all">
                   <div>
-                    <p className="text-xs font-medium text-[#FAFAF8]">{s.name}</p>
-                    <p className="text-[10px] text-[#6B6B72]">
+                    <p className="text-xs font-medium text-[#1a1a2e]">{s.name}</p>
+                    <p className="text-[10px] text-[#94a3b8]">
                       {s.currency} {s.amount}/{s.billingCycle === 'yearly' ? 'বছর' : 'মাস'}
                       {s.category ? ` · ${s.category}` : ''}
                     </p>
