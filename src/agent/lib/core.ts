@@ -56,6 +56,30 @@ export type AgentEvent =
   | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
   | { type: 'error'; message: string }
 
+// ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
+export const MUTATING_TOOLS = new Set([
+  'add_family_contact', 'add_owner_todo', 'add_product_asset', 'add_staff_task_now',
+  'add_subscription', 'approve_and_dispatch_tasks', 'approve_pending_dispatch',
+  'approve_pending_staff_message', 'approve_playbook', 'cancel_reminder',
+  'confirm_oxylabs_spend', 'correct_and_redispatch_staff_tasks', 'create_order_draft',
+  'delete_finance_entry', 'delete_memory', 'duplicate_campaign', 'edit_finance_entry',
+  'forget_reference', 'forget_rule', 'log_expense', 'log_expenses_batch',
+  'log_ledger_entries_batch', 'log_ledger_entry', 'manage_competitor_watchlist',
+  'manage_model_library', 'manage_work_todos', 'mark_salah', 'merge_into_proposal',
+  'outbound_phone_call', 'pause_campaign', 'pause_content_engine', 'post_to_facebook',
+  'publish_product', 'reject_playbook', 'resume_content_engine', 'retire_playbook',
+  'run_content_post', 'save_brand_asset', 'save_memory', 'send_customer_message',
+  'send_dispatch_correction_notice', 'send_product_image', 'send_staff_announcement',
+  'send_urgent_alert', 'set_api_credit', 'set_product_featured', 'set_qc_level',
+  'set_reminder', 'set_salah_override', 'set_salah_time', 'set_staff_leave',
+  'snooze_reminder', 'unpublish_product', 'update_campaign_budget', 'update_memory',
+  'update_owner_todo', 'update_product_web', 'update_setting', 'update_staff_task_profile',
+  'update_staff_task_status', 'delegate_to_specialist', 'call_family_member',
+  'prepare_staff_task_proposal', 'propose_staff_tasks', 'request_salah_delay',
+  'run_health_scan', 'web_research', 'generate_image', 'generate_on_model_image',
+  'make_ad_creatives', 'make_product_reel',
+])
+
 // ── Anthropic client ────────────────────────────────────────────────────────
 
 const globalForAnthropic = globalThis as unknown as { anthropic: Anthropic | undefined }
@@ -536,21 +560,65 @@ export async function* runAgentTurn(
         { role: 'assistant', content: currentBlocks as unknown as Anthropic.Messages.ContentBlockParam[] },
       ]
 
-      const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const tb of toolUseBlocks) {
-        const isDelegate = tb.name === 'delegate_to_specialist'
-        // Emit the live delegation card the moment we know which specialist + task.
-        if (isDelegate) {
-          const role = String((tb.input as Record<string, unknown>).role ?? '')
-          const task = String((tb.input as Record<string, unknown>).task ?? '')
-          yield { type: 'subagent_start', id: tb.id, role, roleLabel: specialistLabel(role), task }
-        }
+      // ── Parallel read / sequential write tool execution ──────────────
+      type ToolBlock = Extract<CollectedBlock, { type: 'tool_use' }>
+      type ToolExecResult = {
+        tb: ToolBlock
+        result: { success: boolean; data?: unknown; error?: string }
+        durationMs: number
+      }
 
+      const execOneTool = async (tb: ToolBlock): Promise<ToolExecResult> => {
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
           : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id })
-        const durationMs = Date.now() - started
+        return { tb, result, durationMs: Date.now() - started }
+      }
+
+      const reads: ToolBlock[] = []
+      const writes: ToolBlock[] = []
+      for (const tb of toolUseBlocks) {
+        // Emit pre-execution events
+        const isDelegate = tb.name === 'delegate_to_specialist'
+        if (isDelegate) {
+          const role = String((tb.input as Record<string, unknown>).role ?? '')
+          const task = String((tb.input as Record<string, unknown>).task ?? '')
+          yield { type: 'subagent_start', id: tb.id, role, roleLabel: specialistLabel(role), task }
+        } else {
+          yield { type: 'tool_start', id: tb.id, name: tb.name }
+        }
+
+        if (MUTATING_TOOLS.has(tb.name)) {
+          writes.push(tb)
+        } else {
+          reads.push(tb)
+        }
+      }
+
+      // Execute reads in parallel, writes sequentially after
+      const resultMap = new Map<string, ToolExecResult>()
+
+      if (reads.length > 1) {
+        const readResults = await Promise.all(reads.map(execOneTool))
+        for (const r of readResults) resultMap.set(r.tb.id, r)
+      } else if (reads.length === 1) {
+        const r = await execOneTool(reads[0])
+        resultMap.set(r.tb.id, r)
+      }
+
+      for (const tb of writes) {
+        const r = await execOneTool(tb)
+        resultMap.set(r.tb.id, r)
+      }
+
+      // Emit events and build toolResultContent in ORIGINAL order
+      const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
+      for (const tb of toolUseBlocks) {
+        const exec = resultMap.get(tb.id)!
+        const { result, durationMs } = exec
+
+        const isDelegate = tb.name === 'delegate_to_specialist'
 
         if (!result.success) {
           await captureAgentError(new Error(result.error ?? 'tool_failed'), 'agent.tool.failed', {
@@ -590,7 +658,6 @@ export async function* runAgentTurn(
           }
         }
 
-        // Emit confirm_card only when the pending action is still awaiting owner approval
         if (result.success && result.data != null && typeof result.data === 'object') {
           const d = result.data as Record<string, unknown>
           if (typeof d.pendingActionId === 'string') {
