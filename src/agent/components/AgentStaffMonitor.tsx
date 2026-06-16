@@ -225,7 +225,7 @@ export default function AgentStaffMonitor() {
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 3000)
+    setTimeout(() => setToast(null), 4500)
   }
 
   /* ── Data Loaders ── */
@@ -504,13 +504,24 @@ export default function AgentStaffMonitor() {
           </div>
         )}
 
-        {/* Toast */}
+        {/* Action result — fixed top-center banner, always visible regardless of scroll position.
+            Respects the iOS safe area so it never hides under the status bar / header chrome. */}
         <AnimatePresence>
           {toast && (
-            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-              className={cn('fixed top-4 right-4 z-50 rounded-xl border px-4 py-2.5 text-[12px] font-semibold shadow-lg',
-                toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-50 text-emerald-700' : 'border-red-500/30 bg-red-50 text-red-700')}>
-              {toast.msg}
+            <motion.div
+              initial={{ opacity: 0, y: -24 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -24 }}
+              style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
+              className={cn(
+                'fixed left-1/2 z-[100] -translate-x-1/2 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[12px] font-semibold shadow-xl max-w-[92vw]',
+                toast.type === 'ok'
+                  ? 'border-emerald-500/30 bg-emerald-50 text-emerald-700'
+                  : 'border-red-500/30 bg-red-50 text-red-700',
+              )}
+            >
+              <span className="shrink-0">{toast.type === 'ok' ? '✓' : '⚠'}</span>
+              <span className="truncate">{toast.msg}</span>
             </motion.div>
           )}
         </AnimatePresence>

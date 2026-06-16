@@ -18,6 +18,10 @@ export interface ChatMessage {
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
+  /** Live extended-thinking stream — how the agent reasoned before answering. */
+  thinking?: string
+  /** Seconds spent thinking (set once the reply text begins). */
+  thinkingMs?: number
   pendingAction?: PendingAction
   askCard?: AskCard
   tokensIn?: number
@@ -53,6 +57,82 @@ function detectArtifact(text: string): { type: 'code' | 'markdown'; content: str
     return { type: 'markdown', content: text, title: firstHeading }
   }
   return null
+}
+
+/**
+ * Cursor-style "Thought for Ns" block. While the agent is still reasoning (no reply
+ * text yet) it stays expanded and streams the thinking live; once the reply begins it
+ * collapses to a one-line summary that the owner can tap to re-expand.
+ */
+function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinkingMs?: number; live: boolean }) {
+  const [open, setOpen] = useState(live)
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  // Keep expanded while thinking is live; collapse once the reply starts.
+  useEffect(() => {
+    setOpen(live)
+  }, [live])
+
+  // Autoscroll the thinking body as new text streams in.
+  useEffect(() => {
+    if (live && open && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    }
+  }, [thinking, live, open])
+
+  const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
+  const label = live ? 'Thinking…' : seconds != null ? `Thought for ${seconds}s` : 'Thought'
+
+  return (
+    <div className="mb-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-[12px] font-medium text-[#94a3b8] transition-colors hover:text-[#64748b]"
+      >
+        {live ? (
+          <motion.span
+            className="inline-block h-3 w-3 rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+            aria-hidden
+          />
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 2a7 7 0 00-4 12.74V17a2 2 0 002 2h4a2 2 0 002-2v-2.26A7 7 0 0012 2z" />
+            <path d="M9 21h6" />
+          </svg>
+        )}
+        <span>{label}</span>
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          className={`transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div
+              ref={bodyRef}
+              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-black/[0.07] pl-3 text-[13px] leading-relaxed text-[#64748b] whitespace-pre-wrap break-words"
+            >
+              {thinking}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -274,6 +354,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               ) : (
                 /* Assistant message — full-width, dark text on light bg */
                 <div className="min-w-0">
+                  {msg.thinking && (
+                    <ThoughtBlock
+                      thinking={msg.thinking}
+                      thinkingMs={msg.thinkingMs}
+                      live={Boolean(msg.streaming) && !msg.text}
+                    />
+                  )}
+
                   {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
                       label={streamStatus}

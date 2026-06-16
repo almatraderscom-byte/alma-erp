@@ -40,6 +40,9 @@ export const viewport: Viewport = {
   themeColor: '#FAF9F6',
   width: 'device-width',
   initialScale: 1,
+  /** Native Capacitor shell: lock zoom so touch never triggers pinch/zoom drift or jitter on iPhone. */
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: 'cover',
   /** Lets the layout viewport shrink when the software keyboard opens (iOS 15+ / modern Safari). */
   interactiveWidget: 'resizes-content',

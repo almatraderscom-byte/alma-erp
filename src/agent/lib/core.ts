@@ -38,6 +38,7 @@ import {
 
 export type AgentEvent =
   | { type: 'text_delta'; delta: string }
+  | { type: 'thinking_delta'; delta: string }
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
@@ -447,6 +448,11 @@ export async function* runAgentTurn(
           if (delta.type === 'text_delta') {
             activeBlockText += delta.text
             yield { type: 'text_delta', delta: delta.text }
+          } else if (delta.type === 'thinking_delta') {
+            // Surface the model's extended-thinking stream so the UI can show a
+            // live "Thought for Ns" block — how the agent is reasoning about the
+            // owner's message before it answers. Not persisted to history here.
+            yield { type: 'thinking_delta', delta: delta.thinking }
           } else if (delta.type === 'input_json_delta') {
             activeBlockInputJson += delta.partial_json
           }

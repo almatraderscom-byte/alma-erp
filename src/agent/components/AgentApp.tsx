@@ -140,6 +140,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    */
   const streamBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean } | null>(null)
 
+  /** Same rAF-batching for the extended-thinking stream (Cursor-style "Thought" block),
+   *  plus a start timestamp so we can show "Thought for Ns" once the reply begins. */
+  const thinkingBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean; startedAt: number } | null>(null)
+
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
   useEffect(() => {
@@ -333,13 +337,49 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         ))
       }
 
+      const flushThinkingBuffer = () => {
+        const buf = thinkingBufferRef.current
+        if (!buf || !buf.pending) {
+          if (buf) buf.flushScheduled = false
+          return
+        }
+        const chunk = buf.pending
+        buf.pending = ''
+        buf.flushScheduled = false
+        setMessages((prev) => prev.map((m) =>
+          m.id === buf.msgId ? { ...m, thinking: (m.thinking ?? '') + chunk } : m,
+        ))
+      }
+
       const applySseEvent = (evt: Record<string, unknown>) => {
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
           setActiveConvId(finalConvId)
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
+        } else if (evt.type === 'thinking_delta') {
+          setStreamMode('fetching')
+          setStreamStatus('🤔 ভাবছি…')
+          if (!thinkingBufferRef.current || thinkingBufferRef.current.msgId !== assistantMsgId) {
+            thinkingBufferRef.current = { msgId: assistantMsgId, pending: '', flushScheduled: false, startedAt: Date.now() }
+          }
+          thinkingBufferRef.current.pending += evt.delta as string
+          if (!thinkingBufferRef.current.flushScheduled) {
+            thinkingBufferRef.current.flushScheduled = true
+            requestAnimationFrame(flushThinkingBuffer)
+          }
         } else if (evt.type === 'text_delta') {
+          // First reply token after thinking: stamp the elapsed thinking time so the
+          // block collapses to "Thought for Ns".
+          const tb = thinkingBufferRef.current
+          if (tb && tb.msgId === assistantMsgId && tb.startedAt) {
+            flushThinkingBuffer()
+            const elapsed = Date.now() - tb.startedAt
+            tb.startedAt = 0
+            setMessages((prev) => prev.map((m) =>
+              m.id === assistantMsgId && m.thinkingMs == null ? { ...m, thinkingMs: elapsed } : m,
+            ))
+          }
           if (!toolInFlight) {
             setStreamMode('writing')
             setStreamStatus('✍️ উত্তর লিখছি…')
@@ -418,6 +458,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           gotStreamDone = true
           setStreamStatus(null)
           setStreamMode('writing')
+          flushThinkingBuffer()
           flushStreamBuffer()
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
@@ -442,6 +483,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setCompacting(true)
         } else if (evt.type === 'error') {
           gotStreamDone = true
+          flushThinkingBuffer()
           flushStreamBuffer()
           const errText = evt.message as string
           let banglaMsg = errText
@@ -478,8 +520,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
       }
       // Final flush in case stream ended without 'done' event
+      flushThinkingBuffer()
       flushStreamBuffer()
       streamBufferRef.current = null
+      thinkingBufferRef.current = null
 
       if (finalConvId && !gotStreamDone) {
         try {
@@ -498,6 +542,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (pending) {
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId ? { ...m, text: m.text + pending } : m,
+          ))
+        }
+      }
+      const tbuf = thinkingBufferRef.current
+      if (tbuf) {
+        const pending = tbuf.pending
+        thinkingBufferRef.current = null
+        if (pending) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, thinking: (m.thinking ?? '') + pending } : m,
           ))
         }
       }
