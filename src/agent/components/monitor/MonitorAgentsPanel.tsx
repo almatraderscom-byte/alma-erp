@@ -37,6 +37,13 @@ interface ModelToday {
   conversations: number
 }
 
+interface SpecialistToday {
+  role: string
+  label: string
+  calls: number
+  costUsd: number
+}
+
 interface RoutingResponse {
   config: RoutingConfig
   defaults: RoutingConfig
@@ -46,7 +53,16 @@ interface RoutingResponse {
   opusRemainingToday: number
   agentsToday: AgentToday[]
   modelsToday: ModelToday[]
+  specialistsToday: SpecialistToday[]
   todayDhakaDate: string
+}
+
+const SPECIALIST_ICON: Record<string, string> = {
+  researcher: '🔎',
+  analyst: '📊',
+  marketer: '📣',
+  content: '✍️',
+  ops: '🗂️',
 }
 
 /* ───────── Helpers ───────── */
@@ -412,6 +428,34 @@ export function MonitorAgentsPanel({
                   </motion.div>
                 )
               })}
+            </div>
+          )}
+
+          {/* Specialist sub-agents the head delegated to today */}
+          {data.specialistsToday && data.specialistsToday.length > 0 && (
+            <div className="mt-3 rounded-xl border border-sky-200/60 bg-sky-50/50 p-3">
+              <div className="mb-2 flex items-center gap-1.5">
+                <span className="text-sm">🤝</span>
+                <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-sky-700/80">
+                  সাব-এজেন্ট ডেলিগেশন
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {data.specialistsToday.map((s) => (
+                  <div
+                    key={s.role}
+                    className="flex items-center justify-between rounded-lg border border-sky-200/50 bg-white px-2.5 py-1.5"
+                  >
+                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#1a1a2e]/80">
+                      <span>{SPECIALIST_ICON[s.role] ?? '🤝'}</span>
+                      {s.label}
+                    </span>
+                    <span className="text-[10px] tabular-nums text-[#64748b]">
+                      {s.calls} কল · {fmtUsd(s.costUsd)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

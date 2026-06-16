@@ -27,6 +27,7 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   propose_staff_tasks: { label: 'টাস্ক প্রস্তাব সেভ করছি', icon: '📝', color: '#6366f1' },
   generate_owner_briefing: { label: 'ব্রিফিং ডেটা সংগ্রহ করছি', icon: '☀️', color: '#eab308' },
   get_salah_status: { label: 'নামাজের স্ট্যাটাস দেখছি', icon: '🕌', color: '#0ea5e9' },
+  delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
 }
 
 export function toolDisplay(name: string) {

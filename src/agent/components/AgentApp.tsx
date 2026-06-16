@@ -416,6 +416,47 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'subagent_start') {
+          setStreamMode('fetching')
+          setStreamStatus(`🤝 ${evt.roleLabel as string} কাজ করছে…`)
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  delegations: [
+                    ...(m.delegations ?? []),
+                    {
+                      id: evt.id as string,
+                      role: evt.role as string,
+                      roleLabel: evt.roleLabel as string,
+                      task: evt.task as string,
+                      done: false,
+                    },
+                  ],
+                }
+              : m
+          ))
+        } else if (evt.type === 'subagent_end') {
+          setStreamMode('writing')
+          setStreamStatus('✍️ উত্তর লিখছি…')
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  delegations: (m.delegations ?? []).map((d) =>
+                    d.id === evt.id
+                      ? {
+                          ...d,
+                          done: true,
+                          success: evt.success as boolean,
+                          summary: evt.summary as string | undefined,
+                          toolsUsed: evt.toolsUsed as string[] | undefined,
+                        }
+                      : d
+                  ),
+                }
+              : m
+          ))
         } else if (evt.type === 'confirm_card') {
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId

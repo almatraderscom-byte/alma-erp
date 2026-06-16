@@ -35,6 +35,7 @@ import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
 import { QC_TOOLS } from './qc-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
+import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 
 export interface ToolResult {
   success: boolean
@@ -383,6 +384,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...OWNER_TODO_TOOLS,
   ...PLAYBOOK_TOOLS,
   ...WORK_TODO_TOOLS,
+  ...ORCHESTRATOR_TOOLS,
 ]
 
 export const TOOLS: AgentTool[] = [
@@ -418,6 +420,7 @@ export const TOOLS: AgentTool[] = [
   ...VIDEO_TOOLS,
   ...BRAND_TOOLS,
   ...WORK_TODO_TOOLS,
+  ...ORCHESTRATOR_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

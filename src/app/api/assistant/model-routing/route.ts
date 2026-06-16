@@ -23,6 +23,7 @@ import {
   type ModelRoutingConfig,
 } from '@/agent/lib/models/routing-config'
 import { getModel, MODEL_REGISTRY } from '@/agent/lib/models/registry'
+import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 
 export const runtime = 'nodejs'
 
@@ -99,6 +100,23 @@ export async function GET(req: NextRequest) {
     conversations: Number(r.conversations) || 0,
   }))
 
+  // What each specialist sub-agent did today (delegations from the head agent).
+  const specialistRows = await prisma.$queryRaw<Array<{ role: string; calls: bigint; total: string }>>(
+    Prisma.sql`SELECT units->>'subagent' AS role, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0)::text AS total
+               FROM agent_cost_events
+               WHERE occurred_at >= ${start} AND occurred_at < ${end}
+                 AND units->>'subagent' IS NOT NULL
+               GROUP BY units->>'subagent'
+               ORDER BY COUNT(*) DESC`,
+  ).catch(() => [] as Array<{ role: string; calls: bigint; total: string }>)
+
+  const specialistsToday = specialistRows.map((r) => ({
+    role: r.role,
+    label: specialistLabel(r.role),
+    calls: Number(r.calls) || 0,
+    costUsd: parseFloat(r.total) || 0,
+  }))
+
   const criticalModelOptions = ESCALATION_CANDIDATE_IDS.map((id) => {
     const m = getModel(id)
     return { id: m.id, label: m.label, provider: m.provider, inPerM: m.inPerM, outPerM: m.outPerM }
@@ -115,6 +133,7 @@ export async function GET(req: NextRequest) {
     opusRemainingToday: Math.max(0, config.opusDailyCap - opusUsedToday),
     agentsToday,
     modelsToday,
+    specialistsToday,
     todayDhakaDate: todayStr,
     asOf: new Date().toISOString(),
   })

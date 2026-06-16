@@ -19,6 +19,17 @@ export interface ChatMessage {
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
+  /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
+  delegations?: Array<{
+    id: string
+    role: string
+    roleLabel: string
+    task: string
+    done: boolean
+    success?: boolean
+    summary?: string
+    toolsUsed?: string[]
+  }>
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -128,6 +139,71 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
               className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-black/[0.07] pl-3 text-[13px] leading-relaxed text-[#64748b] whitespace-pre-wrap break-words"
             >
               {thinking}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+const ROLE_ICON: Record<string, string> = {
+  researcher: '🔎',
+  analyst: '📊',
+  marketer: '📣',
+  content: '✍️',
+  ops: '🗂️',
+}
+
+/**
+ * Cursor-style delegation card — shows the head agent handing a sub-task to a
+ * specialist sub-agent, with live status (running → done/failed) and an expandable
+ * result summary once the specialist returns.
+ */
+function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[number] }) {
+  const [open, setOpen] = useState(false)
+  const hasSummary = Boolean(d.summary)
+  return (
+    <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white/70 backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={() => hasSummary && setOpen((o) => !o)}
+        className={`flex w-full items-start gap-2.5 px-3 py-2.5 text-left ${hasSummary ? 'cursor-pointer hover:bg-black/[0.02]' : 'cursor-default'}`}
+      >
+        <span className="mt-0.5 text-[15px] leading-none">{ROLE_ICON[d.role] ?? '🤝'}</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="text-[12px] font-semibold text-[#1a1a2e]">{d.roleLabel}</span>
+            <span className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">সাব-এজেন্ট</span>
+          </span>
+          <span className="mt-0.5 block truncate text-[12px] leading-snug text-[#64748b]">{d.task}</span>
+          {d.toolsUsed && d.toolsUsed.length > 0 && (
+            <span className="mt-1 block truncate text-[10px] text-gray-400">
+              {d.toolsUsed.map((t) => toolDisplay(t).label).join(' · ')}
+            </span>
+          )}
+        </span>
+        <span className="mt-0.5 shrink-0">
+          {!d.done ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+          ) : d.success !== false ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          )}
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && hasSummary && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-black/[0.06] px-3 py-2.5 text-[13px] leading-relaxed text-[#334155] whitespace-pre-wrap break-words">
+              {d.summary}
             </div>
           </motion.div>
         )}
@@ -376,6 +452,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <div className="mb-3 flex flex-wrap gap-1.5">
                       {msg.toolActivity.map((t) => (
                         <ToolActivityChip key={t.id} name={t.name} done={t.done} success={t.success} />
+                      ))}
+                    </div>
+                  )}
+
+                  {msg.delegations && msg.delegations.length > 0 && (
+                    <div className="mb-3 flex flex-col gap-2">
+                      {msg.delegations.map((d) => (
+                        <DelegationCard key={d.id} d={d} />
                       ))}
                     </div>
                   )}

@@ -23,6 +23,7 @@ import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
 import { applyOwnerTeaching, buildTeachingTurnPromptBlock } from '@/agent/lib/learning/apply-teaching'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
+import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
@@ -41,6 +42,8 @@ export type AgentEvent =
   | { type: 'thinking_delta'; delta: string }
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
+  | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
+  | { type: 'subagent_end'; id: string; role: string; success: boolean; summary?: string; toolsUsed?: string[]; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | {
@@ -441,7 +444,11 @@ export async function* runAgentTurn(
             activeBlockId = block.id
             activeBlockName = block.name
             activeBlockInputJson = ''
-            yield { type: 'tool_start', id: block.id, name: block.name }
+            // Delegation gets a richer live "delegation card" emitted from the
+            // execution loop (once the role/task input is parsed), not a generic chip.
+            if (block.name !== 'delegate_to_specialist') {
+              yield { type: 'tool_start', id: block.id, name: block.name }
+            }
           }
         } else if (event.type === 'content_block_delta') {
           const delta = event.delta
@@ -531,6 +538,14 @@ export async function* runAgentTurn(
 
       const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
       for (const tb of toolUseBlocks) {
+        const isDelegate = tb.name === 'delegate_to_specialist'
+        // Emit the live delegation card the moment we know which specialist + task.
+        if (isDelegate) {
+          const role = String((tb.input as Record<string, unknown>).role ?? '')
+          const task = String((tb.input as Record<string, unknown>).task ?? '')
+          yield { type: 'subagent_start', id: tb.id, role, roleLabel: specialistLabel(role), task }
+        }
+
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
@@ -551,7 +566,21 @@ export async function* runAgentTurn(
           durationMs, error: result.error ?? null,
         })
 
-        yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error }
+        if (isDelegate) {
+          const d = (result.data ?? {}) as Record<string, unknown>
+          const role = String((tb.input as Record<string, unknown>).role ?? '')
+          yield {
+            type: 'subagent_end',
+            id: tb.id,
+            role,
+            success: result.success,
+            summary: typeof d.summary === 'string' ? d.summary : undefined,
+            toolsUsed: Array.isArray(d.toolsUsed) ? (d.toolsUsed as string[]) : undefined,
+            error: result.error,
+          }
+        } else {
+          yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error }
+        }
 
         if (result.success && !personalMode) {
           void bumpPlaybookForTool(tb.name, businessId).catch(() => {})
