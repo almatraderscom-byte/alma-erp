@@ -4,6 +4,66 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAgentTodosOptional, type Todo } from './AgentTodoContext'
 
+/** Whether a todo represents a failed/cancelled agent task. */
+export function isFailedStatus(status: string): boolean {
+  return status === 'failed' || status === 'cancelled'
+}
+
+/**
+ * Shared status icon — the agent owns these states:
+ *   ○ pending · ↻ running · ✓ completed · ✕ failed
+ * Rendered as a tappable control so the owner can toggle completion.
+ */
+export function TodoStatusIcon({
+  status,
+  onClick,
+}: {
+  status: string
+  onClick?: () => void
+}) {
+  const completed = status === 'completed'
+  const failed = isFailedStatus(status)
+  const running = status === 'in_progress' || status === 'running'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={completed ? 'Completed' : failed ? 'Failed' : running ? 'Running' : 'Pending'}
+      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors ${
+        completed
+          ? 'border-emerald-400 bg-emerald-100'
+          : failed
+            ? 'border-red-300 bg-red-100'
+            : running
+              ? 'border-[#E07A5F] bg-[#E07A5F]/10'
+              : 'border-slate-300 hover:border-[#E07A5F]'
+      }`}
+    >
+      {completed ? (
+        <motion.svg
+          width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="#059669"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+          initial={{ pathLength: 0, opacity: 0 }} animate={{ pathLength: 1, opacity: 1 }} transition={{ duration: 0.3 }}
+        >
+          <motion.path d="M2 5l2.5 2.5L8 3" />
+        </motion.svg>
+      ) : failed ? (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round">
+          <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+        </svg>
+      ) : running ? (
+        <motion.svg
+          width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#E07A5F" strokeWidth="3" strokeLinecap="round"
+          animate={{ rotate: 360 }} transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
+        >
+          <path d="M21 12a9 9 0 11-6.219-8.56" />
+        </motion.svg>
+      ) : null}
+    </button>
+  )
+}
+
 const PRIORITY_COLORS: Record<string, string> = {
   urgent: 'bg-red-500',
   high: 'bg-amber-500',
@@ -108,7 +168,7 @@ export function AgentTodoPanel() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-base font-bold text-slate-800">Tasks</h2>
+          <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {activeTodos.length} active{completedTodos.length > 0 ? ` · ${completedTodos.length} done` : ''}
           </p>
@@ -198,14 +258,9 @@ export function AgentTodoPanel() {
                 exit={{ opacity: 0, x: -20 }}
                 className="group flex items-start gap-3 bg-white border border-black/[0.06] rounded-xl p-3.5 hover:shadow-sm transition-shadow"
               >
-                <button
-                  onClick={() => void toggleTodo(todo)}
-                  className="mt-0.5 w-5 h-5 rounded-md border-2 border-slate-300 hover:border-[#E07A5F] transition-colors shrink-0 flex items-center justify-center"
-                >
-                  {todo.status === 'in_progress' && (
-                    <span className="w-2 h-2 rounded-sm bg-[#E07A5F]" />
-                  )}
-                </button>
+                <div className="mt-0.5">
+                  <TodoStatusIcon status={todo.status} onClick={() => void toggleTodo(todo)} />
+                </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-slate-800 leading-snug">{todo.title}</p>

@@ -1,7 +1,6 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { AgentTodoPanel } from './AgentTodoPanel'
 
 const SUGGESTIONS = [
   { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
@@ -17,16 +16,6 @@ interface AgentEmptyStateProps {
 export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) {
   return (
     <div className="flex flex-col px-4 py-6">
-      {/* Todo List */}
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
-        className="w-full max-w-lg mx-auto mb-6"
-      >
-        <AgentTodoPanel />
-      </motion.div>
-
       {/* Greeting */}
       <div className="flex flex-col items-center text-center mb-6">
         <motion.div

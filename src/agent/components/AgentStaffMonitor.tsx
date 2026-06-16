@@ -447,6 +447,11 @@ export default function AgentStaffMonitor() {
   return (
     <div className="mx-auto flex max-w-7xl gap-0 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8 lg:gap-4 lg:p-4">
       <div className="min-w-0 flex-1 space-y-3 p-3 sm:p-4">
+        {/* ── Sticky top bar: header + tabs (stays pinned, clears the Dynamic Island) ── */}
+        <div
+          className="sticky top-0 z-30 -mx-3 border-b border-black/[0.05] bg-[#FAF9F6]/90 px-3 pb-2.5 backdrop-blur-md sm:-mx-4 sm:px-4"
+          style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
+        >
         {/* ── Header ── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -496,6 +501,25 @@ export default function AgentStaffMonitor() {
           </div>
         </div>
 
+        {/* ── Tab Navigation (part of the sticky top) ── */}
+        {displayData && (
+          <div className="mt-2.5">
+            <MonitorTabs
+              tab={monitorTab}
+              setTab={setMonitorTab}
+              alertCount={
+                (displayData.unackedMessages?.length ?? 0) +
+                (displayData.pendingApprovals?.length ?? 0) +
+                (displayData.failures?.length ?? 0)
+              }
+              feedCount={feedItems.length}
+              staffCount={displayData.staffSummaries?.length ?? 0}
+            />
+          </div>
+        )}
+        </div>
+        {/* ── End sticky top bar ── */}
+
         {/* Deploy message */}
         {deployMsg && (
           <div className={cn('rounded-xl border px-4 py-2 text-[11px] font-semibold',
@@ -528,19 +552,6 @@ export default function AgentStaffMonitor() {
 
         {displayData && (
           <motion.div className="space-y-3" variants={staggerContainer} initial="hidden" animate="show">
-            {/* ── Tab Navigation ── */}
-            <MonitorTabs
-              tab={monitorTab}
-              setTab={setMonitorTab}
-              alertCount={
-                (displayData.unackedMessages?.length ?? 0) +
-                (displayData.pendingApprovals?.length ?? 0) +
-                (displayData.failures?.length ?? 0)
-              }
-              feedCount={feedItems.length}
-              staffCount={displayData.staffSummaries?.length ?? 0}
-            />
-
             {/* ── OVERVIEW: Alerts + KPI + Quick Actions + Top Staff ── */}
             {monitorTab === 'overview' && (
               <>

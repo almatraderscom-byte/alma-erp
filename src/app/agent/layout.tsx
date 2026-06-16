@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import type { Viewport } from 'next'
 import { AgentBottomNav } from '@/agent/components/AgentBottomNav'
 import { AgentTodoProvider } from '@/agent/components/AgentTodoContext'
-import { AgentTodoBar } from '@/agent/components/AgentTodoBar'
 import '@/agent/styles/agent-ambient.css'
 
 /**
@@ -38,7 +37,6 @@ export default function AgentLayout({ children }: { children: ReactNode }) {
         />
 
         <main className="agent-main-height relative z-10 flex flex-col">
-          <AgentTodoBar />
           <div className="min-h-0 flex-1">
             {children}
           </div>

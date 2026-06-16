@@ -8,6 +8,7 @@ import AgentAskCard, { type AskCard } from './AgentAskCard'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
+import { AgentTodoDock } from './AgentTodoDock'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
@@ -311,6 +312,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+      <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl px-4 py-4 pb-6 md:px-6 md:py-6">
         {messages.length === 0 && (
           <AgentEmptyState onSuggestion={onQuickSend} />
