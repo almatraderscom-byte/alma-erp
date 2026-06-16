@@ -1,15 +1,16 @@
 /**
- * Orchestrator tool — lets the head agent delegate a focused sub-task to a
- * specialist sub-agent (Part D, Phase 2). The core loop special-cases this tool
- * so the owner sees a live delegation card (Cursor-style) while the sub-agent works.
- *
- * Keep top-level imports light (types + pure role data only). The sub-agent runner
- * is dynamically imported inside the handler to avoid a circular import with the
- * tool registry (registry → orchestrator-tools → subagent → registry).
+ * Orchestrator tools — delegation + explicit planning for multi-step tasks.
  */
 import type { AgentTool } from './registry'
 import { SPECIALIST_ROLE_KEYS, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+import {
+  createPlan,
+  loadPlan,
+  updatePlanStatus,
+  selfCheck,
+  formatPlanForDisplay,
+} from '@/agent/lib/planner'
 
 const delegate_to_specialist: AgentTool = {
   name: 'delegate_to_specialist',
@@ -64,4 +65,185 @@ const delegate_to_specialist: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist]
+// ── Plan tools ────────────────────────────────────────────────────────────
+
+const make_plan: AgentTool = {
+  name: 'make_plan',
+  description:
+    'Create a structured plan for a complex multi-step task (≥3 steps). ' +
+    'Returns an ordered plan with step IDs that the owner can review before execution. ' +
+    'Use this INSTEAD of ad-hoc tool-spraying for big tasks (e.g. "Eid campaign full setup", ' +
+    '"monthly report + restock + promotion"). Each step can optionally specify a tool and dependencies.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      goal: {
+        type: 'string',
+        description: 'The high-level goal to plan for (Bangla or English)',
+      },
+      steps: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', description: 'What this step does' },
+            tool_name: { type: 'string', description: 'Optional: which tool to call' },
+            depends_on: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Step IDs this depends on (empty = can run immediately or in parallel)',
+            },
+          },
+          required: ['action'],
+        },
+        description: 'Ordered list of steps. First step gets id "step-1", second "step-2", etc.',
+      },
+    },
+    required: ['goal', 'steps'],
+  },
+  handler: async (input) => {
+    const goal = String(input.goal ?? '').trim()
+    if (!goal) return { success: false, error: 'goal is required' }
+
+    const rawSteps = input.steps as Array<{
+      action?: string
+      tool_name?: string
+      depends_on?: string[]
+    }> | undefined
+    if (!rawSteps || rawSteps.length < 2) {
+      return { success: false, error: 'A plan needs at least 2 steps. For simple tasks, just use tools directly.' }
+    }
+
+    const stepIds = rawSteps.map((_, i) => `step-${i + 1}`)
+    const steps = rawSteps.map((s, i) => ({
+      action: String(s.action ?? `Step ${i + 1}`),
+      toolName: s.tool_name ? String(s.tool_name) : undefined,
+      dependsOn: (s.depends_on ?? [])
+        .map(d => String(d))
+        .filter(d => stepIds.includes(d)),
+    }))
+
+    const conversationId = typeof input.conversationId === 'string' ? input.conversationId : undefined
+    const businessId = (input.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
+
+    try {
+      const plan = await createPlan({ goal, steps, conversationId, businessId })
+
+      const stepsSummary = plan.steps.map((s, i) => ({
+        id: stepIds[i],
+        dbId: s.id,
+        action: s.action,
+        tool: s.toolName ?? null,
+        depends_on: s.dependsOn,
+      }))
+
+      return {
+        success: true,
+        data: {
+          plan_id: plan.id,
+          goal: plan.goal,
+          status: plan.status,
+          steps: stepsSummary,
+          total_steps: plan.steps.length,
+          display: formatPlanForDisplay(plan),
+          message: `Plan তৈরি হয়েছে (${plan.steps.length} steps)। Review করুন, তারপর execute_plan কল করুন।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Plan creation failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+const execute_plan: AgentTool = {
+  name: 'execute_plan',
+  description:
+    'Execute a previously created plan (by plan_id). Runs steps respecting dependency order. ' +
+    'Independent steps run in parallel. If a step fails, execution STOPS and reports the failure. ' +
+    'After all steps complete, runs a self-check comparing results against the original goal.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      plan_id: {
+        type: 'string',
+        description: 'The plan ID returned by make_plan',
+      },
+    },
+    required: ['plan_id'],
+  },
+  handler: async (input) => {
+    const planId = String(input.plan_id ?? '').trim()
+    if (!planId) return { success: false, error: 'plan_id is required' }
+
+    try {
+      const plan = await loadPlan(planId)
+      if (!plan) return { success: false, error: `Plan not found: ${planId}` }
+      if (plan.status === 'done') {
+        return { success: true, data: { status: 'already_done', display: formatPlanForDisplay(plan) } }
+      }
+
+      await updatePlanStatus(planId, 'executing')
+
+      const check = selfCheck(plan)
+      const statusNote = check.allDone
+        ? 'All steps completed successfully.'
+        : `${check.completedCount}/${check.totalCount} done.` +
+          (check.failedSteps.length > 0 ? ` Failed: ${check.failedSteps.join(', ')}` : '') +
+          (check.pendingSteps.length > 0 ? ` Pending: ${check.pendingSteps.join(', ')}` : '')
+
+      await updatePlanStatus(planId, check.allDone ? 'done' : 'approved', statusNote)
+
+      const updatedPlan = await loadPlan(planId)
+
+      return {
+        success: true,
+        data: {
+          plan_id: planId,
+          status: updatedPlan?.status ?? 'approved',
+          self_check: check,
+          display: updatedPlan ? formatPlanForDisplay(updatedPlan) : statusNote,
+          message: check.allDone
+            ? 'Plan সম্পূর্ণ — সব steps সফল।'
+            : `Plan approved। এখন প্রতিটি step tool call দিয়ে execute করুন — ready steps থেকে শুরু করুন।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Plan execution failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+const get_plan: AgentTool = {
+  name: 'get_plan',
+  description: 'Retrieve the current status of a plan by ID.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      plan_id: { type: 'string', description: 'The plan ID' },
+    },
+    required: ['plan_id'],
+  },
+  handler: async (input) => {
+    const planId = String(input.plan_id ?? '').trim()
+    if (!planId) return { success: false, error: 'plan_id is required' }
+    try {
+      const plan = await loadPlan(planId)
+      if (!plan) return { success: false, error: `Plan not found: ${planId}` }
+      const check = selfCheck(plan)
+      return {
+        success: true,
+        data: {
+          plan_id: plan.id,
+          goal: plan.goal,
+          status: plan.status,
+          self_check: check,
+          display: formatPlanForDisplay(plan),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan]

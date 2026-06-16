@@ -2969,3 +2969,38 @@ model AgentToolEvent {
   @@index([businessId, ts])
   @@map("agent_tool_events")
 }
+
+model AgentPlan {
+  id             String          @id @default(uuid())
+  conversationId String?         @map("conversation_id")
+  businessId     String          @default("ALMA_LIFESTYLE") @map("business_id")
+  goal           String
+  status         String          @default("draft")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  completedAt    DateTime?       @map("completed_at")
+  selfCheckNote  String?         @map("self_check_note")
+  steps          AgentPlanStep[]
+
+  @@index([conversationId])
+  @@index([businessId, status])
+  @@map("agent_plans")
+}
+
+model AgentPlanStep {
+  id        String   @id @default(uuid())
+  planId    String   @map("plan_id")
+  plan      AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  seq       Int
+  action    String
+  toolName  String?  @map("tool_name")
+  dependsOn String[] @map("depends_on")
+  status    String   @default("pending")
+  result    Json?
+  error     String?
+  startedAt DateTime? @map("started_at")
+  doneAt    DateTime? @map("done_at")
+
+  @@index([planId, seq])
+  @@map("agent_plan_steps")
+}

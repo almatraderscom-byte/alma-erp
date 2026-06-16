@@ -80,6 +80,7 @@ export const MUTATING_TOOLS = new Set([
   'prepare_staff_task_proposal', 'propose_staff_tasks', 'request_salah_delay',
   'run_health_scan', 'web_research', 'generate_image', 'generate_on_model_image',
   'make_ad_creatives', 'make_product_reel',
+  'make_plan', 'execute_plan',
 ])
 
 // ── Anthropic client ────────────────────────────────────────────────────────
