@@ -35,7 +35,9 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
     crossCheckPendingCounts(),
   ])
 
+  const TEST_PATTERNS = /test|টেস্ট/i
   const stuck = (pending.orders ?? []).filter((order) => {
+    if (TEST_PATTERNS.test(order.customerName ?? '')) return false
     const placed = new Date(order.placedAt).getTime()
     return Number.isFinite(placed) && placed > 0 && now - placed > STUCK_PENDING_DAYS * MS_PER_DAY
   })

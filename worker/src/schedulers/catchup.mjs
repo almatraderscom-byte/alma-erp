@@ -6,7 +6,6 @@ const JOB_FOR_DUTY = {
   owner_briefing: 'owner-briefing',
   evening_proposal: 'evening-proposal',
   night_report: 'night-report',
-  order_watch: 'order-watch',
 }
 
 function nowMinDhaka() {

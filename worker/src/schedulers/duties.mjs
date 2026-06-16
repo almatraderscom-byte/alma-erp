@@ -99,5 +99,4 @@ export const DUTY_CATCHUP = {
   owner_briefing: { scheduledAfterMin: 7 * 60 + 30, catchUpUntilMin: 12 * 60, critical: true },
   evening_proposal: { scheduledAfterMin: 21 * 60 + 5, catchUpUntilMin: 23 * 60 + 30, critical: true },
   night_report: { scheduledAfterMin: 21 * 60, catchUpUntilMin: 23 * 60 + 59, critical: false },
-  order_watch: { scheduledAfterMin: 12 * 60, catchUpUntilMin: 20 * 60, critical: false },
 }
