@@ -46,6 +46,7 @@ export const CONTINUOUS_SERVICES = [
   { key: 'cs_services', label: 'CS সার্ভিস' },
   { key: 'ack_escalation', label: 'Unseen এসকেলেশন' },
   { key: 'lunch_watch', label: 'লাঞ্চ মনিটর' },
+  { key: 'geo_monitor', label: 'জিও-ফেন্স মনিটর' },
   { key: 'session_summarizer', label: 'সেশন সামারাইজ' },
   { key: 'cs_escalation', label: 'CS ড্রাফট এসকেলেশন' },
   { key: 'cs_followups', label: 'CS ফলোআপ' },

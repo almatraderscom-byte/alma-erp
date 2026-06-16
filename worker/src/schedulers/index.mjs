@@ -101,6 +101,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'proof-timeout',          cronUtc: '*/5 * * * *',    description: 'Task proof reminder + 2h unverified flag' },
   { name: 'ack-escalation',         cronUtc: '*/5 * * * *',    description: 'Escalate unseen staff messages (every 5 min)' },
   { name: 'lunch-watch',            cronUtc: '*/5 * * * *',    description: 'Check overdue staff lunches (every 5 min)' },
+  { name: 'geo-monitor',            cronUtc: '*/2 * * * *',    description: 'Staff geo-fence monitor (every 2 min during office hours)' },
   { name: 'personal-checkin',       cronUtc: '0 15 * * *',     description: 'Evening personal/family check-in (21:00 Dhaka)' },
   { name: 'personal-midday',        cronUtc: '0 8 * * *',      description: 'Brief daytime personal check-in (14:00 Dhaka)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },
@@ -277,6 +278,12 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'lunch-watch': {
       const { runLunchWatch } = await lazy.lunchWatch()
       await runLunchWatch(context)
+      break
+    }
+    case 'geo-monitor': {
+      const { runGeoMonitor, checkGhostCheckins } = await import('../staff/geo-monitor.mjs')
+      dutyResult = await runGeoMonitor(context)
+      await checkGhostCheckins(context).catch((err) => console.warn('[geo-monitor] ghost check failed:', err.message))
       break
     }
     case 'personal-checkin': {
