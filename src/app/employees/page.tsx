@@ -241,7 +241,7 @@ export default function EmployeesPage() {
                 {rosterEmployees.map(em => {
                   const linkedUser = usersByEmployeeId.get(em.emp_id)
                   return (
-                    <tr key={em.emp_id} className="border-b border-border/60 hover:bg-white/[0.02]">
+                    <tr key={em.emp_id} className="border-b border-border/60 hover:bg-black/[0.02]">
                       <td className="py-2 px-4 font-mono text-gold-dim">{em.emp_id}</td>
                       <td className="py-2 pr-3 text-cream">{em.name}</td>
                       <td className="py-2 pr-3">{em.role}</td>
@@ -286,7 +286,7 @@ export default function EmployeesPage() {
               <select
                 value={linkUserId}
                 onChange={e => setLinkUserId(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream"
+                className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream"
               >
                 <option value="">Select user</option>
                 {unlinkableUsers.map(u => (
@@ -320,7 +320,7 @@ export default function EmployeesPage() {
             <form id="employee-create-form" onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
             <div className="mobile-modal-body px-5 pb-4">
             <div className="grid lg:grid-cols-[1.05fr_1fr] gap-4">
-              <div className="rounded-2xl border border-border bg-black/20 p-3">
+              <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold mb-3">Create Employee From User</p>
                 {usersLoading ? (
                   <Skeleton className="h-40 w-full" />
@@ -331,7 +331,7 @@ export default function EmployeesPage() {
                     {users.map(user => (
                       <div
                         key={user.id}
-                        className={`rounded-xl border p-3 ${selectedUserId === user.id ? 'border-gold-dim/60 bg-gold/10' : user.selectable ? 'border-border bg-card' : 'border-border bg-black/20 opacity-80'}`}
+                        className={`rounded-xl border p-3 ${selectedUserId === user.id ? 'border-gold-dim/60 bg-gold/10' : user.selectable ? 'border-border bg-card' : 'border-border bg-black/[0.03] opacity-80'}`}
                       >
                         <button
                           type="button"
@@ -384,7 +384,7 @@ export default function EmployeesPage() {
                                   setSelectedUserId(user.id)
                                   setOrphanLinkEmpId(e.target.value)
                                 }}
-                                className="flex-1 rounded-lg border border-border bg-black/30 px-2 py-1.5 text-[10px] text-cream"
+                                className="flex-1 rounded-lg border border-border bg-black/[0.03] px-2 py-1.5 text-[10px] text-cream"
                               >
                                 <option value="">Link to roster row…</option>
                                 {rosterEmployees.map(em => (

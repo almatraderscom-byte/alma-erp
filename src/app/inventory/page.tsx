@@ -328,7 +328,7 @@ export default function InventoryPage() {
                           ? STATUS_STYLE['LOW STOCK']
                           : STATUS_STYLE['OUT OF STOCK']
                     return (
-                      <tr key={item.sku} className="border-b border-border/50 hover:bg-white/[0.015] transition-colors">
+                      <tr key={item.sku} className="border-b border-border/50 hover:bg-black/[0.02] transition-colors">
                         <td className="px-3 py-3.5 font-mono text-[11px] text-gold font-bold">{item.sku}</td>
                         <td className="px-3 py-3.5">
                           <p className="font-mono text-[11px] text-gold-lt">{item.collectionCode || '—'}</p>

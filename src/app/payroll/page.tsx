@@ -373,20 +373,20 @@ export default function PayrollPage() {
             </div>
           </div>
           <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
-            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
+            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream">
               <option value="">Select employee</option>
               {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
             </select>
-            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream">
+            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream">
               {PAYROLL_COMPENSATION_TYPES.map(t => (
                 <option key={t.value} value={t.value}>
                   {t.label}{t.kind === 'credit' ? ' · credit' : t.kind === 'debit' ? ' · debit' : ''}
                 </option>
               ))}
             </select>
-            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
-            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
-            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream font-mono" />
+            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" />
+            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" />
             <Button size="xs" variant="gold" type="submit" loading={compBusy}>Post</Button>
           </form>
           {orphanLedgerCount > 0 && (
@@ -425,12 +425,12 @@ export default function PayrollPage() {
             </div>
           </div>
           <div className="grid md:grid-cols-3 gap-3 mt-4">
-            <div className="rounded-2xl border border-border bg-black/20 p-3">
+            <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
               <p className="text-[9px] uppercase tracking-wider text-zinc-600 font-bold">Monthly preview</p>
               <p className="font-mono text-green-400 text-lg font-bold mt-1">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</p>
               <p className="text-[10px] text-zinc-500">{preview?.employees.length ?? 0} linked employees · {preview?.alreadyAccruedCount ?? 0} already accrued</p>
             </div>
-            <div className="md:col-span-2 rounded-2xl border border-border bg-black/20 p-3">
+            <div className="md:col-span-2 rounded-2xl border border-border bg-black/[0.03] p-3">
               <p className="text-[9px] uppercase tracking-wider text-zinc-600 font-bold mb-2">Accrual history</p>
               {!history.length ? <p className="text-[11px] text-zinc-600">No accrual runs yet.</p> : (
                 <div className="grid gap-1 text-[11px] max-h-28 overflow-y-auto">
@@ -485,7 +485,7 @@ export default function PayrollPage() {
         <div className="flex justify-between gap-3 items-center flex-wrap mb-4">
           <p className="text-sm font-bold text-cream">Employee profitability and liabilities</p>
           <div className="flex flex-1 flex-wrap gap-2">
-            <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="min-h-[44px] flex-1 min-w-[10rem] rounded-xl border border-border bg-black/30 px-3 py-2 text-[11px] text-cream md:min-h-0" />
+            <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="min-h-[44px] flex-1 min-w-[10rem] rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px] text-cream md:min-h-0" />
           </div>
         </div>
         <div className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide pb-1">
@@ -530,7 +530,7 @@ export default function PayrollPage() {
               </thead>
               <tbody>
                 {filteredWallets.map((w: PayrollWallet) => (
-                  <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60 transition-colors hover:bg-white/[0.015]">
+                  <tr key={`${w.businessId}:${w.employeeId}`} className="border-b border-border/60 transition-colors hover:bg-black/[0.02]">
                     <td className="py-2 pr-3"><span className="text-cream">{w.name}</span><span className="block text-zinc-600 font-mono">{w.employeeId}</span></td>
                     <td className="py-2 pr-3 font-mono text-right">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
                     <td className="py-2 pr-3 font-mono text-right text-green-400">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
@@ -558,19 +558,19 @@ export default function PayrollPage() {
                   </Link>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                  <div className="rounded-xl border border-border bg-black/[0.03] px-2 py-1.5">
                     <p className="text-[10px] text-zinc-600">Earned</p>
                     <p className="font-mono font-bold text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</p>
                   </div>
-                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                  <div className="rounded-xl border border-border bg-black/[0.03] px-2 py-1.5">
                     <p className="text-[10px] text-zinc-600">Held balance</p>
                     <p className="font-mono font-bold text-green-400">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
                   </div>
-                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                  <div className="rounded-xl border border-border bg-black/[0.03] px-2 py-1.5">
                     <p className="text-[10px] text-zinc-600">Commission</p>
                     <p className="font-mono text-green-400">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
                   </div>
-                  <div className="rounded-xl border border-border bg-black/20 px-2 py-1.5">
+                  <div className="rounded-xl border border-border bg-black/[0.03] px-2 py-1.5">
                     <p className="text-[10px] text-zinc-600">Deductions</p>
                     <p className="font-mono text-red-400">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
                   </div>
@@ -638,7 +638,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
                             )
                           }
-                          className="w-full max-w-[120px] ml-auto rounded-xl border border-border bg-black/30 px-3 py-2 text-right font-mono text-cream disabled:opacity-40"
+                          className="w-full max-w-[120px] ml-auto rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-right font-mono text-cream disabled:opacity-40"
                         />
                       </td>
                       <td className="py-2 text-right">
@@ -683,7 +683,7 @@ export default function PayrollPage() {
                     min="1"
                     value={review.approvedAmount}
                     onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
-                    className="mt-2 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/60"
+                    className="mt-2 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/60"
                   />
                 </label>
               )}

@@ -15,7 +15,7 @@ const ACTIONS: Array<{
   { id: 'trade', label: 'Add Trade', short: 'Trade', icon: '＋', tone: 'border-gold-dim/50 bg-gold/15 text-gold-lt' },
   { id: 'screenshot', label: 'Upload Screenshot', short: 'Screenshot', icon: '▣', tone: 'border-blue-400/30 bg-blue-400/10 text-blue-200' },
   { id: 'summary', label: 'Daily Summary', short: 'Summary', icon: '◫', tone: 'border-green-400/30 bg-green-400/10 text-green-200' },
-  { id: 'accounts', label: 'Accounts', short: 'Accounts', icon: '◧', tone: 'border-border bg-white/[0.04] text-cream' },
+  { id: 'accounts', label: 'Accounts', short: 'Accounts', icon: '◧', tone: 'border-border bg-black/[0.03] text-cream' },
 ]
 
 export function TradingQuickActions({
@@ -76,7 +76,7 @@ export function TradingStickyBar({
               <Link
                 key={action.id}
                 href="/trading/accounts"
-                className="flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold text-zinc-300 active:bg-white/10"
+                className="flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold text-zinc-300 active:bg-black/[0.05]"
               >
                 <span className="text-base">{action.icon}</span>
                 {action.short}
@@ -89,7 +89,7 @@ export function TradingStickyBar({
               type="button"
               onClick={() => onAction(action.id)}
               className={cn(
-                'flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold active:bg-white/10',
+                'flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold active:bg-black/[0.05]',
                 action.id === 'trade' ? 'text-gold-lt' : action.id === 'screenshot' && highlightScreenshot ? 'text-gold-lt trading-upload-emphasis' : 'text-zinc-300',
               )}
             >

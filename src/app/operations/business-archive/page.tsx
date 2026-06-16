@@ -257,7 +257,7 @@ export default function BusinessArchiveControlPage() {
       />
 
       {loadWarning && (
-        <Card className="border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-100 flex flex-wrap items-center justify-between gap-3">
+        <Card className="border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-800 flex flex-wrap items-center justify-between gap-3">
           <p>{loadWarning}</p>
           <Button size="xs" variant="secondary" onClick={() => void load()}>
             Retry
@@ -266,7 +266,7 @@ export default function BusinessArchiveControlPage() {
       )}
 
       {!schemaReady && (
-        <Card className="border-red-500/40 bg-red-500/15 p-4 text-sm text-red-100">
+        <Card className="border-red-500/40 bg-red-500/15 p-4 text-sm text-red-800">
           <p className="font-black">Database migration required</p>
           <p className="mt-1 text-xs">
             {migrationHint || 'Business Archive tables are not on this database yet.'} ERP continues
@@ -275,11 +275,11 @@ export default function BusinessArchiveControlPage() {
         </Card>
       )}
 
-      <Card className="border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <Card className="border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800">
         <p className="font-black">Safety mode</p>
-        <p className="mt-1 text-xs text-amber-100/90">
+        <p className="mt-1 text-xs text-amber-800/90">
           This never permanently deletes records. Archived items are hidden from default views. Use
-          <code className="mx-1 rounded bg-black/30 px-1">archive_visibility=archived</code> on APIs or Show Archived in UI.
+          <code className="mx-1 rounded bg-black/[0.03] px-1">archive_visibility=archived</code> on APIs or Show Archived in UI.
         </p>
       </Card>
 
@@ -305,7 +305,7 @@ export default function BusinessArchiveControlPage() {
             </p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {stats.map(s => (
-                <div key={s.moduleKey} className="rounded-xl border border-border bg-black/25 px-3 py-2 text-[11px]">
+                <div key={s.moduleKey} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]">
                   <p className="font-bold text-cream">{s.label}</p>
                   <p className="mt-1 text-zinc-500">
                     Active <span className="text-green-400">{s.activeCount}</span> · Archived{' '}
@@ -329,10 +329,10 @@ export default function BusinessArchiveControlPage() {
                     key={m.key}
                     className={`flex gap-3 rounded-xl border px-3 py-2.5 text-xs transition ${
                       unavailable
-                        ? 'cursor-not-allowed border-zinc-700 bg-zinc-900/40 opacity-80'
+                        ? 'cursor-not-allowed border-zinc-700 bg-slate-100/60 opacity-80'
                         : selected.includes(m.key)
                           ? 'cursor-pointer border-gold/50 bg-gold/10'
-                          : 'cursor-pointer border-border bg-black/20 hover:border-zinc-600'
+                          : 'cursor-pointer border-border bg-black/[0.03] hover:border-zinc-600'
                     }`}
                   >
                     <input
@@ -362,7 +362,7 @@ export default function BusinessArchiveControlPage() {
 
           {preview && (
             <Card className="p-5 border-amber-500/25 bg-amber-500/5 space-y-3">
-              <p className="text-sm font-black text-amber-100">
+              <p className="text-sm font-black text-amber-800">
                 Dry run · {previewTotal.toLocaleString()} records would be archived
               </p>
               <ul className="space-y-2 text-[11px]">
@@ -383,7 +383,7 @@ export default function BusinessArchiveControlPage() {
               />
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
                 <p className="text-[10px] font-bold text-red-200">Step 5 · Type to confirm</p>
-                <p className="mt-1 font-mono text-xs text-red-100 break-all">{expectedPhrase}</p>
+                <p className="mt-1 font-mono text-xs text-red-800 break-all">{expectedPhrase}</p>
                 <Input
                   className="mt-3"
                   placeholder="Type confirmation phrase exactly"
@@ -410,7 +410,7 @@ export default function BusinessArchiveControlPage() {
                 {batches.map(b => (
                   <li
                     key={b.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-black/20 px-3 py-2 text-[11px]"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]"
                   >
                     <span>
                       <span className="font-bold text-cream">{b.name}</span>

@@ -134,7 +134,7 @@ export default function TradingAnalyticsPage() {
           <p className="mb-3 text-sm font-bold text-red-300">Analytics Alerts</p>
           <div className="grid gap-2 md:grid-cols-2">
             {data.alerts.map(alert => (
-              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-400/20 bg-black/20 p-3">
+              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-400/20 bg-black/[0.03] p-3">
                 <p className="text-xs font-black text-cream">{alert.type} · {alert.accountTitle}</p>
                 <p className="mt-1 text-[11px] text-red-200/70">{alert.message}</p>
               </div>

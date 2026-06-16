@@ -442,10 +442,10 @@ function TelegramOpsSettingsPageInner() {
 
                 <p className="pt-2 text-sm font-bold text-cream">Queue (7 days)</p>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">SENT: {queueStats.SENT ?? 0}</span>
-                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">QUEUED: {queueStats.QUEUED ?? 0}</span>
-                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">FAILED: {queueStats.FAILED ?? 0}</span>
-                  <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-400">SENDING: {queueStats.SENDING ?? 0}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">SENT: {queueStats.SENT ?? 0}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">QUEUED: {queueStats.QUEUED ?? 0}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">FAILED: {queueStats.FAILED ?? 0}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">SENDING: {queueStats.SENDING ?? 0}</span>
                 </div>
 
                 {dashboard?.delivery?.lastFailed && (
@@ -505,7 +505,7 @@ function HealthStat({
 }) {
   const color = tone === 'ok' ? 'text-green-300' : tone === 'warn' ? 'text-amber-300' : 'text-red-300'
   return (
-    <div className="rounded-xl border border-border/60 bg-black/20 p-3">
+    <div className="rounded-xl border border-border/60 bg-black/[0.03] p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
       <p className={`mt-1 text-sm font-bold ${color}`}>{value}</p>
       {hint ? <p className="mt-1 truncate text-[10px] text-zinc-500" title={hint}>{hint}</p> : null}

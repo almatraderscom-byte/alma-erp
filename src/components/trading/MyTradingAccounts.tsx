@@ -111,8 +111,8 @@ function MiniAction({ label, onClick, emphasis }: { label: string; onClick: () =
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-black uppercase tracking-wide active:bg-white/10 ${
-        emphasis ? 'trading-upload-emphasis border-gold-dim/50 bg-gold/10 text-gold-lt' : 'border-border bg-black/25 text-zinc-300'
+      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-black uppercase tracking-wide active:bg-black/[0.05] ${
+        emphasis ? 'trading-upload-emphasis border-gold-dim/50 bg-gold/10 text-gold-lt' : 'border-border bg-black/[0.03] text-zinc-300'
       }`}
     >
       {label}

@@ -351,7 +351,7 @@ export default function EmployeePortalPage() {
           </AttendanceWidgetErrorBoundary>
         )}
 
-        <Card className="p-5 space-y-3 border-gold-dim/25 bg-[#0c0c10]">
+        <Card className="p-5 space-y-3 border-gold-dim/25 bg-white/60">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Account details</p>
           {loadingMe ? <Skeleton className="h-28 w-full" /> : !me ? (
             <div>
@@ -379,7 +379,7 @@ export default function EmployeePortalPage() {
         </Card>
 
         {!systemOwner && (
-          <Card className="p-5 border-gold-dim/20 bg-[#0c0c10] flex flex-wrap items-center justify-between gap-3">
+          <Card className="p-5 border-gold-dim/20 bg-white/60 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payout identity</p>
               <p className="mt-1 text-[11px] text-zinc-500">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
@@ -454,7 +454,7 @@ export default function EmployeePortalPage() {
           )}
         </Card>}
 
-        {!systemOwner && <Card className="p-5 md:col-span-2 bg-black/25 border-border">
+        {!systemOwner && <Card className="p-5 md:col-span-2 bg-black/[0.03] border-border">
           <p className="text-sm font-bold text-cream mb-2">Pending requests</p>
           <RequestList requests={wallet?.requests ?? []} />
         </Card>}
@@ -471,7 +471,7 @@ function money(n: unknown) {
 
 function SystemOwnerCard({ businessName }: { businessName: string }) {
   return (
-    <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-black/30">
+    <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-white/80">
       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">System owner mode</p>
       <h2 className="mt-2 text-xl font-black text-cream">Owner control active</h2>
       <p className="mt-2 max-w-2xl text-xs leading-relaxed text-zinc-400">
@@ -580,7 +580,7 @@ function AttendanceCard({
   }
 
   return (
-    <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-black/30">
+    <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-white/80">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Today attendance</p>
@@ -779,7 +779,7 @@ function stableSessionId() {
 function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: EmployeeWalletResponse | null }) {
   const s = wallet?.summary
   return (
-    <Card className="p-5 border-gold-dim/25 bg-[#0c0c10]">
+    <Card className="p-5 border-gold-dim/25 bg-white/60">
       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold mb-4">Employee wallet</p>
       {loading ? <Skeleton className="h-40 w-full" /> : !s ? (
         <Empty icon="◇" title="Wallet not active" desc="Link your HR employee ID to view salary balance." />
@@ -803,8 +803,8 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
 
 function WalletStat({ label, value, tone = 'text-cream' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-black/25 p-3">
-      <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-600">{label}</p>
+    <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${tone}`}>{value}</p>
     </div>
   )

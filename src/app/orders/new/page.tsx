@@ -44,7 +44,7 @@ export default function NewOrderPage() {
         <div className="flex items-center gap-3 px-4 pb-3">
           <Link
             href="/orders"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-cream"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-zinc-400 transition-colors hover:bg-black/[0.04] hover:text-cream"
             aria-label="Back to orders"
           >
             ←
@@ -76,7 +76,7 @@ export default function NewOrderPage() {
       </form>
 
       <footer
-        className="fixed bottom-0 left-0 right-0 z-[110] border-t border-border bg-surface/95 backdrop-blur-md supports-[backdrop-filter]:bg-surface/85 shadow-[0_-8px_32px_rgba(0,0,0,0.45)]"
+        className="fixed bottom-0 left-0 right-0 z-[110] border-t border-border bg-surface/95 backdrop-blur-md supports-[backdrop-filter]:bg-surface/85 shadow-[0_-8px_32px_rgba(0,0,0,0.08)]"
         style={{
           paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
           paddingTop: 12,
@@ -95,7 +95,7 @@ export default function NewOrderPage() {
         <div className="flex gap-2">
           <Link
             href="/orders"
-            className={`inline-flex min-h-[48px] flex-1 items-center justify-center rounded-xl border border-border bg-transparent px-4 py-3 text-sm font-semibold text-zinc-400 transition-all hover:bg-white/[0.04] hover:text-cream ${loading ? 'pointer-events-none opacity-50' : ''}`}
+            className={`inline-flex min-h-[48px] flex-1 items-center justify-center rounded-xl border border-border bg-transparent px-4 py-3 text-sm font-semibold text-zinc-400 transition-all hover:bg-black/[0.04] hover:text-cream ${loading ? 'pointer-events-none opacity-50' : ''}`}
           >
             Cancel
           </Link>

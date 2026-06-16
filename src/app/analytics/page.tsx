@@ -21,7 +21,7 @@ const ExpenseBarChart = dynamic(() => import('@/components/charts').then(m => m.
 const DonutChart = dynamic(() => import('@/components/charts').then(m => m.DonutChart), { ssr: false, loading: chartFallback })
 const ReturnLossTrendChart = dynamic(() => import('@/components/charts').then(m => m.ReturnLossTrendChart), { ssr: false, loading: chartFallback })
 
-const PALETTE = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020']
+const PALETTE = ['#E07A5F','#C45A3C','#F4A28C','#D4956A','#8B5E3C','#A0644A']
 
 // Payment pie is derived from live by_payment data, not hardcoded
 function paymentPie(byPayment: Record<string, number>) {
@@ -34,13 +34,13 @@ function paymentPie(byPayment: Record<string, number>) {
   return Object.entries(byPayment).map(([name, count]) => ({
     name,
     value: Math.round(count / total * 100),
-    color: COLORS[name] ?? '#888',
+    color: COLORS[name] ?? '#9CA3AF',
   }))
 }
 
 // Expense bar data from live by_category
 function expenseBar(byCat: Record<string, number>) {
-  const colors = ['#C9A84C','#8B6914','#E8C96A','#6B5530','#4A3A20','#3D3020','#2A1A08','#1A0A00']
+  const colors = ['#E07A5F','#C45A3C','#F4A28C','#D4956A','#8B5E3C','#A0644A','#7A4530','#5C3320']
   return Object.entries(byCat)
     .sort(([, a], [, b]) => b - a)
     .map(([category, amount], i) => ({ category, amount, color: colors[i] ?? '#888' }))
@@ -204,7 +204,7 @@ export default function AnalyticsPage() {
                 </thead>
                 <tbody>
                   {catArr.map((c, i) => (
-                    <tr key={c.name} className="border-b border-border/50 hover:bg-white/[0.015] transition-colors">
+                    <tr key={c.name} className="border-b border-border/50 hover:bg-black/[0.02] transition-colors">
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2.5">
                           <div className="w-2 h-2 rounded-sm" style={{ background: PALETTE[i] ?? '#3D3020' }} />

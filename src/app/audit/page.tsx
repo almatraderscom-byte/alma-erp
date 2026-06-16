@@ -67,7 +67,7 @@ export default function AuditLogPage() {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={`${r.timestamp}-${r.route}-${i}`} className="border-b border-border/50 hover:bg-white/[0.02]">
+                    <tr key={`${r.timestamp}-${r.route}-${i}`} className="border-b border-border/50 hover:bg-black/[0.02]">
                       <td className="py-2 px-3 font-mono text-zinc-400 whitespace-nowrap">{r.timestamp}</td>
                       <td className="py-2 px-3 font-mono text-gold-lt">{r.route}</td>
                       <td className="py-2 px-3 text-cream">{r.actor}</td>

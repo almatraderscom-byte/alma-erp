@@ -41,7 +41,7 @@ const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Deliv
 
 function orderRowAccentClass(status: string, selected: boolean) {
   const key = status.trim().toUpperCase().replace(/\s+/g, '_')
-  const base = selected ? 'bg-gold/5' : 'hover:bg-white/[0.015]'
+  const base = selected ? 'bg-gold/5' : 'hover:bg-black/[0.02]'
   if (key === 'RETURNED_PAID') return `${base} border-l-2 border-l-amber-400/80 bg-amber-400/[0.04]`
   if (key === 'RETURNED_UNPAID' || key === 'RETURNED') return `${base} border-l-2 border-l-red-500/80 bg-red-500/[0.05]`
   return `${base}`
@@ -409,7 +409,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <p className="text-sm font-bold text-cream leading-tight">{order.product}</p>
               <div className="mt-2"><StatusBadge status={order.status} /></div>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-xl border border-border flex items-center justify-center text-zinc-500 hover:text-cream hover:bg-white/[0.04] transition-colors shrink-0 mt-1">×</button>
+            <button onClick={onClose} className="w-8 h-8 rounded-xl border border-border flex items-center justify-center text-zinc-500 hover:text-cream hover:bg-black/[0.04] transition-colors shrink-0 mt-1">×</button>
           </div>
         </div>
 
@@ -619,13 +619,13 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                     <textarea
                       value={editForm[key]}
                       onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
-                      className="mt-1 min-h-16 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                      className="mt-1 min-h-16 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
                     />
                   ) : (
                     <input
                       value={editForm[key]}
                       onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
-                      className="mt-1 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                      className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
                     />
                   )}
                 </label>
@@ -648,7 +648,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                 value={deleteReason}
                 onChange={e => setDeleteReason(e.target.value)}
                 placeholder="Why should this order be removed? (min 5 characters)"
-                className="mt-3 min-h-24 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                className="mt-3 min-h-24 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
               />
               <div className="mt-4 flex justify-end gap-2">
                 <Button size="xs" variant="secondary" onClick={() => setShowDeleteRequest(false)} disabled={deleteBusy}>Cancel</Button>
@@ -678,7 +678,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                   Items will be returned to inventory automatically.
                 </p>
               )}
-              <div className="mt-4 rounded-xl border border-border bg-black/25 p-3 text-[11px]">
+              <div className="mt-4 rounded-xl border border-border bg-black/[0.03] p-3 text-[11px]">
                 <p className="text-zinc-500">Order</p>
                 <p className="font-mono text-gold-lt">{order.id}</p>
                 <p className="mt-2 text-zinc-500">Current status</p>
@@ -691,7 +691,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                     value={returnReason}
                     onChange={e => setReturnReason(e.target.value)}
                     placeholder="Why did the customer return or refuse?"
-                    className="mt-1 min-h-20 w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-sm text-cream"
+                    className="mt-1 min-h-20 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
                   />
                 </label>
               )}

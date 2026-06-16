@@ -29,7 +29,7 @@ export function MiniTrendChart({
         <p className="py-10 text-center text-xs text-zinc-600">No trend data</p>
       ) : (
         <svg viewBox="0 0 100 100" className="h-36 w-full overflow-visible">
-          <line x1="0" x2="100" y1="90" y2="90" stroke="rgba(255,255,255,.08)" strokeWidth="1" />
+          <line x1="0" x2="100" y1="90" y2="90" stroke="rgba(0,0,0,.06)" strokeWidth="1" />
           <polyline points={points} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           {values.map((v, i) => {
             const x = values.length <= 1 ? 0 : (i / (values.length - 1)) * 100

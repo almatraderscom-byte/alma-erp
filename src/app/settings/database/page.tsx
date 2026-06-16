@@ -81,7 +81,7 @@ export default function DatabaseSettingsPage() {
         subtitle="PostgreSQL · Prisma · NextAuth · session health"
       />
       <div className="p-4 md:p-6 max-w-xl space-y-4">
-        <Card className="p-5 border-gold-dim/25 bg-[#0c0c10] space-y-1">
+        <Card className="p-5 border-gold-dim/25 bg-[#FAF9F6] space-y-1">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Connection</p>
           <p className="text-[11px] text-zinc-500 leading-snug">
             Uses Supabase Postgres for ERP accounts and RBAC. Google Sheets behaviour is unchanged (

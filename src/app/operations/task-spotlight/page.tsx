@@ -167,11 +167,11 @@ export default function TaskSpotlightAdminPage() {
         subtitle="Operations → assign premium operational instructions to employees. Shown fullscreen after Start Work."
       />
 
-      <Card className="p-5 border-gold-dim/30 bg-gradient-to-br from-gold/5 via-card to-black/40 space-y-4">
+      <Card className="p-5 border-gold-dim/30 bg-gradient-to-br from-gold/5 via-card to-transparent space-y-4">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Create spotlight task</p>
         <Input placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} />
         <textarea
-          className="w-full rounded-xl border border-border bg-black/40 px-3 py-2 text-sm text-cream placeholder:text-zinc-600 min-h-[100px]"
+          className="w-full rounded-xl border border-border bg-black/[0.04] px-3 py-2 text-sm text-cream placeholder:text-zinc-600 min-h-[100px]"
           placeholder="Instructions for the employee…"
           value={description}
           onChange={e => setDescription(e.target.value)}
@@ -228,7 +228,7 @@ export default function TaskSpotlightAdminPage() {
         ) : (
           <div className="space-y-4">
             {tasks.map(t => (
-              <div key={t.id} className="rounded-xl border border-border bg-black/20 p-4">
+              <div key={t.id} className="rounded-xl border border-border bg-black/[0.03] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <p className="font-black text-cream">{t.title}</p>

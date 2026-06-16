@@ -282,7 +282,7 @@ function ApprovalsPageInner() {
           <p className="text-sm font-black text-cream">Pending by module</p>
           <div className="mt-4 space-y-2">
             {loading && !data ? <Skeleton className="h-32" /> : !byModule.length ? <Empty icon="◆" title="No pending modules" /> : byModule.map(row => (
-              <div key={row.module} className="flex items-center justify-between rounded-2xl border border-border bg-black/20 px-3 py-2 text-sm">
+              <div key={row.module} className="flex items-center justify-between rounded-2xl border border-border bg-black/[0.03] px-3 py-2 text-sm">
                 <span className="font-bold text-zinc-300">{row.module.replace(/_/g, ' ')}</span>
                 <span className="rounded-full bg-gold/10 px-2 py-1 text-xs font-black text-gold-lt">{row.count}</span>
               </div>
@@ -302,7 +302,7 @@ function ApprovalsPageInner() {
                 <div key={row.id} className={`relative grid gap-3 px-4 py-3 text-xs md:grid-cols-[1fr_0.8fr_1.2fr_0.9fr_1.1fr] ${approvalRowLockClass(ui)}`}>
                   {ui.state === 'processing' && (
                     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40 backdrop-blur-[1px]">
-                      <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-black/80 px-3 py-2 text-[11px] font-black text-amber-200">
+                      <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-black/60 px-3 py-2 text-[11px] font-black text-amber-200">
                         <Spinner />
                         {ui.message || 'Processing approval…'}
                       </div>
@@ -421,7 +421,7 @@ function ApprovalsPageInner() {
               )}
             </div>
             <div className="mobile-modal-body px-5 pb-4">
-              <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/20 p-3">
+              <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/[0.03] p-3">
                 <EmployeeAvatar
                   userId={selected.requester?.id}
                   name={selected.requester?.name || selected.requestedBy}
@@ -451,11 +451,11 @@ function ApprovalsPageInner() {
                     <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
                     <Info label="Reason" value={selected.reason} />
                     {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
-                      <div className="rounded-2xl border border-border bg-black/20 p-3">
+                      <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
                         <PayoutSummaryBlock payout={selected.payoutSummary} />
                       </div>
                     )}
-                    <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/30 p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
+                    <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/[0.03] p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
                   </>
                 )}
               </div>
@@ -554,12 +554,12 @@ function lastAuditSource(auditHistory: unknown): string | null {
 }
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="rounded-2xl border border-border bg-black/20 p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-1 font-bold text-cream">{value}</p></div>
+  return <div className="rounded-2xl border border-border bg-black/[0.03] p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-1 font-bold text-cream">{value}</p></div>
 }
 
 function IntegrityStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+    <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
       <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">{label}</p>
       <p className={`mt-1 text-lg font-black ${warn && value > 0 ? 'text-amber-300' : 'text-cream'}`}>{value}</p>
     </div>

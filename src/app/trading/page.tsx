@@ -222,7 +222,7 @@ export default function TradingDashboardPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <RecentCard title="Latest Trades" empty="No trades today" loading={loading}>
           {latest.trades.map(trade => (
-            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.025]">
+            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/[0.02]">
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold text-cream">{trade.tradingAccount?.accountTitle || trade.tradingAccountId}</p>
                 <p className="mt-0.5 text-[10px] text-zinc-500">{trade.user?.name || 'Staff'} · {trade.tradeType} · {money(trade.usdtAmount)} USDT</p>
@@ -233,7 +233,7 @@ export default function TradingDashboardPage() {
         </RecentCard>
         <RecentCard title="Latest Expenses" empty="No expenses" loading={loading}>
           {latest.expenses.map(expense => (
-            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.025]">
+            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/[0.02]">
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold text-cream">{expense.expenseType}</p>
                 <p className="mt-0.5 text-[10px] text-zinc-500">{expense.tradingAccount?.accountTitle || expense.tradingAccountId}</p>
@@ -346,7 +346,7 @@ function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResp
               <span>Account</span><span>Balance</span><span>Daily P/L</span><span>Weekly P/L</span><span>ROI</span><span>Expense</span><span>Fees</span><span>Progress</span><span>Staff</span><span>Health</span>
             </div>
             {rows.slice(0, 20).map(row => (
-              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs hover:bg-white/[0.025]">
+              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs hover:bg-black/[0.02]">
                 <span><b className="text-cream">{row.accountTitle}</b><br /><span className="text-[10px] text-zinc-500">{row.activityStatus.replace('_', ' ')} · {row.inactiveDays}d idle</span></span>
                 <span className="text-gold-lt">৳{row.currentBalance.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.dailyPl)}>৳{row.dailyPl.toLocaleString('en-BD')}</span>
@@ -373,7 +373,7 @@ function HealthBadge({ health }: { health: TradingDashboardResponse['accountPerf
 
 function MetricPill({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-border bg-black/20 p-3">
+    <div className="min-w-0 rounded-2xl border border-border bg-black/[0.03] p-3">
       <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
       <p className={`mt-2 min-w-0 break-words text-[clamp(0.875rem,0.5rem+0.8vw,1.125rem)] font-black leading-tight tabular-nums ${tone}`}>{value}</p>
     </div>
@@ -391,7 +391,7 @@ function MiniOpsTrend({ rows }: { rows: TradingDashboardResponse['trend'] }) {
     return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
   }).join(' ')
   return (
-    <div className="mt-4 rounded-2xl border border-border bg-black/20 p-3">
+    <div className="mt-4 rounded-2xl border border-border bg-black/[0.03] p-3">
       <svg viewBox="0 0 100 100" className="h-28 w-full overflow-visible">
         <path d={path} fill="none" stroke="currentColor" strokeWidth="3" className="text-gold-lt" vectorEffect="non-scaling-stroke" />
       </svg>

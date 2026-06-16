@@ -153,7 +153,7 @@ export default function SessionSettingsPage() {
           />
         )}
 
-        <Card className="p-5 border-gold-dim/25 bg-[#0c0c10] space-y-3">
+        <Card className="p-5 border-gold-dim/25 bg-[#FAF9F6] space-y-3">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Build / backend</p>
           {healthLoading ? (
             <Skeleton className="h-24 w-full" />

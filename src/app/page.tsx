@@ -18,7 +18,7 @@ const TradingDashboard = dynamic(() => import('@/app/trading/page'), {
   loading: () => <Skeleton className="m-4 h-80 md:m-8" />,
 })
 
-const PALETTE = ['#C9A84C', '#8B6914', '#E8C96A', '#6B5530', '#4A3A20']
+const PALETTE = ['#E07A5F', '#C45A3C', '#F4A28C', '#D4956A', '#8B5E3C']
 const chartFallback = () => <Skeleton className="h-48 w-full rounded-xl" />
 const RevenueChart = dynamic(() => import('@/components/charts').then(m => m.RevenueChart), { ssr: false, loading: chartFallback })
 const BarSourceChart = dynamic(() => import('@/components/charts').then(m => m.BarSourceChart), { ssr: false, loading: chartFallback })
@@ -84,7 +84,7 @@ function LifestyleDashboard() {
     .map(([name, v], i) => ({
       name,
       value: Math.round(v.orders),
-      color: PALETTE[i] ?? '#3D3020',
+      color: PALETTE[i] ?? '#D4956A',
     }))
 
   const statusPie = Object.entries(byStatus)
@@ -303,7 +303,7 @@ function LifestyleDashboard() {
                 </div>
               ) : (
                 topProducts.map((p, i) => (
-                  <div key={p.product} className="px-5 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors">
+                  <div key={p.product} className="px-5 py-3 flex items-center gap-3 hover:bg-black/[0.02] transition-colors">
                     <span className="text-[11px] font-bold text-gold w-5">{i + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-cream truncate">{p.product}</p>
@@ -350,7 +350,7 @@ function LifestyleDashboard() {
                 : recentOrders.length === 0
                   ? <div className="px-5 py-8"><Empty icon="◫" title="No orders found for selected period" desc="Recent orders appear for the selected date range" /></div>
                   : (recentOrders as Partial<Order>[]).slice(0, 6).map(o => (
-                      <div key={o.id} className="px-5 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors">
+                      <div key={o.id} className="px-5 py-3 flex items-center gap-3 hover:bg-black/[0.02] transition-colors">
                         <span className="font-mono text-[11px] text-gold font-bold shrink-0 w-16">{o.id}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-cream truncate">{o.customer}</p>

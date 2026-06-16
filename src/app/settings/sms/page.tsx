@@ -186,7 +186,7 @@ export default function SmsSettingsPage() {
                   <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(true)}>Enable SMS</Button>
                   <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(false)}>Disable SMS</Button>
                 </div>
-                <p className="rounded-xl border border-border bg-black/20 p-3 text-[11px] text-zinc-400">
+                <p className="rounded-xl border border-border bg-black/[0.03] p-3 text-[11px] text-zinc-400">
                   Balance: <span className="font-mono text-gold-lt">{balanceText}</span>
                 </p>
                 <p className="text-[10px] text-zinc-500 leading-relaxed">

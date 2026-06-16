@@ -100,7 +100,7 @@ export default function DigitalClientsPage() {
         ) : (
           <div className="overflow-x-auto min-w-0 max-w-full divide-y divide-border">
             {clients.map(c => (
-              <Link key={c.id} href={`/digital/clients/${c.id}`} className="block px-5 py-4 hover:bg-white/[0.02]">
+              <Link key={c.id} href={`/digital/clients/${c.id}`} className="block px-5 py-4 hover:bg-black/[0.02]">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-bold text-cream">{c.name}</p>

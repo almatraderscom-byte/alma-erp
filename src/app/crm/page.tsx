@@ -157,7 +157,7 @@ export default function CrmPage() {
                   ))
                 : customers.map(c => (
                     <tr key={c.id} onClick={() => setSelected(c.id === selected?.id ? null : c)}
-                      className={`border-b border-border/50 cursor-pointer transition-colors ${c.id === selected?.id ? 'bg-gold/5' : 'hover:bg-white/[0.015]'}`}>
+                      className={`border-b border-border/50 cursor-pointer transition-colors ${c.id === selected?.id ? 'bg-gold/5' : 'hover:bg-black/[0.02]'}`}>
                       <td className="px-3 py-3.5">
                         <div className="flex items-center gap-2.5">
                           <Avatar name={c.name} vip={c.segment === 'VIP'} />

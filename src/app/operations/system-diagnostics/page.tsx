@@ -222,39 +222,39 @@ export default function SystemDiagnosticsPage() {
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {(q?.byStatus ?? []).map(s => (
-                <div key={s.status} className="rounded-xl border border-border bg-black/20 px-3 py-2">
+                <div key={s.status} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                   <p className="text-[9px] uppercase tracking-wider text-zinc-600">{s.status}</p>
                   <p className="mt-0.5 font-mono text-lg font-black text-cream">{s.count}</p>
                 </div>
               ))}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-[11px]">
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-zinc-600">Pending depth</p>
                 <p className={`font-mono font-bold ${(q?.pendingDepth ?? 0) > 0 ? 'text-amber-300' : 'text-green-400'}`}>{q?.pendingDepth ?? 0}</p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-zinc-600">Stuck sending</p>
                 <p className={`font-mono font-bold ${(q?.stuckSending ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>{q?.stuckSending ?? 0}</p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-zinc-600">Retry wait</p>
                 <p className="font-mono font-bold text-cream">{q?.retryWaitCount ?? 0}</p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-zinc-600">Dead letter (max attempts)</p>
                 <p className={`font-mono font-bold ${(q?.failedDeadLetter ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>
                   {q?.failedDeadLetter ?? 0}
                   {q?.maxAttempts != null ? ` / ${q.maxAttempts}` : ''}
                 </p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-zinc-600">Avg delivery latency</p>
                 <p className="font-mono font-bold text-cream">
                   {q?.averageDeliveryLatencyMs != null ? `${q.averageDeliveryLatencyMs}ms` : 'N/A'}
                 </p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2 col-span-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 col-span-2">
                 <p className="text-zinc-600">Oldest pending</p>
                 {q?.oldestQueued ? (
                   <p className="font-mono font-bold text-amber-300">
@@ -277,11 +277,11 @@ export default function SystemDiagnosticsPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-[9px] uppercase tracking-wider text-zinc-600">Total selfies</p>
                 <p className="mt-0.5 font-mono text-lg font-black text-cream">{s?.last24hTotal ?? 0}</p>
               </div>
-              <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+              <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
                 <p className="text-[9px] uppercase tracking-wider text-zinc-600">Missing storage ref</p>
                 <p className={`mt-0.5 font-mono text-lg font-black ${(s?.missingStorageRefCount ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>
                   {s?.missingStorageRefCount ?? 0}

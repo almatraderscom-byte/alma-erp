@@ -300,18 +300,18 @@ export default function BrandingSettingsPage() {
                   const previewUrl = previewAssets[assetType]
                   const isLogo = assetType === 'logo'
                   return (
-                    <div key={assetType} className="space-y-3 rounded-2xl border border-border bg-black/20 p-3">
+                    <div key={assetType} className="space-y-3 rounded-2xl border border-border bg-black/[0.03] p-3">
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-500">{rules.label}</p>
                         <p className="mt-1 text-[11px] text-zinc-500">{rules.helper}</p>
                         <p className="mt-1 text-[10px] text-zinc-600">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
                       </div>
-                      <div className={`rounded-xl border border-border bg-[linear-gradient(45deg,#111_25%,transparent_25%),linear-gradient(-45deg,#111_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#111_75%),linear-gradient(-45deg,transparent_75%,#111_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 ${isLogo ? 'h-28' : 'h-28'}`}>
+                      <div className={`rounded-xl border border-border bg-[linear-gradient(45deg,#e5e5e5_25%,transparent_25%),linear-gradient(-45deg,#e5e5e5_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#e5e5e5_75%),linear-gradient(-45deg,transparent_75%,#e5e5e5_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 ${isLogo ? 'h-28' : 'h-28'}`}>
                         {previewUrl ? (
                           <img
                             src={previewUrl}
                             alt={`${rules.label} preview`}
-                            className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-black/40 border border-border p-1'}
+                            className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-black/[0.04] border border-border p-1'}
                           />
                         ) : (
                           <span className="text-xs text-zinc-600">No {rules.label.toLowerCase()}</span>
@@ -393,7 +393,7 @@ export default function BrandingSettingsPage() {
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="flex items-center gap-2 rounded-xl border border-border bg-black/20 px-3 py-3 text-sm text-zinc-300">
+                <label className="flex items-center gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-3 text-sm text-zinc-300">
                   <input
                     type="checkbox"
                     checked={form.invoice_watermark_enabled}

@@ -180,7 +180,7 @@ export default function TradingHrPage() {
               <Field name="roleTitle" label="Trading role" defaultValue={profileEmployee.profile?.roleTitle || ''} />
               <label className="space-y-1">
                 <span className="text-[10px] font-bold uppercase text-zinc-500">Shift</span>
-                <select name="shift" defaultValue={profileEmployee.profile?.shift || 'DAY'} className="w-full rounded-xl border border-border bg-black/25 px-3 py-2 text-cream">
+                <select name="shift" defaultValue={profileEmployee.profile?.shift || 'DAY'} className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream">
                   <option value="DAY">Day shift</option>
                   <option value="NIGHT">Night shift</option>
                 </select>
@@ -190,7 +190,7 @@ export default function TradingHrPage() {
               <Field name="salary" label="Salary" type="number" defaultValue={String(profileEmployee.profile?.salary || profileEmployee.user.salaryHint || 0)} />
               <label className="space-y-1">
                 <span className="text-[10px] font-bold uppercase text-zinc-500">Commission type</span>
-                <select name="commissionType" defaultValue={profileEmployee.profile?.commissionType || 'NONE'} className="w-full rounded-xl border border-border bg-black/25 px-3 py-2 text-cream">
+                <select name="commissionType" defaultValue={profileEmployee.profile?.commissionType || 'NONE'} className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream">
                   <option value="NONE">None</option>
                   <option value="PERCENTAGE">Profit percentage</option>
                   <option value="FIXED">Fixed bonus</option>
@@ -283,7 +283,7 @@ function Field({ name, label, type = 'text', defaultValue = '' }: { name: string
   return (
     <label className="space-y-1">
       <span className="text-[10px] font-bold uppercase text-zinc-500">{label}</span>
-      <input name={name} type={type} defaultValue={defaultValue} className="w-full rounded-xl border border-border bg-black/25 px-3 py-2 text-cream" />
+      <input name={name} type={type} defaultValue={defaultValue} className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" />
     </label>
   )
 }
@@ -292,7 +292,7 @@ function Textarea({ name, label, defaultValue = '' }: { name: string; label: str
   return (
     <label className="space-y-1">
       <span className="text-[10px] font-bold uppercase text-zinc-500">{label}</span>
-      <textarea name={name} defaultValue={defaultValue} rows={3} className="w-full rounded-xl border border-border bg-black/25 px-3 py-2 text-cream" />
+      <textarea name={name} defaultValue={defaultValue} rows={3} className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" />
     </label>
   )
 }

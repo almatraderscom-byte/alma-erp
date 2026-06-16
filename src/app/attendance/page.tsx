@@ -382,7 +382,7 @@ function AttendancePageInner() {
         ) : (
           <div className="grid gap-2">
             {data!.pendingWaivers.map(w => (
-              <div key={w.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px] flex flex-col md:flex-row md:items-center gap-3">
+              <div key={w.id} className="rounded-2xl border border-border bg-black/[0.03] p-3 text-[11px] flex flex-col md:flex-row md:items-center gap-3">
                 <EmployeeAvatar userId={w.requesterUserId} name={w.requesterName} imageUrl={w.requesterProfileImageUrl} size="sm" />
                 <div className="flex-1 min-w-0">
                   <p className="text-cream font-bold">{w.requesterName} · {w.employeeId}</p>
@@ -432,7 +432,7 @@ function AttendancePageInner() {
                 </thead>
                 <tbody>
                   {data!.records.map(r => (
-                    <tr key={r.id} className="border-b border-border/60 transition-colors hover:bg-white/[0.015]">
+                    <tr key={r.id} className="border-b border-border/60 transition-colors hover:bg-black/[0.02]">
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
@@ -522,7 +522,7 @@ function AttendancePageInner() {
           ) : (
             <div className="space-y-2 max-h-[420px] overflow-y-auto">
               {data!.ranking.slice(0, 20).map((r, i) => (
-                <div key={`${r.employeeId}-${i}`} className="card-interactive rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+                <div key={`${r.employeeId}-${i}`} className="card-interactive rounded-2xl border border-border bg-black/[0.03] p-3 text-[11px]">
                   <div className="flex justify-between gap-2 items-center">
                     <span className="flex items-center gap-2 min-w-0">
                       <EmployeeAvatar userId={r.userId} name={r.name} imageUrl={r.profileImageUrl} size="sm" />
@@ -594,7 +594,7 @@ function AttendancePageInner() {
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {data!.selfieLogs.slice(0, 12).map(log => (
-              <div key={log.id} className="rounded-2xl border border-border bg-black/20 p-3 text-[11px]">
+              <div key={log.id} className="rounded-2xl border border-border bg-black/[0.03] p-3 text-[11px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <VerificationPhoto
                   src={log.imageUrl || log.imageDataUrl}
@@ -629,13 +629,13 @@ function AttendancePageInner() {
               {review.action === 'APPROVE' && (
                 <label className="block space-y-1 text-[11px]">
                   <span className="text-zinc-500">Approved reduction (wallet credit)</span>
-                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream font-mono" />
+                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream font-mono" />
                   <p className="text-zinc-600">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
                 </label>
               )}
               <label className="block space-y-1 text-[11px]">
                 <span className="text-zinc-500">Admin note</span>
-                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-border bg-black/30 px-3 py-2 text-cream" />
+                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-cream" />
               </label>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
@@ -668,7 +668,7 @@ function VerificationPhoto({
     missing || broken || !src || (!src.startsWith('http') && !src.startsWith('data:image/'))
   if (showFallback) {
     return (
-      <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border border-amber-500/25 bg-black/40 px-3 text-center text-[10px] text-amber-200">
+      <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border border-amber-500/25 bg-black/[0.04] px-3 text-center text-[10px] text-amber-200">
         <span className="font-black uppercase tracking-wide">Photo unavailable</span>
         <span className="text-zinc-500">Storage ref missing or expired for {employeeId}. Ask employee to re-verify if needed.</span>
       </div>
@@ -679,7 +679,7 @@ function VerificationPhoto({
     <img
       src={src}
       alt="Verification selfie"
-      className="h-36 w-full rounded-xl object-cover bg-black/40"
+      className="h-36 w-full rounded-xl object-cover bg-black/[0.04]"
       onError={() => setBroken(true)}
     />
   )
@@ -691,7 +691,7 @@ function money(value: unknown) {
 
 function AnalyticsStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-black/20 px-3 py-2">
+    <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
       <p className="text-[9px] uppercase tracking-wider text-zinc-600">{label}</p>
       <p className={`mt-0.5 font-mono font-bold ${tone || 'text-cream'}`}>{value}</p>
     </div>

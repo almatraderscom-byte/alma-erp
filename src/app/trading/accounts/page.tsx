@@ -78,7 +78,7 @@ export default function TradingAccountsPage() {
               </thead>
               <tbody>
                 {accounts.map(account => (
-                  <tr key={account.id} className="border-b border-border/60 hover:bg-white/[0.02]">
+                  <tr key={account.id} className="border-b border-border/60 hover:bg-black/[0.02]">
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream hover:text-gold-lt">{account.accountTitle}</Link>
@@ -170,7 +170,7 @@ export default function TradingAccountsPage() {
 
 function MiniStat({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-black/20 p-2">
+    <div className="rounded-xl border border-border bg-black/[0.03] p-2">
       <p className="text-[9px] uppercase tracking-[0.12em] text-zinc-600">{label}</p>
       <p className={`mt-1 text-xs font-black ${className || 'text-cream'}`}>{value}</p>
     </div>

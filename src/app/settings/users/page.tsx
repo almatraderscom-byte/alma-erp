@@ -150,7 +150,7 @@ export default function UsersSettingsPage() {
                 </thead>
                 <tbody>
                   {users.map(u => (
-                    <tr key={u.id} className="border-b border-border/60 hover:bg-white/[0.02]">
+                    <tr key={u.id} className="border-b border-border/60 hover:bg-black/[0.02]">
                       <td className="py-2 px-4">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={u.id} name={u.name} email={u.email} imageUrl={u.profileImageUrl} size="sm" />
@@ -439,7 +439,7 @@ function UserFormModal({
               System owner accounts control the ERP and are not linked to HR employee IDs, salary hints, attendance, or personal wallets.
             </p>
           )}
-          <div className="space-y-2 rounded-xl border border-border p-3 bg-black/30">
+          <div className="space-y-2 rounded-xl border border-border p-3 bg-black/[0.03]">
             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Business access</p>
             {BUSINESS_LIST.map(b => (
               <label key={b.id} className="flex items-center gap-2 cursor-pointer">
@@ -470,7 +470,7 @@ function UserFormModal({
             </>
           )}
           {initial && (
-            <div className="rounded-xl border border-border bg-black/25 p-4">
+            <div className="rounded-xl border border-border bg-black/[0.03] p-4">
               <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Profile photo</p>
               <ProfilePhotoUploader
                 userId={initial.id}

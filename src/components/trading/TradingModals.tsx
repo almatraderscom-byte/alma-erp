@@ -158,7 +158,7 @@ export function TradingAccountModal({
           {canManageTargets ? (
             <Input inputMode="decimal" type="number" min="0" step="0.01" value={form.merchantTarget ?? ''} onChange={e => setForm(f => ({ ...f, merchantTarget: e.target.value ? Number(e.target.value) : null }))} placeholder="Merchant Goal / Monthly Target" />
           ) : account?.merchantTarget != null ? (
-            <p className="rounded-xl border border-border bg-black/20 px-4 py-3 text-sm text-zinc-400">Monthly target: {n(account.merchantTarget)} BDT (Super Admin only)</p>
+            <p className="rounded-xl border border-border bg-black/[0.03] px-4 py-3 text-sm text-zinc-400">Monthly target: {n(account.merchantTarget)} BDT (Super Admin only)</p>
           ) : null}
           <Select value={form.status || 'ACTIVE'} onChange={v => setForm(f => ({ ...f, status: v as never }))} options={[
             { label: 'Active', value: 'ACTIVE' },
@@ -171,7 +171,7 @@ export function TradingAccountModal({
           { label: 'Unassigned', value: '' },
           ...staff.map(s => ({ label: `${s.name}${s.role ? ` · ${s.role}` : ''}`, value: s.id })),
         ]} className="w-full" />
-        <div className="rounded-2xl border border-border bg-black/20 p-3">
+        <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
           <p className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Partnership / 50-50 Loss Share</p>
           <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-cream">
             <input
@@ -200,7 +200,7 @@ export function TradingAccountModal({
             </>
           )}
         </div>
-        <div className="rounded-2xl border border-border bg-black/20 p-3">
+        <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
           <p className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Optional Staff Commission</p>
           {form.partnershipEnabled && (
             <p className="mb-3 text-[11px] text-zinc-500">Commission disabled while partnership is active.</p>
@@ -406,7 +406,7 @@ export function TradeEntryModal({
           className="mb-4 w-full"
         />
       )}
-      <div className="mb-4 rounded-2xl border border-border bg-black/20 p-2">
+      <div className="mb-4 rounded-2xl border border-border bg-black/[0.03] p-2">
         <p className="mb-2 px-1 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Trade Type</p>
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -457,10 +457,10 @@ export function TradeEntryModal({
           <Input inputMode="decimal" type="number" min="0" step="any" value={form.feeUsdt} onChange={e => setForm(f => ({ ...f, feeUsdt: e.target.value }))} placeholder="Binance Fee (USDT)" className="text-lg font-bold tabular-nums" />
         </div>
         <div className="grid grid-cols-2 gap-2 text-center text-[11px] sm:grid-cols-4">
-          <div className="rounded-xl border border-border bg-black/20 p-2"><p className="text-zinc-500">{form.tradeType === 'BUY' ? 'Total BDT' : 'Sell BDT'}</p><p className="font-bold text-cream">৳{calc.totalBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-border bg-black/20 p-2"><p className="text-zinc-500">Fee BDT</p><p className="font-bold text-amber-300">৳{calc.feeBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-border bg-black/20 p-2"><p className="text-zinc-500">{form.tradeType === 'BUY' ? 'Net Buy Cost' : 'Net Receive'}</p><p className="font-bold text-gold-lt">৳{calc.netBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-border bg-black/20 p-2"><p className="text-zinc-500">Avg Cost</p><p className="font-bold text-zinc-300">৳{calc.avgCostRate.toLocaleString('en-BD', { maximumFractionDigits: 4 })}</p></div>
+          <div className="rounded-xl border border-border bg-black/[0.03] p-2"><p className="text-zinc-500">{form.tradeType === 'BUY' ? 'Total BDT' : 'Sell BDT'}</p><p className="font-bold text-cream">৳{calc.totalBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-border bg-black/[0.03] p-2"><p className="text-zinc-500">Fee BDT</p><p className="font-bold text-amber-300">৳{calc.feeBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-border bg-black/[0.03] p-2"><p className="text-zinc-500">{form.tradeType === 'BUY' ? 'Net Buy Cost' : 'Net Receive'}</p><p className="font-bold text-gold-lt">৳{calc.netBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-border bg-black/[0.03] p-2"><p className="text-zinc-500">Avg Cost</p><p className="font-bold text-zinc-300">৳{calc.avgCostRate.toLocaleString('en-BD', { maximumFractionDigits: 4 })}</p></div>
         </div>
         <div className={`rounded-2xl border p-4 ${calc.net >= 0 ? 'border-green-400/25 bg-green-400/10' : 'border-red-400/25 bg-red-400/10'}`}>
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">{form.tradeType === 'BUY' ? 'Net cost' : 'Live profit / loss'}</p>
