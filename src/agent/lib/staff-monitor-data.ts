@@ -12,8 +12,10 @@ import type {
   ActiveTodoRow,
   AgentDutyRow,
   ContinuousServiceHealth,
+  GeoStaffStatus,
   MonitorWarning,
   PendingApprovalRow,
+  ProductivityAlert,
   SalahDutyRow,
   SchedulerHealth,
   StaffMonitorData,
@@ -295,6 +297,68 @@ async function getDutyHistory(days: number): Promise<DutyHistoryDay[]> {
   return dates.map((date) => ({ date, duties: byDate.get(date) ?? [] }))
 }
 
+const OFFICE_LAT = Number(process.env.OFFICE_ALMA_LIFESTYLE_LAT || process.env.OFFICE_LAT || 0)
+const OFFICE_LNG = Number(process.env.OFFICE_ALMA_LIFESTYLE_LNG || process.env.OFFICE_LNG || 0)
+const OFFICE_RADIUS_M = Number(process.env.OFFICE_ALMA_LIFESTYLE_RADIUS_M || process.env.OFFICE_RADIUS_M || 300)
+
+function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+async function getGeoStatus(): Promise<GeoStaffStatus[]> {
+  if (!OFFICE_LAT || !OFFICE_LNG) return []
+  const staff = await db.agentStaff.findMany({ where: { active: true, businessId: 'ALMA_LIFESTYLE' }, select: { id: true, name: true } })
+  const results: GeoStaffStatus[] = []
+  for (const s of staff as Array<{ id: string; name: string }>) {
+    const loc = await db.agentStaffLocation.findFirst({ where: { staffId: s.id }, orderBy: { recordedAt: 'desc' } })
+    if (!loc) { results.push({ staffId: s.id, staffName: s.name, status: 'no_data' }); continue }
+    const ageMin = (Date.now() - new Date(loc.recordedAt).getTime()) / 60_000
+    if (ageMin > 10) { results.push({ staffId: s.id, staffName: s.name, status: 'stale', lastUpdate: loc.recordedAt.toISOString() }); continue }
+    const dist = haversineM(OFFICE_LAT, OFFICE_LNG, loc.lat, loc.lng)
+    const inZone = dist <= OFFICE_RADIUS_M
+    results.push({
+      staffId: s.id, staffName: s.name,
+      status: inZone ? 'in_zone' : 'outside',
+      distanceM: Math.round(dist),
+      lastUpdate: loc.recordedAt.toISOString(),
+      mapsLink: inZone ? undefined : `https://www.google.com/maps?q=${loc.lat},${loc.lng}`,
+    })
+  }
+  return results
+}
+
+async function getProductivityAlerts(): Promise<ProductivityAlert[]> {
+  const today = todayYmdDhaka()
+  const alerts: ProductivityAlert[] = []
+  const proofKeys = await prisma.agentKvSetting.findMany({ where: { key: { startsWith: `proof_requests:${today}:` } } })
+  for (const row of proofKeys) {
+    try {
+      const v = JSON.parse(row.value) as { count?: number; lastSentAt?: string }
+      if (v.lastSentAt) {
+        const staffId = row.key.split(':')[2]
+        const staff = await db.agentStaff.findUnique({ where: { id: staffId }, select: { name: true } })
+        alerts.push({ staffId, staffName: staff?.name ?? 'Staff', type: 'proof_sent', message: `প্রুফ পাঠানো হয়েছে (${v.count ?? 1}x আজ)`, at: v.lastSentAt })
+      }
+    } catch { /* skip */ }
+  }
+  const idleKey = await prisma.agentKvSetting.findUnique({ where: { key: `idle_alert:${today}` } })
+  if (idleKey?.value) {
+    try {
+      const v = JSON.parse(idleKey.value) as { staffIds?: string[] }
+      for (const sid of v.staffIds ?? []) {
+        const staff = await db.agentStaff.findUnique({ where: { id: sid }, select: { name: true } })
+        alerts.push({ staffId: sid, staffName: staff?.name ?? 'Staff', type: 'idle', message: '২+ ঘণ্টা নিষ্ক্রিয়', at: new Date().toISOString() })
+      }
+    } catch { /* skip */ }
+  }
+  return alerts
+}
+
 export async function getStaffMonitorData(opts: { historyDays?: number } = {}): Promise<StaffMonitorData> {
   const historyDays = Math.min(Math.max(opts.historyDays ?? 7, 1), 14)
   const today = todayYmdDhaka()
@@ -353,6 +417,11 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
   ])
 
   const continuousServices = hbPack.services
+
+  const [geoStatus, productivityAlerts] = await Promise.all([
+    getGeoStatus().catch(() => [] as GeoStaffStatus[]),
+    getProductivityAlerts().catch(() => [] as ProductivityAlert[]),
+  ])
 
   const activeReminders = (reminderRows as Array<{
     id: string; title: string; body: string | null; dueAt: Date; tier: number
@@ -558,6 +627,8 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     activeTodos,
     pendingApprovals,
     dutyTimeOverrides,
+    geoStatus,
+    productivityAlerts,
     generatedAt: new Date().toISOString(),
   }
 }

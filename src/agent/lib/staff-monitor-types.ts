@@ -287,5 +287,24 @@ export type StaffMonitorData = {
   activeTodos?: ActiveTodoRow[]
   pendingApprovals?: PendingApprovalRow[]
   dutyTimeOverrides?: Record<string, string>
+  geoStatus?: GeoStaffStatus[]
+  productivityAlerts?: ProductivityAlert[]
   generatedAt: string
+}
+
+export type GeoStaffStatus = {
+  staffId: string
+  staffName: string
+  status: 'in_zone' | 'outside' | 'stale' | 'no_data'
+  distanceM?: number
+  lastUpdate?: string
+  mapsLink?: string
+}
+
+export type ProductivityAlert = {
+  staffId: string
+  staffName: string
+  type: 'proof_timeout' | 'slow_task' | 'idle' | 'proof_sent'
+  message: string
+  at: string
 }

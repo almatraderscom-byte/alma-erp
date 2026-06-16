@@ -490,6 +490,54 @@ export default function AgentStaffMonitor() {
             {/* ── Staff Cards ── */}
             <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
 
+            {/* ── Live Surveillance (Geo + Productivity) ── */}
+            {isLive && (displayData.geoStatus?.length || displayData.productivityAlerts?.length) ? (
+              <motion.div variants={fadeIn}>
+                <SectionCard title="Live Surveillance" icon="📡" accent="red">
+                  {displayData.geoStatus?.length ? (
+                    <div className="mb-3">
+                      <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">📍 Geo-Fence</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {displayData.geoStatus.map((g) => (
+                          <div key={g.staffId} className={cn(
+                            'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium',
+                            g.status === 'in_zone' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                            g.status === 'outside' && 'border-red-200 bg-red-50 text-red-700',
+                            g.status === 'stale' && 'border-amber-200 bg-amber-50 text-amber-700',
+                            g.status === 'no_data' && 'border-zinc-200 bg-zinc-50 text-zinc-500',
+                          )}>
+                            <span>{g.status === 'in_zone' ? '✅' : g.status === 'outside' ? '🚨' : g.status === 'stale' ? '⏸️' : '❓'}</span>
+                            <span className="font-semibold">{g.staffName}</span>
+                            {g.status === 'outside' && g.distanceM && <span className="text-[10px]">({g.distanceM}m)</span>}
+                            {g.mapsLink && <a href={g.mapsLink} target="_blank" rel="noopener noreferrer" className="text-[9px] underline">📍 Map</a>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {displayData.productivityAlerts?.length ? (
+                    <div>
+                      <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">⚡ Productivity</h4>
+                      <div className="space-y-1">
+                        {displayData.productivityAlerts.map((a, i) => (
+                          <div key={i} className={cn(
+                            'flex items-center gap-2 rounded-md border px-2 py-1 text-[11px]',
+                            a.type === 'idle' && 'border-red-200 bg-red-50',
+                            a.type === 'proof_timeout' && 'border-amber-200 bg-amber-50',
+                            a.type === 'slow_task' && 'border-orange-200 bg-orange-50',
+                            a.type === 'proof_sent' && 'border-blue-200 bg-blue-50',
+                          )}>
+                            <span className="font-semibold">{a.staffName}</span>
+                            <span className="text-zinc-600">{a.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </SectionCard>
+              </motion.div>
+            ) : null}
+
             {/* ── Duty Timeline ── */}
             <MonitorDutyTimeline
               data={displayData.agentDuties}
