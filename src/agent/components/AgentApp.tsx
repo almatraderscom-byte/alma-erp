@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentModelSelector from './AgentModelSelector'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
-import VoiceSessionOverlay from './voice/VoiceSessionOverlay'
+const VoiceSessionOverlay = dynamic(() => import('./voice/VoiceSessionOverlay'), { ssr: false })
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
@@ -959,19 +960,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
         {/* Thread + artifacts */}
         <div className="relative flex flex-1 overflow-hidden">
-          <VoiceSessionOverlay
-            open={voiceOverlayOpen}
-            agentState={agentOrbState}
-            inputLevel={micLevel}
-            outputLevel={playbackLevel}
-            voiceMode={voiceMode}
-            phase={voiceRecorder.recording ? 'listening' : voicePhase}
-            onClose={closeVoiceOverlay}
-            onTapOrb={() => {
-              if (voiceRecorder.recording) voiceRecorder.stopRecording()
-              else void voiceRecorder.startRecording()
-            }}
-          />
+          {voiceOverlayOpen && (
+            <VoiceSessionOverlay
+              open={voiceOverlayOpen}
+              agentState={agentOrbState}
+              inputLevel={micLevel}
+              outputLevel={playbackLevel}
+              voiceMode={voiceMode}
+              phase={voiceRecorder.recording ? 'listening' : voicePhase}
+              onClose={closeVoiceOverlay}
+              onTapOrb={() => {
+                if (voiceRecorder.recording) voiceRecorder.stopRecording()
+                else void voiceRecorder.startRecording()
+              }}
+            />
+          )}
           {convLoading ? (
             <div className="flex flex-1 overflow-y-auto">
               <AgentConversationSkeleton />

@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import AgentVoiceOrb from './voice/AgentVoiceOrb'
+import VoiceOrbFallback from './voice/VoiceOrbFallback'
 
 const SUGGESTIONS = [
   { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
@@ -38,7 +38,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
             whileTap={{ scale: 0.96 }}
             aria-label="ভয়েস মোড শুরু করুন"
           >
-            <AgentVoiceOrb agentState={null} size={168} />
+            <VoiceOrbFallback size={168} />
           </motion.button>
         </motion.div>
 
