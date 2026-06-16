@@ -269,7 +269,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
               <p className="text-[15px] font-semibold text-[#1a1a2e]/80">{STATUS[state]}</p>
               {transcript && (
                 <p className="max-w-[280px] text-center text-[12px] leading-relaxed text-[#64748b]">
-                  "{transcript}"
+                  &ldquo;{transcript}&rdquo;
                 </p>
               )}
             </motion.div>

@@ -6,7 +6,6 @@ import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
-import AgentModelSelector from './AgentModelSelector'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 const VoiceSession = dynamic(() => import('./voice/VoiceSession'), { ssr: false })
 import toast from 'react-hot-toast'
