@@ -75,3 +75,14 @@ export const SPECIALIST_ROLE_KEYS = Object.keys(SPECIALIST_ROLES) as SpecialistR
 export function specialistLabel(role: string): string {
   return (SPECIALIST_ROLES as Record<string, SpecialistRoleDef>)[role]?.label ?? role
 }
+
+/** Bangla + English — for CCTV / owner visibility. */
+export function specialistDisplayName(role: string): string {
+  const d = (SPECIALIST_ROLES as Record<string, SpecialistRoleDef>)[role]
+  if (!d) return role
+  return `${d.label} · ${d.labelEn}`
+}
+
+export function specialistIcon(role: string): string {
+  return (SPECIALIST_ROLES as Record<string, SpecialistRoleDef>)[role]?.icon ?? '🤝'
+}

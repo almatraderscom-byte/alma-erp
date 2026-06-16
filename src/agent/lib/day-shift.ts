@@ -29,6 +29,7 @@ export type DayShiftState = {
   todoIds: string[]
   startedAt: string
   lastTickAt?: string
+  lastPatrolAt?: string
   completedAt?: string
 }
 
@@ -239,7 +240,7 @@ async function maybeRunSpecialist(
 
   await appendShiftNarrative(
     conversationId,
-    `এই অংশটা ${label} সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
+    `এই অংশটা ${label} (${def.needsSpecialist}) সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
       `> **Delegate → ${label}:** ${brief.slice(0, 120)}${brief.length > 120 ? '…' : ''}`,
   )
 
@@ -257,6 +258,34 @@ async function maybeRunSpecialist(
 
   const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
   return `✓ **${label} ফলাফল:**\n${result.summary}${toolsLine}`
+}
+
+const PATROL_INTERVAL_MS = 60 * 60 * 1000 // hourly light check after main queue
+
+async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detail: string; conversationId: string }> {
+  const now = Date.now()
+  if (state.lastPatrolAt && now - new Date(state.lastPatrolAt).getTime() < PATROL_INTERVAL_MS) {
+    return { ok: true, detail: 'patrol_wait', conversationId: state.conversationId }
+  }
+
+  const lines: string[] = ['🔄 **অফিস প্যাট্রোল** — ২৪ ঘণ্টা অফিস চালু। মূল কাজ শেষ; হালকা মনিটরিং চলছে।']
+
+  try {
+    const briefing = await buildOwnerBriefingData()
+    const pending = briefing.pendingOrders?.count ?? 0
+    const unreplied = briefing.csWaiting?.unrepliedCount ?? 0
+    const lowStock = briefing.inventory?.items?.filter((i) => i.currentStock <= i.reorderLevel).length ?? 0
+    lines.push(`📊 অর্ডার pending: **${pending}** · CS unreplied: **${unreplied}** · low stock: **${lowStock}**`)
+    if (unreplied > 0) lines.push(`⚠️ CS inbox-এ ${unreplied}টি উত্তর বাকি — দেখা দরকার।`)
+  } catch {
+    lines.push('✓ ERP সংযোগ ঠিক আছে — বিস্তারিত পরের টিক-এ।')
+  }
+
+  await appendShiftNarrative(state.conversationId, lines.join('\n\n'))
+  state.lastPatrolAt = new Date().toISOString()
+  state.lastTickAt = state.lastPatrolAt
+  await saveDayShiftState(state)
+  return { ok: true, detail: 'patrol_done', conversationId: state.conversationId }
 }
 
 async function patchTodoStatus(id: string, status: string): Promise<void> {
@@ -284,10 +313,10 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
   if (!state) {
     await appendShiftNarrative(
       conversationId,
-      `🌅 **সকালের অফিস শিফট শুরু**\n\n` +
-        `আসসালামু আলাইকুম Sir। আজকের কাজের তালিকা বানাচ্ছি — strategist + ERP briefing চেক করব, ` +
-        `তারপর একটার পর একটা কাজ করব। আপনি এই chat-এ live দেখতে পারবেন; যেকোনো সময় জিজ্ঞেস করলে ` +
-        `আমি same thread থেকে বুঝে উত্তর দেব।\n\n` +
+      `🏢 **অফিস সাইকেল শুরু** (দুপুর ১২টা — ২৪ ঘণ্টা অফিস চালু)\n\n` +
+        `আসসালামু আলাইকুম Sir। আজকের কাজের তালিকা বানাচ্ছি — ERP briefing চেক করব, ` +
+        `তারপর একটার পর একটা কাজ করব। অফিস ২৪ ঘণ্টা চালু থাকবে; মূল কাজ শেষে hourly প্যাট্রোল চলবে। ` +
+        `আপনি এই chat-এ live দেখতে পারবেন।\n\n` +
         `প্রথমে briefing data টানছি...`,
     )
 
@@ -338,27 +367,37 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   const date = todayYmdDhaka()
   let state = await loadDayShiftState(date)
 
-  if (!state || state.status !== 'running') {
+  if (!state) {
     const started = await startDayShift()
     if (!started.ok) return { ok: false, detail: 'start_failed' }
     state = await loadDayShiftState(date)
     if (!state) return { ok: false, detail: 'no_state' }
   }
 
+  if (state.status === 'done') {
+    return runPatrolTick(state)
+  }
+
+  if (state.status !== 'running') {
+    state.status = 'running'
+    await saveDayShiftState(state)
+  }
+
   const { conversationId, taskIndex, todoIds } = state
   const total = SHIFT_TASK_DEFS.length
 
   if (taskIndex >= total) {
-    if (state.status !== 'done') {
+    if (!state.completedAt) {
       await appendShiftNarrative(
         conversationId,
-        `🌙 **আজকের শিফট সম্পন্ন** — ${total}টি কাজ চেক করা হয়েছে।\n\n` +
-          `আপনি যেকোনো কাজের বিস্তারিত এই chat-এ জিজ্ঞেস করতে পারেন। ইনশাআল্লাহ।`,
+        `✅ **মূল কাজের তালিকা সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
+          `অফিস **২৪ ঘণ্টা চালু** থাকবে — প্রতি ঘণ্টায় হালকা প্যাট্রোল চলবে। ` +
+          `পরের সাইকেল **দুপুর ১২টায়** শুরু হবে। এই chat-এ যেকোনো সময় জিজ্ঞেস করতে পারেন।`,
       )
       state.status = 'done'
       state.completedAt = new Date().toISOString()
       await saveDayShiftState(state)
-      void sendOwnerText(`🌙 Agent অফিস শিফট শেষ — ${total}টি কাজ সম্পন্ন। Chat-এ summary দেখুন।`).catch(() => {})
+      void sendOwnerText(`🌙 Agent অফিস মূল কাজ শেষ — ${total}টি সম্পন্ন। অফিস ২৪ ঘণ্টা চালু।`).catch(() => {})
     }
     return { ok: true, detail: 'shift_complete', conversationId }
   }

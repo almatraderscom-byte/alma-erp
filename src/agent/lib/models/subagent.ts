@@ -127,6 +127,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         apiModel: model.apiModel,
         provider: 'anthropic',
         subagent: params.role,
+        task_snippet: params.task.slice(0, 160),
       },
       costUsd,
       conversationId: params.conversationId ?? null,

@@ -23,7 +23,7 @@ import {
   type ModelRoutingConfig,
 } from '@/agent/lib/models/routing-config'
 import { getModel, MODEL_REGISTRY } from '@/agent/lib/models/registry'
-import { specialistLabel } from '@/agent/lib/models/specialist-roles'
+import { specialistLabel, specialistDisplayName, specialistIcon } from '@/agent/lib/models/specialist-roles'
 
 export const runtime = 'nodejs'
 
@@ -101,21 +101,95 @@ export async function GET(req: NextRequest) {
   }))
 
   // What each specialist sub-agent did today (delegations from the head agent).
-  const specialistRows = await prisma.$queryRaw<Array<{ role: string; calls: bigint; total: string }>>(
-    Prisma.sql`SELECT units->>'subagent' AS role, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0)::text AS total
+  const specialistRows = await prisma.$queryRaw<Array<{
+    role: string
+    calls: bigint
+    total: string
+    input_tokens: string
+    output_tokens: string
+  }>>(
+    Prisma.sql`SELECT units->>'subagent' AS role,
+                      COUNT(*) AS calls,
+                      COALESCE(SUM(cost_usd), 0)::text AS total,
+                      COALESCE(SUM((units->>'input_tokens')::bigint), 0)::text AS input_tokens,
+                      COALESCE(SUM((units->>'output_tokens')::bigint), 0)::text AS output_tokens
                FROM agent_cost_events
                WHERE occurred_at >= ${start} AND occurred_at < ${end}
                  AND units->>'subagent' IS NOT NULL
                GROUP BY units->>'subagent'
-               ORDER BY COUNT(*) DESC`,
-  ).catch(() => [] as Array<{ role: string; calls: bigint; total: string }>)
+               ORDER BY SUM(cost_usd) DESC`,
+  ).catch(() => [] as Array<{
+    role: string
+    calls: bigint
+    total: string
+    input_tokens: string
+    output_tokens: string
+  }>)
 
   const specialistsToday = specialistRows.map((r) => ({
     role: r.role,
     label: specialistLabel(r.role),
+    displayName: specialistDisplayName(r.role),
+    icon: specialistIcon(r.role),
     calls: Number(r.calls) || 0,
     costUsd: parseFloat(r.total) || 0,
+    inputTokens: parseInt(r.input_tokens, 10) || 0,
+    outputTokens: parseInt(r.output_tokens, 10) || 0,
   }))
+
+  const delegationRows = await prisma.$queryRaw<Array<{
+    role: string
+    task_snippet: string | null
+    total: string
+    input_tokens: string
+    output_tokens: string
+    at: Date
+  }>>(
+    Prisma.sql`SELECT units->>'subagent' AS role,
+                      units->>'task_snippet' AS task_snippet,
+                      cost_usd::text AS total,
+                      COALESCE(units->>'input_tokens', '0') AS input_tokens,
+                      COALESCE(units->>'output_tokens', '0') AS output_tokens,
+                      occurred_at AS at
+               FROM agent_cost_events
+               WHERE occurred_at >= ${start} AND occurred_at < ${end}
+                 AND units->>'subagent' IS NOT NULL
+               ORDER BY occurred_at DESC
+               LIMIT 12`,
+  ).catch(() => [] as Array<{
+    role: string
+    task_snippet: string | null
+    total: string
+    input_tokens: string
+    output_tokens: string
+    at: Date
+  }>)
+
+  const specialistDelegationsToday = delegationRows.map((r) => ({
+    role: r.role,
+    displayName: specialistDisplayName(r.role),
+    icon: specialistIcon(r.role),
+    taskSnippet: r.task_snippet ?? '',
+    costUsd: parseFloat(r.total) || 0,
+    inputTokens: parseInt(r.input_tokens, 10) || 0,
+    outputTokens: parseInt(r.output_tokens, 10) || 0,
+    at: r.at instanceof Date ? r.at.toISOString() : String(r.at),
+  }))
+
+  const headTokenRows = await prisma.$queryRaw<Array<{ input_tokens: string; output_tokens: string }>>(
+    Prisma.sql`SELECT COALESCE(SUM((units->>'input_tokens')::bigint), 0)::text AS input_tokens,
+                      COALESCE(SUM((units->>'output_tokens')::bigint), 0)::text AS output_tokens
+               FROM agent_cost_events
+               WHERE occurred_at >= ${start} AND occurred_at < ${end}
+                 AND provider = 'anthropic'
+                 AND kind = 'chat'
+                 AND units->>'subagent' IS NULL`,
+  ).catch(() => [{ input_tokens: '0', output_tokens: '0' }])
+
+  const headTokensToday = {
+    inputTokens: parseInt(headTokenRows[0]?.input_tokens ?? '0', 10) || 0,
+    outputTokens: parseInt(headTokenRows[0]?.output_tokens ?? '0', 10) || 0,
+  }
 
   const criticalModelOptions = ESCALATION_CANDIDATE_IDS.map((id) => {
     const m = getModel(id)
@@ -134,6 +208,8 @@ export async function GET(req: NextRequest) {
     agentsToday,
     modelsToday,
     specialistsToday,
+    specialistDelegationsToday,
+    headTokensToday,
     todayDhakaDate: todayStr,
     asOf: new Date().toISOString(),
   })

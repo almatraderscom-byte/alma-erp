@@ -40,8 +40,23 @@ interface ModelToday {
 interface SpecialistToday {
   role: string
   label: string
+  displayName: string
+  icon: string
   calls: number
   costUsd: number
+  inputTokens: number
+  outputTokens: number
+}
+
+interface SpecialistDelegation {
+  role: string
+  displayName: string
+  icon: string
+  taskSnippet: string
+  costUsd: number
+  inputTokens: number
+  outputTokens: number
+  at: string
 }
 
 interface RoutingResponse {
@@ -54,6 +69,8 @@ interface RoutingResponse {
   agentsToday: AgentToday[]
   modelsToday: ModelToday[]
   specialistsToday: SpecialistToday[]
+  specialistDelegationsToday: SpecialistDelegation[]
+  headTokensToday: { inputTokens: number; outputTokens: number }
   todayDhakaDate: string
 }
 
@@ -416,6 +433,13 @@ export function MonitorAgentsPanel({
                             ))}
                           </div>
                         )}
+                        {(data.headTokensToday?.inputTokens > 0 || data.headTokensToday?.outputTokens > 0) && (
+                          <p className="text-[10px] text-[#94a3b8]">
+                            টোকেন: {(data.headTokensToday.inputTokens / 1000).toFixed(1)}k in ·{' '}
+                            {(data.headTokensToday.outputTokens / 1000).toFixed(1)}k out
+                            <span className="text-zinc-400"> — বড় system prompt + ERP tools = input বেশি</span>
+                          </p>
+                        )}
                         <div className="flex items-center gap-1.5 text-[10px] text-[#94a3b8]">
                           <span>⚡ Opus আজ:</span>
                           <span className="font-bold text-[#E07A5F]">
@@ -444,18 +468,47 @@ export function MonitorAgentsPanel({
                 {data.specialistsToday.map((s) => (
                   <div
                     key={s.role}
-                    className="flex items-center justify-between rounded-lg border border-sky-200/50 bg-white px-2.5 py-1.5"
+                    className="rounded-lg border border-sky-200/50 bg-white px-2.5 py-2"
                   >
-                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#1a1a2e]/80">
-                      <span>{SPECIALIST_ICON[s.role] ?? '🤝'}</span>
-                      {s.label}
-                    </span>
-                    <span className="text-[10px] tabular-nums text-[#64748b]">
-                      {s.calls} কল · {fmtUsd(s.costUsd)}
-                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#1a1a2e]/80">
+                        <span>{s.icon ?? SPECIALIST_ICON[s.role] ?? '🤝'}</span>
+                        {s.displayName ?? s.label}
+                      </span>
+                      <span className="shrink-0 text-[10px] tabular-nums text-[#64748b]">
+                        {s.calls} কল · {fmtUsd(s.costUsd)}
+                      </span>
+                    </div>
+                    {(s.inputTokens > 0 || s.outputTokens > 0) && (
+                      <p className="mt-1 text-[9px] text-[#94a3b8]">
+                        {(s.inputTokens / 1000).toFixed(1)}k in · {(s.outputTokens / 1000).toFixed(1)}k out
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
+
+              {data.specialistDelegationsToday && data.specialistDelegationsToday.length > 0 && (
+                <div className="mt-2.5 space-y-1.5 border-t border-sky-200/40 pt-2.5">
+                  <p className="text-[10px] font-semibold text-sky-800/70">কোন এজেন্ট কী করেছে</p>
+                  {data.specialistDelegationsToday.map((d, i) => (
+                    <div
+                      key={`${d.role}-${d.at}-${i}`}
+                      className="rounded-lg border border-sky-100 bg-white/80 px-2.5 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold text-[#1a1a2e]/75">
+                          {d.icon} {d.displayName}
+                        </span>
+                        <span className="text-[9px] tabular-nums text-[#94a3b8]">{fmtUsd(d.costUsd)}</span>
+                      </div>
+                      {d.taskSnippet ? (
+                        <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-[#64748b]">{d.taskSnippet}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
