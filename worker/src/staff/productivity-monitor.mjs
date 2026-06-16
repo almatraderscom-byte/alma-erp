@@ -59,7 +59,7 @@ export async function maybeRequestProof(context) {
     .from('agent_staff')
     .select('id, name, telegramChatId')
     .eq('active', true)
-    .eq('businessId', 'ALMA_LIFESTYLE')
+    .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return []
 
@@ -250,7 +250,7 @@ export async function detectIdleStaff(context) {
     .from('agent_staff')
     .select('id, name, telegramChatId')
     .eq('active', true)
-    .eq('businessId', 'ALMA_LIFESTYLE')
+    .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return
 
@@ -260,9 +260,9 @@ export async function detectIdleStaff(context) {
   for (const staff of staffList) {
     const { data: recentOutbox } = await supabase
       .from('agent_outbox')
-      .select('delivered_at')
-      .eq('target_staff_id', staff.id)
-      .gte('delivered_at', new Date(now - IDLE_THRESHOLD_MINUTES * 60_000).toISOString())
+      .select('sent_at')
+      .eq('staff_id', staff.id)
+      .gte('sent_at', new Date(now - IDLE_THRESHOLD_MINUTES * 60_000).toISOString())
       .limit(1)
 
     const { data: recentTasks } = await supabase
@@ -274,7 +274,7 @@ export async function detectIdleStaff(context) {
       .order('completed_at', { ascending: false })
       .limit(1)
 
-    const lastOutboxTime = recentOutbox?.[0]?.delivered_at ? new Date(recentOutbox[0].delivered_at).getTime() : 0
+    const lastOutboxTime = recentOutbox?.[0]?.sent_at ? new Date(recentOutbox[0].sent_at).getTime() : 0
     const lastTaskDone = recentTasks?.[0]?.completed_at ? new Date(recentTasks[0].completed_at).getTime() : 0
     const lastActivity = Math.max(lastOutboxTime, lastTaskDone)
     const idleMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : null

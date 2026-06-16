@@ -63,7 +63,7 @@ export async function runGeoMonitor(context) {
     .from('agent_staff')
     .select('id, name, telegramChatId')
     .eq('active', true)
-    .eq('businessId', 'ALMA_LIFESTYLE')
+    .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return { dutyStatus: 'done', dutyDetail: 'no active staff' }
 
@@ -171,20 +171,20 @@ export async function checkGhostCheckins(context) {
 
   const { data: staffList } = await supabase
     .from('agent_staff')
-    .select('id, name, userId')
+    .select('id, name, user_id')
     .eq('active', true)
-    .eq('businessId', 'ALMA_LIFESTYLE')
+    .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return
 
   for (const staff of staffList) {
     if (alreadyChecked.has(staff.id)) continue
-    if (!staff.userId) continue
+    if (!staff.user_id) continue
 
     const { data: attendance } = await supabase
       .from('attendance_records')
       .select('check_in_at, latitude, longitude')
-      .eq('employee_id', staff.userId)
+      .eq('employee_id', staff.user_id)
       .eq('attendance_date', today)
       .eq('business_id', 'ALMA_LIFESTYLE')
       .maybeSingle()
