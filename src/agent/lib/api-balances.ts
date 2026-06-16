@@ -15,6 +15,8 @@ export type BalanceProviderId =
   | 'google_tts'
   | 'meta_free'
   | 'oxylabs'
+  | 'elevenlabs'
+  | 'veo'
 
 export type ApiBalanceCredit = {
   initialCredit: number
@@ -59,6 +61,11 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   tts: 'google_tts',
   oxylabs: 'oxylabs',
   oxy: 'oxylabs',
+  elevenlabs: 'elevenlabs',
+  eleven: 'elevenlabs',
+  veo: 'veo',
+  'veo 3': 'veo',
+  veo3: 'veo',
 }
 
 const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; free?: boolean }> = {
@@ -69,10 +76,12 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   google_tts: { label: 'Google TTS', source: 'Input+Track' },
   meta_free: { label: 'Meta/ntfy', source: '—', free: true },
   oxylabs: { label: 'Oxylabs', source: 'Credit track' },
+  elevenlabs: { label: 'ElevenLabs', source: 'Live API' },
+  veo: { label: 'VEO 3', source: 'Input+Track' },
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts', 'oxylabs',
+  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -216,6 +225,25 @@ async function fetchOpenAIMonthSpendUsd(monthStart: Date, monthEnd: Date): Promi
   }
 }
 
+/** ElevenLabs subscription — character quota remaining (Starter plan). */
+async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
+  const apiKey = process.env.ELEVENLABS_API_KEY
+  if (!apiKey) return null
+  try {
+    const res = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+      headers: { 'xi-api-key': apiKey },
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { character_count?: number; character_limit?: number }
+    const limit = data.character_limit ?? 0
+    const used = data.character_count ?? 0
+    const remainingChars = Math.max(0, limit - used)
+    return roundUsd((remainingChars / 1000) * 0.30)
+  } catch {
+    return null
+  }
+}
+
 function roundUsd(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -262,10 +290,11 @@ export async function refreshApiBalanceCache(): Promise<{
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, elevenLabsLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(monthStart, monthEnd),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
+    fetchElevenLabsBalanceUsd(),
   ])
 
   let twilioRaw: { balance: string; currency: string } | null = null
@@ -284,13 +313,15 @@ export async function refreshApiBalanceCache(): Promise<{
 
     if (id === 'twilio') {
       balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
+    } else if (id === 'elevenlabs' && elevenLabsLive != null) {
+      balanceUsd = elevenLabsLive
     } else if (id === 'anthropic' && anthropicAdminMonth != null) {
       monthUsd = roundUsd(anthropicAdminMonth)
     } else if (id === 'openai' && openaiAdminMonth != null) {
       monthUsd = roundUsd(openaiAdminMonth)
     }
 
-    if (id !== 'twilio' && credit) {
+    if (id !== 'twilio' && id !== 'elevenlabs' && credit) {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
       balanceUsd = roundUsd(credit.initialCredit - spent)
@@ -325,9 +356,10 @@ export async function refreshApiBalanceCache(): Promise<{
   await storeBalanceCache(cache)
 
   const creditFlags: Partial<Record<BalanceProviderId, boolean>> = {}
-  for (const id of ['anthropic', 'openai', 'gemini', 'google_tts', 'oxylabs'] as BalanceProviderId[]) {
+  for (const id of ['anthropic', 'openai', 'gemini', 'google_tts', 'oxylabs', 'veo'] as BalanceProviderId[]) {
     creditFlags[id] = Boolean(await getApiBalanceCredit(id))
   }
+  creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY || (await getApiBalanceCredit('elevenlabs')))
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
@@ -371,7 +403,9 @@ export function computeLowBalanceAlerts(
         ? Boolean(opts.creditSet.anthropic || opts.anthropicAdmin)
         : row.id === 'openai'
           ? Boolean(opts.creditSet.openai || opts.openaiAdmin)
-          : Boolean(opts.creditSet[row.id])
+          : row.id === 'elevenlabs'
+            ? Boolean(opts.creditSet.elevenlabs)
+            : Boolean(opts.creditSet[row.id])
 
     if (!configured || row.balanceUsd >= generalThreshold) continue
 

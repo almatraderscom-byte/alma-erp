@@ -1,32 +1,39 @@
 import { prisma } from '@/lib/prisma'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
 import type { AgentTool } from './registry'
 
 const manage_work_todos: AgentTool = {
   name: 'manage_work_todos',
   description:
-    'Manage the agent\'s daily work todo list. Use this to plan work at the start of the day, ' +
-    'track progress as tasks complete, and provide end-of-day summaries. The owner sees this ' +
-    'list on the agent homepage. Actions: list, add, update, complete, summary.\n\n' +
+    'Manage the single daily todo list (agent office tasks on top, owner requests below). ' +
+    'When owner asks you to do something in chat: add with source=owner. ' +
+    'When owner says cancel/remove: action=remove. Owner task complete → removed from list. ' +
+    'Office tasks are source=day_shift (scheduler) — do not duplicate.\n\n' +
     'WORKFLOW:\n' +
-    '- Morning: list current todos, then add today\'s planned tasks\n' +
-    '- During work: mark tasks in_progress, then completed with results\n' +
-    '- When owner asks something: add it as a new todo, work on it, mark complete\n' +
-    '- Evening: call with action=summary for a full day review\n' +
-    '- Always update description with results/outcome when completing',
+    '- Morning office: day_shift scheduler seeds agent office tasks at top of the same todo list\n' +
+    '- During chat: owner request → add source=owner, work on it, complete → auto-removed\n' +
+    '- Owner says বাদ দাও / cancel → action=remove\n' +
+    '- Evening: action=summary for day review\n' +
+    '- Always update description with results when completing agent office tasks',
   input_schema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['list', 'add', 'update', 'complete', 'summary'],
-        description: 'list=show all active, add=create new, update=change status/details, complete=mark done with result, summary=end-of-day digest',
+        enum: ['list', 'add', 'update', 'complete', 'remove', 'summary'],
+        description: 'list | add | update | complete | remove (delete/cancel) | summary',
       },
-      id: { type: 'string', description: 'Todo ID (for update/complete)' },
+      id: { type: 'string', description: 'Todo ID (for update/complete/remove)' },
       title: { type: 'string', description: 'Task title (for add)' },
       description: { type: 'string', description: 'Task details or completion result' },
       priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'], description: 'Priority level' },
       status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'], description: 'New status (for update)' },
+      source: {
+        type: 'string',
+        enum: ['owner', 'agent'],
+        description: 'owner when Sir asked in chat; agent for your own ad-hoc tasks (not day_shift — scheduler owns those)',
+      },
     },
     required: ['action'],
   },
@@ -38,10 +45,11 @@ const manage_work_todos: AgentTool = {
       if (action === 'list') {
         const todos = await prisma.agentTodo.findMany({
           where: { businessId, status: { notIn: ['cancelled'] } },
-          orderBy: [{ status: 'asc' }, { priority: 'desc' }, { createdAt: 'desc' }],
+          orderBy: [{ createdAt: 'desc' }],
         })
-        const active = todos.filter(t => t.status !== 'completed')
-        const completed = todos.filter(t => t.status === 'completed')
+        const sorted = sortTodosForDisplay(todos)
+        const active = sorted.filter(t => t.status !== 'completed')
+        const completed = sorted.filter(t => t.status === 'completed')
         return {
           success: true,
           data: {
@@ -50,7 +58,7 @@ const manage_work_todos: AgentTool = {
               const today = new Date().toISOString().slice(0, 10)
               return t.completedAt && t.completedAt.toISOString().slice(0, 10) === today
             }).length,
-            todos: todos.map(t => ({
+            todos: sorted.map(t => ({
               id: t.id,
               title: t.title,
               description: t.description,
@@ -73,7 +81,7 @@ const manage_work_todos: AgentTool = {
             title,
             description: input.description ? String(input.description).trim() : null,
             priority: String(input.priority ?? 'normal'),
-            source: 'agent',
+            source: input.source === 'owner' ? 'owner' : 'agent',
             businessId,
           },
         })
@@ -105,6 +113,27 @@ const manage_work_todos: AgentTool = {
         if (!id) return { success: false, error: 'id is required for complete' }
 
         const result = input.description ? String(input.description).trim() : null
+        const before = await prisma.agentTodo.findUnique({ where: { id } })
+        if (!before) return { success: false, error: 'todo not found' }
+
+        if (before.source === 'owner') {
+          await prisma.agentTodo.delete({ where: { id } })
+          const completionLine = result
+            ? `✅ ${before.title}\n\n📋 ${result}`
+            : `✅ ${before.title}`
+          void sendOwnerText(completionLine).catch(() => {})
+          return {
+            success: true,
+            data: {
+              id: before.id,
+              title: before.title,
+              status: 'completed',
+              removed: true,
+              message: `✅ "${before.title}" সম্পন্ন — তালিকা থেকে সরানো হয়েছে।`,
+            },
+          }
+        }
+
         const todo = await prisma.agentTodo.update({
           where: { id },
           data: {
@@ -114,9 +143,6 @@ const manage_work_todos: AgentTool = {
           },
         })
 
-        // Telegram completion feedback to owner — fire-and-forget so the tool
-        // result returns immediately. Only pings if the owner is offline /
-        // outside the chat surface (Telegram is the always-on channel).
         const completionLine = result
           ? `✅ ${todo.title}\n\n📋 ${result}`
           : `✅ ${todo.title}`
@@ -129,6 +155,24 @@ const manage_work_todos: AgentTool = {
             title: todo.title,
             status: 'completed',
             message: `✅ "${todo.title}" সম্পন্ন।`,
+          },
+        }
+      }
+
+      if (action === 'remove') {
+        const id = String(input.id ?? '')
+        if (!id) return { success: false, error: 'id is required for remove' }
+
+        const existing = await prisma.agentTodo.findUnique({ where: { id } })
+        if (!existing) return { success: false, error: 'todo not found' }
+
+        await prisma.agentTodo.delete({ where: { id } })
+        return {
+          success: true,
+          data: {
+            id,
+            title: existing.title,
+            message: `"${existing.title}" তালিকা থেকে সরানো হয়েছে।`,
           },
         }
       }
@@ -187,19 +231,21 @@ const manage_work_todos: AgentTool = {
 export const WORK_TODO_TOOLS: AgentTool[] = [manage_work_todos]
 
 export const WORK_TODO_PROMPT = `
-## এজেন্ট ওয়ার্ক ট্র্যাকার (TodoList System)
-আপনি একটি TodoList সিস্টেম ব্যবহার করে কাজ ট্র্যাক করবেন — ঠিক যেভাবে একজন chief of staff তার দৈনিক কার্যতালিকা manage করে।
+## এজেন্ট ওয়ার্ক ট্র্যাকার (একটি Todo লিস্ট)
+একই তালিকায় দুই ধরনের কাজ — **উপরে Agent office** (day_shift/scheduler), **নিচে Sir-এর request** (source=owner)। আলাদা UI নেই।
 
-### দৈনিক কর্মপ্রবাহ:
-1. **সকাল**: manage_work_todos action=list দিয়ে বর্তমান টুডু দেখুন, তারপর আজকের পরিকল্পিত কাজ action=add দিয়ে যোগ করুন
-2. **কাজ চলাকালীন**: প্রতিটি কাজ শুরুর আগে status=in_progress করুন, শেষ হলে action=complete + ফলাফল description-এ দিন
-3. **মালিক কিছু বললে**: নতুন todo যোগ করুন, কাজ করুন, সম্পন্ন হলে রিপোর্ট দিন
-4. **সন্ধ্যা**: action=summary দিয়ে পূর্ণ দিনের রিপোর্ট দিন
+### সকালের office (day_shift):
+- Scheduler আপনার office কাজগুলো source=day_shift দিয়ে তালিকার **উপরে** যোগ করে
+- Chat-এ Cursor-style step-by-step update দিন; manage_work_todos দিয়ে status sync করুন
+
+### Sir chat-এ কিছু বললে:
+- "X করো" → manage_work_todos action=add, **source=owner** — তালিকায় agent কাজের **নিচে** যুক্ত হবে
+- কাজ শেষ → action=complete + ফলাফল → owner todo **অটো তালিকা থেকে সরে যাবে**
+- "বাদ দাও" / cancel → action=remove
 
 ### নিয়ম:
-- প্রতিটি কাজ complete করার সময় description-এ ফলাফল/আউটকাম লিখুন
-- একবারে একটি কাজ in_progress রাখুন
-- মালিকের কাজ source=owner হিসেবে আসে, আপনার নিজের কাজ source=agent
-- কাজ complete হলে মালিককে সংক্ষেপে ফলাফল জানান, তারপর পরবর্তী কাজে যান
-- দিন শেষে সমস্ত completed items-এর সারাংশ দিন
+- একই লিস্ট — office tasks সবসময় owner tasks-এর উপরে sort হয়
+- day_shift todos নিজে duplicate করবেন না
+- Office task complete করলে completed হিসেবে থাকে; owner task complete = delete
+- description-এ ফলাফল লিখুন
 `

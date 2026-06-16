@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import toast from 'react-hot-toast'
+import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
 
 export interface Todo {
   id: string
@@ -124,7 +125,7 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const active = useMemo(
-    () => todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled'),
+    () => sortTodosForDisplay(todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')),
     [todos],
   )
   const completed = useMemo(

@@ -128,9 +128,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvProjectId, setActiveConvProjectId] = useState<string | null>(null)
   const [activeModelId, setActiveModelId] = useState('claude-sonnet-4-6')
   const [compacting, setCompacting] = useState(false)
+  const [dayShift, setDayShift] = useState<{
+    conversationId: string | null
+    active: boolean
+    title: string | null
+  } | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dayShiftPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   /**
    * Streaming text-delta batcher: Anthropic emits a `text_delta` per token. Calling
@@ -163,6 +169,47 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       .then((data) => { if (data?.projectId) setPersonalProjectId(data.projectId) })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    async function refreshShift() {
+      try {
+        const res = await fetch('/api/assistant/day-shift')
+        if (!res.ok) return
+        const data = await res.json() as {
+          conversationId: string | null
+          active: boolean
+          title: string | null
+        }
+        setDayShift(data)
+      } catch { /* ignore */ }
+    }
+    void refreshShift()
+    const id = setInterval(() => void refreshShift(), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    if (!dayShift?.active || !dayShift.conversationId || activeConvId !== dayShift.conversationId) {
+      if (dayShiftPollRef.current) {
+        clearInterval(dayShiftPollRef.current)
+        dayShiftPollRef.current = null
+      }
+      return
+    }
+    async function pollMessages() {
+      try {
+        const res = await fetch(`/api/assistant/conversations/${dayShift!.conversationId}/messages`)
+        if (!res.ok) return
+        const rows: MessageRow[] = await res.json()
+        setMessages(mapMessageRows(rows))
+      } catch { /* ignore */ }
+    }
+    void pollMessages()
+    dayShiftPollRef.current = setInterval(() => void pollMessages(), 15_000)
+    return () => {
+      if (dayShiftPollRef.current) clearInterval(dayShiftPollRef.current)
+    }
+  }, [dayShift?.active, dayShift?.conversationId, activeConvId])
 
   useEffect(() => {
     if (personalProjectId && activeConvProjectId) {
@@ -708,6 +755,22 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       {/* Main area */}
       <div className="flex min-h-0 flex-1 flex-col">
+        {dayShift?.conversationId && dayShift.active && activeConvId !== dayShift.conversationId && (
+          <button
+            type="button"
+            onClick={() => void loadConversation({
+              id: dayShift.conversationId!,
+              title: dayShift.title,
+              projectId: null,
+              source: 'day_shift',
+              archived: false,
+              updatedAt: new Date().toISOString(),
+            })}
+            className="safe-x shrink-0 border-b border-emerald-200/60 bg-emerald-50/90 px-4 py-2 text-left text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/90 transition-colors"
+          >
+            🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
+          </button>
+        )}
         {/* Header — light theme */}
         <header className="safe-top safe-x relative flex shrink-0 items-center gap-1 border-b border-black/[0.06] bg-white px-3 py-2 md:px-4">
           <button
@@ -725,6 +788,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             {activePersonalMode && (
               <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
                 ব্যক্তিগত
+              </span>
+            )}
+            {dayShift?.active && activeConvId === dayShift.conversationId && (
+              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 animate-pulse">
+                অফিস লাইভ
               </span>
             )}
           </div>

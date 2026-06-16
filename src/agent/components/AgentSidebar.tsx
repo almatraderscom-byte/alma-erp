@@ -17,6 +17,7 @@ export interface Conversation {
   title: string | null
   projectId: string | null
   modelId?: string | null
+  source?: string | null
   archived: boolean
   updatedAt: string
   businessId?: string | null
@@ -105,12 +106,19 @@ export default function AgentSidebar({
 
   useEffect(() => { void loadData() }, [loadData])
 
-  const filtered = conversations.filter((c) => {
-    if (c.archived) return false
-    if (activeProject !== PROJECT_NONE && c.projectId !== activeProject) return false
-    if (search && !(c.title ?? '').toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
+  const filtered = conversations
+    .filter((c) => {
+      if (c.archived) return false
+      if (activeProject !== PROJECT_NONE && c.projectId !== activeProject) return false
+      if (search && !(c.title ?? '').toLowerCase().includes(search.toLowerCase())) return false
+      return true
+    })
+    .sort((a, b) => {
+      const aOffice = a.source === 'day_shift' ? 1 : 0
+      const bOffice = b.source === 'day_shift' ? 1 : 0
+      if (aOffice !== bOffice) return bOffice - aOffice
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
 
   async function archiveConv(id: string) {
     await fetch(`/api/assistant/conversations/${id}`, {
@@ -339,9 +347,11 @@ export default function AgentSidebar({
               <>
                 <div className="min-w-0 pr-6">
                   <p className={cn('truncate text-xs font-medium', c.id === activeConvId ? 'text-[#E07A5F]' : 'text-gray-700 group-hover:text-gray-900')}>
+                    {c.source === 'day_shift' && <span className="mr-1">🏢</span>}
                     {c.title ?? '(শিরোনাম নেই)'}
                   </p>
                   <p className="mt-0.5 text-[10px] text-gray-400">
+                    {c.source === 'day_shift' ? 'অফিস লাইভ · ' : ''}
                     {new Date(c.updatedAt).toLocaleDateString('en-BD', { day: '2-digit', month: 'short' })}
                   </p>
                 </div>

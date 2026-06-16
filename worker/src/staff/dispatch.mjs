@@ -5,6 +5,7 @@
  */
 
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+import { sendDispatchVoiceHeadline } from './staff-voice-nudge.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
 import { lunchButtonRow } from './lunch.mjs'
@@ -345,5 +346,12 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
 
   if (!sendResult.ok) {
     throw new Error(sendResult.error ?? 'task dispatch send failed')
+  }
+
+  // Short voice headline only — name + task count (no details; saves ElevenLabs cost)
+  try {
+    await sendDispatchVoiceHeadline(bot.telegram, chatId, staffName, staffTasks.length)
+  } catch (voiceErr) {
+    console.warn(`[dispatch] voice headline for ${staffName}:`, voiceErr.message)
   }
 }

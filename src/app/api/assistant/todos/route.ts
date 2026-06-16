@@ -5,6 +5,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
 
 function isInternalToken(req: NextRequest): boolean {
   return verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))
@@ -36,14 +37,10 @@ export async function GET(req: NextRequest) {
 
   const todos = await prisma.agentTodo.findMany({
     where,
-    orderBy: [
-      { status: 'asc' },
-      { priority: 'desc' },
-      { createdAt: 'desc' },
-    ],
+    orderBy: [{ createdAt: 'desc' }],
   })
 
-  return NextResponse.json({ todos })
+  return NextResponse.json({ todos: sortTodosForDisplay(todos) })
 }
 
 export async function POST(req: NextRequest) {

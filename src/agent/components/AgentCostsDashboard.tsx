@@ -55,6 +55,18 @@ const PROVIDER_COLORS: Record<string, string> = {
   google_tts: '#8B5CF6',
   twilio: '#D4A84B',
   elevenlabs: '#EC4899',
+  veo: '#0EA5E9',
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  google_tts: 'Google TTS',
+  twilio: 'Twilio',
+  elevenlabs: 'ElevenLabs',
+  veo: 'VEO 3',
+  oxylabs: 'Oxylabs',
 }
 
 function fmtUsd(n: number) {
@@ -203,12 +215,15 @@ export default function AgentCostsDashboard() {
     openai: Number(d.openai ?? 0),
     gemini: Number(d.gemini ?? 0),
     google_tts: Number(d.google_tts ?? 0),
+    elevenlabs: Number(d.elevenlabs ?? 0),
+    veo: Number(d.veo ?? 0),
     twilio: Number(d.twilio ?? 0),
     total: Number(d.total ?? 0),
   }))
 
   const pieData = (data?.byProvider ?? []).map((p) => ({
-    name: p.provider,
+    name: PROVIDER_LABELS[p.provider] ?? p.provider,
+    providerId: p.provider,
     value: p.totalUsd,
   }))
 
@@ -457,6 +472,8 @@ export default function AgentCostsDashboard() {
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
                 <Bar dataKey="gemini" stackId="a" fill={PROVIDER_COLORS.gemini} />
                 <Bar dataKey="google_tts" stackId="a" fill={PROVIDER_COLORS.google_tts} />
+                <Bar dataKey="elevenlabs" stackId="a" fill={PROVIDER_COLORS.elevenlabs} />
+                <Bar dataKey="veo" stackId="a" fill={PROVIDER_COLORS.veo} />
                 <Bar dataKey="twilio" stackId="a" fill={PROVIDER_COLORS.twilio} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -472,7 +489,7 @@ export default function AgentCostsDashboard() {
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name }) => name}>
                   {pieData.map((e) => (
-                    <Cell key={e.name} fill={PROVIDER_COLORS[e.name] ?? '#94a3b8'} />
+                    <Cell key={e.name} fill={PROVIDER_COLORS[e.providerId] ?? '#94a3b8'} />
                   ))}
                 </Pie>
                 <Tooltip

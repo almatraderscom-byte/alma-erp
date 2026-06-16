@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAgentTodosOptional, type Todo } from './AgentTodoContext'
+import { todoSourceLabel } from '@/agent/lib/todo-sort'
 
 /** Whether a todo represents a failed/cancelled agent task. */
 export function isFailedStatus(status: string): boolean {
@@ -274,8 +275,14 @@ export function AgentTodoPanel() {
                     <p className="text-xs text-slate-500 mt-1 line-clamp-2">{todo.description}</p>
                   )}
                   <div className="flex items-center gap-2 mt-1.5">
-                    {todo.source === 'agent' && (
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#E07A5F] bg-[#E07A5F]/10 px-1.5 py-0.5 rounded">Agent</span>
+                    {todoSourceLabel(todo.source) && (
+                      <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                        todo.source === 'owner'
+                          ? 'text-slate-600 bg-slate-100'
+                          : 'text-[#E07A5F] bg-[#E07A5F]/10'
+                      }`}>
+                        {todoSourceLabel(todo.source)}
+                      </span>
                     )}
                     {todo.dueDate && (
                       <span className="text-[10px] text-slate-400">

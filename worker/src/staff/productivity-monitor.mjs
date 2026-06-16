@@ -13,6 +13,7 @@
 import { isWithinOfficeHours } from './office-hours.mjs'
 import { notify } from '../notify/index.mjs'
 import { bnNum, formatDhakaTimeBn } from './bn-format.mjs'
+import { sendStaffNudge } from './staff-voice-nudge.mjs'
 
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 const PROOF_MAX_PER_DAY = 4
@@ -81,16 +82,24 @@ export async function maybeRequestProof(context) {
     const probability = 0.18
     if (Math.random() > probability) continue
 
-    const messages = [
+    const textMessages = [
       'এখন কী করছেন? একটি ছবি পাঠান 📸',
       'কাজের আপডেট দিন — এখন কোন টাস্কে কাজ হচ্ছে?',
       'এখনকার কাজের একটি ছবি/স্ক্রিনশট পাঠান ✅',
       'আপনার বর্তমান কাজ সম্পর্কে একটু জানান — ছবি দিলে ভালো হয়।',
     ]
-    const msg = messages[randomInRange(0, messages.length - 1)]
+    const voiceScripts = [
+      'এখন কাজ কতটুকু হয়েছে? একটি ছবি পাঠান।',
+      'বর্তমান কাজের আপডেট দিন।',
+      'কাজের একটি ছবি পাঠান।',
+      'এখন কী করছেন? ছবি দিলে ভালো হয়।',
+    ]
+    const idx = randomInRange(0, textMessages.length - 1)
+    const msg = textMessages[idx]
+    const voiceScript = voiceScripts[idx]
 
     try {
-      await bot.telegram.sendMessage(staff.telegramChatId, msg)
+      await sendStaffNudge(bot, staff.telegramChatId, msg, voiceScript)
       proofRequests.push({ staffId: staff.id, staffName: staff.name, sentAt: new Date().toISOString() })
 
       await supabase.from('agent_kv_settings').upsert({
@@ -214,8 +223,10 @@ export async function analyzeTaskTiming(context) {
 
   for (const task of newSlowTasks) {
     if (task.chatId) {
-      const nudge = `⏰ "${task.title}" — ${bnNum(task.elapsedMinutes)} মিনিট হয়ে গেছে। কতটুকু এগিয়েছে?`
-      await bot.telegram.sendMessage(task.chatId, nudge).catch(() => {})
+      const textNudge = `⏰ "${task.title}" — ${bnNum(task.elapsedMinutes)} মিনিট হয়ে গেছে। কতটুকু এগিয়েছে?`
+      const firstName = task.staffName.split(/\s+/)[0] ?? 'ভাই'
+      const voiceNudge = `${firstName} ভাই, "${task.title}" কতটুকু এগিয়েছে?`
+      await sendStaffNudge(bot, task.chatId, textNudge, voiceNudge).catch(() => {})
     }
     alertedIds.add(`${task.staffId}:${task.title}`)
   }
@@ -300,13 +311,18 @@ export async function detectIdleStaff(context) {
 
   for (const staff of newIdle) {
     if (staff.telegramChatId) {
-      const presenceMsg = [
+      const textMessages = [
         'আপনার পরবর্তী কাজটি কতটুকু এগিয়েছে?',
         'কিছু সাহায্য লাগবে? অনেকক্ষণ ধরে কোনো আপডেট পাইনি।',
         'কাজ চলছে? একটু জানান 👍',
       ]
-      const msg = presenceMsg[randomInRange(0, presenceMsg.length - 1)]
-      await bot.telegram.sendMessage(staff.telegramChatId, msg).catch(() => {})
+      const voiceMessages = [
+        'কাজ কতটুকু এগিয়েছে?',
+        'কিছু সাহায্য লাগবে?',
+        'কাজ চলছে? একটু জানান।',
+      ]
+      const idx = randomInRange(0, textMessages.length - 1)
+      await sendStaffNudge(bot, staff.telegramChatId, textMessages[idx], voiceMessages[idx]).catch(() => {})
     }
     prevAlertedStaff.add(staff.id)
   }

@@ -64,6 +64,7 @@ const lazy = {
   dailyStrategist:    () => import('../intelligence/strategist.mjs'),
   todoReminder:       () => import('./todo-reminder.mjs'),
   dailyFocus:         () => import('../intelligence/daily-focus.mjs'),
+  dayShift:           () => import('../intelligence/day-shift.mjs'),
   weeklyBusinessIntel: () => import('../reports/weekly-business-intel.mjs'),
   securityAudit:       () => import('../security/audit-scan.mjs'),
 }
@@ -126,6 +127,8 @@ export const SCHEDULER_REGISTRY = [
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
   { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
+  { name: 'day-shift-start',         cronUtc: '5 2 * * *',    description: 'Agent office day shift start (08:05 Dhaka)' },
+  { name: 'day-shift-tick',          cronUtc: '*/12 3-11 * * *', description: 'Agent day shift — next task every 12 min (09:00–17:48 Dhaka)' },
   { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
   { name: 'todo-reconcile',          cronUtc: '55 17 * * *',  description: 'End-of-day: cancel agent todos not done today (23:55 Dhaka)' },
 ]
@@ -410,6 +413,16 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'morning-todo-reminder': {
       const { runMorningTodoReminder } = await lazy.todoReminder()
       dutyResult = await runMorningTodoReminder(context) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'day-shift-start': {
+      const { runDayShiftStart } = await lazy.dayShift()
+      dutyResult = await runDayShiftStart() ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'day-shift-tick': {
+      const { runDayShiftTick } = await lazy.dayShift()
+      dutyResult = await runDayShiftTick() ?? { dutyStatus: 'done' }
       break
     }
     case 'evening-todo-summary': {
