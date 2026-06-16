@@ -238,7 +238,7 @@ export default function AgentCostsDashboard() {
   }
 
   return (
-    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-screen">
+    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-[#FAF9F6] min-h-screen">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/[0.06] bg-white px-4 py-3 shadow-sm">
         <div>
           <h1 className="text-lg font-bold text-[#1a1a2e]">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>

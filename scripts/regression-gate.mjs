@@ -30,6 +30,7 @@ if (process.env.DATABASE_URL) {
 }
 
 run('npm', ['run', 'type-check'])
+run('npm', ['run', 'lint', '--', '--max-warnings=9999'])
 run('npm', ['run', 'build'])
 
 const requireAuth = process.env.REQUIRE_REGRESSION_AUTH === '1'

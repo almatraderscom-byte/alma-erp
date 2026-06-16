@@ -48,6 +48,7 @@ export async function sendNtfy(topic, title, message, category) {
         ...(tags.length > 0 ? { 'Tags': tags.join(',') } : {}),
       },
       body: message,
+      signal: AbortSignal.timeout(8_000),
     })
     if (!res.ok) {
       const body = await res.text()
@@ -80,6 +81,7 @@ export async function sendNtfyToTopic(topicName, title, message, category) {
         ...(tags.length > 0 ? { 'Tags': tags.join(',') } : {}),
       },
       body: message,
+      signal: AbortSignal.timeout(8_000),
     })
     if (!res.ok) {
       const body = await res.text()

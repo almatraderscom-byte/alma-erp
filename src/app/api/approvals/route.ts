@@ -27,7 +27,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const role = normalizeAlmaRole(token.role as string)
   const url = new URL(req.url)
   const status = url.searchParams.get('status') || 'PENDING'
-  const module = url.searchParams.get('module') || ''
+  const moduleFilter = url.searchParams.get('module') || ''
   const summary = url.searchParams.get('summary') === '1'
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 50)))
 
@@ -41,7 +41,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
     ...businessScope,
     ...archiveWhere,
     ...(status === 'ALL' ? {} : { status: status as never }),
-    ...(module ? { module } : {}),
+    ...(moduleFilter ? { module: moduleFilter } : {}),
     ...(role === 'SUPER_ADMIN' ? {} : { requestedBy: token.sub }),
   }
 

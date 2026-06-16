@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { handleOutboundCallMissed, handleOutboundCallAnswered } from '@/agent/lib/outbound-call-missed'
+import { verifyTwilioRequest, formDataToParams } from '@/lib/twilio/verify-signature'
+import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 
 export const runtime = 'nodejs'
 
 /**
  * Twilio StatusCallback — logs delivery quality; offers owner retry when outbound call missed.
+ *
+ * Accepts EITHER:
+ *  - Valid Twilio x-twilio-signature (real Twilio webhook)
+ *  - Authorization: Bearer ${AGENT_INTERNAL_TOKEN} (worker poll fallback)
  */
 export async function POST(req: NextRequest) {
   const body = await req.formData().catch(() => null)
   if (!body) return new NextResponse('', { status: 400 })
+
+  const bearer = extractBearerToken(req.headers.get('authorization'))
+  const internalOk = bearer && verifyAgentInternalToken(bearer)
+  const twilioOk = verifyTwilioRequest(req, formDataToParams(body))
+  if (!internalOk && !twilioOk) {
+    return new NextResponse('Forbidden', { status: 403 })
+  }
 
   const status = String(body.get('CallStatus') ?? '')
   const duration = Number(body.get('CallDuration') ?? 0)

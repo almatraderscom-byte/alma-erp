@@ -77,7 +77,35 @@ function buildErpPayload(input: WebsiteOrderPayload): Record<string, unknown> {
   }
 }
 
+async function findExistingWebsiteOrder(websiteOrderId: string): Promise<string | null> {
+  try {
+    const url = process.env.SUPABASE_URL?.replace(/\/$/, '')
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) return null
+    const tag = `[Website ${websiteOrderId}]`
+    const q = `notes=ilike.${encodeURIComponent('%' + tag + '%')}&select=id,date,status&limit=1`
+    const res = await fetch(`${url}/rest/v1/lifestyle_orders?${q}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) return null
+    const rows = await res.json() as Array<{ id: string }>
+    return rows?.[0]?.id ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
+  const existing = await findExistingWebsiteOrder(input.website_order_id)
+  if (existing) {
+    logEvent('info', 'website_order.duplicate_ignored', {
+      websiteOrderId: input.website_order_id,
+      existingErpOrderId: existing,
+    })
+    return { ok: true as const, erpOrderId: existing, result: { duplicate: true }, sms: { skipped: true, reason: 'duplicate' } }
+  }
+
   const gasPayload = buildErpPayload(input)
   const result = await dispatchCreateOrder(gasPayload)
 

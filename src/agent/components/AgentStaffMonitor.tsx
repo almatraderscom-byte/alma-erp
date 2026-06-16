@@ -394,7 +394,7 @@ export default function AgentStaffMonitor() {
   /* ── Render: Main Layout ── */
 
   return (
-    <div className="mx-auto flex max-w-7xl gap-0 pb-8 lg:gap-4 lg:p-4">
+    <div className="mx-auto flex max-w-7xl gap-0 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8 lg:gap-4 lg:p-4">
       <div className="min-w-0 flex-1 space-y-3 p-3 sm:p-4">
         {/* ── Header ── */}
         <div className="flex flex-wrap items-start justify-between gap-3">

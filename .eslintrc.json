@@ -1,0 +1,30 @@
+{
+  "extends": ["next/core-web-vitals", "plugin:@typescript-eslint/recommended"],
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "@next/next/no-img-element": "warn",
+    "react-hooks/exhaustive-deps": "warn",
+    "no-empty-pattern": "warn",
+    "prefer-const": "warn",
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-unused-vars": ["warn", {"argsIgnorePattern": "^_", "varsIgnorePattern": "^_"}],
+    "@typescript-eslint/no-empty-object-type": "off"
+  },
+  "ignorePatterns": [
+    "node_modules/",
+    ".next/",
+    "out/",
+    "build/",
+    "dist/",
+    "prisma/migrations/",
+    "public/",
+    "android/",
+    "ios/",
+    "worker/node_modules/",
+    "scripts/",
+    "*.config.js",
+    "*.config.mjs",
+    "next-env.d.ts"
+  ]
+}

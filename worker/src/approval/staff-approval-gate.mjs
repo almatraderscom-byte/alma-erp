@@ -21,8 +21,13 @@ async function checkTrust(domain, actionPattern, businessId) {
       signal: AbortSignal.timeout(5000),
     })
     if (res.ok) return await res.json()
-  } catch { /* fall through */ }
-  return { tier: 'approve' }
+    console.warn('[staff-approval-gate] trust-check non-ok:', res.status)
+  } catch (err) {
+    console.warn('[staff-approval-gate] trust-check failed:', err?.message)
+  }
+  // Fail CLOSED: when trust API is down, route to manual approval (safer than 'auto').
+  // 'approve' tier means: send approval card to owner, do not auto-act.
+  return { tier: 'approve', reason: 'trust_check_unavailable' }
 }
 
 export async function requireStaffApproval({

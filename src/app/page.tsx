@@ -47,6 +47,16 @@ export default function DashboardPage() {
 
 function LifestyleDashboard() {
   const { orders: allOrders, loading, error, enabled } = useOrdersData()
+  const { range, label: rangeLabel } = useDateRange()
+
+  const metrics = useMemo(() => {
+    const inRange = allOrders.filter(o => {
+      const d = o.date?.slice(0, 10)
+      return d && d >= range.start && d <= range.end
+    })
+    return aggregateDashboardMetrics(inRange)
+  }, [allOrders, range])
+
   if (!enabled) {
     return (
       <>
@@ -61,15 +71,6 @@ function LifestyleDashboard() {
       </>
     )
   }
-  const { range, label: rangeLabel } = useDateRange()
-
-  const metrics = useMemo(() => {
-    const inRange = allOrders.filter(o => {
-      const d = o.date?.slice(0, 10)
-      return d && d >= range.start && d <= range.end
-    })
-    return aggregateDashboardMetrics(inRange)
-  }, [allOrders, range])
 
   const kpis = metrics.kpis
   const byStatus = metrics.by_status

@@ -3,6 +3,7 @@
  */
 import { sendTypingOn, sendMessengerText, sendMessengerImage } from './meta-send.mjs'
 import { notifyShadowDraft } from './shadow-notify.mjs'
+import { resilientFetch } from '../fetch-retry.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -29,13 +30,15 @@ export async function processCsReplyJob(job, bot) {
   await sendTypingOn(pageId, psid)
   await sleep(randomDelay())
 
-  const res = await fetch(`${APP_URL()}/api/assistant/internal/cs-run`, {
+  const res = await resilientFetch(`${APP_URL()}/api/assistant/internal/cs-run`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${INT_TOKEN()}`,
     },
     body: JSON.stringify({ jobId, conversationId, messageId }),
+    timeoutMs: 60_000,
+    retries: 1,
   })
 
   const data = await res.json()
@@ -83,8 +86,10 @@ export async function processCsReplyJob(job, bot) {
 }
 
 export async function pollCsPendingReplies(bot) {
-  const res = await fetch(`${APP_URL()}/api/assistant/internal/cs-pending-replies`, {
+  const res = await resilientFetch(`${APP_URL()}/api/assistant/internal/cs-pending-replies`, {
     headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+    timeoutMs: 15_000,
+    retries: 1,
   })
   if (!res.ok) {
     console.error(`[cs-reply] poll failed HTTP ${res.status}`)

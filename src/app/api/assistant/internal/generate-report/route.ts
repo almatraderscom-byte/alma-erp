@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 import Anthropic from '@anthropic-ai/sdk'
+import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -38,9 +39,9 @@ export async function POST(req: NextRequest) {
   if (!apiKey) return NextResponse.json({ report: null, error: 'no_api_key' })
 
   try {
-    const anthropic = new Anthropic({ apiKey })
+    const anthropic = new Anthropic({ apiKey, timeout: 25_000 })
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: enforceClaudeOnlyModel(),
       max_tokens: 800,
       messages: [{
         role: 'user',

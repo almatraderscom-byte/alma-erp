@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildSalahCallSayTwiml, buildSalahCallTwiml } from '@/lib/twilio/twiml'
+import { verifyTwilioRequest } from '@/lib/twilio/verify-signature'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +13,9 @@ function twiml(xml: string) {
 
 /** Twilio fetches this URL when the outbound call connects. */
 export async function GET(req: NextRequest) {
+  if (!verifyTwilioRequest(req, {})) {
+    return new NextResponse('Forbidden', { status: 403 })
+  }
   const audio = req.nextUrl.searchParams.get('audio')?.trim()
   const say = req.nextUrl.searchParams.get('say')?.trim()
 

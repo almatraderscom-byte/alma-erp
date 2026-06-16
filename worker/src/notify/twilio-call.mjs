@@ -440,7 +440,9 @@ export async function pollAndReportCallResult(callSid, toNumber) {
         CallSid: callSid,
         To: toNumber,
       })
-      const res = await fetch(`${appUrl}/api/twilio/call-status`, { method: 'POST', body })
+      const internalToken = process.env.AGENT_INTERNAL_TOKEN
+      const headers = internalToken ? { Authorization: `Bearer ${internalToken}` } : {}
+      const res = await fetch(`${appUrl}/api/twilio/call-status`, { method: 'POST', body, headers })
       console.log(`[twilio] polled call result ${callSid} → ${call.status} (${call.duration ?? 0}s) HTTP ${res.status}`)
       return
     } catch (err) {

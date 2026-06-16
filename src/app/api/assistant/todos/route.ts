@@ -3,10 +3,10 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 
 function isInternalToken(req: NextRequest): boolean {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '')
-  return !!token && token === process.env.AGENT_INTERNAL_TOKEN
+  return verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))
 }
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
