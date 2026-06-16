@@ -7,10 +7,16 @@ import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentModelSelector from './AgentModelSelector'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
+import VoiceSessionOverlay from './voice/VoiceSessionOverlay'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
+import { useVoiceRecorder, type VoicePhase } from '@/agent/hooks/useVoiceRecorder'
+import { useMicLevel } from '@/agent/hooks/useMicLevel'
+import { usePlaybackLevel } from '@/agent/hooks/usePlaybackLevel'
+import { speakAgentText } from '@/agent/lib/voice-tts-client'
+import type { AgentOrbState, VoiceMode } from '@/agent/lib/voice-types'
 
 interface AgentAppProps {
   userName: string
@@ -134,6 +140,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     title: string | null
   } | null>(null)
 
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('off')
+  const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false)
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle')
+  const [ttsAudio, setTtsAudio] = useState<HTMLAudioElement | null>(null)
+  const [ttsPlaying, setTtsPlaying] = useState(false)
+
+  const voiceModeRef = useRef(voiceMode)
+  const voiceOverlayRef = useRef(voiceOverlayOpen)
+  const handleSendRef = useRef<(text: string, files: PendingFile[]) => Promise<void>>(async () => {})
+  const playVoiceReplyRef = useRef<(text: string) => Promise<void>>(async () => {})
+
+  useEffect(() => { voiceModeRef.current = voiceMode }, [voiceMode])
+  useEffect(() => { voiceOverlayRef.current = voiceOverlayOpen }, [voiceOverlayOpen])
+
   const abortRef = useRef<AbortController | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const dayShiftPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -149,6 +169,76 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   /** Same rAF-batching for the extended-thinking stream (Cursor-style "Thought" block),
    *  plus a start timestamp so we can show "Thought for Ns" once the reply begins. */
   const thinkingBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean; startedAt: number } | null>(null)
+
+  const voiceRecorder = useVoiceRecorder({
+    onPhaseChange: setVoicePhase,
+    onTranscribed: (text) => {
+      if (voiceModeRef.current !== 'off') void handleSendRef.current(text, [])
+    },
+  })
+
+  const micLevel = useMicLevel(voiceRecorder.stream, voiceRecorder.recording)
+  const playbackLevel = usePlaybackLevel(ttsAudio, ttsPlaying)
+
+  const agentOrbState: AgentOrbState =
+    voicePhase === 'listening' || voiceRecorder.recording
+      ? 'listening'
+      : voicePhase === 'talking' || ttsPlaying
+        ? 'talking'
+        : voicePhase === 'thinking' || voicePhase === 'transcribing' || streaming
+          ? 'thinking'
+          : null
+
+  const playVoiceReply = useCallback(async (text: string) => {
+    if (voiceModeRef.current !== 'conversation' || !text.trim() || text.startsWith('⚠️')) return
+    setVoicePhase('talking')
+    setTtsPlaying(true)
+    try {
+      const audio = await speakAgentText(text)
+      setTtsAudio(audio)
+      audio.onended = () => {
+        setTtsPlaying(false)
+        setVoicePhase('idle')
+        setTtsAudio(null)
+        if (voiceOverlayRef.current) {
+          window.setTimeout(() => { void voiceRecorder.startRecording() }, 500)
+        }
+      }
+    } catch {
+      setTtsPlaying(false)
+      setVoicePhase('idle')
+      toast.error('ভয়েস উত্তর ব্যর্থ')
+    }
+  }, [voiceRecorder])
+
+  useEffect(() => { playVoiceReplyRef.current = playVoiceReply }, [playVoiceReply])
+
+  const startVoiceSession = useCallback(() => {
+    setVoiceMode('conversation')
+    setVoiceOverlayOpen(true)
+    window.setTimeout(() => { void voiceRecorder.startRecording() }, 320)
+  }, [voiceRecorder])
+
+  const startDictation = useCallback(() => {
+    if (voiceModeRef.current === 'off') setVoiceMode('dictation')
+    setVoiceOverlayOpen(true)
+    void voiceRecorder.startRecording()
+  }, [voiceRecorder])
+
+  const closeVoiceOverlay = useCallback(() => {
+    voiceRecorder.cancelRecording()
+    setVoiceOverlayOpen(false)
+    setVoiceMode('off')
+    setVoicePhase('idle')
+    if (ttsAudio) {
+      ttsAudio.pause()
+      setTtsPlaying(false)
+    }
+  }, [voiceRecorder, ttsAudio])
+
+  const cycleVoiceMode = useCallback(() => {
+    setVoiceMode((m) => (m === 'off' ? 'dictation' : m === 'dictation' ? 'conversation' : 'off'))
+  }, [])
 
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
@@ -278,6 +368,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const handleSend = useCallback(async (text: string, pendingFiles: PendingFile[]) => {
     if (streaming) return
     abortRef.current = new AbortController()
+    if (voiceOverlayRef.current) setVoicePhase('thinking')
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
 
@@ -659,6 +750,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       abortRef.current = null
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
 
+      if (voiceModeRef.current === 'conversation' && voiceOverlayRef.current) {
+        setMessages((prev) => {
+          const last = [...prev].reverse().find(
+            (m) => m.role === 'assistant' && !m.streaming && m.text?.trim() && !m.text.startsWith('⚠️'),
+          )
+          if (last?.text) void playVoiceReplyRef.current(last.text)
+          return prev
+        })
+      } else if (voiceOverlayRef.current && voiceModeRef.current === 'dictation') {
+        setVoicePhase('idle')
+      }
+
       if (compactAfterStream) {
         void runCompaction(compactAfterStream)
       } else if (serverCompacted) {
@@ -669,6 +772,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     }
   }, [streaming, activeConvId])
+
+  useEffect(() => { handleSendRef.current = handleSend }, [handleSend])
 
   function stopGeneration() {
     abortRef.current?.abort()
@@ -853,7 +958,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         )}
 
         {/* Thread + artifacts */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="relative flex flex-1 overflow-hidden">
+          <VoiceSessionOverlay
+            open={voiceOverlayOpen}
+            agentState={agentOrbState}
+            inputLevel={micLevel}
+            outputLevel={playbackLevel}
+            voiceMode={voiceMode}
+            phase={voiceRecorder.recording ? 'listening' : voicePhase}
+            onClose={closeVoiceOverlay}
+            onTapOrb={() => {
+              if (voiceRecorder.recording) voiceRecorder.stopRecording()
+              else void voiceRecorder.startRecording()
+            }}
+          />
           {convLoading ? (
             <div className="flex flex-1 overflow-y-auto">
               <AgentConversationSkeleton />
@@ -876,6 +994,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onArtifactOpen={() => setArtifactsOpen(true)}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
+            onStartVoiceSession={startVoiceSession}
             streamStatus={streamStatus}
             streamMode={streamMode}
             compacting={compacting}
@@ -899,6 +1018,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           isMobile={isMobile}
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
+          voiceMode={voiceMode}
+          voiceRecording={voiceRecorder.recording}
+          voiceRecordSecs={voiceRecorder.recordSecs}
+          onVoiceStart={startDictation}
+          onVoiceStop={() => voiceRecorder.stopRecording()}
+          onVoiceCancel={() => voiceRecorder.cancelRecording()}
+          onVoiceModeCycle={cycleVoiceMode}
         />
       </div>
     </div>

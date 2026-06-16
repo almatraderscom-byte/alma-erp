@@ -49,6 +49,7 @@ interface AgentThreadProps {
   onArtifactOpen: () => void
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
+  onStartVoiceSession?: () => void
   streamStatus?: string | null
   streamMode?: 'fetching' | 'writing' | 'settled'
   compacting?: boolean
@@ -332,7 +333,7 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, streamStatus, streamMode, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
@@ -391,7 +392,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl px-4 py-4 pb-6 md:px-6 md:py-6">
         {messages.length === 0 && (
-          <AgentEmptyState onSuggestion={onQuickSend} />
+          <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
         )}
 
         <AnimatePresence initial={false}>
