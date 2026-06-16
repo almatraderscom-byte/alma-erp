@@ -355,6 +355,16 @@ export async function POST(req: NextRequest) {
       const enqueue = (evt: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
 
+      // SSE keepalive — a long tool/sub-agent step can run 30–60s without yielding
+      // any event; without traffic an idle proxy/CDN may drop the stream and the
+      // client sees "Failed to fetch". Comment frames (": ping") keep it warm and
+      // are ignored by the client parser (only "data:" lines are consumed).
+      let streamClosed = false
+      const keepAlive = setInterval(() => {
+        if (streamClosed) return
+        try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* closed */ }
+      }, 10_000)
+
       enqueue({ type: 'conversation_id', id: conversationId })
       enqueue({ type: 'personal_mode', active: personalMode })
       try {
@@ -397,6 +407,8 @@ export async function POST(req: NextRequest) {
           enqueue({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {
+        streamClosed = true
+        clearInterval(keepAlive)
         controller.close()
       }
     },
