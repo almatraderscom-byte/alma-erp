@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useDeferredValue, type UIEvent } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
+import { motion } from 'framer-motion'
 import { useStock, useProducts, useCreateProduct } from '@/hooks/useERP'
 import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skeleton, Empty, Money, BdtText, KPI_AUTO_GRID } from '@/components/ui'
 import { PageEnter } from '@/components/layout/AgentAccess'
@@ -196,7 +197,7 @@ export default function InventoryPage() {
   }, [mutateInventory])
 
   return (
-    <>
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader
         title="Inventory"
         subtitle={<>{summary?.total_skus ?? 0} SKUs · <BdtText value={fmt(totalValue)} /> stock value</>}
@@ -472,6 +473,6 @@ export default function InventoryPage() {
         saveError={createError}
         onSubmit={handleCreate}
       />
-    </>
+    </div>
   )
 }

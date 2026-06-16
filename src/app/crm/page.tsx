@@ -13,6 +13,9 @@ import { PageHeader, Card, KpiCard, SegmentBadge, RiskBadge, Avatar, ClvBar, But
 import { fmt, pct } from '@/lib/utils'
 import type { Customer, CustomerSegment, OrderStatus } from '@/types'
 
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
+
 const SEGMENTS: CustomerSegment[] = ['VIP','REGULAR','NEW','RISKY','BLACKLIST','COLD']
 
 export default function CrmPage() {
@@ -87,7 +90,7 @@ export default function CrmPage() {
   }
 
   return (
-    <>
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader
         title="CRM"
         subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}
@@ -103,16 +106,16 @@ export default function CrmPage() {
         ) : undefined}
       />
 
-      <div className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
 
         {/* KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <KpiCard label="Total Customers" value={summary?.total ?? 0} loading={listLoading} />
           <KpiCard label="Lifetime Revenue" value={fmt(summary?.total_revenue ?? 0)} color="text-gold-lt" loading={listLoading} />
           <KpiCard label="VIP"          value={summary?.by_segment?.VIP ?? 0}       color="text-gold"      loading={listLoading} />
           <KpiCard label="Avg CLV Score" value={`${summary?.avg_clv ?? 0}/100`}      color="text-blue-400"  loading={listLoading} />
           <KpiCard label="High Risk"     value={summary?.by_segment?.HIGH ?? (data?.customers ?? []).filter(c => c.risk_level === 'HIGH').length ?? 0} color="text-red-400" loading={listLoading} />
-        </div>
+        </motion.div>
 
         {/* Segment tabs */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
@@ -242,7 +245,7 @@ export default function CrmPage() {
           {!listLoading && customers.length === 0 && <Empty icon="◎" title="No customers match" />}
         </div>
 
-      </div>
+      </motion.div>
 
       {/* Detail drawer */}
       <AnimatePresence>
@@ -360,6 +363,6 @@ export default function CrmPage() {
         )}
       </AnimatePresence>
 
-    </>
+    </div>
   )
 }

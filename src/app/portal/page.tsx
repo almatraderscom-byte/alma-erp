@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useSession } from 'next-auth/react'
+import { motion } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { Button, Card, Empty, Input, Skeleton } from '@/components/ui'
 import { useBusiness } from '@/contexts/BusinessContext'
@@ -38,6 +39,9 @@ import {
   normalizeMyAttendancePayload,
 } from '@/lib/attendance-portal-normalize'
 import { MySalarySlipCard } from '@/components/portal/MySalarySlipCard'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
 
 type MeUser = {
   id: string
@@ -278,7 +282,7 @@ export default function EmployeePortalPage() {
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
-    <>
+    <div className="min-h-screen bg-[#FAF9F6]">
       {!systemOwner && empId && (
         <>
           <OperationalTaskHero
@@ -311,8 +315,9 @@ export default function EmployeePortalPage() {
         </div>
       )}
     >
+      <motion.div variants={stagger} initial="hidden" animate="show">
       {profileIdentity && (
-        <div className="mb-4 min-h-[208px]">
+        <motion.div variants={fadeUp} className="mb-4 min-h-[208px]">
           {loadingMe && !me ? (
             <Skeleton className="h-52 w-full rounded-2xl" />
           ) : (
@@ -324,9 +329,10 @@ export default function EmployeePortalPage() {
               onUpdated={handleProfileUpdated}
             />
           )}
-        </div>
+        </motion.div>
       )}
 
+      <motion.div variants={fadeUp}>
       <div className="grid md:grid-cols-2 gap-4">
         {systemOwner ? (
           <SystemOwnerCard businessName={business.name} />
@@ -363,14 +369,14 @@ export default function EmployeePortalPage() {
           ) : (
             <>
             <dl className="grid gap-2 text-[11px]">
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Name</dt><dd className="text-cream font-medium">{me.name}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Email</dt><dd className="font-mono text-zinc-400 truncate max-w-[55%]" title={me.email}>{me.email}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Role</dt><dd className="text-gold-lt">{role.replace(/_/g, ' ')}</dd></div>
-              {me.profile?.roleTitle && <div className="flex justify-between gap-3"><dt className="text-zinc-500">Profile role</dt><dd className="text-zinc-400">{me.profile.roleTitle}</dd></div>}
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Business scope</dt><dd className="text-zinc-400 text-right">{me.businessAccess.replace(/,/g, ', ')}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">HR employee ID</dt><dd className="font-mono text-zinc-400">{systemOwner ? 'System owner - not required' : me.employeeIdGas || '— link in Users'}</dd></div>
-              {me.profile?.shift && <div className="flex justify-between gap-3"><dt className="text-zinc-500">Shift</dt><dd className="text-zinc-400">{me.profile.shift}</dd></div>}
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Salary hint</dt><dd className="font-mono text-gold">
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">Name</dt><dd className="text-slate-800 font-medium">{me.name}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">Email</dt><dd className="font-mono text-slate-500 truncate max-w-[55%]" title={me.email}>{me.email}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">Role</dt><dd className="text-gold-lt">{role.replace(/_/g, ' ')}</dd></div>
+              {me.profile?.roleTitle && <div className="flex justify-between gap-3"><dt className="text-slate-500">Profile role</dt><dd className="text-slate-500">{me.profile.roleTitle}</dd></div>}
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">Business scope</dt><dd className="text-slate-500 text-right">{me.businessAccess.replace(/,/g, ', ')}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">HR employee ID</dt><dd className="font-mono text-slate-500">{systemOwner ? 'System owner - not required' : me.employeeIdGas || '— link in Users'}</dd></div>
+              {me.profile?.shift && <div className="flex justify-between gap-3"><dt className="text-slate-500">Shift</dt><dd className="text-slate-500">{me.profile.shift}</dd></div>}
+              <div className="flex justify-between gap-3"><dt className="text-slate-500">Salary hint</dt><dd className="font-mono text-gold">
                 {me.salaryHint != null ? `৳ ${Number(me.salaryHint).toLocaleString('en-BD')}` : '—'}
               </dd></div>
             </dl>
@@ -382,7 +388,7 @@ export default function EmployeePortalPage() {
           <Card className="p-5 border-gold-dim/20 bg-white/60 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payout identity</p>
-              <p className="mt-1 text-[11px] text-zinc-500">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
+              <p className="mt-1 text-[11px] text-slate-500">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
             </div>
             <Link href="/portal/payment-accounts">
               <Button size="sm" variant="gold">Payment accounts</Button>
@@ -431,19 +437,19 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && <Card className="p-5 md:col-span-2">
-          <p className="text-sm font-bold text-cream mb-3">Wallet transaction history</p>
+          <p className="text-sm font-bold text-slate-800 mb-3">Wallet transaction history</p>
           {!empId ? (
-            <p className="text-[11px] text-zinc-500">Link your HR employee ID (Users settings) to activate the payroll wallet.</p>
+            <p className="text-[11px] text-slate-500">Link your HR employee ID (Users settings) to activate the payroll wallet.</p>
           ) : walletLoading ? (
             <Skeleton className="h-36 w-full" />
           ) : !(wallet?.entries ?? []).length ? (
-            <p className="text-[11px] text-zinc-500">No wallet entries yet. HR can run monthly salary accruals from Payroll.</p>
+            <p className="text-[11px] text-slate-500">No wallet entries yet. HR can run monthly salary accruals from Payroll.</p>
           ) : (
             <div className="divide-y divide-border max-h-56 overflow-y-auto text-[11px]">
               {(wallet!.entries ?? []).slice().reverse().slice(0, 60).map(tx => (
                 <div key={String(tx.id ?? `${tx.date}-${tx.type}`)} className="py-2 grid grid-cols-[82px_1fr_auto_auto] gap-2 items-center">
-                  <span className="text-zinc-500 font-mono">{String(tx.date).slice(0, 10)}</span>
-                  <span className="text-cream">{tx.type.replace(/_/g, ' ')}</span>
+                  <span className="text-slate-500 font-mono">{String(tx.date).slice(0, 10)}</span>
+                  <span className="text-slate-800">{tx.type.replace(/_/g, ' ')}</span>
                   <span className={tx.signedAmount >= 0 ? 'font-mono text-green-400' : 'font-mono text-red-400'}>
                     {tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}
                   </span>
@@ -454,14 +460,16 @@ export default function EmployeePortalPage() {
           )}
         </Card>}
 
-        {!systemOwner && <Card className="p-5 md:col-span-2 bg-black/[0.03] border-border">
-          <p className="text-sm font-bold text-cream mb-2">Pending requests</p>
+        {!systemOwner && <Card className="p-5 md:col-span-2 bg-slate-50 border-border">
+          <p className="text-sm font-bold text-slate-800 mb-2">Pending requests</p>
           <RequestList requests={wallet?.requests ?? []} />
         </Card>}
       </div>
+      </motion.div>
+      </motion.div>
 
     </FinancePageChrome>
-    </>
+    </div>
   )
 }
 
@@ -473,8 +481,8 @@ function SystemOwnerCard({ businessName }: { businessName: string }) {
   return (
     <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-white/80">
       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">System owner mode</p>
-      <h2 className="mt-2 text-xl font-black text-cream">Owner control active</h2>
-      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-zinc-400">
+      <h2 className="mt-2 text-xl font-black text-slate-800">Owner control active</h2>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
         You are operating {businessName} as a system owner. Employee attendance, personal wallet requests, payroll linkage,
         and staff profile requirements are intentionally skipped for this account.
       </p>
@@ -584,8 +592,8 @@ function AttendanceCard({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Today attendance</p>
-          <h2 className="mt-2 text-xl font-black text-cream">{today ? (today.checkOutAt ? 'Workday completed' : 'Work is running') : 'Ready to start work'}</h2>
-          <p className="mt-1 text-xs text-zinc-500">Office time: 9:00 AM - 9:00 PM. Late penalties sync to your wallet automatically.</p>
+          <h2 className="mt-2 text-xl font-black text-slate-800">{today ? (today.checkOutAt ? 'Workday completed' : 'Work is running') : 'Ready to start work'}</h2>
+          <p className="mt-1 text-xs text-slate-500">Office time: 9:00 AM - 9:00 PM. Late penalties sync to your wallet automatically.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 min-w-[220px]">
           <Button
@@ -609,9 +617,9 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Error banner">
         {attendanceError && (
-          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
             <p className="font-bold">{attendanceErrorLabel(attendanceError.code)}</p>
-            <p className="mt-1 text-red-100/90">{attendanceError.message}</p>
+            <p className="mt-1 text-red-600">{attendanceError.message}</p>
             {attendanceError.retryable && (
               <Button size="xs" variant="secondary" className="mt-3" onClick={onRefresh}>
                 Retry attendance
@@ -623,7 +631,7 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Daily stats">
         {loading ? <Skeleton className="mt-4 h-28 w-full" /> : !empLinked ? (
-          <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-300">Ask an admin to link your HR employee ID before using attendance.</p>
+          <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-600">Ask an admin to link your HR employee ID before using attendance.</p>
         ) : (
           <div className="mt-4 grid md:grid-cols-5 gap-2 text-[11px]">
             <WalletStat label="Check in" value={formatAttendanceTime(today?.checkInAt)} />
@@ -637,9 +645,9 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Verification banner">
         {selfieActionRequired && (
-          <div className="mt-4 rounded-2xl border-2 border-amber-400/40 bg-amber-500/15 p-4 shadow-lg shadow-amber-500/10">
-            <p className="text-sm font-black text-amber-100">Verification required</p>
-            <p className="mt-1 text-xs text-amber-100/80">
+          <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 shadow-lg shadow-amber-500/10">
+            <p className="text-sm font-black text-amber-800">Verification required</p>
+            <p className="mt-1 text-xs text-amber-600">
               Admin requested a quick face photo. Your check-in is saved — complete verification now.
             </p>
             <Button
@@ -653,14 +661,14 @@ function AttendanceCard({
         )}
 
         {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
-          <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200">
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-700">
             <p className="font-bold">Attendance marked for review</p>
-            <p className="mt-1 text-amber-100/80">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
+            <p className="mt-1 text-amber-600">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
             {selfieSubmitted && (
-              <p className="mt-2 text-green-300/90">Verification submitted — waiting for admin review.</p>
+              <p className="mt-2 text-emerald-600">Verification submitted — waiting for admin review.</p>
             )}
             {today.faceVerified && (
-              <p className="mt-2 text-green-300/90">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
+              <p className="mt-2 text-emerald-600">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
             )}
           </div>
         )}
@@ -702,7 +710,7 @@ function AttendanceCard({
         {desk && !desk.needsEmployeeLink && (
           <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
             <WalletStat label="Month present" value={`${summary.presentDays} days`} />
-            <WalletStat label="Month late" value={`${summary.lateCount} days`} tone="text-amber-300" />
+            <WalletStat label="Month late" value={`${summary.lateCount} days`} tone="text-amber-600" />
             <WalletStat label="Total penalties" value={money(summary.totalPenalties)} tone="text-red-400" />
             <WalletStat label="Waived" value={money(summary.waivedPenalties)} tone="text-green-400" />
           </div>
@@ -793,17 +801,17 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
           <WalletStat label="Overtime" value={money(s.totalOvertime)} />
           <WalletStat label="Penalties" value={money(s.totalPenalties)} tone="text-red-400" />
           <WalletStat label="Meal deductions" value={money(s.totalMealDeductions)} tone="text-red-400" />
-          <WalletStat label="Advances" value={money(s.totalAdvances)} tone="text-amber-300" />
-          <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-zinc-300" />
+          <WalletStat label="Advances" value={money(s.totalAdvances)} tone="text-amber-600" />
+          <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-slate-600" />
         </div>
       )}
     </Card>
   )
 }
 
-function WalletStat({ label, value, tone = 'text-cream' }: { label: string; value: string; tone?: string }) {
+function WalletStat({ label, value, tone = 'text-slate-800' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
+    <div className="rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
       <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${tone}`}>{value}</p>
     </div>
@@ -869,11 +877,11 @@ function MealAllowanceCard({
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Meal Allowance</p>
           {canRequest ? (
-            <p className="mt-2 text-[11px] text-zinc-400">No kitchen today? Request your meal allowance.</p>
+            <p className="mt-2 text-[11px] text-slate-500">No kitchen today? Request your meal allowance.</p>
           ) : pending?.status === 'APPROVED' ? (
-            <p className="mt-2 text-[11px] text-zinc-400">Meal allowance approved for today</p>
+            <p className="mt-2 text-[11px] text-slate-500">Meal allowance approved for today</p>
           ) : (
-            <p className="mt-2 text-[11px] text-zinc-400">Request pending approval</p>
+            <p className="mt-2 text-[11px] text-slate-500">Request pending approval</p>
           )}
         </div>
         <span className="rounded-full border border-gold-dim/40 bg-gold/10 px-3 py-1 text-[11px] font-bold text-gold-lt">
@@ -888,14 +896,14 @@ function MealAllowanceCard({
       {canRequest ? (
         <form onSubmit={submit} className="space-y-3 text-[11px]">
           <label className="block space-y-1">
-            <span className="text-zinc-500">Reason</span>
+            <span className="text-slate-500">Reason</span>
             <textarea
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={2}
               placeholder="e.g. No food arranged today"
               disabled={!empLinked || busy}
-              className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm resize-none disabled:opacity-40"
+              className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm resize-none disabled:opacity-40"
             />
           </label>
           <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>
@@ -903,10 +911,10 @@ function MealAllowanceCard({
           </Button>
         </form>
       ) : eligibility.reason ? (
-        <p className="text-[11px] text-zinc-500">{eligibility.reason}</p>
+        <p className="text-[11px] text-slate-500">{eligibility.reason}</p>
       ) : null}
       {!empLinked && canRequest && (
-        <p className="text-[11px] text-amber-400">Ask an admin to link your HR employee ID before requesting meal allowance.</p>
+        <p className="text-[11px] text-amber-600">Ask an admin to link your HR employee ID before requesting meal allowance.</p>
       )}
     </Card>
   )
@@ -961,35 +969,35 @@ function WalletRequestCard({
               key={t}
               type="button"
               onClick={() => setType(t)}
-              className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${type === t ? 'border-gold-dim/50 bg-gold/15 text-gold-lt' : 'border-border bg-card text-zinc-400 hover:text-cream'}`}
+              className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${type === t ? 'border-gold-dim/50 bg-gold/15 text-gold-lt' : 'border-black/[0.08] bg-white text-slate-500 hover:text-slate-800'}`}
             >
               {t === 'WITHDRAWAL' ? 'Request withdrawal' : 'Request advance'}
             </button>
           ))}
         </div>
         <label className="block space-y-1">
-          <span className="text-zinc-500">Amount (৳)</span>
+          <span className="text-slate-500">Amount (৳)</span>
           <Input value={amount} onChange={e => setAmount(e.target.value)} type="number" min={1} step="1" className="font-mono" disabled={!empLinked} />
         </label>
         <label className="block space-y-1">
-          <span className="text-zinc-500">Reason</span>
-          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} disabled={!empLinked} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm resize-none disabled:opacity-40" />
+          <span className="text-slate-500">Reason</span>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} disabled={!empLinked} className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm resize-none disabled:opacity-40" />
         </label>
         <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>{busy ? 'Sending…' : 'Submit request'}</Button>
       </form>
-      {!empLinked && <p className="text-[11px] text-amber-400">Ask an admin to link your HR employee ID before requesting wallet movements.</p>}
+      {!empLinked && <p className="text-[11px] text-amber-600">Ask an admin to link your HR employee ID before requesting wallet movements.</p>}
     </Card>
   )
 }
 
 function RequestList({ requests }: { requests: WalletRequestDto[] }) {
-  if (!requests?.length) return <p className="text-[11px] text-zinc-600">No wallet requests yet.</p>
+  if (!requests?.length) return <p className="text-[11px] text-slate-400">No wallet requests yet.</p>
   return (
     <ul className="space-y-1.5 max-h-44 overflow-y-auto text-[11px]">
       {requests.slice(0, 20).map(r => (
-        <li key={r.id} className="flex justify-between gap-2 border-b border-border/50 pb-1.5">
-          <span className="text-zinc-500 font-mono">{r.createdAt.slice(0, 10)}</span>
-          <span className="text-cream flex-1">{r.type.replace(/_/g, ' ')} · {money(r.requestedAmount)}</span>
+        <li key={r.id} className="flex justify-between gap-2 border-b border-black/[0.04] pb-1.5">
+          <span className="text-slate-500 font-mono">{r.createdAt.slice(0, 10)}</span>
+          <span className="text-slate-800 flex-1">{r.type.replace(/_/g, ' ')} · {money(r.requestedAmount)}</span>
           <span className={r.status === 'PENDING' ? 'text-amber-400' : r.status.includes('APPROVED') ? 'text-green-400' : 'text-red-400'}>{r.status.replace(/_/g, ' ')}</span>
         </li>
       ))}

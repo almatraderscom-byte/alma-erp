@@ -18,13 +18,13 @@ type AccountRow = {
 
 function complianceBadge(status?: AccountRow['screenshotCompliance'], today?: boolean) {
   if (today || status === 'COMPLETE') {
-    return <span className="rounded-full border border-green-400/30 bg-green-400/10 px-2 py-0.5 text-[9px] font-black text-green-300">Today ✓</span>
+    return <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[9px] font-bold text-green-600">Today ✓</span>
   }
   if (status === 'OVERDUE') {
-    return <span className="rounded-full border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[9px] font-black text-red-300">Screenshot overdue</span>
+    return <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[9px] font-bold text-red-600">Screenshot overdue</span>
   }
   if (status === 'DUE') {
-    return <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[9px] font-black text-amber-300">Screenshot due</span>
+    return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">Screenshot due</span>
   }
   return null
 }
@@ -43,13 +43,13 @@ export function MyTradingAccounts({
   const perfById = new Map(performance.map(row => [row.id, row]))
 
   return (
-    <Card className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <Card className="overflow-hidden rounded-2xl">
+      <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
         <div>
-          <p className="text-sm font-bold text-cream">My accounts</p>
-          <p className="text-[11px] text-zinc-500">Daily ops · screenshot status per account</p>
+          <p className="text-sm font-bold text-slate-800">My accounts</p>
+          <p className="text-[11px] text-slate-500">Daily ops · screenshot status per account</p>
         </div>
-        <Link href="/trading/accounts" className="text-[11px] font-bold text-gold-lt">
+        <Link href="/trading/accounts" className="text-[11px] font-bold text-gold">
           View all
         </Link>
       </div>
@@ -61,7 +61,7 @@ export function MyTradingAccounts({
       ) : !accounts.length ? (
         <Empty icon="◇" title="No active accounts assigned" />
       ) : (
-        <div className="divide-y divide-border">
+        <div className="divide-y divide-black/[0.06]">
           {accounts.slice(0, 12).map(account => {
             const perf = perfById.get(account.id)
             const needsScreenshot = perf?.screenshotCompliance === 'DUE' || perf?.screenshotCompliance === 'OVERDUE'
@@ -70,18 +70,18 @@ export function MyTradingAccounts({
                 <Link href={`/trading/accounts/${account.id}`} className="block min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-black text-cream">{account.accountTitle}</p>
+                      <p className="truncate text-sm font-bold text-slate-800">{account.accountTitle}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <p className="text-[10px] text-zinc-500">{account.binanceUid || 'No UID'}</p>
+                        <p className="text-[10px] text-slate-500">{account.binanceUid || 'No UID'}</p>
                         {complianceBadge(perf?.screenshotCompliance, perf?.screenshotToday)}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className="text-xs font-bold text-gold-lt">
+                      <p className="text-xs font-bold text-gold">
                         <Money amount={perf?.currentBalance ?? Number(account.startingCapital || 0)} />
                       </p>
                       {perf && (
-                        <p className={`mt-0.5 text-[10px] font-black tabular-nums ${signedClass(perf.dailyPl)}`}>
+                        <p className={`mt-0.5 text-[10px] font-bold tabular-nums ${signedClass(perf.dailyPl)}`}>
                           Today <Money amount={perf.dailyPl} />
                         </p>
                       )}
@@ -111,8 +111,8 @@ function MiniAction({ label, onClick, emphasis }: { label: string; onClick: () =
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-black uppercase tracking-wide active:bg-black/[0.05] ${
-        emphasis ? 'trading-upload-emphasis border-gold-dim/50 bg-gold/10 text-gold-lt' : 'border-border bg-black/[0.03] text-zinc-300'
+      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-bold uppercase tracking-wide active:bg-slate-100 ${
+        emphasis ? 'trading-upload-emphasis border-gold/25 bg-gold/8 text-gold' : 'border-black/[0.06] bg-white text-slate-500'
       }`}
     >
       {label}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useSession } from 'next-auth/react'
+import { motion } from 'framer-motion'
 import { Button, Card, Empty, Input, KpiCard, KPI_AUTO_GRID, Select, Skeleton } from '@/components/ui'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { useTradingAccounts } from '@/hooks/useTrading'
@@ -10,6 +11,9 @@ import { api } from '@/lib/api'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { statusClass } from '@/components/trading/trading-utils'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 type VolumeTargetRow = {
   id: string
@@ -82,7 +86,7 @@ export default function TradingTargetControlPage() {
   if (role !== 'SUPER_ADMIN' && role !== 'ADMIN') {
     return (
       <TradingPageShell title="Target Control" subtitle="Restricted">
-        <Card className="p-6 text-sm text-zinc-400">You do not have access to trading volume targets.</Card>
+        <Card className="rounded-2xl p-6 text-sm text-slate-500">You do not have access to trading volume targets.</Card>
       </TradingPageShell>
     )
   }
@@ -147,29 +151,31 @@ export default function TradingTargetControlPage() {
         </div>
       }
     >
-      <div className="flex flex-wrap gap-2">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5">
+      <motion.div variants={fadeUp} className="flex flex-wrap gap-2">
         {(['targets', 'penalties', 'analytics', 'settings'] as const).map(t => (
           <Button key={t} size="sm" variant={tab === t ? 'gold' : 'ghost'} onClick={() => setTab(t)}>
             {t === 'targets' ? 'Accounts' : t === 'penalties' ? `Penalty queue (${penaltyQueue.length})` : t.charAt(0).toUpperCase() + t.slice(1)}
           </Button>
         ))}
-      </div>
+      </motion.div>
 
       {analytics && (
-        <div className={KPI_AUTO_GRID}>
+        <motion.div variants={fadeUp} className={KPI_AUTO_GRID}>
           <KpiCard label="Targets" value={String(analytics.targetCount ?? 0)} />
           <KpiCard label="Met" value={String(analytics.met ?? 0)} color="green" />
           <KpiCard label="Missed" value={String(analytics.missed ?? 0)} color="red" />
           <KpiCard label="Ignored" value={String(analytics.ignored ?? 0)} />
-        </div>
+        </motion.div>
       )}
 
       {tab === 'settings' && (
-        <Card className="space-y-4 p-4">
-          <p className="text-sm font-bold text-cream">Auto-penalty configuration</p>
+        <motion.div variants={fadeUp}>
+        <Card className="space-y-4 rounded-2xl p-5">
+          <p className="text-sm font-bold text-slate-800">Auto-penalty configuration</p>
           {canManage ? (
             <>
-              <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <label className="flex items-center gap-2 text-sm text-slate-600">
                 <input
                   type="checkbox"
                   checked={settings.autoPenaltyEnabled}
@@ -187,19 +193,22 @@ export default function TradingTargetControlPage() {
               <Button variant="gold" onClick={() => void saveSettings()}>Save settings</Button>
             </>
           ) : (
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-slate-500">
               Auto-penalty: {settings.autoPenaltyEnabled ? 'On' : 'Off'} · Default ৳{settings.defaultPenaltyBdt}
             </p>
           )}
         </Card>
+        </motion.div>
       )}
 
       {tab === 'analytics' && (
-        <Card className="p-4 text-sm text-zinc-400">
+        <motion.div variants={fadeUp}>
+        <Card className="rounded-2xl p-5 text-sm text-slate-500">
           {canManage
             ? 'Use Accounts and Penalty queue for enforcement. Month KPIs are shown above.'
             : 'Summary KPIs above reflect the selected month. Contact Super Admin for penalty actions.'}
         </Card>
+        </motion.div>
       )}
 
       {(tab === 'targets' || tab === 'penalties') && (
@@ -210,12 +219,13 @@ export default function TradingTargetControlPage() {
         ) : (
           <div className="space-y-3">
             {(tab === 'penalties' ? penaltyQueue : targets).map(row => (
-              <Card key={row.id} className="p-4">
+              <motion.div key={row.id} variants={fadeUp}>
+              <Card className="rounded-2xl p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="font-bold text-cream">{row.accountTitle}</p>
-                    <p className="text-xs text-zinc-500">{row.assignedUserName || 'Unassigned'} · {row.targetDate.slice(0, 10)}</p>
-                    <p className="mt-2 text-sm text-zinc-300">
+                    <p className="font-bold text-slate-800">{row.accountTitle}</p>
+                    <p className="text-xs text-slate-500">{row.assignedUserName || 'Unassigned'} · {row.targetDate.slice(0, 10)}</p>
+                    <p className="mt-2 text-sm text-slate-600">
                       Target {row.targetUsdt} USDT · Actual {row.actualUsdt} USDT
                       {row.shortfallUsdt > 0 ? ` · Short ${row.shortfallUsdt}` : ''}
                     </p>
@@ -259,14 +269,15 @@ export default function TradingTargetControlPage() {
                   )}
                 </div>
               </Card>
+              </motion.div>
             ))}
           </div>
         )
       )}
 
       {createOpen && canManage && (
-        <Card className="fixed inset-x-3 bottom-20 z-50 mx-auto max-w-lg border-gold-dim/40 p-4 shadow-2xl sm:bottom-auto sm:top-24">
-          <p className="mb-3 text-sm font-bold text-cream">Create daily target</p>
+        <Card className="fixed inset-x-3 bottom-20 z-50 mx-auto max-w-lg rounded-2xl border-gold/20 bg-white p-4 shadow-2xl sm:bottom-auto sm:top-24">
+          <p className="mb-3 text-sm font-bold text-slate-800">Create daily target</p>
           <form className="space-y-3" onSubmit={e => void createTarget(e)}>
             <Select
               value={createForm.trading_account_id}
@@ -282,6 +293,7 @@ export default function TradingTargetControlPage() {
           </form>
         </Card>
       )}
+      </motion.div>
     </TradingPageShell>
   )
 }

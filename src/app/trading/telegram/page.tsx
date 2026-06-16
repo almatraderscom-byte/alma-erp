@@ -1,8 +1,12 @@
 'use client'
 
+import { motion } from 'framer-motion'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { TradingTelegramAdmin } from '@/components/trading/TradingTelegramAdmin'
 import { useActor } from '@/contexts/ActorContext'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 export default function TradingTelegramPage() {
   const { role, userId } = useActor()
@@ -16,12 +20,16 @@ export default function TradingTelegramPage() {
 
   return (
     <TradingPageShell title="Telegram Quick Entry" subtitle={subtitle}>
-      <TradingTelegramAdmin
-        userId={userId}
-        isAdmin={isAdmin}
-        isSuperAdmin={isSuperAdmin}
-        canReviewDrafts={canReviewDrafts}
-      />
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5">
+        <motion.div variants={fadeUp}>
+          <TradingTelegramAdmin
+            userId={userId}
+            isAdmin={isAdmin}
+            isSuperAdmin={isSuperAdmin}
+            canReviewDrafts={canReviewDrafts}
+          />
+        </motion.div>
+      </motion.div>
     </TradingPageShell>
   )
 }

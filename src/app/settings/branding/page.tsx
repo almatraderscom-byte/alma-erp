@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { PageHeader, Card, Button, Skeleton } from '@/components/ui'
 import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
 import { useBusiness } from '@/contexts/BusinessContext'
@@ -7,6 +8,9 @@ import { useBranding } from '@/contexts/BrandingContext'
 import { api } from '@/lib/api'
 import type { BrandAssetType } from '@/types/branding'
 import toast from 'react-hot-toast'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.04 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 type AssetDraft = {
   file: File
@@ -272,206 +276,220 @@ export default function BrandingSettingsPage() {
   }
 
   return (
-    <div>
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader
         title="Settings · Branding"
         subtitle={`Permanent brand assets for ${business.name}`}
         actions={<BusinessSwitcherCompact />}
       />
-      <div className="p-4 md:p-8 space-y-6 pb-24 md:pb-8 max-w-3xl">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="p-4 md:p-8 space-y-6 pb-24 md:pb-8 max-w-3xl">
         {loading ? (
-          <Skeleton className="h-64" />
+          <Skeleton className="h-64 rounded-2xl" />
         ) : (
           <>
-            <Card className="p-5 space-y-4">
-              <p className="text-sm font-bold text-cream">Brand assets</p>
-              <p className="text-[11px] text-zinc-500">
-                Files are stored permanently in Google Drive and used on invoices, PDFs, dashboards, and print layouts.
-              </p>
-              <div className="rounded-2xl border border-gold/20 bg-gold/[0.04] p-3 text-[11px] text-zinc-400 leading-relaxed">
-                <p><span className="font-bold text-gold-lt">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
-                <p><span className="font-bold text-gold-lt">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
-                <p><span className="font-bold text-gold-lt">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {(['logo', 'favicon'] as const).map(assetType => {
-                  const rules = ASSET_RULES[assetType]
-                  const draft = drafts[assetType]
-                  const previewUrl = previewAssets[assetType]
-                  const isLogo = assetType === 'logo'
-                  return (
-                    <div key={assetType} className="space-y-3 rounded-2xl border border-border bg-black/[0.03] p-3">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-zinc-500">{rules.label}</p>
-                        <p className="mt-1 text-[11px] text-zinc-500">{rules.helper}</p>
-                        <p className="mt-1 text-[10px] text-zinc-600">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
-                      </div>
-                      <div className={`rounded-xl border border-border bg-[linear-gradient(45deg,#e5e5e5_25%,transparent_25%),linear-gradient(-45deg,#e5e5e5_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#e5e5e5_75%),linear-gradient(-45deg,transparent_75%,#e5e5e5_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 ${isLogo ? 'h-28' : 'h-28'}`}>
-                        {previewUrl ? (
-                          <img
-                            src={previewUrl}
-                            alt={`${rules.label} preview`}
-                            className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-black/[0.04] border border-border p-1'}
-                          />
-                        ) : (
-                          <span className="text-xs text-zinc-600">No {rules.label.toLowerCase()}</span>
-                        )}
-                      </div>
-                      {draft && (
-                        <div className="space-y-1">
-                          <p className="text-[10px] text-zinc-500">
-                            Selected: {draft.width}x{draft.height} · {(draft.file.size / 1024).toFixed(0)} KB
-                          </p>
-                          {draft.warnings.map(w => <p key={w} className="text-[10px] text-amber-300">Warning: {w}</p>)}
-                          {draft.errors.map(e => <p key={e} className="text-[10px] text-red-300">Fix needed: {e}</p>)}
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-5 shadow-sm">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Brand assets</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Files are stored permanently in Google Drive and used on invoices, PDFs, dashboards, and print layouts.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.04] p-4 text-[11px] text-slate-600 leading-relaxed space-y-1">
+                  <p><span className="font-bold text-[#E07A5F]">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
+                  <p><span className="font-bold text-[#E07A5F]">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
+                  <p><span className="font-bold text-[#E07A5F]">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {(['logo', 'favicon'] as const).map(assetType => {
+                    const rules = ASSET_RULES[assetType]
+                    const draft = drafts[assetType]
+                    const previewUrl = previewAssets[assetType]
+                    const isLogo = assetType === 'logo'
+                    return (
+                      <div key={assetType} className="space-y-3 rounded-xl border border-black/[0.06] bg-slate-50/50 p-4">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{rules.label}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">{rules.helper}</p>
+                          <p className="mt-1 text-[10px] text-slate-400">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
                         </div>
-                      )}
-                      <label className="block">
-                        <span className="sr-only">Upload {rules.label}</span>
-                        <input
-                          type="file"
-                          accept={rules.accept}
-                          className="block w-full text-xs text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-gold/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-gold-lt"
-                          disabled={uploading === assetType}
-                          onChange={e => void handleSelectAsset(assetType, e.target.files?.[0] ?? null)}
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 text-[11px] text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={autoOptimize[assetType]}
-                          onChange={e => setAutoOptimize(v => ({ ...v, [assetType]: e.target.checked }))}
-                          className="accent-gold"
-                        />
-                        Auto optimize {isLogo ? 'to 1200x400 transparent PNG' : 'to 512x512 transparent PNG'}
-                      </label>
-                      <Button
-                        variant="gold"
-                        size="sm"
-                        className="w-full justify-center"
-                        disabled={!draft || draft.errors.length > 0 || uploading === assetType}
-                        onClick={() => void handleUpload(assetType)}
-                      >
-                        {uploading === assetType ? 'Uploading…' : draft ? `Upload ${rules.label}` : 'Choose image first'}
-                      </Button>
-                    </div>
-                  )
-                })}
-              </div>
-            </Card>
+                        <div className={`rounded-xl border border-black/[0.06] bg-[linear-gradient(45deg,#f1f1f1_25%,transparent_25%),linear-gradient(-45deg,#f1f1f1_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f1f1f1_75%),linear-gradient(-45deg,transparent_75%,#f1f1f1_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 h-28`}>
+                          {previewUrl ? (
+                            <img
+                              src={previewUrl}
+                              alt={`${rules.label} preview`}
+                              className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-white border border-black/[0.06] p-1'}
+                            />
+                          ) : (
+                            <span className="text-xs text-slate-400">No {rules.label.toLowerCase()}</span>
+                          )}
+                        </div>
+                        {draft && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] text-slate-500">
+                              Selected: {draft.width}x{draft.height} · {(draft.file.size / 1024).toFixed(0)} KB
+                            </p>
+                            {draft.warnings.map(w => <p key={w} className="text-[10px] text-amber-600">Warning: {w}</p>)}
+                            {draft.errors.map(e => <p key={e} className="text-[10px] text-red-600">Fix needed: {e}</p>)}
+                          </div>
+                        )}
+                        <label className="block">
+                          <span className="sr-only">Upload {rules.label}</span>
+                          <input
+                            type="file"
+                            accept={rules.accept}
+                            className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-[#E07A5F]/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-[#E07A5F]"
+                            disabled={uploading === assetType}
+                            onChange={e => void handleSelectAsset(assetType, e.target.files?.[0] ?? null)}
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={autoOptimize[assetType]}
+                            onChange={e => setAutoOptimize(v => ({ ...v, [assetType]: e.target.checked }))}
+                            className="accent-[#E07A5F]"
+                          />
+                          Auto optimize {isLogo ? 'to 1200x400 transparent PNG' : 'to 512x512 transparent PNG'}
+                        </label>
+                        <Button
+                          variant="gold"
+                          size="sm"
+                          className="w-full justify-center"
+                          disabled={!draft || draft.errors.length > 0 || uploading === assetType}
+                          onClick={() => void handleUpload(assetType)}
+                        >
+                          {uploading === assetType ? 'Uploading…' : draft ? `Upload ${rules.label}` : 'Choose image first'}
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+            </motion.div>
 
-            <Card className="p-5 space-y-4">
-              <p className="text-sm font-bold text-cream">Company details</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Company details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {([
+                    ['company_name', 'Company name'],
+                    ['tagline', 'Tagline'],
+                    ['phone', 'Phone'],
+                    ['email', 'Email'],
+                    ['website', 'Website'],
+                    ['address', 'Address'],
+                    ['facebook', 'Facebook'],
+                    ['invoice_prefix', 'Invoice prefix'],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="block">
+                      <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                      <input
+                        className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+                        value={form[key]}
+                        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </Card>
+            </motion.div>
+
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Invoice watermark</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Uses the uploaded logo as a subtle centered invoice background. Defaults are print-safe and PDF optimized.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex items-center gap-2 rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={form.invoice_watermark_enabled}
+                      onChange={e => setForm(f => ({ ...f, invoice_watermark_enabled: e.target.checked }))}
+                      className="accent-[#E07A5F]"
+                    />
+                    Enable invoice watermark
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Watermark opacity</span>
+                    <select
+                      className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                      value={form.invoice_watermark_opacity}
+                      onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
+                    >
+                      <option value="0.07">7% subtle</option>
+                      <option value="0.08">8% balanced</option>
+                      <option value="0.10">10% visible</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  These settings are backend-ready; current invoice PDFs use the safe default unless persisted branding config is available.
+                </p>
+              </Card>
+            </motion.div>
+
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Brand colors</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {([
+                    ['color_primary', 'Primary'],
+                    ['color_secondary', 'Secondary'],
+                    ['color_accent', 'Accent'],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="block">
+                      <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                      <div className="flex gap-2 mt-1 items-center">
+                        <input
+                          type="color"
+                          value={form[key]}
+                          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                          className="w-10 h-10 rounded-lg border border-black/[0.06] bg-transparent cursor-pointer"
+                        />
+                        <input
+                          className="flex-1 bg-white border border-black/[0.06] rounded-xl px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                          value={form[key]}
+                          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                        />
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </Card>
+            </motion.div>
+
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Invoice footer</h3>
                 {([
-                  ['company_name', 'Company name'],
-                  ['tagline', 'Tagline'],
-                  ['phone', 'Phone'],
-                  ['email', 'Email'],
-                  ['website', 'Website'],
-                  ['address', 'Address'],
-                  ['facebook', 'Facebook'],
-                  ['invoice_prefix', 'Invoice prefix'],
+                  ['invoice_footer_thanks', 'Thank you line'],
+                  ['invoice_footer_policy', 'Policy / terms'],
+                  ['invoice_footer_note', 'Legal note'],
                 ] as const).map(([key, label]) => (
                   <label key={key} className="block">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</span>
-                    <input
-                      className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                    <textarea
+                      className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 min-h-[64px] focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
                       value={form[key]}
                       onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                     />
                   </label>
                 ))}
-              </div>
-            </Card>
+              </Card>
+            </motion.div>
 
-            <Card className="p-5 space-y-4">
-              <div>
-                <p className="text-sm font-bold text-cream">Invoice watermark</p>
-                <p className="mt-1 text-[11px] text-zinc-500">
-                  Uses the uploaded logo as a subtle centered invoice background. Defaults are print-safe and PDF optimized.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="flex items-center gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-3 text-sm text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={form.invoice_watermark_enabled}
-                    onChange={e => setForm(f => ({ ...f, invoice_watermark_enabled: e.target.checked }))}
-                    className="accent-gold"
-                  />
-                  Enable invoice watermark
-                </label>
-                <label className="block">
-                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Watermark opacity</span>
-                  <select
-                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
-                    value={form.invoice_watermark_opacity}
-                    onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
-                  >
-                    <option value="0.07">7% subtle</option>
-                    <option value="0.08">8% balanced</option>
-                    <option value="0.10">10% visible</option>
-                  </select>
-                </label>
-              </div>
-              <p className="text-[10px] text-zinc-600">
-                These settings are backend-ready; current invoice PDFs use the safe default unless persisted branding config is available.
-              </p>
-            </Card>
-
-            <Card className="p-5 space-y-4">
-              <p className="text-sm font-bold text-cream">Brand colors</p>
-              <div className="grid grid-cols-3 gap-4">
-                {([
-                  ['color_primary', 'Primary'],
-                  ['color_secondary', 'Secondary'],
-                  ['color_accent', 'Accent'],
-                ] as const).map(([key, label]) => (
-                  <label key={key} className="block">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</span>
-                    <div className="flex gap-2 mt-1 items-center">
-                      <input
-                        type="color"
-                        value={form[key]}
-                        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                        className="w-10 h-10 rounded border border-border bg-transparent cursor-pointer"
-                      />
-                      <input
-                        className="flex-1 bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream font-mono"
-                        value={form[key]}
-                        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                      />
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </Card>
-
-            <Card className="p-5 space-y-4">
-              <p className="text-sm font-bold text-cream">Invoice footer</p>
-              {([
-                ['invoice_footer_thanks', 'Thank you line'],
-                ['invoice_footer_policy', 'Policy / terms'],
-                ['invoice_footer_note', 'Legal note'],
-              ] as const).map(([key, label]) => (
-                <label key={key} className="block">
-                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</span>
-                  <textarea
-                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream min-h-[64px]"
-                    value={form[key]}
-                    onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                  />
-                </label>
-              ))}
-            </Card>
-
-            <Button variant="gold" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : 'Save branding'}
-            </Button>
+            <motion.div variants={fadeUp}>
+              <Button variant="gold" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : 'Save branding'}
+              </Button>
+            </motion.div>
           </>
         )}
-      </div>
+      </motion.div>
     </div>
   )
 }

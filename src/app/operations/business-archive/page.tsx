@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
@@ -11,6 +12,9 @@ import { modulesForBusiness, type ArchiveModuleDef } from '@/lib/business-archiv
 import { isSystemOwner } from '@/lib/roles'
 import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/ui'
 import { useRouter } from 'next/navigation'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 type ModuleDef = { key: string; label: string; description: string; storage: string }
 type StatRow = {
@@ -250,192 +254,209 @@ export default function BusinessArchiveControlPage() {
   }
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader
         title="Business Archive Control"
         subtitle="Soft archive only — data stays in the database. Hide from active workspace; restore anytime."
       />
 
-      {loadWarning && (
-        <Card className="border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-800 flex flex-wrap items-center justify-between gap-3">
-          <p>{loadWarning}</p>
-          <Button size="xs" variant="secondary" onClick={() => void load()}>
-            Retry
-          </Button>
-        </Card>
-      )}
-
-      {!schemaReady && (
-        <Card className="border-red-500/40 bg-red-500/15 p-4 text-sm text-red-800">
-          <p className="font-black">Database migration required</p>
-          <p className="mt-1 text-xs">
-            {migrationHint || 'Business Archive tables are not on this database yet.'} ERP continues
-            normally; run migrations on production to enable archive features.
-          </p>
-        </Card>
-      )}
-
-      <Card className="border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800">
-        <p className="font-black">Safety mode</p>
-        <p className="mt-1 text-xs text-amber-800/90">
-          This never permanently deletes records. Archived items are hidden from default views. Use
-          <code className="mx-1 rounded bg-black/[0.03] px-1">archive_visibility=archived</code> on APIs or Show Archived in UI.
-        </p>
-      </Card>
-
-      <Card className="p-5 border-gold-dim/25 space-y-4">
-        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Step 1 · Business</p>
-        <Select
-          value={business.id}
-          onChange={v => {
-            const b = BUSINESS_LIST.find(x => x.id === v)
-            if (b) setBusinessId(b.id)
-          }}
-          options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
-        />
-      </Card>
-
-      {loading ? (
-        <Skeleton className="h-64 w-full" />
-      ) : (
-        <>
-          <Card className="p-5 space-y-3">
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">
-              Active vs archived stats
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {stats.map(s => (
-                <div key={s.moduleKey} className="rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]">
-                  <p className="font-bold text-cream">{s.label}</p>
-                  <p className="mt-1 text-zinc-500">
-                    Active <span className="text-green-400">{s.activeCount}</span> · Archived{' '}
-                    <span className="text-amber-300">{s.archivedCount}</span>
-                  </p>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="p-5 space-y-4 border-gold-dim/20">
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">
-              Step 2–3 · Select modules
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {modules.map(m => {
-                const stat = stats.find(s => s.moduleKey === m.key)
-                const unavailable = stat?.available === false
-                return (
-                  <label
-                    key={m.key}
-                    className={`flex gap-3 rounded-xl border px-3 py-2.5 text-xs transition ${
-                      unavailable
-                        ? 'cursor-not-allowed border-zinc-700 bg-slate-100/60 opacity-80'
-                        : selected.includes(m.key)
-                          ? 'cursor-pointer border-gold/50 bg-gold/10'
-                          : 'cursor-pointer border-border bg-black/[0.03] hover:border-zinc-600'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      disabled={unavailable}
-                      checked={selected.includes(m.key)}
-                      onChange={() => !unavailable && toggleModule(m.key)}
-                    />
-                    <span>
-                      <span className="font-bold text-cream">{m.label}</span>
-                      <span className="mt-0.5 block text-zinc-500">{m.description}</span>
-                      <span className="text-[10px] text-zinc-600">{m.storage}</span>
-                      {stat?.warning && (
-                        <span className="mt-1 block text-[10px] text-amber-300/90">{stat.warning}</span>
-                      )}
-                    </span>
-                  </label>
-                )
-              })}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" disabled={busy !== null} onClick={() => void runPreview()}>
-                {busy === 'preview' ? 'Previewing…' : 'Step 4 · Dry run preview'}
-              </Button>
-            </div>
-          </Card>
-
-          {preview && (
-            <Card className="p-5 border-amber-500/25 bg-amber-500/5 space-y-3">
-              <p className="text-sm font-black text-amber-800">
-                Dry run · {previewTotal.toLocaleString()} records would be archived
-              </p>
-              <ul className="space-y-2 text-[11px]">
-                {preview.map(p => (
-                  <li key={p.moduleKey} className="flex justify-between gap-4 border-b border-border/50 py-2">
-                    <span className="text-cream">
-                      {p.label}{' '}
-                      <span className="text-zinc-600">({p.storage})</span>
-                    </span>
-                    <span className="font-mono text-amber-200">{p.count}</span>
-                  </li>
-                ))}
-              </ul>
-              <Input
-                placeholder="Batch name (e.g. Lifestyle Reset May 2026)"
-                value={batchName}
-                onChange={e => setBatchName(e.target.value)}
-              />
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                <p className="text-[10px] font-bold text-red-200">Step 5 · Type to confirm</p>
-                <p className="mt-1 font-mono text-xs text-red-800 break-all">{expectedPhrase}</p>
-                <Input
-                  className="mt-3"
-                  placeholder="Type confirmation phrase exactly"
-                  value={confirmation}
-                  onChange={e => setConfirmation(e.target.value)}
-                />
-              </div>
-              <Button
-                variant="gold"
-                disabled={busy !== null || confirmation.trim().toUpperCase() !== expectedPhrase}
-                onClick={() => void runArchive()}
-              >
-                {busy === 'archive' ? 'Archiving…' : 'Execute soft archive'}
-              </Button>
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+        {loadWarning && (
+          <motion.div variants={fadeUp}>
+            <Card className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 flex flex-wrap items-center justify-between gap-3">
+              <p>{loadWarning}</p>
+              <Button size="xs" variant="secondary" onClick={() => void load()}>Retry</Button>
             </Card>
-          )}
+          </motion.div>
+        )}
 
-          <Card className="p-5 space-y-3">
-            <p className="text-sm font-bold text-cream">Archive history</p>
-            {!batches.length ? (
-              <p className="text-xs text-zinc-500">No archive batches yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {batches.map(b => (
-                  <li
-                    key={b.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]"
-                  >
-                    <span>
-                      <span className="font-bold text-cream">{b.name}</span>
-                      <span className="mt-0.5 block text-zinc-500">
-                        {b.moduleKeys.join(', ')} · {b.recordCount} records · {b.status}
-                      </span>
-                      <span className="text-zinc-600">{new Date(b.createdAt).toLocaleString()}</span>
-                    </span>
-                    {b.status === 'COMPLETED' && (
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        disabled={busy !== null}
-                        onClick={() => void restoreBatch(b.id)}
-                      >
-                        {busy === `restore-${b.id}` ? 'Restoring…' : 'Restore batch'}
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+        {!schemaReady && (
+          <motion.div variants={fadeUp}>
+            <Card className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-bold">Database migration required</p>
+              <p className="mt-1 text-xs">
+                {migrationHint || 'Business Archive tables are not on this database yet.'} ERP continues
+                normally; run migrations on production to enable archive features.
+              </p>
+            </Card>
+          </motion.div>
+        )}
+
+        <motion.div variants={fadeUp}>
+          <Card className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-sm text-amber-800">
+            <p className="font-bold">Safety mode</p>
+            <p className="mt-1 text-xs text-amber-700">
+              This never permanently deletes records. Archived items are hidden from default views. Use
+              <code className="mx-1 rounded bg-amber-100 px-1 text-amber-900">archive_visibility=archived</code> on APIs or Show Archived in UI.
+            </p>
           </Card>
-        </>
-      )}
+        </motion.div>
+
+        <motion.div variants={fadeUp}>
+          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">Step 1 · Business</p>
+            <Select
+              value={business.id}
+              onChange={v => {
+                const b = BUSINESS_LIST.find(x => x.id === v)
+                if (b) setBusinessId(b.id)
+              }}
+              options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
+            />
+          </Card>
+        </motion.div>
+
+        {loading ? (
+          <Skeleton className="h-64 w-full rounded-2xl" />
+        ) : (
+          <>
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
+                  Active vs archived stats
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {stats.map(s => (
+                    <div key={s.moduleKey} className="rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-[11px]">
+                      <p className="font-bold text-slate-800">{s.label}</p>
+                      <p className="mt-1 text-slate-500">
+                        Active <span className="font-semibold text-emerald-600">{s.activeCount}</span> · Archived{' '}
+                        <span className="font-semibold text-amber-600">{s.archivedCount}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </motion.div>
+
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
+                  Step 2–3 · Select modules
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {modules.map(m => {
+                    const stat = stats.find(s => s.moduleKey === m.key)
+                    const unavailable = stat?.available === false
+                    return (
+                      <label
+                        key={m.key}
+                        className={`flex gap-3 rounded-xl border px-4 py-3 text-xs transition ${
+                          unavailable
+                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70'
+                            : selected.includes(m.key)
+                              ? 'cursor-pointer border-[#E07A5F]/40 bg-[#E07A5F]/5'
+                              : 'cursor-pointer border-black/[0.06] bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={unavailable}
+                          checked={selected.includes(m.key)}
+                          onChange={() => !unavailable && toggleModule(m.key)}
+                          className="mt-0.5 accent-[#E07A5F]"
+                        />
+                        <span>
+                          <span className="font-bold text-slate-800">{m.label}</span>
+                          <span className="mt-0.5 block text-slate-500">{m.description}</span>
+                          <span className="text-[10px] text-slate-400">{m.storage}</span>
+                          {stat?.warning && (
+                            <span className="mt-1 block text-[10px] text-amber-600">{stat.warning}</span>
+                          )}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" disabled={busy !== null} onClick={() => void runPreview()}>
+                    {busy === 'preview' ? 'Previewing…' : 'Step 4 · Dry run preview'}
+                  </Button>
+                </div>
+              </Card>
+            </motion.div>
+
+            {preview && (
+              <motion.div variants={fadeUp}>
+                <Card className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 space-y-3">
+                  <p className="text-sm font-bold text-amber-800">
+                    Dry run · {previewTotal.toLocaleString()} records would be archived
+                  </p>
+                  <ul className="space-y-2 text-[11px]">
+                    {preview.map(p => (
+                      <li key={p.moduleKey} className="flex justify-between gap-4 border-b border-amber-200/50 py-2">
+                        <span className="text-slate-800">
+                          {p.label}{' '}
+                          <span className="text-slate-400">({p.storage})</span>
+                        </span>
+                        <span className="font-mono font-bold text-amber-700">{p.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <Input
+                    placeholder="Batch name (e.g. Lifestyle Reset May 2026)"
+                    value={batchName}
+                    onChange={e => setBatchName(e.target.value)}
+                  />
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                    <p className="text-[10px] font-bold text-red-700">Step 5 · Type to confirm</p>
+                    <p className="mt-1 font-mono text-xs text-red-800 break-all">{expectedPhrase}</p>
+                    <Input
+                      className="mt-3"
+                      placeholder="Type confirmation phrase exactly"
+                      value={confirmation}
+                      onChange={e => setConfirmation(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    variant="gold"
+                    disabled={busy !== null || confirmation.trim().toUpperCase() !== expectedPhrase}
+                    onClick={() => void runArchive()}
+                  >
+                    {busy === 'archive' ? 'Archiving…' : 'Execute soft archive'}
+                  </Button>
+                </Card>
+              </motion.div>
+            )}
+
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Archive history</h3>
+                {!batches.length ? (
+                  <p className="text-xs text-slate-500">No archive batches yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {batches.map(b => (
+                      <li
+                        key={b.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-[11px]"
+                      >
+                        <span>
+                          <span className="font-bold text-slate-800">{b.name}</span>
+                          <span className="mt-0.5 block text-slate-500">
+                            {b.moduleKeys.join(', ')} · {b.recordCount} records · {b.status}
+                          </span>
+                          <span className="text-slate-400">{new Date(b.createdAt).toLocaleString()}</span>
+                        </span>
+                        {b.status === 'COMPLETED' && (
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            disabled={busy !== null}
+                            onClick={() => void restoreBatch(b.id)}
+                          >
+                            {busy === `restore-${b.id}` ? 'Restoring…' : 'Restore batch'}
+                          </Button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            </motion.div>
+          </>
+        )}
+      </motion.div>
     </div>
   )
 }

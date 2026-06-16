@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
 import { PayoutSummaryBlock } from '@/components/approvals/PayoutSummaryBlock'
@@ -13,6 +14,9 @@ import type { ApprovalAuditEntry } from '@/lib/approval-types'
 import { normalizeApprovalResponse } from '@/lib/approvals-response'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
 
 type ApprovalRow = {
   id: string
@@ -184,7 +188,7 @@ function ApprovalsPageInner() {
   const actionsGloballyDisabled = hasProcessing
 
   return (
-    <main className="space-y-5 pb-24 md:pb-6">
+    <main className="min-h-screen bg-[#FAF9F6] space-y-5 pb-24 md:pb-6">
       <PageHeader
         title="Approvals"
         subtitle="Persistent authorization requests. Reading notifications never clears this queue."
@@ -213,7 +217,7 @@ function ApprovalsPageInner() {
         }
       />
 
-      <div className="min-w-0 max-w-full space-y-5 px-3 sm:px-6">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-5 px-3 sm:px-6">
       <ApprovalProcessingBanner
         count={processingOps.length}
         message={
@@ -224,11 +228,12 @@ function ApprovalsPageInner() {
       />
 
       {showIntegrity && (
-        <Card className="border-amber-500/20 bg-amber-500/5 p-4">
+        <motion.div variants={fadeUp}>
+        <Card className="border-amber-200 bg-amber-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-black text-cream">Integrity Monitor</p>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="text-sm font-black text-slate-800">Integrity Monitor</p>
+              <p className="mt-1 text-xs text-slate-500">
                 Detects orphan approvals, hidden penalty appeals, and stale pending rows.
               </p>
             </div>
@@ -254,7 +259,7 @@ function ApprovalsPageInner() {
             </div>
           )}
           {integrity?.orphans?.length ? (
-            <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-[11px] text-zinc-400">
+            <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-[11px] text-slate-400">
               {integrity.orphans.slice(0, 12).map((row, i) => (
                 <li key={`${row.kind}-${row.approvalId || row.waiverId || i}`}>
                   {row.kind.replace(/_/g, ' ')}
@@ -264,26 +269,30 @@ function ApprovalsPageInner() {
               ))}
             </ul>
           ) : integrity && !integrityLoading ? (
-            <p className="mt-3 text-[11px] font-bold text-green-300">No linkage issues detected in scan window.</p>
+            <p className="mt-3 text-[11px] font-bold text-emerald-600">No linkage issues detected in scan window.</p>
           ) : null}
         </Card>
+        </motion.div>
       )}
 
+      <motion.div variants={fadeUp}>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label="Pending" value={data?.totalPending ?? 0} loading={loading} color="text-gold-lt" />
-        <KpiCard label="Critical" value={priorityCounts.CRITICAL ?? 0} loading={loading} color="text-red-300" />
-        <KpiCard label="High" value={priorityCounts.HIGH ?? 0} loading={loading} color="text-amber-300" />
+        <KpiCard label="Critical" value={priorityCounts.CRITICAL ?? 0} loading={loading} color="text-red-500" />
+        <KpiCard label="High" value={priorityCounts.HIGH ?? 0} loading={loading} color="text-amber-600" />
         <KpiCard label="Normal" value={priorityCounts.NORMAL ?? 0} loading={loading} />
         <KpiCard label="Low" value={priorityCounts.LOW ?? 0} loading={loading} />
       </div>
+      </motion.div>
 
+      <motion.div variants={fadeUp}>
       <div className="grid gap-4 lg:grid-cols-[0.8fr_1.5fr]">
         <Card className="p-4">
-          <p className="text-sm font-black text-cream">Pending by module</p>
+          <p className="text-sm font-black text-slate-800">Pending by module</p>
           <div className="mt-4 space-y-2">
             {loading && !data ? <Skeleton className="h-32" /> : !byModule.length ? <Empty icon="◆" title="No pending modules" /> : byModule.map(row => (
-              <div key={row.module} className="flex items-center justify-between rounded-2xl border border-border bg-black/[0.03] px-3 py-2 text-sm">
-                <span className="font-bold text-zinc-300">{row.module.replace(/_/g, ' ')}</span>
+              <div key={row.module} className="flex items-center justify-between rounded-2xl border border-border bg-slate-50 px-3 py-2 text-sm">
+                <span className="font-bold text-slate-700">{row.module.replace(/_/g, ' ')}</span>
                 <span className="rounded-full bg-gold/10 px-2 py-1 text-xs font-black text-gold-lt">{row.count}</span>
               </div>
             ))}
@@ -309,9 +318,9 @@ function ApprovalsPageInner() {
                     </div>
                   )}
                   <div>
-                    <p className="font-black text-cream">{row.type.replace(/_/g, ' ')}</p>
-                    <p className="mt-1 text-zinc-500">{row.module.replace(/_/g, ' ')} · {row.businessName || row.businessId || 'Global'}</p>
-                    <p className="mt-1 text-zinc-600">{new Date(row.createdAt).toLocaleString()}</p>
+                    <p className="font-black text-slate-800">{row.type.replace(/_/g, ' ')}</p>
+                    <p className="mt-1 text-slate-500">{row.module.replace(/_/g, ' ')} · {row.businessName || row.businessId || 'Global'}</p>
+                    <p className="mt-1 text-slate-400">{new Date(row.createdAt).toLocaleString()}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <EmployeeAvatar
@@ -321,8 +330,8 @@ function ApprovalsPageInner() {
                       size="sm"
                     />
                     <div>
-                      <p className="font-bold text-zinc-300">{row.requester?.name || row.requestedBy}</p>
-                      <p className="mt-1 text-zinc-500">{row.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
+                      <p className="font-bold text-slate-600">{row.requester?.name || row.requestedBy}</p>
+                      <p className="mt-1 text-slate-500">{row.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
                     </div>
                   </div>
                   <div>
@@ -337,8 +346,8 @@ function ApprovalsPageInner() {
                       />
                     ) : (
                       <>
-                        <p className="font-bold text-zinc-300">{row.entityLabel || row.entityId}</p>
-                        <p className="mt-1 line-clamp-2 text-zinc-500">{row.reason}</p>
+                        <p className="font-bold text-slate-600">{row.entityLabel || row.entityId}</p>
+                        <p className="mt-1 line-clamp-2 text-slate-500">{row.reason}</p>
                       </>
                     )}
                     {(row.type === 'WALLET_ADVANCE' || row.type === 'WALLET_WITHDRAWAL' || row.type === 'SALARY_ADVANCE') && (
@@ -346,21 +355,21 @@ function ApprovalsPageInner() {
                     )}
                   </div>
                   <div>
-                    <p className={`font-black ${row.priority === 'CRITICAL' ? 'text-red-300' : row.priority === 'HIGH' ? 'text-amber-300' : 'text-zinc-300'}`}>{row.priority}</p>
-                    <p className={row.status === 'PENDING' ? 'mt-1 font-black text-gold-lt' : row.status === 'APPROVED' ? 'mt-1 font-black text-green-300' : 'mt-1 font-black text-red-300'}>{row.status}</p>
+                    <p className={`font-black ${row.priority === 'CRITICAL' ? 'text-red-500' : row.priority === 'HIGH' ? 'text-amber-600' : 'text-slate-600'}`}>{row.priority}</p>
+                    <p className={row.status === 'PENDING' ? 'mt-1 font-black text-gold-lt' : row.status === 'APPROVED' ? 'mt-1 font-black text-emerald-600' : 'mt-1 font-black text-red-500'}>{row.status}</p>
                     {row.linkageStatus === 'orphan_source_already_resolved' && (
-                      <p className="mt-1 text-[10px] font-bold text-amber-300">
+                      <p className="mt-1 text-[10px] font-bold text-amber-600">
                         Payroll already {row.sourceStatus || 'resolved'} — reject will sync queue
                       </p>
                     )}
                     {row.linkageStatus === 'orphan_missing_source' && (
-                      <p className="mt-1 text-[10px] font-bold text-red-300">Source record missing</p>
+                      <p className="mt-1 text-[10px] font-bold text-red-500">Source record missing</p>
                     )}
                     {row.linkageStatus === 'orphan_missing_approval' && (
-                      <p className="mt-1 text-[10px] font-bold text-red-300">Central approval missing — run Integrity repair</p>
+                      <p className="mt-1 text-[10px] font-bold text-red-500">Central approval missing — run Integrity repair</p>
                     )}
                     {lastAuditSource(row.auditHistory) && (
-                      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                         via {lastAuditSource(row.auditHistory)}
                       </p>
                     )}
@@ -388,7 +397,7 @@ function ApprovalsPageInner() {
                         Retry
                       </Button>
                     )}
-                    {row.status === 'PENDING' && !row.executable && <span className="text-[10px] font-bold text-amber-300">Manual review</span>}
+                    {row.status === 'PENDING' && !row.executable && <span className="text-[10px] font-bold text-amber-600">Manual review</span>}
                   </div>
                 </div>
               )})}
@@ -397,6 +406,7 @@ function ApprovalsPageInner() {
           )}
         </Card>
       </div>
+      </motion.div>
 
       {selected && (() => {
         const selectedUi = getRowUi(selected.id)
@@ -408,8 +418,8 @@ function ApprovalsPageInner() {
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-cream">{selected.type.replace(/_/g, ' ')}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{selected.module} · {new Date(selected.createdAt).toLocaleString()}</p>
+                  <p className="text-sm font-black text-slate-800">{selected.type.replace(/_/g, ' ')}</p>
+                  <p className="mt-1 text-xs text-slate-500">{selected.module} · {new Date(selected.createdAt).toLocaleString()}</p>
                 </div>
                 <Button size="xs" variant="ghost" disabled={selectedBusy} onClick={() => setSelected(null)}>Close</Button>
               </div>
@@ -421,7 +431,7 @@ function ApprovalsPageInner() {
               )}
             </div>
             <div className="mobile-modal-body px-5 pb-4">
-              <div className="flex items-center gap-3 rounded-2xl border border-border bg-black/[0.03] p-3">
+              <div className="flex items-center gap-3 rounded-2xl border border-border bg-slate-50 p-3">
                 <EmployeeAvatar
                   userId={selected.requester?.id}
                   name={selected.requester?.name || selected.requestedBy}
@@ -429,8 +439,8 @@ function ApprovalsPageInner() {
                   size="lg"
                 />
                 <div>
-                  <p className="text-sm font-bold text-cream">{selected.requester?.name || selected.requestedBy}</p>
-                  <p className="text-[11px] text-zinc-500">{selected.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
+                  <p className="text-sm font-bold text-slate-800">{selected.requester?.name || selected.requestedBy}</p>
+                  <p className="text-[11px] text-slate-500">{selected.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
                 </div>
               </div>
               <div className="mt-3 space-y-3 text-xs">
@@ -451,11 +461,11 @@ function ApprovalsPageInner() {
                     <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
                     <Info label="Reason" value={selected.reason} />
                     {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
-                      <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
+                      <div className="rounded-2xl border border-border bg-slate-50 p-3">
                         <PayoutSummaryBlock payout={selected.payoutSummary} />
                       </div>
                     )}
-                    <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-black/[0.03] p-3 text-[11px] text-zinc-300">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
+                    <pre className="max-h-64 overflow-auto rounded-2xl border border-border bg-slate-50 p-3 text-[11px] text-slate-600">{JSON.stringify({ payloadSnapshot: selected.payloadSnapshot, auditHistory: selected.auditHistory }, null, 2)}</pre>
                   </>
                 )}
               </div>
@@ -494,8 +504,8 @@ function ApprovalsPageInner() {
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-cream">Reject Approval</p>
-                  <p className="mt-1 text-xs text-zinc-500">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
+                  <p className="text-sm font-black text-slate-800">Reject Approval</p>
+                  <p className="mt-1 text-xs text-slate-500">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
                 </div>
                 <Button size="xs" variant="ghost" disabled={rejectBusy} onClick={() => setActionTarget(null)}>Close</Button>
               </div>
@@ -512,10 +522,10 @@ function ApprovalsPageInner() {
                 onChange={e => setNote(e.target.value)}
                 disabled={rejectActionDisabled}
                 minLength={5}
-                className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+                className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold-dim/60 disabled:opacity-60"
                 placeholder="Rejection reason required (min. 5 characters)"
               />
-              <p className={`text-[11px] ${note.trim().length < 5 ? 'text-amber-300' : 'text-zinc-500'}`}>
+              <p className={`text-[11px] ${note.trim().length < 5 ? 'text-amber-600' : 'text-slate-500'}`}>
                 {note.trim().length < 5
                   ? `${5 - note.trim().length} more character(s) required`
                   : 'Reason will be stored on the approval record.'}
@@ -535,7 +545,7 @@ function ApprovalsPageInner() {
         </MobileModalPortal>
         )
       })()}
-      </div>
+      </motion.div>
     </main>
   )
 }
@@ -554,14 +564,14 @@ function lastAuditSource(auditHistory: unknown): string | null {
 }
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="rounded-2xl border border-border bg-black/[0.03] p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-600">{label}</p><p className="mt-1 font-bold text-cream">{value}</p></div>
+  return <div className="rounded-2xl border border-border bg-slate-50 p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{label}</p><p className="mt-1 font-bold text-slate-800">{value}</p></div>
 }
 
 function IntegrityStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div className="rounded-xl border border-border bg-black/[0.03] px-3 py-2">
-      <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">{label}</p>
-      <p className={`mt-1 text-lg font-black ${warn && value > 0 ? 'text-amber-300' : 'text-cream'}`}>{value}</p>
+    <div className="rounded-xl border border-border bg-slate-50 px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-1 text-lg font-black ${warn && value > 0 ? 'text-amber-600' : 'text-slate-800'}`}>{value}</p>
     </div>
   )
 }

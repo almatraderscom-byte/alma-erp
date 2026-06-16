@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
+import { motion } from 'framer-motion'
 import { Card, Empty, KpiCard, KPI_AUTO_GRID, Money, Skeleton, Button } from '@/components/ui'
 import { ResponsiveKpiValue } from '@/components/ui/ResponsiveKpiValue'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
@@ -14,6 +15,9 @@ import { useActor } from '@/contexts/ActorContext'
 import { money, signedClass } from '@/components/trading/trading-utils'
 import { getTradingAlertCta } from '@/lib/trading-alert-cta'
 import type { TradingDashboardResponse, TradingMutationResponse } from '@/types/trading'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 const TradeEntryModal = dynamic(
   () => import('@/components/trading/TradingModals').then(mod => mod.TradeEntryModal),
@@ -105,144 +109,158 @@ export default function TradingDashboardPage() {
     >
       <TradingStickyBar highlightScreenshot={highlightScreenshot} onAction={action => openWorkflow(action)} />
 
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5">
       {data?.screenshotCompliance && (
-        <Card className="border-amber-400/25 bg-amber-400/5 p-4">
-          <p className="text-sm font-bold text-amber-200">Screenshot compliance</p>
-          <p className="mt-1 text-[11px] text-zinc-400">
+        <motion.div variants={fadeUp}>
+        <Card className="rounded-2xl border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-bold text-amber-700">Screenshot compliance</p>
+          <p className="mt-1 text-[11px] text-amber-600">
             {data.screenshotCompliance.completeCount} complete · {data.screenshotCompliance.dueCount} due · {data.screenshotCompliance.overdueCount} overdue
             {data.screenshotCompliance.pastCutoff ? ' · cutoff passed' : ` · cutoff ${data.screenshotCompliance.cutoffHourBd}:00 BD`}
           </p>
         </Card>
+        </motion.div>
       )}
 
-      <section aria-label="Quick actions">
-        <TradingQuickActions highlightScreenshot={highlightScreenshot} onAction={action => openWorkflow(action)} />
-      </section>
+      <motion.div variants={fadeUp}>
+        <section aria-label="Quick actions">
+          <TradingQuickActions highlightScreenshot={highlightScreenshot} onAction={action => openWorkflow(action)} />
+        </section>
+      </motion.div>
 
-      <MyTradingAccounts
-        accounts={accounts}
-        performance={(data?.accountPerformance ?? []).map(row => ({
-          id: row.id,
-          accountTitle: row.accountTitle,
-          currentBalance: row.currentBalance,
-          dailyPl: row.dailyPl,
-          health: row.health,
-          screenshotToday: row.screenshotToday,
-          screenshotCompliance: row.screenshotCompliance,
-        }))}
-        loading={loading}
-        onAction={(action, accountId) => openWorkflow(action, accountId)}
-      />
+      <motion.div variants={fadeUp}>
+        <MyTradingAccounts
+          accounts={accounts}
+          performance={(data?.accountPerformance ?? []).map(row => ({
+            id: row.id,
+            accountTitle: row.accountTitle,
+            currentBalance: row.currentBalance,
+            dailyPl: row.dailyPl,
+            health: row.health,
+            screenshotToday: row.screenshotToday,
+            screenshotCompliance: row.screenshotCompliance,
+          }))}
+          loading={loading}
+          onAction={(action, accountId) => openWorkflow(action, accountId)}
+        />
+      </motion.div>
 
-      <AlertsPanel
-        alerts={data?.alerts ?? []}
-        loading={loading}
-        isAdmin={isAdmin}
-        onCta={handleAlertCta}
-      />
+      <motion.div variants={fadeUp}>
+        <AlertsPanel
+          alerts={data?.alerts ?? []}
+          loading={loading}
+          isAdmin={isAdmin}
+          onCta={handleAlertCta}
+        />
+      </motion.div>
 
-      <div className={KPI_AUTO_GRID}>
+      <motion.div variants={fadeUp} className={KPI_AUTO_GRID}>
         <KpiCard label="Today net" value={data?.kpis.netTodayResult ?? 0} valueKind="currency" color={signedClass(data?.kpis.netTodayResult ?? 0)} loading={loading} />
-        <KpiCard label="Current balance" value={data?.kpis.currentBalance ?? 0} valueKind="currency" color="text-gold-lt" loading={loading} />
+        <KpiCard label="Current balance" value={data?.kpis.currentBalance ?? 0} valueKind="currency" color="text-gold" loading={loading} />
         <KpiCard label="Today profit" value={data?.kpis.todayProfit ?? 0} valueKind="currency" color="text-green-400" loading={loading} />
         <KpiCard label="Today loss" value={data?.kpis.todayLoss ?? 0} valueKind="currency" color="text-red-400" loading={loading} />
         {isAdmin && (
           <>
             <KpiCard label="Active accounts" value={data?.kpis.activeAccounts ?? 0} valueKind="number" loading={loading} />
-            <KpiCard label="Total capital" value={data?.kpis.totalCapital ?? bk?.totalCapital ?? 0} valueKind="currency" color="text-gold-lt" loading={loading || summaryLoading} />
+            <KpiCard label="Total capital" value={data?.kpis.totalCapital ?? bk?.totalCapital ?? 0} valueKind="currency" color="text-gold" loading={loading || summaryLoading} />
             <KpiCard label="Trade volume" value={data?.kpis.totalTradeVolume ?? 0} valueKind="currency" loading={loading} />
             <KpiCard label="USDT volume" value={data?.kpis.totalUsdtVolume ?? bk?.totalTradedUsdt ?? 0} valueKind="usdt" loading={loading || summaryLoading} />
           </>
         )}
-      </div>
+      </motion.div>
 
       {isAdmin && (
         <>
-          <div className={KPI_AUTO_GRID}>
-            <KpiCard label="Total fees" value={bk?.totalFees ?? 0} valueKind="currency" color="text-amber-400" loading={summaryLoading} />
-            <KpiCard label="Total expenses" value={data?.kpis.totalExpenses ?? bk?.totalOperatingExpenses ?? 0} valueKind="currency" color="text-red-300" loading={loading || summaryLoading} />
+          <motion.div variants={fadeUp} className={KPI_AUTO_GRID}>
+            <KpiCard label="Total fees" value={bk?.totalFees ?? 0} valueKind="currency" color="text-amber-500" loading={summaryLoading} />
+            <KpiCard label="Total expenses" value={data?.kpis.totalExpenses ?? bk?.totalOperatingExpenses ?? 0} valueKind="currency" color="text-red-400" loading={loading || summaryLoading} />
             <KpiCard label="Active staff" value={data?.kpis.activeStaffCount ?? 0} valueKind="number" loading={loading} />
             <KpiCard label="Total buy USDT" value={bk?.totalBuyUsdt ?? 0} valueKind="usdt" loading={summaryLoading} />
             <KpiCard label="Total sell USDT" value={bk?.totalSellUsdt ?? 0} valueKind="usdt" loading={summaryLoading} />
-          </div>
+          </motion.div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <Card className="p-5">
-              <p className="text-sm font-bold text-cream">Merchant Growth & Capital Risk</p>
+          <motion.div variants={fadeUp} className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="rounded-2xl p-5">
+              <p className="text-sm font-bold text-slate-800">Merchant Growth & Capital Risk</p>
               <div className="mt-4 grid grid-cols-2 gap-3">
-                <MetricPill label="Avg growth score" value={`${(data?.merchantGrowth.averageScore ?? 0).toFixed(1)}%`} tone="text-green-300" />
-                <MetricPill label="Growth trend" value={data?.merchantGrowth.trend ?? 'FLAT'} tone={data?.merchantGrowth.trend === 'UP' ? 'text-green-300' : data?.merchantGrowth.trend === 'DOWN' ? 'text-red-300' : 'text-blue-300'} />
-                <MetricPill label="Capital utilization" value={`${(data?.capitalRisk.capitalUtilization ?? 0).toFixed(1)}%`} tone="text-amber-300" />
-                <MetricPill label="Loss exposure" value={`${(data?.capitalRisk.lossExposure ?? 0).toFixed(1)}%`} tone="text-red-300" />
+                <MetricPill label="Avg growth score" value={`${(data?.merchantGrowth.averageScore ?? 0).toFixed(1)}%`} tone="text-green-400" />
+                <MetricPill label="Growth trend" value={data?.merchantGrowth.trend ?? 'FLAT'} tone={data?.merchantGrowth.trend === 'UP' ? 'text-green-400' : data?.merchantGrowth.trend === 'DOWN' ? 'text-red-400' : 'text-blue-500'} />
+                <MetricPill label="Capital utilization" value={`${(data?.capitalRisk.capitalUtilization ?? 0).toFixed(1)}%`} tone="text-amber-500" />
+                <MetricPill label="Loss exposure" value={`${(data?.capitalRisk.lossExposure ?? 0).toFixed(1)}%`} tone="text-red-400" />
               </div>
               <MiniOpsTrend rows={data?.trend ?? []} />
             </Card>
-            <Card className="p-5">
-              <p className="text-sm font-bold text-cream">Period snapshots</p>
+            <Card className="rounded-2xl p-5">
+              <p className="text-sm font-bold text-slate-800">Period snapshots</p>
               <div className="mt-3 space-y-2">
                 {businessSummary && Object.entries(businessSummary.ranges).slice(0, 3).map(([label, range]) => (
                   <div key={label} className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-500">{label === 'last7' ? 'Last 7 days' : label}</span>
-                    <span className={`font-black tabular-nums ${signedClass(range.netResultBdt ?? 0)}`}>
+                    <span className="text-slate-500">{label === 'last7' ? 'Last 7 days' : label}</span>
+                    <span className={`font-bold tabular-nums ${signedClass(range.netResultBdt ?? 0)}`}>
                       ৳{(range.netResultBdt ?? 0).toLocaleString('en-BD')}
                     </span>
                   </div>
                 ))}
               </div>
             </Card>
-          </div>
+          </motion.div>
 
-          <AccountPerformanceTable rows={data?.accountPerformance ?? []} loading={loading} />
+          <motion.div variants={fadeUp}>
+            <AccountPerformanceTable rows={data?.accountPerformance ?? []} loading={loading} />
+          </motion.div>
 
-          <Card className="overflow-hidden">
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-sm font-bold text-cream">Staff Performance Rankings</p>
+          <motion.div variants={fadeUp}>
+          <Card className="overflow-hidden rounded-2xl">
+            <div className="border-b border-black/[0.06] px-4 py-3">
+              <p className="text-sm font-bold text-slate-800">Staff Performance Rankings</p>
             </div>
             {loading ? <div className="p-4"><Skeleton className="h-24" /></div> : !data?.staffRankings.rows.length ? (
               <Empty icon="◇" title="No staff performance yet" />
             ) : (
-              <div className="divide-y divide-border">
+              <div className="divide-y divide-black/[0.06]">
                 {data.staffRankings.rows.map(staff => (
-                  <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs md:grid-cols-[1.2fr_0.8fr_0.9fr_0.9fr_0.9fr_0.9fr_0.9fr]">
-                    <span className="font-bold text-cream">{staff.name}</span>
-                    <span className="text-zinc-500">{staff.managedAccounts} accounts</span>
-                    <span className="text-gold-lt">Capital ৳{staff.managedCapital.toLocaleString('en-BD')}</span>
+                  <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-slate-50 md:grid-cols-[1.2fr_0.8fr_0.9fr_0.9fr_0.9fr_0.9fr_0.9fr]">
+                    <span className="font-bold text-slate-800">{staff.name}</span>
+                    <span className="text-slate-500">{staff.managedAccounts} accounts</span>
+                    <span className="text-gold">Capital ৳{staff.managedCapital.toLocaleString('en-BD')}</span>
                     <span className={signedClass(staff.totalProfitGenerated)}>Profit ৳{staff.totalProfitGenerated.toLocaleString('en-BD')}</span>
-                    <span className="text-green-300">Commission ৳{staff.commissionEarned.toLocaleString('en-BD')}</span>
-                    <span className="text-blue-300">Consistency {staff.activityConsistency.toFixed(0)}%</span>
-                    <span className="font-black text-cream">Score {staff.score.toFixed(0)}</span>
+                    <span className="text-green-400">Commission ৳{staff.commissionEarned.toLocaleString('en-BD')}</span>
+                    <span className="text-blue-500">Consistency {staff.activityConsistency.toFixed(0)}%</span>
+                    <span className="font-bold text-slate-800">Score {staff.score.toFixed(0)}</span>
                   </div>
                 ))}
               </div>
             )}
           </Card>
+          </motion.div>
         </>
       )}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <motion.div variants={fadeUp} className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <RecentCard title="Latest Trades" empty="No trades today" loading={loading}>
           {latest.trades.map(trade => (
-            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/[0.02]">
+            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50">
               <div className="min-w-0">
-                <p className="truncate text-xs font-bold text-cream">{trade.tradingAccount?.accountTitle || trade.tradingAccountId}</p>
-                <p className="mt-0.5 text-[10px] text-zinc-500">{trade.user?.name || 'Staff'} · {trade.tradeType} · {money(trade.usdtAmount)} USDT</p>
+                <p className="truncate text-xs font-bold text-slate-800">{trade.tradingAccount?.accountTitle || trade.tradingAccountId}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">{trade.user?.name || 'Staff'} · {trade.tradeType} · {money(trade.usdtAmount)} USDT</p>
               </div>
-              <p className={`shrink-0 text-sm font-black tabular-nums ${signedClass(trade.netProfit)}`}><Money amount={Number(trade.netProfit)} /></p>
+              <p className={`shrink-0 text-sm font-bold tabular-nums ${signedClass(trade.netProfit)}`}><Money amount={Number(trade.netProfit)} /></p>
             </Link>
           ))}
         </RecentCard>
         <RecentCard title="Latest Expenses" empty="No expenses" loading={loading}>
           {latest.expenses.map(expense => (
-            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/[0.02]">
+            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50">
               <div className="min-w-0">
-                <p className="truncate text-xs font-bold text-cream">{expense.expenseType}</p>
-                <p className="mt-0.5 text-[10px] text-zinc-500">{expense.tradingAccount?.accountTitle || expense.tradingAccountId}</p>
+                <p className="truncate text-xs font-bold text-slate-800">{expense.expenseType}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">{expense.tradingAccount?.accountTitle || expense.tradingAccountId}</p>
               </div>
-              <p className="shrink-0 text-sm font-black text-red-300 tabular-nums"><Money amount={Number(expense.amount)} /></p>
+              <p className="shrink-0 text-sm font-bold text-red-400 tabular-nums"><Money amount={Number(expense.amount)} /></p>
             </Link>
           ))}
         </RecentCard>
-      </div>
+      </motion.div>
+      </motion.div>
 
       <TradeEntryModal
         open={workflowModal === 'trade'}
@@ -295,28 +313,28 @@ function AlertsPanel({
   onCta: (alert: TradingDashboardResponse['alerts'][number]) => void
 }) {
   return (
-    <Card className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <Card className="overflow-hidden rounded-2xl">
+      <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
         <div>
-          <p className="text-sm font-bold text-cream">{isAdmin ? 'Action required' : 'Your tasks'}</p>
-          <p className="text-[11px] text-zinc-500">Tap Upload Now or Add Summary to fix alerts</p>
+          <p className="text-sm font-bold text-slate-800">{isAdmin ? 'Action required' : 'Your tasks'}</p>
+          <p className="text-[11px] text-slate-500">Tap Upload Now or Add Summary to fix alerts</p>
         </div>
-        <span className="rounded-full bg-red-400/10 px-2 py-1 text-[10px] font-black text-red-300">{alerts.length}</span>
+        <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold text-red-500">{alerts.length}</span>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-28" /></div> : !alerts.length ? (
         <Empty icon="✓" title="All clear — no pending tasks" />
       ) : (
-        <div className="divide-y divide-border">
+        <div className="divide-y divide-black/[0.06]">
           {alerts.slice(0, 8).map(alert => {
             const cta = getTradingAlertCta(alert.key)
             return (
               <div key={alert.key} className="px-4 py-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-xs font-black text-cream">{alert.title}</p>
-                    <p className="mt-1 text-[11px] text-zinc-500">{alert.message}</p>
+                    <p className="text-xs font-bold text-slate-800">{alert.title}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{alert.message}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black ${alertTone(alert.severity)}`}>{alert.severity}</span>
+                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${alertTone(alert.severity)}`}>{alert.severity}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button size="xs" variant="gold" onClick={() => onCta(alert)}>{cta.label}</Button>
@@ -335,27 +353,27 @@ function AlertsPanel({
 
 function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResponse['accountPerformance']; loading: boolean }) {
   return (
-    <Card className="overflow-hidden">
-      <div className="border-b border-border px-4 py-3">
-        <p className="text-sm font-bold text-cream">Account Performance & Health</p>
+    <Card className="overflow-hidden rounded-2xl">
+      <div className="border-b border-black/[0.06] px-4 py-3">
+        <p className="text-sm font-bold text-slate-800">Account Performance & Health</p>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : !rows.length ? <Empty icon="◇" title="No account performance yet" /> : (
         <div className="overflow-x-auto">
-          <div className="min-w-[1080px] divide-y divide-border">
-            <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">
+          <div className="min-w-[1080px] divide-y divide-black/[0.06]">
+            <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
               <span>Account</span><span>Balance</span><span>Daily P/L</span><span>Weekly P/L</span><span>ROI</span><span>Expense</span><span>Fees</span><span>Progress</span><span>Staff</span><span>Health</span>
             </div>
             {rows.slice(0, 20).map(row => (
-              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs hover:bg-black/[0.02]">
-                <span><b className="text-cream">{row.accountTitle}</b><br /><span className="text-[10px] text-zinc-500">{row.activityStatus.replace('_', ' ')} · {row.inactiveDays}d idle</span></span>
-                <span className="text-gold-lt">৳{row.currentBalance.toLocaleString('en-BD')}</span>
+              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs transition-colors hover:bg-slate-50">
+                <span><b className="text-slate-800">{row.accountTitle}</b><br /><span className="text-[10px] text-slate-400">{row.activityStatus.replace('_', ' ')} · {row.inactiveDays}d idle</span></span>
+                <span className="text-gold">৳{row.currentBalance.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.dailyPl)}>৳{row.dailyPl.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.weeklyPl)}>৳{row.weeklyPl.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.roi)}>{row.roi.toFixed(1)}%</span>
-                <span className={row.expenseRatio > 35 ? 'text-red-300' : 'text-zinc-400'}>{row.expenseRatio.toFixed(1)}%</span>
-                <span className="text-amber-300">৳{row.feeTotals.toLocaleString('en-BD')}</span>
-                <span>{row.merchantProgress.toFixed(1)}%</span>
-                <span className="text-zinc-400">{row.assignedStaff}</span>
+                <span className={row.expenseRatio > 35 ? 'text-red-400' : 'text-slate-500'}>{row.expenseRatio.toFixed(1)}%</span>
+                <span className="text-amber-500">৳{row.feeTotals.toLocaleString('en-BD')}</span>
+                <span className="text-slate-600">{row.merchantProgress.toFixed(1)}%</span>
+                <span className="text-slate-500">{row.assignedStaff}</span>
                 <HealthBadge health={row.health} />
               </Link>
             ))}
@@ -367,15 +385,15 @@ function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResp
 }
 
 function HealthBadge({ health }: { health: TradingDashboardResponse['accountPerformance'][number]['health'] }) {
-  const cls = health === 'PROFITABLE' ? 'border-green-400/30 bg-green-400/10 text-green-300' : health === 'STABLE' ? 'border-blue-400/30 bg-blue-400/10 text-blue-300' : health === 'RISK' ? 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300' : 'border-red-400/30 bg-red-400/10 text-red-300'
-  return <span className={`h-fit rounded-full border px-2 py-1 text-[10px] font-black ${cls}`}>{health}</span>
+  const cls = health === 'PROFITABLE' ? 'border-green-200 bg-green-50 text-green-600' : health === 'STABLE' ? 'border-blue-200 bg-blue-50 text-blue-600' : health === 'RISK' ? 'border-yellow-200 bg-yellow-50 text-yellow-600' : 'border-red-200 bg-red-50 text-red-600'
+  return <span className={`h-fit rounded-full border px-2 py-1 text-[10px] font-bold ${cls}`}>{health}</span>
 }
 
 function MetricPill({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-border bg-black/[0.03] p-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
-      <p className={`mt-2 min-w-0 break-words text-[clamp(0.875rem,0.5rem+0.8vw,1.125rem)] font-black leading-tight tabular-nums ${tone}`}>{value}</p>
+    <div className="min-w-0 rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={`mt-2 min-w-0 break-words text-[clamp(0.875rem,0.5rem+0.8vw,1.125rem)] font-bold leading-tight tabular-nums ${tone}`}>{value}</p>
     </div>
   )
 }
@@ -391,33 +409,33 @@ function MiniOpsTrend({ rows }: { rows: TradingDashboardResponse['trend'] }) {
     return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
   }).join(' ')
   return (
-    <div className="mt-4 rounded-2xl border border-border bg-black/[0.03] p-3">
+    <div className="mt-4 rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
       <svg viewBox="0 0 100 100" className="h-28 w-full overflow-visible">
-        <path d={path} fill="none" stroke="currentColor" strokeWidth="3" className="text-gold-lt" vectorEffect="non-scaling-stroke" />
+        <path d={path} fill="none" stroke="currentColor" strokeWidth="3" className="text-gold" vectorEffect="non-scaling-stroke" />
       </svg>
-      <p className="text-[11px] text-zinc-500">Last {points.length} days net profit trend</p>
+      <p className="text-[11px] text-slate-500">Last {points.length} days net profit trend</p>
     </div>
   )
 }
 
 function alertTone(severity: TradingDashboardResponse['alerts'][number]['severity']) {
-  if (severity === 'CRITICAL') return 'border-red-400/40 bg-red-400/10 text-red-300'
-  if (severity === 'HIGH') return 'border-orange-400/40 bg-orange-400/10 text-orange-300'
-  if (severity === 'MEDIUM') return 'border-yellow-400/40 bg-yellow-400/10 text-yellow-300'
-  return 'border-blue-400/40 bg-blue-400/10 text-blue-300'
+  if (severity === 'CRITICAL') return 'border-red-200 bg-red-50 text-red-600'
+  if (severity === 'HIGH') return 'border-orange-200 bg-orange-50 text-orange-600'
+  if (severity === 'MEDIUM') return 'border-yellow-200 bg-yellow-50 text-yellow-600'
+  return 'border-blue-200 bg-blue-50 text-blue-600'
 }
 
 function RecentCard({ title, empty, loading, children }: { title: string; empty: string; loading: boolean; children: React.ReactNode }) {
   const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children)
   return (
-    <Card className="overflow-hidden">
-      <div className="border-b border-border px-4 py-3">
-        <p className="text-sm font-bold text-cream">{title}</p>
+    <Card className="overflow-hidden rounded-2xl">
+      <div className="border-b border-black/[0.06] px-4 py-3">
+        <p className="text-sm font-bold text-slate-800">{title}</p>
       </div>
       {loading ? (
         <div className="p-4"><Skeleton className="h-28" /></div>
       ) : hasItems ? (
-        <div className="divide-y divide-border/70">{children}</div>
+        <div className="divide-y divide-black/[0.06]">{children}</div>
       ) : (
         <Empty icon="◇" title={empty} />
       )}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { useBusiness } from '@/contexts/BusinessContext'
@@ -10,6 +11,9 @@ import type { TelegramOpsSettingDto } from '@/lib/telegram-notification/types'
 import { safeResponseJson } from '@/lib/safe-api-response'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 type QueueRow = {
   id: string
@@ -229,7 +233,7 @@ function TelegramOpsSettingsPageInner() {
   const queueStats = Object.fromEntries((dashboard?.queue?.stats7d || []).map(s => [s.status, s.count]))
 
   return (
-    <>
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader
         title="Telegram Ops"
         subtitle="Production health · owner routing · async delivery queue"
@@ -248,247 +252,257 @@ function TelegramOpsSettingsPageInner() {
           </div>
         )}
       />
-      <div className="space-y-4 p-4 md:p-6">
-        <Select
-          value={businessId}
-          onChange={v => setBusinessId(v as BusinessId)}
-          options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
-        />
-        <p className="text-[11px] text-amber-300/90 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-          Showing config for:{' '}
-          <span className="font-semibold text-cream">
-            {BUSINESS_LIST.find(b => b.id === businessId)?.name ?? businessId}
-          </span>
-          {businessId !== headerBusinessId ? ' · switch header business to align default' : ''}
-        </p>
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+        <motion.div variants={fadeUp}>
+          <Select
+            value={businessId}
+            onChange={v => setBusinessId(v as BusinessId)}
+            options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
+          />
+          <p className="mt-2 text-[11px] text-amber-700 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+            Showing config for:{' '}
+            <span className="font-semibold text-slate-800">
+              {BUSINESS_LIST.find(b => b.id === businessId)?.name ?? businessId}
+            </span>
+            {businessId !== headerBusinessId ? ' · switch header business to align default' : ''}
+          </p>
+        </motion.div>
 
         {loading || !setting ? (
           <Skeleton className="h-64 w-full rounded-2xl" />
         ) : (
           <>
-            <Card className="grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4">
-              <HealthStat
-                label="Bot (outbound)"
-                value={
-                  dashboard?.telegram?.botOk
-                    ? `@${dashboard.telegram.botUsername || 'ok'}`
-                    : dashboard?.telegram?.botError || 'Offline / misconfigured'
-                }
-                tone={dashboard?.telegram?.botOk ? 'ok' : 'bad'}
-              />
-              <HealthStat
-                label="Webhook (inbound)"
-                value={dashboard?.telegram?.webhookHealthy ? 'Registered' : 'Informational'}
-                tone="warn"
-                hint={dashboard?.telegram?.webhookNote || dashboard?.telegram?.expectedWebhookUrl || undefined}
-              />
-              <HealthStat
-                label="Owner routing"
-                value={dashboard?.ownerRoutingHealth?.label || routingLabel(routing?.source || 'none')}
-                tone={dashboard?.ownerRoutingHealth?.tone || (routing?.chatIds?.length ? 'ok' : 'bad')}
-                hint={routing?.chatIds?.join(', ')}
-              />
-              <HealthStat
-                label="Queue depth"
-                value={String(dashboard?.queue?.pendingDepth ?? dashboard?.queue?.businessPending ?? 0)}
-                tone={(dashboard?.queue?.pendingDepth ?? 0) > 5 ? 'warn' : 'ok'}
-              />
-              <HealthStat
-                label="Processing"
-                value={String(dashboard?.queue?.processingCount ?? 0)}
-                tone={(dashboard?.queue?.processingCount ?? 0) > 0 ? 'warn' : 'ok'}
-              />
-              <HealthStat
-                label="Retry wait"
-                value={String(dashboard?.queue?.retryWaitCount ?? 0)}
-                tone={(dashboard?.queue?.retryWaitCount ?? 0) > 0 ? 'warn' : 'ok'}
-              />
-              <HealthStat
-                label="Avg latency (24h)"
-                value={
-                  dashboard?.queue?.averageDeliveryLatencyMs != null
-                    ? `${dashboard.queue.averageDeliveryLatencyMs}ms`
-                    : '—'
-                }
-                tone="ok"
-              />
-              <HealthStat
-                label="Stuck SENDING"
-                value={String(dashboard?.queue?.stuckSending ?? 0)}
-                tone={(dashboard?.queue?.stuckSending ?? 0) > 0 ? 'bad' : 'ok'}
-              />
-              <HealthStat
-                label="Failed (24h)"
-                value={String(dashboard?.queue?.businessFailed24h ?? 0)}
-                tone={(dashboard?.queue?.businessFailed24h ?? 0) > 0 ? 'warn' : 'ok'}
-              />
-              <HealthStat
-                label="Sent (24h)"
-                value={String(dashboard?.delivery?.sentLast24h ?? 0)}
-                tone="ok"
-              />
-              <HealthStat
-                label="Last success"
-                value={
-                  dashboard?.delivery?.lastSuccessfulSend?.sentAt
-                    ? new Date(dashboard.delivery.lastSuccessfulSend.sentAt).toLocaleString()
-                    : '—'
-                }
-                tone={dashboard?.delivery?.lastSuccessfulSend ? 'ok' : 'warn'}
-                hint={dashboard?.delivery?.lastSuccessfulSend?.eventType}
-              />
-            </Card>
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-2xl border border-black/[0.06] grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4 shadow-sm">
+                <HealthStat
+                  label="Bot (outbound)"
+                  value={
+                    dashboard?.telegram?.botOk
+                      ? `@${dashboard.telegram.botUsername || 'ok'}`
+                      : dashboard?.telegram?.botError || 'Offline / misconfigured'
+                  }
+                  tone={dashboard?.telegram?.botOk ? 'ok' : 'bad'}
+                />
+                <HealthStat
+                  label="Webhook (inbound)"
+                  value={dashboard?.telegram?.webhookHealthy ? 'Registered' : 'Informational'}
+                  tone="warn"
+                  hint={dashboard?.telegram?.webhookNote || dashboard?.telegram?.expectedWebhookUrl || undefined}
+                />
+                <HealthStat
+                  label="Owner routing"
+                  value={dashboard?.ownerRoutingHealth?.label || routingLabel(routing?.source || 'none')}
+                  tone={dashboard?.ownerRoutingHealth?.tone || (routing?.chatIds?.length ? 'ok' : 'bad')}
+                  hint={routing?.chatIds?.join(', ')}
+                />
+                <HealthStat
+                  label="Queue depth"
+                  value={String(dashboard?.queue?.pendingDepth ?? dashboard?.queue?.businessPending ?? 0)}
+                  tone={(dashboard?.queue?.pendingDepth ?? 0) > 5 ? 'warn' : 'ok'}
+                />
+                <HealthStat
+                  label="Processing"
+                  value={String(dashboard?.queue?.processingCount ?? 0)}
+                  tone={(dashboard?.queue?.processingCount ?? 0) > 0 ? 'warn' : 'ok'}
+                />
+                <HealthStat
+                  label="Retry wait"
+                  value={String(dashboard?.queue?.retryWaitCount ?? 0)}
+                  tone={(dashboard?.queue?.retryWaitCount ?? 0) > 0 ? 'warn' : 'ok'}
+                />
+                <HealthStat
+                  label="Avg latency (24h)"
+                  value={
+                    dashboard?.queue?.averageDeliveryLatencyMs != null
+                      ? `${dashboard.queue.averageDeliveryLatencyMs}ms`
+                      : '—'
+                  }
+                  tone="ok"
+                />
+                <HealthStat
+                  label="Stuck SENDING"
+                  value={String(dashboard?.queue?.stuckSending ?? 0)}
+                  tone={(dashboard?.queue?.stuckSending ?? 0) > 0 ? 'bad' : 'ok'}
+                />
+                <HealthStat
+                  label="Failed (24h)"
+                  value={String(dashboard?.queue?.businessFailed24h ?? 0)}
+                  tone={(dashboard?.queue?.businessFailed24h ?? 0) > 0 ? 'warn' : 'ok'}
+                />
+                <HealthStat
+                  label="Sent (24h)"
+                  value={String(dashboard?.delivery?.sentLast24h ?? 0)}
+                  tone="ok"
+                />
+                <HealthStat
+                  label="Last success"
+                  value={
+                    dashboard?.delivery?.lastSuccessfulSend?.sentAt
+                      ? new Date(dashboard.delivery.lastSuccessfulSend.sentAt).toLocaleString()
+                      : '—'
+                  }
+                  tone={dashboard?.delivery?.lastSuccessfulSend ? 'ok' : 'warn'}
+                  hint={dashboard?.delivery?.lastSuccessfulSend?.eventType}
+                />
+              </Card>
+            </motion.div>
 
             {routing && (
-              <Card className="p-4 text-[11px] text-zinc-400">
-                <p className="font-bold text-cream">Owner routing diagnostics</p>
-                <p className="mt-2">
-                  Active source: <span className="text-gold-lt">{routingLabel(routing.source)}</span>
-                  {' · '}
-                  Delivering to: <span className="font-mono text-zinc-300">{routing.chatIds.join(', ') || '—'}</span>
-                </p>
-                <p className="mt-1">
-                  DB IDs: {routing.dbIds.join(', ') || '—'} · Env fallback IDs: {routing.envIds.join(', ') || '—'}
-                </p>
-                {(routing.invalidDbTokens?.length || routing.invalidEnvTokens?.length) ? (
-                  <p className="mt-1 text-amber-300">
-                    Invalid tokens ignored: DB [{routing.invalidDbTokens?.join(', ')}] Env [{routing.invalidEnvTokens?.join(', ')}]
+              <motion.div variants={fadeUp}>
+                <Card className="rounded-2xl border border-black/[0.06] p-5 text-[11px] text-slate-600 shadow-sm">
+                  <p className="font-bold text-slate-800">Owner routing diagnostics</p>
+                  <p className="mt-2">
+                    Active source: <span className="font-semibold text-[#E07A5F]">{routingLabel(routing.source)}</span>
+                    {' · '}
+                    Delivering to: <span className="font-mono text-slate-700">{routing.chatIds.join(', ') || '—'}</span>
                   </p>
-                ) : null}
-                <p className="mt-2 text-zinc-500">
-                  Priority: database chat IDs first. If empty or invalid, <code className="text-gold-lt">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
-                </p>
-                <p className="mt-2 text-zinc-500">
-                  Delivery: <span className="text-gold-lt">enqueue → cron/worker</span> (ERP never waits on Telegram API).
-                  High priority: approvals, penalties, wallet. Low priority: screenshots, summaries (45s delay).
-                </p>
-              </Card>
+                  <p className="mt-1">
+                    DB IDs: {routing.dbIds.join(', ') || '—'} · Env fallback IDs: {routing.envIds.join(', ') || '—'}
+                  </p>
+                  {(routing.invalidDbTokens?.length || routing.invalidEnvTokens?.length) ? (
+                    <p className="mt-1 text-amber-600">
+                      Invalid tokens ignored: DB [{routing.invalidDbTokens?.join(', ')}] Env [{routing.invalidEnvTokens?.join(', ')}]
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-slate-500">
+                    Priority: database chat IDs first. If empty or invalid, <code className="text-[#E07A5F]">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
+                  </p>
+                  <p className="mt-2 text-slate-500">
+                    Delivery: <span className="text-[#E07A5F]">enqueue → cron/worker</span> (ERP never waits on Telegram API).
+                    High priority: approvals, penalties, wallet. Low priority: screenshots, summaries (45s delay).
+                  </p>
+                </Card>
+              </motion.div>
             )}
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Card className="space-y-4 p-5">
-                <p className="text-sm font-bold text-cream">Recipients & master switch</p>
-                <div className="flex gap-2">
-                  <Button variant={setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: true })} disabled={saving}>
-                    Enabled
+            <div className="grid gap-5 lg:grid-cols-2">
+              <motion.div variants={fadeUp}>
+                <Card className="rounded-2xl border border-black/[0.06] space-y-4 p-5 shadow-sm">
+                  <h3 className="text-sm font-bold text-slate-800">Recipients & master switch</h3>
+                  <div className="flex gap-2">
+                    <Button variant={setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: true })} disabled={saving}>
+                      Enabled
+                    </Button>
+                    <Button variant={!setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: false })} disabled={saving}>
+                      Disabled
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS</p>
+                  <Input
+                    value={ownerChatIds}
+                    onChange={e => setOwnerChatIds(e.target.value)}
+                    placeholder="1949042834, -1001234567890"
+                  />
+                  <Button variant="gold" onClick={() => void save({ ownerChatIds })} disabled={saving}>
+                    Save chat IDs
                   </Button>
-                  <Button variant={!setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: false })} disabled={saving}>
-                    Disabled
-                  </Button>
-                </div>
-                <p className="text-[11px] text-zinc-500">Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS</p>
-                <Input
-                  value={ownerChatIds}
-                  onChange={e => setOwnerChatIds(e.target.value)}
-                  placeholder="1949042834, -1001234567890"
-                />
-                <Button variant="gold" onClick={() => void save({ ownerChatIds })} disabled={saving}>
-                  Save chat IDs
-                </Button>
 
-                <p className="text-sm font-bold text-cream">Schedule (BD)</p>
-                <p className="text-[11px] text-zinc-500">
-                  Office {minutesToTimeLabel(setting.officeStartMinutes)} · grace +{setting.gracePeriodMinutes}m ·
-                  no-checkout {minutesToTimeLabel(setting.checkoutCutoffMinutes)}
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      ['officeStartMinutes', 'Office start (min)'],
-                      ['gracePeriodMinutes', 'Grace (min)'],
-                      ['checkoutCutoffMinutes', 'Checkout cutoff (min)'],
-                      ['earlyLeaveMinutes', 'Early leave under (min)'],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="block text-[11px] text-zinc-500">
-                      {label}
-                      <Input
-                        type="number"
-                        className="mt-1"
-                        value={String(setting[key])}
-                        onChange={e =>
-                          setData(d =>
-                            d
-                              ? {
-                                  ...d,
-                                  setting: { ...d.setting, [key]: Number(e.target.value) },
-                                }
-                              : d,
-                          )
-                        }
-                        onBlur={() => void save({ [key]: setting[key] })}
+                  <h3 className="pt-2 text-sm font-bold text-slate-800">Schedule (BD)</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Office {minutesToTimeLabel(setting.officeStartMinutes)} · grace +{setting.gracePeriodMinutes}m ·
+                    no-checkout {minutesToTimeLabel(setting.checkoutCutoffMinutes)}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        ['officeStartMinutes', 'Office start (min)'],
+                        ['gracePeriodMinutes', 'Grace (min)'],
+                        ['checkoutCutoffMinutes', 'Checkout cutoff (min)'],
+                        ['earlyLeaveMinutes', 'Early leave under (min)'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="block text-[11px] text-slate-500">
+                        {label}
+                        <Input
+                          type="number"
+                          className="mt-1"
+                          value={String(setting[key])}
+                          onChange={e =>
+                            setData(d =>
+                              d
+                                ? {
+                                    ...d,
+                                    setting: { ...d.setting, [key]: Number(e.target.value) },
+                                  }
+                                : d,
+                            )
+                          }
+                          onBlur={() => void save({ [key]: setting[key] })}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </Card>
+              </motion.div>
+
+              <motion.div variants={fadeUp}>
+                <Card className="rounded-2xl border border-black/[0.06] space-y-3 p-5 shadow-sm">
+                  <h3 className="text-sm font-bold text-slate-800">Alert toggles</h3>
+                  {ALERT_TOGGLES.map(t => (
+                    <label
+                      key={t.key}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.06] px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      {t.label}
+                      <input
+                        type="checkbox"
+                        checked={Boolean(setting[t.key])}
+                        onChange={e => void save({ [t.key]: e.target.checked } as Partial<TelegramOpsSettingDto>)}
+                        className="h-4 w-4 accent-[#E07A5F]"
                       />
                     </label>
                   ))}
-                </div>
-              </Card>
 
-              <Card className="space-y-3 p-5">
-                <p className="text-sm font-bold text-cream">Alert toggles</p>
-                {ALERT_TOGGLES.map(t => (
-                  <label
-                    key={t.key}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm text-zinc-300"
-                  >
-                    {t.label}
-                    <input
-                      type="checkbox"
-                      checked={Boolean(setting[t.key])}
-                      onChange={e => void save({ [t.key]: e.target.checked } as Partial<TelegramOpsSettingDto>)}
-                      className="h-4 w-4"
-                    />
-                  </label>
-                ))}
-
-                <p className="pt-2 text-sm font-bold text-cream">Queue (7 days)</p>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">SENT: {queueStats.SENT ?? 0}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">QUEUED: {queueStats.QUEUED ?? 0}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">FAILED: {queueStats.FAILED ?? 0}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-zinc-400">SENDING: {queueStats.SENDING ?? 0}</span>
-                </div>
-
-                {dashboard?.delivery?.lastFailed && (
-                  <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-200/90">
-                    <p className="font-bold">Last failure</p>
-                    <p className="mt-1">{dashboard.delivery.lastFailed.eventType}</p>
-                    <p className="mt-1 break-words">{dashboard.delivery.lastFailed.errorMessage}</p>
+                  <h3 className="pt-3 text-sm font-bold text-slate-800">Queue (7 days)</h3>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-emerald-700 font-medium">SENT: {queueStats.SENT ?? 0}</span>
+                    <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-amber-700 font-medium">QUEUED: {queueStats.QUEUED ?? 0}</span>
+                    <span className="rounded-full bg-red-50 border border-red-200 px-2.5 py-1 text-red-700 font-medium">FAILED: {queueStats.FAILED ?? 0}</span>
+                    <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-blue-700 font-medium">SENDING: {queueStats.SENDING ?? 0}</span>
                   </div>
-                )}
 
-                <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-zinc-500">
-                  {data.recentQueue.map(row => (
-                    <li key={row.id} className="rounded-lg border border-border/60 p-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="flex items-center gap-2 text-zinc-300">
-                          <EmployeeAvatar
-                            userId={row.userId}
-                            name={row.employeeName || row.eventType}
-                            imageUrl={row.profileImageUrl}
-                            size="xs"
-                          />
-                          {row.eventType} · <b>{row.status}</b>
-                        </span>
-                        {(row.status === 'FAILED' || row.status === 'QUEUED' || row.status === 'SENDING') && (
-                          <Button size="xs" variant="secondary" onClick={() => void retryQueue(row.id)}>
-                            Retry
-                          </Button>
-                        )}
-                      </div>
-                      <div>Chat {row.chatId} · attempts {row.attempts}</div>
-                      <div>{new Date(row.createdAt).toLocaleString()}</div>
-                      {row.errorMessage ? (
-                        <p className="mt-1 break-words text-red-400/90">{row.errorMessage}</p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </Card>
+                  {dashboard?.delivery?.lastFailed && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">
+                      <p className="font-bold">Last failure</p>
+                      <p className="mt-1">{dashboard.delivery.lastFailed.eventType}</p>
+                      <p className="mt-1 break-words">{dashboard.delivery.lastFailed.errorMessage}</p>
+                    </div>
+                  )}
+
+                  <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-slate-600">
+                    {data.recentQueue.map(row => (
+                      <li key={row.id} className="rounded-xl border border-black/[0.06] bg-white p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 text-slate-700">
+                            <EmployeeAvatar
+                              userId={row.userId}
+                              name={row.employeeName || row.eventType}
+                              imageUrl={row.profileImageUrl}
+                              size="xs"
+                            />
+                            {row.eventType} · <b>{row.status}</b>
+                          </span>
+                          {(row.status === 'FAILED' || row.status === 'QUEUED' || row.status === 'SENDING') && (
+                            <Button size="xs" variant="secondary" onClick={() => void retryQueue(row.id)}>
+                              Retry
+                            </Button>
+                          )}
+                        </div>
+                        <div className="mt-1 text-slate-500">Chat {row.chatId} · attempts {row.attempts}</div>
+                        <div className="text-slate-400">{new Date(row.createdAt).toLocaleString()}</div>
+                        {row.errorMessage ? (
+                          <p className="mt-1 break-words text-red-600">{row.errorMessage}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              </motion.div>
             </div>
           </>
         )}
-      </div>
-    </>
+      </motion.div>
+    </div>
   )
 }
 
@@ -503,12 +517,12 @@ function HealthStat({
   tone: 'ok' | 'warn' | 'bad'
   hint?: string
 }) {
-  const color = tone === 'ok' ? 'text-green-300' : tone === 'warn' ? 'text-amber-300' : 'text-red-300'
+  const color = tone === 'ok' ? 'text-emerald-600' : tone === 'warn' ? 'text-amber-600' : 'text-red-600'
   return (
-    <div className="rounded-xl border border-border/60 bg-black/[0.03] p-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">{label}</p>
+    <div className="rounded-xl border border-black/[0.06] bg-white p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
       <p className={`mt-1 text-sm font-bold ${color}`}>{value}</p>
-      {hint ? <p className="mt-1 truncate text-[10px] text-zinc-500" title={hint}>{hint}</p> : null}
+      {hint ? <p className="mt-1 truncate text-[10px] text-slate-400" title={hint}>{hint}</p> : null}
     </div>
   )
 }

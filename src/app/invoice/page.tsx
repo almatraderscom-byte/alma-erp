@@ -1,4 +1,5 @@
 'use client'
+import { motion } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
@@ -19,6 +20,9 @@ import type { BusinessBranding } from '@/types/branding'
 import { defaultBusinessBranding, readCachedBranding } from '@/lib/branding-defaults'
 import { fetchLogoDataUrl } from '@/lib/pdf/branding'
 import { withTimeout } from '@/lib/pdf/timeout'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
 
 type InvoiceRegistryResponse = {
   invoices: InvoiceRegistryRecord[]
@@ -248,26 +252,26 @@ export default function InvoicePage() {
   }
 
   return (
-    <>
+    <div className="min-h-screen bg-[#FAF9F6]">
       <PageHeader title="Invoices" subtitle={`${invoices.length} issued · ${pendingOrders.length} pending`} />
 
-      <div className="p-4 md:p-6 pb-24 md:pb-6 space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-cream">{deliveredOrders.length}</p>
-            <p className="text-[10px] text-zinc-500 mt-1">Delivered orders</p>
+      <motion.div variants={stagger} initial="hidden" animate="show" className="p-4 md:p-6 pb-24 md:pb-6 space-y-5">
+        <motion.div variants={fadeUp} className="grid grid-cols-3 gap-3">
+          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-slate-800">{deliveredOrders.length}</p>
+            <p className="text-[10px] text-slate-500 mt-1">Delivered orders</p>
           </Card>
-          <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-green-400">{registry?.totals.count ?? 0}</p>
-            <p className="text-[10px] text-zinc-500 mt-1">Invoiced</p>
+          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-emerald-600">{registry?.totals.count ?? 0}</p>
+            <p className="text-[10px] text-slate-500 mt-1">Invoiced</p>
           </Card>
-          <Card className="p-4 text-center">
-            <p className="text-2xl font-bold text-amber-400">{pendingOrders.length}</p>
-            <p className="text-[10px] text-zinc-500 mt-1">Pending</p>
+          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-amber-600">{pendingOrders.length}</p>
+            <p className="text-[10px] text-slate-500 mt-1">Pending</p>
           </Card>
-        </div>
+        </motion.div>
 
-        <div className="flex flex-wrap gap-2">
+        <motion.div variants={fadeUp} className="flex flex-wrap gap-2">
           <div className="flex-1 min-w-48"><SearchInput value={search} onChange={setSearch} placeholder="Search invoices, orders, customers…" /></div>
           <Select value={statusFilter} onChange={setStatusFilter} options={[
             { label: 'All payment status', value: '' },
@@ -276,40 +280,40 @@ export default function InvoicePage() {
             { label: 'Paid', value: 'PAID' },
             { label: 'Void', value: 'VOID' },
           ]} />
-        </div>
+        </motion.div>
 
         {pendingOrders.length > 0 && !statusFilter && (
-          <div>
-            <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-amber-400 mb-2">Pending Invoices</p>
+          <motion.div variants={fadeUp}>
+            <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-amber-600 mb-2">Pending Invoices</p>
             <div className="space-y-2">
               {pendingOrders.map(o => (
                 <button
                   key={o.id}
                   type="button"
                   onClick={() => openPreview(o)}
-                  className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-amber-400/15 hover:border-amber-400/30 transition-colors cursor-pointer bg-card"
+                  className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-amber-200/60 hover:border-amber-300 transition-colors cursor-pointer bg-white shadow-sm"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
+                      <span className="font-mono text-[11px] text-[#E07A5F] font-bold">{o.id}</span>
                       <StatusBadge status={o.status} />
                     </div>
-                    <p className="text-sm font-semibold text-cream">{o.customer}</p>
-                    <p className="text-[11px] text-zinc-500">{o.product}</p>
+                    <p className="text-sm font-semibold text-slate-800">{o.customer}</p>
+                    <p className="text-[11px] text-slate-500">{o.product}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-cream"><Money amount={o.sell_price} /></p>
-                    <p className="text-[10px] text-zinc-500">{o.date}</p>
+                    <p className="font-bold text-slate-800"><Money amount={o.sell_price} /></p>
+                    <p className="text-[10px] text-slate-500">{o.date}</p>
                   </div>
                   <Button variant="gold" size="xs">Preview PDF</Button>
                 </button>
               ))}
             </div>
-          </div>
+          </motion.div>
         )}
 
-        <div>
-          <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-green-400 mb-2">Invoice Registry</p>
+        <motion.div variants={fadeUp}>
+          <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-emerald-600 mb-2">Invoice Registry</p>
           {registryLoading ? (
             <div className="space-y-2">{Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}</div>
           ) : invoices.length > 0 ? (
@@ -317,20 +321,20 @@ export default function InvoicePage() {
               {invoices.map(inv => {
                 const order = invoiceOrders.find(o => o.id === inv.orderId)
                 return (
-                  <Card key={inv.id} className="p-4 border-green-400/10">
+                  <Card key={inv.id} className="rounded-2xl border border-black/[0.06] p-4 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex flex-col md:flex-row md:items-center gap-3">
                       <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv), inv) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="font-mono text-[11px] text-green-400 font-bold">{inv.invoiceNumber}</span>
-                          <span className="font-mono text-[10px] text-gold-lt">Order {inv.orderId}</span>
-                          <span className="rounded-full border border-border px-2 py-0.5 text-[9px] font-bold text-zinc-400">{inv.paymentStatus}</span>
+                          <span className="font-mono text-[11px] text-emerald-600 font-bold">{inv.invoiceNumber}</span>
+                          <span className="font-mono text-[10px] text-[#E07A5F]">Order {inv.orderId}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : inv.paymentStatus === 'PARTIAL' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{inv.paymentStatus}</span>
                         </div>
-                        <p className="text-sm font-semibold text-cream">{inv.customerName}</p>
-                        <p className="text-[11px] text-zinc-500">
+                        <p className="text-sm font-semibold text-slate-800">{inv.customerName}</p>
+                        <p className="text-[11px] text-slate-500">
                           ৳ {Number(inv.amount || 0).toLocaleString('en-BD')} · {inv.generatedByName || 'System'} · {String(inv.createdAt).slice(0, 16).replace('T', ' ')}
                         </p>
                         {!!inv.events?.length && (
-                          <p className="mt-1 text-[10px] text-zinc-600">
+                          <p className="mt-1 text-[10px] text-slate-400">
                             Last: {inv.events[0].type.replace(/_/g, ' ')} · {String(inv.events[0].createdAt).slice(0, 10)}
                           </p>
                         )}
@@ -355,12 +359,14 @@ export default function InvoicePage() {
           ) : (
             <Empty icon="◈" title="No invoice records" desc="Generate an invoice to create a persistent registry record." />
           )}
-        </div>
+        </motion.div>
 
         {!loading && deliveredOrders.length === 0 && (
-          <Empty icon="◈" title="No delivered orders" desc="Invoices are generated for delivered orders" />
+          <motion.div variants={fadeUp}>
+            <Empty icon="◈" title="No delivered orders" desc="Invoices are generated for delivered orders" />
+          </motion.div>
         )}
-      </div>
+      </motion.div>
 
       <PdfPreviewModal
         open={!!preview}
@@ -373,6 +379,6 @@ export default function InvoicePage() {
         externalLoading={prepLoading}
         readinessLabel={readinessText}
       />
-    </>
+    </div>
   )
 }
