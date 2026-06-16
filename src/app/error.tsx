@@ -39,9 +39,9 @@ export default function Error({
 
   return (
     <div className="flex min-h-[50vh] items-center justify-center p-6">
-      <Card className="max-w-md p-6 space-y-4 text-center border-amber-500/20">
-        <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Page error</p>
-        <p className="text-sm text-zinc-400">This section failed to load. The error was reported automatically.</p>
+      <Card className="max-w-md p-6 space-y-4 text-center border-[#E07A5F]/20 bg-white">
+        <p className="text-[10px] font-black uppercase tracking-widest text-[#E07A5F]">Page error</p>
+        <p className="text-sm text-slate-600">This section failed to load. The error was reported automatically.</p>
         <div className="flex justify-center gap-2">
           <Button size="sm" variant="secondary" onClick={() => reset()}>
             Retry

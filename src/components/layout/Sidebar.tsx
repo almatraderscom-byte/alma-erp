@@ -30,18 +30,18 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
     ? path === href
     : path.startsWith(href)
   return (
-    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/10 border border-gold-dim/40' : 'border border-transparent hover:bg-white/[0.04] hover:border-white/[0.06]'}`}>
-      {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gold rounded-r-full" />}
-      <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-gold-lt' : 'text-muted group-hover:text-muted-hi'}`}>
+    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-[#E07A5F]/10 border border-[#E07A5F]/25' : 'border border-transparent hover:bg-[#E07A5F]/[0.05] hover:border-slate-200'}`}>
+      {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-[#E07A5F] rounded-r-full" />}
+      <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-[#E07A5F]' : 'text-slate-500 group-hover:text-slate-700'}`}>
         {icon}
         {badge && collapsed && (
-          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-950/40" aria-hidden />
+          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
         )}
       </span>
       <AnimatePresence>
         {!collapsed && (
           <motion.span initial={{ opacity:0, width:0 }} animate={{ opacity:1, width:'auto' }} exit={{ opacity:0, width:0 }}
-            className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-colors ${active ? 'text-gold-lt' : 'text-muted-hi group-hover:text-cream'}`}>
+            className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-colors ${active ? 'text-[#E07A5F]' : 'text-slate-600 group-hover:text-[#1a1a2e]'}`}>
             {label}
           </motion.span>
         )}
@@ -70,16 +70,16 @@ export function Sidebar() {
     <motion.aside
       animate={{ width: collapsed ? 64 : 220 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="hidden md:flex flex-col bg-surface border-r border-border shrink-0 overflow-hidden"
+      className="hidden md:flex flex-col bg-white border-r border-slate-200 shrink-0 overflow-hidden"
     >
-      <motion.div layout className={`flex items-center px-4 py-5 border-b border-border gap-2 ${collapsed ? 'justify-center' : ''}`}>
+      <motion.div layout className={`flex items-center px-4 py-5 border-b border-slate-200 gap-2 ${collapsed ? 'justify-center' : ''}`}>
         <div className={`flex items-center min-w-0 ${collapsed ? 'justify-center' : 'flex-1 gap-3'}`}>
           <BusinessLogo size={32} />
           <AnimatePresence>
             {!collapsed && (
               <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} className="min-w-0 flex-1">
-                <p className="text-[11px] font-black tracking-[0.14em] text-gold leading-none">{business.shortName.toUpperCase()}</p>
-                <p className="text-[9px] tracking-[0.16em] text-gold-dim leading-none mt-0.5">{business.tagline}</p>
+                <p className="text-[11px] font-black tracking-[0.14em] text-[#E07A5F] leading-none">{business.shortName.toUpperCase()}</p>
+                <p className="text-[9px] tracking-[0.16em] text-slate-400 leading-none mt-0.5">{business.tagline}</p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -93,24 +93,24 @@ export function Sidebar() {
       </nav>
 
       {showAgentPin && (
-        <div className="shrink-0 border-t border-gold-dim/20 bg-gold/[0.03] py-2">
+        <div className="shrink-0 border-t border-slate-200 bg-[#E07A5F]/[0.03] py-2">
           <AgentSidebarLink collapsed={collapsed} active={agentActive} />
         </div>
       )}
 
-      <div className="border-t border-border p-3 space-y-3">
+      <div className="border-t border-slate-200 p-3 space-y-3">
         {!collapsed && (
           <div className="mx-2 flex items-center justify-between">
-            <span className="text-[9px] font-black uppercase tracking-[0.18em] text-zinc-600">Account</span>
-            <span className="flex items-center gap-1 text-[9px] font-semibold text-green-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+            <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Account</span>
+            <span className="flex items-center gap-1 text-[9px] font-semibold text-green-600">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
               Online
             </span>
           </div>
         )}
         <UserAccountMenu collapsed={collapsed} />
         <button onClick={() => setCollapsed(c => !c)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-border hover:bg-white/[0.04] transition-colors text-zinc-600 hover:text-zinc-400">
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 hover:bg-[#E07A5F]/[0.05] transition-colors text-slate-500 hover:text-slate-700">
           <span className="text-sm">{collapsed ? '→' : '←'}</span>
           {!collapsed && <span className="text-[11px]">Collapse</span>}
         </button>
@@ -140,15 +140,15 @@ function MobileTab({
 }) {
   const cls = cn(
     'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2.5 transition-all duration-200 active:scale-[0.96]',
-    active ? 'text-gold-lt' : 'text-zinc-500',
+    active ? 'text-[#E07A5F]' : 'text-slate-500',
   )
   const content = (
     <>
-      {active && <motion.span layoutId="mobile-nav-glow" className="absolute inset-1 rounded-2xl border border-gold-dim/40 bg-gold/10 shadow-[0_0_26px_rgba(214,169,74,.18)]" />}
+      {active && <motion.span layoutId="mobile-nav-glow" className="absolute inset-1 rounded-2xl border border-[#E07A5F]/25 bg-[#E07A5F]/10 shadow-[0_0_26px_rgba(224,122,95,.12)]" />}
       <span className="relative text-[19px] leading-none">{icon}</span>
       <span className="relative truncate text-[9px] font-black tracking-[0.08em]">{label}</span>
       {!!badge && (
-        <span className="absolute right-2 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-950/40">
+        <span className="absolute right-2 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-200/40">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -169,16 +169,16 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
       className={cn(
         'flex items-center gap-3 rounded-2xl border px-3 py-3 transition-all duration-200',
         active
-          ? 'border-gold-dim/50 bg-gold/10 text-gold-lt shadow-[0_0_24px_rgba(214,169,74,.10)]'
-          : 'border-border bg-white/[0.025] text-zinc-300 hover:border-gold-dim/30 hover:bg-white/[0.05]',
+          ? 'border-[#E07A5F]/30 bg-[#E07A5F]/10 text-[#E07A5F] shadow-[0_0_24px_rgba(224,122,95,.06)]'
+          : 'border-slate-200 bg-slate-50/50 text-slate-700 hover:border-[#E07A5F]/20 hover:bg-[#E07A5F]/[0.04]',
       )}
     >
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-black/25 text-base">{item.icon}</span>
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-base">{item.icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-bold">{item.label}</span>
-        <span className="block truncate text-[10px] text-zinc-600">{item.href}</span>
+        <span className="block truncate text-[10px] text-slate-400">{item.href}</span>
       </span>
-      {active && <span className="h-2 w-2 rounded-full bg-gold" />}
+      {active && <span className="h-2 w-2 rounded-full bg-[#E07A5F]" />}
     </Link>
   )
 }
@@ -324,7 +324,7 @@ export function MobileNav() {
   return (
     <>
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
-        <div className="mx-auto max-w-lg rounded-[26px] border border-gold-dim/20 bg-[#09090d]/92 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-2xl">
+        <div className="mx-auto max-w-lg rounded-[26px] border border-slate-200 bg-white/95 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
           <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${mobileTabCount}, minmax(0, 1fr))` }}>
             {primary.slice(0, 3).map(item => (
               <MobileTab key={item.key} icon={item.icon} label={item.label} href={item.href} active={activePath(path, item.href)} />
@@ -344,21 +344,21 @@ export function MobileNav() {
             <motion.button
               type="button"
               aria-label="Close mobile menu"
-              className="fixed inset-0 z-[130] bg-black/65 backdrop-blur-sm md:hidden"
+              className="fixed inset-0 z-[130] bg-black/20 backdrop-blur-sm md:hidden"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setDrawerOpen(false)}
             />
             <motion.aside
-              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-gold-dim/30 bg-[#09090d] shadow-2xl shadow-black md:hidden mobile-sheet"
+              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-slate-200 bg-white shadow-xl shadow-black/10 md:hidden mobile-sheet"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', stiffness: 360, damping: 34 }}
             >
-              <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-700" />
-              <div className="border-b border-border px-5 pb-4 pt-4">
+              <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-slate-300" />
+              <div className="border-b border-slate-200 px-5 pb-4 pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <EmployeeAvatar
                     userId={session?.user?.id}
@@ -368,10 +368,10 @@ export function MobileNav() {
                     size="md"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-black text-cream">{session?.user?.name || 'Account'}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-zinc-500">{role.replace(/_/g, ' ')} · {business.name}</p>
+                    <p className="truncate text-sm font-black text-[#1a1a2e]">{session?.user?.name || 'Account'}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-500">{role.replace(/_/g, ' ')} · {business.name}</p>
                   </div>
-                  <button type="button" onClick={() => setDrawerOpen(false)} className="rounded-2xl border border-border px-3 py-2 text-xs font-bold text-zinc-400">Close</button>
+                  <button type="button" onClick={() => setDrawerOpen(false)} className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500">Close</button>
                 </div>
                 {allowedBusinessIds.length > 1 && (
                   <div className="mt-4 grid grid-cols-2 gap-2">
@@ -382,26 +382,26 @@ export function MobileNav() {
                         onClick={() => setBusinessId(id)}
                         className={cn(
                           'rounded-2xl border px-3 py-2 text-left transition-colors',
-                          id === businessId ? 'border-gold-dim/50 bg-gold/10 text-gold-lt' : 'border-border bg-white/[0.03] text-zinc-400',
+                          id === businessId ? 'border-[#E07A5F]/30 bg-[#E07A5F]/10 text-[#E07A5F]' : 'border-slate-200 bg-slate-50 text-slate-600',
                         )}
                       >
                         <span className="block text-[11px] font-bold">{BUSINESSES[id].shortName}</span>
-                        <span className="block text-[9px] text-zinc-600">{BUSINESSES[id].tagline}</span>
+                        <span className="block text-[9px] text-slate-400">{BUSINESSES[id].tagline}</span>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
               <div className="max-h-[calc(86dvh-160px)] overflow-y-auto px-4 py-4">
-                <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-zinc-600">Workspace modules</p>
+                <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Workspace modules</p>
                 <div className="grid gap-2">
                   {secondary.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}
                   <button
                     type="button"
                     onClick={() => void signOut({ callbackUrl: '/login' })}
-                    className="mt-2 flex items-center gap-3 rounded-2xl border border-red-400/25 bg-red-500/10 px-3 py-3 text-left text-red-300"
+                    className="mt-2 flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-left text-red-600"
                   >
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10">↗</span>
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-red-200 bg-red-100/50">↗</span>
                     <span className="text-[13px] font-bold">Logout</span>
                   </button>
                 </div>

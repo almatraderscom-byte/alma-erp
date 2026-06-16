@@ -37,7 +37,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#C9A84C',
+  themeColor: '#FAF9F6',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
@@ -75,7 +75,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
         <script dangerouslySetInnerHTML={{ __html: bootEscapeScript() }} />
       </head>
-      <body className="bg-black text-cream antialiased font-sans">
+      <body className="bg-[#FAF9F6] text-[#1a1a2e] antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
           <div className="alma-boot-mark">A</div>
           <p className="alma-boot-title">Alma ERP</p>
@@ -88,14 +88,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           toastOptions={{
             duration: 4000,
             style: {
-              background: '#141418',
-              color: '#E8E8E2',
-              border: '1px solid #2A2A34',
+              background: '#FFFFFF',
+              color: '#1a1a2e',
+              border: '1px solid #e5e2dc',
               fontFamily: 'var(--font-sans)',
               fontSize: '13px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
             },
-            success: { iconTheme: { primary: '#C9A84C', secondary: '#08080A' } },
-            error:   { iconTheme: { primary: '#E74C3C', secondary: '#08080A' } },
+            success: { iconTheme: { primary: '#81B29A', secondary: '#FFFFFF' } },
+            error:   { iconTheme: { primary: '#E74C3C', secondary: '#FFFFFF' } },
           }}
         />
       </body>

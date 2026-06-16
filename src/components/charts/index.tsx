@@ -3,14 +3,14 @@ import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tool
 import { BdtText } from '@/components/ui/Currency'
 import { CHART_FONT_FAMILY, formatBDT, formatBDTk } from '@/lib/currency'
 
-const T = { gold:'#C9A84C', goldLt:'#E8C96A', green:'#2ECC71', blue:'#4A9EFF', red:'#E74C3C', amber:'#F5A623', muted:'#6B6B72', border:'#1E1E24', card:'#141418' }
+const T = { gold:'#E07A5F', goldLt:'#F4A28C', green:'#22c55e', blue:'#3b82f6', red:'#ef4444', amber:'#f59e0b', muted:'#94a3b8', border:'#e5e5e5', card:'#FFFFFF' }
 const TICK = { fill: T.muted, fontSize: 10, fontFamily: CHART_FONT_FAMILY }
 
 function Tip({ active, payload, label }: Record<string, unknown>) {
   if (!active || !(payload as unknown[])?.length) return null
   return (
-    <div className="bg-card border border-border rounded-xl p-3 text-xs shadow-xl currency">
-      <p className="text-zinc-500 mb-2 font-mono">{label as string}</p>
+    <div className="bg-white border border-black/[0.08] rounded-xl p-3 text-xs shadow-elevated currency">
+      <p className="text-slate-500 mb-2 font-mono">{label as string}</p>
       {(payload as Array<{name:string;value:number;color:string}>).map((p, i) => (
         <p key={i} style={{ color: p.color }} className="font-bold">
           {p.name}: {typeof p.value === 'number' && p.value > 999 ? <BdtText value={formatBDT(p.value)} /> : p.value}
@@ -64,7 +64,7 @@ export function DonutChart({ data }: { data: Array<{ name: string; value: number
         <Pie data={data} cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2} dataKey="value">
           {data.map((e, i) => <Cell key={i} fill={e.color} />)}
         </Pie>
-        <Tooltip formatter={(v: number) => [`${v}%`, '']} contentStyle={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12 }} />
+        <Tooltip formatter={(v: number) => [`${v}%`, '']} contentStyle={{ background: T.card, border: `1px solid rgba(0,0,0,0.08)`, borderRadius: 10, fontSize: 12 }} />
       </PieChart>
     </ResponsiveContainer>
   )
@@ -85,7 +85,7 @@ export function ExpenseBarChart({ data }: { data: Array<{ category: string; amou
   )
 }
 
-export function TrendLine({ data, color = '#C9A84C' }: { data: Array<{ value: number }>; color?: string }) {
+export function TrendLine({ data, color = '#E07A5F' }: { data: Array<{ value: number }>; color?: string }) {
   return (
     <ResponsiveContainer width="100%" height={48}>
       <LineChart data={data}>
@@ -131,8 +131,8 @@ export function MonthlyRevenueChart({ data }: { data: Array<{ month: string; rev
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  Pending: '#F5A623', Confirmed: '#4A9EFF', Packed: '#9B59B6',
-  Shipped: '#3498DB', Delivered: '#2ECC71', Returned: '#E74C3C', Cancelled: '#6B6B72',
+  Pending: '#f59e0b', Confirmed: '#3b82f6', Packed: '#8b5cf6',
+  Shipped: '#0ea5e9', Delivered: '#22c55e', Returned: '#ef4444', Cancelled: '#94a3b8',
 }
 
 export function ReturnLossTrendChart({ data }: { data: Array<{ date: string; return_loss: number }> }) {
@@ -158,7 +158,7 @@ export function ReturnLossTrendChart({ data }: { data: Array<{ date: string; ret
 export function StatusPieChart({ data }: { data: Array<{ name: string; value: number }> }) {
   const colored = data.map((d, i) => ({
     ...d,
-    color: STATUS_COLORS[d.name] ?? ['#C9A84C', '#8B6914', '#E8C96A'][i % 3],
+    color: STATUS_COLORS[d.name] ?? ['#E07A5F', '#C45A3C', '#F4A28C'][i % 3],
   }))
   return (
     <ResponsiveContainer width="100%" height={200}>

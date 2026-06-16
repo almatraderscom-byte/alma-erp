@@ -31,21 +31,21 @@ export function RouteTransitionLoader() {
       {visible && (
         <>
           <motion.div
-            className="pointer-events-none fixed inset-x-0 top-0 z-[95] h-0.5 overflow-hidden bg-gold-dim/10 md:hidden"
+            className="pointer-events-none fixed inset-x-0 top-0 z-[95] h-0.5 overflow-hidden bg-[#E07A5F]/10 md:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             aria-hidden="true"
           >
             <motion.div
-              className="h-full bg-gradient-to-r from-transparent via-gold to-transparent"
+              className="h-full bg-gradient-to-r from-transparent via-[#E07A5F] to-transparent"
               initial={reduceMotion ? { x: '0%' } : { x: '-100%' }}
               animate={reduceMotion ? { x: '0%' } : { x: '100%' }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             />
           </motion.div>
           <motion.div
-            className="pointer-events-none fixed inset-x-0 top-0 z-[95] hidden h-[100dvh] items-center justify-center bg-black/72 backdrop-blur-[2px] md:flex"
+            className="pointer-events-none fixed inset-x-0 top-0 z-[95] hidden h-[100dvh] items-center justify-center bg-white/72 backdrop-blur-[2px] md:flex"
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -57,7 +57,7 @@ export function RouteTransitionLoader() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-[2rem] border border-gold-dim/25 bg-[#07070a]/82 px-10 py-8 shadow-2xl shadow-black/50"
+              className="rounded-[2rem] border border-slate-200 bg-white/95 px-10 py-8 shadow-xl shadow-black/8"
             >
               <AlmaLoader size="sm" label="Opening" />
             </motion.div>

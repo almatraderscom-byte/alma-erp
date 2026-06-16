@@ -15,9 +15,9 @@ export function AlertsActionButton({ className }: { className?: string }) {
       onClick={openPanel}
       data-platform-alerts="true"
       className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-gold-dim/40',
-        'bg-[#0b0b0f]/90 px-3 py-2 text-xs font-bold text-cream',
-        'shadow-lg shadow-black/25 backdrop-blur transition-colors hover:border-gold-dim/60 hover:bg-gold/10',
+        'inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200',
+        'bg-white px-3 py-2 text-xs font-bold text-[#1a1a2e]',
+        'shadow-sm transition-colors hover:border-[#E07A5F]/30 hover:bg-[#E07A5F]/[0.05]',
         'max-w-full',
         className,
       )}
@@ -25,7 +25,7 @@ export function AlertsActionButton({ className }: { className?: string }) {
     >
       <span className="whitespace-nowrap">Alerts</span>
       {unread > 0 && (
-        <span className="shrink-0 rounded-full bg-gold px-2 py-0.5 text-[10px] font-black text-black">
+        <span className="shrink-0 rounded-full bg-[#E07A5F] px-2 py-0.5 text-[10px] font-black text-white">
           {unread > 99 ? '99+' : unread}
         </span>
       )}

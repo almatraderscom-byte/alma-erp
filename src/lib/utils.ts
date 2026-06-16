@@ -11,17 +11,17 @@ export function pct(n: number): string {
 }
 
 export const STATUS_COLORS: Record<OrderStatus, { text: string; bg: string; border: string; dot: string }> = {
-  Pending:   { text:'text-amber-400',  bg:'bg-amber-400/10',  border:'border-amber-400/30',  dot:'bg-amber-400'  },
-  Confirmed: { text:'text-purple-400', bg:'bg-purple-400/10', border:'border-purple-400/30', dot:'bg-purple-400' },
-  Packed:    { text:'text-cyan-400',   bg:'bg-cyan-400/10',   border:'border-cyan-400/30',   dot:'bg-cyan-400'   },
-  Shipped:   { text:'text-blue-400',   bg:'bg-blue-400/10',   border:'border-blue-400/30',   dot:'bg-blue-400'   },
-  Delivered: { text:'text-green-400',  bg:'bg-green-400/10',  border:'border-green-400/30',  dot:'bg-green-400'  },
-  Returned:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
-  Cancelled: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
-  RETURNED:  { text:'text-red-400',    bg:'bg-red-400/10',    border:'border-red-400/30',    dot:'bg-red-400'    },
-  RETURNED_PAID: { text:'text-amber-300', bg:'bg-amber-400/10', border:'border-amber-400/35', dot:'bg-amber-400' },
-  RETURNED_UNPAID: { text:'text-red-400', bg:'bg-red-500/15', border:'border-red-400/40', dot:'bg-red-500' },
-  CANCELLED: { text:'text-zinc-500',   bg:'bg-zinc-500/10',   border:'border-zinc-500/30',   dot:'bg-zinc-500'   },
+  Pending:   { text:'text-amber-700',  bg:'bg-amber-50',  border:'border-amber-200',  dot:'bg-amber-500'  },
+  Confirmed: { text:'text-purple-700', bg:'bg-purple-50', border:'border-purple-200', dot:'bg-purple-500' },
+  Packed:    { text:'text-cyan-700',   bg:'bg-cyan-50',   border:'border-cyan-200',   dot:'bg-cyan-500'   },
+  Shipped:   { text:'text-blue-700',   bg:'bg-blue-50',   border:'border-blue-200',   dot:'bg-blue-500'   },
+  Delivered: { text:'text-green-700',  bg:'bg-green-50',  border:'border-green-200',  dot:'bg-green-500'  },
+  Returned:  { text:'text-red-700',    bg:'bg-red-50',    border:'border-red-200',    dot:'bg-red-500'    },
+  Cancelled: { text:'text-slate-600',  bg:'bg-slate-50',  border:'border-slate-200',  dot:'bg-slate-400'  },
+  RETURNED:  { text:'text-red-700',    bg:'bg-red-50',    border:'border-red-200',    dot:'bg-red-500'    },
+  RETURNED_PAID: { text:'text-amber-700', bg:'bg-amber-50', border:'border-amber-200', dot:'bg-amber-500' },
+  RETURNED_UNPAID: { text:'text-red-700', bg:'bg-red-50', border:'border-red-200', dot:'bg-red-500' },
+  CANCELLED: { text:'text-slate-600',  bg:'bg-slate-50',  border:'border-slate-200',  dot:'bg-slate-400'  },
 }
 
 /** Human-readable order status for badges and lists. */
@@ -35,25 +35,25 @@ export function orderStatusLabel(status: OrderStatus | string): string {
 }
 
 export const SEG_COLORS: Record<CustomerSegment, { text: string; bg: string; border: string }> = {
-  VIP:       { text:'text-gold-lt',   bg:'bg-gold/10',       border:'border-gold-dim/50'     },
-  REGULAR:   { text:'text-green-400', bg:'bg-green-400/10',  border:'border-green-400/30'    },
-  NEW:       { text:'text-blue-400',  bg:'bg-blue-400/10',   border:'border-blue-400/30'     },
-  RISKY:     { text:'text-amber-400', bg:'bg-amber-400/10',  border:'border-amber-400/30'    },
-  BLACKLIST: { text:'text-red-400',   bg:'bg-red-400/10',    border:'border-red-400/30'      },
-  COLD:      { text:'text-zinc-500',  bg:'bg-zinc-500/10',   border:'border-zinc-500/30'     },
+  VIP:       { text:'text-gold-dim',   bg:'bg-gold/10',       border:'border-gold/30'         },
+  REGULAR:   { text:'text-green-700',  bg:'bg-green-50',      border:'border-green-200'       },
+  NEW:       { text:'text-blue-700',   bg:'bg-blue-50',       border:'border-blue-200'        },
+  RISKY:     { text:'text-amber-700',  bg:'bg-amber-50',      border:'border-amber-200'       },
+  BLACKLIST: { text:'text-red-700',    bg:'bg-red-50',        border:'border-red-200'         },
+  COLD:      { text:'text-slate-600',  bg:'bg-slate-50',      border:'border-slate-200'       },
 }
 
 export const RISK_COLORS: Record<RiskLevel, { text: string; bg: string }> = {
-  LOW:    { text:'text-green-400', bg:'bg-green-400/10' },
-  MEDIUM: { text:'text-amber-400', bg:'bg-amber-400/10' },
-  HIGH:   { text:'text-red-400',   bg:'bg-red-400/10'   },
+  LOW:    { text:'text-green-700', bg:'bg-green-50' },
+  MEDIUM: { text:'text-amber-700', bg:'bg-amber-50' },
+  HIGH:   { text:'text-red-700',   bg:'bg-red-50'   },
 }
 
 export const PAYMENT_COLORS: Record<string, string> = {
-  bKash: 'text-pink-400 bg-pink-400/10 border-pink-400/30',
-  Nagad: 'text-orange-400 bg-orange-400/10 border-orange-400/30',
-  COD:   'text-amber-400 bg-amber-400/10 border-amber-400/30',
-  'Bank Transfer': 'text-blue-400 bg-blue-400/10 border-blue-400/30',
+  bKash: 'text-pink-700 bg-pink-50 border-pink-200',
+  Nagad: 'text-orange-700 bg-orange-50 border-orange-200',
+  COD:   'text-amber-700 bg-amber-50 border-amber-200',
+  'Bank Transfer': 'text-blue-700 bg-blue-50 border-blue-200',
 }
 
 export const COURIER_STEPS: Partial<Record<OrderStatus, Array<{ label: string; done: boolean; active: boolean }>>> = {

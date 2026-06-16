@@ -39,7 +39,7 @@ function WatermarkDisplay({ text, showCursor }: { text: string; showCursor: bool
   return (
     <>
       {PREFIX}
-      <span className="font-semibold tracking-[0.08em] text-gold/60 md:text-gold/65">
+      <span className="font-semibold tracking-[0.08em] text-[#E07A5F]/40 md:text-[#E07A5F]/45">
         {text.slice(marufStart)}
       </span>
       {showCursor ? <span className="animate-pulse">|</span> : null}
@@ -135,7 +135,7 @@ export function DeveloperWatermark() {
   const watermarkClass = cn(
     'developer-watermark pointer-events-none fixed right-3 select-none',
     'text-[10px] font-medium leading-none tracking-[0.14em] md:right-5 md:text-[11px]',
-    'text-zinc-400/55 md:text-zinc-400/60',
+    'text-slate-400/40 md:text-slate-400/45',
     'print:hidden',
     compactBottom
       ? 'bottom-[max(0.75rem,env(safe-area-inset-bottom))]'

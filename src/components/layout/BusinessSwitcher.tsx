@@ -15,11 +15,11 @@ export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
         type="button"
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'w-full flex items-center gap-2 rounded-xl border border-gold-dim/30 bg-gold/[0.06] px-2.5 py-2 transition-colors hover:bg-gold/10',
+          'w-full flex items-center gap-2 rounded-xl border border-slate-200 bg-[#FAF9F6] px-2.5 py-2 transition-colors hover:bg-[#E07A5F]/[0.06]',
           collapsed && 'justify-center px-2',
         )}
       >
-        <span className="w-7 h-7 rounded-lg bg-gold/15 border border-gold-dim/40 flex items-center justify-center shrink-0 text-[10px] font-black text-gold-lt">
+        <span className="w-7 h-7 rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/25 flex items-center justify-center shrink-0 text-[10px] font-black text-[#E07A5F]">
           {BUSINESS_LIST.find(b => b.id === businessId)?.brandInitial ?? 'A'}
         </span>
         <AnimatePresence>
@@ -30,10 +30,10 @@ export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
               exit={{ opacity: 0, width: 0 }}
               className="flex-1 min-w-0 text-left overflow-hidden"
             >
-              <p className="text-[10px] font-bold text-cream truncate leading-tight">
+              <p className="text-[10px] font-bold text-[#1a1a2e] truncate leading-tight">
                 {BUSINESS_LIST.find(b => b.id === businessId)?.name}
               </p>
-              <p className="text-[9px] text-zinc-500">Switch business ▾</p>
+              <p className="text-[9px] text-slate-400">Switch business ▾</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -60,15 +60,15 @@ export function BusinessSwitcher({ collapsed }: { collapsed?: boolean }) {
                   className={cn(
                     'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
                     active
-                      ? 'bg-gold/15 border border-gold-dim/40'
-                      : 'hover:bg-white/[0.04] border border-transparent',
+                      ? 'bg-[#E07A5F]/10 border border-[#E07A5F]/25'
+                      : 'hover:bg-slate-50 border border-transparent',
                   )}
                 >
-                  <span className="w-6 h-6 rounded-md bg-surface border border-border flex items-center justify-center text-[9px] font-bold text-gold-lt">
+                  <span className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center text-[9px] font-bold text-[#E07A5F]">
                     {b.brandInitial}
                   </span>
                   {!collapsed && (
-                    <span className="text-[11px] font-semibold text-cream truncate">{b.name}</span>
+                    <span className="text-[11px] font-semibold text-[#1a1a2e] truncate">{b.name}</span>
                   )}
                 </button>
               )
@@ -88,7 +88,7 @@ export function BusinessSwitcherCompact() {
     <select
       value={businessId}
       onChange={e => setBusinessId(e.target.value as BusinessId)}
-      className="bg-card border border-border rounded-lg px-2 py-1 text-[10px] font-bold text-gold-lt max-w-[140px] truncate"
+      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-[#E07A5F] max-w-[140px] truncate"
       aria-label="Select business"
     >
       {list.map(b => (

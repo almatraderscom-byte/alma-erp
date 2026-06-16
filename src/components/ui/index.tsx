@@ -36,8 +36,8 @@ export function Card({
   return (
     <div
       className={cn(
-        'min-w-0 rounded-2xl border bg-card',
-        gold ? 'border-gold-dim/50' : 'border-border',
+        'min-w-0 rounded-2xl border bg-card shadow-card',
+        gold ? 'border-gold/30' : 'border-black/[0.06]',
         interactive && 'card-interactive',
         className,
       )}
@@ -65,7 +65,7 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
   const valueColor = color ?? 'text-cream'
 
   return (
-    <Card className="kpi-card min-w-0 p-3.5 sm:p-4 md:p-5">
+    <Card className="kpi-card min-w-0 border-l-[3px] border-l-gold/40 p-3.5 sm:p-4 md:p-5">
       {loading ? (
         <><Skeleton className="mb-3 h-3 w-20" /><Skeleton className="mb-2 h-8 w-24" /><Skeleton className="h-3 w-28" /></>
       ) : (
@@ -105,9 +105,9 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
               </p>
             )}
           </div>
-          {sub && <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">{sub}</p>}
+          {sub && <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{sub}</p>}
           {delta !== undefined && (
-            <p className={cn('text-[11px] font-semibold', delta > 0 ? 'text-green-400' : 'text-red-400')}>
+            <p className={cn('text-[11px] font-semibold', delta > 0 ? 'text-emerald-600' : 'text-red-500')}>
               {delta > 0 ? '▲' : '▼'} {Math.abs(delta)}% vs last month
             </p>
           )}
@@ -159,7 +159,7 @@ export function PaymentTag({ method }: { method: string }) {
 export function Progress({ value, max = 100, color = 'bg-gold', className }: { value: number; max?: number; color?: string; className?: string }) {
   const pct = Math.min(100, Math.round(value / max * 100))
   return (
-    <div className={cn('h-1 bg-border rounded-full overflow-hidden', className)}>
+    <div className={cn('h-1 bg-slate-100 rounded-full overflow-hidden', className)}>
       <motion.div className={cn('h-full rounded-full', color)} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.6, ease: 'easeOut' }} />
     </div>
   )
@@ -191,14 +191,14 @@ export function PageHeader({
 
   return (
     <header
-      className="page-header sticky top-0 border-b border-border bg-surface/95 px-4 py-4 backdrop-blur md:px-8"
+      className="page-header sticky top-0 border-b border-black/[0.06] bg-white/95 px-4 py-4 backdrop-blur md:px-8"
       style={{ zIndex: PLATFORM_Z.stickyBanner }}
     >
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-4">
         <div className="min-w-0">
           <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>
           {subtitle != null && subtitle !== '' && (
-            <p className="mt-0.5 truncate text-[11px] text-zinc-500">{subtitle}</p>
+            <p className="mt-0.5 truncate text-[11px] text-slate-500">{subtitle}</p>
           )}
         </div>
         {hasActions && (
@@ -238,10 +238,10 @@ export function Button({
   const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
-    gold:      'bg-gold/10 border border-gold-dim/50 text-gold-lt hover:bg-gold/20',
-    secondary: 'bg-white/[0.04] border border-border text-cream hover:bg-white/[0.07] hover:border-gold-dim/30',
-    ghost:     'bg-transparent border border-border text-zinc-400 hover:bg-white/[0.04] hover:text-cream',
-    danger:    'bg-red-400/10 border border-red-400/30 text-red-400 hover:bg-red-400/20',
+    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20',
+    secondary: 'bg-slate-100 border border-black/[0.06] text-cream hover:bg-slate-200/80 hover:border-black/[0.1]',
+    ghost:     'bg-transparent border border-black/[0.06] text-slate-600 hover:bg-slate-100 hover:text-cream',
+    danger:    'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100',
   }
   return (
     <button
@@ -263,7 +263,7 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
     <input
       {...props}
       className={cn(
-        'w-full rounded-xl bg-card border border-border px-4 py-3 text-sm text-cream placeholder-zinc-600 transition-colors focus:outline-none focus:border-gold-dim/60 focus:ring-1 focus:ring-gold-dim/30',
+        'w-full rounded-xl bg-white border border-black/[0.08] px-4 py-3 text-sm text-cream placeholder-slate-400 transition-colors focus:outline-none focus:border-gold/50 focus:ring-1 focus:ring-gold/20',
         className,
       )}
     />
@@ -274,10 +274,10 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
 export function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <div className="relative">
-      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">⌕</span>
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">⌕</span>
       <input
         value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder ?? 'Search…'}
-        className="w-full bg-card border border-border rounded-xl pl-9 pr-4 py-2.5 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/60 transition-colors"
+        className="w-full bg-white border border-black/[0.08] rounded-xl pl-9 pr-4 py-2.5 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-gold/50 transition-colors"
       />
     </div>
   )
@@ -289,7 +289,7 @@ export function Select({ value, onChange, options, className }: {
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className={cn('bg-card border border-border rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold-dim/60 transition-colors cursor-pointer', className)}>
+      className={cn('bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50 transition-colors cursor-pointer', className)}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
@@ -298,8 +298,8 @@ export function Select({ value, onChange, options, className }: {
 // ── Stat Row ─────────────────────────────────────────────────────────────
 export function StatRow({ label, value, valueClass }: { label: string; value: React.ReactNode; valueClass?: string }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-      <span className="text-[11px] text-zinc-500">{label}</span>
+    <div className="flex items-center justify-between py-2 border-b border-black/[0.04] last:border-0">
+      <span className="text-[11px] text-slate-500">{label}</span>
       <span className={cn('text-[12px] font-bold', valueClass ?? 'text-cream')}>{value}</span>
     </div>
   )
@@ -310,7 +310,7 @@ export function Avatar({ name, size = 'sm', vip }: { name: string; size?: 'sm' |
   const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
   const sizes = { sm: 'w-8 h-8 text-[11px]', md: 'w-10 h-10 text-sm', lg: 'w-12 h-12 text-base' }
   return (
-    <div className={cn('rounded-full flex items-center justify-center font-black shrink-0', sizes[size], vip ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt' : 'bg-white/[0.06] border border-white/[0.08] text-zinc-400')}>
+    <div className={cn('rounded-full flex items-center justify-center font-black shrink-0', sizes[size], vip ? 'bg-gold/10 border border-gold/30 text-gold-dim' : 'bg-slate-100 border border-black/[0.06] text-slate-500')}>
       {initials}
     </div>
   )
@@ -319,7 +319,7 @@ export function Avatar({ name, size = 'sm', vip }: { name: string; size?: 'sm' |
 // ── Loading Spinner ───────────────────────────────────────────────────────
 export function Spinner({ size = 'sm' }: { size?: 'sm' | 'md' | 'lg' }) {
   const s = { sm: 'w-4 h-4 border-2', md: 'w-6 h-6 border-2', lg: 'w-8 h-8 border-2' }
-  return <div className={cn('rounded-full border-gold-dim border-t-gold animate-spin', s[size])} />
+  return <div className={cn('rounded-full border-gold/30 border-t-gold animate-spin', s[size])} />
 }
 
 // ── Empty State ───────────────────────────────────────────────────────────
@@ -336,9 +336,9 @@ export function Empty({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <span className="mb-4 text-5xl opacity-20">{icon}</span>
-      <p className="mb-1 text-sm font-semibold text-zinc-400">{title}</p>
-      {desc && <p className="text-[11px] text-zinc-600">{desc}</p>}
+      <span className="mb-4 text-5xl opacity-30">{icon}</span>
+      <p className="mb-1 text-sm font-semibold text-slate-600">{title}</p>
+      {desc && <p className="text-[11px] text-slate-400">{desc}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )
@@ -346,13 +346,13 @@ export function Empty({
 
 // ── CLV Bar ───────────────────────────────────────────────────────────────
 export function ClvBar({ score }: { score: number }) {
-  const color = score > 60 ? 'bg-gold' : score > 30 ? 'bg-amber-500' : 'bg-zinc-600'
+  const color = score > 60 ? 'bg-gold' : score > 30 ? 'bg-amber-500' : 'bg-slate-300'
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1 bg-border rounded-full overflow-hidden">
+      <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
         <motion.div className={cn('h-full rounded-full', color)} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.5 }} />
       </div>
-      <span className={cn('text-[11px] font-bold w-6 text-right tabular-nums', score > 60 ? 'text-gold' : 'text-zinc-500')}>{score}</span>
+      <span className={cn('text-[11px] font-bold w-6 text-right tabular-nums', score > 60 ? 'text-gold' : 'text-slate-500')}>{score}</span>
     </div>
   )
 }
