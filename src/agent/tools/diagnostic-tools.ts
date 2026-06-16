@@ -100,7 +100,37 @@ const read_source_file: AgentTool = {
   },
 }
 
-export const DIAGNOSTIC_TOOLS: AgentTool[] = [run_health_scan, diagnose_issue, read_source_file]
+const get_audit_summary: AgentTool = {
+  name: 'get_audit_summary',
+  description:
+    'Get a security/audit summary: tool usage stats, failure rates, sensitive tool calls, ' +
+    'pending actions, and AI cost for a given period. Use when owner asks "audit", "security check", ' +
+    '"কত খরচ হচ্ছে", "কোন tool বেশি ব্যবহার হচ্ছে", etc.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Lookback days (default 7, max 30)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const days = Math.min(30, Math.max(1, Number(input.days ?? 7)))
+      const since = new Date(Date.now() - days * 86_400_000).toISOString()
+      const base = APP_URL()
+      if (!base || !INT()) return { success: false, error: 'APP_URL or token not set' }
+
+      const res = await fetch(`${base}/api/assistant/internal/audit-summary?since=${encodeURIComponent(since)}`, {
+        headers: { Authorization: `Bearer ${INT()}` },
+      })
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
+      return { success: true, data: await res.json() }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const DIAGNOSTIC_TOOLS: AgentTool[] = [run_health_scan, diagnose_issue, read_source_file, get_audit_summary]
 
 export const DIAGNOSTIC_ROLE_PROMPT = `
 ## সেলফ-ডায়াগনস্টিক (শুধু নির্ণয়, fix নয়)

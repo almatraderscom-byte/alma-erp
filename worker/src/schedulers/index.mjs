@@ -63,6 +63,9 @@ const lazy = {
   weeklyReflection:   () => import('../intelligence/reflection.mjs'),
   dailyStrategist:    () => import('../intelligence/strategist.mjs'),
   todoReminder:       () => import('./todo-reminder.mjs'),
+  dailyFocus:         () => import('../intelligence/daily-focus.mjs'),
+  weeklyBusinessIntel: () => import('../reports/weekly-business-intel.mjs'),
+  securityAudit:       () => import('../security/audit-scan.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -95,6 +98,8 @@ export const SCHEDULER_REGISTRY = [
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'customer-intel',         cronUtc: '0 4 * * 6',    description: 'Weekly customer win-back + loyalty digest (Sat 10:00 Dhaka)' },
   { name: 'marketing-weekly',       cronUtc: '0 4 * * 6',    description: 'Weekly marketing report (Sat 10:00 Dhaka)' },
+  { name: 'weekly-business-intel', cronUtc: '0 3 * * 6',    description: 'Weekly business intelligence report (Sat 09:00 Dhaka)' },
+  { name: 'security-audit',       cronUtc: '30 16 * * 5',  description: 'Weekly security audit (Fri 22:30 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
   { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
@@ -119,6 +124,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
   { name: 'staff-approval-escalation', cronUtc: '* * * * *',  description: 'Escalate unapproved staff messages (every minute)' },
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
+  { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
   { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
 ]
@@ -380,9 +386,24 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
       await runWeeklyReflection()
       break
     }
+    case 'security-audit': {
+      const { runSecurityAudit } = await lazy.securityAudit()
+      dutyResult = await runSecurityAudit({ supabase, bot })
+      break
+    }
+    case 'weekly-business-intel': {
+      const { runWeeklyBusinessIntel } = await lazy.weeklyBusinessIntel()
+      dutyResult = await runWeeklyBusinessIntel({ supabase, bot })
+      break
+    }
     case 'daily-strategist': {
       const { runDailyStrategist } = await lazy.dailyStrategist()
       await runDailyStrategist()
+      break
+    }
+    case 'daily-focus': {
+      const { runDailyFocus } = await lazy.dailyFocus()
+      dutyResult = await runDailyFocus({ supabase, bot })
       break
     }
     case 'morning-todo-reminder': {
