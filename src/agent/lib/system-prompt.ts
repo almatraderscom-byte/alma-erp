@@ -6,6 +6,7 @@ import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
 import { COMPETITOR_ROLE_PROMPT } from '@/agent/tools/competitor-tools'
 import { ADVISOR_ROLE_PROMPT } from '@/agent/tools/advisor-tools'
 import { OWNER_TODO_ROLE_PROMPT } from '@/agent/tools/owner-todo-tools'
+import { WORK_TODO_PROMPT } from '@/agent/tools/work-todo-tools'
 import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
 import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
@@ -342,6 +343,7 @@ const LIFESTYLE_STATIC_PROMPT =
   + `\n${COMPETITOR_ROLE_PROMPT}\n`
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${WORK_TODO_PROMPT}\n`
   + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${TRYON_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
@@ -372,6 +374,7 @@ const TRADING_STATIC_PROMPT =
   + VERIFY_BEFORE_REPLY_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
+  + `\n${WORK_TODO_PROMPT}\n`
   + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${TRADING_READ_ROLE_PROMPT}\n`

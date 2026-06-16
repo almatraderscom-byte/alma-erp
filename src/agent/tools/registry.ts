@@ -34,6 +34,7 @@ import { PLAYBOOK_TOOLS } from './playbook-tools'
 import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
 import { QC_TOOLS } from './qc-tools'
+import { WORK_TODO_TOOLS } from './work-todo-tools'
 
 export interface ToolResult {
   success: boolean
@@ -381,6 +382,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...ASK_TOOLS,
   ...OWNER_TODO_TOOLS,
   ...PLAYBOOK_TOOLS,
+  ...WORK_TODO_TOOLS,
 ]
 
 export const TOOLS: AgentTool[] = [
@@ -415,6 +417,7 @@ export const TOOLS: AgentTool[] = [
   ...AD_CREATIVE_TOOLS,
   ...VIDEO_TOOLS,
   ...BRAND_TOOLS,
+  ...WORK_TODO_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.
