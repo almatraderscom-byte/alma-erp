@@ -99,6 +99,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Public design demo — fully public, no auth, no session needed.
+  if (pathname === '/agent-demo' || pathname.startsWith('/agent-demo/')) {
+    return NextResponse.next()
+  }
+
   if (!secret) {
     console.error('[middleware] NEXTAUTH_SECRET missing')
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
