@@ -15,7 +15,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurn } from '@/agent/tools/select-tools'
+import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -181,7 +181,7 @@ async function* runAlternateProviderTurn(
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
   const systemText = systemBlocksToText([...stable, ...volatile])
-  const selectedTools = selectToolsForTurn(lastUserText, { personalMode, businessId })
+  const selectedTools = await selectToolsForTurnAsync(lastUserText, { personalMode, businessId })
   const neutralTools = anthropicToolsToNeutral(selectedTools)
   const adapter = adapterFor(model.provider)
 

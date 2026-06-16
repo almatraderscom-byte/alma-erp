@@ -12,7 +12,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurn } from '@/agent/tools/select-tools'
+import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
@@ -350,8 +350,8 @@ export async function* runAgentTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  // Load pinned memories and retrieve relevant memories in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext] = await Promise.all([
+  // Load pinned memories, relevant memories, and tool selection in parallel
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, selectedTools] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -363,6 +363,7 @@ export async function* runAgentTurn(
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
     personalMode ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
+    selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
   ])
 
   type ToolRecord = {
@@ -397,7 +398,6 @@ export async function* runAgentTurn(
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
-  const selectedTools = selectToolsForTurn(lastUserText, { personalMode, businessId })
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {

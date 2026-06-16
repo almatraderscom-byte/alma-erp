@@ -2,30 +2,38 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import { TOOL_GROUPS, type ToolGroupName } from '@/agent/tools/tool-groups'
 import type { AgentTool } from '@/agent/tools/registry'
+import { semanticGroups } from '@/agent/tools/semantic-router'
 
 const AMBIGUOUS_FALLBACK: ToolGroupName[] = ['erp', 'staff']
 
-/** Casual / short owner messages — avoid loading 60+ tools. */
 const SHORT_GREETING_RE =
   /^(hei|hi|hello|hey|hii|ok|okay|thanks|thank you|dhonnobad|ধন্যবাদ|kemon|ki khobor|কেমন|কি খবর|assalam|salam|আসসালাম|salamu|জি|ha|হ্যা|na|না)[\s!.?,]*$/i
 
-export function selectToolGroups(
+export type ToolGroupResult = {
+  groups: ToolGroupName[]
+  confident: boolean
+}
+
+/**
+ * Pure keyword-based tool-group selection (synchronous).
+ * Returns groups and a confidence signal.
+ */
+export function selectToolGroupsSync(
   text: string,
   opts: { personalMode: boolean; businessId: AgentBusinessId },
-): ToolGroupName[] {
-  if (opts.personalMode) return ['personal']
-
-  if (opts.businessId === 'ALMA_TRADING') return ['base', 'trading']
+): ToolGroupResult {
+  if (opts.personalMode) return { groups: ['personal'], confident: true }
+  if (opts.businessId === 'ALMA_TRADING') return { groups: ['base', 'trading'], confident: true }
 
   const g = new Set<ToolGroupName>(['base'])
   const t = text.trim()
 
   if (t.length < 24 && SHORT_GREETING_RE.test(t)) {
-    return ['base', 'erp']
+    return { groups: ['base', 'erp'], confident: true }
   }
 
   if (t.length < 12 && g.size === 1) {
-    return ['base', 'erp']
+    return { groups: ['base', 'erp'], confident: true }
   }
 
   if (/staff|হাজিরা|টাস্ক|বেতন|fine|eyafi|mustahid|dispatch|approve|পাঠাও/i.test(t)) {
@@ -45,7 +53,25 @@ export function selectToolGroups(
     for (const x of AMBIGUOUS_FALLBACK) g.add(x)
   }
 
-  return [...g]
+  const groups = [...g]
+
+  // Confident when keywords matched something beyond the base+ambiguous fallback,
+  // or the message is trivially short/greeting
+  const isAmbiguousFallback =
+    g.size <= 3 &&
+    groups.every(gr => gr === 'base' || AMBIGUOUS_FALLBACK.includes(gr))
+  const isNonTrivial = t.length >= 24 && !SHORT_GREETING_RE.test(t)
+  const confident = !(isAmbiguousFallback && isNonTrivial)
+
+  return { groups, confident }
+}
+
+/** Backward-compatible wrapper — returns groups only. */
+export function selectToolGroups(
+  text: string,
+  opts: { personalMode: boolean; businessId: AgentBusinessId },
+): ToolGroupName[] {
+  return selectToolGroupsSync(text, opts).groups
 }
 
 export function dedupeToolsByName(tools: AgentTool[]): AgentTool[] {
@@ -82,11 +108,55 @@ export function applyToolCacheControl(tools: Anthropic.Messages.Tool[]): Anthrop
   )
 }
 
+/** Synchronous tool selection (keyword-only). Used by tests and fast paths. */
+export function selectToolsForTurnSync(
+  text: string,
+  opts: { personalMode: boolean; businessId: AgentBusinessId },
+): Anthropic.Messages.Tool[] {
+  const { groups } = selectToolGroupsSync(text, opts)
+  const tools = assembleSelectedTools(groups)
+  return applyToolCacheControl(toolsToDefinitions(tools))
+}
+
+/** Keep old sync name working for existing call sites during migration. */
 export function selectToolsForTurn(
   text: string,
   opts: { personalMode: boolean; businessId: AgentBusinessId },
 ): Anthropic.Messages.Tool[] {
-  const groups = selectToolGroups(text, opts)
-  const tools = assembleSelectedTools(groups)
+  return selectToolsForTurnSync(text, opts)
+}
+
+const WIDE_FALLBACK: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
+
+/**
+ * Async hybrid tool selection: keyword fast-path when confident,
+ * semantic embedding fallback when ambiguous.
+ */
+export async function selectToolsForTurnAsync(
+  text: string,
+  opts: { personalMode: boolean; businessId: AgentBusinessId },
+): Promise<Anthropic.Messages.Tool[]> {
+  const { groups, confident } = selectToolGroupsSync(text, opts)
+
+  if (confident) {
+    const tools = assembleSelectedTools(groups)
+    return applyToolCacheControl(toolsToDefinitions(tools))
+  }
+
+  // Low confidence — try semantic fallback
+  try {
+    const semGroups = await semanticGroups(text)
+    if (semGroups.length > 0) {
+      const merged = new Set<ToolGroupName>([...groups, ...semGroups])
+      const tools = assembleSelectedTools([...merged])
+      return applyToolCacheControl(toolsToDefinitions(tools))
+    }
+  } catch {
+    // Embedding unavailable — widen fallback
+  }
+
+  // Widen to safe defaults so agent isn't capability-starved
+  const widened = new Set<ToolGroupName>([...groups, ...WIDE_FALLBACK])
+  const tools = assembleSelectedTools([...widened])
   return applyToolCacheControl(toolsToDefinitions(tools))
 }

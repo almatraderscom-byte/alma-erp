@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { selectToolGroups, assembleSelectedTools } from '@/agent/tools/select-tools'
+import { selectToolGroups, selectToolGroupsSync, assembleSelectedTools } from '@/agent/tools/select-tools'
 import type { ToolGroupName } from '@/agent/tools/tool-groups'
 
 const ALMA_OPTS = { personalMode: false, businessId: 'ALMA_LIFESTYLE' as const }
@@ -102,5 +102,65 @@ describe('Tool Selection — Golden Table', () => {
   it('ambiguous short message gets fallback groups', () => {
     const groups = selectToolGroups('hmm ok', ALMA_OPTS)
     expect(groups).toContain('erp')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Confidence signal tests — proves semantic fallback triggers for off-keyword
+// ═══════════════════════════════════════════════════════════════════════════
+describe('Confidence signal (selectToolGroupsSync)', () => {
+  it('confident when keyword matches', () => {
+    const { confident } = selectToolGroupsSync('ajker sales koto', ALMA_OPTS)
+    expect(confident).toBe(true)
+  })
+
+  it('confident for short greetings', () => {
+    const { confident } = selectToolGroupsSync('hi', ALMA_OPTS)
+    expect(confident).toBe(true)
+  })
+
+  it('confident for personal mode', () => {
+    const { confident } = selectToolGroupsSync('remind me to call doctor', { personalMode: true, businessId: 'ALMA_LIFESTYLE' as const })
+    expect(confident).toBe(true)
+  })
+
+  it('NOT confident: "porer week e ki plan kora jay sobkichu miliye dekhte hobe"', () => {
+    const { confident } = selectToolGroupsSync(
+      'porer week e ki plan kora jay sobkichu miliye dekhte hobe',
+      ALMA_OPTS,
+    )
+    expect(confident).toBe(false)
+  })
+
+  it('NOT confident: "manush jon ke bolo giye jisnispotro thik kore rakhte"', () => {
+    const { confident } = selectToolGroupsSync(
+      'manush jon ke bolo office e giye jisnispotro thik kore rakhte',
+      ALMA_OPTS,
+    )
+    expect(confident).toBe(false)
+  })
+
+  it('NOT confident: "kichu notun idea dao jeta kore next level e niye jete pari"', () => {
+    const { confident } = selectToolGroupsSync(
+      'kichu notun idea dao jeta kore next level e niye jete pari',
+      ALMA_OPTS,
+    )
+    expect(confident).toBe(false)
+  })
+
+  it('NOT confident: "gotokal theke shipment er kono update aseni kothay attke ache dekhao"', () => {
+    const { confident } = selectToolGroupsSync(
+      'gotokal theke shipment er kono update aseni kothay attke ache dekhao',
+      ALMA_OPTS,
+    )
+    expect(confident).toBe(false)
+  })
+
+  it('NOT confident: "ei byapar ta nijer theke check kore amake janaow result ta ki"', () => {
+    const { confident } = selectToolGroupsSync(
+      'ei byapar ta nijer theke check kore amake janaow result ta ki',
+      ALMA_OPTS,
+    )
+    expect(confident).toBe(false)
   })
 })
