@@ -2,23 +2,23 @@
  * Daily Focus Planner — AI-powered daily planning for the owner.
  * Runs at 07:45 Dhaka (just after morning briefing at 07:30).
  *
- * Gathers: open todos, pending approvals, scheduled reminders, staff tasks,
- *          yesterday's unresolved items, calendar hints.
- * Returns: a structured, prioritized day plan sent to owner via Telegram.
+ * Gathers: open todos, pending approvals, scheduled reminders.
+ * Sends structured data to Vercel API which generates AI-powered plan.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
-import { logCost } from '../cost-log.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
 
-async function api(path) {
+async function api(path, method = 'GET', body = null) {
   try {
-    const res = await fetch(`${APP_URL()}${path}`, {
-      headers: { Authorization: `Bearer ${INT()}` },
-    })
+    const opts = {
+      method,
+      headers: { Authorization: `Bearer ${INT()}`, 'Content-Type': 'application/json' },
+    }
+    if (body) opts.body = JSON.stringify(body)
+    const res = await fetch(`${APP_URL()}${path}`, opts)
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -55,7 +55,7 @@ export async function runDailyFocus(context) {
   const salesInfo = briefing?.sales ? `Yesterday: ৳${briefing.sales.yesterdayTotal}, Orders: ${briefing.sales.yesterdayOrders}` : ''
   const pendingOrders = briefing?.pendingOrders?.count ?? 0
 
-  const contextText = [
+  const contextLines = [
     `Today: ${today} (${dayName})`,
     `Open owner todos (${todos.length}):`,
     ...todos.map(t => `  - [${t.priority}] ${t.title}${t.due_hint ? ` (hint: ${t.due_hint})` : ''}`),
@@ -64,36 +64,48 @@ export async function runDailyFocus(context) {
     `Pending approvals: ${approvals.length}`,
     ...approvals.map(a => `  - ${a.summary?.slice(0, 60)}`),
     salesInfo ? `Business: ${salesInfo}. Pending orders: ${pendingOrders}` : '',
-  ].filter(Boolean).join('\n')
+  ].filter(Boolean)
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 600,
-    messages: [{
-      role: 'user',
-      content: `You are a personal executive assistant for a business owner in Bangladesh. Based on the following context, create a focused daily plan in Bangla. Keep it concise (max 8 items), prioritize by urgency, and group into Morning/Afternoon/Evening. Use bullet points.
-
-CONTEXT:
-${contextText}
-
-Reply ONLY with the daily plan in Bangla (no English, no preamble). Format: emoji + time block + items. End with one motivational line.`,
-    }],
+  const planResult = await api('/api/assistant/internal/generate-focus-plan', 'POST', {
+    context: contextLines.join('\n'),
+    today,
+    dayName,
   })
 
-  const plan = response.content[0]?.type === 'text' ? response.content[0].text : ''
-  if (!plan) return { dutyStatus: 'failed', dutyDetail: 'AI returned empty plan' }
+  if (!planResult?.plan) {
+    const fallbackPlan = buildFallbackPlan(todos, reminders, approvals, dayName)
+    await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, `📋 *আজকের ফোকাস প্ল্যান*\n\n${fallbackPlan}`)
+    return { dutyStatus: 'done', dutyDetail: `Fallback plan sent (no AI)` }
+  }
 
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: { inputTokens: response.usage?.input_tokens, outputTokens: response.usage?.output_tokens },
-    costUsd: ((response.usage?.input_tokens ?? 0) * 3 + (response.usage?.output_tokens ?? 0) * 15) / 1_000_000,
-    dedupKey: `daily-focus:${today}`,
-  })
-
-  const msg = `📋 *আজকের ফোকাস প্ল্যান*\n\n${plan}`
+  const msg = `📋 *আজকের ফোকাস প্ল্যান*\n\n${planResult.plan}`
   await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, msg)
 
   return { dutyStatus: 'done', dutyDetail: `Plan sent (${todos.length} todos, ${reminders.length} reminders)` }
+}
+
+function buildFallbackPlan(todos, reminders, approvals, dayName) {
+  const L = [`🗓️ ${dayName}`, '']
+  if (approvals.length) {
+    L.push('🔴 *জরুরি (Approval):*')
+    approvals.forEach(a => L.push(`  • ${a.summary?.slice(0, 50)}`))
+    L.push('')
+  }
+  const high = todos.filter(t => t.priority === 'high')
+  if (high.length) {
+    L.push('⚡ *গুরুত্বপূর্ণ:*')
+    high.forEach(t => L.push(`  • ${t.title}`))
+    L.push('')
+  }
+  const normal = todos.filter(t => t.priority !== 'high').slice(0, 5)
+  if (normal.length) {
+    L.push('📌 *টুডু:*')
+    normal.forEach(t => L.push(`  • ${t.title}`))
+  }
+  if (reminders.length) {
+    L.push('')
+    L.push('⏰ *রিমাইন্ডার:*')
+    reminders.slice(0, 3).forEach(r => L.push(`  • ${r.title}`))
+  }
+  return L.join('\n')
 }

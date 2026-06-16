@@ -11,9 +11,7 @@
  *  6. AI cost tracking summary
  *  7. Staff productivity score comparison
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
-import { logCost } from '../cost-log.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -108,32 +106,22 @@ export async function runWeeklyBusinessIntel(context) {
   if (twCancelled > twOrders * 0.25) anomalies.push(`High cancellation rate: ${((twCancelled/twOrders)*100).toFixed(0)}%`)
   if (twReturned > twOrders * 0.15) anomalies.push(`High return rate: ${((twReturned/twOrders)*100).toFixed(0)}%`)
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 800,
-    messages: [{
-      role: 'user',
-      content: `You are a business intelligence analyst for a Bangladeshi e-commerce clothing brand (Alma Lifestyle). Generate a weekly business report in Bangla. Be concise, use bullet points and emojis. Highlight anomalies if any.
+  let report = ''
+  try {
+    const aiRes = await fetch(`${APP_URL()}/api/assistant/internal/generate-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT()}` },
+      body: JSON.stringify({ type: 'weekly-bi', data: dataContext, anomalies }),
+    })
+    if (aiRes.ok) {
+      const aiData = await aiRes.json()
+      report = aiData.report ?? ''
+    }
+  } catch {}
 
-DATA:
-${dataContext}
-${anomalies.length ? `\nANOMALIES: ${anomalies.join(', ')}` : ''}
-
-Format: Sections with emoji headers. Key metrics first, then insights. End with 2-3 action items for next week. All in Bangla.`,
-    }],
-  })
-
-  const report = response.content[0]?.type === 'text' ? response.content[0].text : ''
-  if (!report) return { dutyStatus: 'failed', dutyDetail: 'AI returned empty report' }
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: { inputTokens: response.usage?.input_tokens, outputTokens: response.usage?.output_tokens },
-    costUsd: ((response.usage?.input_tokens ?? 0) * 3 + (response.usage?.output_tokens ?? 0) * 15) / 1_000_000,
-    dedupKey: `weekly-biz-intel:${thisWeekEnd}`,
-  })
+  if (!report) {
+    report = buildFallbackReport({ twRevenue, lwRevenue, revenueChange, twOrders, twDelivered, twCancelled, twReturned, topProducts, uniqueCustomers, newCustomers, totalAiCost, anomalies })
+  }
 
   const msg = `📊 *সাপ্তাহিক বিজনেস ইন্টেলিজেন্স*\n${thisWeekStart} → ${thisWeekEnd}\n\n${report}`
   await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, msg)
@@ -142,4 +130,28 @@ Format: Sections with emoji headers. Key metrics first, then insights. End with 
     dutyStatus: 'done',
     dutyDetail: `Report sent: ৳${twRevenue} revenue, ${twOrders} orders, ${revenueChange}% change`,
   }
+}
+
+function buildFallbackReport({ twRevenue, lwRevenue, revenueChange, twOrders, twDelivered, twCancelled, twReturned, topProducts, uniqueCustomers, newCustomers, totalAiCost, anomalies }) {
+  const L = []
+  const trend = Number(revenueChange) >= 0 ? '📈' : '📉'
+  L.push(`${trend} *রাজস্ব:* ৳${twRevenue} (${revenueChange}% গত সপ্তাহের তুলনায়)`)
+  L.push(`   গত সপ্তাহ: ৳${lwRevenue}`)
+  L.push('')
+  L.push(`📦 *অর্ডার:* ${twOrders}টি`)
+  L.push(`   ✅ ডেলিভারি: ${twDelivered} | ❌ বাতিল: ${twCancelled} | ↩️ রিটার্ন: ${twReturned}`)
+  L.push('')
+  if (topProducts.length) {
+    L.push(`🏆 *টপ প্রোডাক্ট:*`)
+    topProducts.forEach(p => L.push(`   • ${p}`))
+    L.push('')
+  }
+  L.push(`👥 *কাস্টমার:* ${uniqueCustomers.size}জন (${newCustomers} নতুন)`)
+  L.push(`💰 *AI খরচ:* $${totalAiCost.toFixed(2)}`)
+  if (anomalies.length) {
+    L.push('')
+    L.push('⚠️ *অসামঞ্জস্য:*')
+    anomalies.forEach(a => L.push(`   🔴 ${a}`))
+  }
+  return L.join('\n')
 }
