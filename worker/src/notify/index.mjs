@@ -98,7 +98,10 @@ export async function notify({
     try {
       const { sendVoiceMessage } = await import('../telegram/voice.mjs')
       const speech = voiceMessage ?? `${title}. ${message}`
-      await sendVoiceMessage(_telegramBot, _ownerChatId, speech)
+      await sendVoiceMessage(_telegramBot, _ownerChatId, speech, {
+        isSalah: category === 'salah',
+        useOwnerVoice: category !== 'salah',
+      })
       statuses.telegram_voice = 'sent'
     } catch (err) {
       statuses.telegram_voice = `error: ${err.message}`

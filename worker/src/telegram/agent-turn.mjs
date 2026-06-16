@@ -6,6 +6,7 @@ import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
 import { replyMarkdownSafe } from './markdown-safe.mjs'
 import { sendVoiceMessage } from './voice.mjs'
+import { isElevenLabsAvailable } from '../tts-elevenlabs.mjs'
 import { ownerState, releaseOwnerTurn } from './owner-state.mjs'
 import { getDispatcherBot } from './dispatcher.mjs'
 
@@ -179,9 +180,9 @@ export async function deliverAgentTurn(jobData) {
       )
     }
 
-    if (process.env.GOOGLE_TTS_CREDENTIALS && wantsVoice) {
+    if (wantsVoice && (process.env.GOOGLE_TTS_CREDENTIALS || isElevenLabsAvailable())) {
       try {
-        await sendVoiceMessage(bot.telegram, chatId, replyText)
+        await sendVoiceMessage(bot.telegram, chatId, replyText, { useOwnerVoice: true })
       } catch (ttsErr) {
         console.warn('[telegram] TTS voice reply failed:', ttsErr.message)
       }

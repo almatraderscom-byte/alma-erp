@@ -52,7 +52,7 @@ export async function sendStaffAnnouncement({ bot, payload }) {
 
       if (voice) {
         try {
-          await sendVoiceMessage(bot, chatId, prepareStaffOutboundMessage(message))
+          await sendVoiceMessage(bot, chatId, prepareStaffOutboundMessage(message), { elevenLabsOnly: true })
         } catch (ttsErr) {
           console.warn(`[announcement] TTS failed for ${name}:`, ttsErr.message)
         }

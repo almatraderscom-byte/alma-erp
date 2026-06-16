@@ -60,12 +60,17 @@ function telegramApi(botOrApi) {
  * @param {import('telegraf').Telegraf|import('telegraf').Telegram} botOrApi
  * @param {string|number} chatId
  * @param {string} text
- * @param {{ caption?: string, useOwnerVoice?: boolean, isSalah?: boolean }} [options]
+ * @param {{ caption?: string, useOwnerVoice?: boolean, isSalah?: boolean, elevenLabsOnly?: boolean }} [options]
  */
 export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
   const api = telegramApi(botOrApi)
-  const useOwner = options.isSalah ? false : (options.useOwnerVoice ?? isElevenLabsAvailable())
-  const mp3Buffer = await smartTts(text, { useOwnerVoice: useOwner })
+  const useOwner = options.isSalah
+    ? false
+    : (options.useOwnerVoice ?? options.elevenLabsOnly ?? isElevenLabsAvailable())
+  const mp3Buffer = await smartTts(text, {
+    useOwnerVoice: useOwner,
+    elevenLabsOnly: options.elevenLabsOnly,
+  })
   const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
   await api.sendVoice(chatId, { source: mp3Buffer }, extra)
 }

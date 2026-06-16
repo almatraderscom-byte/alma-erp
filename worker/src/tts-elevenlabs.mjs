@@ -91,6 +91,13 @@ export function isElevenLabsAvailable() {
  * @returns {Promise<Buffer>}
  */
 export async function smartTts(text, opts = {}) {
+  if (opts.elevenLabsOnly) {
+    if (!isElevenLabsAvailable()) {
+      throw new Error('ElevenLabs required but ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID not set')
+    }
+    return synthesizeElevenLabs(text)
+  }
+
   if (opts.useOwnerVoice && isElevenLabsAvailable()) {
     return synthesizeElevenLabs(text)
   }
