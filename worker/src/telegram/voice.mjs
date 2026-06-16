@@ -7,6 +7,7 @@
  */
 
 import { synthesizeSpeech } from '../tts.mjs'
+import { smartTts, isElevenLabsAvailable } from '../tts-elevenlabs.mjs'
 
 const APP_URL   = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -53,15 +54,18 @@ function telegramApi(botOrApi) {
 
 /**
  * Synthesizes text to speech and sends it as a Telegram voice note.
+ * Uses ElevenLabs (owner's cloned voice) for staff messages when available.
+ * Falls back to Google TTS for Salah or when ElevenLabs is not configured.
+ *
  * @param {import('telegraf').Telegraf|import('telegraf').Telegram} botOrApi
  * @param {string|number} chatId
  * @param {string} text
- * @param {{ caption?: string }} [options]
+ * @param {{ caption?: string, useOwnerVoice?: boolean, isSalah?: boolean }} [options]
  */
 export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
   const api = telegramApi(botOrApi)
-  const mp3Buffer = await synthesizeSpeech(text, 600)
-  // No caption by default — the voice already speaks the content; a caption just duplicates it.
+  const useOwner = options.isSalah ? false : (options.useOwnerVoice ?? isElevenLabsAvailable())
+  const mp3Buffer = await smartTts(text, { useOwnerVoice: useOwner })
   const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
   await api.sendVoice(chatId, { source: mp3Buffer }, extra)
 }
