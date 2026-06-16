@@ -93,10 +93,33 @@ export function dutiesForToday(date = new Date()) {
  *  - scheduledAfterMin: normal window start — don't catch up before this.
  *  - catchUpUntilMin: too late to run safely — mark missed + alert.
  *  - critical: owner alert on miss.
+ *
+ * All daily duties included — if worker restarts mid-day, nothing is left "pending" forever.
  */
 export const DUTY_CATCHUP = {
-  morning_dispatch: { scheduledAfterMin: 9 * 60, catchUpUntilMin: 14 * 60, critical: true },
   owner_briefing: { scheduledAfterMin: 7 * 60 + 30, catchUpUntilMin: 12 * 60, critical: true },
-  evening_proposal: { scheduledAfterMin: 21 * 60 + 5, catchUpUntilMin: 23 * 60 + 30, critical: true },
+  daily_strategist: { scheduledAfterMin: 8 * 60, catchUpUntilMin: 12 * 60, critical: false },
+  cost_reconcile: { scheduledAfterMin: 8 * 60 + 15, catchUpUntilMin: 12 * 60, critical: false },
+  daily_cashflow: { scheduledAfterMin: 8 * 60 + 30, catchUpUntilMin: 13 * 60, critical: false },
+  morning_dispatch: { scheduledAfterMin: 9 * 60, catchUpUntilMin: 14 * 60, critical: true },
+  ads_monitor: { scheduledAfterMin: 9 * 60 + 30, catchUpUntilMin: 14 * 60, critical: false },
+  ads_optimizer: { scheduledAfterMin: 9 * 60 + 45, catchUpUntilMin: 14 * 60, critical: false },
+  token_health: { scheduledAfterMin: 9 * 60 + 30, catchUpUntilMin: 14 * 60, critical: false },
+  content_engine_1: { scheduledAfterMin: 10 * 60, catchUpUntilMin: 14 * 60, critical: false },
+  subscription_renewal: { scheduledAfterMin: 10 * 60, catchUpUntilMin: 14 * 60, critical: false },
+  approval_tracker: { scheduledAfterMin: 10 * 60, catchUpUntilMin: 15 * 60, critical: false },
+  staff_presence: { scheduledAfterMin: 11 * 60, catchUpUntilMin: 15 * 60, critical: false },
+  outcome_measure: { scheduledAfterMin: 11 * 60, catchUpUntilMin: 15 * 60, critical: false },
+  payment_reminders: { scheduledAfterMin: 12 * 60, catchUpUntilMin: 16 * 60, critical: false },
+  order_watch: { scheduledAfterMin: 12 * 60, catchUpUntilMin: 18 * 60, critical: false },
+  staff_morale: { scheduledAfterMin: 13 * 60, catchUpUntilMin: 17 * 60, critical: false },
+  midday_checkin: { scheduledAfterMin: 13 * 60 + 30, catchUpUntilMin: 17 * 60, critical: false },
+  personal_midday: { scheduledAfterMin: 14 * 60, catchUpUntilMin: 18 * 60, critical: false },
+  content_engine_2: { scheduledAfterMin: 15 * 60, catchUpUntilMin: 19 * 60, critical: false },
+  content_engine_3: { scheduledAfterMin: 19 * 60, catchUpUntilMin: 22 * 60, critical: false },
   night_report: { scheduledAfterMin: 21 * 60, catchUpUntilMin: 23 * 60 + 59, critical: false },
+  personal_checkin: { scheduledAfterMin: 21 * 60, catchUpUntilMin: 23 * 60 + 59, critical: false },
+  evening_proposal: { scheduledAfterMin: 21 * 60 + 5, catchUpUntilMin: 23 * 60 + 30, critical: true },
+  approval_chase: { scheduledAfterMin: 22 * 60 + 30, catchUpUntilMin: 23 * 60 + 59, critical: false },
+  daily_summary: { scheduledAfterMin: 23 * 60 + 30, catchUpUntilMin: 23 * 60 + 59, critical: false },
 }

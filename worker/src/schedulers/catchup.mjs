@@ -2,10 +2,31 @@ import { DAILY_DUTIES, DUTY_CATCHUP } from './duties.mjs'
 import { dhakaDateYmd } from './duty-log.mjs'
 
 const JOB_FOR_DUTY = {
-  morning_dispatch: 'morning-staff-reminder',
   owner_briefing: 'owner-briefing',
-  evening_proposal: 'evening-proposal',
+  daily_strategist: 'daily-strategist',
+  cost_reconcile: 'cost-reconcile',
+  daily_cashflow: 'daily-cashflow',
+  morning_dispatch: 'morning-staff-reminder',
+  ads_monitor: 'ads-monitor',
+  ads_optimizer: 'ads-optimizer',
+  token_health: 'token-health',
+  content_engine_1: 'content-engine-1',
+  subscription_renewal: 'subscription-renewal',
+  approval_tracker: 'approval-tracker',
+  staff_presence: 'staff-presence',
+  outcome_measure: 'outcome-measure',
+  payment_reminders: 'payment-reminders',
+  order_watch: 'order-watch',
+  staff_morale: 'staff-morale',
+  midday_checkin: 'midday-checkin',
+  personal_midday: 'personal-midday',
+  content_engine_2: 'content-engine-2',
+  content_engine_3: 'content-engine-3',
   night_report: 'night-report',
+  personal_checkin: 'personal-checkin',
+  evening_proposal: 'evening-proposal',
+  approval_chase: 'approval-escalation',
+  daily_summary: 'daily-summary',
 }
 
 function nowMinDhaka() {
