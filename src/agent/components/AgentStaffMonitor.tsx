@@ -18,6 +18,7 @@ import {
   MonitorTrustEngine,
   MonitorBrainCard,
   MonitorQuickActions,
+  MonitorAgentsPanel,
 } from './monitor'
 import { MonitorSalahTimeline } from './monitor/MonitorDutyTimeline'
 import type { TrustRule } from './monitor/MonitorTrustEngine'
@@ -103,7 +104,7 @@ function SectionCard({ title, icon, badge, children, className, accent, actions 
   )
 }
 
-type MonitorTab = 'overview' | 'staff' | 'feed' | 'system'
+type MonitorTab = 'overview' | 'agents' | 'staff' | 'feed' | 'system'
 
 function MonitorTabs({
   tab, setTab, alertCount, feedCount, staffCount,
@@ -116,12 +117,13 @@ function MonitorTabs({
 }) {
   const tabs: Array<{ id: MonitorTab; label: string; icon: string; badge?: number }> = [
     { id: 'overview', label: 'Overview', icon: '📊', badge: alertCount > 0 ? alertCount : undefined },
+    { id: 'agents', label: 'Agents', icon: '🤖' },
     { id: 'staff', label: 'Staff', icon: '👥', badge: staffCount > 0 ? staffCount : undefined },
     { id: 'feed', label: 'Feed', icon: '📨', badge: feedCount > 0 ? feedCount : undefined },
     { id: 'system', label: 'System', icon: '⚙️' },
   ]
   return (
-    <div className="sticky top-0 z-30 -mx-3 mb-3 flex gap-1 overflow-x-auto border-b border-black/[0.06] bg-white/95 px-3 py-2 backdrop-blur-md sm:-mx-4 sm:px-4">
+    <div className="flex gap-1 overflow-x-auto">
       {tabs.map(t => {
         const active = tab === t.id
         return (
@@ -572,6 +574,18 @@ export default function AgentStaffMonitor() {
                 )}
                 <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
               </>
+            )}
+
+            {/* ── AGENTS tab: model-control dial + per-agent daily activity ── */}
+            {monitorTab === 'agents' && isLive && (
+              <motion.div variants={fadeIn}>
+                <MonitorAgentsPanel onToast={showToast} />
+              </motion.div>
+            )}
+            {monitorTab === 'agents' && !isLive && (
+              <div className="rounded-2xl border border-black/[0.06] bg-white px-4 py-8 text-center text-[11px] text-[#94a3b8]">
+                Agent কন্ট্রোল শুধু লাইভ ভিউতে — &ldquo;Today&rdquo; চাপুন
+              </div>
             )}
 
             {/* ── STAFF tab: full staff cards, capabilities, geo + productivity ── */}
