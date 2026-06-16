@@ -1,6 +1,6 @@
 /**
  * Day Shift runner — autonomous office session in owner agent chat.
- * Calls Vercel internal API — cycle start at 12:05 Dhaka, tick every 12 min (24h office).
+ * Calls Vercel internal API — cycle start at 00:05 Dhaka (midnight), tick every 12 min (24h).
  */
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''

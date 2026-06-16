@@ -102,13 +102,17 @@ export async function GET(req: NextRequest) {
 
   // What each specialist sub-agent did today (delegations from the head agent).
   const specialistRows = await prisma.$queryRaw<Array<{
+    model_id: string
+    model_label: string | null
     role: string
     calls: bigint
     total: string
     input_tokens: string
     output_tokens: string
   }>>(
-    Prisma.sql`SELECT units->>'subagent' AS role,
+    Prisma.sql`SELECT COALESCE(units->>'model', 'claude-sonnet-4-6') AS model_id,
+                      MAX(units->>'model_label') AS model_label,
+                      units->>'subagent' AS role,
                       COUNT(*) AS calls,
                       COALESCE(SUM(cost_usd), 0)::text AS total,
                       COALESCE(SUM((units->>'input_tokens')::bigint), 0)::text AS input_tokens,
@@ -116,9 +120,11 @@ export async function GET(req: NextRequest) {
                FROM agent_cost_events
                WHERE occurred_at >= ${start} AND occurred_at < ${end}
                  AND units->>'subagent' IS NOT NULL
-               GROUP BY units->>'subagent'
+               GROUP BY units->>'subagent', COALESCE(units->>'model', 'claude-sonnet-4-6')
                ORDER BY SUM(cost_usd) DESC`,
   ).catch(() => [] as Array<{
+    model_id: string
+    model_label: string | null
     role: string
     calls: bigint
     total: string
@@ -126,19 +132,26 @@ export async function GET(req: NextRequest) {
     output_tokens: string
   }>)
 
-  const specialistsToday = specialistRows.map((r) => ({
-    role: r.role,
-    label: specialistLabel(r.role),
-    displayName: specialistDisplayName(r.role),
-    icon: specialistIcon(r.role),
-    calls: Number(r.calls) || 0,
-    costUsd: parseFloat(r.total) || 0,
-    inputTokens: parseInt(r.input_tokens, 10) || 0,
-    outputTokens: parseInt(r.output_tokens, 10) || 0,
-  }))
+  const specialistsToday = specialistRows.map((r) => {
+    const modelLabel = r.model_label || getModel(r.model_id).label
+    return {
+      role: r.role,
+      modelId: r.model_id,
+      modelLabel,
+      label: specialistLabel(r.role),
+      displayName: `${modelLabel} · ${specialistDisplayName(r.role)}`,
+      icon: specialistIcon(r.role),
+      calls: Number(r.calls) || 0,
+      costUsd: parseFloat(r.total) || 0,
+      inputTokens: parseInt(r.input_tokens, 10) || 0,
+      outputTokens: parseInt(r.output_tokens, 10) || 0,
+    }
+  })
 
   const delegationRows = await prisma.$queryRaw<Array<{
     role: string
+    model_id: string
+    model_label: string | null
     task_snippet: string | null
     total: string
     input_tokens: string
@@ -146,6 +159,8 @@ export async function GET(req: NextRequest) {
     at: Date
   }>>(
     Prisma.sql`SELECT units->>'subagent' AS role,
+                      COALESCE(units->>'model', 'claude-sonnet-4-6') AS model_id,
+                      units->>'model_label' AS model_label,
                       units->>'task_snippet' AS task_snippet,
                       cost_usd::text AS total,
                       COALESCE(units->>'input_tokens', '0') AS input_tokens,
@@ -158,6 +173,8 @@ export async function GET(req: NextRequest) {
                LIMIT 12`,
   ).catch(() => [] as Array<{
     role: string
+    model_id: string
+    model_label: string | null
     task_snippet: string | null
     total: string
     input_tokens: string
@@ -165,16 +182,22 @@ export async function GET(req: NextRequest) {
     at: Date
   }>)
 
-  const specialistDelegationsToday = delegationRows.map((r) => ({
-    role: r.role,
-    displayName: specialistDisplayName(r.role),
-    icon: specialistIcon(r.role),
-    taskSnippet: r.task_snippet ?? '',
-    costUsd: parseFloat(r.total) || 0,
-    inputTokens: parseInt(r.input_tokens, 10) || 0,
-    outputTokens: parseInt(r.output_tokens, 10) || 0,
-    at: r.at instanceof Date ? r.at.toISOString() : String(r.at),
-  }))
+  const specialistDelegationsToday = delegationRows.map((r) => {
+    const modelLabel = r.model_label || getModel(r.model_id).label
+    return {
+      role: r.role,
+      modelId: r.model_id,
+      modelLabel,
+      displayName: modelLabel,
+      roleLabel: specialistDisplayName(r.role),
+      icon: specialistIcon(r.role),
+      taskSnippet: r.task_snippet ?? '',
+      costUsd: parseFloat(r.total) || 0,
+      inputTokens: parseInt(r.input_tokens, 10) || 0,
+      outputTokens: parseInt(r.output_tokens, 10) || 0,
+      at: r.at instanceof Date ? r.at.toISOString() : String(r.at),
+    }
+  })
 
   const headTokenRows = await prisma.$queryRaw<Array<{ input_tokens: string; output_tokens: string }>>(
     Prisma.sql`SELECT COALESCE(SUM((units->>'input_tokens')::bigint), 0)::text AS input_tokens,

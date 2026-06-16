@@ -3,7 +3,11 @@ import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import { TOOL_GROUPS, type ToolGroupName } from '@/agent/tools/tool-groups'
 import type { AgentTool } from '@/agent/tools/registry'
 
-const AMBIGUOUS_FALLBACK: ToolGroupName[] = ['staff', 'erp', 'growth', 'content']
+const AMBIGUOUS_FALLBACK: ToolGroupName[] = ['erp', 'staff']
+
+/** Casual / short owner messages — avoid loading 60+ tools. */
+const SHORT_GREETING_RE =
+  /^(hei|hi|hello|hey|hii|ok|okay|thanks|thank you|dhonnobad|ধন্যবাদ|kemon|ki khobor|কেমন|কি খবর|assalam|salam|আসসালাম|salamu|জি|ha|হ্যা|na|না)[\s!.?,]*$/i
 
 export function selectToolGroups(
   text: string,
@@ -15,6 +19,14 @@ export function selectToolGroups(
 
   const g = new Set<ToolGroupName>(['base'])
   const t = text.trim()
+
+  if (t.length < 24 && SHORT_GREETING_RE.test(t)) {
+    return ['base', 'erp']
+  }
+
+  if (t.length < 12 && g.size === 1) {
+    return ['base', 'erp']
+  }
 
   if (/staff|হাজিরা|টাস্ক|বেতন|fine|eyafi|mustahid|dispatch|approve|পাঠাও/i.test(t)) {
     g.add('staff')

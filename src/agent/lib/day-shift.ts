@@ -47,8 +47,12 @@ const SHIFT_TASK_DEFS: ShiftTaskDef[] = [
     title: 'স্টাফ টাস্ক প্রোগ্রেস চেক ও ফলো-আপ',
     priority: 'high',
     needsSpecialist: 'ops',
-    specialistBrief: () =>
-      'আজকের staff_tasks স্ট্যাটাস চেক করো — কে কতটা done, কার কিছু pending, proof timeout আছে কিনা। সংক্ষিপ্ত Bangla সারসংক্ষেপ দাও।',
+    specialistBrief: (b) => {
+      const pending = (b.staffYesterday?.total ?? 0) - (b.staffYesterday?.done ?? 0)
+      const hasIssues = (b.staffPatterns?.length ?? 0) > 0 || pending > 2
+      if (!hasIssues) return null
+      return `আজকের staff_tasks — ${pending} pending, patterns ${b.staffPatterns?.length ?? 0}। বিস্তারিত চেক করে সংক্ষিপ্ত Bangla সারসংক্ষেপ দাও।`
+    },
   },
   {
     key: 'orders',
@@ -81,8 +85,7 @@ const SHIFT_TASK_DEFS: ShiftTaskDef[] = [
     title: 'কন্টেন্ট/পোস্ট প্ল্যানিং চেক',
     priority: 'normal',
     needsSpecialist: 'content',
-    specialistBrief: () =>
-      'আজকের জন্য একটি halal-compliant Facebook post idea draft করো (১টি product angle)। সংক্ষিপ্ত Bangla — owner approve করবে।',
+    specialistBrief: () => null,
   },
 ]
 
@@ -238,9 +241,17 @@ async function maybeRunSpecialist(
   const role = def.needsSpecialist
   const label = specialistLabel(role)
 
+  const conv = await prisma.agentConversation.findUnique({
+    where: { id: conversationId },
+    select: { modelId: true },
+  })
+  const { getModel } = await import('@/agent/lib/models/registry')
+  const plannedModel = getModel(conv?.modelId ?? 'claude-sonnet-4-6')
+  const modelTag = plannedModel.label ? ` · ${plannedModel.label}` : ''
+
   await appendShiftNarrative(
     conversationId,
-    `এই অংশটা ${label} (${def.needsSpecialist}) সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
+    `এই অংশটা ${label}${modelTag} সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
       `> **Delegate → ${label}:** ${brief.slice(0, 120)}${brief.length > 120 ? '…' : ''}`,
   )
 
@@ -250,14 +261,15 @@ async function maybeRunSpecialist(
     task: brief,
     businessId: BUSINESS_ID,
     conversationId,
+    modelId: conv?.modelId ?? undefined,
   })
 
   if (!result.success) {
-    return `✗ ${label} সাব-এজেন্ট ব্যর্থ: ${result.error ?? 'unknown'}`
+    return `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`
   }
 
   const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
-  return `✓ **${label} ফলাফল:**\n${result.summary}${toolsLine}`
+  return `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`
 }
 
 const PATROL_INTERVAL_MS = 60 * 60 * 1000 // hourly light check after main queue
@@ -313,10 +325,9 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
   if (!state) {
     await appendShiftNarrative(
       conversationId,
-      `🏢 **অফিস সাইকেল শুরু** (দুপুর ১২টা — ২৪ ঘণ্টা অফিস চালু)\n\n` +
-        `আসসালামু আলাইকুম Sir। আজকের কাজের তালিকা বানাচ্ছি — ERP briefing চেক করব, ` +
-        `তারপর একটার পর একটা কাজ করব। অফিস ২৪ ঘণ্টা চালু থাকবে; মূল কাজ শেষে hourly প্যাট্রোল চলবে। ` +
-        `আপনি এই chat-এ live দেখতে পারবেন।\n\n` +
+      `🏢 **অফিস সাইকেল শুরু** (রাত ১২:০৫ মধ্যরাত — ২৪ ঘণ্টা অফিস)\n\n` +
+        `আসসালামু আলাইকুম Sir। আজকের (রাত ১২টা → পরের রাত ১১:৫৫) কাজের তালিকা বানাচ্ছি। ` +
+        `অফিস ২৪ ঘণ্টা চালু — আপনি যেকোনো সময় এই chat-এ live দেখতে পারবেন।\n\n` +
         `প্রথমে briefing data টানছি...`,
     )
 
@@ -391,8 +402,8 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
       await appendShiftNarrative(
         conversationId,
         `✅ **মূল কাজের তালিকা সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
-          `অফিস **২৪ ঘণ্টা চালু** থাকবে — প্রতি ঘণ্টায় হালকা প্যাট্রোল চলবে। ` +
-          `পরের সাইকেল **দুপুর ১২টায়** শুরু হবে। এই chat-এ যেকোনো সময় জিজ্ঞেস করতে পারেন।`,
+          `অফিস **২৪ ঘণ্টা চালু** (রাত ১২টা → পরের রাত ১১:৫৫) — প্রতি ঘণ্টায় হালকা প্যাট্রোল। ` +
+          `পরের সাইকেল **মধ্যরাত ১২:০৫**-এ শুরু।`,
       )
       state.status = 'done'
       state.completedAt = new Date().toISOString()
@@ -437,6 +448,8 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
         ? `✓ স্টাফ সারসংক্ষেপ: ${staff.summary}`
         : '✓ স্টাফ টাস্ক ডেটা চেক করা হয়েছে — বিস্তারিত staff monitor-এ।',
     )
+  } else if (def.key === 'content') {
+    parts.push('✓ কন্টেন্ট প্ল্যানিং — owner request এ draft করব (অটো office-এ LLM খরচ এড়ানো)।')
   } else if (def.key === 'ads' && briefing && !(briefing.adsDigest?.anomalies?.length)) {
     parts.push('✓ Ads anomaly নেই — আজকের জন্য pause/change দরকার নেই।')
   }

@@ -9,8 +9,7 @@
  * delegation card and attributes the cost to the role in the CCTV "Agents" view.
  */
 import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL } from '@/agent/config'
-import { getModel } from '@/agent/lib/models/registry'
+import { getModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { assembleSelectedTools, toolsToDefinitions } from '@/agent/tools/select-tools'
@@ -35,6 +34,8 @@ export interface RunSubAgentParams {
   task: string
   businessId: AgentBusinessId
   conversationId?: string
+  /** Head conversation model — sub-agent uses same model when it supports tools. */
+  modelId?: string | null
   signal?: AbortSignal
 }
 
@@ -42,6 +43,8 @@ export interface SubAgentResult {
   success: boolean
   role: SpecialistRole
   roleLabel: string
+  modelId: string
+  modelLabel: string
   summary: string
   toolsUsed: string[]
   costUsd: number
@@ -50,8 +53,30 @@ export interface SubAgentResult {
 
 export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentResult> {
   const def = SPECIALIST_ROLES[params.role]
+  const model = getModel(params.modelId ?? DEFAULT_MODEL_ID)
+  const fail = (error: string): SubAgentResult => ({
+    success: false,
+    role: params.role,
+    roleLabel: def?.label ?? params.role,
+    modelId: model.id,
+    modelLabel: model.label,
+    summary: '',
+    toolsUsed: [],
+    costUsd: 0,
+    error,
+  })
+
   if (!def) {
-    return { success: false, role: params.role, roleLabel: params.role, summary: '', toolsUsed: [], costUsd: 0, error: `unknown role: ${params.role}` }
+    return fail(`unknown role: ${params.role}`)
+  }
+
+  if (!model.supportsTools || model.provider !== 'anthropic') {
+    // Sub-agents need native tool loop — fall back to Sonnet for delegations.
+    const fallback = getModel(DEFAULT_MODEL_ID)
+    if (model.id !== fallback.id) {
+      return runSubAgent({ ...params, modelId: fallback.id })
+    }
+    return fail(`model ${model.label} does not support sub-agent tools`)
   }
 
   // Scope the tool set; never let a sub-agent delegate again (no recursion).
@@ -76,7 +101,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
 
       const resp = await getClient().messages.create(
         {
-          model: AGENT_MODEL,
+          model: model.apiModel,
           max_tokens: SUBAGENT_MAX_TOKENS,
           system,
           tools: toolDefs,
@@ -114,7 +139,6 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       messages = [...messages, { role: 'user', content: toolResults }]
     }
 
-    const model = getModel('claude-sonnet-4-6')
     const costUsd = calcModelTurnCostUsd(model, { inputTokens, outputTokens })
 
     void logCost({
@@ -124,6 +148,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         model: model.id,
+        model_label: model.label,
         apiModel: model.apiModel,
         provider: 'anthropic',
         subagent: params.role,
@@ -138,6 +163,8 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       success: true,
       role: params.role,
       roleLabel: def.label,
+      modelId: model.id,
+      modelLabel: model.label,
       summary: finalText || '(সাব-এজেন্ট কোনো সারাংশ দেয়নি)',
       toolsUsed: Array.from(new Set(toolsUsed)),
       costUsd,
@@ -148,6 +175,8 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       success: false,
       role: params.role,
       roleLabel: def.label,
+      modelId: model.id,
+      modelLabel: model.label,
       summary: '',
       toolsUsed: Array.from(new Set(toolsUsed)),
       costUsd: 0,

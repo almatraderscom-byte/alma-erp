@@ -268,7 +268,7 @@ async function* runAlternateProviderTurn(
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId })
-          : await executeTool(call.name, call.input, { conversationId, businessId })
+          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id })
         const durationMs = Date.now() - started
 
         if (!result.success) {

@@ -549,7 +549,7 @@ export async function* runAgentTurn(
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id })
         const durationMs = Date.now() - started
 
         if (!result.success) {

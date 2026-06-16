@@ -39,6 +39,8 @@ interface ModelToday {
 
 interface SpecialistToday {
   role: string
+  modelId: string
+  modelLabel: string
   label: string
   displayName: string
   icon: string
@@ -50,7 +52,10 @@ interface SpecialistToday {
 
 interface SpecialistDelegation {
   role: string
+  modelId: string
+  modelLabel: string
   displayName: string
+  roleLabel: string
   icon: string
   taskSnippet: string
   costUsd: number
@@ -461,19 +466,24 @@ export function MonitorAgentsPanel({
               <div className="mb-2 flex items-center gap-1.5">
                 <span className="text-sm">🤝</span>
                 <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-sky-700/80">
-                  সাব-এজেন্ট ডেলিগেশন
+                  সাব-এজেন্ট — কোন AI মডেল
                 </p>
               </div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {data.specialistsToday.map((s) => (
                   <div
-                    key={s.role}
+                    key={`${s.modelId}-${s.role}`}
                     className="rounded-lg border border-sky-200/50 bg-white px-2.5 py-2"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#1a1a2e]/80">
-                        <span>{s.icon ?? SPECIALIST_ICON[s.role] ?? '🤝'}</span>
-                        {s.displayName ?? s.label}
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[11px] font-bold text-[#1a1a2e]/85">
+                          {s.modelLabel}
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-[#64748b]">
+                          <span>{s.icon ?? SPECIALIST_ICON[s.role] ?? '🤝'}</span>
+                          {s.label}
+                        </span>
                       </span>
                       <span className="shrink-0 text-[10px] tabular-nums text-[#64748b]">
                         {s.calls} কল · {fmtUsd(s.costUsd)}
@@ -490,15 +500,16 @@ export function MonitorAgentsPanel({
 
               {data.specialistDelegationsToday && data.specialistDelegationsToday.length > 0 && (
                 <div className="mt-2.5 space-y-1.5 border-t border-sky-200/40 pt-2.5">
-                  <p className="text-[10px] font-semibold text-sky-800/70">কোন এজেন্ট কী করেছে</p>
+                  <p className="text-[10px] font-semibold text-sky-800/70">কোন মডেল কী করেছে</p>
                   {data.specialistDelegationsToday.map((d, i) => (
                     <div
-                      key={`${d.role}-${d.at}-${i}`}
+                      key={`${d.modelId}-${d.at}-${i}`}
                       className="rounded-lg border border-sky-100 bg-white/80 px-2.5 py-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold text-[#1a1a2e]/75">
-                          {d.icon} {d.displayName}
+                        <span className="flex flex-col gap-0.5">
+                          <span className="text-[10px] font-bold text-[#1a1a2e]/85">{d.modelLabel}</span>
+                          <span className="text-[9px] text-[#94a3b8]">{d.icon} {d.roleLabel}</span>
                         </span>
                         <span className="text-[9px] tabular-nums text-[#94a3b8]">{fmtUsd(d.costUsd)}</span>
                       </div>

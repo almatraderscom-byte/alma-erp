@@ -44,9 +44,10 @@ const delegate_to_specialist: AgentTool = {
 
     const businessId = (input.businessId as AgentBusinessId | undefined) ?? 'ALMA_LIFESTYLE'
     const conversationId = typeof input.conversationId === 'string' ? input.conversationId : undefined
+    const modelId = typeof input.modelId === 'string' ? input.modelId : undefined
 
     const { runSubAgent } = await import('@/agent/lib/models/subagent')
-    const result = await runSubAgent({ role, task, businessId, conversationId })
+    const result = await runSubAgent({ role, task, businessId, conversationId, modelId })
 
     if (!result.success) {
       return { success: false, error: result.error ?? 'sub-agent failed' }
