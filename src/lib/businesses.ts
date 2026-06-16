@@ -54,50 +54,50 @@ export interface NavItem {
 }
 
 const FINANCE_SUITE: NavItem[] = [
-  { href: '/finance', icon: '◆', label: 'Finance' },
-  { href: '/expenses', icon: '◫', label: 'Expenses' },
-  { href: '/employees', icon: '☷', label: 'Employees' },
-  { href: '/attendance', icon: '◷', label: 'Attendance' },
-  { href: '/payroll', icon: '⌁', label: 'Payroll' },
+  { href: '/finance', icon: '💰', label: 'Finance' },
+  { href: '/expenses', icon: '💳', label: 'Expenses' },
+  { href: '/employees', icon: '👤', label: 'Employees' },
+  { href: '/attendance', icon: '⏱', label: 'Attendance' },
+  { href: '/payroll', icon: '💵', label: 'Payroll' },
 ]
 
 /** Super Admin only — filtered in filterNavByRole; requires AGENT_ENABLED=true on server. */
-export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✦', label: 'ALMA Agent' }
+export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✨', label: 'ALMA Agent' }
 
 const SETTINGS_NAV: NavItem[] = [
-  { href: '/operations/task-spotlight', icon: '✦', label: 'Task Spotlight' },
+  { href: '/operations/task-spotlight', icon: '🎯', label: 'Task Spotlight' },
   { href: '/operations/business-archive', icon: '📦', label: 'Archive Control' },
-  { href: '/settings/session', icon: '⚙', label: 'Session' },
-  { href: '/settings/database', icon: '◈', label: 'Database' },
-  { href: '/settings/users', icon: '◫', label: 'Users' },
-  { href: '/settings/notifications', icon: '◌', label: 'Notifications' },
-  { href: '/settings/sms', icon: '✉', label: 'SMS' },
+  { href: '/settings/session', icon: '⚙️', label: 'Session' },
+  { href: '/settings/database', icon: '🗄', label: 'Database' },
+  { href: '/settings/users', icon: '👥', label: 'Users' },
+  { href: '/settings/notifications', icon: '🔔', label: 'Notifications' },
+  { href: '/settings/sms', icon: '✉️', label: 'SMS' },
   { href: '/settings/telegram-ops', icon: '📡', label: 'Telegram Ops' },
-  { href: '/audit', icon: '◇', label: 'Audit' },
-  { href: '/settings/branding', icon: '◉', label: 'Branding' },
+  { href: '/audit', icon: '📋', label: 'Audit' },
+  { href: '/settings/branding', icon: '🎨', label: 'Branding' },
 ]
 
 const ALMA_NAV: NavItem[] = [
-  { href: '/', icon: '⬡', label: 'Dashboard' },
-  { href: '/approvals', icon: '◆', label: 'Approvals' },
-  { href: '/portal', icon: '◇', label: 'My desk' },
-  { href: '/orders', icon: '◫', label: 'Orders' },
-  { href: '/crm', icon: '◎', label: 'CRM' },
-  { href: '/inventory', icon: '◧', label: 'Inventory' },
-  { href: '/invoice', icon: '◈', label: 'Invoice' },
+  { href: '/', icon: '🏠', label: 'Dashboard' },
+  { href: '/approvals', icon: '✅', label: 'Approvals' },
+  { href: '/portal', icon: '🪪', label: 'My desk' },
+  { href: '/orders', icon: '📦', label: 'Orders' },
+  { href: '/crm', icon: '👥', label: 'CRM' },
+  { href: '/inventory', icon: '📊', label: 'Inventory' },
+  { href: '/invoice', icon: '🧾', label: 'Invoice' },
   ...FINANCE_SUITE,
-  { href: '/analytics', icon: '◩', label: 'Analytics' },
+  { href: '/analytics', icon: '📈', label: 'Analytics' },
   AGENT_NAV_ITEM,
   ...SETTINGS_NAV,
 ]
 
 const CDIT_NAV: NavItem[] = [
-  { href: '/digital', icon: '⬡', label: 'Dashboard' },
-  { href: '/approvals', icon: '◆', label: 'Approvals' },
-  { href: '/portal', icon: '◇', label: 'My desk' },
-  { href: '/digital/clients', icon: '◎', label: 'Clients' },
-  { href: '/digital/projects', icon: '◰', label: 'Projects' },
-  { href: '/digital/invoices', icon: '◈', label: 'Invoices' },
+  { href: '/digital', icon: '🏠', label: 'Dashboard' },
+  { href: '/approvals', icon: '✅', label: 'Approvals' },
+  { href: '/portal', icon: '🪪', label: 'My desk' },
+  { href: '/digital/clients', icon: '👥', label: 'Clients' },
+  { href: '/digital/projects', icon: '📂', label: 'Projects' },
+  { href: '/digital/invoices', icon: '🧾', label: 'Invoices' },
   ...FINANCE_SUITE,
   AGENT_NAV_ITEM,
   ...SETTINGS_NAV,
@@ -106,18 +106,18 @@ const CDIT_NAV: NavItem[] = [
 export function getNavForBusiness(businessId: BusinessId): NavItem[] {
   if (businessId === 'CREATIVE_DIGITAL_IT') return CDIT_NAV
   if (businessId === 'ALMA_TRADING') return [
-    { href: '/trading', icon: '⬡', label: 'Trading' },
-    { href: '/approvals', icon: '◆', label: 'Approvals' },
-    { href: '/trading/accounts', icon: '◧', label: 'Accounts' },
-    { href: '/trading/target-control', icon: '◎', label: 'Target Control' },
-    { href: '/trading/telegram', icon: '✉', label: 'Telegram' },
-    { href: '/trading/hr', icon: '☷', label: 'Trading HR' },
-    { href: '/employees', icon: '☷', label: 'Employees' },
-    { href: '/attendance', icon: '◷', label: 'Attendance' },
-    { href: '/payroll', icon: '⌁', label: 'Payroll' },
-    { href: '/trading/analytics', icon: '◩', label: 'Analytics' },
-    { href: '/trading/analytics?view=reports', icon: '▣', label: 'Reports' },
-    { href: '/portal', icon: '◇', label: 'My desk' },
+    { href: '/trading', icon: '💹', label: 'Trading' },
+    { href: '/approvals', icon: '✅', label: 'Approvals' },
+    { href: '/trading/accounts', icon: '🏦', label: 'Accounts' },
+    { href: '/trading/target-control', icon: '🎯', label: 'Target Control' },
+    { href: '/trading/telegram', icon: '✉️', label: 'Telegram' },
+    { href: '/trading/hr', icon: '👤', label: 'Trading HR' },
+    { href: '/employees', icon: '👤', label: 'Employees' },
+    { href: '/attendance', icon: '⏱', label: 'Attendance' },
+    { href: '/payroll', icon: '💵', label: 'Payroll' },
+    { href: '/trading/analytics', icon: '📈', label: 'Analytics' },
+    { href: '/trading/analytics?view=reports', icon: '📊', label: 'Reports' },
+    { href: '/portal', icon: '🪪', label: 'My desk' },
     AGENT_NAV_ITEM,
     ...SETTINGS_NAV,
   ]

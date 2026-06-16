@@ -6,6 +6,7 @@ import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
 const NAV_ITEMS = [
+  { href: '/', label: 'ERP', icon: ErpIcon, matchExact: true },
   { href: '/agent', label: 'Chat', icon: ChatIcon, matchExact: true },
   { href: '/agent/staff-monitor', label: 'Monitor', icon: MonitorIcon },
   { href: '/agent/costs', label: 'Costs', icon: CostsIcon },
@@ -23,9 +24,11 @@ export function AgentBottomNav() {
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {NAV_ITEMS.map((item) => {
-          const isActive = item.matchExact
-            ? pathname === item.href
-            : pathname.startsWith(item.href)
+          const isActive = item.href === '/'
+            ? false
+            : item.matchExact
+              ? pathname === item.href
+              : pathname.startsWith(item.href)
 
           return (
             <Link
@@ -75,6 +78,15 @@ function CostsIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
       <path d="M12 6v12M9 9h6M9 15h6" />
+    </svg>
+  )
+}
+
+function ErpIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
     </svg>
   )
 }

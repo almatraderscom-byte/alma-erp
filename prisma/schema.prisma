@@ -2932,3 +2932,20 @@ model AgentTrustRule {
   @@index([businessId, tier])
   @@map("agent_trust_rules")
 }
+
+model AgentTodo {
+  id          String    @id @default(uuid())
+  businessId  String    @default("ALMA_LIFESTYLE") @map("business_id")
+  title       String
+  description String?
+  priority    String    @default("normal")
+  status      String    @default("pending")
+  dueDate     DateTime? @map("due_date")
+  source      String    @default("agent")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  completedAt DateTime? @map("completed_at")
+
+  @@index([businessId, status])
+  @@map("agent_todos")
+}

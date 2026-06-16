@@ -1,6 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
+import { AgentTodoPanel } from './AgentTodoPanel'
 
 const SUGGESTIONS = [
   { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
@@ -15,53 +16,58 @@ interface AgentEmptyStateProps {
 
 export default function AgentEmptyState({ onSuggestion }: AgentEmptyStateProps) {
   return (
-    <div className="flex min-h-[min(440px,55dvh)] flex-col items-center justify-center px-4 py-12 text-center">
-      {/* Warm gradient orb */}
+    <div className="flex flex-col px-4 py-6">
+      {/* Todo List */}
       <motion.div
-        className="relative mb-8 h-16 w-16"
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="w-full max-w-lg mx-auto mb-6"
       >
-        <motion.div
-          className="absolute inset-0 rounded-full"
-          style={{
-            background: 'radial-gradient(circle at 40% 35%, rgba(224,122,95,0.3) 0%, rgba(129,178,154,0.15) 60%, transparent 100%)',
-          }}
-          animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
-          transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        <motion.div
-          className="absolute inset-2 rounded-full"
-          style={{
-            background: 'radial-gradient(circle, rgba(212,168,75,0.2) 0%, transparent 70%)',
-          }}
-          animate={{ scale: [0.95, 1.1, 0.95] }}
-          transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        <div className="absolute inset-0 rounded-full border border-black/[0.06]" />
+        <AgentTodoPanel />
       </motion.div>
 
-      <motion.p
-        className="text-xl font-semibold text-[#1a1a2e]"
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1, duration: 0.4 }}
-      >
-        আস্সালামু আলাইকুম
-      </motion.p>
-      <motion.p
-        className="mt-2 text-[14px] text-[#64748b]"
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, duration: 0.4 }}
-      >
-        কিভাবে সাহায্য করতে পারি, স্যার?
-      </motion.p>
+      {/* Greeting */}
+      <div className="flex flex-col items-center text-center mb-6">
+        <motion.div
+          className="relative mb-5 h-12 w-12"
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <motion.div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: 'radial-gradient(circle at 40% 35%, rgba(224,122,95,0.3) 0%, rgba(129,178,154,0.15) 60%, transparent 100%)',
+            }}
+            animate={{ scale: [1, 1.08, 1], opacity: [0.6, 1, 0.6] }}
+            transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <div className="absolute inset-0 rounded-full border border-black/[0.06]" />
+        </motion.div>
 
+        <motion.p
+          className="text-lg font-semibold text-[#1a1a2e]"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.4 }}
+        >
+          আস্সালামু আলাইকুম
+        </motion.p>
+        <motion.p
+          className="mt-1.5 text-[13px] text-[#64748b]"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.4 }}
+        >
+          কিভাবে সাহায্য করতে পারি, স্যার?
+        </motion.p>
+      </div>
+
+      {/* Suggestions */}
       {onSuggestion && (
         <motion.div
-          className="mt-8 grid w-full max-w-md grid-cols-2 gap-2"
+          className="grid w-full max-w-md mx-auto grid-cols-2 gap-2"
           initial="hidden"
           animate="visible"
           variants={{
