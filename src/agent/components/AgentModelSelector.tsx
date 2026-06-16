@@ -97,7 +97,7 @@ export default function AgentModelSelector({
       </button>
 
       {open && (
-        <div className="absolute left-1/2 top-full z-50 mt-1.5 w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-[0_8px_30px_rgba(0,0,0,0.12)] backdrop-blur-2xl">
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-56 overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
           <div className="border-b border-black/[0.04] px-3 py-2 text-[10px] text-gray-400">
             Sonnet = default ও সবচেয়ে নির্ভরযোগ্য
           </div>

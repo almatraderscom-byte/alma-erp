@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import AgentModelSelector from './AgentModelSelector'
 
 export interface PendingFile {
   file: File
@@ -16,6 +17,8 @@ interface AgentComposerProps {
   streaming: boolean
   conversationId: string | null
   isMobile?: boolean
+  activeModelId?: string
+  onModelChange?: (modelId: string) => void
 }
 
 export default function AgentComposer({
@@ -23,8 +26,10 @@ export default function AgentComposer({
   disabled,
   onStop,
   streaming,
-  conversationId: _conversationId,
+  conversationId,
   isMobile = false,
+  activeModelId,
+  onModelChange,
 }: AgentComposerProps) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<PendingFile[]>([])
@@ -179,12 +184,13 @@ export default function AgentComposer({
       {/* Input area */}
       <div
         className={cn(
-          'flex items-end gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
+          'flex flex-col gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
           streaming
             ? 'border-[#E07A5F]/25 bg-white shadow-[0_2px_12px_rgba(224,122,95,0.08)]'
             : 'border-black/[0.08] bg-white focus-within:border-black/[0.14] focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06)]',
         )}
       >
+        <div className="flex items-end gap-1">
         {/* Attach */}
         <button
           type="button"
@@ -246,6 +252,22 @@ export default function AgentComposer({
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
+        )}
+        </div>
+
+        {/* Model selector + footer row */}
+        {activeModelId && onModelChange && (
+          <div className="flex items-center justify-between border-t border-black/[0.04] px-1 pt-1">
+            <AgentModelSelector
+              conversationId={conversationId}
+              modelId={activeModelId}
+              onModelChange={onModelChange}
+              disabled={streaming}
+            />
+            <span className="hidden text-[10px] text-gray-300 md:block">
+              {isMobile ? '' : 'Shift+Enter = নতুন লাইন'}
+            </span>
+          </div>
         )}
       </div>
     </div>

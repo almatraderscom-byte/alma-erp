@@ -17,7 +17,7 @@ export function AgentBottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
-      <div className="absolute inset-0 bg-white/80 backdrop-blur-2xl border-t border-black/[0.06]" />
+      <div className="absolute inset-0 bg-white border-t border-black/[0.06]" />
 
       <div
         className="relative flex items-center justify-around px-4 pt-2"

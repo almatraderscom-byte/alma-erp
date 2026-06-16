@@ -4,19 +4,53 @@
   background: #FAF9F6;
 }
 
+/* GPU acceleration hints for iOS WebView smooth scrolling */
+.agent-chat-root {
+  -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Layout: account for fixed bottom nav on mobile + iOS safe area */
+.agent-main-height {
+  height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .agent-main-height {
+    height: 100dvh;
+  }
+}
+
 .glass-panel {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+  @media (min-width: 768px) {
+    .glass-panel {
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(255, 255, 255, 0.8);
+    }
+  }
+}
+
 .glass-card {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+  @media (min-width: 768px) {
+    .glass-card {
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background: rgba(255, 255, 255, 0.7);
+    }
+  }
 }
 
 .neon-gold {

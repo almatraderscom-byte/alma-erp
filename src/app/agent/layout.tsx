@@ -18,7 +18,7 @@ export default function AgentLayout({ children }: { children: ReactNode }) {
         }}
       />
 
-      <main className="relative z-10 h-[100dvh] pb-16 md:pb-0">
+      <main className="agent-main-height relative z-10">
         {children}
       </main>
 
