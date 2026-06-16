@@ -12,6 +12,10 @@ import { displayBdPhone } from '@/lib/phone'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { ProfilePhotoUploader } from '@/components/profile/ProfilePhotoUploader'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { motion } from 'framer-motion'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
 
 type RowUser = {
   id: string
@@ -31,14 +35,14 @@ type RowUser = {
 function RoleBadge({ role }: { role: UserRole }) {
   const tone =
     role === 'SUPER_ADMIN'
-      ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+      ? 'bg-purple-50 text-purple-600 border-purple-200'
       : role === 'ADMIN'
-        ? 'bg-gold/15 text-gold-lt border-gold-dim/40'
+        ? 'bg-gold/10 text-gold-dim border-gold/30'
         : role === 'HR'
-          ? 'bg-sky-500/15 text-sky-300 border-sky-500/25'
+          ? 'bg-sky-50 text-sky-600 border-sky-200'
           : role === 'STAFF'
-            ? 'bg-zinc-500/15 text-zinc-300 border-zinc-600/40'
-            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+            ? 'bg-slate-100 text-slate-600 border-slate-200'
+            : 'bg-emerald-50 text-emerald-600 border-emerald-200'
   return (
     <span className={`inline-flex text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tone}`}>
       {role.replace(/_/g, ' ')}
@@ -123,10 +127,11 @@ export default function UsersSettingsPage() {
         subtitle="Accounts · roles · business scope · HR linkage"
         actions={<Button size="xs" variant="gold" onClick={() => setCreateOpen(true)}>+ Add user</Button>}
       >
-        <div className="min-w-0 max-w-full">
-        <Card className="min-w-0">
-          <div className="p-4 border-b border-border flex justify-between items-center gap-3 flex-wrap">
-            <p className="text-xs text-zinc-500">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
+        <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-4">
+        <motion.div variants={fadeUp}>
+        <Card className="min-w-0 bg-white">
+          <div className="p-4 border-b border-black/[0.04] flex justify-between items-center gap-3 flex-wrap">
+            <p className="text-xs text-slate-500">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
             <Button size="xs" variant="secondary" type="button" onClick={() => void load()}>Refresh</Button>
           </div>
           {loading ? (
@@ -136,7 +141,7 @@ export default function UsersSettingsPage() {
           ) : (
             <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[72vh]">
               <table className="w-full min-w-[980px] text-left text-[11px]">
-                <thead className="sticky top-0 bg-card border-b border-border text-zinc-500">
+                <thead className="sticky top-0 bg-white border-b border-black/[0.04] text-[11px] font-medium uppercase tracking-wider text-slate-400">
                   <tr>
                     <th className="py-2 px-4">Name</th>
                     <th className="py-2 pr-3">Phone</th>
@@ -150,28 +155,28 @@ export default function UsersSettingsPage() {
                 </thead>
                 <tbody>
                   {users.map(u => (
-                    <tr key={u.id} className="border-b border-border/60 hover:bg-black/[0.02]">
+                    <tr key={u.id} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
                       <td className="py-2 px-4">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={u.id} name={u.name} email={u.email} imageUrl={u.profileImageUrl} size="sm" />
-                          <span className="text-cream font-medium">{u.name}</span>
+                          <span className="text-slate-800 font-medium">{u.name}</span>
                         </div>
                       </td>
                       <td className="py-2 pr-3 font-mono text-gold-lt">{u.phone ? displayBdPhone(u.phone) : '—'}</td>
-                      <td className="py-2 pr-3 font-mono text-zinc-400">{u.email || '—'}</td>
+                      <td className="py-2 pr-3 font-mono text-slate-500">{u.email || '—'}</td>
                       <td className="py-2 pr-3"><RoleBadge role={u.role} /></td>
-                      <td className="py-2 pr-3 text-zinc-400 max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
+                      <td className="py-2 pr-3 text-slate-500 max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
                       <td className="py-2 pr-3 font-mono text-gold-dim">{u.employeeIdGas || '—'}</td>
                       <td className="py-2 pr-3">
                         <span className={u.active ? 'text-green-400' : 'text-red-400'}>{u.active ? 'Active' : 'Inactive'}</span>
                       </td>
                       <td className="py-2 pr-4 text-right space-x-2 whitespace-nowrap">
-                        <button type="button" className="text-gold-lt hover:underline" onClick={() => setPermUser(u)}>Permissions</button>
-                        <button type="button" className="text-gold hover:underline" onClick={() => setEditUser(u)}>Edit</button>
-                        <button type="button" className="text-zinc-400 hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
+                        <button type="button" className="text-gold hover:underline" onClick={() => setPermUser(u)}>Permissions</button>
+                        <button type="button" className="text-gold-dim hover:underline" onClick={() => setEditUser(u)}>Edit</button>
+                        <button type="button" className="text-slate-500 hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
                         <button
                           type="button"
-                          className="text-zinc-500 hover:text-amber-400"
+                          className="text-slate-500 hover:text-amber-400"
                           onClick={() => void patchUser(u.id, { active: !u.active })}
                         >
                           {u.active ? 'Deactivate' : 'Activate'}
@@ -184,7 +189,8 @@ export default function UsersSettingsPage() {
             </div>
           )}
         </Card>
-        </div>
+        </motion.div>
+        </motion.div>
       </FinancePageChrome>
 
       {permUser && (
@@ -192,14 +198,14 @@ export default function UsersSettingsPage() {
           <Card className="w-full max-w-md p-6 border-gold-dim/30 space-y-4">
             <div className="flex justify-between gap-3 items-start">
               <div>
-                <p className="text-sm font-bold text-cream">Role capabilities</p>
-                <p className="text-[11px] text-zinc-500 mt-1">{permUser.name} · server-enforced ERP scope</p>
+                <p className="text-sm font-bold text-slate-800">Role capabilities</p>
+                <p className="text-[11px] text-slate-500 mt-1">{permUser.name} · server-enforced ERP scope</p>
               </div>
-              <button type="button" className="text-zinc-500 hover:text-cream text-lg leading-none" onClick={() => setPermUser(null)}>×</button>
+              <button type="button" className="text-slate-500 hover:text-slate-800 text-lg leading-none" onClick={() => setPermUser(null)}>×</button>
             </div>
             <RoleBadge role={permUser.role} />
-            <p className="text-[11px] text-zinc-500">Business access: <span className="font-mono text-zinc-400">{permUser.businessAccess}</span></p>
-            <p className="text-xs text-zinc-300 leading-relaxed">
+            <p className="text-[11px] text-slate-500">Business access: <span className="font-mono text-slate-400">{permUser.businessAccess}</span></p>
+            <p className="text-xs text-slate-600 leading-relaxed">
               {ALMA_ROLE_OPTIONS.find(o => o.id === permUser.role)?.hint}
             </p>
             <Button variant="secondary" className="w-full justify-center" type="button" onClick={() => setPermUser(null)}>Close</Button>
@@ -334,17 +340,17 @@ function ResetPasswordModal({
         <div className="mobile-modal-header p-6 pb-3">
           <div className="flex justify-between gap-3">
             <div>
-              <p className="text-sm font-bold text-cream">Reset password</p>
-              <p className="text-[11px] text-zinc-500 mt-1">{user.email}</p>
+              <p className="text-sm font-bold text-slate-800">Reset password</p>
+              <p className="text-[11px] text-slate-500 mt-1">{user.email}</p>
             </div>
-            <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+            <button type="button" className="text-slate-500 hover:text-slate-800" onClick={onClose}>×</button>
           </div>
         </div>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="mobile-modal-body px-6">
             <label className="block space-y-1 text-xs">
-              <span className="text-zinc-500">New password</span>
-              <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+              <span className="text-slate-500">New password</span>
+              <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
             </label>
           </div>
           <div className="mobile-modal-footer px-6 pt-3">
@@ -394,8 +400,8 @@ function UserFormModal({
       <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
         <div className="mobile-modal-header p-5 pb-3">
           <div className="flex justify-between gap-3">
-            <p className="text-sm font-bold text-cream">{title}</p>
-            <button type="button" className="text-zinc-500 hover:text-cream" onClick={onClose}>×</button>
+            <p className="text-sm font-bold text-slate-800">{title}</p>
+            <button type="button" className="text-slate-500 hover:text-slate-800" onClick={onClose}>×</button>
           </div>
         </div>
         <form onSubmit={wrapped} className="flex min-h-0 flex-1 flex-col text-xs">
@@ -403,32 +409,32 @@ function UserFormModal({
           {!initial && (
             <>
               <label className="block space-y-1">
-                <span className="text-zinc-500">Email (optional)</span>
-                <input name="email" type="email" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+                <span className="text-slate-500">Email (optional)</span>
+                <input name="email" type="email" className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-zinc-500">Initial password</span>
-                <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+                <span className="text-slate-500">Initial password</span>
+                <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
               </label>
             </>
           )}
           <label className="block space-y-1">
-            <span className="text-zinc-500">Full name</span>
-            <input name="name" required defaultValue={initial?.name || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+            <span className="text-slate-500">Full name</span>
+            <input name="name" required defaultValue={initial?.name || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
           </label>
           {initial && (
             <label className="block space-y-1">
-              <span className="text-zinc-500">Email (optional)</span>
-              <input name="email" type="email" defaultValue={initial.email || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+              <span className="text-slate-500">Email (optional)</span>
+              <input name="email" type="email" defaultValue={initial.email || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
             </label>
           )}
           <label className="block space-y-1">
-            <span className="text-zinc-500">Phone (Bangladesh)</span>
-            <input name="phone" required={!initial} inputMode="tel" autoComplete="tel" placeholder="+8801XXXXXXXXX" defaultValue={initial?.phone || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+            <span className="text-slate-500">Phone (Bangladesh)</span>
+            <input name="phone" required={!initial} inputMode="tel" autoComplete="tel" placeholder="+8801XXXXXXXXX" defaultValue={initial?.phone || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
           </label>
           <label className="block space-y-1">
-            <span className="text-zinc-500">Role</span>
-            <select name="role" required value={selectedRole} onChange={e => setSelectedRole(e.target.value as UserRole)} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm">
+            <span className="text-slate-500">Role</span>
+            <select name="role" required value={selectedRole} onChange={e => setSelectedRole(e.target.value as UserRole)} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50">
               {roleOptions.map(o => (
                 <option key={o.id} value={o.id}>{o.label}</option>
               ))}
@@ -439,39 +445,39 @@ function UserFormModal({
               System owner accounts control the ERP and are not linked to HR employee IDs, salary hints, attendance, or personal wallets.
             </p>
           )}
-          <div className="space-y-2 rounded-xl border border-border p-3 bg-black/[0.03]">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Business access</p>
+          <div className="space-y-2 rounded-xl border border-black/[0.08] p-3 bg-slate-50/50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Business access</p>
             {BUSINESS_LIST.map(b => (
               <label key={b.id} className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   name={`biz_${b.id}`}
                   defaultChecked={selectedBiz.includes(b.id)}
-                  className="rounded border-border"
+                  className="rounded border-black/[0.08]"
                 />
-                <span className="text-cream">{b.name}</span>
+                <span className="text-slate-800">{b.name}</span>
               </label>
             ))}
           </div>
           {!systemOwnerAccount && (
             <>
               <label className="block space-y-1">
-                <span className="text-zinc-500">Linked HR employee ID (GAS)</span>
-                <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-[11px]" />
+                <span className="text-slate-500">Linked HR employee ID (GAS)</span>
+                <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 font-mono text-[11px] focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-zinc-500">Joining date</span>
-                <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream text-sm" />
+                <span className="text-slate-500">Joining date</span>
+                <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-zinc-500">Salary hint (৳)</span>
-                <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full rounded-xl bg-card border border-border px-3 py-2 text-cream font-mono text-sm" />
+                <span className="text-slate-500">Salary hint (৳)</span>
+                <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 font-mono text-sm focus:outline-none focus:border-gold/50" />
               </label>
             </>
           )}
           {initial && (
-            <div className="rounded-xl border border-border bg-black/[0.03] p-4">
-              <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Profile photo</p>
+            <div className="rounded-xl border border-black/[0.08] bg-slate-50/50 p-4">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Profile photo</p>
               <ProfilePhotoUploader
                 userId={initial.id}
                 name={initial.name}

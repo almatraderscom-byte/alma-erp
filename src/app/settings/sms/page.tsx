@@ -1,11 +1,15 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import type { SmsType } from '@/lib/sms/types'
 import { DEFAULT_SMS_ENABLED_TYPES, SMS_TYPE_CATALOG } from '@/lib/sms/catalog'
 import { Button, Card, Input, KpiCard, PageHeader, Select, Skeleton } from '@/components/ui'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
 
 type SmsLogRow = {
   id: string
@@ -167,37 +171,42 @@ export default function SmsSettingsPage() {
         subtitle="কোন জায়গায় SMS যাবে তা এখান থেকে নিজে চালু/বন্ধ করুন — কোডিং লাগবে না।"
         actions={<Button size="xs" variant="secondary" onClick={() => void load()}>Refresh</Button>}
       />
-      <div className="p-4 md:p-6 space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <motion.div
+        className="p-4 md:p-6 space-y-4"
+        variants={stagger}
+        initial="hidden"
+        animate="show"
+      >
+        <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <KpiCard label="Total" value={loading ? '—' : data?.stats.total ?? 0} loading={loading} />
           <KpiCard label="Delivered" value={loading ? '—' : data?.stats.delivered ?? 0} loading={loading} />
           <KpiCard label="Failed" value={loading ? '—' : data?.stats.failed ?? 0} loading={loading} />
           <KpiCard label="Queued" value={loading ? '—' : data?.stats.queued ?? 0} loading={loading} />
           <KpiCard label="Success" value={loading ? '—' : `${data?.stats.successPct ?? 0}%`} loading={loading} />
-        </div>
+        </motion.div>
 
-        <div className="grid lg:grid-cols-[420px_1fr] gap-4">
+        <motion.div variants={fadeUp} className="grid lg:grid-cols-[420px_1fr] gap-4">
           <div className="space-y-4">
             <Card className="p-5 space-y-4">
               <div className="space-y-2">
-                <p className="text-sm font-bold text-cream">Business & master switch</p>
+                <p className="text-sm font-semibold text-slate-800">Business & master switch</p>
                 <Select value={businessId} onChange={v => setBusinessId(v as BusinessId)} options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))} />
                 <div className="flex gap-2">
                   <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(true)}>Enable SMS</Button>
                   <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(false)}>Disable SMS</Button>
                 </div>
-                <p className="rounded-xl border border-border bg-black/[0.03] p-3 text-[11px] text-zinc-400">
+                <p className="rounded-xl border border-black/[0.08] bg-slate-50 p-3 text-[11px] text-slate-600">
                   Balance: <span className="font-mono text-gold-lt">{balanceText}</span>
                 </p>
-                <p className="text-[10px] text-zinc-500 leading-relaxed">
-                  Recharge-এর পর <span className="text-zinc-300">Enable SMS</span> চাপুন। Master switch বন্ধ থাকলে নিচের কোনো type চালু থাকলেও SMS যাবে না।
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Recharge-এর পর <span className="text-slate-600">Enable SMS</span> চাপুন। Master switch বন্ধ থাকলে নিচের কোনো type চালু থাকলেও SMS যাবে না।
                 </p>
               </div>
             </Card>
 
             <Card className="p-5 space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-cream">কোন SMS চালু থাকবে</p>
+                <p className="text-sm font-semibold text-slate-800">কোন SMS চালু থাকবে</p>
                 <Button size="xs" variant="gold" disabled={savingTypes} onClick={() => void saveTypes()}>
                   {savingTypes ? 'Saving…' : 'Save types'}
                 </Button>
@@ -208,7 +217,7 @@ export default function SmsSettingsPage() {
                 catalog.map(item => (
                   <label
                     key={item.type}
-                    className="flex items-start gap-3 rounded-xl border border-border px-3 py-3 text-sm text-zinc-300"
+                    className="flex items-start gap-3 rounded-xl border border-black/[0.08] px-3 py-3 text-sm text-slate-600"
                   >
                     <input
                       type="checkbox"
@@ -217,10 +226,10 @@ export default function SmsSettingsPage() {
                       onChange={e => toggleType(item.type, e.target.checked)}
                     />
                     <span className="min-w-0">
-                      <span className="block font-semibold text-cream">{item.labelBn}</span>
-                      <span className="block text-[11px] text-zinc-500">{item.label} · {item.type}</span>
-                      <span className="mt-1 block text-[11px] text-zinc-400 leading-relaxed">{item.description}</span>
-                      <span className="mt-1 block text-[10px] text-zinc-600">কে পাবে: {item.audience}</span>
+                      <span className="block font-semibold text-slate-800">{item.labelBn}</span>
+                      <span className="block text-[11px] text-slate-500">{item.label} · {item.type}</span>
+                      <span className="mt-1 block text-[11px] text-slate-500 leading-relaxed">{item.description}</span>
+                      <span className="mt-1 block text-[10px] text-slate-400">কে পাবে: {item.audience}</span>
                     </span>
                   </label>
                 ))
@@ -228,9 +237,9 @@ export default function SmsSettingsPage() {
             </Card>
 
             <Card className="p-5 space-y-3">
-              <p className="text-sm font-bold text-cream">Test SMS</p>
-              <p className="text-[11px] text-zinc-500">
-                উপরে <span className="text-zinc-300">Test SMS</span> type চালু রাখুন, তারপর নম্বর দিয়ে test পাঠান।
+              <p className="text-sm font-semibold text-slate-800">Test SMS</p>
+              <p className="text-[11px] text-slate-500">
+                উপরে <span className="text-slate-600">Test SMS</span> type চালু রাখুন, তারপর নম্বর দিয়ে test পাঠান।
               </p>
               <Input
                 placeholder="01XXXXXXXXX"
@@ -245,15 +254,15 @@ export default function SmsSettingsPage() {
 
           <Card className="p-5">
             <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <p className="text-sm font-bold text-cream">SMS logs</p>
+              <p className="text-sm font-semibold text-slate-800">SMS logs</p>
               <Select value={status} onChange={setStatus} options={['ALL', 'QUEUED', 'PENDING', 'SENDING', 'SENT', 'DELIVERED', 'FAILED'].map(s => ({ label: s, value: s }))} />
             </div>
             {loading ? <Skeleton className="h-64" /> : !(data?.logs ?? []).length ? (
-              <p className="text-xs text-zinc-600">No SMS logs yet.</p>
+              <p className="text-xs text-slate-400">No SMS logs yet.</p>
             ) : (
               <div className="table-scroll">
                 <table className="w-full min-w-[900px] text-left text-[11px]">
-                  <thead className="border-b border-border text-zinc-500">
+                  <thead className="border-b border-black/[0.08] text-[11px] font-medium uppercase tracking-wider text-slate-400">
                     <tr>
                       <th className="py-2 pr-3">Created</th>
                       <th className="py-2 pr-3">Phone</th>
@@ -265,20 +274,20 @@ export default function SmsSettingsPage() {
                   </thead>
                   <tbody>
                     {data!.logs.map(row => (
-                      <tr key={row.id} className="border-b border-border/50">
-                        <td className="py-2 pr-3 font-mono text-zinc-500">{new Date(row.createdAt).toLocaleString()}</td>
+                      <tr key={row.id} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
+                        <td className="py-2 pr-3 font-mono text-slate-400">{new Date(row.createdAt).toLocaleString()}</td>
                         <td className="py-2 pr-3 font-mono">{row.phone}</td>
                         <td className="py-2 pr-3">{row.type}</td>
                         <td className="py-2 pr-3">
                           {row.status}
                           <span className="block text-red-400">{row.errorCode || ''}</span>
                           {row.errorMessage && (
-                            <span className="block text-[10px] text-zinc-500 max-w-xs truncate" title={row.errorMessage}>
+                            <span className="block text-[10px] text-slate-500 max-w-xs truncate" title={row.errorMessage}>
                               {row.errorMessage}
                             </span>
                           )}
                         </td>
-                        <td className="py-2 pr-3 text-zinc-400 max-w-sm truncate" title={row.message}>{row.message}</td>
+                        <td className="py-2 pr-3 text-slate-500 max-w-sm truncate" title={row.message}>{row.message}</td>
                         <td className="py-2 pr-3">
                           <div className="flex gap-1">
                             {row.status === 'FAILED' && row.errorCode !== 'CANCELLED' && (
@@ -294,8 +303,8 @@ export default function SmsSettingsPage() {
               </div>
             )}
           </Card>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     </>
   )
 }

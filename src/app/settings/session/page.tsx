@@ -7,6 +7,10 @@ import { useSession } from 'next-auth/react'
 import { normalizeAlmaRole } from '@/lib/roles'
 import toast from 'react-hot-toast'
 import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
+import { motion } from 'framer-motion'
+
+const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
 
 function apiHost(url: string | null | undefined): string {
   if (!url) return '—'
@@ -141,7 +145,7 @@ export default function SessionSettingsPage() {
         title="Session"
         subtitle="Signed-in identity · profile · diagnostics"
       />
-      <div className="p-4 md:p-6 max-w-lg space-y-4">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="p-4 md:p-6 max-w-lg space-y-5">
         {session?.user?.id && (
           <ProfilePhotoSection
             userId={session.user.id}
@@ -153,91 +157,97 @@ export default function SessionSettingsPage() {
           />
         )}
 
-        <Card className="p-5 border-gold-dim/25 bg-[#FAF9F6] space-y-3">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Build / backend</p>
-          {healthLoading ? (
-            <Skeleton className="h-24 w-full" />
-          ) : health ? (
-            <dl className="grid grid-cols-1 gap-2 text-[11px]">
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Frontend git</dt><dd className="font-mono text-cream truncate max-w-[55%]" title={health.frontend?.git_commit || ''}>{health.frontend?.git_commit || '—'}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">GAS stamp</dt><dd className="font-mono text-gold-lt">{gasStamp}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Clasp @NN</dt><dd className="font-mono text-zinc-300">{claspVer}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Deployment ID</dt><dd className="font-mono text-cream truncate max-w-[55%]" title={health.api?.gas_deployment_id || ''}>{health.api?.gas_deployment_id || '—'}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">API URL host</dt><dd className="font-mono text-zinc-400 truncate max-w-[55%]" title={health.api?.next_public_api_url || ''}>{apiHost(health.api?.next_public_api_url)}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Environment</dt><dd className="text-zinc-300">{health.environment}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Checked</dt><dd className="font-mono text-zinc-500">{health.timestamp}</dd></div>
-              <div className="flex justify-between gap-3 pt-2 border-t border-border"><dt className="text-zinc-500">Business</dt><dd className="text-cream font-semibold">{business.name}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Role</dt><dd className="text-cream font-semibold">{role.replace(/_/g, ' ')}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Account</dt><dd className="font-mono text-zinc-400 truncate max-w-[60%]" title={session?.user?.email || ''}>{session?.user?.email || '—'}</dd></div>
-            </dl>
-          ) : (
-            <p className="text-xs text-red-400">Could not load /api/health</p>
-          )}
-          {!healthLoading && health && !health.ok && (
-            <p className="text-[10px] text-amber-400">Backend probe returned ok:false — compare NEXT_PUBLIC_API_URL with clasp deployment.</p>
-          )}
-        </Card>
+        <motion.div variants={fadeUp}>
+          <Card className="p-5 border-gold-dim/25 bg-[#FAF9F6] space-y-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Build / backend</p>
+            {healthLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : health ? (
+              <dl className="grid grid-cols-1 gap-2 text-[11px]">
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Frontend git</dt><dd className="font-mono text-slate-800 truncate max-w-[55%]" title={health.frontend?.git_commit || ''}>{health.frontend?.git_commit || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">GAS stamp</dt><dd className="font-mono text-gold-lt">{gasStamp}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Clasp @NN</dt><dd className="font-mono text-slate-600">{claspVer}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Deployment ID</dt><dd className="font-mono text-slate-800 truncate max-w-[55%]" title={health.api?.gas_deployment_id || ''}>{health.api?.gas_deployment_id || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">API URL host</dt><dd className="font-mono text-slate-400 truncate max-w-[55%]" title={health.api?.next_public_api_url || ''}>{apiHost(health.api?.next_public_api_url)}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Environment</dt><dd className="text-slate-600">{health.environment}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Checked</dt><dd className="font-mono text-slate-500">{health.timestamp}</dd></div>
+                <div className="flex justify-between gap-3 pt-2 border-t border-black/[0.06]"><dt className="text-slate-500">Business</dt><dd className="text-slate-800 font-semibold">{business.name}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Role</dt><dd className="text-slate-800 font-semibold">{role.replace(/_/g, ' ')}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd className="font-mono text-slate-400 truncate max-w-[60%]" title={session?.user?.email || ''}>{session?.user?.email || '—'}</dd></div>
+              </dl>
+            ) : (
+              <p className="text-xs text-red-400">Could not load /api/health</p>
+            )}
+            {!healthLoading && health && !health.ok && (
+              <p className="text-[10px] text-amber-400">Backend probe returned ok:false — compare NEXT_PUBLIC_API_URL with clasp deployment.</p>
+            )}
+          </Card>
+        </motion.div>
 
-        <Card className="p-5 space-y-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Display name & contact</p>
-          <form onSubmit={saveProfile} className="space-y-3">
-            <label className="block space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Display name</span>
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="w-full rounded-xl bg-card border border-border px-3 py-2.5 text-sm text-cream"
-                placeholder="Full name"
-                maxLength={120}
-              />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Phone</span>
-              <input
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                className="w-full rounded-xl bg-card border border-border px-3 py-2.5 text-sm text-cream"
-                placeholder="+880 …"
-              />
-            </label>
-            <Button variant="gold" className="w-full justify-center" type="submit" disabled={savingProfile}>
-              {savingProfile ? 'Saving…' : 'Save profile'}
-            </Button>
-          </form>
-        </Card>
+        <motion.div variants={fadeUp}>
+          <Card className="p-5 space-y-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Display name & contact</p>
+            <form onSubmit={saveProfile} className="space-y-3">
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Display name</span>
+                <input
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  placeholder="Full name"
+                  maxLength={120}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Phone</span>
+                <input
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  placeholder="+880 …"
+                />
+              </label>
+              <Button variant="gold" className="w-full justify-center" type="submit" disabled={savingProfile}>
+                {savingProfile ? 'Saving…' : 'Save profile'}
+              </Button>
+            </form>
+          </Card>
+        </motion.div>
 
-        <Card className="p-5 space-y-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Password</p>
-          <form onSubmit={changePassword} className="space-y-3">
-            <label className="block space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Current</span>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={pwCur}
-                onChange={e => setPwCur(e.target.value)}
-                className="w-full rounded-xl bg-card border border-border px-3 py-2.5 text-sm text-cream"
-              />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">New (8+ chars)</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={pwNew}
-                onChange={e => setPwNew(e.target.value)}
-                className="w-full rounded-xl bg-card border border-border px-3 py-2.5 text-sm text-cream"
-              />
-            </label>
-            <Button variant="secondary" className="w-full justify-center" type="submit" disabled={savingPw}>
-              {savingPw ? 'Updating…' : 'Change password'}
-            </Button>
-          </form>
-          <p className="text-[11px] text-zinc-600">
-            Forgot your password? Use the recovery flow from the login screen — it emails a reset link when outbound mail is configured.
-          </p>
-        </Card>
-      </div>
+        <motion.div variants={fadeUp}>
+          <Card className="p-5 space-y-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Password</p>
+            <form onSubmit={changePassword} className="space-y-3">
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={pwCur}
+                  onChange={e => setPwCur(e.target.value)}
+                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">New (8+ chars)</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={pwNew}
+                  onChange={e => setPwNew(e.target.value)}
+                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                />
+              </label>
+              <Button variant="secondary" className="w-full justify-center" type="submit" disabled={savingPw}>
+                {savingPw ? 'Updating…' : 'Change password'}
+              </Button>
+            </form>
+            <p className="text-[11px] text-slate-600">
+              Forgot your password? Use the recovery flow from the login screen — it emails a reset link when outbound mail is configured.
+            </p>
+          </Card>
+        </motion.div>
+      </motion.div>
     </>
   )
 }
