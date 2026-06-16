@@ -41,7 +41,7 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
     const placed = new Date(order.placedAt).getTime()
     return Number.isFinite(placed) && placed > 0 && now - placed > STUCK_PENDING_DAYS * MS_PER_DAY
   })
-  if (stuck.length > 0) {
+  if (stuck.length >= 3) {
     issues.push({
       type: 'stuck_pending',
       severity: stuck.length >= 5 ? 'high' : 'normal',
