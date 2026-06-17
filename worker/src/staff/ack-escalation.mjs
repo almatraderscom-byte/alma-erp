@@ -1,12 +1,18 @@
 /**
- * Escalate staff messages that required acknowledgement but were not seen within 10 minutes.
- * Owner alerts fire anytime; staff NTFY fires anytime (office hours only limits Telegram re-ping).
+ * Escalate staff messages that required acknowledgement — staff nudge ×2, then owner (Phase 3).
  */
-import { sendNtfy, sendNtfyToTopic } from '../notify/ntfy.mjs'
-import { staffNtfyTopic, staffTelegramChatId } from './staff-fields.mjs'
+import { sendNtfy } from '../notify/ntfy.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
-import { isStaffOnLeaveSb, dhakaToday } from './leave.mjs'
+import {
+  MAX_STAFF_NUDGES,
+  formatOwnerEscalation,
+  sendOwnerEscalation,
+} from './task-nudge.mjs'
+
+const NUDGE1_MS = 10 * 60 * 1000
+const NUDGE2_MS = 20 * 60 * 1000
+const ESCALATE_MS = 30 * 60 * 1000
 
 async function recordAckEscalationRun(supabase) {
   const at = new Date().toISOString()
@@ -20,6 +26,31 @@ async function recordAckEscalationRun(supabase) {
   } catch (err) {
     console.warn('[ack-escalation] last-run log failed:', err.message)
   }
+}
+
+async function getAckNudgeCount(supabase, outboxId) {
+  const { data } = await supabase
+    .from('agent_kv_settings')
+    .select('value')
+    .eq('key', `ack_nudge:${outboxId}`)
+    .maybeSingle()
+  if (!data?.value) return 0
+  if (typeof data.value === 'number') return data.value
+  if (typeof data.value === 'object' && data.value != null) return Number(data.value.count ?? 0)
+  try {
+    const parsed = JSON.parse(String(data.value))
+    return Number(parsed.count ?? 0)
+  } catch {
+    return 0
+  }
+}
+
+async function setAckNudgeCount(supabase, outboxId, count) {
+  await supabase.from('agent_kv_settings').upsert({
+    key: `ack_nudge:${outboxId}`,
+    value: { count, at: new Date().toISOString() },
+    updated_at: new Date().toISOString(),
+  })
 }
 
 /**
@@ -45,7 +76,6 @@ export async function runAckEscalation({ supabase, bot }) {
   }
 
   const duringOffice = isWithinOfficeHours('ALMA_LIFESTYLE')
-  const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString()
   const { data: unseen, error } = await supabase
     .from('agent_outbox')
     .select('id, staff_id, staff_name, content, sent_at')
@@ -53,78 +83,76 @@ export async function runAckEscalation({ supabase, bot }) {
     .eq('status', 'delivered')
     .is('acknowledged_at', null)
     .is('ack_escalated_at', null)
-    .lt('sent_at', tenMinAgo)
+    .not('sent_at', 'is', null)
 
   if (error) {
     console.warn('[ack-escalation] query failed:', error.message)
-    await sendNtfy('critical', 'Ack escalation query failed', error.message, 'urgent').catch((err) => {
-      console.warn('[ack-escalation] query fail ntfy failed:', err.message)
-    })
     return { ok: false, reason: 'query_failed' }
   }
-  if (!unseen?.length) return { ok: true, escalated: 0 }
+  if (!unseen?.length) return { ok: true, escalated: 0, nudged: 0 }
 
-  console.log(`[ack-escalation] escalating ${unseen.length} unseen message(s) (office=${duringOffice})`)
+  const now = Date.now()
+  let nudged = 0
+  let escalated = 0
 
   for (const m of unseen) {
-    const preview = (m.content ?? '').slice(0, 80)
-    let ownerNotified = false
-    try {
-      await sendMarkdownSafe(
-        bot.telegram,
-        ownerChatId,
-        `🔴 ${m.staff_name ?? 'স্টাফ'} ১০ মিনিটেও মেসেজ দেখেনি:\n"${preview}"`,
-      )
-      ownerNotified = true
-    } catch (err) {
-      console.warn('[ack-escalation] owner notify failed:', err.message)
-    }
-    if (ownerNotified) {
-      await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch((err) => {
-        console.warn('[ack-escalation] staff unseen ntfy failed:', err.message)
-      })
-    }
-
-    if (!ownerNotified) continue
-
-    const today = dhakaToday()
-    const onLeave = m.staff_id && (await isStaffOnLeaveSb(supabase, m.staff_id, today))
-    if (!onLeave && m.staff_id) {
-      const { data: staff } = await supabase
+    const sentAt = m.sent_at ? new Date(m.sent_at).getTime() : now
+    const elapsed = now - sentAt
+    const nudgeCount = await getAckNudgeCount(supabase, m.id)
+    let staffName = m.staff_name ?? 'স্টাফ'
+    const preview = (m.content ?? '').slice(0, 60)
+    let chatId = null
+    if (m.staff_id) {
+      const { data: staffRow } = await supabase
         .from('agent_staff')
-        .select('telegramChatId, ntfy_topic, name')
+        .select('telegramChatId, name')
         .eq('id', m.staff_id)
         .maybeSingle()
-
-      const topic = staffNtfyTopic(staff)
-      if (topic) {
-        const ntfyResult = await sendNtfyToTopic(
-          topic,
-          'নতুন কাজ',
-          `${staff?.name ?? 'স্টাফ'}, একটি মেসেজ অপেক্ষা করছে — দেখুন।`,
-          'task',
-        ).catch((err) => ({ ok: false, error: err.message }))
-        if (!ntfyResult?.ok) {
-          console.warn(`[ack-escalation] staff ntfy failed (${topic}):`, ntfyResult?.error)
-        }
-      }
-      const chatId = staffTelegramChatId(staff)
-      if (duringOffice && chatId) {
-        await sendMarkdownSafe(
-          bot.telegram,
-          chatId,
-          `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
-        ).catch((err) => {
-          console.warn(`[ack-escalation] staff re-ping failed for ${staff.name}:`, err.message)
-        })
-      }
+      chatId = staffRow?.telegramChatId
+      if (staffRow?.name) staffName = staffRow.name
     }
 
-    await supabase
-      .from('agent_outbox')
-      .update({ ack_escalated_at: new Date().toISOString() })
-      .eq('id', m.id)
+    if (elapsed >= ESCALATE_MS && nudgeCount >= MAX_STAFF_NUDGES) {
+      const line = formatOwnerEscalation({
+        staffName,
+        title: preview || 'মেসেজ',
+        reason: '২টা reminder — মেসেজ দেখেননি',
+        recommendation: 'Telegram এ directly call/message করুন।',
+      })
+      const sent = await sendOwnerEscalation(bot.telegram, ownerChatId, line)
+      if (sent) {
+        await supabase
+          .from('agent_outbox')
+          .update({ ack_escalated_at: new Date().toISOString() })
+          .eq('id', m.id)
+        escalated++
+      }
+      continue
+    }
+
+    if (!duringOffice || !chatId) continue
+
+    const needNudge =
+      (elapsed >= NUDGE1_MS && nudgeCount < 1) ||
+      (elapsed >= NUDGE2_MS && nudgeCount < 2)
+
+    if (!needNudge || nudgeCount >= MAX_STAFF_NUDGES) continue
+
+    const msg =
+      nudgeCount === 0
+        ? `⏰ ${staffName} ভাই, একটি মেসেজ দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`
+        : `⏰ ${staffName} ভাই, এখনো মেসেজটি pending — দয়া করে দেখুন।`
+
+    await sendMarkdownSafe(bot.telegram, chatId, msg).catch((err) => {
+      console.warn(`[ack-escalation] staff nudge failed ${staffName}:`, err.message)
+    })
+    await setAckNudgeCount(supabase, m.id, nudgeCount + 1)
+    nudged++
   }
 
-  return { ok: true, escalated: unseen.length }
+  if (nudged || escalated) {
+    console.log(`[ack-escalation] nudged=${nudged} escalated=${escalated}`)
+  }
+
+  return { ok: true, nudged, escalated }
 }

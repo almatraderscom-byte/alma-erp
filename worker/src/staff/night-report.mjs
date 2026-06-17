@@ -60,17 +60,19 @@ export async function runNightReport({ supabase, bot }) {
   }
 
   // Group by staff
+  const DONE_STATUSES = new Set(['done', 'done_unverified'])
   const byStaff = {}
   for (const t of allTasks) {
     const staffId = t.agent_staff?.id || t.staff_id
     if (!byStaff[staffId]) byStaff[staffId] = { staff: t.agent_staff, done: [], pending: [] }
-    if (t.status === 'done') byStaff[staffId].done.push(t)
+    if (DONE_STATUSES.has(t.status)) byStaff[staffId].done.push(t)
     else byStaff[staffId].pending.push(t)
   }
 
   const reportLines = []
   const tasksToCarry = []
   const compactParts = []
+  const byStaffList = []
 
   for (const { staff, done, pending } of Object.values(byStaff)) {
     const staffId = staff?.id
@@ -83,6 +85,8 @@ export async function runNightReport({ supabase, bot }) {
     const pct = workTotal > 0 ? Math.round((workDone.length / workTotal) * 100) : 0
     const shortName = staffName.split(' ').pop() ?? staffName
     compactParts.push(`${shortName} ${bnNum(workDone.length)}/${bnNum(workTotal)} সম্পন্ন`)
+
+    byStaffList.push({ staff, done, pending })
 
     let lunchLine = ''
     const lunch = lunchByStaff[staffId]
@@ -292,8 +296,20 @@ export async function runNightReport({ supabase, bot }) {
     : ''
   const compactHeader = `আজকের (${dateLabel}) রিপোর্ট: ${compactParts.join(', ')}${carryLine}`
 
+  let scoreboardBlock = ''
+  try {
+    const { buildDailyScoreboard, sendScoreboardToStaff } = await import('./scoreboard.mjs')
+    const scoreboard = await buildDailyScoreboard(supabase, today, byStaffList)
+    scoreboardBlock = scoreboard.ownerBlock ? `${scoreboard.ownerBlock}\n\n` : ''
+    const staffSent = await sendScoreboardToStaff({ supabase, bot, perStaff: scoreboard.perStaff })
+    if (staffSent) console.log(`[night-report] scoreboard sent to ${staffSent} staff`)
+  } catch (err) {
+    console.warn('[night-report] scoreboard failed:', err?.message ?? err)
+  }
+
   const reportText =
     `📋 *${compactHeader}*\n\n` +
+    scoreboardBlock +
     reportLines.join('\n\n') +
     salahSummary +
     salesSummary +

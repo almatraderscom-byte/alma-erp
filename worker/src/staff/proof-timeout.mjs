@@ -1,13 +1,20 @@
 /**
- * Proof timeout — 30 min reminder, 2h unverified flag.
+ * Proof timeout — staff nudge ×2, then owner escalation (Phase 3).
  */
 import { getAppUrl, getInternalToken } from '../env.mjs'
-import { notify } from '../notify/index.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
-
-const REMINDER_MS = 30 * 60 * 1000
-const TIMEOUT_MS = 2 * 60 * 60 * 1000
+import {
+  NUDGE1_MS,
+  NUDGE2_MS,
+  ESCALATE_MS,
+  MAX_STAFF_NUDGES,
+  getTaskNudgeCount,
+  staffTaskNudgeMessage,
+  staffProofNudgeMessage,
+  formatOwnerEscalation,
+  sendOwnerEscalation,
+} from './task-nudge.mjs'
 
 async function callTaskCallback(payload, attempt = 0) {
   const base = getAppUrl()
@@ -36,68 +43,115 @@ async function callTaskCallback(payload, attempt = 0) {
   }
 }
 
-function shortTitle(title) {
-  const s = String(title ?? '').trim()
-  return s.length > 40 ? `${s.slice(0, 37)}…` : s
+function anchorTime(task) {
+  const pd = task.proof_data ?? {}
+  if (pd.proofRequestedAt) return new Date(pd.proofRequestedAt).getTime()
+  if (pd.sentAt) return new Date(pd.sentAt).getTime()
+  if (task.updated_at) return new Date(task.updated_at).getTime()
+  return Date.now()
+}
+
+async function sendStaffNudge({ bot, supabase, task, message }) {
+  const staffChat = task.agent_staff?.telegramChatId
+  if (!staffChat || !bot) return false
+  await loggedSendToStaff(bot.telegram, {
+    supabase,
+    staffId: task.staff_id,
+    staffName: task.agent_staff?.name ?? 'স্টাফ',
+    businessId: task.business_id ?? 'ALMA_LIFESTYLE',
+    type: 'task_nudge',
+    content: message,
+    chatId: staffChat,
+    relatedTaskIds: [task.id],
+    requiresAck: false,
+  }).catch((err) => {
+    console.warn(`[proof-timeout] nudge send failed ${task.id}:`, err.message)
+    return bot.telegram.sendMessage(staffChat, message).catch(() => {})
+  })
+  return true
 }
 
 export async function runProofTimeoutCheck({ supabase, bot }) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  const duringOffice = isWithinOfficeHours('ALMA_LIFESTYLE')
+
   const { data: tasks } = await supabase
     .from('staff_tasks')
-    .select('id, title, staff_id, proof_data, agent_staff(telegramChatId, name)')
-    .eq('status', 'awaiting_proof')
-    .eq('verification_status', 'awaiting_proof')
+    .select('id, title, staff_id, status, verification_status, proof_data, business_id, updated_at, agent_staff(telegramChatId, name)')
+    .in('status', ['awaiting_proof', 'sent'])
+    .neq('type', 'learning')
 
-  if (!tasks?.length) return
+  if (!tasks?.length) return { nudged: 0, escalated: 0 }
 
   const now = Date.now()
+  let nudged = 0
+  let escalated = 0
 
   for (const task of tasks) {
     const proofData = task.proof_data ?? {}
-    const requestedAt = proofData.proofRequestedAt
-      ? new Date(proofData.proofRequestedAt).getTime()
-      : now
-    const elapsed = now - requestedAt
-    const staffChat = task.agent_staff?.telegramChatId
-    const label = shortTitle(task.title)
+    if (proofData.ownerEscalatedAt) continue
 
-    if (elapsed >= TIMEOUT_MS) {
-      const result = await callTaskCallback({ taskId: task.id, action: 'timeout_unverified' })
-      await notify({
-        tier: 1,
-        title: 'টাস্ক প্রমাণ ছাড়াই সম্পন্ন',
-        message:
-          `⚠️ *${task.agent_staff?.name ?? 'স্টাফ'}* — ${label}\n` +
-          `২ ঘণ্টা প্রমাণ পাওয়া যায়নি — done_unverified হিসেবে চিহ্নিত।`,
-        category: 'task',
-      })
-      console.log('[proof-timeout] unverified', task.id, result.taskId)
+    if (task.status === 'sent' && !['not_required', 'redo_requested', 'awaiting_proof'].includes(task.verification_status ?? 'not_required')) {
       continue
     }
 
-    if (elapsed >= REMINDER_MS && !proofData.reminderSentAt && staffChat && bot) {
-      if (!isWithinOfficeHours('ALMA_LIFESTYLE')) continue
-      const reminderMsg = `📸 ${label} এর প্রমাণ পাঠাননি — ফটো পাঠান`
-      await loggedSendToStaff(bot.telegram, {
-        supabase,
-        staffId: task.staff_id,
-        staffName: task.agent_staff?.name ?? 'স্টাフ',
-        businessId: 'ALMA_LIFESTYLE',
-        type: 'proof_reminder',
-        content: reminderMsg,
-        chatId: staffChat,
-        relatedTaskIds: [task.id],
-        requiresAck: true,
-      }).catch((err) => {
-        console.warn(`[proof-timeout] logged send failed for ${task.id}, trying direct:`, err.message)
-        return bot.telegram.sendMessage(staffChat, reminderMsg).catch((e2) => {
-          console.warn(`[proof-timeout] direct send also failed for ${task.id}:`, e2.message)
-        })
-      })
+    const elapsed = now - anchorTime(task)
+    const nudgeCount = getTaskNudgeCount(proofData)
+    const staffName = task.agent_staff?.name ?? 'স্টাফ'
+    const isProofWait = task.status === 'awaiting_proof'
+    const nudgeMsg = isProofWait ? staffProofNudgeMessage(task.title) : staffTaskNudgeMessage(task.title)
 
-      await supabase.from('staff_tasks').update({
-        proof_data: { ...proofData, reminderSentAt: new Date().toISOString() },
-      }).eq('id', task.id)
+    if (elapsed >= ESCALATE_MS && nudgeCount >= MAX_STAFF_NUDGES) {
+      if (isProofWait) {
+        await callTaskCallback({ taskId: task.id, action: 'timeout_unverified' }).catch((err) => {
+          console.warn('[proof-timeout] timeout_unverified failed:', err.message)
+        })
+      }
+      const reason = isProofWait
+        ? '২টা reminder + প্রমাণ পাওয়া যায়নি'
+        : '২টা reminder — কাজ শেষ হয়নি'
+      const line = formatOwnerEscalation({
+        staffName,
+        title: task.title,
+        reason,
+        recommendation: 'Telegram এ directly জিজ্ঞেস করুন বা কাল সকালে follow-up।',
+      })
+      const sent = await sendOwnerEscalation(bot?.telegram, ownerChatId, line)
+      if (sent) {
+        await supabase.from('staff_tasks').update({
+          proof_data: {
+            ...proofData,
+            ownerEscalatedAt: new Date().toISOString(),
+            nudgeCount,
+          },
+        }).eq('id', task.id)
+        escalated++
+      }
+      continue
     }
+
+    if (!duringOffice) continue
+
+    const dueNudge =
+      (elapsed >= NUDGE1_MS && nudgeCount < 1) ||
+      (elapsed >= NUDGE2_MS && nudgeCount < 2)
+
+    if (!dueNudge || nudgeCount >= MAX_STAFF_NUDGES) continue
+
+    const sent = await sendStaffNudge({ bot, supabase, task, message: nudgeMsg })
+    if (!sent) continue
+
+    await supabase.from('staff_tasks').update({
+      proof_data: {
+        ...proofData,
+        nudgeCount: nudgeCount + 1,
+        lastNudgeAt: new Date().toISOString(),
+        ...(nudgeCount === 0 && !proofData.reminderSentAt ? { reminderSentAt: new Date().toISOString() } : {}),
+      },
+    }).eq('id', task.id)
+    nudged++
+    console.log(`[proof-timeout] nudge ${nudgeCount + 1} → ${staffName} task=${task.id}`)
   }
+
+  return { nudged, escalated }
 }
