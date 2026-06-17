@@ -27,6 +27,23 @@ export async function queryCostSumBetween(start: Date, end: Date): Promise<numbe
   return parseFloat(rows[0]?.total ?? '0') || 0
 }
 
+/** Sum recorded cost events for one conversation in a time window (duty attribution). */
+export async function queryConversationCostBetween(
+  conversationId: string,
+  start: Date,
+  end: Date,
+): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
+    Prisma.sql`SELECT COALESCE(SUM(cost_usd), 0)::text AS total
+      FROM agent_cost_events
+      WHERE conversation_id = ${conversationId}
+        AND occurred_at >= ${start}
+        AND occurred_at <= ${end}`,
+  )
+  const raw = parseFloat(rows[0]?.total ?? '0') || 0
+  return Math.round(raw * 1_000_000) / 1_000_000
+}
+
 /** Anthropic chat token usage aggregated from cost-event units JSON. */
 export type PromptCacheUsageRow = {
   cacheReadTokens: number

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react'
 import AgentMarkdown from './AgentMarkdown'
+import { formatDutyCostLineBangla } from '@/agent/lib/format-cost'
 
 /** GPU-friendly collapse — grid 0fr↔1fr + opacity (~250ms ease-out). */
 export function CollapsibleGrid({
@@ -30,6 +31,8 @@ export type OfficeShiftMessage = {
   id: string
   role: 'user' | 'assistant'
   text: string
+  /** Recorded duty cost — shown under ✅ feedback lines. */
+  costUsd?: number
 }
 
 export type OfficeTaskBlock = {
@@ -169,8 +172,15 @@ export function OfficeShiftThreadRenderer({
   const { preamble, blocks } = buildOfficeTaskBlocks(messages)
 
   const renderAssistant = (msg: OfficeShiftMessage) => (
-    <div className="text-[15px] leading-[1.7] text-[#1a1a2e] break-words [overflow-wrap:anywhere]">
-      <AgentMarkdown content={msg.text} />
+    <div>
+      <div className="text-[15px] leading-[1.7] text-[#1a1a2e] break-words [overflow-wrap:anywhere]">
+        <AgentMarkdown content={msg.text} />
+      </div>
+      {msg.costUsd != null && msg.costUsd >= 0 && DUTY_DONE.test(msg.text) && (
+        <p className="mt-1.5 text-[11px] tabular-nums text-[#94a3b8]">
+          {formatDutyCostLineBangla(msg.costUsd)}
+        </p>
+      )}
     </div>
   )
 

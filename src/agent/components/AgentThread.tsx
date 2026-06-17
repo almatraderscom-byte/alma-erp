@@ -411,7 +411,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         {isOfficeShift && staticMessages.length > 0 && (
           <div className="mb-6">
             <OfficeShiftThreadRenderer
-              messages={staticMessages}
+              messages={staticMessages.map((m) => ({
+                id: m.id,
+                role: m.role,
+                text: m.text,
+                costUsd: m.costUsd,
+              }))}
               renderUserMessage={(msg) => (
                 <div className="mb-4 flex justify-end">
                   <div className="max-w-[85%] min-w-0 rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-[#1a1a2e] whitespace-pre-wrap break-words select-text">

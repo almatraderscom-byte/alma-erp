@@ -24,6 +24,8 @@ import {
 } from '@/agent/lib/dayshift-settings'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
+import { queryConversationCostBetween } from '@/agent/lib/cost-db'
+import { formatDutyCostLineBangla } from '@/agent/lib/format-cost'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -57,6 +59,8 @@ type DutyWorkResult = {
   narrative: string
   result: string
   opinion: string
+  /** Sub-agent returns — cross-check against cost_events window. */
+  subagentCostUsd: number
 }
 
 const OPS_DUTIES = new Set([
@@ -80,6 +84,8 @@ export type DayShiftState = {
   lastTickAt?: string
   lastPatrolAt?: string
   completedAt?: string
+  /** Running sum of recorded duty costs for the day (office chat roll-up). */
+  totalDutyCostUsd?: number
 }
 
 function shiftKvKey(date: string): string {
@@ -122,9 +128,17 @@ export async function getOrCreateDayShiftConversation(date = todayYmdDhaka()): P
 }
 
 /** Cursor-style narrative block in the day_shift chat thread. */
-export async function appendShiftNarrative(conversationId: string, text: string): Promise<void> {
+export async function appendShiftNarrative(
+  conversationId: string,
+  text: string,
+  opts?: { costUsd?: number },
+): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
+  const cost =
+    opts?.costUsd != null && Number.isFinite(opts.costUsd) && opts.costUsd >= 0
+      ? Math.round(opts.costUsd * 1_000_000) / 1_000_000
+      : 0
   await db.agentMessage.create({
     data: {
       conversationId,
@@ -132,7 +146,7 @@ export async function appendShiftNarrative(conversationId: string, text: string)
       content: [{ type: 'text', text: trimmed }],
       tokensIn: 0,
       tokensOut: 0,
-      costUsd: 0,
+      costUsd: cost,
     },
   })
   await touchConversationActivity(conversationId)
@@ -177,6 +191,27 @@ function composeFeedback(label: string, result: string, opinion: string): string
   return `✅ Sir, "${label}" শেষ — ${r} আমার মত: ${o}`
 }
 
+/** Prefer cost_events sum; retry once if sub-agent logged async; fall back to sub-agent accrued. */
+async function measureDutyCostUsd(
+  conversationId: string,
+  start: Date,
+  end: Date,
+  subagentAccrued: number,
+): Promise<{ costUsd: number; approximate: boolean }> {
+  let recorded = await queryConversationCostBetween(conversationId, start, end)
+  if (recorded === 0 && subagentAccrued > 0) {
+    await new Promise((r) => setTimeout(r, 200))
+    recorded = await queryConversationCostBetween(conversationId, start, end)
+  }
+  if (recorded > 0) {
+    return { costUsd: recorded, approximate: false }
+  }
+  if (subagentAccrued > 0) {
+    return { costUsd: subagentAccrued, approximate: true }
+  }
+  return { costUsd: 0, approximate: false }
+}
+
 function specialistBriefForDuty(dutyKey: string, briefing: OwnerBriefingData): string | null {
   if (OPS_DUTIES.has(dutyKey)) {
     const pending = (briefing.staffYesterday?.total ?? 0) - (briefing.staffYesterday?.done ?? 0)
@@ -209,6 +244,7 @@ async function runDutyWork(
 ): Promise<DutyWorkResult> {
   const log = await getDutyLogRow(dutyKey, date)
   const parts: string[] = []
+  let subagentCostUsd = 0
 
   if (log?.status === 'done' || log?.status === 'skipped') {
     parts.push(log.detail?.trim() || `✓ ${label} — scheduler থেকে সম্পন্ন।`)
@@ -259,7 +295,10 @@ async function runDutyWork(
     const brief = specialistBriefForDuty(dutyKey, briefing)
     if (role && brief) {
       const spec = await maybeRunSpecialistByRole(role, brief, conversationId)
-      if (spec) parts.push(spec)
+      if (spec) {
+        parts.push(spec.text)
+        subagentCostUsd += spec.costUsd
+      }
     }
   }
 
@@ -273,14 +312,14 @@ async function runDutyWork(
         ? 'Scheduler catch-up বা manual follow-up দরকার হতে পারে।'
         : 'আজকের জন্য ঠিক আছে।'
 
-  return { narrative, result, opinion }
+  return { narrative, result, opinion, subagentCostUsd }
 }
 
 async function maybeRunSpecialistByRole(
   role: SpecialistRole,
   brief: string,
   conversationId: string,
-): Promise<string | null> {
+): Promise<{ text: string; costUsd: number } | null> {
   const label = specialistLabel(role)
   const conv = await prisma.agentConversation.findUnique({
     where: { id: conversationId },
@@ -309,11 +348,14 @@ async function maybeRunSpecialistByRole(
     void sendOwnerText(
       `⚠️ Day Shift: ${label} specialist ব্যর্থ — ${result.error ?? 'unknown'}. কাজ চালিয়ে যাচ্ছি।`,
     ).catch(() => {})
-    return `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`
+    return { text: `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`, costUsd: result.costUsd }
   }
 
   const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
-  return `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`
+  return {
+    text: `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`,
+    costUsd: result.costUsd,
+  }
 }
 
 async function runDeterministicTask(
@@ -496,9 +538,14 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 
   if (taskIndex >= total) {
     if (!state.completedAt) {
+      const dayTotal = state.totalDutyCostUsd ?? 0
+      const rollUp =
+        dayTotal > 0
+          ? `\n\n${formatDutyCostLineBangla(dayTotal)} — আজকের মোট duty AI খরচ।`
+          : ''
       await appendShiftNarrative(
         conversationId,
-        `✅ **মূল duty roster সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
+        `✅ **মূল duty roster সম্পন্ন** — ${total}টি চেক করা হয়েছে।${rollUp}\n\n` +
           `অফিস সময় (৮:০০–২২:০০) — প্রতি ঘণ্টায় হালকা প্যাট্রোল। ` +
           `পরের সাইকেল **সকাল ৮:০৫**-এ শুরু।`,
       )
@@ -512,6 +559,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 
   const duty = duties[taskIndex]
   const n = taskIndex + 1
+  const dutyStartAt = new Date()
 
   // STEP 1 — announce + in_progress
   await appendShiftNarrative(conversationId, `🏢 Sir, এখন করছি: ${duty.label}`)
@@ -530,6 +578,13 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     await appendShiftNarrative(conversationId, work.narrative)
   }
 
+  const { costUsd: dutyCostUsd, approximate: dutyCostApprox } = await measureDutyCostUsd(
+    conversationId,
+    dutyStartAt,
+    new Date(),
+    work.subagentCostUsd,
+  )
+
   // STEP 3 — approval gate: leave pending, notify, continue roster (Phase C)
   const approvalBlock = await checkDutyApprovalBlock(duty.duty, date, duty.label)
   if (approvalBlock) {
@@ -543,6 +598,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 
     state.taskIndex = taskIndex + 1
     state.lastTickAt = new Date().toISOString()
+    state.totalDutyCostUsd = (state.totalDutyCostUsd ?? 0) + dutyCostUsd
     await saveDayShiftState(state)
 
     if (state.taskIndex >= total) {
@@ -558,15 +614,16 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 
   // STEP 4 — mandatory feedback + complete
   const feedback = composeFeedback(duty.label, work.result, work.opinion)
-  await appendShiftNarrative(conversationId, feedback)
+  await appendShiftNarrative(conversationId, feedback, { costUsd: dutyCostUsd })
   await patchTodoByDutyKey(duty.duty, date, {
     status: 'completed',
-    description: feedback,
+    description: `${feedback}\n${formatDutyCostLineBangla(dutyCostUsd, dutyCostApprox)}`,
     completedAt: new Date(),
   })
 
   state.taskIndex = taskIndex + 1
   state.lastTickAt = new Date().toISOString()
+  state.totalDutyCostUsd = (state.totalDutyCostUsd ?? 0) + dutyCostUsd
   await saveDayShiftState(state)
 
   if (state.taskIndex >= total) {
