@@ -1,9 +1,7 @@
 /**
  * Auto-verification helpers for staff tasks (best-effort).
  */
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
+import { getAppUrl, getInternalToken } from '../env.mjs'
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle', envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
   { id: '827260860637393', name: 'Alma Online Shop', envKey: 'FB_PAGE_TOKEN_ONLINESHOP' },
@@ -83,11 +81,11 @@ async function checkMessengerActivity(task, supabase) {
 
 async function checkErpProductUpdate(task) {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/task-verify-erp`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/task-verify-erp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ action: 'listing', task }),
     })
@@ -104,11 +102,11 @@ async function checkErpProductUpdate(task) {
 
 async function checkErpOrderUpdates(task) {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/task-verify-erp`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/task-verify-erp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ action: 'order', task }),
     })
@@ -132,14 +130,14 @@ const CONTENT_TYPES = new Set(['ad_creative', 'product_content', 'product_photo'
 export async function assessProofQuality({ task, proofImageUrl, proofText }) {
   const fallback = { matches: true, confidence: 'low', note: '', feedback: null }
   if (!task?.type || !CONTENT_TYPES.has(task.type)) return fallback
-  if (!APP_URL || !INT_TOKEN) return fallback
+  if (!getAppUrl() || !getInternalToken()) return fallback
 
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/assess-task-proof`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/assess-task-proof`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({
         taskTitle: task.title,

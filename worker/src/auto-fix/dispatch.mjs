@@ -10,12 +10,12 @@
  * 6. SECOND AGENT REVIEW — After PR, Bugbot reviews the changes automatically.
  */
 import { createClient } from '@supabase/supabase-js'
+import { getBotToken } from '../env.mjs'
+import { getOwnerChatId } from '../telegram/owner-id.mjs'
 
 const CURSOR_API_KEY = () => process.env.CURSOR_API_KEY ?? ''
 const GITHUB_REPO = process.env.AUTOFIX_GITHUB_REPO ?? 'almatraderscom-byte/alma-erp'
 const GITHUB_BRANCH = process.env.AUTOFIX_GITHUB_BRANCH ?? 'main'
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID ?? ''
-const BOT_TOKEN = process.env.ASSISTANT_BOT_TOKEN ?? ''
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -190,12 +190,14 @@ async function updateAction(supabase, actionId, status, result) {
 }
 
 async function notifyOwner(text) {
-  if (!OWNER_CHAT_ID || !BOT_TOKEN) return
+  const ownerChatId = getOwnerChatId()
+  const botToken = getBotToken()
+  if (!ownerChatId || !botToken) return
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: OWNER_CHAT_ID, text }),
+      body: JSON.stringify({ chat_id: ownerChatId, text }),
     })
   } catch (err) {
     console.warn('[auto-fix] telegram notify failed:', err.message)
@@ -222,12 +224,14 @@ export async function requestAutoFix(issue) {
     costEstimate: costEstimate,
   })
 
-  if (OWNER_CHAT_ID && BOT_TOKEN) {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  if (getOwnerChatId() && getBotToken()) {
+    const ownerChatId = getOwnerChatId()
+    const botToken = getBotToken()
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: OWNER_CHAT_ID,
+        chat_id: ownerChatId,
         text: `🔧 Auto-Fix Request\n\n` +
           `📋 ${issue.title}\n📁 ${issue.area} · ${issue.severity}\n📝 ${preview}\n\n` +
           `💰 আনুমানিক খরচ: $${costEstimate.toFixed(2)}\n\n` +

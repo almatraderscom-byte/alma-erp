@@ -1,13 +1,12 @@
 /**
  * Task verification orchestration — Done flow, proof, owner review cards.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { autoVerifyTask, assessProofQuality, trackProofFailurePattern } from './verify-task.mjs'
 import { taskDoneCallbackData, compactUuid, buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { notifyStaffTaskProgress, resolveTaskProgressContext } from './task-progress.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 import { getOwnerChatId } from '../telegram/owner-id.mjs'
 import { uploadTaskProofPhoto } from './task-proof-storage.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
@@ -30,11 +29,11 @@ const AUTO_FIRST_TYPES = new Set([
 const TEXT_PROOF_TYPES = new Set(['order_followup'])
 
 async function callTaskCallback(payload) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/task-callback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify(payload),
   })

@@ -13,16 +13,14 @@
  *   - Generated task types
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { createClient } from '@supabase/supabase-js'
-
-const APP_URL    = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN  = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 // ── ERP data fetch helpers ────────────────────────────────────────────────────
 
 async function fetchFromAgent(endpoint) {
-  const res = await fetch(`${APP_URL}${endpoint}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${getAppUrl()}${endpoint}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   if (!res.ok) throw new Error(`ERP fetch ${endpoint} failed: ${res.status}`)
   return res.json()

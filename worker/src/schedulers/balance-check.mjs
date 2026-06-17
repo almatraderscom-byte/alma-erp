@@ -1,14 +1,12 @@
 /**
  * Every 6 hours — refresh API provider balances + low-balance Tier 1 alerts.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
 async function wasAlerted(key) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings?keys=${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   if (!res.ok) return false
   const data = await res.json()
@@ -16,11 +14,11 @@ async function wasAlerted(key) {
 }
 
 async function markAlert(key) {
-  await fetch(`${APP_URL}/api/assistant/internal/agent-settings`, {
+  await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ key, value: new Date().toISOString() }),
   }).catch(() => {})
@@ -28,9 +26,9 @@ async function markAlert(key) {
 
 export async function runBalanceCheck() {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/balance-refresh`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/balance-refresh`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     if (!res.ok) {
       console.warn(`[balance-check] HTTP ${res.status}`)

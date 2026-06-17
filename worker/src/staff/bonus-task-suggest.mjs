@@ -9,19 +9,19 @@ import {
 } from './evening-proposal.mjs'
 import { sendBonusSuggestCard } from '../telegram/dispatcher.mjs'
 import { bnNum, formatDhakaTimeBn } from './bn-format.mjs'
-
-const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
-const BONUS_TARGET = 4
+import { getAppUrl, getInternalToken } from '../env.mjs'
+import { normalizeStaffTaskSource } from './task-source.mjs'
 
 async function callInternal(path) {
-  const res = await fetch(`${APP_URL()}${path}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+  const res = await fetch(`${getAppUrl()}${path}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   const text = await res.text()
   try { return JSON.parse(text) }
   catch { return { raw: text, ok: res.ok } }
 }
+
+const BONUS_TARGET = 4
 
 /** Build 3–4 bonus tasks excluding task types already completed today. */
 export function buildBonusTasks(staff, profile, picks, pendingOrders, existingTasks) {
@@ -32,7 +32,7 @@ export function buildBonusTasks(staff, profile, picks, pendingOrders, existingTa
   for (const task of candidates) {
     if (usedTypes.has(task.type)) continue
     if (unique.some((u) => u.type === task.type && u.title === task.title)) continue
-    unique.push({ ...task, source: 'bonus_suggest' })
+    unique.push({ ...task, source: normalizeStaffTaskSource('agent') })
     if (unique.length >= BONUS_TARGET) break
   }
   return unique
@@ -61,7 +61,7 @@ export async function suggestBonusTasks({ supabase, telegram, staff, today, exis
   }
 
   const [{ data: staffRow }, profiles, apiData] = await Promise.all([
-    supabase.from('agent_staff').select('id, name, role').eq('id', staff.id).single(),
+    supabase.from('agent_staff').select('id, name, role, business_id').eq('id', staff.id).single(),
     loadStaffProfiles(supabase),
     callInternal(`/api/assistant/internal/staff-task-proposal?date=${today}`),
   ])
@@ -77,6 +77,8 @@ export async function suggestBonusTasks({ supabase, telegram, staff, today, exis
     return
   }
 
+  const staffBiz = staffRow?.business_id ?? 'ALMA_LIFESTYLE'
+
   const taskData = bonusTasks.map((t) => ({
     id: crypto.randomUUID(),
     staff_id: t.staffId,
@@ -86,7 +88,8 @@ export async function suggestBonusTasks({ supabase, telegram, staff, today, exis
     product_ref: t.productRef ?? null,
     status: 'proposed',
     proposed_for: today,
-    source: 'bonus_suggest',
+    source: normalizeStaffTaskSource('agent'),
+    business_id: staffBiz,
     created_at: new Date().toISOString(),
   }))
 
@@ -105,6 +108,7 @@ export async function suggestBonusTasks({ supabase, telegram, staff, today, exis
       summary: message,
       costEstimate: 0,
       status: 'pending',
+      business_id: staffBiz,
       createdAt: new Date().toISOString(),
     })
     .select('id')

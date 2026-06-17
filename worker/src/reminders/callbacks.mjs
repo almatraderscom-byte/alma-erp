@@ -2,15 +2,13 @@
  * Telegram inline buttons for reminders.
  */
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
+import { getAppUrl, getInternalToken } from '../env.mjs'
 async function updateReminder(id, action, minutes) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/reminder-update`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/reminder-update`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ id, action, minutes }),
   })

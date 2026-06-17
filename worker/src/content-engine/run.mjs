@@ -2,10 +2,8 @@
  * Autonomous content engine slot runner (Phase 3).
  * Preparation only — pipeline stops at Gate 1; owner must approve twice to publish.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { isWithinOfficeHours } from '../staff/office-hours.mjs'
-
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 const SLOT_TIMES = {
   1: '10:00',
@@ -60,11 +58,11 @@ export async function runContentEngineSlot({ supabase, slot }) {
     return { dutyStatus: 'skipped', dutyDetail: `ইতিমধ্যে চালানো হয়েছে (${timeLabel})` }
   }
 
-  const res = await fetch(`${APP_URL}/api/assistant/internal/content-engine-run`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/content-engine-run`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ slot }),
   })

@@ -6,21 +6,11 @@ import { dhakaTodayYmd } from '../salah/dhaka-date.mjs'
 import { formatDhakaDateLabel } from './bn-format.mjs'
 import { fetchOwnerDecisions } from '../memory/owner-decisions.mjs'
 import { normalizeStaffTaskSource } from './task-source.mjs'
+import { normalizeStaffTaskType } from './task-type.mjs'
+import { getAppUrl, getInternalToken } from '../env.mjs'
 
-const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
-
-/** Must match staff_tasks_type_check in Postgres — unknown types map to misc. */
-const ALLOWED_STAFF_TASK_TYPES = new Set([
-  'ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update',
-  'order_followup', 'page_management', 'customer_reply', 'content_support', 'office_task',
-  'stock_check', 'misc', 'strategist_directive',
-])
-
-function normalizeStaffTaskType(type) {
-  const t = String(type ?? 'misc').trim()
-  return ALLOWED_STAFF_TASK_TYPES.has(t) ? t : 'misc'
-}
+const INT_TOKEN = () => getInternalToken()
+const APP_URL = () => getAppUrl()
 
 /** Smart task brief cache — reset per proposal run */
 let _smartTaskCache = null
@@ -720,6 +710,16 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
 
     await supabase.from('staff_tasks').delete().eq('proposed_for', targetDate).eq('status', 'proposed')
 
+    const staffIds = [...new Set(proposal.tasks.map((t) => t.staffId))]
+    const { data: staffBizRows } = await supabase
+      .from('agent_staff')
+      .select('id, business_id')
+      .in('id', staffIds)
+    const bizByStaff = Object.fromEntries(
+      (staffBizRows ?? []).map((s) => [s.id, s.business_id ?? 'ALMA_LIFESTYLE']),
+    )
+    const proposalBusinessId = staffIds.map((id) => bizByStaff[id]).find(Boolean) ?? 'ALMA_LIFESTYLE'
+
     const taskData = proposal.tasks.map((t) => ({
       id: crypto.randomUUID(),
       staff_id: t.staffId,
@@ -730,6 +730,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       status: 'proposed',
       proposed_for: targetDate,
       source: normalizeStaffTaskSource(t.source),
+      business_id: bizByStaff[t.staffId] ?? 'ALMA_LIFESTYLE',
       created_at: new Date().toISOString(),
     }))
 
@@ -760,6 +761,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
         : proposal.summaryBangla,
       costEstimate: 0,
       status: 'pending',
+      business_id: proposalBusinessId,
     })
 
     const { sendTelegramApprovalCard, buildStaffProposalKeyboard, getDispatcherBot } = await import('../telegram/dispatcher.mjs')

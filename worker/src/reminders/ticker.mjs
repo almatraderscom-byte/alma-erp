@@ -2,21 +2,19 @@
  * Reminder ticker — every minute: fire due reminders + escalate unacked tier≥2.
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
-
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function callInternal(path, method = 'GET', body = null) {
   const opts = {
     method,
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
   }
   if (body) opts.body = JSON.stringify(body)
-  const res = await fetch(`${APP_URL}${path}`, opts)
+  const res = await fetch(`${getAppUrl()}${path}`, opts)
   const text = await res.text()
   try { return { ok: res.ok, status: res.status, data: JSON.parse(text) } }
   catch { return { ok: res.ok, status: res.status, data: { raw: text } } }

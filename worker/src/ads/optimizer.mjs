@@ -2,12 +2,10 @@
  * Ads Optimizer — 09:45 Asia/Dhaka daily (after ads-monitor).
  * Creates ONE owner approval card when actionable recommendations exist.
  */
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
+import { getAppUrl, getInternalToken } from '../env.mjs'
 export async function runAdsOptimizer() {
-  if (!APP_URL || !INT_TOKEN) {
-    console.warn('[ads-optimizer] APP_URL or AGENT_INTERNAL_TOKEN not set — skipping')
+  if (!getAppUrl() || !getInternalToken()) {
+    console.warn('[ads-optimizer] getAppUrl() or AGENT_INTERNAL_TOKEN not set — skipping')
     return { dutyStatus: 'skipped', dutyDetail: 'Internal API not configured' }
   }
 
@@ -17,9 +15,9 @@ export async function runAdsOptimizer() {
   }
 
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/ads-optimizer-run`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/ads-optimizer-run`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     const data = await res.json()
     if (!res.ok) {

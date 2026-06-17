@@ -1,3 +1,4 @@
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { buildFinanceKeyboard } from '../finance/confirm-cards.mjs'
 import {
@@ -6,9 +7,6 @@ import {
   buildStaffProposalKeyboard,
   getDispatcherBot,
 } from '../telegram/dispatcher.mjs'
-
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 const FINANCE_TYPES = new Set([
   'log_expense',
@@ -168,11 +166,11 @@ export function buildContentGate1KeyboardFromPayload(gate1Id, payload) {
 }
 
 export async function handleContentGate1Variant(ctx, gate1Id, variant, action) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/content-gate1-variant`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/content-gate1-variant`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gate1Id, variant, action }),
   })
@@ -214,11 +212,11 @@ export function buildAdCreativeKeyboardFromPayload(gateId, payload) {
 }
 
 export async function handleAdCreativeRegen(ctx, gateId, creativeId) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/ad-creative-gate`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/ad-creative-gate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gateId, creativeId }),
   })
@@ -256,11 +254,11 @@ export function buildAdsOptimizerKeyboardFromPayload(gateId, payload) {
 }
 
 export async function handleAdsOptimizerExec(ctx, gateId, recIndex) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/ads-optimizer-exec`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/ads-optimizer-exec`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gateId, recIndex: Number(recIndex) }),
   })

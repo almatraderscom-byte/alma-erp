@@ -7,11 +7,9 @@
  * 2. Health scan (failed/missed duties, heartbeat issues)
  * 3. Recent Vercel function errors (via Vercel API if configured)
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { createClient } from '@supabase/supabase-js'
 import { requestAutoFix } from './dispatch.mjs'
-
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -57,8 +55,8 @@ export async function runErrorCollector() {
 
   // 2. Check health scan results via API
   try {
-    const res = await fetch(`${APP_URL}/api/agent/health-scan`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    const res = await fetch(`${getAppUrl()}/api/agent/health-scan`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
       signal: AbortSignal.timeout(15_000),
     })
     if (res.ok) {

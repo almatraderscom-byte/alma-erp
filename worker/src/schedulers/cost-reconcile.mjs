@@ -1,16 +1,14 @@
 /**
  * Nightly cost reconciliation — compare logged vs provider usage where API permits.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
-
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 export async function runCostReconciliation() {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/cost-reconcile`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/cost-reconcile`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     if (!res.ok) {
       console.warn(`[cost-reconcile] HTTP ${res.status}`)

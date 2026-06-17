@@ -13,6 +13,7 @@
  * Confirm cards from pending actions render as inline keyboard buttons.
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { Telegraf } from 'telegraf'
 import { transcribeVoiceNote } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
@@ -67,9 +68,6 @@ import { getOwnerChatId, isOwnerChatId } from './owner-id.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
 function createSupabase() {
   return createClient(
     process.env.SUPABASE_URL ?? '',
@@ -105,8 +103,8 @@ async function getDailyConversationId(personalMode = false) {
   const title = personalMode ? `Telegram ব্যক্তিগত ${today}` : `Telegram ${today}`
 
   // Try to find an existing conversation for today
-  const listRes = await fetch(`${APP_URL}/api/assistant/internal/telegram-conversation?date=${today}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const listRes = await fetch(`${getAppUrl()}/api/assistant/internal/telegram-conversation?date=${today}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   if (listRes.ok) {
     const data = await listRes.json()
@@ -157,11 +155,11 @@ function userWantsVoiceReply(text) {
 async function autoMarkSalahFromText(text) {
   if (!text?.trim()) return
   try {
-    await fetch(`${APP_URL}/api/assistant/internal/salah-auto-mark`, {
+    await fetch(`${getAppUrl()}/api/assistant/internal/salah-auto-mark`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ text }),
     })
@@ -175,7 +173,7 @@ async function handleOwnerText(ctx, text) {
 
   if (ownerState.financeEdit) {
     const { handleFinanceEditValue } = await import('../finance/confirm-cards.mjs')
-    const handled = await handleFinanceEditValue(ctx, APP_URL, INT_TOKEN, ownerState, text)
+    const handled = await handleFinanceEditValue(ctx, getAppUrl(), getInternalToken(), ownerState, text)
     if (handled) return
   }
 
@@ -361,11 +359,11 @@ async function handleActionCallback(ctx, action, actionId) {
       }
     }
 
-    const res = await fetch(`${APP_URL}/api/assistant/actions/${actionId}/${endpoint}`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/actions/${actionId}/${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
     })
     const data = await res.json()
@@ -409,17 +407,17 @@ async function handleCsModeCommand(ctx, modeArg) {
     await ctx.reply('ব্যবহার: /cs off|shadow|night|auto|status|resume <conversationId>')
     return
   }
-  await fetch(`${APP_URL}/api/assistant/internal/agent-settings`, {
+  await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ key: 'cs_mode', value: mode }),
   })
   await ctx.reply(`✅ CS mode → *${mode}*`, { parse_mode: 'Markdown' })
 }
 
 async function handleCsStatus(ctx) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=cs_mode`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings?keys=cs_mode`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   const data = await res.json()
   await ctx.reply(`📊 CS mode: *${data.cs_mode ?? 'off'}*`, { parse_mode: 'Markdown' })
@@ -430,9 +428,9 @@ async function handleCsResume(ctx, convId) {
     await ctx.reply('ব্যবহার: /cs resume <conversationId>')
     return
   }
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-resume`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-resume`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ conversationId: convId }),
   })
   const data = await res.json()
@@ -444,9 +442,9 @@ async function handleCsResume(ctx, convId) {
 }
 
 async function handleCsFollowups(ctx, on) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-followups`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-followups`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ action: 'set_enabled', enabled: on }),
   })
   if (!res.ok) {
@@ -462,9 +460,9 @@ async function handleCsBlock(ctx, psid) {
     return
   }
   const pageId = process.env.CS_DEFAULT_PAGE_ID ?? '1044848232034171'
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-block`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-block`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ pageId, psid, blockedBy: String(ctx.chat?.id) }),
   })
   const data = await res.json()
@@ -482,9 +480,9 @@ async function handlePostlink(ctx, args) {
   }
   const postRef = args[0]
   const codes = args.slice(1)
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-postlink`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-postlink`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ postRef, productCodes: codes }),
   })
   const data = await res.json()
@@ -497,9 +495,9 @@ async function handlePostlink(ctx, args) {
 
 async function handleCsConfirmOrder(ctx, draftId) {
   await ctx.answerCbQuery('⏳ কনফার্ম হচ্ছে…')
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cs-confirm-order`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-confirm-order`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ draftId, confirmedBy: String(ctx.chat?.id) }),
   })
   const data = await res.json()
@@ -514,9 +512,9 @@ async function handleCsConfirmOrder(ctx, draftId) {
 async function handleCsSendDraft(ctx, draftId) {
   await ctx.answerCbQuery('⏳ পাঠানো হচ্ছে…')
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-shadow-draft`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
       body: JSON.stringify({ draftId, action: 'send', sentBy: String(ctx.chat?.id) }),
     })
     const data = await res.json().catch(() => ({}))
@@ -536,9 +534,9 @@ async function handleCsSendDraft(ctx, draftId) {
       await ctx.reply(`❌ Facebook পাঠাতে ব্যর্থ (page ${data.pageId}): ${sendErr.message?.slice(0, 200)}`)
       return
     }
-    const markRes = await fetch(`${APP_URL}/api/assistant/internal/cs-shadow-draft`, {
+    const markRes = await fetch(`${getAppUrl()}/api/assistant/internal/cs-shadow-draft`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
       body: JSON.stringify({ draftId, action: 'mark_sent', sentBy: String(ctx.chat?.id) }),
     })
     if (!markRes.ok) {
@@ -557,8 +555,8 @@ async function handleCsSendDraft(ctx, draftId) {
 
 async function showRecentChats(ctx) {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/conversations?limit=5`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    const res = await fetch(`${getAppUrl()}/api/assistant/conversations?limit=5`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     if (!res.ok) { await ctx.reply('চ্যাট লোড করা যায়নি।'); return }
     const data = await res.json()
@@ -589,9 +587,9 @@ async function handleStaffLink(ctx, args) {
   const chatId = parts[parts.length - 1]
   const name   = parts.slice(1, parts.length - 1).join(' ')
 
-  const res = await fetch(`${APP_URL}/api/assistant/internal/staff-link`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/staff-link`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ name, telegramChatId: chatId }),
   })
   const data = await res.json()
@@ -1102,7 +1100,7 @@ export function createTelegramBot() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${INT_TOKEN}`,
+              Authorization: `Bearer ${getInternalToken()}`,
             },
             body: JSON.stringify({ actionId, issue: row.payload }),
           })
@@ -1143,7 +1141,7 @@ export function createTelegramBot() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${INT_TOKEN}`,
+              Authorization: `Bearer ${getInternalToken()}`,
             },
             body: JSON.stringify({ actionId, payload: row.payload }),
           })
@@ -1192,7 +1190,7 @@ export function createTelegramBot() {
     if (data.startsWith('fin_rm:')) {
       const [, actionId, idxStr] = data.split(':')
       const { handleFinanceRemove } = await import('../finance/confirm-cards.mjs')
-      await handleFinanceRemove(ctx, APP_URL, INT_TOKEN, actionId, Number(idxStr))
+      await handleFinanceRemove(ctx, getAppUrl(), getInternalToken(), actionId, Number(idxStr))
       return
     }
 
@@ -1212,7 +1210,7 @@ export function createTelegramBot() {
     if (data.startsWith('fin_edit:')) {
       const actionId = data.slice('fin_edit:'.length)
       const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
-      await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
+      await handleFinanceEditMenu(ctx, getAppUrl(), getInternalToken(), actionId, ownerState)
       return
     }
 
@@ -1316,7 +1314,7 @@ export function createTelegramBot() {
           return
         }
         const { handleFinanceEditMenu } = await import('../finance/confirm-cards.mjs')
-        await handleFinanceEditMenu(ctx, APP_URL, INT_TOKEN, actionId, ownerState)
+        await handleFinanceEditMenu(ctx, getAppUrl(), getInternalToken(), actionId, ownerState)
       } else {
         await handleActionCallback(ctx, action, actionId)
       }
@@ -1584,8 +1582,8 @@ export function createTelegramBot() {
       const [, askCardId, optIdxStr] = data.split(':')
       const optIdx = parseInt(optIdxStr, 10)
       try {
-        const cardRes = await fetch(`${APP_URL}/api/assistant/internal/ask-card?id=${askCardId}`, {
-          headers: { Authorization: `Bearer ${INT_TOKEN}` },
+        const cardRes = await fetch(`${getAppUrl()}/api/assistant/internal/ask-card?id=${askCardId}`, {
+          headers: { Authorization: `Bearer ${getInternalToken()}` },
         })
         const card = await cardRes.json()
         const options = JSON.parse(card.options ?? '[]')
@@ -1594,11 +1592,11 @@ export function createTelegramBot() {
           await ctx.answerCbQuery('অপশন পাওয়া যায়নি')
           return
         }
-        await fetch(`${APP_URL}/api/assistant/ask-cards/${askCardId}/answer`, {
+        await fetch(`${getAppUrl()}/api/assistant/ask-cards/${askCardId}/answer`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${INT_TOKEN}`,
+            Authorization: `Bearer ${getInternalToken()}`,
           },
           body: JSON.stringify({ option }),
         })
@@ -1712,9 +1710,9 @@ export function createTelegramBot() {
       if (isOwner(ctx.chat?.id)) {
         const [, pageId, postId, code] = data.split(':')
         await ctx.answerCbQuery('লিঙ্ক হচ্ছে…')
-        const res = await fetch(`${APP_URL}/api/assistant/internal/cs-postlink`, {
+        const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-postlink`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
           body: JSON.stringify({ postRef: postId, pageId, productCodes: [code] }),
         })
         if (res.ok) await ctx.reply(`✅ Post ${postId} → ${code}`)

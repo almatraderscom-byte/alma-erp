@@ -4,6 +4,7 @@
  * Sends each staff member their Bangla task list via Telegram with [✅ Done] buttons.
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { sendDispatchVoiceHeadline } from './staff-voice-nudge.mjs'
 import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
@@ -29,9 +30,6 @@ async function updateMorningDispatchDutyLog(supabase, result) {
     console.error('[dispatch] duty-log update failed:', e.message)
   }
 }
-
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 /**
  * @param {import('../staff/dispatch.mjs').DispatchResult | null | undefined} result
@@ -93,21 +91,24 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
   const { data: tasks, error } = await query
   if (error) throw new Error(`DB error: ${error.message}`)
-  const pending = (tasks ?? []).filter((t) => t.status === 'approved')
+  let pending = (tasks ?? []).filter((t) => t.status === 'approved')
 
-  // Derive business scope for this dispatch batch. If tasks span multiple
-  // businesses (shouldn't happen — one project per proposal — fall back to the
-  // first non-null businessId; downstream filtering keeps staff lookups safe).
+  if (taskIds?.length) {
+    const idSet = new Set(taskIds)
+    const filtered = pending.filter((t) => idSet.has(t.id))
+    const missing = taskIds.filter((id) => !filtered.some((t) => t.id === id))
+    if (missing.length) {
+      console.warn(`[dispatch] taskIds mismatch — ${missing.length} id(s) not approved for ${date}: ${missing.slice(0, 5).join(',')}`)
+    }
+    pending = filtered
+  }
+
+  // Derive business scope for this dispatch batch.
   const dispatchBusinessId =
     pending.find((t) => t.business_id)?.business_id
     ?? pending.find((t) => t.agent_staff?.business_id)?.agent_staff?.business_id
     ?? 'ALMA_LIFESTYLE'
 
-  if (taskIds?.length && pending.length !== taskIds.length) {
-    console.warn(
-      `[dispatch] payload taskIds (${taskIds.length}) != approved rows (${pending.length}) — using all approved for ${date}`,
-    )
-  }
   if (!pending.length) {
     console.warn('[dispatch] no approved tasks to dispatch for', date)
     const result = {
@@ -297,11 +298,11 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
   let greeting = `আস্সালামু আলাইকুম ${staffName} ভাই! 📋`
   let taskIntro = ''
   try {
-    const ctxRes = await fetch(`${APP_URL}/api/agent/staff-context`, {
+    const ctxRes = await fetch(`${getAppUrl()}/api/agent/staff-context`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ staffId, staffName, taskCount: staffTasks.length }),
       signal: AbortSignal.timeout(5000),

@@ -9,6 +9,8 @@ import { notify } from '../notify/index.mjs'
 import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 import { bnNum, formatDhakaDateLabel } from './bn-format.mjs'
 import { normalizeStaffTaskSource } from './task-source.mjs'
+import { normalizeStaffTaskType } from './task-type.mjs'
+import { getAppUrl, getInternalToken } from '../env.mjs'
 
 export async function runNightReport({ supabase, bot }) {
   console.log('[night-report] starting...')
@@ -43,7 +45,7 @@ export async function runNightReport({ supabase, bot }) {
 
   const { data: allTasks } = await supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, telegramChatId)`)
+    .select(`*, business_id, agent_staff(id, name, telegramChatId, business_id)`)
     .eq('proposed_for', today)
     .not('status', 'eq', 'cancelled')
 
@@ -136,11 +138,12 @@ export async function runNightReport({ supabase, bot }) {
       staff_id:     t.staff_id,
       title:        `↩ ${t.title}`,
       detail:       t.detail ?? null,
-      type:         t.type ?? 'general',
+      type:         normalizeStaffTaskType(t.type),
       product_ref:  t.product_ref ?? null,
       status:       'proposed',
       proposed_for: tomorrowStr,
       source: normalizeStaffTaskSource('carry_forward'),
+      business_id:  t.business_id ?? t.agent_staff?.business_id ?? 'ALMA_LIFESTYLE',
       created_at:   new Date().toISOString(),
     }))
 
@@ -167,8 +170,8 @@ export async function runNightReport({ supabase, bot }) {
   // Today's sales snapshot (best-effort)
   let salesSummary = ''
   try {
-    const salesRes = await fetch(`${process.env.APP_URL}/api/assistant/internal/agent-settings?keys=today_sales_summary`, {
-      headers: { Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN}` },
+    const salesRes = await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings?keys=today_sales_summary`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     const data = await salesRes.json()
     if (data.today_sales_summary) salesSummary = `\n\n📊 ${data.today_sales_summary}`

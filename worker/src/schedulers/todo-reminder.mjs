@@ -3,12 +3,10 @@
  * Fetches agent todos from Vercel API and sends Bangla Telegram summaries.
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { sendMarkdownSafe, escapeMarkdown } from '../telegram/markdown-safe.mjs'
 
 import { getOwnerChatId } from '../telegram/owner-id.mjs'
-
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 const PRIORITY_EMOJI = { urgent: '🔴', high: '🟡', normal: '🔵', low: '⚪' }
 
@@ -25,10 +23,10 @@ function formatTodoLine(todo) {
  * @returns {Promise<any[]|null>} array of todos, or null on failure
  */
 async function fetchTodos(query) {
-  const url = `${APP_URL}/api/assistant/todos${query}`
+  const url = `${getAppUrl()}/api/assistant/todos${query}`
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
       signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) {
@@ -55,9 +53,9 @@ const DAILY_SEED_TASKS = [
 
 async function seedDailyTodos() {
   try {
-    const url = `${APP_URL}/api/assistant/todos`
+    const url = `${getAppUrl()}/api/assistant/todos`
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
       signal: AbortSignal.timeout(8_000),
     })
     if (!res.ok) return
@@ -72,7 +70,7 @@ async function seedDailyTodos() {
       if (already) continue
       await fetch(url, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${INT_TOKEN}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getInternalToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: task.title, priority: task.priority, status: 'pending', source: 'scheduler' }),
         signal: AbortSignal.timeout(5_000),
       }).catch(() => {})
@@ -91,9 +89,9 @@ async function seedDailyTodos() {
  */
 async function patchTodo(id, patch) {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/todos`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/todos`, {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${INT_TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${getInternalToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, ...patch }),
       signal: AbortSignal.timeout(8_000),
     })

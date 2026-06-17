@@ -2,12 +2,10 @@
  * Phase 10 — /today, /khoroch, /ask quick Telegram commands.
  */
 
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { replyMarkdownSafe } from './markdown-safe.mjs'
 import { dhakaTodayYmd, dhakaMidnightUtc, salahDateFilter } from '../salah/dhaka-date.mjs'
 import { bnNum } from '../staff/bn-format.mjs'
-
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 function dhakaToday() {
   return dhakaTodayYmd()

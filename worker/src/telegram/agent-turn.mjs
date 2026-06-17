@@ -1,6 +1,7 @@
 /**
  * Background agent turns for Telegram — avoids Vercel 120s wall blocking replies.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { createClient } from '@supabase/supabase-js'
 import { captureWorkerError } from '../sentry.mjs'
 import { safeLogMessage } from '../log-safe.mjs'
@@ -12,8 +13,6 @@ import { getDispatcherBot } from './dispatcher.mjs'
 
 import { Queue } from 'bullmq'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 /** Just under Vercel 300s limit */
 const AGENT_FETCH_TIMEOUT_MS = 290_000
 
@@ -25,11 +24,11 @@ function createSupabase() {
 }
 
 export async function callAgentApi(userMessage, conversationId, { personalMode = false } = {}) {
-  const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/chat?stream=false`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
       'X-Agent-Source': 'telegram',
     },
     body: JSON.stringify({

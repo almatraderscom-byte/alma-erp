@@ -1,3 +1,4 @@
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { replyMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
 /**
@@ -9,18 +10,15 @@ import { replyMarkdownSafe } from '../telegram/markdown-safe.mjs'
  * Finance data is NEVER sent to staff — only to owner.
  */
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-
 async function fetchLedgerBalances(person = null) {
   const url = person
-    ? `${APP_URL}/api/assistant/internal/agent-settings?keys=_` // placeholder — use direct query
-    : `${APP_URL}/api/assistant/internal/agent-settings?keys=_`
+    ? `${getAppUrl()}/api/assistant/internal/agent-settings?keys=_` // placeholder — use direct query
+    : `${getAppUrl()}/api/assistant/internal/agent-settings?keys=_`
 
   // Use the agent chat route to get balances (it has the finance tools)
-  const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
+  const res = await fetch(`${getAppUrl()}/api/assistant/chat?stream=false`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({
       message: person
         ? `get_ledger_balances for person "${person}"`
