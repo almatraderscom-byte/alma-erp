@@ -112,6 +112,50 @@ export async function runHealthScan(dateYmd?: string): Promise<HealthScanReport>
     console.warn('[health-scan] pending actions scan failed:', err instanceof Error ? err.message : err)
   }
 
+  try {
+    const { getWebsiteHealth } = await import('@/lib/website/consistency')
+    const web = await getWebsiteHealth()
+    if (web.configured) {
+      if (web.liveOutOfStock.length > 0) {
+        issues.push({
+          severity: 'high',
+          area: 'website',
+          title: `${web.liveOutOfStock.length}টি live প্রোডাক্ট web-এ out-of-stock`,
+          detail: web.liveOutOfStock.slice(0, 3).map((p) => `${p.name} (${p.slug})`).join(', '),
+          signal: 'website:live_out_of_stock',
+        })
+      }
+      if (web.priceMismatches.length > 0) {
+        issues.push({
+          severity: 'medium',
+          area: 'website',
+          title: `${web.priceMismatches.length}টি web/ERP price mismatch`,
+          detail: web.priceMismatches.slice(0, 3).map((p) => `${p.slug}: web ৳${p.webPrice} vs ERP ৳${p.erpPrice}`).join('; '),
+          signal: 'website:price_mismatch',
+        })
+      }
+      if (web.unpublishedInStock.length >= 5) {
+        issues.push({
+          severity: 'low',
+          area: 'website',
+          title: `${web.unpublishedInStock.length}টি ERP স্টক আছে কিন্তু publish হয়নি`,
+          detail: web.summary[0] ?? 'Catalog gap — consider publish plan.',
+          signal: 'website:unpublished_in_stock',
+        })
+      }
+    } else {
+      issues.push({
+        severity: 'low',
+        area: 'website',
+        title: 'Website Supabase not configured',
+        detail: 'get_website_health unavailable — set WEBSITE_SUPABASE_* env.',
+        signal: 'website:not_configured',
+      })
+    }
+  } catch (err) {
+    console.warn('[health-scan] website health scan failed:', err instanceof Error ? err.message : err)
+  }
+
   issues.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const highCount = issues.filter(i => i.severity === 'high').length
