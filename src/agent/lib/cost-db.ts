@@ -26,3 +26,41 @@ export async function queryCostSumBetween(start: Date, end: Date): Promise<numbe
   )
   return parseFloat(rows[0]?.total ?? '0') || 0
 }
+
+/** Anthropic chat token usage aggregated from cost-event units JSON. */
+export type PromptCacheUsageRow = {
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  inputTokens: number
+  outputTokens: number
+  chatTurns: number
+}
+
+export async function queryPromptCacheUsageBetween(start: Date, end: Date): Promise<PromptCacheUsageRow> {
+  const rows = await prisma.$queryRaw<Array<{
+    cache_read: string
+    cache_creation: string
+    input_tokens: string
+    output_tokens: string
+    chat_turns: string
+  }>>(
+    Prisma.sql`SELECT
+      COALESCE(SUM(COALESCE((units->>'cache_read_input_tokens')::bigint, 0)), 0)::text AS cache_read,
+      COALESCE(SUM(COALESCE((units->>'cache_creation_input_tokens')::bigint, 0)), 0)::text AS cache_creation,
+      COALESCE(SUM(COALESCE((units->>'input_tokens')::bigint, 0)), 0)::text AS input_tokens,
+      COALESCE(SUM(COALESCE((units->>'output_tokens')::bigint, 0)), 0)::text AS output_tokens,
+      COUNT(*)::text AS chat_turns
+    FROM agent_cost_events
+    WHERE provider = 'anthropic'
+      AND kind = 'chat'
+      AND occurred_at >= ${start} AND occurred_at < ${end}`,
+  )
+  const row = rows[0]
+  return {
+    cacheReadTokens: parseInt(row?.cache_read ?? '0', 10) || 0,
+    cacheCreationTokens: parseInt(row?.cache_creation ?? '0', 10) || 0,
+    inputTokens: parseInt(row?.input_tokens ?? '0', 10) || 0,
+    outputTokens: parseInt(row?.output_tokens ?? '0', 10) || 0,
+    chatTurns: parseInt(row?.chat_turns ?? '0', 10) || 0,
+  }
+}

@@ -5,11 +5,77 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getBudgetSettings } from '@/agent/lib/cost-events'
 import { subscriptionDailyUsd } from '@/agent/lib/pricing'
-import { assertAgentCostSchemaReady, queryCostSumBetween } from '@/agent/lib/cost-db'
+import { assertAgentCostSchemaReady, queryCostSumBetween, queryPromptCacheUsageBetween, type PromptCacheUsageRow } from '@/agent/lib/cost-db'
 import { queryBillableCostSumBetween, formatBudgetPct } from '@/agent/lib/cost-budget'
 import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
+import { PRICING_META } from '@/agent/lib/pricing'
 
 const DHAKA_TZ = 'Asia/Dhaka'
+
+/** Min chat turns today before we alert that prompt caching may be broken. */
+const CACHE_ALERT_MIN_TURNS = 5
+/** cache_read / (cache_read + fresh input) — below this with enough turns → warning */
+const CACHE_HIT_RATIO_WARN = 0.05
+
+export type PromptCacheMonitorSnapshot = {
+  dhakaDate: string
+  tokensSaved: number
+  usdSaved: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  inputTokens: number
+  outputTokens: number
+  chatTurns: number
+  /** cache_read / (cache_read + input_tokens), 0–1 */
+  cacheHitRatio: number
+  cachingBroken: boolean
+}
+
+export function computePromptCacheSavings(usage: PromptCacheUsageRow): {
+  tokensSaved: number
+  usdSaved: number
+} {
+  const p = PRICING_META.anthropic
+  const tokensSaved = usage.cacheReadTokens
+  const rateDelta = (p.inputPerMillion - p.cacheReadPerMillion) / 1_000_000
+  const usdSaved = Math.round(tokensSaved * rateDelta * 1_000_000) / 1_000_000
+  return { tokensSaved, usdSaved }
+}
+
+export function buildPromptCacheMonitorSnapshot(
+  dhakaDate: string,
+  usage: PromptCacheUsageRow,
+): PromptCacheMonitorSnapshot {
+  const { tokensSaved, usdSaved } = computePromptCacheSavings(usage)
+  const prefixTokens = usage.cacheReadTokens + usage.inputTokens
+  const cacheHitRatio = prefixTokens > 0
+    ? Math.round((usage.cacheReadTokens / prefixTokens) * 1000) / 1000
+    : 0
+  const cachingBroken =
+    usage.chatTurns >= CACHE_ALERT_MIN_TURNS
+    && usage.cacheReadTokens < 100
+    && usage.inputTokens > 1_000
+
+  return {
+    dhakaDate,
+    tokensSaved,
+    usdSaved,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheCreationTokens: usage.cacheCreationTokens,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    chatTurns: usage.chatTurns,
+    cacheHitRatio,
+    cachingBroken,
+  }
+}
+
+export async function getPromptCacheMonitorSnapshot(dhakaDate?: string): Promise<PromptCacheMonitorSnapshot> {
+  const dateStr = dhakaDate ?? todayYmdDhaka()
+  const bounds = dhakaDayBounds(dateStr)
+  const usage = await queryPromptCacheUsageBetween(bounds.start, bounds.end)
+  return buildPromptCacheMonitorSnapshot(dateStr, usage)
+}
 
 /** ~750 characters ≈ 1 minute of spoken TTS at typical pace. */
 const TTS_CHARS_PER_MINUTE = 750
@@ -284,6 +350,7 @@ export async function getCostDashboardData() {
     elevenLabsMonth,
     twilioCallsToday,
     twilioCallsMonth,
+    promptCache,
   ] = await Promise.all([
     queryTtsProviderUsage('google_tts', todayBounds.start, todayBounds.end),
     queryTtsProviderUsage('google_tts', monthB.start, monthB.end),
@@ -291,6 +358,7 @@ export async function getCostDashboardData() {
     queryTtsProviderUsage('elevenlabs', monthB.start, monthB.end),
     queryTwilioCallUsage(todayBounds.start, todayBounds.end),
     queryTwilioCallUsage(monthB.start, monthB.end),
+    getPromptCacheMonitorSnapshot(todayStr),
   ])
 
   return {
@@ -346,5 +414,6 @@ export async function getCostDashboardData() {
       month: elevenLabsMonth,
       priceNote: '$0.30 / 1k chars (Starter estimate)',
     },
+    promptCache,
   }
 }

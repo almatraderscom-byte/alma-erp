@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
@@ -13,10 +14,30 @@ export type BrainStats = {
   todayCostUsd: number
 }
 
+/** Mirrors GET /api/assistant/costs/summary → promptCache */
+type PromptCacheMonitorSnapshot = {
+  dhakaDate: string
+  tokensSaved: number
+  usdSaved: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  inputTokens: number
+  outputTokens: number
+  chatTurns: number
+  cacheHitRatio: number
+  cachingBroken: boolean
+}
+
 const fadeIn = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } }
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit' })
+}
+
+function fmtTokens(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return String(Math.round(n))
 }
 
 function NeuralNode({ label, value, color, delay = 0 }: {
@@ -36,7 +57,56 @@ function NeuralNode({ label, value, color, delay = 0 }: {
   )
 }
 
+function PromptCacheLine({ cache }: { cache: PromptCacheMonitorSnapshot | null }) {
+  if (!cache) {
+    return (
+      <p className="text-[10px] text-[#94a3b8] tabular-nums">💾 ক্যাশ ডেটা লোড হচ্ছে…</p>
+    )
+  }
+
+  if (cache.cachingBroken) {
+    return (
+      <div className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 space-y-1">
+        <p className="text-[11px] font-semibold text-amber-800">⚠️ caching হিট করছে না</p>
+        <p className="text-[10px] text-amber-700/90 tabular-nums">
+          আজ {cache.chatTurns} টার্ন · cache read {fmtTokens(cache.cacheReadTokens)} · hit {(cache.cacheHitRatio * 100).toFixed(0)}%
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-[#81B29A]/25 bg-[#81B29A]/[0.06] px-3 py-2">
+      <p className="text-[11px] font-medium text-[#3d5c4a] tabular-nums">
+        💾 ক্যাশ থেকে বাঁচানো: {fmtTokens(cache.tokensSaved)} টোকেন · ~${cache.usdSaved.toFixed(2)} আজ
+      </p>
+      <p className="mt-0.5 text-[9px] text-[#64748b] tabular-nums">
+        hit {(cache.cacheHitRatio * 100).toFixed(0)}% · read {fmtTokens(cache.cacheReadTokens)} · fresh {fmtTokens(cache.inputTokens)} · {cache.chatTurns} turns
+      </p>
+    </div>
+  )
+}
+
 export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
+  const [promptCache, setPromptCache] = useState<PromptCacheMonitorSnapshot | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    async function load() {
+      try {
+        const res = await fetch('/api/assistant/costs/summary', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json() as { promptCache?: PromptCacheMonitorSnapshot }
+        if (alive && data.promptCache) setPromptCache(data.promptCache)
+      } catch {
+        /* ignore */
+      }
+    }
+    void load()
+    const t = setInterval(load, 30_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
       <div className="rounded-2xl border border-[#E07A5F]/20 bg-white overflow-hidden shadow-sm">
@@ -56,6 +126,8 @@ export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
             </div>
           ) : (
             <div className="space-y-3">
+              <PromptCacheLine cache={promptCache} />
+
               <div className="grid grid-cols-3 gap-2">
                 <NeuralNode label="Memories" value={stats.memoryCount} color="text-[#E07A5F]" delay={0} />
                 <NeuralNode label="Active Rules" value={stats.activePlaybookCount} color="text-[#81B29A]" delay={0.05} />

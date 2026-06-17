@@ -1,9 +1,15 @@
 /**
  * Unified cost event logging — all billable agent calls go through logCost().
+ *
+ * Anthropic chat turns store cache_read_input_tokens / cache_creation_input_tokens
+ * in `units` (see core.ts logCost). Aggregations: cost-db.queryPromptCacheUsageBetween.
  */
 import { prisma } from '@/lib/prisma'
 import type { CostKind, CostProvider } from '@/agent/lib/pricing'
 import { queryCostSumBetween } from '@/agent/lib/cost-db'
+
+export type { PromptCacheUsageRow } from '@/agent/lib/cost-db'
+export { queryPromptCacheUsageBetween } from '@/agent/lib/cost-db'
 
 export type LogCostInput = {
   provider: CostProvider
