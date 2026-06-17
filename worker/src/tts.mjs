@@ -8,7 +8,10 @@ import { logCost, calcTtsCostUsd } from './cost-log.mjs'
 
 const SENTENCE_ENDS = ['।', '?', '!', '.']
 
-function stripMarkdown(text) {
+/**
+ * Strip markdown / normalize text for TTS (Google + ElevenLabs).
+ */
+export function stripMarkdown(text) {
   return text
     // Islamic honorific ligatures → clear Bangla for natural TTS
     .replace(/\uFDFA/g, ' সাল্লাল্লাহু আলাইহি ওয়াসাল্লাম ')

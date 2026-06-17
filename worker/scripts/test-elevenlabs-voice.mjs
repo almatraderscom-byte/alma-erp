@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Send a test ElevenLabs voice note to owner Telegram.
+ * Send Bangla-only ElevenLabs test voice notes to owner Telegram.
  * Usage (VPS): cd /opt/alma-erp/worker && node scripts/test-elevenlabs-voice.mjs
  */
 import dotenv from 'dotenv'
@@ -14,8 +14,11 @@ const __dir = dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: join(__dir, '../.env'), override: true })
 installTelegramProxy()
 
-const TEST_TEXT =
-  'স্যার, এটা ElevenLabs টেস্ট ভয়েস। model eleven multilingual v two। stability পয়েন্ট পাঁচ, similarity boost সাত পয়েন্ট পঁচাত্তর। আওয়াজ ক্লিয়ার শুনতে পাচ্ছেন কিনা বলবেন।'
+/** Pure Bangla — no English words (Latin triggers English pronunciation). */
+const TEST_SAMPLES = [
+  'স্যার, আসসালামু আলাইকুম। এটি শুধু বাংলায় একটি পরীক্ষামূলক ভয়েস। আওয়াজ কতটা পরিষ্কার শুনতে পাচ্ছেন জানাবেন।',
+  'আসসালামু আলাইকুম ইয়াফি ভাই। আজ তিনটি কাজ দেওয়া হয়েছে। বিস্তারিত টেলিগ্রামে দেখুন।',
+]
 
 async function main() {
   const token = process.env.ASSISTANT_BOT_TOKEN
@@ -25,11 +28,15 @@ async function main() {
     process.exit(1)
   }
 
-  console.log('[test-voice] synthesizing + sending...')
   const apiRoot = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '') || 'https://api.telegram.org'
   const bot = new Telegraf(token, { telegram: { apiRoot } })
-  await sendVoiceMessage(bot, ownerChatId, TEST_TEXT, { elevenLabsOnly: true })
-  console.log('✅ Test voice sent to owner Telegram')
+
+  for (let i = 0; i < TEST_SAMPLES.length; i++) {
+    console.log(`[test-voice] sending sample ${i + 1}/${TEST_SAMPLES.length}...`)
+    await sendVoiceMessage(bot, ownerChatId, TEST_SAMPLES[i], { elevenLabsOnly: true })
+    if (i < TEST_SAMPLES.length - 1) await new Promise((r) => setTimeout(r, 1500))
+  }
+  console.log('✅ Bangla test voices sent to owner Telegram')
 }
 
 main().catch((err) => {
