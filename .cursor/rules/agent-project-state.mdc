@@ -3,7 +3,7 @@ description: Current state of the ALMA Agent project — what's done, what's wir
 alwaysApply: true
 ---
 
-# Agent Project State (last updated: 2026-06-16)
+# Agent Project State (last updated: 2026-06-17)
 
 ## Architecture Summary
 
@@ -38,6 +38,14 @@ alwaysApply: true
 
 ### Long Agent Tasks
 - `long_agent_task` BullMQ processor implemented — calls `/api/assistant/chat` with 5-min timeout
+
+### Model Tier Routing (Phase H — verified 2026-06-17, commit `750bdd2`)
+- OpenRouter provider + adapters for cheap sub-agent tiers (GLM / Gemini Flash Lite)
+- Tier KV keys: `model.routing.tier.lightModelId`, `heavyModelId`, `criticalSubagentModelId`
+- CRITICAL (`analyst`/`ops`) locked to Claude; HEAVY/LIGHT try OpenRouter first
+- OpenRouter failure → native `gemini-3.1-flash-lite` (not Claude) when `GEMINI_API_KEY` set
+- `OPENROUTER_API_KEY` not yet on Vercel — add via `scripts/setup-openrouter-vercel.mjs` after creating key at openrouter.ai/keys
+- Verify: `npx tsx scripts/verify-tier-routing.ts` (unit), `npx tsx scripts/verify-tier-routing-live.ts` (live)
 
 ## VPS Deploy Process
 - SSH: `root@31.97.237.40`, repo at `/opt/alma-erp`, PM2 process: `agent-worker`
