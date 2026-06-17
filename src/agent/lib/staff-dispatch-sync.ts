@@ -5,6 +5,7 @@
 import { prisma } from '@/lib/prisma'
 import {
   buildRichDispatchSummary,
+  buildStaffFriendlyDetail,
   type FormattableStaffTask,
   type RichDispatchOpts,
   type StaffDispatchBreakdown,
@@ -311,6 +312,17 @@ export async function refreshAndApproveDispatch(
     where: { id: actionId },
     data: { payload, summary: summaryText },
   })
+
+  const proposedFull = await db.agentStaffTask.findMany({
+    where: { proposedFor: new Date(date), status: 'proposed', ...buildBusinessClause(businessId) },
+    select: { id: true, title: true, type: true, detail: true, productRef: true },
+  })
+  for (const t of proposedFull) {
+    const detail = buildStaffFriendlyDetail(t)
+    if (detail !== (t.detail ?? '')) {
+      await db.agentStaffTask.update({ where: { id: t.id }, data: { detail } })
+    }
+  }
 
   const count = await approveAllProposedTasksForDate(date, businessId)
 

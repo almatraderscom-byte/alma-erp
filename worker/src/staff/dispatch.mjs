@@ -7,7 +7,8 @@
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { sendDispatchVoiceHeadline } from './staff-voice-nudge.mjs'
-import { taskDoneCallbackData } from '../telegram/callback-data.mjs'
+import { taskDoneCallbackData, taskDetailsCallbackData } from '../telegram/callback-data.mjs'
+import { buildContextShot } from './context-shot.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
 import { staffNtfyTopic } from './staff-fields.mjs'
 import { lunchButtonRow } from './lunch.mjs'
@@ -299,13 +300,28 @@ export async function markDispatchActionsExecuted(supabase, date) {
   }
 }
 
+async function enrichTasksBeforeDispatch(supabase, tasks) {
+  for (const task of tasks) {
+    try {
+      const shot = await buildContextShot({ supabase, task })
+      if (shot) {
+        await supabase.from('staff_tasks').update({ context_shot: shot }).eq('id', task.id)
+        task.context_shot = shot
+      }
+    } catch (err) {
+      console.warn(`[dispatch] context-shot skip ${task.id}:`, err.message)
+    }
+  }
+}
+
 async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, staffId, isUpdate = false, newCount = 0, businessId = 'ALMA_LIFESTYLE' }) {
+  await enrichTasksBeforeDispatch(supabase, staffTasks)
+
   const numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
   const taskLines = staffTasks.map((t, i) => {
     const num = numEmojis[i] ?? `${i + 1}.`
-    const detail = t.detail ? `\n   → ${t.detail}` : ''
-    return `${num} ${t.title}${detail}`
+    return `${num} ${t.title}`
   })
 
   const header = isUpdate
@@ -337,17 +353,12 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     (taskIntro ? `${taskIntro}\n\n` : '') +
     `${header}\n\n` +
     taskLines.join('\n\n') +
-    `\n\nপ্রতিটা শেষ হলে নিচে Done চাপুন ✅`
+    `\n\nপ্রতিটা কাজের বিস্তারিত জানতে 📋 Details চাপুন। শেষ হলে ✅ Done চাপুন।`
 
-  const buttons = staffTasks.map((t, i) => ({
-    text: `✅ ${i + 1} Done`,
-    callback_data: taskDoneCallbackData(t.id),
-  }))
-
-  const rows = []
-  for (let i = 0; i < buttons.length; i += 2) {
-    rows.push(buttons.slice(i, i + 2))
-  }
+  const rows = staffTasks.map((t, i) => [
+    { text: `📋 ${i + 1} Details`, callback_data: taskDetailsCallbackData(t.id) },
+    { text: `✅ ${i + 1} Done`, callback_data: taskDoneCallbackData(t.id) },
+  ])
   if (staffId) {
     rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
     rows.push(lunchButtonRow())

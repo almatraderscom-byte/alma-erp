@@ -3,6 +3,120 @@
  * Used by dispatch cards, get_staff_tasks, proposals.
  */
 
+/** Instruction appended to proposal builders — no extra LLM call; guides detail output. */
+export const STAFF_TASK_DETAIL_INSTRUCTION =
+  'প্রতিটা task-এর জন্য একটা `detail` লেখো — ২-৩ লাইন, খুব সহজ বাংলা, staff-এর level অনুযায়ী। ' +
+  'কোন tool/template দিয়ে করবে স্পষ্ট বলো (Canva/CapCut/Website admin)। ধাপ ভেঙে দাও। জটিল শব্দ নয়।'
+
+const TOOL_HINT_BY_TYPE: Record<string, string> = {
+  video_reel: 'CapCut',
+  ad_creative: 'Canva',
+  product_content: 'Canva / FB',
+  product_photo: 'ফোন ক্যামেরা',
+  listing_update: 'Website admin / FB shop',
+  order_followup: 'ERP + ফোন/মেসেঞ্জার',
+  page_management: 'FB Page admin',
+  customer_reply: 'Messenger',
+  content_support: 'অফিস/শুট সেটআপ',
+  office_task: 'অফিস',
+  stock_check: 'ERP inventory',
+  organic_marketing: 'Website admin',
+  offer_idea: 'Canva / নোট',
+  learning: 'CapCut / Canva',
+  misc: 'ERP',
+}
+
+type DetailInput = {
+  title: string
+  type?: string
+  productRef?: string | null
+  detail?: string | null
+}
+
+function lineCount(text: string): number {
+  return text.split(/\n/).filter((l) => l.trim()).length
+}
+
+function hasToolHint(text: string, tool: string): boolean {
+  const lower = text.toLowerCase()
+  return tool.split('/').some((part) => lower.includes(part.trim().toLowerCase()))
+}
+
+/** Ensure 2–3 line staff-friendly Bangla detail with explicit tool name. */
+export function buildStaffFriendlyDetail(task: DetailInput): string {
+  const type = task.type ?? 'misc'
+  const tool = TOOL_HINT_BY_TYPE[type] ?? TOOL_HINT_BY_TYPE.misc
+  const existing = (task.detail ?? '').trim()
+
+  if (existing && lineCount(existing) >= 2 && lineCount(existing) <= 4 && hasToolHint(existing, tool)) {
+    return existing.split('\n').slice(0, 4).join('\n').trim()
+  }
+
+  const product = task.productRef?.trim() || null
+  const titleHint = task.title.replace(/^↩\s*|^🔄\s*গতকার থেকে বাকি:\s*|^📚\s*|^🎯\s*/u, '').trim()
+
+  switch (type) {
+    case 'order_followup':
+      return [
+        `${tool} খুলে Pending অর্ডার লিস্ট দেখুন।`,
+        '১) কাস্টমারকে কল/মেসেজ — কনফার্ম বা ডেলিভারি আপডেট নিন।',
+        '২) ERP-এ status আপডেট করুন।',
+      ].join('\n')
+    case 'video_reel':
+      return [
+        `${tool} দিয়ে ${product ?? titleHint} এর ১৫–৩০ সেকেন্ড রিল বানান।`,
+        '১) প্রোডাক্ট clear দেখান  ২) নাম+দাম text দিন  ৩) Export করে proof পাঠান।',
+      ].join('\n')
+    case 'ad_creative':
+      return [
+        `${tool}-তে square (1080×1080) + story (1080×1920) অ্যাড বানান।`,
+        `প্রোডাক্ট: ${product ?? titleHint}। শেষে PNG export করে owner-কে দিন।`,
+      ].join('\n')
+    case 'product_photo':
+      return [
+        `${tool} দিয়ে ৪ angle ছবি তুলুন (সামনে, পেছন, close-up, full)।`,
+        product ? `SKU: ${product}।` : '',
+        'Website admin-এ আপলোডের জন্য owner-কে পাঠান।',
+      ].filter(Boolean).join('\n')
+    case 'product_content':
+      return [
+        `${tool} দিয়ে FB পোস্ট caption (Bangla) লিখুন।`,
+        `প্রোডাক্ট: ${product ?? titleHint} — feature, দাম, CTA (DM করুন)।`,
+      ].join('\n')
+    case 'listing_update':
+      return [
+        `${tool} খুলে listing আপডেট করুন।`,
+        `ছবি/দাম/বর্ণনা চেক — ${product ?? titleHint}।`,
+      ].join('\n')
+    case 'stock_check':
+      return [
+        `${tool} inventory খুলে স্টক মিলান।`,
+        product ? `SKU ${product} — physical count vs ERP লিখে owner-কে জানান।` : 'Physical count vs ERP নোট করুন।',
+      ].join('\n')
+    case 'page_management':
+      return [
+        'FB Page admin + Insta app খুলুন।',
+        '১) Unreplied comments reply  ২) Story/pinned post চেক  ৩) Proof screenshot পাঠান।',
+      ].join('\n')
+    case 'customer_reply':
+      return [
+        `${tool} inbox — সব unread reply দিন (Alma Lifestyle + Online Shop)।`,
+        'Product query → দাম+availability। Order query → ERP status দেখে জানান।',
+      ].join('\n')
+    default:
+      if (existing && lineCount(existing) >= 2) {
+        const lines = existing.split('\n').slice(0, 3)
+        if (!hasToolHint(existing, tool) && tool) lines.push(`টুল: ${tool}`)
+        return lines.join('\n').trim()
+      }
+      return [
+        `${tool} ব্যবহার করে কাজটি করুন।`,
+        titleHint.slice(0, 120),
+        'শেষে Done চাপুন + proof পাঠান।',
+      ].join('\n')
+  }
+}
+
 export type StaffDispatchBreakdown = {
   date: string
   proposedToDispatch: number

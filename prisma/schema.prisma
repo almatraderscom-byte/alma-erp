@@ -2029,6 +2029,7 @@ model AgentStaffTask {
   proofData          Json?                          @map("proof_data")
   reviewerNote       String?                        @map("reviewer_note") @db.Text
   redoCount          Int                            @default(0) @map("redo_count")
+  contextShot        String?                        @db.Text @map("context_shot")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")

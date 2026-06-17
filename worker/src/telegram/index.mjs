@@ -1452,6 +1452,41 @@ export function createTelegramBot() {
       }
       return
 
+    } else if (data.startsWith('task_details:')) {
+      const taskId = parseTaskIdFromCallback(data.slice('task_details:'.length))
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const { data: task, error } = await supabase
+        .from('staff_tasks')
+        .select('id, title, detail, context_shot, staff_id')
+        .eq('id', taskId)
+        .maybeSingle()
+      if (error || !task) {
+        await ctx.answerCbQuery('টাস্ক পাওয়া যায়নি')
+        return
+      }
+      if (task.staff_id !== staff.id) {
+        await ctx.answerCbQuery('এই টাস্ক আপনার নয়')
+        return
+      }
+      await ctx.answerCbQuery('📋 Details')
+      const detailText = task.detail?.trim()
+        ? `📋 *${task.title}*\n\n${task.detail}`
+        : `📋 *${task.title}*\n\n(বিস্তারিত নেই — Boss-কে জিজ্ঞেস করুন)`
+      await ctx.reply(detailText, { parse_mode: 'Markdown' }).catch(() => {
+        return ctx.reply(detailText.replace(/\*/g, ''))
+      })
+      if (task.context_shot) {
+        await ctx.replyWithPhoto(task.context_shot).catch((err) => {
+          console.warn('[telegram] task_details photo failed:', err.message)
+        })
+      }
+      return
+
     } else if (data.startsWith('task_done:')) {
       const taskId = parseTaskIdFromCallback(data.slice('task_done:'.length))
       const supabase = createSupabase()

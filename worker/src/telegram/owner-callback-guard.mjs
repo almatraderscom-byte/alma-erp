@@ -7,6 +7,7 @@ import { isOwnerChatId } from './owner-id.mjs'
 /** Staff may use these prefixes without owner check. */
 const STAFF_CALLBACK_PREFIXES = [
   'task_done:',
+  'task_details:',
   'msg_ack:',
   'staff_feedback_open:',
 ]

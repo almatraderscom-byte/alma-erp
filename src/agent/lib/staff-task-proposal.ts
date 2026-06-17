@@ -1,6 +1,7 @@
 /**
  * Proactive staff task proposal — inventory, sales, FB, carry-forward.
  * Used by prepare_staff_task_proposal tool and evening-proposal worker job.
+ * Per-task detail follows STAFF_TASK_DETAIL_INSTRUCTION in staff-task-format.ts.
  */
 import { prisma } from '@/lib/prisma'
 import { getLifestyleOrders } from '@/lib/lifestyle/read'
@@ -13,6 +14,7 @@ import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import type { WebsiteProductSummary } from '@/lib/website/types'
 import { getRecentPosts, resolvePageId } from '@/agent/lib/meta'
 import { trackContentTaskOutcomes } from '@/lib/outcome-wiring'
+import { buildStaffFriendlyDetail } from '@/agent/lib/staff-task-format'
 import type { Order } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -372,7 +374,11 @@ function buildTasksForStaff(
     })
   }
 
-  return trimmed.map((t) => ({ ...t, staffName: staff.name }))
+  return trimmed.map((t) => ({
+    ...t,
+    staffName: staff.name,
+    detail: buildStaffFriendlyDetail({ title: t.title, type: t.type, productRef: t.productRef, detail: t.detail }),
+  }))
 }
 
 function formatSummary(

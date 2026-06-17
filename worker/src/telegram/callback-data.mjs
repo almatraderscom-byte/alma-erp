@@ -38,6 +38,10 @@ export function taskDoneCallbackData(taskId) {
   return buildCallbackData('task_done', compactUuid(taskId))
 }
 
+export function taskDetailsCallbackData(taskId) {
+  return buildCallbackData('task_details', compactUuid(taskId))
+}
+
 export function msgAckCallbackData(outboxId) {
   return buildCallbackData('msg_ack', compactUuid(outboxId))
 }

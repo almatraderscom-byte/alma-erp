@@ -5,6 +5,7 @@
 import {
   buildCallbackData,
   taskDoneCallbackData,
+  taskDetailsCallbackData,
   parseTaskIdFromCallback,
   TELEGRAM_CALLBACK_MAX_BYTES,
 } from '../src/telegram/callback-data.mjs'
@@ -23,6 +24,11 @@ if (compact.length > TELEGRAM_CALLBACK_MAX_BYTES) {
 }
 const restored = parseTaskIdFromCallback(compact.slice('task_done:'.length))
 if (restored !== uuid) throw new Error(`UUID round-trip failed: ${restored}`)
+
+const detailsCb = taskDetailsCallbackData(uuid)
+if (detailsCb.length > TELEGRAM_CALLBACK_MAX_BYTES) {
+  throw new Error(`compact task_details too long: ${detailsCb.length}`)
+}
 
 buildCallbackData('msg_draft', 't_1648631293023028')
 
