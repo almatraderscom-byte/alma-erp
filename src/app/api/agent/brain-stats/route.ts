@@ -3,6 +3,8 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { queryCostSumBetween } from '@/agent/lib/cost-db'
+import { todayYmdDhaka, dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,8 +18,8 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   try {
-    const todayStart = new Date()
-    todayStart.setHours(0, 0, 0, 0)
+    const todayStr = todayYmdDhaka()
+    const { start: todayStart, end: todayEnd } = dhakaDayBounds(todayStr)
 
     const [
       memoryCount,
@@ -25,7 +27,7 @@ export async function GET(req: NextRequest) {
       proposedPlaybookCount,
       knowledgeCount,
       kvRows,
-      todayCostRows,
+      todayCostUsd,
     ] = await Promise.all([
       prisma.agentMemory.count(),
       prisma.agentPlaybook.count({ where: { status: 'active' } }),
@@ -34,10 +36,7 @@ export async function GET(req: NextRequest) {
       prisma.agentKvSetting.findMany({
         where: { key: { in: ['worker.lastKnowledgeBuild', 'worker.lastSessionSummary'] } },
       }),
-      prisma.agentCostEvent.aggregate({
-        _sum: { costUsd: true },
-        where: { occurredAt: { gte: todayStart } },
-      }),
+      queryCostSumBetween(todayStart, todayEnd),
     ])
 
     const kvMap = Object.fromEntries(kvRows.map(r => [r.key, r.value]))
@@ -49,7 +48,8 @@ export async function GET(req: NextRequest) {
       knowledgeCount,
       lastKnowledgeBuild: kvMap['worker.lastKnowledgeBuild'] ?? null,
       lastSessionSummary: kvMap['worker.lastSessionSummary'] ?? null,
-      todayCostUsd: Number(todayCostRows._sum.costUsd ?? 0),
+      todayDhakaDate: todayStr,
+      todayCostUsd: Math.round(todayCostUsd * 1_000_000) / 1_000_000,
     })
   } catch (err) {
     console.error('[agent/brain-stats]', err)
