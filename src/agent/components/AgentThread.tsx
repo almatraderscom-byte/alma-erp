@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
@@ -9,6 +9,8 @@ import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
 import { AgentTodoDock } from './AgentTodoDock'
+import { useAgentTodosOptional } from './AgentTodoContext'
+import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
@@ -337,6 +339,17 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
+  const todoCtx = useAgentTodosOptional()
+  const isOfficeShift = Boolean(
+    conversationId &&
+    todoCtx?.dayShiftConversationId &&
+    conversationId === todoCtx.dayShiftConversationId,
+  )
+  const staticMessages = useMemo(
+    () => messages.filter((m) => !m.streaming),
+    [messages],
+  )
+  const streamingMessage = messages.find((m) => m.streaming)
 
   // When user manually scrolls up during streaming, stop force-tailing them.
   const stickToBottomRef = useRef(true)
@@ -395,8 +408,23 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
         )}
 
+        {isOfficeShift && staticMessages.length > 0 && (
+          <div className="mb-6">
+            <OfficeShiftThreadRenderer
+              messages={staticMessages}
+              renderUserMessage={(msg) => (
+                <div className="mb-4 flex justify-end">
+                  <div className="max-w-[85%] min-w-0 rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-[#1a1a2e] whitespace-pre-wrap break-words select-text">
+                    {msg.text}
+                  </div>
+                </div>
+              )}
+            />
+          </div>
+        )}
+
         <AnimatePresence initial={false}>
-          {messages.map((msg, index) => (
+          {(isOfficeShift ? messages.filter((m) => m.streaming) : messages).map((msg, index) => (
             <motion.div
               key={msg.id}
               initial={{ opacity: 0, y: 6 }}

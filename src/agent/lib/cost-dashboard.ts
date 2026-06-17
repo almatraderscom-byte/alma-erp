@@ -11,6 +11,26 @@ import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api
 
 const DHAKA_TZ = 'Asia/Dhaka'
 
+/** ~750 characters ≈ 1 minute of spoken TTS at typical pace. */
+const ELEVENLABS_CHARS_PER_MINUTE = 750
+
+async function queryElevenLabsUsage(start: Date, end: Date) {
+  const rows = await prisma.$queryRaw<Array<{ total_cost: string; total_chars: string; calls: string }>>(
+    Prisma.sql`SELECT
+                 COALESCE(SUM(cost_usd), 0)::text AS total_cost,
+                 COALESCE(SUM(COALESCE((units->>'characters')::int, 0)), 0)::text AS total_chars,
+                 COUNT(*)::text AS calls
+               FROM agent_cost_events
+               WHERE provider = 'elevenlabs'
+                 AND occurred_at >= ${start} AND occurred_at < ${end}`,
+  )
+  const costUsd = Math.round((parseFloat(rows[0]?.total_cost ?? '0') || 0) * 1_000_000) / 1_000_000
+  const characters = parseInt(rows[0]?.total_chars ?? '0', 10) || 0
+  const calls = parseInt(rows[0]?.calls ?? '0', 10) || 0
+  const minutesUsed = Math.round((characters / ELEVENLABS_CHARS_PER_MINUTE) * 10) / 10
+  return { costUsd, characters, minutesUsed, calls }
+}
+
 export async function getCostDashboardData() {
   await assertAgentCostSchemaReady()
 
@@ -161,6 +181,11 @@ export async function getCostDashboardData() {
   const dailyBudgetPct = budgets.dailyUsd ? formatBudgetPct(todayUsd, budgets.dailyUsd) : null
   const monthlyBudgetPct = budgets.monthlyUsd ? formatBudgetPct(monthBillable, budgets.monthlyUsd) : null
 
+  const [elevenLabsToday, elevenLabsMonth] = await Promise.all([
+    queryElevenLabsUsage(todayBounds.start, todayBounds.end),
+    queryElevenLabsUsage(monthB.start, monthB.end),
+  ])
+
   return {
     todayDhakaDate: todayStr,
     todayUsd,
@@ -202,5 +227,10 @@ export async function getCostDashboardData() {
     })),
     csAnalytics,
     asOf: new Date().toISOString(),
+    elevenLabs: {
+      today: elevenLabsToday,
+      month: elevenLabsMonth,
+      priceNote: '$0.30 / 1k chars (Starter estimate)',
+    },
   }
 }

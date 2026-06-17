@@ -223,7 +223,7 @@ function TodoRow({
   )
 }
 
-function UnifiedTodoList({
+function InPlaceTodoList({
   todos,
   readOnly,
   compact,
@@ -236,96 +236,34 @@ function UnifiedTodoList({
   onToggle: (todo: Todo) => void
   onDelete: (id: string) => void
 }) {
-  const [showCompleted, setShowCompleted] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-
-  const openList = useMemo(
-    () => todos.filter((t) => t.status !== 'completed'),
-    [todos],
-  )
-  const completedList = useMemo(
-    () => todos.filter((t) => t.status === 'completed'),
-    [todos],
-  )
 
   if (todos.length === 0) {
     return <p className="text-xs text-slate-400 pl-0.5">কিছু নেই</p>
   }
 
   return (
-    <>
-      <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
-        <AnimatePresence>
-          {openList.map((todo) => (
-            <TodoRow
-              key={todo.id}
-              todo={todo}
-              readOnly={readOnly}
-              compact={compact}
-              expanded={expandedIds.has(todo.id)}
-              onToggleExpand={() => {
-                setExpandedIds((prev) => {
-                  const next = new Set(prev)
-                  if (next.has(todo.id)) next.delete(todo.id)
-                  else next.add(todo.id)
-                  return next
-                })
-              }}
-              onToggleComplete={() => onToggle(todo)}
-              onDelete={() => onDelete(todo.id)}
-            />
-          ))}
-        </AnimatePresence>
-      </div>
-
-      {completedList.length > 0 && (
-        <div className={compact ? 'mt-2' : 'mt-3'}>
-          <button
-            type="button"
-            onClick={() => setShowCompleted(!showCompleted)}
-            className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold hover:text-slate-700 transition-colors mb-1.5"
-          >
-            <svg
-              width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
-              className={`transition-transform ${showCompleted ? 'rotate-90' : ''}`}
-            >
-              <path d="M4.5 2.5l4 3.5-4 3.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {completedList.length} done
-          </button>
-          <AnimatePresence>
-            {showCompleted && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className={`overflow-hidden ${compact ? 'space-y-1.5' : 'space-y-2'}`}
-              >
-                {completedList.map((todo) => (
-                  <TodoRow
-                    key={todo.id}
-                    todo={todo}
-                    readOnly={readOnly}
-                    compact={compact}
-                    expanded={expandedIds.has(todo.id)}
-                    onToggleExpand={() => {
-                      setExpandedIds((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(todo.id)) next.delete(todo.id)
-                        else next.add(todo.id)
-                        return next
-                      })
-                    }}
-                    onToggleComplete={readOnly ? undefined : () => onToggle(todo)}
-                    onDelete={readOnly ? undefined : () => onDelete(todo.id)}
-                  />
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
-    </>
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+      {todos.map((todo) => (
+        <TodoRow
+          key={todo.id}
+          todo={todo}
+          readOnly={readOnly}
+          compact={compact}
+          expanded={expandedIds.has(todo.id)}
+          onToggleExpand={() => {
+            setExpandedIds((prev) => {
+              const next = new Set(prev)
+              if (next.has(todo.id)) next.delete(todo.id)
+              else next.add(todo.id)
+              return next
+            })
+          }}
+          onToggleComplete={() => onToggle(todo)}
+          onDelete={() => onDelete(todo.id)}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -358,7 +296,7 @@ function AgentCompactCard({
         </span>
       </div>
       <div className="flex-1 min-h-0">
-        <UnifiedTodoList todos={todos} readOnly compact onToggle={onToggle} onDelete={onDelete} />
+        <InPlaceTodoList todos={todos} readOnly compact onToggle={onToggle} onDelete={onDelete} />
       </div>
       <button
         type="button"
@@ -488,7 +426,7 @@ function BossTodoFrame({
       </AnimatePresence>
 
       <div className="flex-1 min-h-0">
-        <UnifiedTodoList todos={todos} onToggle={onToggle} onDelete={onDelete} />
+        <InPlaceTodoList todos={todos} onToggle={onToggle} onDelete={onDelete} />
       </div>
     </div>
   )
@@ -522,7 +460,7 @@ function AgentFullWidthSection({
           {active} active · {done} done
         </span>
       </div>
-      <UnifiedTodoList todos={todos} readOnly onToggle={onToggle} onDelete={onDelete} />
+      <InPlaceTodoList todos={todos} readOnly onToggle={onToggle} onDelete={onDelete} />
       <button
         type="button"
         onClick={() => {
@@ -538,7 +476,7 @@ function AgentFullWidthSection({
   )
 }
 
-export function AgentTodoPanel() {
+export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
   const ctx = useAgentTodosOptional()
   const [localTodos, setLocalTodos] = useState<Todo[]>([])
   const [localLoading, setLocalLoading] = useState(!ctx)
@@ -649,57 +587,73 @@ export function AgentTodoPanel() {
   ).length
 
   return (
-    <div className="px-4 py-5 sm:px-5 sm:py-6">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {totalActive} active
-            {hasOwnerSplit ? ' · Boss + Agent split' : ''}
-          </p>
-        </div>
-        {!hasOwnerSplit && !showAdd && (
+    <div className={embedded ? 'px-3 py-4 sm:px-4 sm:py-5' : 'px-4 py-5 sm:px-5 sm:py-6'}>
+      {!embedded && (
+        <>
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {totalActive} active
+                {hasOwnerSplit ? ' · Boss + Agent split' : ''}
+              </p>
+            </div>
+            {!hasOwnerSplit && !showAdd && (
+              <button
+                type="button"
+                onClick={() => setShowAdd(true)}
+                className={`shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-colors ${brandTodo.coralBg} ${brandTodo.coral} ${brandTodo.coralHover}`}
+              >
+                + Boss-এর কাজ
+              </button>
+            )}
+          </div>
+
+          {!hasOwnerSplit && showAdd && (
+            <div className={`mb-4 ${brandTodo.bossFrame} p-3.5`}>
+              <p className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${brandTodo.coralDark}`}>
+                🧑‍💼 Boss-এর আজকের কাজ
+              </p>
+              <input
+                type="text"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="আপনার কাজ লিখুন…"
+                className="w-full bg-white border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
+                onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowAdd(false); setNewTitle('') }}
+                  className="flex-1 py-2 rounded-xl border border-black/[0.06] text-xs text-slate-500 font-semibold hover:bg-white/60"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void addTodo()}
+                  disabled={!newTitle.trim() || adding}
+                  className={`flex-1 py-2 rounded-xl text-white text-xs font-bold disabled:opacity-40 ${brandTodo.coralBtn}`}
+                >
+                  {adding ? '…' : 'যোগ করুন'}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {embedded && !hasOwnerSplit && !showAdd && (
+        <div className="mb-3 flex justify-end">
           <button
             type="button"
             onClick={() => setShowAdd(true)}
-            className={`shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-colors ${brandTodo.coralBg} ${brandTodo.coral} ${brandTodo.coralHover}`}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold ${brandTodo.coralBg} ${brandTodo.coral}`}
           >
             + Boss-এর কাজ
           </button>
-        )}
-      </div>
-
-      {!hasOwnerSplit && showAdd && (
-        <div className={`mb-4 ${brandTodo.bossFrame} p-3.5`}>
-          <p className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${brandTodo.coralDark}`}>
-            🧑‍💼 Boss-এর আজকের কাজ
-          </p>
-          <input
-            type="text"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            placeholder="আপনার কাজ লিখুন…"
-            className="w-full bg-white border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
-            onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
-            autoFocus
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => { setShowAdd(false); setNewTitle('') }}
-              className="flex-1 py-2 rounded-xl border border-black/[0.06] text-xs text-slate-500 font-semibold hover:bg-white/60"
-            >
-              বাতিল
-            </button>
-            <button
-              type="button"
-              onClick={() => void addTodo()}
-              disabled={!newTitle.trim() || adding}
-              className={`flex-1 py-2 rounded-xl text-white text-xs font-bold disabled:opacity-40 ${brandTodo.coralBtn}`}
-            >
-              {adding ? '…' : 'যোগ করুন'}
-            </button>
-          </div>
         </div>
       )}
 

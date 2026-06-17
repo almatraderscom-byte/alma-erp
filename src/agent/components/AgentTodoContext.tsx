@@ -27,14 +27,30 @@ export interface Todo {
   completedAt: string | null
 }
 
+const PANEL_EXPANDED_KEY = 'alma_todo_panel_expanded'
+const PANEL_INTRO_KEY = 'alma_todo_panel_intro_v2'
+
+function readPanelExpanded(): boolean {
+  if (typeof sessionStorage === 'undefined') return false
+  return sessionStorage.getItem(PANEL_EXPANDED_KEY) === '1'
+}
+
+function writePanelExpanded(v: boolean) {
+  if (typeof sessionStorage === 'undefined') return
+  sessionStorage.setItem(PANEL_EXPANDED_KEY, v ? '1' : '0')
+}
+
 interface TodoContextValue {
   todos: Todo[]
   loading: boolean
   active: Todo[]
   completed: Todo[]
   cancelled: Todo[]
-  /** Office day-shift is actively running — faster poll interval. */
   dayShiftActive: boolean
+  dayShiftConversationId: string | null
+  panelExpanded: boolean
+  setPanelExpanded: (v: boolean) => void
+  togglePanelExpanded: () => void
   refresh: () => Promise<void>
   add: (input: { title: string; priority?: string; description?: string }) => Promise<void>
   toggle: (todo: Todo) => Promise<void>
@@ -50,8 +66,42 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
   const [todos, setTodos] = useState<Todo[]>([])
   const [loading, setLoading] = useState(true)
   const [dayShiftActive, setDayShiftActive] = useState(false)
+  const [dayShiftConversationId, setDayShiftConversationId] = useState<string | null>(null)
+  const [panelExpanded, setPanelExpandedState] = useState(false)
+  const introRanRef = useRef(false)
   const toastedRef = useRef<Set<string>>(new Set())
   const previousTodosRef = useRef<Todo[]>([])
+
+  const setPanelExpanded = useCallback((v: boolean) => {
+    setPanelExpandedState(v)
+    writePanelExpanded(v)
+  }, [])
+
+  const togglePanelExpanded = useCallback(() => {
+    setPanelExpandedState((prev) => {
+      const next = !prev
+      writePanelExpanded(next)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (typeof sessionStorage === 'undefined' || introRanRef.current) return
+    introRanRef.current = true
+
+    if (sessionStorage.getItem(PANEL_INTRO_KEY) === '1') {
+      setPanelExpandedState(readPanelExpanded())
+      return
+    }
+
+    setPanelExpandedState(true)
+    const t = window.setTimeout(() => {
+      setPanelExpandedState(false)
+      writePanelExpanded(false)
+      sessionStorage.setItem(PANEL_INTRO_KEY, '1')
+    }, 700)
+    return () => window.clearTimeout(t)
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -64,8 +114,9 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
       const next = data.todos ?? []
 
       if (shiftRes?.ok) {
-        const shift = (await shiftRes.json()) as { active?: boolean }
+        const shift = (await shiftRes.json()) as { active?: boolean; conversationId?: string | null }
         setDayShiftActive(Boolean(shift.active))
+        setDayShiftConversationId(shift.conversationId ?? null)
       }
 
       if (previousTodosRef.current.length > 0) {
@@ -170,7 +221,6 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
       const newStatus = todo.status === 'completed' ? 'pending'
         : (todo.status === 'in_progress' || todo.status === 'running') ? 'completed'
         : 'completed'
-      // Optimistic update for snappy UX.
       setTodos(prev =>
         prev.map(t =>
           t.id === todo.id
@@ -208,8 +258,38 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
   )
 
   const value: TodoContextValue = useMemo(
-    () => ({ todos, loading, active, completed, cancelled, dayShiftActive, refresh, add, toggle, remove }),
-    [todos, loading, active, completed, cancelled, dayShiftActive, refresh, add, toggle, remove],
+    () => ({
+      todos,
+      loading,
+      active,
+      completed,
+      cancelled,
+      dayShiftActive,
+      dayShiftConversationId,
+      panelExpanded,
+      setPanelExpanded,
+      togglePanelExpanded,
+      refresh,
+      add,
+      toggle,
+      remove,
+    }),
+    [
+      todos,
+      loading,
+      active,
+      completed,
+      cancelled,
+      dayShiftActive,
+      dayShiftConversationId,
+      panelExpanded,
+      setPanelExpanded,
+      togglePanelExpanded,
+      refresh,
+      add,
+      toggle,
+      remove,
+    ],
   )
 
   return <TodoContext.Provider value={value}>{children}</TodoContext.Provider>
@@ -223,8 +303,6 @@ export function useAgentTodos(): TodoContextValue {
   return ctx
 }
 
-/** Safe variant — returns null when no provider is mounted (used by AgentTodoPanel
- *  to support both inside-empty-state usage AND inside the global drawer). */
 export function useAgentTodosOptional(): TodoContextValue | null {
   return useContext(TodoContext)
 }

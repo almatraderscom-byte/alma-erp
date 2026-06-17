@@ -30,6 +30,11 @@ type DashboardData = {
   budgets: { dailyUsd: number | null; monthlyUsd: number | null }
   dailyBudgetPct?: number | null
   monthlyBudgetPct?: number | null
+  elevenLabs?: {
+    today: { costUsd: number; characters: number; minutesUsed: number; calls: number }
+    month: { costUsd: number; characters: number; minutesUsed: number; calls: number }
+    priceNote: string
+  }
 }
 
 type BalanceProviderRow = {
@@ -327,6 +332,37 @@ export default function AgentCostsDashboard() {
           </div>
         )}
       </div>
+
+      {data.elevenLabs && (
+        <div className="rounded-2xl border border-[#EC4899]/25 bg-gradient-to-br from-[#EC4899]/[0.06] to-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-[#EC4899]">🗣️ ElevenLabs API (TTS)</p>
+            <p className="text-[10px] text-[#94a3b8]">{data.elevenLabs.priceNote}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
+              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.today.minutesUsed}</p>
+              <p className="text-[10px] text-[#64748b]">{fmtUsd(data.elevenLabs.today.costUsd)}</p>
+            </div>
+            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
+              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.today.characters.toLocaleString()}</p>
+              <p className="text-[10px] text-[#64748b]">{data.elevenLabs.today.calls} calls</p>
+            </div>
+            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
+              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.month.minutesUsed}</p>
+              <p className="text-[10px] text-[#64748b]">{fmtUsd(data.elevenLabs.month.costUsd)}</p>
+            </div>
+            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
+              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.month.characters.toLocaleString()}</p>
+              <p className="text-[10px] text-[#64748b]">{data.elevenLabs.month.calls} calls</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <motion.div

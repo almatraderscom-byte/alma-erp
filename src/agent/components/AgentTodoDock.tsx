@@ -1,148 +1,110 @@
 'use client'
 
-import { useEffect, useRef, useState, useMemo, type RefObject } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useMemo, type RefObject } from 'react'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { AgentTodoPanel } from './AgentTodoPanel'
-import { isAgentTodoSource, filterOwnerTasksToday } from './todo-panel-utils'
+import { CollapsibleGrid } from './OfficeShiftThreadBlocks'
+import {
+  filterOwnerTasksToday,
+  isAgentTodoSource,
+  isFailedStatus,
+  isOwnerTodoSource,
+} from './todo-panel-utils'
 
 /**
- * Single, scroll-aware todo dock — the ONLY todo component in the agent chat.
- *
- * Behavior (Cursor-style):
- *   • At the top of the conversation  → full "Today's Tasks" card (in-flow, scrolls naturally)
- *   • Once scrolled past it / chatting → a compact sticky header pins to the top and stays
- *     visible for the whole conversation; tapping it expands the full list as a dropdown.
- *
- * Lives as the first child of the chat scroll container so `position: sticky` pins to the
- * conversation viewport.
+ * Today's Tasks dock — summary header + collapsible body (F-v2).
+ * In-flow only (no position:fixed). Intro animates open→closed once per session.
  */
-export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
+export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
   const ctx = useAgentTodosOptional()
-  const [scrolled, setScrolled] = useState(false)
-  const [expanded, setExpanded] = useState(false)
-  const sentinelRef = useRef<HTMLDivElement>(null)
-
-  // Toggle compact mode once the full card scrolls out of the viewport.
-  useEffect(() => {
-    const root = containerRef.current
-    const sentinel = sentinelRef.current
-    if (!root || !sentinel) return
-    const io = new IntersectionObserver(
-      ([entry]) => setScrolled(!entry.isIntersecting),
-      { root, threshold: 0, rootMargin: '0px' },
-    )
-    io.observe(sentinel)
-    return () => io.disconnect()
-  }, [containerRef])
-
-  // Collapse the dropdown whenever we return to full mode.
-  useEffect(() => {
-    if (!scrolled) setExpanded(false)
-  }, [scrolled])
 
   const todos = ctx?.todos ?? []
-  const completed = ctx?.completed ?? []
   const loading = ctx?.loading ?? true
   const dayShiftActive = ctx?.dayShiftActive ?? false
+  const panelExpanded = ctx?.panelExpanded ?? false
+  const togglePanelExpanded = ctx?.togglePanelExpanded
 
-  const agentActive = useMemo(
-    () => todos.filter((t) => isAgentTodoSource(t.source) && t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
-    [todos],
-  )
-  const ownerTasksToday = useMemo(() => filterOwnerTasksToday(todos), [todos])
-  const sirActiveToday = useMemo(
-    () => ownerTasksToday.filter((t) => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
-    [ownerTasksToday],
-  )
-  const hasBossSplit = ownerTasksToday.length > 0
-  const total = agentActive.length + sirActiveToday.length + completed.length
+  const stats = useMemo(() => {
+    const agentActive = todos.filter(
+      (t) => isAgentTodoSource(t.source) && t.status !== 'completed' && !isFailedStatus(t.status),
+    ).length
+    const bossActive = filterOwnerTasksToday(todos).filter(
+      (t) => isOwnerTodoSource(t.source) && t.status !== 'completed' && !isFailedStatus(t.status),
+    ).length
+    const done = todos.filter((t) => t.status === 'completed').length
+    const active = todos.filter((t) => t.status !== 'completed' && !isFailedStatus(t.status)).length
+    return { total: todos.length, active, agentActive, bossActive, done }
+  }, [todos])
 
   if (!ctx) return null
-  if (loading || total === 0) return null
+  if (loading || stats.total === 0) return null
 
-  const dateLabel = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const dateLabel = new Date().toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
 
   return (
-    <>
-      {/* ── Compact sticky header (visible when scrolled) ── */}
-      <div className="pointer-events-none sticky top-0 z-30">
-        <AnimatePresence>
-          {scrolled && (
-            <motion.div
-              initial={{ y: -48, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -48, opacity: 0 }}
-              transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-              className="pointer-events-auto border-b border-black/[0.06] bg-white/80 backdrop-blur-xl"
-            >
-              <button
-                type="button"
-                onClick={() => setExpanded((e) => !e)}
-                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left md:px-6"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#E07A5F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" />
-                </svg>
-                <span className="min-w-0 truncate text-[12px] font-semibold text-[#1a1a2e]">{dateLabel}</span>
-                <span className="shrink-0 text-[11px] text-[#94a3b8]">·</span>
-                <span className="flex shrink-0 items-center gap-2 text-[11px] font-medium">
-                  <span className="text-[#1a1a2e]">{total} Tasks</span>
-                  <span className="inline-flex items-center gap-1 text-[#E07A5F]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]" />
-                    🤖 {agentActive.length}
-                  </span>
-                  <span className={`inline-flex items-center gap-1 ${hasBossSplit ? 'text-[#E07A5F]' : 'text-slate-600'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${hasBossSplit ? 'bg-[#E07A5F]' : 'bg-slate-400'}`} />
-                    Boss {sirActiveToday.length}
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-emerald-600">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    {completed.length} Done
-                  </span>
-                  {dayShiftActive && (
-                    <span className="text-[9px] font-semibold text-amber-700 animate-pulse">live</span>
-                  )}
-                </span>
-                <svg
-                  width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round"
-                  className={`ml-auto shrink-0 text-[#94a3b8] transition-transform ${expanded ? 'rotate-180' : ''}`}
-                >
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-
-              {/* Expand dropdown — full list as overlay */}
-              <AnimatePresence>
-                {expanded && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden border-t border-black/[0.05]"
-                  >
-                    <div className="mx-auto max-h-[55dvh] max-w-2xl overflow-y-auto">
-                      <AgentTodoPanel />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
+    <div className="mx-auto w-full max-w-2xl px-4 pt-3 pb-1 md:px-6 safe-x">
+      <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-white/90 shadow-sm backdrop-blur-sm">
+        <button
+          type="button"
+          onClick={() => togglePanelExpanded?.()}
+          className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left sm:px-4"
+          aria-expanded={panelExpanded}
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#E07A5F"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="shrink-0"
+            aria-hidden
+          >
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" />
+          </svg>
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#1a1a2e]">
+            {dateLabel}
+            <span className="font-normal text-[#94a3b8]">
+              {' '}· {stats.total} Tasks · {stats.active} active
+              {stats.bossActive > 0 || filterOwnerTasksToday(todos).length > 0
+                ? ` · Boss ${stats.bossActive}`
+                : ''}
+              {' '}· {stats.done} Done
+            </span>
+          </span>
+          {dayShiftActive && (
+            <span className="shrink-0 text-[9px] font-semibold text-amber-700 animate-pulse">live</span>
           )}
-        </AnimatePresence>
-      </div>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`shrink-0 text-[#94a3b8] transition-transform duration-[250ms] ease-out ${panelExpanded ? 'rotate-180' : ''}`}
+            aria-hidden
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
 
-      {/* ── Full card (in-flow at the top, scrolls away naturally) ── */}
-      <div className="mx-auto w-full max-w-2xl px-4 pt-3 md:px-6">
-        <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-white/85 shadow-sm backdrop-blur-sm">
-          <AgentTodoPanel />
-        </div>
+        <CollapsibleGrid open={panelExpanded}>
+          <div className="border-t border-black/[0.05] max-h-[min(70dvh,520px)] overflow-y-auto overscroll-y-contain">
+            <AgentTodoPanel embedded />
+          </div>
+        </CollapsibleGrid>
       </div>
-      <div ref={sentinelRef} aria-hidden className="h-px w-full" />
-    </>
+    </div>
   )
 }
 
