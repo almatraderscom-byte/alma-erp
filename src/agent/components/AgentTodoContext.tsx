@@ -125,7 +125,7 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const active = useMemo(
-    () => sortTodosForDisplay(todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')),
+    () => sortTodosForDisplay(todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed')),
     [todos],
   )
   const completed = useMemo(
@@ -133,7 +133,7 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
     [todos],
   )
   const cancelled = useMemo(
-    () => todos.filter(t => t.status === 'cancelled'),
+    () => todos.filter(t => t.status === 'cancelled' || t.status === 'failed'),
     [todos],
   )
 
@@ -160,7 +160,9 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
 
   const toggle = useCallback(
     async (todo: Todo) => {
-      const newStatus = todo.status === 'completed' ? 'pending' : 'completed'
+      const newStatus = todo.status === 'completed' ? 'pending'
+        : (todo.status === 'in_progress' || todo.status === 'running') ? 'completed'
+        : 'completed'
       // Optimistic update for snappy UX.
       setTodos(prev =>
         prev.map(t =>

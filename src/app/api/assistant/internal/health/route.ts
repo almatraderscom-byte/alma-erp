@@ -30,12 +30,14 @@ export async function GET(req: NextRequest) {
   }
 
   let db = false
+  let dbError: string | null = null
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (prisma as any).agentHeartbeat.findFirst({ select: { service: true } })
     db = true
-  } catch {
+  } catch (err) {
     db = false
+    dbError = err instanceof Error ? err.message : String(err)
   }
 
   const now = new Date()
@@ -54,6 +56,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: db,
     db,
+    ...(dbError ? { dbError } : {}),
     agentEnabled: true,
     timestamp: now.toISOString(),
   })

@@ -49,6 +49,12 @@ function isInCooldown(staffId, alertType) {
 
 function markAlerted(staffId, alertType) {
   alertCooldowns.set(`${staffId}:${alertType}`, Date.now())
+  if (alertCooldowns.size > 200) {
+    const now = Date.now()
+    for (const [k, ts] of alertCooldowns) {
+      if (now - ts > ALERT_COOLDOWN_MS) alertCooldowns.delete(k)
+    }
+  }
 }
 
 function formatDistance(meters) {

@@ -39,8 +39,13 @@ export default function AgentModelSelector({
   useEffect(() => {
     void fetch('/api/assistant/models')
       .then(async (res) => (res.ok ? res.json() as Promise<{ models: ModelOption[] }> : null))
-      .then((data) => { if (data?.models) setModels(data.models) })
-      .catch(() => {})
+      .then((data) => {
+        if (data?.models?.length) setModels(data.models)
+        else setModels([{ id: DEFAULT_MODEL_ID, label: 'Claude Sonnet 4.6', provider: 'anthropic', default: true }])
+      })
+      .catch(() => {
+        setModels([{ id: DEFAULT_MODEL_ID, label: 'Claude Sonnet 4.6', provider: 'anthropic', default: true }])
+      })
   }, [])
 
   useEffect(() => {

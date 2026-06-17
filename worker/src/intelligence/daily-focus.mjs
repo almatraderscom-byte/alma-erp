@@ -9,7 +9,7 @@ import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 async function api(path, method = 'GET', body = null) {
   try {
@@ -36,13 +36,16 @@ function dhakaDay() {
 
 export async function runDailyFocus(context) {
   const { supabase, bot } = context
-  if (!OWNER_CHAT_ID || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner chat' }
+  if (!OWNER_CHAT_ID() || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner chat' }
 
   const today = dhakaToday()
   const dayName = dhakaDay()
 
   const [todosRes, remindersRes, approvalsRes, briefing] = await Promise.all([
-    supabase.from('agent_owner_todos').select('title, priority, due_hint, created_at').eq('status', 'open').order('priority', { ascending: false }).limit(15),
+    supabase.from('agent_todos').select('title, priority, dueDate, created_at').in('status', ['pending', 'in_progress']).order('priority', { ascending: false }).limit(15).then(r => {
+      if (r.data?.length) return r
+      return supabase.from('agent_owner_todos').select('title, priority, due_hint, created_at').eq('status', 'open').order('priority', { ascending: false }).limit(15)
+    }),
     supabase.from('agent_reminders').select('title, due_at, tier').eq('status', 'pending').gte('due_at', new Date().toISOString()).order('due_at').limit(10),
     supabase.from('agent_pending_actions').select('summary, type, createdAt').eq('status', 'pending').order('createdAt').limit(5),
     api('/api/assistant/internal/owner-briefing'),
@@ -74,12 +77,12 @@ export async function runDailyFocus(context) {
 
   if (!planResult?.plan) {
     const fallbackPlan = buildFallbackPlan(todos, reminders, approvals, dayName)
-    await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, `📋 *আজকের ফোকাস প্ল্যান*\n\n${fallbackPlan}`)
+    await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID(), `📋 *আজকের ফোকাস প্ল্যান*\n\n${fallbackPlan}`)
     return { dutyStatus: 'done', dutyDetail: `Fallback plan sent (no AI)` }
   }
 
   const msg = `📋 *আজকের ফোকাস প্ল্যান*\n\n${planResult.plan}`
-  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, msg)
+  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID(), msg)
 
   return { dutyStatus: 'done', dutyDetail: `Plan sent (${todos.length} todos, ${reminders.length} reminders)` }
 }

@@ -25,7 +25,15 @@ export function initWorkerSentry() {
   })
 }
 
-export function captureWorkerError(err, event, context = {}) {
+export function captureWorkerError(errOrEvent, eventOrErr, context = {}) {
+  let err, event
+  if (typeof errOrEvent === 'string') {
+    event = errOrEvent
+    err = eventOrErr
+  } else {
+    err = errOrEvent
+    event = typeof eventOrErr === 'string' ? eventOrErr : 'worker.unknown'
+  }
   if (!initialized) {
     console.error(`[sentry-skip] ${event}:`, err instanceof Error ? err.message : String(err))
     return

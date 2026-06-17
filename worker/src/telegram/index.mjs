@@ -90,6 +90,11 @@ function checkFlood(chatId) {
     floodBuckets.set(chatId, bucket)
   }
   bucket.count += 1
+  if (floodBuckets.size > 200) {
+    for (const [k, v] of floodBuckets) {
+      if (now >= v.resetAt) floodBuckets.delete(k)
+    }
+  }
   return bucket.count <= FLOOD_LIMIT
 }
 
@@ -1124,18 +1129,20 @@ export function createTelegramBot() {
       const [action, actionId] = data.split(':')
       const approved = action === 'staff_approve'
       const supabase = createSupabase()
-      const { data: row } = await supabase.from('agent_pending_actions')
-        .select('id, payload, status')
+      const { data: claimed, error: claimErr } = await supabase.from('agent_pending_actions')
+        .update({
+          status: approved ? 'approved' : 'rejected',
+          resolvedAt: new Date().toISOString(),
+        })
         .eq('id', actionId)
-        .single()
-      if (!row || (row.status !== 'pending' && row.status !== 'waiting_list')) {
-        await ctx.answerCbQuery(approved ? '⚠ ইতিমধ্যে প্রসেস হয়েছে' : '⚠ ইতিমধ্যে প্রসেস হয়েছে')
+        .in('status', ['pending', 'waiting_list'])
+        .select('id, payload, status')
+      if (claimErr || !claimed?.length) {
+        await ctx.answerCbQuery('⚠ ইতিমধ্যে প্রসেস হয়েছে')
+        try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }) } catch { /* */ }
         return
       }
-      await supabase.from('agent_pending_actions').update({
-        status: approved ? 'approved' : 'rejected',
-        resolvedAt: new Date().toISOString(),
-      }).eq('id', actionId)
+      const row = claimed[0]
       if (approved && row.payload?.chatId) {
         try {
           const { getDiagnosticPublicBase } = await import('../diagnostic-http.mjs')
@@ -1299,6 +1306,7 @@ export function createTelegramBot() {
     }
 
     if (data.startsWith('approve:') || data.startsWith('reject:') || data.startsWith('edit:')) {
+      if (!isOwner(ctx.chat?.id)) { await ctx.answerCbQuery('অনুমতি নেই'); return }
       const [action, actionId] = data.split(':')
       if (action === 'edit') {
         const supabase = createSupabase()
@@ -1724,9 +1732,11 @@ export function createTelegramBot() {
       }
 
     } else if (data.startsWith('postlink_skip:')) {
+      if (!isOwner(ctx.chat?.id)) { await ctx.answerCbQuery('অনুমতি নেই'); return }
       await ctx.answerCbQuery('Skip')
 
     } else if (data.startsWith('cs_edit:')) {
+      if (!isOwner(ctx.chat?.id)) { await ctx.answerCbQuery('অনুমতি নেই'); return }
       const draftId = data.slice('cs_edit:'.length)
       await ctx.answerCbQuery()
       await ctx.reply(`✏️ Draft ${draftId} — Telegram-এ এডিট করে /cs resume বা নতুন মেসেজ পাঠান`)

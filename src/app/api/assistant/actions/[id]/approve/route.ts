@@ -9,6 +9,7 @@ import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import { recordApproval } from '@/agent/lib/trust-engine'
+import { isPendingActionExpired } from '@/agent/lib/pending-action'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -79,9 +80,8 @@ export async function POST(
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
   }
 
-  // Check expiry (30 min)
-  const ageMs = Date.now() - new Date(action.createdAt).getTime()
-  if (ageMs > 30 * 60 * 1000) {
+  // Check expiry
+  if (isPendingActionExpired(action.createdAt)) {
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
@@ -882,6 +882,10 @@ export async function POST(
       return Response.json({ success: true, newAdSetId: result.newAdSetId, campaignId })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
       return Response.json({ error: errMsg }, { status: 502 })
     }
   }

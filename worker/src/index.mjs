@@ -77,7 +77,7 @@ const videoGenQueue = new Queue('video-gen', {
 
 const longTaskQueue = new Queue('long-agent-task', {
   connection,
-  defaultJobOptions: { attempts: 1 },
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
 })
 
 // Track enqueued action IDs to avoid duplicates in polling window

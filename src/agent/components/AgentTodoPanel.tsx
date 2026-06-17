@@ -109,9 +109,9 @@ export function AgentTodoPanel() {
 
   const todos = ctx?.todos ?? localTodos
   const loading = ctx?.loading ?? localLoading
-  const activeTodos = ctx?.active ?? todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
+  const activeTodos = ctx?.active ?? todos.filter(t => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed')
   const completedTodos = ctx?.completed ?? todos.filter(t => t.status === 'completed')
-  const cancelledTodos = ctx?.cancelled ?? todos.filter(t => t.status === 'cancelled')
+  const cancelledTodos = ctx?.cancelled ?? todos.filter(t => t.status === 'cancelled' || t.status === 'failed')
 
   async function addTodo() {
     if (!newTitle.trim() || adding) return
@@ -137,7 +137,9 @@ export function AgentTodoPanel() {
 
   async function toggleTodo(todo: Todo) {
     if (ctx) return ctx.toggle(todo)
-    const newStatus = todo.status === 'completed' ? 'pending' : 'completed'
+    const newStatus = todo.status === 'completed' ? 'pending'
+      : (todo.status === 'in_progress' || todo.status === 'running') ? 'completed'
+      : 'completed'
     try {
       await fetch('/api/assistant/todos', {
         method: 'PATCH',

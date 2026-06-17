@@ -65,14 +65,14 @@ export async function showCatalogPanel(ctx, { isOwner }) {
 export async function showStaffPanel(ctx, supabase) {
   const { data: rows } = await supabase
     .from('agent_staff')
-    .select('name, role, telegram_chat_id, active')
+    .select('name, role, telegramChatId, active')
     .order('name')
 
   const active = (rows ?? []).filter((r) => r.active !== false)
   let list = 'কোনো স্টাফ নেই।'
   if (active.length) {
     list = active.map((s) => {
-      const linked = s.telegram_chat_id ? `✅ ${s.telegram_chat_id}` : '❌ লিঙ্ক নেই'
+      const linked = s.telegramChatId ? `✅ ${s.telegramChatId}` : '❌ লিঙ্ক নেই'
       return `• ${s.name} (${s.role}) — ${linked}`
     }).join('\n')
   }
