@@ -9,6 +9,7 @@
 import { isWithinOfficeHours } from './office-hours.mjs'
 import { notify } from '../notify/index.mjs'
 import { bnNum } from './bn-format.mjs'
+import { isGeoFenceMonitoringEnabled } from './geo-fence-settings.mjs'
 
 const OFFICE_LAT = Number(process.env.OFFICE_ALMA_LIFESTYLE_LAT || process.env.OFFICE_LAT || 0)
 const OFFICE_LNG = Number(process.env.OFFICE_ALMA_LIFESTYLE_LNG || process.env.OFFICE_LNG || 0)
@@ -64,6 +65,10 @@ function formatDistance(meters) {
 
 export async function runGeoMonitor(context) {
   const { supabase, bot } = context
+
+  if (!(await isGeoFenceMonitoringEnabled(supabase))) {
+    return { dutyStatus: 'skipped', dutyDetail: 'geo-fence monitoring disabled by owner' }
+  }
 
   if (!officeCoordsConfigured()) {
     return { dutyStatus: 'skipped', dutyDetail: 'OFFICE_LAT/LNG not configured' }
@@ -176,6 +181,7 @@ export async function runGeoMonitor(context) {
  */
 export async function checkGhostCheckins(context) {
   const { supabase, bot } = context
+  if (!(await isGeoFenceMonitoringEnabled(supabase))) return
   if (!officeCoordsConfigured()) return
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })

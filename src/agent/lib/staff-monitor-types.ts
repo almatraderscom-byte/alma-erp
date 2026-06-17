@@ -289,6 +289,7 @@ export type StaffMonitorData = {
   dutyTimeOverrides?: Record<string, string>
   geoStatus?: GeoStaffStatus[]
   productivityAlerts?: ProductivityAlert[]
+  geoFenceMonitoringEnabled?: boolean
   generatedAt: string
 }
 

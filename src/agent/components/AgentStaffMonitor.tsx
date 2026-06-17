@@ -225,6 +225,7 @@ export default function AgentStaffMonitor() {
   const [capsOpen, setCapsOpen] = useState(false)
   const [feedExpanded, setFeedExpanded] = useState(false)
   const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview')
+  const [geoFenceToggling, setGeoFenceToggling] = useState(false)
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
@@ -376,6 +377,26 @@ export default function AgentStaffMonitor() {
       }
     }
     setDeploying(false); setTimeout(() => setDeployMsg(null), 10000)
+  }
+
+  async function toggleGeoFenceMonitoring(enabled: boolean) {
+    setGeoFenceToggling(true)
+    try {
+      const res = await fetch('/api/agent/staff-monitor/geo-fence', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json() as { enabled: boolean }
+      setLiveData((prev) => prev ? { ...prev, geoFenceMonitoringEnabled: data.enabled, geoStatus: data.enabled ? prev.geoStatus : [] } : prev)
+      showToast(data.enabled ? 'Geo-Fence tracking চালু' : 'Geo-Fence tracking বন্ধ — attendance-এ location এখনও লাগবে', 'ok')
+      void loadLive()
+    } catch {
+      showToast('Geo-Fence toggle ব্যর্থ', 'err')
+    } finally {
+      setGeoFenceToggling(false)
+    }
   }
 
   async function updateTrustTier(ruleId: string, newTier: string) {
@@ -654,30 +675,59 @@ export default function AgentStaffMonitor() {
             )}
 
             {/* ── Live Surveillance (Geo + Productivity) — STAFF tab only ── */}
-            {monitorTab === 'staff' && isLive && (displayData.geoStatus?.length || displayData.productivityAlerts?.length) ? (
+            {monitorTab === 'staff' && isLive ? (
               <motion.div variants={fadeIn}>
                 <SectionCard title="Live Surveillance" icon="📡" accent="red">
-                  {displayData.geoStatus?.length ? (
-                    <div className="mb-3">
-                      <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">📍 Geo-Fence</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {displayData.geoStatus.map((g) => (
-                          <div key={g.staffId} className={cn(
-                            'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium',
-                            g.status === 'in_zone' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
-                            g.status === 'outside' && 'border-red-200 bg-red-50 text-red-700',
-                            g.status === 'stale' && 'border-amber-200 bg-amber-50 text-amber-700',
-                            g.status === 'no_data' && 'border-zinc-200 bg-zinc-50 text-zinc-500',
-                          )}>
-                            <span>{g.status === 'in_zone' ? '✅' : g.status === 'outside' ? '🚨' : g.status === 'stale' ? '⏸️' : '❓'}</span>
-                            <span className="font-semibold">{g.staffName}</span>
-                            {g.status === 'outside' && g.distanceM && <span className="text-[10px]">({g.distanceM}m)</span>}
-                            {g.mapsLink && <a href={g.mapsLink} target="_blank" rel="noopener noreferrer" className="text-[9px] underline">📍 Map</a>}
-                          </div>
-                        ))}
-                      </div>
+                  <div className="mb-3">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">📍 Geo-Fence</h4>
+                      <button
+                        type="button"
+                        disabled={geoFenceToggling}
+                        onClick={() => toggleGeoFenceMonitoring(!(displayData.geoFenceMonitoringEnabled ?? true))}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors',
+                          (displayData.geoFenceMonitoringEnabled ?? true)
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-zinc-300 bg-zinc-100 text-zinc-600',
+                          geoFenceToggling && 'opacity-60',
+                        )}
+                        aria-pressed={displayData.geoFenceMonitoringEnabled ?? true}
+                      >
+                        <span className={cn(
+                          'inline-block h-2 w-2 rounded-full',
+                          (displayData.geoFenceMonitoringEnabled ?? true) ? 'bg-emerald-500' : 'bg-zinc-400',
+                        )} />
+                        {(displayData.geoFenceMonitoringEnabled ?? true) ? 'Tracking ON' : 'Tracking OFF'}
+                      </button>
                     </div>
-                  ) : null}
+                    {(displayData.geoFenceMonitoringEnabled ?? true) ? (
+                      displayData.geoStatus?.length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {displayData.geoStatus.map((g) => (
+                            <div key={g.staffId} className={cn(
+                              'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium',
+                              g.status === 'in_zone' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                              g.status === 'outside' && 'border-red-200 bg-red-50 text-red-700',
+                              g.status === 'stale' && 'border-amber-200 bg-amber-50 text-amber-700',
+                              g.status === 'no_data' && 'border-zinc-200 bg-zinc-50 text-zinc-500',
+                            )}>
+                              <span>{g.status === 'in_zone' ? '✅' : g.status === 'outside' ? '🚨' : g.status === 'stale' ? '⏸️' : '❓'}</span>
+                              <span className="font-semibold">{g.staffName}</span>
+                              {g.status === 'outside' && g.distanceM && <span className="text-[10px]">({g.distanceM}m)</span>}
+                              {g.mapsLink && <a href={g.mapsLink} target="_blank" rel="noopener noreferrer" className="text-[9px] underline">📍 Map</a>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-zinc-500">কোনো staff location ডেটা নেই।</p>
+                      )
+                    ) : (
+                      <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-[11px] text-zinc-600">
+                        Office time-এ continuous location tracking বন্ধ। Attendance check-in/out-এ location এখনও বাধ্যতামূলক।
+                      </p>
+                    )}
+                  </div>
                   {displayData.productivityAlerts?.length ? (
                     <div>
                       <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">⚡ Productivity</h4>

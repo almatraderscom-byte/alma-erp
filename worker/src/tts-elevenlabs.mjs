@@ -48,9 +48,7 @@ export async function synthesizeElevenLabs(text, opts = {}) {
       model_id: 'eleven_multilingual_v2',
       voice_settings: {
         stability: opts.stability ?? 0.5,
-        similarity_boost: opts.similarity ?? 0.8,
-        style: opts.style ?? 0.3,
-        use_speaker_boost: true,
+        similarity_boost: opts.similarity_boost ?? opts.similarity ?? 0.75,
       },
     }),
     signal: AbortSignal.timeout(30_000),
