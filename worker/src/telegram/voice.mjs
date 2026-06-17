@@ -72,5 +72,13 @@ export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
     elevenLabsOnly: options.elevenLabsOnly,
   })
   const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
+  const useElevenLabs = options.elevenLabsOnly || (useOwner && isElevenLabsAvailable())
+
+  // ElevenLabs: sendAudio (HD MP3) — sendVoice re-encodes to low-bitrate OGG and sounds robotic
+  if (useElevenLabs) {
+    await api.sendAudio(chatId, { source: mp3Buffer, filename: 'voice.mp3' }, extra)
+    return
+  }
+
   await api.sendVoice(chatId, { source: mp3Buffer }, extra)
 }

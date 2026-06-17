@@ -1,58 +1,28 @@
 /**
- * ElevenLabs TTS — Owner's cloned voice for staff communication.
+ * ElevenLabs TTS — match playground quality as closely as possible.
  *
- * Bangla quality depends on:
- *  1. Pure Bengali script in `text` (no English words — model reads Latin as English)
- *  2. language_code + text normalization
- *  3. Higher stability / similarity for consistent pronunciation
+ * Quality gaps vs ElevenLabs website were caused by:
+ *  1. Telegram sendVoice re-encodes to low-bitrate OGG (fixed in voice.mjs → sendAudio)
+ *  2. Over-aggressive text prep (transliterating English → awkward Bangla)
+ *  3. Missing output_format=mp3_44100_128 on API URL
  */
 import { logCost } from './cost-log.mjs'
-import { splitTextForTts, stripMarkdown } from './tts.mjs'
+import { stripMarkdown } from './tts.mjs'
 
 const ELEVENLABS_API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
-const ELEVENLABS_VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID ?? ''
+const ELEVENLABS_VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'
 const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2'
+const ELEVENLABS_OUTPUT_FORMAT = () => process.env.ELEVENLABS_OUTPUT_FORMAT ?? 'mp3_44100_128'
 
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
-
-/** Latin → Bengali script for words that often appear in staff/owner messages. */
-const LATIN_WORD_MAP = [
-  [/telegram/gi, 'টেলিগ্রাম'],
-  [/whatsapp/gi, 'হোয়াটসঅ্যাপ'],
-  [/facebook/gi, 'ফেসবুক'],
-  [/messenger/gi, 'মেসেঞ্জার'],
-  [/boost/gi, 'বুস্ট'],
-  [/order/gi, 'অর্ডার'],
-  [/task/gi, 'টাস্ক'],
-  [/proof/gi, 'প্রুফ'],
-  [/office/gi, 'অফিস'],
-  [/sir/gi, 'স্যার'],
-  [/boss/gi, 'বস'],
-  [/ok\b/gi, 'ঠিক আছে'],
-  [/okay\b/gi, 'ঠিক আছে'],
-  [/sms/gi, 'এসএমএস'],
-  [/api/gi, 'এপিআই'],
-  [/erp/gi, 'ইআরপি'],
-]
-
-function toBengaliDigits(text) {
-  return text.replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)])
-}
+/** ElevenLabs multilingual v2 — single request up to ~5000 chars */
+const MAX_CHARS_PER_REQUEST = 4500
 
 /**
- * Prepare text so ElevenLabs stays in Bangla — Latin words trigger English pronunciation.
+ * Minimal prep — playground sends text as typed; only strip markdown/noise.
  */
 export function prepareBanglaForElevenLabs(text) {
-  let out = stripMarkdown(text)
-  for (const [re, bn] of LATIN_WORD_MAP) {
-    out = out.replace(re, bn)
-  }
-  out = toBengaliDigits(out)
-  // Drop bare URLs/emails — TTS reads them as gibberish/English
-  out = out.replace(/https?:\/\/\S+/gi, '')
-  out = out.replace(/\S+@\S+\.\S+/g, '')
-  out = out.replace(/\s{2,}/g, ' ').trim()
-  return out.slice(0, 1000)
+  return stripMarkdown(text).replace(/\s{2,}/g, ' ').trim().slice(0, MAX_CHARS_PER_REQUEST)
 }
 
 function voiceSettings(opts = {}) {
@@ -68,7 +38,7 @@ function voiceSettings(opts = {}) {
 
 async function synthesizeChunk(preparedText, opts = {}) {
   const apiKey = ELEVENLABS_API_KEY()
-  const voiceId = ELEVENLABS_VOICE_ID()
+  const voiceId = opts.voiceId ?? ELEVENLABS_VOICE_ID()
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY not set')
   if (!voiceId) throw new Error('ELEVENLABS_VOICE_ID not set')
   if (!preparedText) throw new Error('No text to synthesize')
@@ -79,7 +49,10 @@ async function synthesizeChunk(preparedText, opts = {}) {
     voice_settings: voiceSettings(opts),
   }
 
-  const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
+  const format = ELEVENLABS_OUTPUT_FORMAT()
+  const url = `${ELEVENLABS_BASE}/text-to-speech/${voiceId}?output_format=${encodeURIComponent(format)}`
+
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -108,12 +81,8 @@ export async function synthesizeElevenLabs(text, opts = {}) {
   const prepared = prepareBanglaForElevenLabs(text)
   if (!prepared) throw new Error('No text to synthesize')
 
-  const chunks = splitTextForTts(prepared, 220)
-  const buffers = []
-  for (const chunk of chunks) {
-    buffers.push(await synthesizeChunk(chunk, opts))
-  }
-  const buffer = Buffer.concat(buffers)
+  // Single request — avoids broken MP3 concat; matches playground behaviour
+  const buffer = await synthesizeChunk(prepared, opts)
 
   void logCost({
     provider: 'elevenlabs',
