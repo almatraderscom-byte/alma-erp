@@ -515,7 +515,7 @@ export async function buildWorkerTaskProposal(supabase, targetDate) {
       .select('payload')
       .eq('type', 'strategist_moves')
       .in('status', ['approved', 'completed'])
-      .gte('created_at', dayStart)
+      .gte('createdAt', dayStart)
       .limit(3)
 
     if (moves?.length) {
@@ -771,7 +771,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       .select('id')
       .eq('status', 'pending')
       .eq('type', 'dispatch_staff_tasks')
-      .order('created_at', { ascending: false })
+      .order('createdAt', { ascending: false })
       .limit(1)
       .maybeSingle()
 
@@ -793,7 +793,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       .select('id')
       .eq('type', 'dispatch_staff_tasks')
       .eq('status', 'pending')
-      .order('created_at', { ascending: false })
+      .order('createdAt', { ascending: false })
       .limit(1)
 
     let cardSent = cardResult?.cardSent ?? false

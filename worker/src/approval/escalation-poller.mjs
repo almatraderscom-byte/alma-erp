@@ -5,8 +5,7 @@
  */
 import { createClient } from '@supabase/supabase-js'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+import { getAppUrl, getInternalToken } from '../env.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -17,10 +16,10 @@ export async function pollApprovalEscalations() {
 
   const { data: pending } = await supabase
     .from('agent_pending_actions')
-    .select('id, payload, summary, created_at')
+    .select('id, payload, summary, createdAt')
     .eq('type', 'staff_auto_message')
     .eq('status', 'pending')
-    .order('created_at', { ascending: true })
+    .order('createdAt', { ascending: true })
 
   if (!pending?.length) return { dutyStatus: 'done', dutyDetail: 'No pending staff approvals' }
 
@@ -28,7 +27,7 @@ export async function pollApprovalEscalations() {
   let callsMade = 0
 
   for (const action of pending) {
-    const ageMs = now - new Date(action.created_at).getTime()
+    const ageMs = now - new Date(action.createdAt).getTime()
     const ageMin = ageMs / 60_000
     const escalationLevel = action.payload?.escalationLevel ?? 0
 
@@ -56,11 +55,11 @@ export async function pollApprovalEscalations() {
       const callMessage = `Sir, ${staffName} er jonno ${type} message approve lagbe. Please check your Telegram.`
 
       try {
-        await fetch(`${APP_URL}/api/assistant/internal/urgent-alert`, {
+        await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${INT_TOKEN}`,
+            Authorization: `Bearer ${getInternalToken()}`,
           },
           body: JSON.stringify({
             tier: 3,

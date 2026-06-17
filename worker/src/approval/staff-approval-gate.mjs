@@ -84,7 +84,7 @@ export async function requireStaffApproval({
     summary,
     status: 'pending',
     business_id: biz,
-    cost_estimate: 0,
+    costEstimate: 0,
   })
 
   try {

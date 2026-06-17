@@ -1,21 +1,22 @@
 /**
  * Proof timeout — 30 min reminder, 2h unverified flag.
  */
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 const REMINDER_MS = 30 * 60 * 1000
 const TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 async function callTaskCallback(payload) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/task-callback`, {
+  const base = getAppUrl()
+  if (!base) throw new Error('[proof-timeout] APP_URL is not configured')
+  const res = await fetch(`${base}/api/assistant/internal/task-callback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify(payload),
   })
@@ -30,7 +31,7 @@ function shortTitle(title) {
 export async function runProofTimeoutCheck({ supabase, bot }) {
   const { data: tasks } = await supabase
     .from('staff_tasks')
-    .select('id, title, staff_id, proof_data, agent_staff(telegram_chat_id, name)')
+    .select('id, title, staff_id, proof_data, agent_staff(telegramChatId, name)')
     .eq('status', 'awaiting_proof')
     .eq('verification_status', 'awaiting_proof')
 
@@ -44,7 +45,7 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
       ? new Date(proofData.proofRequestedAt).getTime()
       : now
     const elapsed = now - requestedAt
-    const staffChat = task.agent_staff?.telegram_chat_id
+    const staffChat = task.agent_staff?.telegramChatId
     const label = shortTitle(task.title)
 
     if (elapsed >= TIMEOUT_MS) {

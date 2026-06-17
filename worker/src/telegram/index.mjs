@@ -1066,6 +1066,9 @@ export function createTelegramBot() {
   bot.on('callback_query', async (ctx) => {
     const data = ctx.callbackQuery.data ?? ''
 
+    const { guardOwnerCallback } = await import('./owner-callback-guard.mjs')
+    if (!(await guardOwnerCallback(ctx))) return
+
     if (data === 'msg_ack_done') {
       await ctx.answerCbQuery('✅ ইতিমধ্যে নিশ্চিত')
       return
@@ -1089,7 +1092,7 @@ export function createTelegramBot() {
       }
       await supabase.from('agent_pending_actions').update({
         status: approved ? 'approved' : 'rejected',
-        resolved_at: new Date().toISOString(),
+        resolvedAt: new Date().toISOString(),
       }).eq('id', actionId)
       if (approved) {
         try {
@@ -1130,7 +1133,7 @@ export function createTelegramBot() {
       }
       await supabase.from('agent_pending_actions').update({
         status: approved ? 'approved' : 'rejected',
-        resolved_at: new Date().toISOString(),
+        resolvedAt: new Date().toISOString(),
       }).eq('id', actionId)
       if (approved && row.payload?.chatId) {
         try {

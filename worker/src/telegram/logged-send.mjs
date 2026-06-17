@@ -40,9 +40,9 @@ export async function loggedSendToStaff(telegram, {
       if (!gateResult.autoApproved) {
         return gateResult
       }
-      // autoApproved (trust tier auto/notify) — fall through to send logic
     } catch (err) {
-      console.warn('[logged-send] approval gate error, falling through:', err.message)
+      console.error('[logged-send] approval gate error — fail closed (no send):', err.message)
+      return { ok: false, queued: true, error: 'approval_gate_unavailable', pendingActionId: null }
     }
   }
 

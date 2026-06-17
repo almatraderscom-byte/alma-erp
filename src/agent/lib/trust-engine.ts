@@ -44,8 +44,9 @@ export async function getTrustDecision(
     }
 
     return { tier: rule.tier as TrustTier, ruleId: rule.id, reason: `trust rule: ${rule.consecutiveApprovals} consecutive approvals` }
-  } catch {
-    return { tier: 'approve', ruleId: null, reason: 'trust engine error — fallback approve' }
+  } catch (err) {
+    console.error('[trust-engine] DB error — fail closed (approve tier):', err)
+    return { tier: 'approve', ruleId: null, reason: 'trust_engine_unavailable_fail_closed' }
   }
 }
 

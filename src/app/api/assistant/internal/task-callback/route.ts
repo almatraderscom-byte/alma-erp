@@ -77,6 +77,14 @@ export async function POST(req: NextRequest) {
 
   const now = new Date()
 
+  if (action === 'approve' || action === 'redo') {
+    const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID?.trim()
+    const actorChatId = String((body as { ownerChatId?: string }).ownerChatId ?? '').trim()
+    if (!ownerChatId || actorChatId !== ownerChatId) {
+      return NextResponse.json({ error: 'Owner authorization required' }, { status: 403 })
+    }
+  }
+
   if (action === 'done') {
     const verify = await shouldVerifyTaskType(task.type)
     if (!verify) {

@@ -184,7 +184,7 @@ Fix this issue following ALL safety rules above.`
 async function updateAction(supabase, actionId, status, result) {
   await supabase.from('agent_pending_actions').update({
     status,
-    resolved_at: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
     result,
   }).eq('id', actionId)
 }
@@ -219,7 +219,7 @@ export async function requestAutoFix(issue) {
     summary: `🔧 Auto-Fix: ${issue.title}\n${preview}\n💰 ~$${costEstimate.toFixed(2)}`,
     status: 'pending',
     business_id: issue.businessId ?? 'ALMA_LIFESTYLE',
-    cost_estimate: costEstimate,
+    costEstimate: costEstimate,
   })
 
   if (OWNER_CHAT_ID && BOT_TOKEN) {

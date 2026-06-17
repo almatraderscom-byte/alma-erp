@@ -22,13 +22,12 @@ import {
   missedMessage,
   salahChannelMessages,
 } from './reminder-messages.mjs'
+import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
 import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 import { isSalahWaqtConfirmed } from '../salah-confirmed.mjs'
 import { dutyWindowEnd } from './duty-window.mjs'
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 const WAQT_NAMES = {
   fajr:    'ফজর',
@@ -67,18 +66,24 @@ function resolvePrayedStatus(windowEnd, now = new Date()) {
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
+function salahApiBase() {
+  const base = getAppUrl()
+  if (!base) throw new Error('[salah] APP_URL is not configured')
+  return base
+}
+
 async function getSettings(keys) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=${keys.join(',')}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${salahApiBase()}/api/assistant/internal/agent-settings?keys=${keys.join(',')}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   if (!res.ok) return {}
   return res.json()
 }
 
 async function upsertSalahRecord(data) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/salah-record`, {
+  const res = await fetch(`${salahApiBase()}/api/assistant/internal/salah-record`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify(data),
   })
   if (!res.ok) {
@@ -90,9 +95,9 @@ async function upsertSalahRecord(data) {
 
 /** Atomically claim a reminder step before sending — prevents duplicate azan from parallel ticks. */
 async function claimReminderStep(date, waqt, expectedRemindersSent) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/salah-record`, {
+  const res = await fetch(`${salahApiBase()}/api/assistant/internal/salah-record`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT_TOKEN}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ date, waqt, incrementRemindersIf: expectedRemindersSent }),
   })
   if (res.status === 409) return false
@@ -105,8 +110,8 @@ async function claimReminderStep(date, waqt, expectedRemindersSent) {
 }
 
 async function getSalahRecords(date) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/salah-record?date=${date}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${salahApiBase()}/api/assistant/internal/salah-record?date=${date}`, {
+    headers: { Authorization: `Bearer ${getInternalToken()}` },
   })
   if (!res.ok) return []
   const data = await res.json()

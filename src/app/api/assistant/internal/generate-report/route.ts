@@ -4,12 +4,17 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAgentInternalToken } from '@/lib/agent-internal-auth'
+import { requireAgentEnabled } from '@/agent/lib/guards'
 import Anthropic from '@anthropic-ai/sdk'
 import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
+
+const MAX_DATA_CHARS = 50_000
+const MAX_ANOMALIES = 20
+const ALLOWED_TYPES = new Set(['weekly-bi'])
 
 const PROMPTS: Record<string, (data: string, anomalies: string[]) => string> = {
   'weekly-bi': (data, anomalies) =>
@@ -23,6 +28,9 @@ Format: Sections with emoji headers. Key metrics first, then insights. End with 
 }
 
 export async function POST(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
   const auth = req.headers.get('authorization') ?? ''
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
   if (!verifyAgentInternalToken(token)) {
@@ -31,6 +39,14 @@ export async function POST(req: NextRequest) {
 
   const { type, data, anomalies } = await req.json()
   if (!type || !data) return NextResponse.json({ error: 'type and data required' }, { status: 400 })
+  if (!ALLOWED_TYPES.has(type)) {
+    return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 })
+  }
+  if (String(data).length > MAX_DATA_CHARS) {
+    return NextResponse.json({ error: 'data_too_large' }, { status: 400 })
+  }
+
+  const anomalyList = Array.isArray(anomalies) ? anomalies.slice(0, MAX_ANOMALIES).map(String) : []
 
   const promptFn = PROMPTS[type]
   if (!promptFn) return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 })
@@ -45,7 +61,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 800,
       messages: [{
         role: 'user',
-        content: promptFn(data, anomalies ?? []),
+        content: promptFn(String(data), anomalyList),
       }],
     })
 

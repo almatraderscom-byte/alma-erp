@@ -1,6 +1,6 @@
 /**
  * POST /api/assistant/internal/urgent-alert
- * Queues immediate notify dispatch (tier 2 instant, tier 3 after approve).
+ * Queues notify dispatch. Tier 2 instant; tier 3 requires owner approval unless preAuthorized.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
@@ -24,6 +24,8 @@ function checkToken(req: NextRequest): boolean {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+const PRE_AUTH_TIER3_CATEGORIES = new Set(['staff_approval_escalation'])
+
 export async function POST(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -38,6 +40,9 @@ export async function POST(req: NextRequest) {
   const title = String(body.title ?? '').trim()
   const message = String(body.message ?? '').trim()
   const voice = body.voice !== false
+  const category = String(body.category ?? '').trim()
+  const preAuthorized = body.preAuthorized === true
+    || PRE_AUTH_TIER3_CATEGORIES.has(category)
 
   if (!title || !message) {
     return NextResponse.json({ error: 'title and message required' }, { status: 400 })
@@ -48,19 +53,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: rate.error }, { status: 429 })
   }
 
+  const instantDispatch = tier === 2 || (tier === 3 && preAuthorized)
+
   try {
     const action = await db.agentPendingAction.create({
       data: {
         type: 'urgent_notify',
-        payload: { tier, title, message, voice },
+        payload: { tier, title, message, voice, category: category || undefined },
         summary: `${tier === 3 ? '📞' : '🚨'} ${title}`,
         costEstimate: tier === 3 ? 0.05 : 0,
-        status: 'approved',
-        resolvedAt: new Date(),
+        status: instantDispatch ? 'approved' : 'pending',
+        resolvedAt: instantDispatch ? new Date() : null,
       },
     })
 
-    return NextResponse.json({ ok: true, queued: true, actionId: action.id })
+    return NextResponse.json({
+      ok: true,
+      queued: instantDispatch,
+      pendingApproval: !instantDispatch,
+      actionId: action.id,
+    })
   } catch (err) {
     console.error('[urgent-alert]', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })

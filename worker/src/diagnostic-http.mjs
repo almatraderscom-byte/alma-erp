@@ -42,8 +42,15 @@ export function startDiagnosticHttpServer() {
       const pathname = url.pathname.replace(/\/$/, '') || '/'
 
       if (pathname === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo }))
+        const auth = req.headers.authorization ?? ''
+        const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+        if (verifyToken(token)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo }))
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true }))
+        }
         return
       }
 
@@ -90,6 +97,11 @@ export function startDiagnosticHttpServer() {
         if (!verifyToken(token)) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        if (process.env.DIAGNOSTIC_DEPLOY_ENABLED === 'false') {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'deploy_disabled' }))
           return
         }
         console.log('[diagnostic-http] deploy request received')
@@ -186,6 +198,11 @@ export function startDiagnosticHttpServer() {
           res.end(JSON.stringify({ error: 'unauthorized' }))
           return
         }
+        if (process.env.DIAGNOSTIC_ENV_SET_ENABLED === 'false') {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'env_set_disabled' }))
+          return
+        }
         const chunks = []
         for await (const chunk of req) chunks.push(chunk)
         let body
@@ -205,17 +222,24 @@ export function startDiagnosticHttpServer() {
           res.end(JSON.stringify({ error: 'invalid key format' }))
           return
         }
+        if (value.includes('\n') || value.includes('\r')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'value must be single-line' }))
+          return
+        }
         try {
           const fs = await import('fs')
           const path = await import('path')
           const envPath = path.join(repo, 'worker', '.env')
           let content = ''
           try { content = fs.readFileSync(envPath, 'utf8') } catch { /* new file */ }
+          const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+          const line = `${key}="${escaped}"`
           const re = new RegExp(`^${key}=.*$`, 'm')
           if (re.test(content)) {
-            content = content.replace(re, `${key}=${value}`)
+            content = content.replace(re, line)
           } else {
-            content = content.trimEnd() + `\n${key}=${value}\n`
+            content = content.trimEnd() + `\n${line}\n`
           }
           fs.writeFileSync(envPath, content, 'utf8')
           process.env[key] = value

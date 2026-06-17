@@ -44,7 +44,7 @@ export async function runDailyFocus(context) {
   const [todosRes, remindersRes, approvalsRes, briefing] = await Promise.all([
     supabase.from('agent_owner_todos').select('title, priority, due_hint, created_at').eq('status', 'open').order('priority', { ascending: false }).limit(15),
     supabase.from('agent_reminders').select('title, due_at, tier').eq('status', 'pending').gte('due_at', new Date().toISOString()).order('due_at').limit(10),
-    supabase.from('agent_pending_actions').select('summary, type, created_at').eq('status', 'pending').order('created_at').limit(5),
+    supabase.from('agent_pending_actions').select('summary, type, createdAt').eq('status', 'pending').order('createdAt').limit(5),
     api('/api/assistant/internal/owner-briefing'),
   ])
 

@@ -27,6 +27,7 @@ export function isAssistantWorkerBypassPath(pathname: string): boolean {
   if (pathname === '/api/assistant/todos') return true
   if (pathname === '/api/assistant/internal/day-shift') return true
   if (/^\/api\/assistant\/actions\/[^/]+\/(approve|reject)$/.test(pathname)) return true
+  if (/^\/api\/assistant\/actions\/[^/]+$/.test(pathname)) return true
   return false
 }
 

@@ -9,13 +9,7 @@
  * - Runs Telegraf long-polling for the assistant Telegram bot
  */
 
-import dotenv from 'dotenv'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
-
-const __workerDir = dirname(fileURLToPath(import.meta.url))
-// PM2 may cache stale env vars — worker/.env must always win (e.g. rotated FB tokens).
-dotenv.config({ path: join(__workerDir, '../.env'), override: true })
+import './env-bootstrap.mjs'
 // CRITICAL: Install Telegram proxy BEFORE any module that does fetch to api.telegram.org.
 import { installTelegramProxy } from './telegram-proxy.mjs'
 installTelegramProxy()
@@ -25,6 +19,7 @@ import { startHealthPingLoop } from './health-ping.mjs'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
+import { getAppUrl, getInternalToken } from './env.mjs'
 import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
@@ -55,8 +50,6 @@ for (const key of required) {
 }
 
 const REDIS_URL      = process.env.REDIS_URL
-const APP_URL        = process.env.APP_URL.replace(/\/$/, '')
-const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN
 const GEMINI_KEY     = process.env.GEMINI_API_KEY
 const SUPABASE_URL   = process.env.SUPABASE_URL
 const SUPABASE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -174,8 +167,8 @@ const csReplyQueue = new Queue('cs-reply', {
 
 async function pollPendingJobs() {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/pending-jobs`, {
-      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     if (!res.ok) {
       console.error(`[worker] pending-jobs poll failed: HTTP ${res.status}`)
@@ -187,23 +180,28 @@ async function pollPendingJobs() {
         const reconciled = await reconcileStuckApprovedJob(supabase, job)
         if (!reconciled) continue
       }
-      enqueuedIds.add(job.id)
+      let handled = false
       if (job.type === 'image_gen') {
         await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
+        handled = true
       } else if (job.type === 'video_gen') {
         await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued video-gen job for action ${job.id}`)
+        handled = true
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        handled = true
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
         console.log(`[worker] enqueued staff dispatch for action ${job.id}`)
+        handled = true
       } else if (job.type === 'urgent_notify') {
         const { processUrgentNotify } = await import('./reminders/ticker.mjs')
         await processUrgentNotify(job.payload)
         await callJobResult(job.id, 'success', { ok: true })
         console.log(`[worker] urgent_notify dispatched for action ${job.id}`)
+        handled = true
       } else if (job.type === 'outbound_call') {
         const { processOutboundCall } = await import('./reminders/ticker.mjs')
         try {
@@ -214,7 +212,15 @@ async function pollPendingJobs() {
           await callJobResult(job.id, 'failed', undefined, err.message)
           console.error(`[worker] outbound_call failed for action ${job.id}:`, err.message)
         }
+        handled = true
       }
+
+      if (!handled) {
+        console.error(`[worker] unknown pending job type "${job.type}" for action ${job.id}`)
+        await callJobResult(job.id, 'failed', undefined, `unknown_job_type:${job.type}`)
+        continue
+      }
+      enqueuedIds.add(job.id)
     }
   } catch (err) {
     console.error('[worker] poll error:', err.message)
@@ -366,8 +372,8 @@ async function processImageGen(job) {
   let regenCount = 0
   const qcResult = await runImageQcLoop({
     supabase,
-    appUrl: APP_URL,
-    token: INTERNAL_TOKEN,
+    appUrl: getAppUrl(),
+    token: getInternalToken(),
     qcLevel,
     initialPath: first.storagePath,
     productType,
@@ -405,11 +411,11 @@ async function processImageGen(job) {
 
 async function callJobResult(pendingActionId, status, data, error) {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/job-result`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/job-result`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INTERNAL_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ pendingActionId, status, data, error }),
     })
@@ -449,11 +455,11 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
   }
   console.log(`[worker] long-agent-task ${pendingActionId} starting: ${String(taskPrompt).slice(0, 80)}...`)
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/chat?stream=false`, {
+    const res = await fetch(`${getAppUrl()}/api/assistant/chat?stream=false`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${INTERNAL_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({
         messages: [{ role: 'user', content: taskPrompt }],
@@ -636,8 +642,8 @@ const csEnqueued = new Set()
 
 async function pollAndEnqueueCsReplies() {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/cs-pending-replies`, {
-      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-pending-replies`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
     })
     if (!res.ok) return
     const { jobs } = await res.json()

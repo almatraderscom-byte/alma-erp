@@ -5,6 +5,7 @@
  */
 import { type NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { requireAgentEnabled } from '@/agent/lib/guards'
 import { runCodeSearch, type CodeSearchBody } from '@/lib/diagnostic/code-search'
 
 export const runtime = 'nodejs'
@@ -38,6 +39,9 @@ async function proxyToWorker(body: CodeSearchBody, token: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
   const auth = req.headers.get('authorization') ?? ''
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
   if (!checkToken(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })

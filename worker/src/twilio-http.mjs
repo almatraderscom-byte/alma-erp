@@ -67,16 +67,72 @@ export function buildProxiedAudioUrl(publicBase, storagePath, ttlSec = 900) {
   return `${base}/audio?path=${encodeURIComponent(storagePath)}&exp=${exp}&t=${t}`
 }
 
+function signTwimlQuery(audio, say, expMs) {
+  const payload = `${audio ?? ''}:${say ?? ''}:${expMs}`
+  return createHmac('sha256', signingSecret()).update(payload).digest('hex')
+}
+
+function verifyTwimlToken(audio, say, expMs, token) {
+  if (!token || !Number.isFinite(expMs)) return false
+  if (Date.now() > expMs) return false
+  const expected = signTwimlQuery(audio, say, expMs)
+  try {
+    const a = Buffer.from(expected, 'utf8')
+    const b = Buffer.from(token, 'utf8')
+    if (a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
+}
+
 export function buildTwimlCallbackUrl(publicBase, audioUrl, sayText) {
   const base = publicBase.replace(/\/$/, '')
-  const params = new URLSearchParams({ audio: audioUrl })
-  if (sayText?.trim()) params.set('say', sayText.slice(0, 400))
+  const exp = Date.now() + 900_000
+  const say = sayText?.trim() ? sayText.slice(0, 400) : ''
+  const t = signTwimlQuery(audioUrl, say, exp)
+  const params = new URLSearchParams({ audio: audioUrl, exp: String(exp), t })
+  if (say) params.set('say', say)
   return `${base}/twiml/salah-call?${params.toString()}`
 }
 
 export function buildTwimlSayOnlyUrl(publicBase, sayText) {
   const base = publicBase.replace(/\/$/, '')
-  return `${base}/twiml/salah-call?say=${encodeURIComponent(sayText.slice(0, 400))}`
+  const exp = Date.now() + 900_000
+  const say = sayText.slice(0, 400)
+  const t = signTwimlQuery('', say, exp)
+  return `${base}/twiml/salah-call?say=${encodeURIComponent(say)}&exp=${exp}&t=${t}`
+}
+
+function verifyTwilioSignature(authToken, signature, url, params) {
+  if (!authToken || !signature) return false
+  const sorted = Object.keys(params).sort()
+  let data = url
+  for (const key of sorted) data += key + params[key]
+  const expected = createHmac('sha1', authToken).update(data).digest('base64')
+  try {
+    const a = Buffer.from(expected, 'utf8')
+    const b = Buffer.from(signature, 'utf8')
+    if (a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
+}
+
+async function readUrlEncodedBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  const raw = Buffer.concat(chunks).toString('utf8')
+  const params = {}
+  for (const part of raw.split('&')) {
+    if (!part) continue
+    const eq = part.indexOf('=')
+    const key = decodeURIComponent(eq >= 0 ? part.slice(0, eq) : part)
+    const val = decodeURIComponent((eq >= 0 ? part.slice(eq + 1) : '').replace(/\+/g, ' '))
+    if (key) params[key] = val
+  }
+  return params
 }
 
 export function getTwilioPublicBase() {
@@ -100,6 +156,13 @@ export function startTwilioHttpServer() {
       if (req.method === 'GET' && pathname === '/twiml/salah-call') {
         const audio = url.searchParams.get('audio')?.trim()
         const say = url.searchParams.get('say')?.trim()
+        const exp = Number(url.searchParams.get('exp'))
+        const token = url.searchParams.get('t')?.trim() ?? ''
+        if (!verifyTwimlToken(audio ?? '', say ?? '', exp, token)) {
+          res.writeHead(403)
+          res.end('forbidden')
+          return
+        }
         const xml = say && !audio
           ? buildSalahCallSayTwiml(say)
           : audio
@@ -141,6 +204,15 @@ export function startTwilioHttpServer() {
       }
 
       if (req.method === 'POST' && pathname === '/call-status') {
+        const authToken = process.env.TWILIO_AUTH_TOKEN ?? ''
+        const signature = req.headers['x-twilio-signature'] ?? ''
+        const params = await readUrlEncodedBody(req)
+        const publicUrl = `${publicBase}${url.pathname}${url.search}`
+        if (authToken && !verifyTwilioSignature(authToken, signature, publicUrl, params)) {
+          res.writeHead(403)
+          res.end('forbidden')
+          return
+        }
         res.writeHead(200)
         res.end('')
         return

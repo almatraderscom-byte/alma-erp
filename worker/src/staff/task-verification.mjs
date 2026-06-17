@@ -249,13 +249,15 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
 
 export async function finalizeOwnerApprove(ctx, supabase, taskId) {
   const progressCtx = await resolveTaskProgressContext(supabase, taskId)
-  const result = await callTaskCallback({ taskId, action: 'approve' })
+  const ownerChatId = String(ctx.chat?.id ?? getOwnerChatId() ?? '')
+  const result = await callTaskCallback({ taskId, action: 'approve', ownerChatId })
   await ctx.answerCbQuery('✅ অনুমোদিত')
   await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
 
   const dateYmd = result.proposedFor ?? progressCtx.dateYmd
   const staffId = result.staffId ?? progressCtx.staffId
   const staffName = result.staffName ?? progressCtx.staffName
+  const ownerId = getOwnerChatId()
 
   if (ownerId && staffName) {
     await notifyStaffTaskProgress(ctx.telegram, supabase, ownerId, {
@@ -277,10 +279,12 @@ export async function startOwnerRedo(ctx, taskId) {
 }
 
 export async function applyOwnerRedoNote(ctx, supabase, taskId, note) {
+  const ownerChatId = String(ctx.chat?.id ?? getOwnerChatId() ?? '')
   const result = await callTaskCallback({
     taskId,
     action: 'redo',
     reviewerNote: note,
+    ownerChatId,
   })
 
   const staffChatId = result.staffChatId
