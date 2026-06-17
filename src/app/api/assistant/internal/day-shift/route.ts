@@ -33,10 +33,13 @@ export async function POST(req: NextRequest) {
   let action = 'tick'
   try {
     const body = await req.json() as { action?: string }
-    if (body.action === 'start' || body.action === 'tick') action = body.action
-  if (body.action === 'morning_brief') action = body.action
-  } catch {
-    /* default tick */
+    if (body.action === 'start' || body.action === 'tick' || body.action === 'morning_brief') {
+      action = body.action
+    } else if (body.action) {
+      console.warn(`[internal/day-shift] unknown action: ${body.action}, defaulting to tick`)
+    }
+  } catch (parseErr) {
+    console.warn('[internal/day-shift] malformed request body, defaulting to tick:', parseErr instanceof Error ? parseErr.message : String(parseErr))
   }
 
   try {

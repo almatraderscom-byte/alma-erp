@@ -34,13 +34,11 @@ export async function POST(req: NextRequest) {
     requestedAt: new Date().toISOString(),
   })
 
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO agent_kv_settings (key, value, updated_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-    kvKey,
-    kvValue,
-  )
+  await prisma.agentKvSetting.upsert({
+    where: { key: kvKey },
+    update: { value: kvValue },
+    create: { key: kvKey, value: kvValue },
+  })
 
   // 2. Try instant execution via worker HTTP (best-effort)
   let instant = false
@@ -60,7 +58,6 @@ export async function POST(req: NextRequest) {
       })
       if (res.ok) {
         instant = true
-        // Mark DB request as done since worker already handled it
         const doneValue = JSON.stringify({
           jobName,
           status: 'done',
@@ -68,14 +65,15 @@ export async function POST(req: NextRequest) {
           completedAt: new Date().toISOString(),
           mode: 'instant',
         })
-        await prisma.$executeRawUnsafe(
-          `UPDATE agent_kv_settings SET value = $1, updated_at = NOW() WHERE key = $2`,
-          doneValue,
-          kvKey,
-        )
+        await prisma.agentKvSetting.update({
+          where: { key: kvKey },
+          data: { value: doneValue },
+        })
+      } else {
+        console.warn(`[retrigger] instant path HTTP ${res.status} for ${jobName}`)
       }
-    } catch {
-      // Worker HTTP not available — DB request will be picked up by poller
+    } catch (err) {
+      console.warn(`[retrigger] instant path failed for ${jobName}:`, err instanceof Error ? err.message : String(err))
     }
   }
 

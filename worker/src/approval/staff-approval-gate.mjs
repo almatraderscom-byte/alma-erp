@@ -48,6 +48,21 @@ export async function requireStaffApproval({
   }
 
   if (trustResult.tier === 'notify') {
+    // Audit trail: log the auto-approved action so owner can review later
+    try {
+      await supabase.from('agent_pending_actions').insert({
+        id: crypto.randomUUID(),
+        type: 'staff_auto_message',
+        payload: { staffId, staffName, businessId: biz, type, chatId: String(chatId ?? ''), autoApproved: true, trustTier: 'notify' },
+        summary: `✅ Auto-approved (notify): ${staffName ?? 'Unknown'} (${type})\n${preview}`,
+        status: 'executed',
+        business_id: biz,
+        costEstimate: 0,
+        resolvedAt: new Date().toISOString(),
+      })
+    } catch (auditErr) {
+      console.warn('[staff-approval-gate] notify audit insert failed:', auditErr.message)
+    }
     try {
       const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
       const botToken = process.env.ASSISTANT_BOT_TOKEN
@@ -61,7 +76,9 @@ export async function requireStaffApproval({
           }),
         })
       }
-    } catch { /* non-fatal */ }
+    } catch (notifyErr) {
+      console.warn('[staff-approval-gate] notify tier telegram failed:', notifyErr.message)
+    }
     return { pendingActionId: null, queued: false, ok: true, autoApproved: true, tier: 'notify' }
   }
 

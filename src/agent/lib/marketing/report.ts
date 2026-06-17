@@ -50,11 +50,20 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     marketingIntel,
     staffTasks,
   ] = await Promise.all([
-    fetchActiveCampaignMetrics().catch(() => []),
+    fetchActiveCampaignMetrics().catch((err) => {
+      console.warn('[marketing-report] campaign metrics fetch failed:', err instanceof Error ? err.message : String(err))
+      return []
+    }),
     getTopCreativeAngles(5),
     getCsAnalyticsSummary(days),
-    getAgentOrdersSummary('week').catch(() => null),
-    buildMarketingIntel().catch(() => null),
+    getAgentOrdersSummary('week').catch((err) => {
+      console.warn('[marketing-report] orders summary fetch failed:', err instanceof Error ? err.message : String(err))
+      return null
+    }),
+    buildMarketingIntel().catch((err) => {
+      console.warn('[marketing-report] marketing intel failed:', err instanceof Error ? err.message : String(err))
+      return null
+    }),
     db.agentStaffTask.findMany({
       where: {
         createdAt: { gte: new Date(Date.now() - days * 86400000) },
@@ -64,7 +73,10 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
       orderBy: { createdAt: 'desc' },
       take: 8,
       select: { title: true, type: true, status: true },
-    }).catch(() => []),
+    }).catch((err) => {
+      console.warn('[marketing-report] staff tasks query failed:', err instanceof Error ? err.message : String(err))
+      return []
+    }),
   ])
 
   const withData = campaigns.filter((c) => c.hasEnoughData)

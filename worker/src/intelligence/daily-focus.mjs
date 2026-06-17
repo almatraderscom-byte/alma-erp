@@ -16,12 +16,17 @@ async function api(path, method = 'GET', body = null) {
     const opts = {
       method,
       headers: { Authorization: `Bearer ${INT()}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15_000),
     }
     if (body) opts.body = JSON.stringify(body)
     const res = await fetch(`${APP_URL()}${path}`, opts)
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[daily-focus] API ${path} returned HTTP ${res.status}`)
+      return null
+    }
     return await res.json()
-  } catch {
+  } catch (err) {
+    console.warn(`[daily-focus] API ${path} fetch failed:`, err.message)
     return null
   }
 }

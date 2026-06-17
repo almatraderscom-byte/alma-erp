@@ -73,7 +73,9 @@ async function seedDailyTodos() {
         headers: { Authorization: `Bearer ${getInternalToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: task.title, priority: task.priority, status: 'pending', source: 'scheduler' }),
         signal: AbortSignal.timeout(5_000),
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn(`[todo-reminder] seed task "${task.title}" failed:`, err.message)
+      })
     }
     console.log('[todo-reminder] seeded daily tasks')
   } catch (err) {
@@ -194,10 +196,15 @@ export async function runEndOfDayTodoReconcile({ bot }) {
     return { dutyStatus: 'skipped', dutyDetail: 'API error' }
   }
 
-  const toCancel = todos.filter((t) => t.source !== 'owner')
+  const autoSources = new Set(['scheduler', 'day_shift'])
+  const toCancel = todos.filter((t) => autoSources.has(t.source))
+  const preserved = todos.filter((t) => !autoSources.has(t.source) && t.source !== 'owner')
+  if (preserved.length) {
+    console.log(`[todo-reminder] reconcile: preserving ${preserved.length} non-scheduler todo(s) (sources: ${[...new Set(preserved.map(t => t.source))].join(',')})`)
+  }
   if (toCancel.length === 0) {
     console.log('[todo-reminder] reconcile: nothing to cancel')
-    return { dutyStatus: 'done', dutyDetail: 'cancelled=0' }
+    return { dutyStatus: 'done', dutyDetail: `cancelled=0, preserved=${preserved.length}` }
   }
 
   let cancelled = 0

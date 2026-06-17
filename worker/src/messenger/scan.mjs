@@ -188,6 +188,7 @@ export async function runMessengerScan({ supabase, bot }) {
 
   let totalAlerts = 0
   let pagesScanned = 0
+  const scanErrors = []
 
   for (const page of PAGES) {
     const token = process.env[page.envKey]
@@ -320,6 +321,7 @@ export async function runMessengerScan({ supabase, bot }) {
       pagesScanned++
     } catch (err) {
       console.error(`[messenger] scan error for ${page.name}:`, err.message)
+      scanErrors.push(`${page.name}: ${err.message}`)
     }
   }
 
@@ -342,5 +344,19 @@ export async function runMessengerScan({ supabase, bot }) {
     )
   }
 
-  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts (cs_mode=${csMode})`)
+  if (scanErrors.length > 0) {
+    console.error(`[messenger] scan errors: ${scanErrors.join('; ')}`)
+    if (bot && ownerChatId) {
+      await bot.telegram.sendMessage(
+        ownerChatId,
+        `⚠️ Messenger scan আংশিক ব্যর্থ: ${scanErrors.map(e => e.split(':')[0]).join(', ')} — log দেখুন।`,
+      ).catch((e) => console.warn('[messenger] error notification failed:', e.message))
+    }
+  }
+
+  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts, ${scanErrors.length} errors (cs_mode=${csMode})`)
+  return {
+    dutyStatus: scanErrors.length === PAGES.length ? 'failed' : pagesScanned > 0 ? 'done' : 'skipped',
+    dutyDetail: `${pagesScanned} page scanned, ${totalAlerts} alerts${scanErrors.length ? `, ${scanErrors.length} error` : ''}`,
+  }
 }

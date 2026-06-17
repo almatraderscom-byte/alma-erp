@@ -629,7 +629,12 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
       console.warn('[task-verification] hydrate failed:', err.message),
     )
   } catch (err) {
-    console.error('[telegram] Failed to start bot:', err.message)
+    console.error('‼️ [telegram] CRITICAL — Bot launch failed, worker running WITHOUT Telegram:', err.message)
+    captureWorkerError(err, 'worker.telegram_boot_failed')
+    // ntfy alert so owner knows bot is down
+    import('./notify/ntfy.mjs').then(({ sendNtfy }) =>
+      sendNtfy('critical', 'Telegram bot down', `Worker started but Telegram bot failed: ${err.message}`, 'urgent')
+    ).catch(() => {})
   }
 } else {
   console.warn('[worker] ASSISTANT_BOT_TOKEN not set — Telegram bot disabled')

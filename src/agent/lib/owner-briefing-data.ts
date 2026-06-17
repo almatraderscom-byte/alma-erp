@@ -593,8 +593,12 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
   decisions = filterVetoedDecisions(decisions, ownerMemories)
   decisions = await enrichDecisionsWithKnowledge(decisions, reorderSuggestions)
 
-  void trackReorderOutcomes(reorderSuggestions).catch(() => {})
-  void trackBriefingDecisionOutcomes(decisions, sales).catch(() => {})
+  void trackReorderOutcomes(reorderSuggestions).catch((err) => {
+    console.warn('[briefing] reorder outcome tracking failed:', err instanceof Error ? err.message : String(err))
+  })
+  void trackBriefingDecisionOutcomes(decisions, sales).catch((err) => {
+    console.warn('[briefing] decision outcome tracking failed:', err instanceof Error ? err.message : String(err))
+  })
 
   return {
     today,

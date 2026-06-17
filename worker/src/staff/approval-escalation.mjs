@@ -14,7 +14,7 @@ function tomorrowDhaka() {
  */
 export async function runApprovalEscalation({ supabase, bot }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-  if (!ownerChatId || !bot) return
+  if (!ownerChatId || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner chat or bot' }
 
   const tomorrow = tomorrowDhaka()
 

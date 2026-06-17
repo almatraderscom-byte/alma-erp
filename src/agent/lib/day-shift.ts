@@ -98,7 +98,8 @@ export async function loadDayShiftState(date = todayYmdDhaka()): Promise<DayShif
   if (!row?.value) return null
   try {
     return JSON.parse(row.value) as DayShiftState
-  } catch {
+  } catch (err) {
+    console.error(`[day-shift] corrupt state JSON for ${date}:`, err instanceof Error ? err.message : String(err), '— raw:', String(row.value).slice(0, 100))
     return null
   }
 }
@@ -265,6 +266,9 @@ async function maybeRunSpecialist(
   })
 
   if (!result.success) {
+    void sendOwnerText(
+      `⚠️ Day Shift: ${label} specialist ব্যর্থ — ${result.error ?? 'unknown'}. কাজ চালিয়ে যাচ্ছি।`,
+    ).catch(() => {})
     return `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`
   }
 

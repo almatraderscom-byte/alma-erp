@@ -58,20 +58,29 @@ export async function runContentEngineSlot({ supabase, slot }) {
     return { dutyStatus: 'skipped', dutyDetail: `ইতিমধ্যে চালানো হয়েছে (${timeLabel})` }
   }
 
-  const res = await fetch(`${getAppUrl()}/api/assistant/internal/content-engine-run`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getInternalToken()}`,
-    },
-    body: JSON.stringify({ slot }),
-  })
+  let res
+  try {
+    res = await fetch(`${getAppUrl()}/api/assistant/internal/content-engine-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getInternalToken()}`,
+      },
+      body: JSON.stringify({ slot }),
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch (fetchErr) {
+    const detail = `fetch failed: ${fetchErr.message}`
+    console.error(`[content-engine] slot ${slot} ${detail}`)
+    await markSlotRun(supabase, slot, 'failed', detail)
+    return { dutyStatus: 'failed', dutyDetail: detail }
+  }
 
   let data = {}
   try {
     data = await res.json()
   } catch {
-    data = { error: `HTTP ${res.status}` }
+    data = { error: `HTTP ${res.status} (non-JSON body)` }
   }
 
   if (!res.ok) {

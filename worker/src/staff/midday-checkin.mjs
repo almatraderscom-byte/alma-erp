@@ -7,16 +7,22 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
 export async function runMiddayCheckin({ supabase, bot }) {
+  if (!bot) return { dutyStatus: 'skipped', dutyDetail: 'bot নেই' }
   console.log('[midday-checkin] starting...')
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
-  const { data: pendingTasks } = await supabase
+  const { data: pendingTasks, error: dbErr } = await supabase
     .from('staff_tasks')
     .select(`*, agent_staff(id, name, telegramChatId)`)
     .eq('proposed_for', today)
     .eq('status', 'sent')
     .neq('type', 'learning')
+
+  if (dbErr) {
+    console.error('[midday-checkin] DB query failed:', dbErr.message)
+    return { dutyStatus: 'skipped', dutyDetail: `DB error: ${dbErr.message}` }
+  }
 
   if (!pendingTasks?.length) {
     console.log('[midday-checkin] all tasks done — no reminders needed')

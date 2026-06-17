@@ -15,7 +15,7 @@ import { notify } from '../notify/index.mjs'
 import { bnNum, formatDhakaTimeBn } from './bn-format.mjs'
 import { sendStaffNudge } from './staff-voice-nudge.mjs'
 
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 const PROOF_MAX_PER_DAY = 4
 const PROOF_REPLY_TIMEOUT_MS = 5 * 60 * 1000
 const IDLE_THRESHOLD_MINUTES = 120
@@ -148,8 +148,10 @@ export async function checkProofTimeouts(context) {
     const staffName = parsed.staffName ?? 'স্টাফ'
     const msg = `⚠️ *${staffName}* — ৫ মিনিটে কাজের ছবি/আপডেট পাঠায়নি। সম্ভবত কাজে ব্যস্ত নয়।`
 
-    if (bot && OWNER_CHAT_ID) {
-      await bot.telegram.sendMessage(OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {})
+    if (bot && OWNER_CHAT_ID()) {
+      await bot.telegram.sendMessage(OWNER_CHAT_ID(), msg, { parse_mode: 'Markdown' }).catch((e) => {
+        console.warn('[productivity] proof timeout owner notify failed:', e.message)
+      })
     }
 
     await supabase.from('agent_kv_settings').delete().eq('key', row.key)
@@ -231,15 +233,17 @@ export async function analyzeTaskTiming(context) {
     alertedIds.add(`${task.staffId}:${task.title}`)
   }
 
-  if (bot && OWNER_CHAT_ID && newSlowTasks.length > 0) {
+  if (bot && OWNER_CHAT_ID() && newSlowTasks.length > 0) {
     const lines = newSlowTasks.map((t) =>
       `• ${t.staffName}: "${t.title}" (${bnNum(t.elapsedMinutes)} min, expected ${bnNum(t.expectedMinutes)})`
     ).join('\n')
     await bot.telegram.sendMessage(
-      OWNER_CHAT_ID,
+      OWNER_CHAT_ID(),
       `🐢 *ধীর কাজ সনাক্ত:*\n${lines}`,
       { parse_mode: 'Markdown' },
-    ).catch(() => {})
+    ).catch((e) => {
+      console.warn('[productivity] slow task owner notify failed:', e.message)
+    })
   }
 
   await supabase.from('agent_kv_settings').upsert({
@@ -327,13 +331,15 @@ export async function detectIdleStaff(context) {
     prevAlertedStaff.add(staff.id)
   }
 
-  if (bot && OWNER_CHAT_ID) {
+  if (bot && OWNER_CHAT_ID()) {
     const names = newIdle.map((s) => `${s.name} (${bnNum(s.idleMinutes)} min idle)`).join(', ')
     await bot.telegram.sendMessage(
-      OWNER_CHAT_ID,
+      OWNER_CHAT_ID(),
       `😴 *Idle সনাক্ত:* ${names}\n\nনাজ পাঠানো হয়েছে।`,
       { parse_mode: 'Markdown' },
-    ).catch(() => {})
+    ).catch((e) => {
+      console.warn('[productivity] idle staff owner notify failed:', e.message)
+    })
   }
 
   await supabase.from('agent_kv_settings').upsert({

@@ -340,7 +340,9 @@ export async function* runAgentTurn(
         ...messages,
       ]
     }
-  } catch { /* contextSummary column might not exist yet */ }
+  } catch (err) {
+    console.warn('[core] contextSummary load failed (column may not exist):', err instanceof Error ? err.message : String(err))
+  }
 
   const assistantTurns: CollectedBlock[][] = []
 
@@ -386,10 +388,19 @@ export async function* runAgentTurn(
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
     personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
-    personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
+    personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch((err) => {
+      console.warn('[core] outcomeLearnings fetch failed:', err instanceof Error ? err.message : String(err))
+      return [] as OutcomeLearning[]
+    }),
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
-    personalMode ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
-    personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
+    personalMode ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch((err) => {
+      console.warn('[core] conflictSignals fetch failed:', err instanceof Error ? err.message : String(err))
+      return []
+    }),
+    personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch((err) => {
+      console.warn('[core] businessContext build failed:', err instanceof Error ? err.message : String(err))
+      return ''
+    }),
     selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
   ])
 

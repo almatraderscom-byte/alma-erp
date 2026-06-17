@@ -91,6 +91,7 @@ export async function runStaffMorale({ supabase, bot }) {
 
   let sent = 0
   let skipped = 0
+  let sendFails = 0
 
   for (const s of staff ?? []) {
     if (!s.telegramChatId) {
@@ -125,6 +126,7 @@ export async function runStaffMorale({ supabase, bot }) {
       requiresAck: false,
     }).catch((err) => {
       console.warn(`[staff-morale] send failed for ${s.name}:`, err.message)
+      sendFails++
       return { ok: false }
     })
 
@@ -132,9 +134,18 @@ export async function runStaffMorale({ supabase, bot }) {
     else skipped++
   }
 
-  console.log(`[staff-morale] sent=${sent} skipped=${skipped} adaptive=${useAdaptive}`)
+  if (sendFails > 0 && sent === 0 && (staff?.length ?? 0) > 0) {
+    const ownerChat = process.env.TELEGRAM_OWNER_CHAT_ID
+    if (ownerChat && bot) {
+      await bot.telegram.sendMessage(ownerChat,
+        `⚠️ Staff morale বার্তা পাঠানো সম্পূর্ণ ব্যর্থ — ${sendFails}টি ব্যর্থ, ০ সফল। Telegram সমস্যা হতে পারে।`,
+      ).catch((e) => console.error('[staff-morale] owner escalation failed:', e.message))
+    }
+  }
+
+  console.log(`[staff-morale] sent=${sent} skipped=${skipped} sendFails=${sendFails} adaptive=${useAdaptive}`)
   return {
     dutyStatus: sent > 0 ? 'done' : 'skipped',
-    dutyDetail: sent > 0 ? `${sent} জনকে পাঠানো` : 'কাউকে পাঠানো হয়নি',
+    dutyDetail: sent > 0 ? `${sent} জনকে পাঠানো` : `কাউকে পাঠানো হয়নি (${sendFails} ব্যর্থ)`,
   }
 }

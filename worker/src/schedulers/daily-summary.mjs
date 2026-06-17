@@ -7,8 +7,8 @@
 import { notify } from '../notify/index.mjs'
 import { dhakaTodayYmd, salahDateFilter } from '../salah/dhaka-date.mjs'
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const APP_URL   = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 export async function runDailySummary({ supabase, bot }) {
   console.log('[daily-summary] starting...')
@@ -57,8 +57,8 @@ export async function runDailySummary({ supabase, bot }) {
     .gte('occurred_at', dayStart.toISOString())
     .lte('occurred_at', dayEnd.toISOString())
 
-  const bdtTotal = expenses?.filter(e => e.currency === 'BDT').reduce((s, e) => s + e.amount, 0) ?? 0
-  const aedTotal = expenses?.filter(e => e.currency === 'AED').reduce((s, e) => s + e.amount, 0) ?? 0
+  const bdtTotal = Math.round(expenses?.filter(e => e.currency === 'BDT').reduce((s, e) => s + e.amount, 0) ?? 0)
+  const aedTotal = Math.round((expenses?.filter(e => e.currency === 'AED').reduce((s, e) => s + e.amount, 0) ?? 0) * 100) / 100
   const expensesParts = []
   if (bdtTotal > 0) expensesParts.push(`৳${bdtTotal.toLocaleString('bn-BD')}`)
   if (aedTotal > 0) expensesParts.push(`AED ${aedTotal.toFixed(2)}`)
@@ -68,8 +68,9 @@ export async function runDailySummary({ supabase, bot }) {
 
   let aiCostLine = '🤖 আজকের AI খরচ: $0.00'
   try {
-    const spendRes = await fetch(`${APP_URL}/api/assistant/internal/cost-spend?period=today`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    const spendRes = await fetch(`${APP_URL()}/api/assistant/internal/cost-spend?period=today`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+      signal: AbortSignal.timeout(10_000),
     })
     if (spendRes.ok) {
       const spend = await spendRes.json()

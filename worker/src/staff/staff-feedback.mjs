@@ -30,7 +30,9 @@ export async function captureStaffFeedback(ctx, supabase, staff, text) {
     await ctx.telegram.sendMessage(
       ownerId,
       `💬 ${staff.name} feedback দিয়েছে:\n\n"${message.slice(0, 800)}"`,
-    ).catch(() => {})
+    ).catch((err) => {
+      console.warn(`[staff-feedback] owner notify failed for ${staff.name}:`, err.message)
+    })
   }
 
   const ack = '✅ জানানো হয়েছে — owner দেখবেন।'

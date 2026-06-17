@@ -9,18 +9,31 @@ import { isWithinOfficeHours } from './office-hours.mjs'
 const REMINDER_MS = 30 * 60 * 1000
 const TIMEOUT_MS = 2 * 60 * 60 * 1000
 
-async function callTaskCallback(payload) {
+async function callTaskCallback(payload, attempt = 0) {
   const base = getAppUrl()
   if (!base) throw new Error('[proof-timeout] APP_URL is not configured')
-  const res = await fetch(`${base}/api/assistant/internal/task-callback`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getInternalToken()}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  return res.json()
+  try {
+    const res = await fetch(`${base}/api/assistant/internal/task-callback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getInternalToken()}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+    }
+    return res.json()
+  } catch (err) {
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)))
+      return callTaskCallback(payload, attempt + 1)
+    }
+    throw err
+  }
 }
 
 function shortTitle(title) {
@@ -68,14 +81,19 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
       await loggedSendToStaff(bot.telegram, {
         supabase,
         staffId: task.staff_id,
-        staffName: task.agent_staff?.name ?? 'স্টাফ',
+        staffName: task.agent_staff?.name ?? 'স্টাフ',
         businessId: 'ALMA_LIFESTYLE',
         type: 'proof_reminder',
         content: reminderMsg,
         chatId: staffChat,
         relatedTaskIds: [task.id],
         requiresAck: true,
-      }).catch(() => bot.telegram.sendMessage(staffChat, reminderMsg).catch(() => {}))
+      }).catch((err) => {
+        console.warn(`[proof-timeout] logged send failed for ${task.id}, trying direct:`, err.message)
+        return bot.telegram.sendMessage(staffChat, reminderMsg).catch((e2) => {
+          console.warn(`[proof-timeout] direct send also failed for ${task.id}:`, e2.message)
+        })
+      })
 
       await supabase.from('staff_tasks').update({
         proof_data: { ...proofData, reminderSentAt: new Date().toISOString() },

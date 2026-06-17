@@ -15,7 +15,11 @@ import { normalizeStaffTaskSource } from './task-source.mjs'
 async function callInternal(path) {
   const res = await fetch(`${getAppUrl()}${path}`, {
     headers: { Authorization: `Bearer ${getInternalToken()}` },
+    signal: AbortSignal.timeout(15_000),
   })
+  if (!res.ok) {
+    console.warn(`[bonus-suggest] internal call ${path} HTTP ${res.status}`)
+  }
   const text = await res.text()
   try { return JSON.parse(text) }
   catch { return { raw: text, ok: res.ok } }

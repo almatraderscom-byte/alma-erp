@@ -93,7 +93,9 @@ export async function notifyOwner(opts: {
       }),
       timeoutMs: 15_000,
       retries: 1,
-    }).catch(() => {})
+    }).catch((err) => {
+      console.warn('[notify-owner] notification-log write failed:', err instanceof Error ? err.message : String(err))
+    })
   }
 
   return { channels, statuses }

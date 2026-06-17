@@ -3,9 +3,12 @@ import { NextResponse } from 'next/server'
 import { HERMES_VPS_IP } from '@/lib/agent-api/constants'
 
 export function clientIp(req: NextRequest): string {
+  // Prefer x-real-ip (set by Vercel/nginx, harder to spoof) over x-forwarded-for
+  const realIp = req.headers.get('x-real-ip')?.trim()
+  if (realIp) return realIp
   const forwarded = req.headers.get('x-forwarded-for')
   if (forwarded) return forwarded.split(',')[0]?.trim() || 'unknown'
-  return req.headers.get('x-real-ip')?.trim() || 'unknown'
+  return 'unknown'
 }
 
 /**

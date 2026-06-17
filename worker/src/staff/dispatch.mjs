@@ -93,6 +93,19 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   if (error) throw new Error(`DB error: ${error.message}`)
   let pending = (tasks ?? []).filter((t) => t.status === 'approved')
 
+  // Carry-forward: include yesterday's incomplete (sent but not done) tasks
+  const yesterday = new Date(new Date(`${date}T00:00:00+06:00`).getTime() - 86_400_000)
+    .toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const { data: carryTasks } = await supabase
+    .from('staff_tasks')
+    .select(`*, business_id, agent_staff(id, name, role, telegramChatId, business_id)`)
+    .eq('proposed_for', yesterday)
+    .eq('status', 'sent')
+    .neq('type', 'learning')
+  if (carryTasks?.length) {
+    console.log(`[dispatch] ${carryTasks.length} carry-forward task(s) from ${yesterday}`)
+  }
+
   if (taskIds?.length) {
     const idSet = new Set(taskIds)
     const filtered = pending.filter((t) => idSet.has(t.id))
@@ -148,8 +161,13 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   const byStaff = {}
   for (const task of pending) {
     const staffId = task.agent_staff?.id || task.staff_id
-    if (!byStaff[staffId]) byStaff[staffId] = { staff: task.agent_staff, tasks: [], priorSent: priorSentByStaff[staffId] ?? [] }
+    if (!byStaff[staffId]) byStaff[staffId] = { staff: task.agent_staff, tasks: [], priorSent: priorSentByStaff[staffId] ?? [], carryForward: [] }
     byStaff[staffId].tasks.push(task)
+  }
+  for (const ct of carryTasks ?? []) {
+    const staffId = ct.agent_staff?.id || ct.staff_id
+    if (!byStaff[staffId]) byStaff[staffId] = { staff: ct.agent_staff, tasks: [], priorSent: [], carryForward: [] }
+    byStaff[staffId].carryForward.push(ct)
   }
 
   const sentIds = []
@@ -158,7 +176,7 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
   const unlinked = []
   const onLeave = []
 
-  for (const { staff, tasks: staffTasks, priorSent } of Object.values(byStaff)) {
+  for (const { staff, tasks: staffTasks, priorSent, carryForward } of Object.values(byStaff)) {
     const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
 
@@ -176,13 +194,13 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
 
     const seen = new Set()
     const combinedTasks = []
-    for (const t of [...priorSent, ...staffTasks]) {
+    for (const t of [...(carryForward ?? []), ...priorSent, ...staffTasks]) {
       if (!seen.has(t.id)) {
         seen.add(t.id)
         combinedTasks.push(t)
       }
     }
-    priorSentBundled += priorSent.length
+    priorSentBundled += priorSent.length + (carryForward?.length ?? 0)
 
     try {
       const isUpdate = priorSent.length > 0

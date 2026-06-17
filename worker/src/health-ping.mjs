@@ -24,20 +24,21 @@ export function startHealthPingLoop(intervalMs = 5 * 60 * 1000) {
       if (now - lastAlertAt < ALERT_COOLDOWN_MS) return
       lastAlertAt = now
 
-      const msg = `App health check failed: HTTP ${res.status}. URL: ${APP_URL()}/api/assistant/internal/health`
-      console.error(`[health-ping] ${msg}`)
-      captureWorkerError(new Error(msg), 'worker.app_health_failed', { status: res.status })
+      const logMsg = `App health check failed: HTTP ${res.status}. URL: ${APP_URL()}/api/assistant/internal/health`
+      console.error(`[health-ping] ${logMsg}`)
+      captureWorkerError(new Error(logMsg), 'worker.app_health_failed', { status: res.status })
 
-      await sendNtfy('critical', 'App down', msg, 'urgent')
+      const ntfyMsg = `App health check failed: HTTP ${res.status}. Internal health endpoint unreachable.`
+      await sendNtfy('critical', 'App down', ntfyMsg, 'urgent')
     } catch (err) {
       const now = Date.now()
       if (now - lastAlertAt < ALERT_COOLDOWN_MS) return
       lastAlertAt = now
 
-      const msg = `App health unreachable: ${err.message}`
-      console.error(`[health-ping] ${msg}`)
+      console.error(`[health-ping] App health unreachable: ${err.message}`)
       captureWorkerError(err, 'worker.app_health_unreachable')
-      await sendNtfy('critical', 'App down', msg, 'urgent')
+      const ntfyErr = `App health unreachable: ${err.message?.replace(/https?:\/\/[^\s]+/g, '[redacted]')}`
+      await sendNtfy('critical', 'App down', ntfyErr, 'urgent')
     }
   }
 

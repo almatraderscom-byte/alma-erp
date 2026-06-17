@@ -194,11 +194,15 @@ async function notifyOwner(text) {
   const botToken = getBotToken()
   if (!ownerChatId || !botToken) return
   try {
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: ownerChatId, text }),
+      signal: AbortSignal.timeout(10_000),
     })
+    if (!res.ok) {
+      console.warn(`[auto-fix] telegram notify HTTP ${res.status}`)
+    }
   } catch (err) {
     console.warn('[auto-fix] telegram notify failed:', err.message)
   }

@@ -34,6 +34,14 @@ export async function launchTelegramBot() {
       isLaunched = false
     })
 
+    // Verify bot is actually responsive before declaring it started
+    try {
+      const me = await instance.telegram.getMe()
+      console.log(`[telegram] Bot verified: @${me.username} (id: ${me.id})`)
+    } catch (verifyErr) {
+      console.error('[telegram] Bot getMe() failed — bot may be dead:', verifyErr.message)
+    }
+
     bot = instance
     isLaunched = true
     console.log('[telegram] Bot started (long-polling)')
