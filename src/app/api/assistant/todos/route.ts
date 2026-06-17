@@ -7,6 +7,14 @@ import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-intern
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
 
+function dueDateRangeDhaka(ymd: string): { start: Date; end: Date } {
+  const day = ymd.slice(0, 10)
+  return {
+    start: new Date(`${day}T00:00:00+06:00`),
+    end: new Date(`${day}T23:59:59.999+06:00`),
+  }
+}
+
 function isInternalToken(req: NextRequest): boolean {
   return verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))
 }
@@ -55,10 +63,28 @@ export async function POST(req: NextRequest) {
     dueDate?: string
     source?: string
     businessId?: string
+    dutyKey?: string
   }
 
   if (!body.title?.trim()) {
     return NextResponse.json({ error: 'Title is required' }, { status: 400 })
+  }
+
+  const businessId = body.businessId || 'ALMA_LIFESTYLE'
+  const dutyKey = body.dutyKey?.trim() || null
+
+  if (dutyKey && body.dueDate) {
+    const { start, end } = dueDateRangeDhaka(body.dueDate)
+    const existing = await prisma.agentTodo.findFirst({
+      where: {
+        businessId,
+        dutyKey,
+        dueDate: { gte: start, lte: end },
+      },
+    })
+    if (existing) {
+      return NextResponse.json({ todo: existing, deduped: true })
+    }
   }
 
   const todo = await prisma.agentTodo.create({
@@ -68,7 +94,8 @@ export async function POST(req: NextRequest) {
       priority: body.priority || 'normal',
       dueDate: body.dueDate ? new Date(body.dueDate) : null,
       source: body.source || 'owner',
-      businessId: body.businessId || 'ALMA_LIFESTYLE',
+      dutyKey,
+      businessId,
     },
   })
 

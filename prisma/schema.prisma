@@ -2945,11 +2945,13 @@ model AgentTodo {
   status      String    @default("pending")
   dueDate     DateTime? @map("due_date")
   source      String    @default("agent")
+  dutyKey     String?   @map("duty_key")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   completedAt DateTime? @map("completed_at")
 
   @@index([businessId, status])
+  @@index([businessId, dutyKey, dueDate])
   @@map("agent_todos")
 }
 

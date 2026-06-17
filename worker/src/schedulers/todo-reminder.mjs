@@ -1,14 +1,26 @@
 /**
  * Todo Reminder Jobs — morning 08:00 + evening 20:30 Asia/Dhaka
- * Fetches agent todos from Vercel API and sends Bangla Telegram summaries.
+ * Seeds agent_todos from the daily duty roster (mirrors live monitor).
  */
 
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { sendMarkdownSafe, escapeMarkdown } from '../telegram/markdown-safe.mjs'
-
 import { getOwnerChatId } from '../telegram/owner-id.mjs'
+import { dutiesForToday } from './duties.mjs'
 
 const PRIORITY_EMOJI = { urgent: '🔴', high: '🟡', normal: '🔵', low: '⚪' }
+
+/** Duties shown in monitor but not as owner todos. */
+const SKIP_DUTY_TODO = new Set(['salah_init'])
+
+function todayYmdDhaka() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+function todoDueYmd(todo) {
+  if (!todo?.dueDate) return null
+  return String(todo.dueDate).slice(0, 10)
+}
 
 /** @param {{ priority?: string, title?: string }} todo */
 function formatTodoLine(todo) {
@@ -41,46 +53,65 @@ async function fetchTodos(query) {
   }
 }
 
-// ── Daily todo seed — ensures there are always tasks for today ───────────────
+/**
+ * Idempotent daily seed — one agent_todos row per duty (except salah), source=day_shift.
+ * @returns {Promise<{ seeded: number, total: number, skipped?: boolean }>}
+ */
+export async function seedDailyTodos() {
+  const today = todayYmdDhaka()
+  const duties = dutiesForToday().filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+  const url = `${getAppUrl()}/api/assistant/todos`
 
-const DAILY_SEED_TASKS = [
-  { title: 'স্টাফ টাস্ক প্রোগ্রেস চেক ও ফলো-আপ', priority: 'high' },
-  { title: 'Messenger inbox — unreplied messages রিভিউ', priority: 'high' },
-  { title: 'সেলস ডেটা রিভিউ ও অর্ডার ট্র্যাকিং', priority: 'normal' },
-  { title: 'ইনভেন্টরি স্ট্যাটাস ও রিঅর্ডার চেক', priority: 'normal' },
-  { title: 'কন্টেন্ট/পোস্ট প্ল্যানিং ও শিডিউলিং', priority: 'normal' },
-]
-
-async function seedDailyTodos() {
-  try {
-    const url = `${getAppUrl()}/api/assistant/todos`
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${getInternalToken()}` },
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!res.ok) return
-    const body = await res.json()
-    const existing = Array.isArray(body) ? body : body.todos ?? body.data ?? []
-    const pendingCount = existing.filter(t => t.status === 'pending' || t.status === 'in_progress').length
-
-    if (pendingCount >= 3) return
-
-    for (const task of DAILY_SEED_TASKS) {
-      const already = existing.some(t => t.title?.includes(task.title.slice(0, 15)))
-      if (already) continue
-      await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${getInternalToken()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: task.title, priority: task.priority, status: 'pending', source: 'scheduler' }),
-        signal: AbortSignal.timeout(5_000),
-      }).catch((err) => {
-        console.warn(`[todo-reminder] seed task "${task.title}" failed:`, err.message)
-      })
-    }
-    console.log('[todo-reminder] seeded daily tasks')
-  } catch (err) {
-    console.warn('[todo-reminder] seed failed:', err.message)
+  const existing = await fetchTodos('?includeCompleted=true')
+  if (existing === null) {
+    console.warn('[todo-reminder] duty seed skipped: API error')
+    return { seeded: 0, total: duties.length, skipped: true }
   }
+
+  const existingKeys = new Set(
+    existing
+      .filter((t) => t.dutyKey && todoDueYmd(t) === today)
+      .map((t) => t.dutyKey),
+  )
+
+  let seeded = 0
+  for (const d of duties) {
+    if (existingKeys.has(d.duty)) continue
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${getInternalToken()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: d.label,
+          priority: 'normal',
+          status: 'pending',
+          source: 'day_shift',
+          dutyKey: d.duty,
+          dueDate: today,
+          description: d.time ? `⏰ ${d.time} Asia/Dhaka` : null,
+        }),
+        signal: AbortSignal.timeout(8_000),
+      })
+      if (res.ok) {
+        seeded++
+        existingKeys.add(d.duty)
+      } else {
+        const text = await res.text().catch(() => '')
+        console.warn(`[todo-reminder] seed duty ${d.duty} failed: HTTP ${res.status} ${text.slice(0, 120)}`)
+      }
+    } catch (err) {
+      console.warn(`[todo-reminder] seed duty ${d.duty} failed:`, err.message)
+    }
+  }
+
+  console.log(
+    `[todo-reminder] duty seed: ${seeded} new, ${existingKeys.size}/${duties.length} present for ${today}`,
+  )
+  return { seeded, total: duties.length }
 }
 
 /**
@@ -104,12 +135,53 @@ async function patchTodo(id, patch) {
   }
 }
 
+/**
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @returns {Promise<Map<string, string>>}
+ */
+async function fetchDutyStatusesForToday(supabase) {
+  const map = new Map()
+  if (!supabase) return map
+  const today = todayYmdDhaka()
+  const { data, error } = await supabase
+    .from('agent_duty_log')
+    .select('duty, status')
+    .eq('duty_date', today)
+  if (error) {
+    console.warn('[todo-reminder] duty_log read failed:', error.message)
+    return map
+  }
+  for (const row of data ?? []) {
+    if (row?.duty) map.set(row.duty, row.status ?? 'pending')
+  }
+  return map
+}
+
+/**
+ * Whether a pending duty-todo should be cancelled at end-of-day.
+ * @param {object} todo
+ * @param {Map<string, string>} dutyStatuses
+ */
+function shouldCancelStaleDutyTodo(todo, dutyStatuses) {
+  if (todo.source === 'owner' || todo.source === 'agent') return false
+  // Legacy generic scheduler rows (pre Phase A)
+  if (todo.source === 'scheduler') return true
+  if (todo.source !== 'day_shift' || !todo.dutyKey) return false
+
+  const ds = dutyStatuses.get(todo.dutyKey)
+  // Duty ran — leave todo for Phase B sync (don't blanket-cancel)
+  if (ds === 'done' || ds === 'skipped') return false
+  // Duty missed/failed or never ran
+  if (ds === 'missed' || ds === 'failed' || !ds || ds === 'pending') return true
+  return false
+}
+
 // ── Morning Reminder (08:00) ─────────────────────────────────────────────────
 
 export async function runMorningTodoReminder({ bot }) {
   console.log('[todo-reminder] morning check...')
 
-  await seedDailyTodos()
+  const seed = await seedDailyTodos()
 
   const todos = await fetchTodos('?status=pending,in_progress')
 
@@ -119,7 +191,7 @@ export async function runMorningTodoReminder({ bot }) {
 
   if (todos.length === 0) {
     console.log('[todo-reminder] no pending todos — skipping message')
-    return { dutyStatus: 'done', dutyDetail: 'কোনো todo নেই' }
+    return { dutyStatus: 'done', dutyDetail: `seed=${seed.seeded}/${seed.total}, no pending` }
   }
 
   const lines = [
@@ -135,7 +207,7 @@ export async function runMorningTodoReminder({ bot }) {
   console.log(`[todo-reminder] morning: sent ${todos.length} todos`)
   return {
     dutyStatus: 'done',
-    dutyDetail: `${todos.length}টি todo reminder পাঠানো হয়েছে`,
+    dutyDetail: `seed=${seed.seeded}/${seed.total}, reminder=${todos.length}`,
   }
 }
 
@@ -183,12 +255,8 @@ export async function runEveningTodoSummary({ bot }) {
 }
 
 // ── End-of-Day Reconcile (23:55) ─────────────────────────────────────────────
-// Whatever the agent did NOT finish today is marked `cancelled` so it stays
-// visible in the todo list as cancelled (owner confirms the loop is working),
-// and the next morning starts with a fresh seeded list. Owner-created tasks are
-// left untouched — the owner manages those.
 
-export async function runEndOfDayTodoReconcile({ bot }) {
+export async function runEndOfDayTodoReconcile({ bot, supabase }) {
   console.log('[todo-reminder] end-of-day reconcile...')
 
   const todos = await fetchTodos('?status=pending,in_progress')
@@ -196,11 +264,14 @@ export async function runEndOfDayTodoReconcile({ bot }) {
     return { dutyStatus: 'skipped', dutyDetail: 'API error' }
   }
 
-  const autoSources = new Set(['scheduler', 'day_shift'])
-  const toCancel = todos.filter((t) => autoSources.has(t.source))
-  const preserved = todos.filter((t) => !autoSources.has(t.source) && t.source !== 'owner')
+  const dutyStatuses = await fetchDutyStatusesForToday(supabase)
+  const toCancel = todos.filter((t) => shouldCancelStaleDutyTodo(t, dutyStatuses))
+  const preserved = todos.filter((t) => !shouldCancelStaleDutyTodo(t, dutyStatuses) && t.source !== 'owner')
+
   if (preserved.length) {
-    console.log(`[todo-reminder] reconcile: preserving ${preserved.length} non-scheduler todo(s) (sources: ${[...new Set(preserved.map(t => t.source))].join(',')})`)
+    console.log(
+      `[todo-reminder] reconcile: preserving ${preserved.length} todo(s) (duty ran or owner-managed)`,
+    )
   }
   if (toCancel.length === 0) {
     console.log('[todo-reminder] reconcile: nothing to cancel')
@@ -216,11 +287,11 @@ export async function runEndOfDayTodoReconcile({ bot }) {
   const lines = [
     '🌃 *দিনশেষ — Agent টাস্ক রিকনসিলিয়েশন*',
     '',
-    `আজ যেসব কাজ সম্পন্ন হয়নি, সেগুলো *বাতিল (cancelled)* হিসেবে চিহ্নিত করা হলো — মোট ${cancelled}টি:`,
+    `আজ যেসব duty চালানো হয়নি, সেগুলো *বাতিল (cancelled)* — মোট ${cancelled}টি:`,
     '',
     ...toCancel.slice(0, 10).map((t) => `  ✕ ${escapeMarkdown(t.title ?? 'Untitled')}`),
     '',
-    'কালকে সকালে নতুন তালিকা তৈরি হবে, ইনশাআল্লাহ।',
+    'কালকে সকালে duty roster থেকে নতুন তালিকা তৈরি হবে, ইনশাআল্লাহ।',
   ]
   await sendMarkdownSafe(bot.telegram, getOwnerChatId(), lines.join('\n'))
 
