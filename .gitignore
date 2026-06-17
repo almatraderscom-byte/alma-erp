@@ -12,6 +12,7 @@ alma-lifestyle-erp@1.0.0
 .github/workflows/
 .env.telegram
 .env*.local
+.env.vercel.*
 .next.stale*/
 mobile/dist/*.apk
 mobile/alma-erp-release.keystore

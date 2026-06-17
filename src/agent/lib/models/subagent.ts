@@ -295,7 +295,12 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
             model: model.id,
             subagent: params.role,
             task_tier: tier,
-            via: 'fallback',
+            via:
+              model.provider === 'google'
+                ? 'fallback-gemini'
+                : model.provider === 'anthropic'
+                  ? 'fallback-claude'
+                  : 'fallback',
             task_snippet: params.task.slice(0, 160),
           },
           costUsd,

@@ -55,15 +55,21 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
   return { tier, model: getModel(modelId) }
 }
 
-/** Fallback chain when OpenRouter errors — never downgrade critical off Claude. */
+/** Fallback when OpenRouter errors — cheap tiers use native Gemini before Claude. */
 export function fallbackModelForTier(tier: TaskTier, failedModelId: string): ModelEntry | null {
   const failed = getModel(failedModelId)
   if (failed.provider !== 'openrouter') return null
 
-  if (tier === 'light') {
-    const heavy = getModel('or-gemini-2.5-flash-lite')
-    if (heavy.id !== failedModelId) return heavy
+  if (tier === 'light' || tier === 'heavy') {
+    const nativeCheap = getModel('gemini-3.1-flash-lite')
+    if (nativeCheap.id !== failedModelId) return nativeCheap
   }
+
+  if (tier === 'light') {
+    const heavyOr = getModel('or-gemini-2.5-flash-lite')
+    if (heavyOr.id !== failedModelId) return heavyOr
+  }
+
   return getModel(DEFAULT_MODEL_ID)
 }
 

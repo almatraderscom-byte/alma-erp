@@ -51,9 +51,11 @@ assert(threw, 'router guard must reject cheap critical')
 // Ops = critical (staff)
 assert(roleToTaskTier('ops') === 'critical', 'ops is critical')
 
-// Fallback chain
-const fb = fallbackModelForTier('light', 'or-glm-4-32b')
-assert(fb !== null && fb.id !== 'or-glm-4-32b', 'light fallback exists')
+// Fallback chain — cheap tiers fall back to native Gemini, not Claude
+const fb = fallbackModelForTier('heavy', 'or-gemini-2.5-flash-lite')
+assert(fb !== null && fb.id === 'gemini-3.1-flash-lite', 'heavy openrouter fallback is native gemini')
+const fbLight = fallbackModelForTier('light', 'or-glm-4-32b')
+assert(fbLight !== null && fbLight.provider === 'google', 'light fallback is native gemini')
 
 console.log('PASS — tier routing verified')
 console.log('  light:', lightId, getModel(lightId).label)
