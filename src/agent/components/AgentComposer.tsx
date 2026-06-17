@@ -1,8 +1,11 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import AgentModelSelector from './AgentModelSelector'
+import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
+import { VoiceOrb } from './voice/VoiceOrb'
 
 export interface PendingFile {
   file: File
@@ -34,8 +37,47 @@ export default function AgentComposer({
 }: AgentComposerProps) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<PendingFile[]>([])
+  const [micLevel, setMicLevel] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ChatGPT-style live dictation: tap mic → speak → transcript fills the input.
+  const recorder = useVoiceRecorder({
+    onTranscribed: (t) => {
+      setText((prev) => (prev.trim() ? prev.trim() + ' ' : '') + t)
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    },
+    onError: (m) => toast.error(m),
+  })
+  const { recording, stream, start: startDictation, stop: stopDictation } = recorder
+
+  // Live mic level (RMS) → drives the floating orb animation while listening.
+  useEffect(() => {
+    if (!stream) { setMicLevel(0); return }
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AC) return
+    const ctx = new AC()
+    const src = ctx.createMediaStreamSource(stream)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 256
+    src.connect(analyser)
+    const data = new Uint8Array(analyser.frequencyBinCount)
+    let raf = 0
+    const tick = () => {
+      analyser.getByteTimeDomainData(data)
+      let sum = 0
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v }
+      setMicLevel(Math.min(1, Math.sqrt(sum / data.length) * 3))
+      raf = requestAnimationFrame(tick)
+    }
+    tick()
+    return () => { cancelAnimationFrame(raf); try { src.disconnect() } catch { /* noop */ } void ctx.close() }
+  }, [stream])
+
+  const toggleDictation = useCallback(() => {
+    if (recording) stopDictation()
+    else void startDictation()
+  }, [recording, startDictation, stopDictation])
 
   useEffect(() => {
     const el = textareaRef.current
@@ -85,6 +127,20 @@ export default function AgentComposer({
   const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming
 
   return (
+    <>
+      {recording && (
+        <button
+          type="button"
+          onClick={stopDictation}
+          className="fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+0.6rem)] z-[80] flex -translate-x-1/2 select-none items-center gap-2 rounded-full border border-black/[0.06] bg-white/90 py-1.5 pl-1.5 pr-3.5 shadow-[0_6px_24px_rgba(224,122,95,0.22)] backdrop-blur-xl [-webkit-touch-callout:none]"
+          aria-label="শোনা থামান"
+        >
+          <VoiceOrb state="listening" micLevel={micLevel} size={30} />
+          <span className="text-[12.5px] font-semibold text-[#1a1a2e]">
+            শুনছি… <span className="font-medium text-gray-400">ট্যাপ করে থামান</span>
+          </span>
+        </button>
+      )}
     <div className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
       {files.length > 0 && (
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -133,15 +189,35 @@ export default function AgentComposer({
             className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
           />
 
+          {!streaming && (
+            <button
+              type="button"
+              onClick={toggleDictation}
+              disabled={disabled}
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-30 md:h-9 md:w-9',
+                recording
+                  ? 'bg-[#E07A5F] text-white'
+                  : 'text-gray-400 hover:bg-[#E07A5F]/8 hover:text-[#E07A5F]',
+              )}
+              aria-label={recording ? 'ভয়েস থামান' : 'ভয়েসে লিখুন'}
+            >
+              {recording ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              )}
+            </button>
+          )}
           {!streaming && onVoiceStart && (
             <button
               type="button"
               onClick={onVoiceStart}
               disabled={disabled}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-[#E07A5F]/8 hover:text-[#E07A5F] disabled:opacity-30 md:h-9 md:w-9"
-              aria-label="ভয়েস"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30 md:h-9 md:w-9"
+              aria-label="ভয়েস টু ভয়েস"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" opacity="0"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
             </button>
           )}
 
@@ -177,5 +253,6 @@ export default function AgentComposer({
         )}
       </div>
     </div>
+    </>
   )
 }
