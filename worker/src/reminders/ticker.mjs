@@ -114,7 +114,13 @@ export async function processOutboundCall(payload) {
   if (!phone || !message) throw new Error('phone and message required')
 
   const { makeTwilioCall, pollAndReportCallResult } = await import('../notify/twilio-call.mjs')
-  const result = await makeTwilioCall(message, { toNumber: phone, force: true, skipAutoRetry: true })
+  const result = await makeTwilioCall(message, {
+    toNumber: phone,
+    force: true,
+    skipAutoRetry: true,
+    ttsProvider: payload.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
+    voiceProfile: payload.voiceGender === 'female' ? 'female' : 'male',
+  })
   if (!result.ok) throw new Error(result.error ?? 'call failed')
   void pollAndReportCallResult(result.callSid, phone)
   console.log(`[outbound-call] ${phone} callSid=${result.callSid}`)

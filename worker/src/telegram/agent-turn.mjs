@@ -149,6 +149,8 @@ export async function deliverAgentTurn(jobData) {
     conversationId,
     personalMode = false,
     wantsVoice = false,
+    voiceProfile = 'male',
+    useElevenLabs = false,
   } = jobData
 
   const bot = getDispatcherBot()
@@ -181,7 +183,11 @@ export async function deliverAgentTurn(jobData) {
 
     if (wantsVoice && (process.env.GOOGLE_TTS_CREDENTIALS || isElevenLabsAvailable())) {
       try {
-        await sendVoiceMessage(bot.telegram, chatId, replyText, { useOwnerVoice: true })
+        await sendVoiceMessage(bot.telegram, chatId, replyText, {
+          useOwnerVoice: true,
+          useElevenLabs: useElevenLabs || isElevenLabsAvailable(),
+          voiceProfile,
+        })
       } catch (ttsErr) {
         console.warn('[telegram] TTS voice reply failed:', ttsErr.message)
       }

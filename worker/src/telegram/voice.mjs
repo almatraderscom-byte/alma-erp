@@ -1,31 +1,17 @@
 /**
  * Voice note helpers for the Telegram bot.
- *
- * Inbound:  OGG voice note → Whisper transcription via internal /api/assistant/internal/transcribe
- * Outbound: text → Google TTS (MP3) → send as Telegram voice note (audio/ogg is accepted by Telegram
- *           even as MP3 — Telegram auto-converts; send as audio/mpeg and let Telegram handle it)
  */
-
-import { synthesizeSpeech } from '../tts.mjs'
 import { smartTts, isElevenLabsAvailable } from '../tts-elevenlabs.mjs'
 
 const APP_URL   = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
-/**
- * Downloads the voice note OGG from Telegram and transcribes it via Whisper.
- * @param {import('telegraf').Telegraf} bot
- * @param {string} fileId   Telegram file_id of the voice note
- * @returns {Promise<string>}  Transcribed text (may be empty)
- */
 export async function transcribeVoiceNote(bot, fileId) {
-  // Get file path from Telegram
   const fileInfo = await bot.telegram.getFile(fileId)
   const filePath = fileInfo.file_path
   const botToken = process.env.ASSISTANT_BOT_TOKEN
   const fileUrl  = `https://api.telegram.org/file/bot${botToken}/${filePath}`
 
-  // Download the OGG
   const audioRes = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) })
   if (!audioRes.ok) throw new Error(`Telegram file download failed: ${audioRes.status}`)
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer())
@@ -47,34 +33,41 @@ export async function transcribeVoiceNote(bot, fileId) {
   return data.text ?? ''
 }
 
-/** Telegraf instance or ctx.telegram API object */
 function telegramApi(botOrApi) {
   return botOrApi?.telegram ?? botOrApi
 }
 
 /**
- * Synthesizes text to speech and sends it as a Telegram voice note.
- * Uses ElevenLabs (owner's cloned voice) for staff messages when available.
- * Falls back to Google TTS for Salah or when ElevenLabs is not configured.
- *
  * @param {import('telegraf').Telegraf|import('telegraf').Telegram} botOrApi
  * @param {string|number} chatId
  * @param {string} text
- * @param {{ caption?: string, useOwnerVoice?: boolean, isSalah?: boolean, elevenLabsOnly?: boolean }} [options]
+ * @param {{
+ *   caption?: string,
+ *   isSalah?: boolean,
+ *   elevenLabsOnly?: boolean,
+ *   useOwnerVoice?: boolean,
+ *   voiceProfile?: 'staff' | 'male' | 'female',
+ *   useElevenLabs?: boolean,
+ * }} [options]
  */
 export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
   const api = telegramApi(botOrApi)
-  const useOwner = options.isSalah
-    ? false
-    : (options.useOwnerVoice ?? options.elevenLabsOnly ?? isElevenLabsAvailable())
-  const mp3Buffer = await smartTts(text, {
-    useOwnerVoice: useOwner,
-    elevenLabsOnly: options.elevenLabsOnly,
-  })
-  const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
-  const useElevenLabs = options.elevenLabsOnly || (useOwner && isElevenLabsAvailable())
+  const voiceProfile = options.voiceProfile ?? (options.elevenLabsOnly ? 'staff' : 'male')
 
-  // ElevenLabs: sendAudio (HD MP3) — sendVoice re-encodes to low-bitrate OGG and sounds robotic
+  const mp3Buffer = await smartTts(text, {
+    isSalah: options.isSalah,
+    elevenLabsOnly: options.elevenLabsOnly,
+    useOwnerVoice: options.useOwnerVoice,
+    useElevenLabs: options.useElevenLabs,
+    voiceProfile,
+  })
+
+  const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
+  const useElevenLabs =
+    !options.isSalah
+    && (options.elevenLabsOnly || options.useElevenLabs || options.useOwnerVoice)
+    && isElevenLabsAvailable()
+
   if (useElevenLabs) {
     await api.sendAudio(chatId, { source: mp3Buffer, filename: 'voice.mp3' }, extra)
     return

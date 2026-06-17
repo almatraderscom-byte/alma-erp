@@ -11,6 +11,7 @@
 
 import { sendNtfy } from './ntfy.mjs'
 import { makeTwilioCall } from './twilio-call.mjs'
+import { isElevenLabsAvailable } from '../tts-elevenlabs.mjs'
 
 // Telegram bot instance is set after the Telegram module boots.
 let _telegramBot = null
@@ -101,6 +102,8 @@ export async function notify({
       await sendVoiceMessage(_telegramBot, _ownerChatId, speech, {
         isSalah: category === 'salah',
         useOwnerVoice: category !== 'salah',
+        useElevenLabs: category !== 'salah' && isElevenLabsAvailable(),
+        voiceProfile: 'male',
       })
       statuses.telegram_voice = 'sent'
     } catch (err) {

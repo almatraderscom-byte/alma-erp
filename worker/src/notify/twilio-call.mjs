@@ -23,6 +23,22 @@ import { isSalahCallBlocked } from '../salah-confirmed.mjs'
 
 const CALL_TEXT_LIMIT = 200
 /** Min gap between general outbound calls — reduces carrier spam-blocking */
+
+async function synthesizeCallAudio(speechText, opts = {}) {
+  const isSalah = Boolean(opts.salah || opts.purpose === 'salah')
+  if (isSalah || opts.ttsProvider === 'google') {
+    return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+  }
+  if (opts.ttsProvider === 'elevenlabs' || opts.useElevenLabs) {
+    const { synthesizeElevenLabs, isElevenLabsAvailable } = await import('../tts-elevenlabs.mjs')
+    if (!isElevenLabsAvailable()) {
+      return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+    }
+    const voiceProfile = opts.voiceProfile === 'female' ? 'female' : 'male'
+    return synthesizeElevenLabs(speechText, { voiceProfile })
+  }
+  return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+}
 const MIN_CALL_GAP_MS = 90 * 1000
 /** Salah retries: wait after failed connect, then call again (owner may be on another line) */
 const SALAH_RETRY_DELAYS_MS = [180_000, 300_000, 300_000]
@@ -353,7 +369,7 @@ export async function makeTwilioCall(text, opts = {}) {
   if (text.length > CALL_TEXT_LIMIT) speechText += '... বিস্তারিত Telegram-এ।'
 
   try {
-    const mp3Buffer = await synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+    const mp3Buffer = await synthesizeCallAudio(speechText, opts)
     const wavBuffer = await mp3ToTelephonyWav(mp3Buffer)
 
     const supabase = getSupabase()

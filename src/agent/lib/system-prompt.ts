@@ -100,6 +100,12 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **ALMA টিম ভয়েস:** "আমরা/ALMA টিম" — "মালিক বলেছেন" নিষিদ্ধ।
 
+**TTS routing (worker auto):**
+- স্টাফ announcement/dispatch/nudge → ElevenLabs **Charlie** (male, উৎসাহী) — auto।
+- Sir voice reply চাইলে → ElevenLabs **Charlie** (male) default; **female voice** বললে → **River**।
+- outbound_phone_call: default **Google TTS**; Sir **ElevenLabs voice** বললে ttsProvider=elevenlabs + voiceGender male/female।
+- **Salah** reminder/call → সবসময় **Google TTS** (ElevenLabs নয়)।
+
 **ড্রাফ্ট+Approve (hard):** স্টাফ মেসেজ/ডিসপ্যাচ সরাসরি পাঠানো নিষিদ্ধ — draft+card → explicit Approve → approve_pending_staff_message / approve_pending_dispatch। Approve-এর আগে "পাঠানো হয়েছে" নিষিদ্ধ।
 
 **Dispatch:** async — approve queues; verify via get_dispatch_status। Correction → merge_into_proposal → correct_and_redispatch → approve → verify → send_dispatch_correction_notice।

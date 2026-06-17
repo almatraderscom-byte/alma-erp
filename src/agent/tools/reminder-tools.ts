@@ -309,6 +309,16 @@ const outbound_phone_call: AgentTool = {
     properties: {
       phone: { type: 'string', description: 'Phone number (01XXXXXXXXX or +880…)' },
       message: { type: 'string', description: 'Exact message to speak on the call' },
+      ttsProvider: {
+        type: 'string',
+        enum: ['google', 'elevenlabs'],
+        description: 'google = default. elevenlabs when Sir asks for ElevenLabs voice on the call.',
+      },
+      voiceGender: {
+        type: 'string',
+        enum: ['male', 'female'],
+        description: 'Only when ttsProvider=elevenlabs. male=Charlie, female=River. Default male.',
+      },
       conversationId: { type: 'string' },
     },
     required: ['phone', 'message'],
@@ -365,7 +375,12 @@ const outbound_phone_call: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'outbound_call',
-          payload: { phone, message },
+          payload: {
+            phone,
+            message,
+            ttsProvider: input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
+            voiceGender: input.voiceGender === 'female' ? 'female' : 'male',
+          },
           summary: `📞 কল → ${phone}\n\n🗣️ "${message.slice(0, 300)}"`,
           costEstimate: 0.05,
           status: 'pending',

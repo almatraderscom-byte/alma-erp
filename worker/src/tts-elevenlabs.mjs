@@ -8,9 +8,9 @@
  */
 import { logCost } from './cost-log.mjs'
 import { stripMarkdown } from './tts.mjs'
+import { resolveVoiceId } from './elevenlabs-voices.mjs'
 
 const ELEVENLABS_API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
-const ELEVENLABS_VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'
 const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_v3'
 const ELEVENLABS_OUTPUT_FORMAT = () => process.env.ELEVENLABS_OUTPUT_FORMAT ?? 'mp3_44100_128'
 
@@ -45,9 +45,9 @@ function voiceSettings(opts = {}) {
 
 async function synthesizeChunk(preparedText, opts = {}) {
   const apiKey = ELEVENLABS_API_KEY()
-  const voiceId = opts.voiceId ?? ELEVENLABS_VOICE_ID()
+  const voiceId = opts.voiceId ?? resolveVoiceId(opts.voiceProfile ?? 'staff')
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY not set')
-  if (!voiceId) throw new Error('ELEVENLABS_VOICE_ID not set')
+  if (!voiceId) throw new Error('ElevenLabs voice ID not configured for profile')
   if (!preparedText) throw new Error('No text to synthesize')
 
   const body = {
@@ -94,7 +94,12 @@ export async function synthesizeElevenLabs(text, opts = {}) {
   void logCost({
     provider: 'elevenlabs',
     kind: 'tts',
-    units: { characters: prepared.length, voice: ELEVENLABS_VOICE_ID(), model: ELEVENLABS_MODEL_ID() },
+    units: {
+      characters: prepared.length,
+      voice: opts.voiceId ?? resolveVoiceId(opts.voiceProfile ?? 'staff'),
+      model: ELEVENLABS_MODEL_ID(),
+      profile: opts.voiceProfile ?? 'staff',
+    },
     costUsd: estimateElevenLabsCost(prepared.length),
     dedupKey: `elevenlabs:${prepared.length}:${prepared.slice(0, 24)}`,
   })
@@ -107,19 +112,26 @@ function estimateElevenLabsCost(chars) {
 }
 
 export function isElevenLabsAvailable() {
-  return Boolean(ELEVENLABS_API_KEY() && ELEVENLABS_VOICE_ID())
+  return Boolean(ELEVENLABS_API_KEY())
 }
 
 export async function smartTts(text, opts = {}) {
-  if (opts.elevenLabsOnly) {
+  const profile = opts.voiceProfile ?? (opts.elevenLabsOnly ? 'staff' : 'male')
+
+  if (opts.isSalah) {
+    const { synthesizeSpeech } = await import('./tts.mjs')
+    return synthesizeSpeech(text)
+  }
+
+  if (opts.elevenLabsOnly || opts.useElevenLabs) {
     if (!isElevenLabsAvailable()) {
-      throw new Error('ElevenLabs required but ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID not set')
+      throw new Error('ElevenLabs required but ELEVENLABS_API_KEY not set')
     }
-    return synthesizeElevenLabs(text)
+    return synthesizeElevenLabs(text, { voiceProfile: profile })
   }
 
   if (opts.useOwnerVoice && isElevenLabsAvailable()) {
-    return synthesizeElevenLabs(text)
+    return synthesizeElevenLabs(text, { voiceProfile: profile })
   }
 
   const { synthesizeSpeech } = await import('./tts.mjs')
