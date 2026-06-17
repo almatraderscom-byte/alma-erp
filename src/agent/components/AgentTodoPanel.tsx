@@ -650,13 +650,58 @@ export function AgentTodoPanel() {
 
   return (
     <div className="px-4 py-5 sm:px-5 sm:py-6">
-      <div className="mb-4">
-        <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          {totalActive} active
-          {hasOwnerSplit ? ' · Boss + Agent split' : ''}
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {totalActive} active
+            {hasOwnerSplit ? ' · Boss + Agent split' : ''}
+          </p>
+        </div>
+        {!hasOwnerSplit && !showAdd && (
+          <button
+            type="button"
+            onClick={() => setShowAdd(true)}
+            className={`shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-colors ${brandTodo.coralBg} ${brandTodo.coral} ${brandTodo.coralHover}`}
+          >
+            + Boss-এর কাজ
+          </button>
+        )}
       </div>
+
+      {!hasOwnerSplit && showAdd && (
+        <div className={`mb-4 ${brandTodo.bossFrame} p-3.5`}>
+          <p className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${brandTodo.coralDark}`}>
+            🧑‍💼 Boss-এর আজকের কাজ
+          </p>
+          <input
+            type="text"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="আপনার কাজ লিখুন…"
+            className="w-full bg-white border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
+            onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setShowAdd(false); setNewTitle('') }}
+              className="flex-1 py-2 rounded-xl border border-black/[0.06] text-xs text-slate-500 font-semibold hover:bg-white/60"
+            >
+              বাতিল
+            </button>
+            <button
+              type="button"
+              onClick={() => void addTodo()}
+              disabled={!newTitle.trim() || adding}
+              className={`flex-1 py-2 rounded-xl text-white text-xs font-bold disabled:opacity-40 ${brandTodo.coralBtn}`}
+            >
+              {adding ? '…' : 'যোগ করুন'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {hasOwnerSplit ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch">
