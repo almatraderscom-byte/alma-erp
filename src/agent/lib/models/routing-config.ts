@@ -8,7 +8,9 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
-import { isKnownModelId } from '@/agent/lib/models/registry'
+import { isKnownModelId, isAnthropicModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
+
+export type TaskTier = 'critical' | 'heavy' | 'light'
 
 export interface ModelRoutingConfig {
   /** Master switch: when false, everything stays on Sonnet. */
@@ -21,6 +23,12 @@ export interface ModelRoutingConfig {
   opusCriticalTaka: number
   /** Which premium model the gate escalates to (owner-chosen — cost vs power). */
   criticalModelId: string
+  /** Sub-agent / tuktak LIGHT tier (OpenRouter cheap). */
+  lightModelId: string
+  /** Sub-agent HEAVY-CONTEXT tier (OpenRouter mid). */
+  heavyModelId: string
+  /** Sub-agent CRITICAL tier — Claude only (CS/finance/staff/scheduler). */
+  criticalSubagentModelId: string
 }
 
 const KEYS = {
@@ -29,6 +37,9 @@ const KEYS = {
   opusConfidenceThreshold: 'model.routing.opusConfidenceThreshold',
   opusCriticalTaka: 'model.routing.opusCriticalTaka',
   criticalModelId: 'model.routing.criticalModelId',
+  lightModelId: 'model.routing.tier.lightModelId',
+  heavyModelId: 'model.routing.tier.heavyModelId',
+  criticalSubagentModelId: 'model.routing.tier.criticalSubagentModelId',
 } as const
 
 export const ROUTING_DEFAULTS: ModelRoutingConfig = {
@@ -37,6 +48,9 @@ export const ROUTING_DEFAULTS: ModelRoutingConfig = {
   opusConfidenceThreshold: 0.8,
   opusCriticalTaka: 20_000,
   criticalModelId: 'claude-opus-4-8',
+  lightModelId: 'or-glm-4-32b',
+  heavyModelId: 'or-gemini-2.5-flash-lite',
+  criticalSubagentModelId: DEFAULT_MODEL_ID,
 }
 
 export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
@@ -51,12 +65,28 @@ export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
     }
     const rawModel = map.get(KEYS.criticalModelId)
     const criticalModelId = rawModel && isKnownModelId(rawModel) ? rawModel : ROUTING_DEFAULTS.criticalModelId
+
+    const rawLight = map.get(KEYS.lightModelId)
+    const lightModelId = rawLight && isKnownModelId(rawLight) ? rawLight : ROUTING_DEFAULTS.lightModelId
+
+    const rawHeavy = map.get(KEYS.heavyModelId)
+    const heavyModelId = rawHeavy && isKnownModelId(rawHeavy) ? rawHeavy : ROUTING_DEFAULTS.heavyModelId
+
+    let criticalSubagentModelId = ROUTING_DEFAULTS.criticalSubagentModelId
+    const rawCriticalSub = map.get(KEYS.criticalSubagentModelId)
+    if (rawCriticalSub && isKnownModelId(rawCriticalSub) && isAnthropicModel(rawCriticalSub)) {
+      criticalSubagentModelId = rawCriticalSub
+    }
+
     return {
       opusEnabled: map.has(KEYS.opusEnabled) ? map.get(KEYS.opusEnabled) === 'true' : ROUTING_DEFAULTS.opusEnabled,
       opusDailyCap: num(KEYS.opusDailyCap, ROUTING_DEFAULTS.opusDailyCap, true),
       opusConfidenceThreshold: num(KEYS.opusConfidenceThreshold, ROUTING_DEFAULTS.opusConfidenceThreshold),
       opusCriticalTaka: num(KEYS.opusCriticalTaka, ROUTING_DEFAULTS.opusCriticalTaka, true),
       criticalModelId,
+      lightModelId,
+      heavyModelId,
+      criticalSubagentModelId,
     }
   } catch {
     return { ...ROUTING_DEFAULTS }
@@ -74,6 +104,19 @@ export async function setModelRoutingConfig(patch: Partial<ModelRoutingConfig>):
   if (patch.opusCriticalTaka !== undefined) entries.push([KEYS.opusCriticalTaka, String(Math.max(0, Math.round(patch.opusCriticalTaka)))])
   if (patch.criticalModelId !== undefined && isKnownModelId(patch.criticalModelId)) {
     entries.push([KEYS.criticalModelId, patch.criticalModelId])
+  }
+  if (patch.lightModelId !== undefined && isKnownModelId(patch.lightModelId)) {
+    entries.push([KEYS.lightModelId, patch.lightModelId])
+  }
+  if (patch.heavyModelId !== undefined && isKnownModelId(patch.heavyModelId)) {
+    entries.push([KEYS.heavyModelId, patch.heavyModelId])
+  }
+  if (
+    patch.criticalSubagentModelId !== undefined &&
+    isKnownModelId(patch.criticalSubagentModelId) &&
+    isAnthropicModel(patch.criticalSubagentModelId)
+  ) {
+    entries.push([KEYS.criticalSubagentModelId, patch.criticalSubagentModelId])
   }
   await Promise.all(
     entries.map(([key, value]) =>

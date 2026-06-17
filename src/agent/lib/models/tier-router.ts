@@ -1,0 +1,72 @@
+/**
+ * Task-tier model routing — Claude locked for critical paths; OpenRouter for tuktak.
+ */
+import { getModel, DEFAULT_MODEL_ID, type ModelEntry, isAnthropicModel } from '@/agent/lib/models/registry'
+import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import {
+  getModelRoutingConfig,
+  type ModelRoutingConfig,
+  type TaskTier,
+} from '@/agent/lib/models/routing-config'
+
+export type { TaskTier }
+
+/** CS / finance / scheduler / salah / staff / orders — never cheap. */
+export const CRITICAL_SPECIALIST_ROLES = new Set<SpecialistRole>(['analyst', 'ops'])
+
+export function roleToTaskTier(role: SpecialistRole): TaskTier {
+  if (CRITICAL_SPECIALIST_ROLES.has(role)) return 'critical'
+  if (role === 'researcher' || role === 'marketer' || role === 'content') return 'heavy'
+  return 'light'
+}
+
+export function resolveModelIdForTier(tier: TaskTier, config: ModelRoutingConfig): string {
+  switch (tier) {
+    case 'critical':
+      return config.criticalSubagentModelId
+    case 'heavy':
+      return config.heavyModelId
+    case 'light':
+      return config.lightModelId
+    default:
+      return DEFAULT_MODEL_ID
+  }
+}
+
+/** Hard guard — critical paths MUST resolve to Claude. Throws on violation. */
+export function assertCriticalTierUsesClaude(modelId: string, tier: TaskTier): void {
+  if (tier !== 'critical') return
+  if (!isAnthropicModel(modelId)) {
+    throw new Error(
+      `CRITICAL tier must use Claude — refused ${modelId} (non-anthropic). ` +
+        'Fix model.routing.tier.criticalSubagentModelId in KV.',
+    )
+  }
+}
+
+export async function resolveSubagentModel(role: SpecialistRole): Promise<{
+  tier: TaskTier
+  model: ModelEntry
+}> {
+  const config = await getModelRoutingConfig()
+  const tier = roleToTaskTier(role)
+  const modelId = resolveModelIdForTier(tier, config)
+  assertCriticalTierUsesClaude(modelId, tier)
+  return { tier, model: getModel(modelId) }
+}
+
+/** Fallback chain when OpenRouter errors — never downgrade critical off Claude. */
+export function fallbackModelForTier(tier: TaskTier, failedModelId: string): ModelEntry | null {
+  const failed = getModel(failedModelId)
+  if (failed.provider !== 'openrouter') return null
+
+  if (tier === 'light') {
+    const heavy = getModel('or-gemini-2.5-flash-lite')
+    if (heavy.id !== failedModelId) return heavy
+  }
+  return getModel(DEFAULT_MODEL_ID)
+}
+
+export function isOpenRouterProvider(provider: string): boolean {
+  return provider === 'openrouter'
+}

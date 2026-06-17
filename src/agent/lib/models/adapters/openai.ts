@@ -53,8 +53,12 @@ function toOpenAiTools(tools: NeutralTool[]): ChatCompletionTool[] {
 export class OpenAiAdapter implements ProviderAdapter {
   private client: OpenAI
 
-  constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey })
+  constructor(apiKey: string, opts?: { baseURL?: string; defaultHeaders?: Record<string, string> }) {
+    this.client = new OpenAI({
+      apiKey,
+      baseURL: opts?.baseURL,
+      defaultHeaders: opts?.defaultHeaders,
+    })
   }
 
   async *streamTurn(args: {

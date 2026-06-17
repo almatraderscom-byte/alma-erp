@@ -49,7 +49,7 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
 
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
-  if (provider === 'openai') return 'openai'
+  if (provider === 'openai' || provider === 'openrouter') return 'openai'
   return 'anthropic'
 }
 

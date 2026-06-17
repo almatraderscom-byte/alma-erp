@@ -3,7 +3,7 @@
  * Verify apiModel strings against provider dashboards before trusting in production.
  */
 
-export type Provider = 'anthropic' | 'google' | 'openai'
+export type Provider = 'anthropic' | 'google' | 'openai' | 'openrouter'
 
 export interface ModelEntry {
   id: string
@@ -131,6 +131,30 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 4.5,
     thinking: 'none',
   },
+  {
+    id: 'or-glm-4-32b',
+    label: 'GLM 4 32B (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'z-ai/glm-4-32b',
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 128_000,
+    inPerM: 0.1,
+    outPerM: 0.1,
+    thinking: 'none',
+  },
+  {
+    id: 'or-gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash Lite (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'google/gemini-2.5-flash-lite',
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 1_000_000,
+    inPerM: 0.1,
+    outPerM: 0.4,
+    thinking: 'none',
+  },
 ]
 
 export function getModel(id?: string | null): ModelEntry {
@@ -144,7 +168,12 @@ export function isKnownModelId(id: string): boolean {
 }
 
 export function modelsByProvider(): Record<Provider, ModelEntry[]> {
-  const out: Record<Provider, ModelEntry[]> = { anthropic: [], google: [], openai: [] }
+  const out: Record<Provider, ModelEntry[]> = { anthropic: [], google: [], openai: [], openrouter: [] }
   for (const m of MODEL_REGISTRY) out[m.provider].push(m)
   return out
+}
+
+export function isAnthropicModel(id: string): boolean {
+  const m = MODEL_REGISTRY.find((e) => e.id === id)
+  return m?.provider === 'anthropic'
 }
