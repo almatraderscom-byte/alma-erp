@@ -313,7 +313,8 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
+  const { projectSystemInstructions, signal, telegramFastPath = false } = options
+  let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
   // Resolve business scope: personal mode is always cross-business; otherwise default to Lifestyle.
@@ -365,6 +366,21 @@ export async function* runAgentTurn(
 
   const now = new Date()
   let teachingBlock: string | undefined
+  let intakeContextBlock: string | undefined
+  let intakeAutoReply: string | undefined
+
+  if (!personalMode && lastUserText) {
+    try {
+      const { processOwnerIntakeReply } = await import('@/agent/lib/owner-task-intake')
+      const intake = await processOwnerIntakeReply(lastUserText, conversationId)
+      if (intake?.autoReply) intakeAutoReply = intake.autoReply
+      if (intake?.contextBlock) intakeContextBlock = intake.contextBlock
+      if (intake?.forcePersonalMode) personalMode = true
+    } catch (err) {
+      console.warn('[core] owner intake reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   if (!personalMode && lastUserText) {
     const teaching = detectTeachingIntent(lastUserText)
     if (teaching) {
@@ -428,6 +444,27 @@ export async function* runAgentTurn(
     }
   }
 
+  if (intakeAutoReply) {
+    const replyText = approvalReminderPrefix + intakeAutoReply
+    yield { type: 'text_delta', delta: intakeAutoReply }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const savedMsg = await db.agentMessage.create({
+      data: {
+        conversationId,
+        role: 'assistant',
+        content: [{ type: 'text', text: replyText }],
+        tokensIn: 0,
+        tokensOut: 0,
+        costUsd: 0,
+        usage: { input_tokens: 0, output_tokens: 0, model: chatModel.id, intake_auto: true },
+      },
+    })
+    await touchConversationActivity(conversationId)
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, costUsd: 0 }
+    return
+  }
+
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
@@ -444,6 +481,7 @@ export async function* runAgentTurn(
     businessId,
     activePlaybook,
     teachingBlock,
+    intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,

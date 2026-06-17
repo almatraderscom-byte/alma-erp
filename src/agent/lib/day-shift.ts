@@ -236,6 +236,8 @@ async function runDutyWork(
         ? `✓ স্টাফ সারসংক্ষেপ: ${staff.summary}`
         : '✓ স্টাফ টাস্ক ডেটা চেক করা হয়েছে — বিস্তারিত staff monitor-এ।',
     )
+  } else if (dutyKey === 'owner_task_intake') {
+    parts.push('✓ Sir-কাজ সংগ্রহ — scheduler ২০:৩০-এ chat + Telegram-এ জিজ্ঞেস করবে; reply থেকে owner todo যোগ হবে।')
   } else if (CONTENT_DUTIES.has(dutyKey)) {
     parts.push('✓ কন্টেন্ট প্ল্যানিং — owner request এ draft করব (অটো office-এ LLM খরচ এড়ানো)।')
   } else if (MARKETER_DUTIES.has(dutyKey) && briefing) {

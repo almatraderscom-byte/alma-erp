@@ -31,6 +31,7 @@ export const DUTY_TO_JOB: Record<string, string> = {
   content_engine_2: 'content-engine-2',
   content_engine_3: 'content-engine-3',
   night_report: 'night-report',
+  owner_task_intake: 'owner-task-intake',
   personal_checkin: 'personal-checkin',
   evening_proposal: 'evening-proposal',
   approval_chase: 'approval-escalation',

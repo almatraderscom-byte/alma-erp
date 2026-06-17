@@ -529,6 +529,7 @@ export type BuildSystemPromptArgs = {
   businessId?: AgentBusinessId
   activePlaybook?: ActivePlaybookEntry[]
   teachingBlock?: string
+  intakeContextBlock?: string
   outcomeLearnings?: OutcomeLearning[]
   ownerDecisions?: OwnerDecision[]
   conflictSignals?: Array<{ source: string; detail: string; confidence: number }>
@@ -555,6 +556,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
     teachingBlock,
+    intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,
@@ -609,6 +611,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     if (teachingBlock) {
       volatileParts.push(teachingBlock)
+    }
+
+    if (intakeContextBlock) {
+      volatileParts.push(intakeContextBlock)
     }
 
     if (businessContext) {

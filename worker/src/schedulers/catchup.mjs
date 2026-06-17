@@ -23,6 +23,7 @@ const JOB_FOR_DUTY = {
   personal_midday: 'personal-midday',
   content_engine_2: 'content-engine-2',
   content_engine_3: 'content-engine-3',
+  owner_task_intake: 'owner-task-intake',
   night_report: 'night-report',
   personal_checkin: 'personal-checkin',
   evening_proposal: 'evening-proposal',

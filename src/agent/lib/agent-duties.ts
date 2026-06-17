@@ -27,6 +27,7 @@ export const DAILY_DUTIES = [
   { duty: 'personal_midday', label: '🤲 দুপুরের খোঁজখবর', time: '14:00' },
   { duty: 'content_engine_2', label: '📸 কন্টেন্ট পোস্ট #2', time: '15:00' },
   { duty: 'content_engine_3', label: '📸 কন্টেন্ট পোস্ট #3', time: '19:00' },
+  { duty: 'owner_task_intake', label: '🌙 Sir-কাজ সংগ্রহ', time: '20:30' },
   { duty: 'night_report', label: '🌙 রাতের রিপোর্ট', time: '21:00' },
   { duty: 'personal_checkin', label: '🤲 সন্ধ্যার খোঁজখবর', time: '21:00' },
   { duty: 'evening_proposal', label: '📝 আগামীকালের টাস্ক প্রস্তাব', time: '21:05' },

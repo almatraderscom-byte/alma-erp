@@ -34,6 +34,7 @@ const manage_work_todos: AgentTool = {
         enum: ['owner', 'agent'],
         description: 'owner when Sir asked in chat; agent for your own ad-hoc tasks (not day_shift — scheduler owns those)',
       },
+      dueDate: { type: 'string', description: 'ISO date YYYY-MM-DD for when Sir should do this (e.g. tomorrow from evening intake)' },
     },
     required: ['action'],
   },
@@ -76,6 +77,12 @@ const manage_work_todos: AgentTool = {
         const title = String(input.title ?? '').trim()
         if (!title) return { success: false, error: 'title is required' }
 
+        let dueDate: Date | null = null
+        if (input.dueDate) {
+          const ymd = String(input.dueDate).slice(0, 10)
+          dueDate = new Date(`${ymd}T00:00:00+06:00`)
+        }
+
         const todo = await prisma.agentTodo.create({
           data: {
             title,
@@ -83,6 +90,7 @@ const manage_work_todos: AgentTool = {
             priority: String(input.priority ?? 'normal'),
             source: input.source === 'owner' ? 'owner' : 'agent',
             businessId,
+            ...(dueDate ? { dueDate } : {}),
           },
         })
         return {
