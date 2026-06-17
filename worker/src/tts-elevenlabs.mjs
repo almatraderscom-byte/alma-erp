@@ -56,12 +56,12 @@ export function prepareBanglaForElevenLabs(text) {
 }
 
 function voiceSettings(opts = {}) {
-  const stability = opts.stability ?? Number(process.env.ELEVENLABS_STABILITY ?? 0.7)
-  const similarity = opts.similarity_boost ?? opts.similarity ?? Number(process.env.ELEVENLABS_SIMILARITY_BOOST ?? 0.85)
+  const stability = opts.stability ?? Number(process.env.ELEVENLABS_STABILITY ?? 0.62)
+  const similarity = opts.similarity_boost ?? opts.similarity ?? Number(process.env.ELEVENLABS_SIMILARITY_BOOST ?? 0.8)
   return {
     stability,
     similarity_boost: similarity,
-    style: opts.style ?? 0,
+    style: opts.style ?? 0.0,
     use_speaker_boost: opts.use_speaker_boost !== false,
   }
 }
@@ -76,13 +76,10 @@ async function synthesizeChunk(preparedText, opts = {}) {
   const body = {
     text: preparedText,
     model_id: ELEVENLABS_MODEL_ID(),
-    language_code: 'bn',
-    apply_language_text_normalization: true,
-    output_format: 'mp3_44100_128',
     voice_settings: voiceSettings(opts),
   }
 
-  let res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
+  const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -92,26 +89,6 @@ async function synthesizeChunk(preparedText, opts = {}) {
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(45_000),
   })
-
-  // Some accounts/models reject bn language_code — retry without forcing locale
-  if (res.status === 400) {
-    const errText = await res.text().catch(() => '')
-    if (/language/i.test(errText)) {
-      const { language_code: _lc, apply_language_text_normalization: _norm, ...fallbackBody } = body
-      res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'xi-api-key': apiKey,
-          Accept: 'audio/mpeg',
-        },
-        body: JSON.stringify(fallbackBody),
-        signal: AbortSignal.timeout(45_000),
-      })
-    } else {
-      throw new Error(`ElevenLabs TTS error ${res.status}: ${errText.slice(0, 200)}`)
-    }
-  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '')

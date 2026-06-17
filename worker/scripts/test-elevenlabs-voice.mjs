@@ -14,10 +14,9 @@ const __dir = dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: join(__dir, '../.env'), override: true })
 installTelegramProxy()
 
-/** Pure Bangla — no English words (Latin triggers English pronunciation). */
+/** Pure Bangla test — new voice model pNInz6obpgDQGcFJgJed */
 const TEST_SAMPLES = [
-  'স্যার, আসসালামু আলাইকুম। এটি শুধু বাংলায় একটি পরীক্ষামূলক ভয়েস। আওয়াজ কতটা পরিষ্কার শুনতে পাচ্ছেন জানাবেন।',
-  'আসসালামু আলাইকুম ইয়াফি ভাই। আজ তিনটি কাজ দেওয়া হয়েছে। বিস্তারিত টেলিগ্রামে দেখুন।',
+  'স্যার, আসসালামু আলাইকুম। এটি নতুন ভয়েস মডেলের পরীক্ষা। আওয়াজ কতটা পরিষ্কার শুনতে পাচ্ছেন জানাবেন।',
 ]
 
 async function main() {
