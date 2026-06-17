@@ -10,6 +10,7 @@
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { createClient } from '@supabase/supabase-js'
 import { requestAutoFix } from './dispatch.mjs'
+import { isAutoFixEligible } from './eligibility.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -64,6 +65,10 @@ export async function runErrorCollector() {
       if (!scan.ok) {
         for (const issue of scan.issues) {
           if (issue.severity !== 'high') continue
+          if (!isAutoFixEligible(issue)) {
+            console.log(`[error-collector] skip auto-fix (not code/infra): ${issue.signal ?? issue.title}`)
+            continue
+          }
 
           const alreadyPending = await supabase
             .from('agent_pending_actions')

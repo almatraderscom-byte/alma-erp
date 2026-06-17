@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { isAutoFixEligible, autoFixIneligibleReason } from '@/lib/diagnostic/auto-fix-eligibility'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +38,13 @@ export async function POST(req: NextRequest) {
 
   if (!body.issue?.title) {
     return Response.json({ error: 'issue.title required' }, { status: 400 })
+  }
+
+  if (!isAutoFixEligible(body.issue)) {
+    return Response.json(
+      { error: 'not_auto_fix_eligible', message: autoFixIneligibleReason(body.issue) },
+      { status: 422 },
+    )
   }
 
   const issue = body.issue

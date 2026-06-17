@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { isAutoFixEligible } from '@/lib/diagnostic/auto-fix-eligibility'
 import type {
   StaffMonitorData,
   StaffMonitorRow,
@@ -408,6 +409,7 @@ export default function AgentStaffMonitor() {
   }
 
   async function requestFix(issue: HealthIssue) {
+    if (!isAutoFixEligible(issue)) return
     setFixingIssue(issue.title)
     try {
       const res = await fetch('/api/agent/auto-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issue }) })
@@ -818,12 +820,15 @@ export default function AgentStaffMonitor() {
                           </div>
                           <div className="mt-1 flex items-center justify-between">
                             <p className="text-[10px] text-[#64748b]">{issue.detail}</p>
-                            {issue.severity === 'high' && (
+                            {issue.severity === 'high' && isAutoFixEligible(issue) && (
                               <button type="button" disabled={fixingIssue === issue.title} onClick={() => void requestFix(issue)}
                                 className={cn('ml-2 shrink-0 rounded-md border px-2 py-0.5 text-[9px] font-bold transition-all',
                                   fixingIssue === issue.title ? 'border-black/[0.06] text-[#94a3b8]' : 'border-[#81B29A]/30 bg-[#81B29A]/[0.08] text-[#81B29A] hover:bg-[#81B29A]/15')}>
                                 {fixingIssue === issue.title ? '⏳...' : '🤖 Fix This'}
                               </button>
+                            )}
+                            {issue.severity === 'high' && !isAutoFixEligible(issue) && (
+                              <span className="ml-2 shrink-0 text-[9px] font-medium text-[#64748b]">Agent tool দিয়ে ঠিক করুন</span>
                             )}
                           </div>
                         </div>
