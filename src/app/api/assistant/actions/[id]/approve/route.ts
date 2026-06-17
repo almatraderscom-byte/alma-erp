@@ -223,7 +223,11 @@ export async function POST(
       return Response.json({ success: true, ...result })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
-      return Response.json({ error: errMsg }, { status: 400 })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
     }
   }
 
@@ -985,6 +989,36 @@ export async function POST(
     })
     await appendConversationNote(db, action, `✅ Website update: ${result.slug} আপডেট হয়েছে। ISR/cache — live page দেখতে কিছুক্ষণ লাগতে পারে।`)
     return Response.json({ success: true, ...result })
+  }
+
+  if (action.type === 'auto_fix') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const workerUrl = process.env.AGENT_WORKER_DIAGNOSTIC_URL?.replace(/\/$/, '')
+    const internalToken = process.env.AGENT_INTERNAL_TOKEN
+    if (workerUrl && internalToken) {
+      try {
+        await fetch(`${workerUrl}/auto-fix-run`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${internalToken}`,
+          },
+          body: JSON.stringify({ actionId, issue: payload }),
+          signal: AbortSignal.timeout(10_000),
+        })
+      } catch { /* worker dispatch is best-effort */ }
+    }
+    await appendConversationNote(db, action, '✅ Auto-Fix অনুমোদিত — Cursor agent শুরু হচ্ছে।')
+    return Response.json({
+      success: true,
+      message: 'Auto-fix approved and dispatched to worker.',
+    })
   }
 
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })

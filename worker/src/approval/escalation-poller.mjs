@@ -1,10 +1,8 @@
 /**
  * Escalation poller for unapproved staff messages.
- * At 10/20/30 min, makes escalating phone calls.
- * After 30 min + 3 calls: moves to waiting_list.
+ * At 10/20/30 min, makes escalating phone calls (idempotent — level only bumps after successful call).
  */
 import { createClient } from '@supabase/supabase-js'
-
 import { getAppUrl, getInternalToken } from '../env.mjs'
 
 function sb() {
@@ -46,16 +44,12 @@ export async function pollApprovalEscalations() {
     }
 
     if (shouldCall) {
-      await supabase.from('agent_pending_actions').update({
-        payload: { ...action.payload, escalationLevel: newLevel },
-      }).eq('id', action.id)
-
       const staffName = action.payload?.staffName ?? 'Unknown'
       const type = action.payload?.type ?? 'message'
       const callMessage = `Sir, ${staffName} er jonno ${type} message approve lagbe. Please check your Telegram.`
 
       try {
-        await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
+        const res = await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -69,6 +63,19 @@ export async function pollApprovalEscalations() {
             category: 'staff_approval_escalation',
           }),
         })
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          throw new Error(`urgent-alert HTTP ${res.status}: ${body.slice(0, 100)}`)
+        }
+
+        await supabase.from('agent_pending_actions').update({
+          payload: {
+            ...action.payload,
+            escalationLevel: newLevel,
+            lastEscalationAt: new Date().toISOString(),
+          },
+        }).eq('id', action.id).eq('status', 'pending')
+
         callsMade++
         console.log(`[escalation-poller] Call #${newLevel} for action ${action.id} (${ageMin.toFixed(0)}min old)`)
       } catch (err) {
@@ -76,7 +83,6 @@ export async function pollApprovalEscalations() {
       }
     }
 
-    // After 30 min + 3 calls: move to waiting_list
     if (ageMin > 30 && escalationLevel >= 3) {
       await supabase.from('agent_pending_actions').update({
         status: 'waiting_list',

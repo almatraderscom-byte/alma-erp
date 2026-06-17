@@ -63,6 +63,7 @@ import {
   showCatalogPanel,
 } from './command-defaults.mjs'
 import { ownerState, isOwnerTurnInFlight, markOwnerTurnStart, releaseOwnerTurn } from './owner-state.mjs'
+import { persistOwnerStateToKv } from './owner-state-persist.mjs'
 import { callAgentApi as sendToAgent } from './agent-turn.mjs'
 import { getOwnerChatId, isOwnerChatId } from './owner-id.mjs'
 
@@ -99,7 +100,7 @@ function isOwner(chatId) {
 // ── Daily conversation helper ──────────────────────────────────────────────
 
 async function getDailyConversationId(personalMode = false) {
-  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
   const title = personalMode ? `Telegram ব্যক্তিগত ${today}` : `Telegram ${today}`
 
   // Try to find an existing conversation for today
@@ -679,6 +680,7 @@ export function createTelegramBot() {
   bot.command('new', async (ctx) => {
     ownerState.conversationId = null
     ownerState.personalConversationId = null
+    await persistOwnerStateToKv(createSupabase()).catch(() => {})
     await ctx.reply('✅ নতুন কথোপকথন শুরু হয়েছে।')
   })
 
@@ -705,6 +707,7 @@ export function createTelegramBot() {
     const { setTelegramPersonalMode } = await import('./personal-mode.mjs')
     await setTelegramPersonalMode(supabase, String(ctx.chat.id), false)
     ownerState.conversationId = null
+    await persistOwnerStateToKv(supabase).catch(() => {})
     await ctx.reply('কাজের মোডে ফিরে এলাম।')
   })
 
@@ -1322,6 +1325,7 @@ export function createTelegramBot() {
     } else if (data.startsWith('switch:')) {
       const convId = data.slice(7)
       ownerState.conversationId = convId
+      await persistOwnerStateToKv(createSupabase()).catch(() => {})
       await ctx.answerCbQuery('চ্যাট পরিবর্তন হয়েছে ✅')
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
       await ctx.reply('✅ চ্যাট পরিবর্তন হয়েছে।')

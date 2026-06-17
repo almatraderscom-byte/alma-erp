@@ -159,6 +159,26 @@ export async function handleStaffTaskDone(ctx, supabase, taskId, staff) {
   return { instant: false, result }
 }
 
+/** Rehydrate in-memory proof waiters after worker restart. */
+export async function hydrateAwaitingProof(supabase) {
+  const { data: tasks } = await supabase
+    .from('staff_tasks')
+    .select('id, staff_id, agent_staff(telegramChatId)')
+    .eq('status', 'awaiting_proof')
+    .eq('verification_status', 'awaiting_proof')
+    .limit(50)
+
+  let count = 0
+  for (const task of tasks ?? []) {
+    const chatId = task.agent_staff?.telegramChatId
+    if (!chatId) continue
+    awaitingProof.set(String(chatId), task.id)
+    count++
+  }
+  if (count) console.log(`[task-verification] hydrated ${count} awaiting_proof session(s)`)
+  return count
+}
+
 export async function storeProofPhoto(supabase, taskId, fileBuffer, contentType = 'image/jpeg') {
   return uploadTaskProofPhoto(supabase, taskId, fileBuffer, contentType)
 }

@@ -4,18 +4,21 @@
  * an approval card to the owner. The message is only sent after approval.
  */
 import { createClient } from '@supabase/supabase-js'
+import { getAppUrl, getInternalToken } from '../env.mjs'
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 }
 
 async function checkTrust(domain, actionPattern, businessId) {
+  const base = getAppUrl()
+  if (!base) return { tier: 'approve', reason: 'app_url_missing' }
   try {
-    const res = await fetch(`${process.env.APP_URL}/api/agent/trust-check`, {
+    const res = await fetch(`${base}/api/agent/trust-check`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN}`,
+        Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ domain, actionPattern, businessId }),
       signal: AbortSignal.timeout(5000),
@@ -25,8 +28,6 @@ async function checkTrust(domain, actionPattern, businessId) {
   } catch (err) {
     console.warn('[staff-approval-gate] trust-check failed:', err?.message)
   }
-  // Fail CLOSED: when trust API is down, route to manual approval (safer than 'auto').
-  // 'approve' tier means: send approval card to owner, do not auto-act.
   return { tier: 'approve', reason: 'trust_check_unavailable' }
 }
 
@@ -77,21 +78,13 @@ export async function requireStaffApproval({
 
   const summary = `📩 স্টাফ মেসেজ (${type})\n👤 ${staffName ?? 'Unknown'}\n\n${preview}`
 
-  await supabase.from('agent_pending_actions').insert({
-    id,
-    type: 'staff_auto_message',
-    payload,
-    summary,
-    status: 'pending',
-    business_id: biz,
-    costEstimate: 0,
-  })
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  const botToken = process.env.ASSISTANT_BOT_TOKEN
+  let cardSent = false
 
-  try {
-    const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
-    const botToken = process.env.ASSISTANT_BOT_TOKEN
-    if (ownerChatId && botToken) {
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+  if (ownerChatId && botToken) {
+    try {
+      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -105,9 +98,33 @@ export async function requireStaffApproval({
           },
         }),
       })
+      cardSent = tgRes.ok
+      if (!tgRes.ok) {
+        const errBody = await tgRes.text().catch(() => '')
+        console.warn('[staff-approval-gate] telegram card HTTP', tgRes.status, errBody.slice(0, 120))
+      }
+    } catch (err) {
+      console.warn('[staff-approval-gate] telegram card failed:', err.message)
     }
-  } catch (err) {
-    console.warn('[staff-approval-gate] telegram card failed:', err.message)
+  }
+
+  if (!cardSent) {
+    return { pendingActionId: null, queued: true, ok: false, error: 'approval_card_failed' }
+  }
+
+  const { error: insertErr } = await supabase.from('agent_pending_actions').insert({
+    id,
+    type: 'staff_auto_message',
+    payload,
+    summary,
+    status: 'pending',
+    business_id: biz,
+    costEstimate: 0,
+  })
+
+  if (insertErr) {
+    console.error('[staff-approval-gate] DB insert failed after card sent:', insertErr.message)
+    return { pendingActionId: id, queued: true, ok: false, error: 'db_insert_failed' }
   }
 
   return { pendingActionId: id, queued: true, ok: false }

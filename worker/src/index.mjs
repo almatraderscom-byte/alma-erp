@@ -21,6 +21,8 @@ import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
 import { getAppUrl, getInternalToken } from './env.mjs'
 import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
+import { loadOwnerStateFromKv } from './telegram/owner-state-persist.mjs'
+import { hydrateAwaitingProof } from './staff/task-verification.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { sendStaffAnnouncement } from './staff/announcement.mjs'
@@ -409,7 +411,9 @@ async function processImageGen(job) {
 
 // ── Callback ───────────────────────────────────────────────────────────────
 
-async function callJobResult(pendingActionId, status, data, error) {
+const MAX_JOB_RESULT_RETRIES = 3
+
+async function callJobResult(pendingActionId, status, data, error, attempt = 0) {
   try {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/job-result`, {
       method: 'POST',
@@ -422,9 +426,17 @@ async function callJobResult(pendingActionId, status, data, error) {
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.error(`[worker] job-result callback HTTP ${res.status}: ${body.slice(0, 200)}`)
+      if (attempt + 1 < MAX_JOB_RESULT_RETRIES) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+        return callJobResult(pendingActionId, status, data, error, attempt + 1)
+      }
     }
   } catch (err) {
     console.error('[worker] job-result callback error:', err.message)
+    if (attempt + 1 < MAX_JOB_RESULT_RETRIES) {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+      return callJobResult(pendingActionId, status, data, error, attempt + 1)
+    }
   }
 }
 
@@ -482,6 +494,17 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
     await callJobResult(pendingActionId, 'failed', undefined, err.message)
   }
 }, { connection, concurrency: 1, lockDuration: 6 * 60 * 1000 })
+
+longTaskWorker.on('completed', (job) => {
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+longTaskWorker.on('failed', async (job, err) => {
+  console.error(`[worker] long-agent-task ${job?.id} failed:`, err.message)
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch(() => {})
+  }
+})
 
 // ── Staff dispatch worker ──────────────────────────────────────────────────────
 
@@ -548,6 +571,9 @@ agentTurnWorker.on('failed', (job, err) => {
   captureWorkerError(err, 'worker.agent_turn.failed', { jobId: job?.id })
 })
 
+staffDispatchWorker.on('completed', (job) => {
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
 staffDispatchWorker.on('failed', async (job, err) => {
   console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)
   if (job?.data?.pendingActionId) {
@@ -563,21 +589,29 @@ staffDispatchWorker.on('failed', async (job, err) => {
   }
 })
 
-imageGenWorker.on('completed', (job) => console.log(`[worker] image-gen ${job.id} completed`))
-imageGenWorker.on('failed', (job, err) => {
+imageGenWorker.on('completed', (job) => {
+  console.log(`[worker] image-gen ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+imageGenWorker.on('failed', async (job, err) => {
   console.error(`[worker] image-gen ${job?.id} failed:`, err.message)
   captureWorkerError(err, 'worker.image_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
-    callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
   }
 })
 
-videoGenWorker.on('completed', (job) => console.log(`[worker] video-gen ${job.id} completed`))
-videoGenWorker.on('failed', (job, err) => {
+videoGenWorker.on('completed', (job) => {
+  console.log(`[worker] video-gen ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+videoGenWorker.on('failed', async (job, err) => {
   console.error(`[worker] video-gen ${job?.id} failed:`, err.message)
   captureWorkerError(err, 'worker.video_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
-    callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
   }
 })
 
@@ -588,6 +622,12 @@ let telegramBot = null
 if (process.env.ASSISTANT_BOT_TOKEN) {
   try {
     telegramBot = await launchTelegramBot()
+    await loadOwnerStateFromKv(supabase).catch((err) =>
+      console.warn('[owner-state] startup load failed:', err.message),
+    )
+    await hydrateAwaitingProof(supabase).catch((err) =>
+      console.warn('[task-verification] hydrate failed:', err.message),
+    )
   } catch (err) {
     console.error('[telegram] Failed to start bot:', err.message)
   }
@@ -597,14 +637,14 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
 
 // ── Phase 6: Schedulers ────────────────────────────────────────────────────
 
-let schedulerQueue = null
-let runSchedulerJobFn = null
+let schedulerTeardown = null
 try {
   const schedulerSetup = await setupSchedulers({
     connection,
     supabase,
     bot: telegramBot,
   })
+  schedulerTeardown = schedulerSetup
   schedulerQueue = schedulerSetup?.schedulerQueue ?? null
   runSchedulerJobFn = schedulerSetup?.runSchedulerJob ?? null
   if (schedulerQueue) {
@@ -662,6 +702,9 @@ const csReplyWorker = new Worker('cs-reply', async (job) => {
   await processCsReplyJob(job.data, telegramBot)
 }, { connection, concurrency: 2 })
 
+csReplyWorker.on('completed', (job) => {
+  if (job?.id) csEnqueued.delete(job.id)
+})
 csReplyWorker.on('failed', (job, err) => {
   console.error(`[cs-reply] ${job?.id} failed:`, err.message)
   if (job?.id) csEnqueued.delete(job.id)
@@ -699,12 +742,16 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
+  if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)
   await stopTelegramBot(signal)
   await Promise.all([
     imageGenWorker.close(),
+    videoGenWorker.close(),
     longTaskWorker.close(),
     staffDispatchWorker.close(),
     csReplyWorker.close(),
+    schedulerTeardown?.schedulerWorker?.close(),
   ])
   process.exit(0)
 }

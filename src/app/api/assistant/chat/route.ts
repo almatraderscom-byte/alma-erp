@@ -135,6 +135,7 @@ export async function POST(req: NextRequest) {
         where: { id: conversationId },
         select: {
           id: true,
+          source: true,
           projectId: true,
           businessId: true,
           modelId: true,
@@ -142,6 +143,9 @@ export async function POST(req: NextRequest) {
         },
       })
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
+      if (isInternalCall && conv.source !== 'telegram') {
+        return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
+      }
       conversationModelId = conv.modelId ?? DEFAULT_MODEL_ID
       personalMode = isPersonalProject(conv.project) || personalMode
       projectSystemInstructions = personalMode

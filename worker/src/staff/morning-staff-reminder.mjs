@@ -13,6 +13,17 @@ export async function runMorningStaffReminder({ supabase, bot }) {
   console.log('[morning-staff-reminder] starting...')
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
+  const { data: openGate } = await supabase
+    .from('agent_pending_actions')
+    .select('id, payload, status')
+    .eq('type', 'dispatch_staff_tasks')
+    .eq('status', 'pending')
+
+  const gateBlocksToday = (openGate ?? []).some((a) => {
+    const d = a.payload?.date
+    return d === today || String(d).slice(0, 10) === today
+  })
+
   const { data: approved } = await supabase
     .from('staff_tasks')
     .select('id')
@@ -20,6 +31,16 @@ export async function runMorningStaffReminder({ supabase, bot }) {
     .eq('status', 'approved')
 
   if (approved?.length && bot) {
+    if (gateBlocksToday) {
+      console.warn('[morning-staff-reminder] dispatch gate still pending — skip auto-dispatch')
+      await notify({
+        tier: 2,
+        title: 'সকাল ডিসপ্যাচ ব্লক',
+        message: `আজকের ${approved.length}টি approved টাস্ক আছে কিন্তু evening proposal gate এখনো pending। Telegram থেকে approve করুন।`,
+        category: 'urgent',
+      })
+      return { dutyStatus: 'skipped', dutyDetail: 'dispatch_staff_tasks gate still pending' }
+    }
     const taskIds = approved.map((t) => t.id)
     console.log(`[morning-staff-reminder] dispatching ${taskIds.length} approved tasks`)
     await dispatchTasksToStaff({ supabase, bot, date: today, taskIds })

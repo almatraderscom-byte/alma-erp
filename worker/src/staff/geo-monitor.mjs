@@ -22,6 +22,14 @@ const GHOST_CHECKIN_WINDOW_MS = 30 * 60 * 1000
 
 const alertCooldowns = new Map()
 
+function officeCoordsConfigured() {
+  return Boolean(
+    process.env.OFFICE_ALMA_LIFESTYLE_LAT || process.env.OFFICE_LAT,
+  ) && Boolean(
+    process.env.OFFICE_ALMA_LIFESTYLE_LNG || process.env.OFFICE_LNG,
+  )
+}
+
 function haversineDistanceM(lat1, lng1, lat2, lng2) {
   const R = 6371000
   const toRad = (d) => (d * Math.PI) / 180
@@ -50,6 +58,10 @@ function formatDistance(meters) {
 
 export async function runGeoMonitor(context) {
   const { supabase, bot } = context
+
+  if (!officeCoordsConfigured()) {
+    return { dutyStatus: 'skipped', dutyDetail: 'OFFICE_LAT/LNG not configured' }
+  }
 
   if (!isWithinOfficeHours()) {
     return { dutyStatus: 'skipped', dutyDetail: 'outside office hours' }
@@ -158,7 +170,7 @@ export async function runGeoMonitor(context) {
  */
 export async function checkGhostCheckins(context) {
   const { supabase, bot } = context
-  if (!OFFICE_LAT || !OFFICE_LNG) return
+  if (!officeCoordsConfigured()) return
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 

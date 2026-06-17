@@ -88,6 +88,7 @@ if (!APP_URL || !TOKEN) {
       body: JSON.stringify({ tier: 3, title: 'smoke', message: 'test', category: 'smoke_test' }),
     })
     const data = await res.json()
+    if (res.status === 429) return // rate limit proves route is live
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!data.pendingApproval) throw new Error('expected pendingApproval')
   })

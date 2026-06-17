@@ -220,6 +220,11 @@ export async function deliverAgentTurn(jobData) {
       await bot.telegram.sendMessage(chatId, '💬 কথোপকথন কম্প্যাক্ট — নতুন চ্যাট শুরু। বলুন স্যার।')
     }
 
+    if (result.conversationId || result.newConversationId) {
+      const { persistOwnerStateToKv } = await import('./owner-state-persist.mjs')
+      await persistOwnerStateToKv(supabase).catch(() => {})
+    }
+
     const elapsed = ((Date.now() - started) / 1000).toFixed(1)
     safeLogMessage('[telegram] agent-turn done', `[chat=${chatId} ${elapsed}s]`)
   } catch (err) {

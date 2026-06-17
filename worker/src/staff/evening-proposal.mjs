@@ -168,9 +168,9 @@ function makeTask(staff, type, title, detail, pick, source = 'rotation') {
     staffName: staff.name,
     title,
     detail: detail ?? undefined,
-    type,
+    type: normalizeStaffTaskType(type),
     productRef: pick?.productRef ?? pick?.name ?? undefined,
-    source,
+    source: normalizeStaffTaskSource(source),
   }
 }
 
@@ -282,7 +282,7 @@ export function buildTasksForStaff(staff, profile, picks, carryForward, pendingO
   const usedTypes = new Set()
 
   for (const carried of carryForward.filter((t) => t.staff_id === staff.id || t.staffId === staff.id)) {
-    const type = carried.type || 'misc'
+    const type = normalizeStaffTaskType(carried.type || 'misc')
     if (!staffHasSkill(profile, type)) continue
     const rawTitle = String(carried.title ?? '').replace(/^↩\s*/, '')
     const title = rawTitle.startsWith('🔄')

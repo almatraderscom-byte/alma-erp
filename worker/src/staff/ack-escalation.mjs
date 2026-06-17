@@ -64,12 +64,22 @@ export async function runAckEscalation({ supabase, bot }) {
 
   for (const m of unseen) {
     const preview = (m.content ?? '').slice(0, 80)
-    await sendMarkdownSafe(
-      bot.telegram,
-      ownerChatId,
-      `🔴 ${m.staff_name ?? 'স্টাফ'} ১০ মিনিটেও মেসেজ দেখেনি:\n"${preview}"`,
-    ).catch(() => {})
-    await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch(() => {})
+    let ownerNotified = false
+    try {
+      await sendMarkdownSafe(
+        bot.telegram,
+        ownerChatId,
+        `🔴 ${m.staff_name ?? 'স্টাফ'} ১০ মিনিটেও মেসেজ দেখেনি:\n"${preview}"`,
+      )
+      ownerNotified = true
+    } catch (err) {
+      console.warn('[ack-escalation] owner notify failed:', err.message)
+    }
+    if (ownerNotified) {
+      await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch(() => {})
+    }
+
+    if (!ownerNotified) continue
 
     const today = dhakaToday()
     const onLeave = m.staff_id && (await isStaffOnLeaveSb(supabase, m.staff_id, today))

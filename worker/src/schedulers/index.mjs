@@ -124,7 +124,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'token-health',           cronUtc: '30 3 * * *',   description: 'Daily Meta page token health check (09:30 Dhaka)' },
   { name: 'outcome-measure',        cronUtc: '0 5 * * *',    description: 'Measure matured agent suggestions (11:00 Dhaka)' },
   { name: 'knowledge-build',        cronUtc: '0 19 * * *',   description: 'Nightly business knowledge graph build (01:00 Dhaka)' },
-  { name: 'staff-approval-escalation', cronUtc: '* * * * *',  description: 'Escalate unapproved staff messages (every minute)' },
+  { name: 'staff-approval-escalation', cronUtc: '*/5 * * * *',  description: 'Escalate unapproved staff messages (every 5 min)' },
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
   { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
@@ -483,20 +483,30 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     },
   })
 
-  // Remove all existing repeatable jobs (re-register on each boot to pick up cron overrides)
+  // Sync repeatable jobs — only re-register when cron changed (avoids boot gap)
   const existing = await schedulerQueue.getRepeatableJobs()
-  for (const job of existing) {
-    await schedulerQueue.removeRepeatableByKey(job.key)
-  }
+  const existingByName = new Map(existing.map((j) => [j.name, j]))
 
-  // Register each job from the registry
   for (const entry of SCHEDULER_REGISTRY) {
+    const ex = existingByName.get(entry.name)
+    if (ex && ex.pattern === entry.cronUtc) {
+      console.log(`[schedulers] kept ${entry.name} — ${entry.cronUtc} UTC`)
+      continue
+    }
+    if (ex) await schedulerQueue.removeRepeatableByKey(ex.key)
     await schedulerQueue.add(
       entry.name,
       { jobName: entry.name },
       { repeat: { pattern: entry.cronUtc, tz: 'UTC' } },
     )
     console.log(`[schedulers] registered ${entry.name} — ${entry.cronUtc} UTC`)
+  }
+
+  for (const job of existing) {
+    if (!SCHEDULER_REGISTRY.some((e) => e.name === job.name)) {
+      await schedulerQueue.removeRepeatableByKey(job.key)
+      console.log(`[schedulers] removed orphan repeatable ${job.name}`)
+    }
   }
 
   // Worker that dispatches to the correct handler
@@ -523,7 +533,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     }
   }, {
     connection,
-    concurrency: 2,
+    concurrency: 1,
   })
 
   const CRITICAL_JOBS = new Set([
@@ -650,6 +660,7 @@ export async function setupSchedulers({ connection, supabase, bot }) {
 
   return {
     schedulerQueue,
+    schedulerWorker,
     retriggerPoll,
     dutyTimePoll,
     runSchedulerJob: (jobName, opts) => runSchedulerJob(jobName, context, opts),

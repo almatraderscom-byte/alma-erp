@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { runHealthScan } from '@/lib/diagnostic/health-scan'
+import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -11,9 +12,7 @@ export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const bearer = req.headers.get('authorization')?.replace('Bearer ', '')
-  const internalToken = process.env.AGENT_INTERNAL_TOKEN
-  const isInternalAuth = bearer && internalToken && bearer === internalToken
+  const isInternalAuth = verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))
 
   if (!isInternalAuth) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
