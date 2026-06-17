@@ -49,5 +49,13 @@
 	<string>ALMA ERP needs your location to verify office attendance check-in/out and staff geo-fencing.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>ALMA ERP needs your location to verify office attendance and staff geo-fencing during work hours.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ALMA ERP uses the microphone so you can talk to the AI assistant by voice.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ALMA ERP uses the camera to capture and upload product photos and attachments.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>ALMA ERP needs photo library access to attach images to the assistant and product records.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ALMA ERP saves generated images and reports to your photo library when you choose to.</string>
 </dict>
 </plist>

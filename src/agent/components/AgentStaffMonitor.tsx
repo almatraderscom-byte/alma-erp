@@ -405,11 +405,33 @@ export default function AgentStaffMonitor() {
   }
 
   async function handleApproval(actionId: string, decision: 'approve' | 'reject') {
+    const action = liveData?.pendingApprovals?.find(a => a.id === actionId)
+    // `staff_auto_message` approval must use the dedicated route (it dispatches the
+    // Telegram send via the worker). Everything else — and ALL rejects — go straight
+    // to the session-authed assistant route, avoiding the internal-token/APP_URL
+    // server-to-server proxy hop that was the source of the "Action failed" error.
+    const useDedicated = decision === 'approve' && action?.type === 'staff_auto_message'
     try {
-      const res = await fetch('/api/agent/staff-monitor/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actionId, decision }) })
-      if (res.ok) showToast(decision === 'approve' ? '✓ Approved' : '✗ Rejected', 'ok')
-      else showToast('Action failed', 'err')
-    } catch { showToast('Network error', 'err') }
+      const res = useDedicated
+        ? await fetch('/api/agent/staff-monitor/approve', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actionId, decision }),
+          })
+        : await fetch(`/api/assistant/actions/${actionId}/${decision === 'approve' ? 'approve' : 'reject'}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          })
+      const data = await res.json().catch(() => ({})) as { error?: string; status?: string }
+      if (res.ok) {
+        showToast(decision === 'approve' ? '✓ Approved' : '✗ Rejected', 'ok')
+        void loadLive()
+      } else if (res.status === 409 || res.status === 410 || (data.status && data.status !== 'pending')) {
+        // Already resolved/expired elsewhere — clear it from the list quietly.
+        showToast(decision === 'approve' ? '✓ Approved' : '✗ Rejected', 'ok')
+        void loadLive()
+      } else {
+        showToast(`ব্যর্থ: ${data.error ?? `HTTP ${res.status}`}`, 'err')
+      }
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Network error', 'err') }
   }
 
   /* ── Derived State ── */

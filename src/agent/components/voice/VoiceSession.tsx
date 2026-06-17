@@ -164,7 +164,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
             <motion.button
               type="button"
               onClick={handleTapOrb}
-              className="relative flex items-center justify-center rounded-full focus:outline-none"
+              className="relative flex select-none touch-manipulation items-center justify-center rounded-full focus:outline-none [-webkit-touch-callout:none]"
               animate={{ scale: orbScale }}
               transition={{ type: 'spring', stiffness: 300, damping: 25 }}
               whileTap={{ scale: 0.94 }}

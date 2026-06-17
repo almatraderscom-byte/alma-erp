@@ -48,13 +48,17 @@ export function useVoiceRecorder(opts: {
         setRecordSecs(0)
         callbacksRef.current.onRecordingStop?.()
 
-        const blob = new Blob(chunks, { type: 'audio/webm' })
+        // iOS/Safari record mp4/aac, not webm — use the negotiated type so the
+        // transcription backend gets a correctly-labeled file.
+        const actualType = mrRef.current?.mimeType || mr.mimeType || 'audio/webm'
+        const ext = /mp4|aac|m4a/i.test(actualType) ? 'm4a' : /ogg/i.test(actualType) ? 'ogg' : 'webm'
+        const blob = new Blob(chunks, { type: actualType })
         if (blob.size < 800) {
           callbacksRef.current.onError?.('অডিও খুব ছোট — আবার বলুন।')
           return
         }
         const fd = new FormData()
-        fd.append('audio', blob, 'recording.webm')
+        fd.append('audio', blob, `recording.${ext}`)
         try {
           const res = await fetch('/api/assistant/transcribe', { method: 'POST', body: fd })
           const data = await res.json() as { text?: string; error?: string }

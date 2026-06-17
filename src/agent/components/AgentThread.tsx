@@ -137,7 +137,7 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
           >
             <div
               ref={bodyRef}
-              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-black/[0.07] pl-3 text-[13px] leading-relaxed text-[#64748b] whitespace-pre-wrap break-words"
+              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-black/[0.07] pl-3 text-[13px] leading-relaxed text-[#64748b] whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
             >
               {thinking}
             </div>
@@ -390,7 +390,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <AgentTodoDock containerRef={containerRef} />
-      <div className="mx-auto max-w-2xl px-4 py-4 pb-6 md:px-6 md:py-6">
+      <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
         {messages.length === 0 && (
           <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
         )}
@@ -466,7 +466,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   )}
 
                   {(!msg.streaming || msg.text) && (
-                    <div className="text-[15px] leading-[1.7] text-[#1a1a2e] select-text">
+                    <div className="text-[15px] leading-[1.7] text-[#1a1a2e] select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />

@@ -28,7 +28,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
           <motion.button
             type="button"
             onClick={onStartVoiceSession}
-            className="relative flex items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/50"
+            className="relative flex select-none touch-manipulation items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/50 [-webkit-touch-callout:none]"
             whileTap={{ scale: 0.95 }}
             aria-label="ভয়েস মোড শুরু করুন"
           >

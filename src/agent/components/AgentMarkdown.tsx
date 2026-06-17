@@ -31,7 +31,7 @@ function CopyButton({ text }: { text: string }) {
 
 function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
   return (
-    <div className={cn('prose-agent select-text text-[#1a1a2e]', className)}>
+    <div className={cn('prose-agent select-text text-[#1a1a2e] break-words [overflow-wrap:anywhere]', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -65,7 +65,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
             }
             return (
               <code
-                className="rounded-md border border-[#E07A5F]/15 bg-[#E07A5F]/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-[#c0553f]"
+                className="rounded-md border border-[#E07A5F]/15 bg-[#E07A5F]/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-[#c0553f] [overflow-wrap:anywhere]"
                 {...props}
               >
                 {children}
@@ -96,7 +96,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           hr() { return <hr className="my-4 border-black/[0.06]" /> },
           a({ href, children }) {
             return (
-              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A]">
+              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]">
                 {children}
               </a>
             )
