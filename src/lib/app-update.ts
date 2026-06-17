@@ -17,6 +17,16 @@ export function isCapacitorNative(): boolean {
 
 export async function fetchRemoteBuildId(): Promise<string | null> {
   try {
+    const res = await fetchWithTimeout('/api/build-info', { cache: 'no-store' }, 8_000)
+    if (res.ok) {
+      const json = await res.json().catch(() => ({}))
+      const remote = String(json?.commit || '').trim()
+      if (remote) return remote
+    }
+  } catch {
+    /* fall through to health */
+  }
+  try {
     const res = await fetchWithTimeout('/api/health', { cache: 'no-store' }, 8_000)
     const json = await res.json().catch(() => ({}))
     const remote = String(json?.frontend?.git_commit || '').trim()

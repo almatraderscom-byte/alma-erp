@@ -11,6 +11,7 @@ const VoiceSession = dynamic(() => import('./voice/VoiceSession'), { ssr: false 
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
+import { AgentBuildBadge } from '@/agent/components/AgentBuildBadge'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 
 interface AgentAppProps {
@@ -834,6 +835,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 অফিস লাইভ
               </span>
             )}
+            <AgentBuildBadge />
           </div>
 
           {/* Right — refresh + new chat */}

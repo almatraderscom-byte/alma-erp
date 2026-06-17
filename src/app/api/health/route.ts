@@ -15,6 +15,9 @@ export async function GET() {
     process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT ||
     null
 
+  const { getBuildInfo } = await import('@/lib/runtime-build')
+  const build = getBuildInfo()
+
   let gasPayload: Record<string, unknown> | null = null
   let gasError: string | null = null
   let dbOk = false
@@ -70,6 +73,10 @@ export async function GET() {
       },
       frontend: {
         git_commit: gitCommit,
+        commit_short: build.commitShort,
+        message: build.message,
+        branch: build.branch,
+        build_info_url: '/api/build-info',
       },
       api: { gas_configured: Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()) },
       /** Optional — set in Vercel to match clasp deploy "@NN" line after each deploy */
