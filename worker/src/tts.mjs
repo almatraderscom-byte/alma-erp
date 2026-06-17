@@ -126,7 +126,12 @@ async function synthesizeChunk(text, accessToken) {
  * @param {number} [maxChars=600]  Total character budget across all chunks
  * @returns {Promise<Buffer>}  MP3 audio buffer
  */
-export async function synthesizeSpeech(text, maxChars = 600) {
+/**
+ * @param {string} text
+ * @param {number} [maxChars=600]
+ * @param {{ purpose?: string }} [opts]
+ */
+export async function synthesizeSpeech(text, maxChars = 600, opts = {}) {
   const creds = getCredentials()
   if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not set or invalid JSON')
 
@@ -141,12 +146,13 @@ export async function synthesizeSpeech(text, maxChars = 600) {
     buffers.push(await synthesizeChunk(chunk, accessToken))
   }
 
+  const purpose = opts.purpose ?? 'voice_message'
   void logCost({
     provider: 'google_tts',
     kind: 'tts',
-    units: { characters: cleaned.length, voice: 'bn-IN-Chirp3-HD-Charon' },
+    units: { characters: cleaned.length, voice: 'bn-IN-Chirp3-HD-Charon', purpose },
     costUsd: calcTtsCostUsd(cleaned.length),
-    dedupKey: `tts:worker:${cleaned.length}:${cleaned.slice(0, 24)}`,
+    dedupKey: `tts:worker:${purpose}:${cleaned.length}:${cleaned.slice(0, 24)}`,
   })
 
   return Buffer.concat(buffers)

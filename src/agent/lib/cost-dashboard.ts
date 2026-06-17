@@ -12,23 +12,119 @@ import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api
 const DHAKA_TZ = 'Asia/Dhaka'
 
 /** ~750 characters ≈ 1 minute of spoken TTS at typical pace. */
-const ELEVENLABS_CHARS_PER_MINUTE = 750
+const TTS_CHARS_PER_MINUTE = 750
 
-async function queryElevenLabsUsage(start: Date, end: Date) {
-  const rows = await prisma.$queryRaw<Array<{ total_cost: string; total_chars: string; calls: string }>>(
+export type TtsUsageSlice = {
+  costUsd: number
+  characters: number
+  minutesUsed: number
+  synthesisCount: number
+}
+
+export type TtsProviderUsage = {
+  total: TtsUsageSlice
+  phoneCalls: TtsUsageSlice & { callCount: number }
+  voiceMessages: TtsUsageSlice
+}
+
+export type TwilioCallUsage = {
+  callCount: number
+  minutesUsed: number
+  costUsd: number
+}
+
+function charsToMinutes(chars: number): number {
+  return Math.round((chars / TTS_CHARS_PER_MINUTE) * 10) / 10
+}
+
+function parseUsageRow(row: { total_cost?: string; total_chars?: string; cnt?: string }) {
+  const costUsd = Math.round((parseFloat(row.total_cost ?? '0') || 0) * 1_000_000) / 1_000_000
+  const characters = parseInt(row.total_chars ?? '0', 10) || 0
+  const synthesisCount = parseInt(row.cnt ?? '0', 10) || 0
+  return {
+    costUsd,
+    characters,
+    minutesUsed: charsToMinutes(characters),
+    synthesisCount,
+  }
+}
+
+function emptySlice(): TtsUsageSlice {
+  return { costUsd: 0, characters: 0, minutesUsed: 0, synthesisCount: 0 }
+}
+
+/**
+ * TTS usage split by purpose. Legacy rows without purpose:
+ * - google_tts worker keys → treat as phone_call (calls were the main worker use)
+ * - elevenlabs → treat as voice_message
+ */
+async function queryTtsProviderUsage(provider: 'google_tts' | 'elevenlabs', start: Date, end: Date): Promise<TtsProviderUsage> {
+  const rows = await prisma.$queryRaw<Array<{ bucket: string; total_cost: string; total_chars: string; cnt: string }>>(
     Prisma.sql`SELECT
-                 COALESCE(SUM(cost_usd), 0)::text AS total_cost,
-                 COALESCE(SUM(COALESCE((units->>'characters')::int, 0)), 0)::text AS total_chars,
-                 COUNT(*)::text AS calls
-               FROM agent_cost_events
-               WHERE provider = 'elevenlabs'
-                 AND occurred_at >= ${start} AND occurred_at < ${end}`,
+      CASE
+        WHEN units->>'purpose' = 'phone_call' THEN 'phone_call'
+        WHEN units->>'purpose' IN ('voice_message', 'web_voice', 'salah_voice') THEN 'voice_message'
+        WHEN ${provider} = 'google_tts'
+          AND (units->>'purpose' IS NULL OR units->>'purpose' = '')
+          AND COALESCE(dedup_key, '') LIKE 'tts:worker:%' THEN 'phone_call'
+        WHEN ${provider} = 'google_tts'
+          AND (units->>'purpose' IS NULL OR units->>'purpose' = '')
+          AND COALESCE(dedup_key, '') LIKE 'tts:web:%' THEN 'voice_message'
+        WHEN ${provider} = 'elevenlabs'
+          AND (units->>'purpose' IS NULL OR units->>'purpose' = '') THEN 'voice_message'
+        ELSE 'voice_message'
+      END AS bucket,
+      COALESCE(SUM(cost_usd), 0)::text AS total_cost,
+      COALESCE(SUM(COALESCE((units->>'characters')::int, 0)), 0)::text AS total_chars,
+      COUNT(*)::text AS cnt
+    FROM agent_cost_events
+    WHERE provider = ${provider}
+      AND kind = 'tts'
+      AND occurred_at >= ${start} AND occurred_at < ${end}
+    GROUP BY 1`,
+  )
+
+  const byBucket = new Map<string, TtsUsageSlice>()
+  for (const row of rows) {
+    byBucket.set(row.bucket, parseUsageRow(row))
+  }
+
+  const phoneCallsSlice = byBucket.get('phone_call') ?? emptySlice()
+  const voiceMessages = byBucket.get('voice_message') ?? emptySlice()
+
+  const total: TtsUsageSlice = {
+    costUsd: Math.round((phoneCallsSlice.costUsd + voiceMessages.costUsd) * 1_000_000) / 1_000_000,
+    characters: phoneCallsSlice.characters + voiceMessages.characters,
+    minutesUsed: charsToMinutes(phoneCallsSlice.characters + voiceMessages.characters),
+    synthesisCount: phoneCallsSlice.synthesisCount + voiceMessages.synthesisCount,
+  }
+
+  return {
+    total,
+    phoneCalls: { ...phoneCallsSlice, callCount: phoneCallsSlice.synthesisCount },
+    voiceMessages,
+  }
+}
+
+async function queryTwilioCallUsage(start: Date, end: Date): Promise<TwilioCallUsage> {
+  const rows = await prisma.$queryRaw<Array<{ total_cost: string; call_count: string; total_seconds: string }>>(
+    Prisma.sql`SELECT
+      COALESCE(SUM(cost_usd), 0)::text AS total_cost,
+      COUNT(*)::text AS call_count,
+      COALESCE(SUM(COALESCE((units->>'estimated_seconds')::int, 60)), 0)::text AS total_seconds
+    FROM agent_cost_events
+    WHERE provider = 'twilio'
+      AND kind = 'call'
+      AND occurred_at >= ${start} AND occurred_at < ${end}`,
   )
   const costUsd = Math.round((parseFloat(rows[0]?.total_cost ?? '0') || 0) * 1_000_000) / 1_000_000
-  const characters = parseInt(rows[0]?.total_chars ?? '0', 10) || 0
-  const calls = parseInt(rows[0]?.calls ?? '0', 10) || 0
-  const minutesUsed = Math.round((characters / ELEVENLABS_CHARS_PER_MINUTE) * 10) / 10
-  return { costUsd, characters, minutesUsed, calls }
+  const callCount = parseInt(rows[0]?.call_count ?? '0', 10) || 0
+  const totalSeconds = parseInt(rows[0]?.total_seconds ?? '0', 10) || 0
+  return {
+    callCount,
+    minutesUsed: Math.round((totalSeconds / 60) * 10) / 10,
+    costUsd,
+  }
 }
 
 export async function getCostDashboardData() {
@@ -181,9 +277,20 @@ export async function getCostDashboardData() {
   const dailyBudgetPct = budgets.dailyUsd ? formatBudgetPct(todayUsd, budgets.dailyUsd) : null
   const monthlyBudgetPct = budgets.monthlyUsd ? formatBudgetPct(monthBillable, budgets.monthlyUsd) : null
 
-  const [elevenLabsToday, elevenLabsMonth] = await Promise.all([
-    queryElevenLabsUsage(todayBounds.start, todayBounds.end),
-    queryElevenLabsUsage(monthB.start, monthB.end),
+  const [
+    googleTtsToday,
+    googleTtsMonth,
+    elevenLabsToday,
+    elevenLabsMonth,
+    twilioCallsToday,
+    twilioCallsMonth,
+  ] = await Promise.all([
+    queryTtsProviderUsage('google_tts', todayBounds.start, todayBounds.end),
+    queryTtsProviderUsage('google_tts', monthB.start, monthB.end),
+    queryTtsProviderUsage('elevenlabs', todayBounds.start, todayBounds.end),
+    queryTtsProviderUsage('elevenlabs', monthB.start, monthB.end),
+    queryTwilioCallUsage(todayBounds.start, todayBounds.end),
+    queryTwilioCallUsage(monthB.start, monthB.end),
   ])
 
   return {
@@ -227,6 +334,13 @@ export async function getCostDashboardData() {
     })),
     csAnalytics,
     asOf: new Date().toISOString(),
+    googleTts: {
+      today: googleTtsToday,
+      month: googleTtsMonth,
+      priceNote: '$16 / 1M chars (Chirp HD estimate)',
+      twilioCallsToday,
+      twilioCallsMonth,
+    },
     elevenLabs: {
       today: elevenLabsToday,
       month: elevenLabsMonth,

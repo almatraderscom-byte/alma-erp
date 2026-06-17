@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     void logCost({
       provider: 'google_tts',
       kind: 'tts',
-      units: { characters: charCount, voice: 'bn-IN-Chirp3-HD-Charon' },
+      units: { characters: charCount, voice: 'bn-IN-Chirp3-HD-Charon', purpose: 'web_voice' },
       costUsd: calcTtsCostUsd(charCount),
       dedupKey: `tts:web:${charCount}:${text.slice(0, 24)}`,
     })

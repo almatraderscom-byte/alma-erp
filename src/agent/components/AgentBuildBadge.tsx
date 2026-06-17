@@ -1,15 +1,22 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { APP_BUILD_ID, formatBuildLabel, type BuildInfo } from '@/lib/runtime-build'
 import { isMeaningfulBuildId, isUpdateAvailable } from '@/lib/app-update'
+import { cn } from '@/lib/utils'
+
+type AgentBuildBadgeProps = {
+  /** monitor = full-width top banner with entrance animation */
+  variant?: 'inline' | 'monitor'
+  className?: string
+}
 
 /**
  * Tap-friendly production version pill — shows what's live vs what you're viewing.
- * Helps after deploys when the PWA cache serves an older bundle.
  */
-export function AgentBuildBadge() {
+export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBadgeProps) {
   const [remote, setRemote] = useState<BuildInfo | null>(null)
 
   useEffect(() => {
@@ -78,18 +85,44 @@ export function AgentBuildBadge() {
     )
   }, [localShort, remote, stale])
 
-  return (
+  const pill = (
     <button
       type="button"
       onClick={showDetails}
       title="Tap for deploy details — bookmark /api/build-info"
-      className={`hidden shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold tabular-nums transition-colors sm:inline-flex ${
+      className={cn(
+        'shrink-0 rounded-full border font-semibold tabular-nums transition-colors',
+        variant === 'monitor'
+          ? 'inline-flex min-h-[32px] items-center gap-1.5 px-3 py-1 text-[11px]'
+          : 'hidden px-2 py-0.5 text-[9px] sm:inline-flex',
         stale
           ? 'border-amber-300 bg-amber-50 text-amber-800 animate-pulse'
-          : 'border-black/[0.06] bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-      }`}
+          : 'border-black/[0.06] bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700',
+        className,
+      )}
     >
       {stale ? '↻ ' : ''}{label}
     </button>
   )
+
+  if (variant === 'monitor') {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: -14, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        className="mb-2.5 flex justify-center"
+      >
+        <div className="inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/90 px-2 py-1 shadow-[0_4px_20px_rgba(224,122,95,0.12)] backdrop-blur-sm">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#E07A5F] opacity-40" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E07A5F]" />
+          </span>
+          {pill}
+        </div>
+      </motion.div>
+    )
+  }
+
+  return pill
 }

@@ -30,9 +30,32 @@ type DashboardData = {
   budgets: { dailyUsd: number | null; monthlyUsd: number | null }
   dailyBudgetPct?: number | null
   monthlyBudgetPct?: number | null
+  googleTts?: {
+    today: {
+      total: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+      phoneCalls: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number; callCount: number }
+      voiceMessages: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+    }
+    month: {
+      total: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+      phoneCalls: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number; callCount: number }
+      voiceMessages: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+    }
+    priceNote: string
+    twilioCallsToday: { callCount: number; minutesUsed: number; costUsd: number }
+    twilioCallsMonth: { callCount: number; minutesUsed: number; costUsd: number }
+  }
   elevenLabs?: {
-    today: { costUsd: number; characters: number; minutesUsed: number; calls: number }
-    month: { costUsd: number; characters: number; minutesUsed: number; calls: number }
+    today: {
+      total: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+      phoneCalls: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number; callCount: number }
+      voiceMessages: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+    }
+    month: {
+      total: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+      phoneCalls: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number; callCount: number }
+      voiceMessages: { costUsd: number; characters: number; minutesUsed: number; synthesisCount: number }
+    }
     priceNote: string
   }
 }
@@ -139,6 +162,128 @@ const STAT_GLOWS = [
   'shadow-[0_2px_12px_rgba(129,178,154,0.08)]',
   'shadow-[0_2px_12px_rgba(59,130,246,0.08)]',
 ]
+
+function TtsProviderCard({
+  title,
+  accent,
+  borderClass,
+  gradientClass,
+  priceNote,
+  todayCalls,
+  monthCalls,
+  todayVoice,
+  monthVoice,
+  twilioToday,
+  twilioMonth,
+  callLabel = 'ফোন কল',
+  primaryMode = 'calls',
+}: {
+  title: string
+  accent: string
+  borderClass: string
+  gradientClass: string
+  priceNote: string
+  todayCalls: { minutesUsed: number; costUsd: number; characters: number; callCount: number }
+  monthCalls: { minutesUsed: number; costUsd: number; characters: number; callCount: number }
+  todayVoice: { minutesUsed: number; costUsd: number; characters: number; synthesisCount: number }
+  monthVoice: { minutesUsed: number; costUsd: number; characters: number; synthesisCount: number }
+  twilioToday?: { callCount: number; minutesUsed: number; costUsd: number }
+  twilioMonth?: { callCount: number; minutesUsed: number; costUsd: number }
+  callLabel?: string
+  primaryMode?: 'calls' | 'voice'
+}) {
+  const todayCallCount = twilioToday?.callCount ?? todayCalls.callCount
+  const monthCallCount = twilioMonth?.callCount ?? monthCalls.callCount
+
+  const callGrid = (
+    <>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#64748b]">{callLabel}</p>
+      <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayCalls.minutesUsed}</p>
+          <p className="text-[10px] text-[#64748b]">{fmtUsd(todayCalls.costUsd)}</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayCalls.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-[#64748b]">{todayCallCount} calls</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthCalls.minutesUsed}</p>
+          <p className="text-[10px] text-[#64748b]">{fmtUsd(monthCalls.costUsd)}</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthCalls.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-[#64748b]">{monthCallCount} calls</p>
+        </div>
+      </div>
+      {twilioToday && (
+        <p className="mb-3 text-[10px] text-[#94a3b8]">
+          Twilio: আজ {twilioToday.callCount} কল · ~{twilioToday.minutesUsed}m · {fmtUsd(twilioToday.costUsd)}
+          {twilioMonth ? ` · মাসে ${twilioMonth.callCount} কল · ~${twilioMonth.minutesUsed}m` : ''}
+        </p>
+      )}
+    </>
+  )
+
+  const voiceGrid = (
+    <>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#64748b]">ভয়েস মেসেজ / voice reply</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayVoice.minutesUsed}</p>
+          <p className="text-[10px] text-[#64748b]">{fmtUsd(todayVoice.costUsd)}</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayVoice.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-[#64748b]">{todayVoice.synthesisCount} synthesis</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthVoice.minutesUsed}</p>
+          <p className="text-[10px] text-[#64748b]">{fmtUsd(monthVoice.costUsd)}</p>
+        </div>
+        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthVoice.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-[#64748b]">{monthVoice.synthesisCount} synthesis</p>
+        </div>
+      </div>
+    </>
+  )
+
+  const showCallsSecondary = primaryMode === 'voice' && (todayCalls.callCount > 0 || monthCalls.callCount > 0)
+
+  return (
+    <div className={cn('rounded-2xl border p-4 shadow-sm', borderClass, gradientClass)}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className={cn('text-xs font-semibold', accent)}>{title}</p>
+        <p className="text-[10px] text-[#94a3b8]">{priceNote}</p>
+      </div>
+
+      {primaryMode === 'calls' ? (
+        <>
+          {callGrid}
+          {(todayVoice.synthesisCount > 0 || monthVoice.synthesisCount > 0) && (
+            <div className="mt-1 border-t border-black/[0.05] pt-3">{voiceGrid}</div>
+          )}
+        </>
+      ) : (
+        <>
+          {voiceGrid}
+          {showCallsSecondary && (
+            <div className="mt-3 border-t border-black/[0.05] pt-3">{callGrid}</div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
 
 export default function AgentCostsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
@@ -333,33 +478,40 @@ export default function AgentCostsDashboard() {
         )}
       </div>
 
-      {data.elevenLabs && (
-        <div className="rounded-2xl border border-[#EC4899]/25 bg-gradient-to-br from-[#EC4899]/[0.06] to-white p-4 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-[#EC4899]">🗣️ ElevenLabs API (TTS)</p>
-            <p className="text-[10px] text-[#94a3b8]">{data.elevenLabs.priceNote}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
-              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.today.minutesUsed}</p>
-              <p className="text-[10px] text-[#64748b]">{fmtUsd(data.elevenLabs.today.costUsd)}</p>
-            </div>
-            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
-              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.today.characters.toLocaleString()}</p>
-              <p className="text-[10px] text-[#64748b]">{data.elevenLabs.today.calls} calls</p>
-            </div>
-            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
-              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.month.minutesUsed}</p>
-              <p className="text-[10px] text-[#64748b]">{fmtUsd(data.elevenLabs.month.costUsd)}</p>
-            </div>
-            <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
-              <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{data.elevenLabs.month.characters.toLocaleString()}</p>
-              <p className="text-[10px] text-[#64748b]">{data.elevenLabs.month.calls} calls</p>
-            </div>
+      {(data.googleTts || data.elevenLabs) && (
+        <div className="space-y-3">
+          <p className="text-[11px] font-semibold text-[#64748b]">🎙️ Voice API — Google TTS vs ElevenLabs (আলাদা হিসাব)</p>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {data.googleTts && (
+              <TtsProviderCard
+                title="📞 Google TTS (কল — primary)"
+                accent="text-[#8B5CF6]"
+                borderClass="border-[#8B5CF6]/25"
+                gradientClass="bg-gradient-to-br from-[#8B5CF6]/[0.06] to-white"
+                priceNote={data.googleTts.priceNote}
+                todayCalls={data.googleTts.today.phoneCalls}
+                monthCalls={data.googleTts.month.phoneCalls}
+                todayVoice={data.googleTts.today.voiceMessages}
+                monthVoice={data.googleTts.month.voiceMessages}
+                twilioToday={data.googleTts.twilioCallsToday}
+                twilioMonth={data.googleTts.twilioCallsMonth}
+              />
+            )}
+            {data.elevenLabs && (
+              <TtsProviderCard
+                title="🗣️ ElevenLabs (staff / voice reply)"
+                accent="text-[#EC4899]"
+                borderClass="border-[#EC4899]/25"
+                gradientClass="bg-gradient-to-br from-[#EC4899]/[0.06] to-white"
+                priceNote={data.elevenLabs.priceNote}
+                todayCalls={data.elevenLabs.today.phoneCalls}
+                monthCalls={data.elevenLabs.month.phoneCalls}
+                todayVoice={data.elevenLabs.today.voiceMessages}
+                monthVoice={data.elevenLabs.month.voiceMessages}
+                callLabel="ElevenLabs ফোন কল (বিরল)"
+                primaryMode="voice"
+              />
+            )}
           </div>
         </div>
       )}

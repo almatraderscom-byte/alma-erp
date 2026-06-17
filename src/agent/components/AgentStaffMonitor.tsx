@@ -24,6 +24,7 @@ import {
 import { MonitorSalahTimeline } from './monitor/MonitorDutyTimeline'
 import type { TrustRule } from './monitor/MonitorTrustEngine'
 import type { BrainStats } from './monitor/MonitorBrainCard'
+import { AgentBuildBadge } from '@/agent/components/AgentBuildBadge'
 
 const AgentSalahTimesSettings = dynamic(
   () => import('@/agent/components/AgentSalahTimesSettings'),
@@ -514,6 +515,7 @@ export default function AgentStaffMonitor() {
           className="sticky top-0 z-30 -mx-3 border-b border-black/[0.05] bg-[#FAF9F6]/90 px-3 pb-2.5 backdrop-blur-md sm:-mx-4 sm:px-4"
           style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
         >
+        <AgentBuildBadge variant="monitor" />
         {/* ── Header ── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

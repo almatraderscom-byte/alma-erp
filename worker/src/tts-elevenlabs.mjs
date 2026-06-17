@@ -91,6 +91,7 @@ export async function synthesizeElevenLabs(text, opts = {}) {
   // Single request — avoids broken MP3 concat; matches playground behaviour
   const buffer = await synthesizeChunk(prepared, opts)
 
+  const purpose = opts.purpose ?? 'voice_message'
   void logCost({
     provider: 'elevenlabs',
     kind: 'tts',
@@ -99,9 +100,10 @@ export async function synthesizeElevenLabs(text, opts = {}) {
       voice: opts.voiceId ?? resolveVoiceId(opts.voiceProfile ?? 'staff'),
       model: ELEVENLABS_MODEL_ID(),
       profile: opts.voiceProfile ?? 'staff',
+      purpose,
     },
     costUsd: estimateElevenLabsCost(prepared.length),
-    dedupKey: `elevenlabs:${prepared.length}:${prepared.slice(0, 24)}`,
+    dedupKey: `elevenlabs:${purpose}:${prepared.length}:${prepared.slice(0, 24)}`,
   })
 
   return buffer
@@ -118,22 +120,24 @@ export function isElevenLabsAvailable() {
 export async function smartTts(text, opts = {}) {
   const profile = opts.voiceProfile ?? (opts.elevenLabsOnly ? 'staff' : 'male')
 
+  const purpose = opts.purpose ?? 'voice_message'
+
   if (opts.isSalah) {
     const { synthesizeSpeech } = await import('./tts.mjs')
-    return synthesizeSpeech(text)
+    return synthesizeSpeech(text, 600, { purpose: 'salah_voice' })
   }
 
   if (opts.elevenLabsOnly || opts.useElevenLabs) {
     if (!isElevenLabsAvailable()) {
       throw new Error('ElevenLabs required but ELEVENLABS_API_KEY not set')
     }
-    return synthesizeElevenLabs(text, { voiceProfile: profile })
+    return synthesizeElevenLabs(text, { voiceProfile: profile, purpose })
   }
 
   if (opts.useOwnerVoice && isElevenLabsAvailable()) {
-    return synthesizeElevenLabs(text, { voiceProfile: profile })
+    return synthesizeElevenLabs(text, { voiceProfile: profile, purpose })
   }
 
   const { synthesizeSpeech } = await import('./tts.mjs')
-  return synthesizeSpeech(text)
+  return synthesizeSpeech(text, 600, { purpose })
 }

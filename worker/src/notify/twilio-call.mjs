@@ -26,18 +26,19 @@ const CALL_TEXT_LIMIT = 200
 
 async function synthesizeCallAudio(speechText, opts = {}) {
   const isSalah = Boolean(opts.salah || opts.purpose === 'salah')
+  const callOpts = { purpose: 'phone_call' }
   if (isSalah || opts.ttsProvider === 'google') {
-    return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+    return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
   }
   if (opts.ttsProvider === 'elevenlabs' || opts.useElevenLabs) {
     const { synthesizeElevenLabs, isElevenLabsAvailable } = await import('../tts-elevenlabs.mjs')
     if (!isElevenLabsAvailable()) {
-      return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+      return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
     }
     const voiceProfile = opts.voiceProfile === 'female' ? 'female' : 'male'
-    return synthesizeElevenLabs(speechText, { voiceProfile })
+    return synthesizeElevenLabs(speechText, { voiceProfile, ...callOpts })
   }
-  return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20)
+  return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
 }
 const MIN_CALL_GAP_MS = 90 * 1000
 /** Salah retries: wait after failed connect, then call again (owner may be on another line) */
