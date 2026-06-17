@@ -48,7 +48,14 @@ export async function GET(req: NextRequest) {
     orderBy: [{ createdAt: 'desc' }],
   })
 
-  return NextResponse.json({ todos: sortTodosForDisplay(todos) })
+  const serialized = sortTodosForDisplay(todos).map((t) => ({
+    ...t,
+    dueDate: t.dueDate?.toISOString() ?? null,
+    createdAt: t.createdAt.toISOString(),
+    completedAt: t.completedAt?.toISOString() ?? null,
+  }))
+
+  return NextResponse.json({ todos: serialized })
 }
 
 export async function POST(req: NextRequest) {

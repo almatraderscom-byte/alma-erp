@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, useMemo, type RefObject } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { AgentTodoPanel } from './AgentTodoPanel'
+import { isAgentTodoSource, isOwnerTodoSource } from './todo-panel-utils'
 
 /**
  * Single, scroll-aware todo dock — the ONLY todo component in the agent chat.
@@ -40,9 +41,22 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
     if (!scrolled) setExpanded(false)
   }, [scrolled])
 
+  const todos = ctx?.todos ?? []
+  const completed = ctx?.completed ?? []
+  const loading = ctx?.loading ?? true
+  const dayShiftActive = ctx?.dayShiftActive ?? false
+
+  const agentActive = useMemo(
+    () => todos.filter((t) => isAgentTodoSource(t.source) && t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
+    [todos],
+  )
+  const sirActive = useMemo(
+    () => todos.filter((t) => isOwnerTodoSource(t.source) && t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
+    [todos],
+  )
+  const total = agentActive.length + sirActive.length + completed.length
+
   if (!ctx) return null
-  const { active, completed, loading } = ctx
-  const total = active.length + completed.length
   if (loading || total === 0) return null
 
   const dateLabel = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
@@ -73,14 +87,21 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
                 <span className="shrink-0 text-[11px] text-[#94a3b8]">·</span>
                 <span className="flex shrink-0 items-center gap-2 text-[11px] font-medium">
                   <span className="text-[#1a1a2e]">{total} Tasks</span>
+                  <span className="inline-flex items-center gap-1 text-[#E07A5F]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]" />
+                    🤖 {agentActive.length}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-slate-600">
+                    <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                    Sir {sirActive.length}
+                  </span>
                   <span className="inline-flex items-center gap-1 text-emerald-600">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                     {completed.length} Done
                   </span>
-                  <span className="inline-flex items-center gap-1 text-[#E07A5F]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]" />
-                    {active.length} Pending
-                  </span>
+                  {dayShiftActive && (
+                    <span className="text-[9px] font-semibold text-amber-700 animate-pulse">live</span>
+                  )}
                 </span>
                 <svg
                   width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
