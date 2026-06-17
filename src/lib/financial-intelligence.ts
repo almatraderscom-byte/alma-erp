@@ -55,7 +55,8 @@ async function fetchGasOrders(): Promise<Order[]> {
   try {
     const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
-  } catch {
+  } catch (err) {
+    console.warn('[financial-intelligence] fetchGasOrders failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
@@ -78,6 +79,7 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<num
   try {
     const campRes = await fetch(
       `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE","PAUSED"]&fields=id&limit=15&access_token=${token}`,
+      { signal: AbortSignal.timeout(20_000) },
     )
     if (!campRes.ok) return 0
     const campData = (await campRes.json()) as { data?: Array<{ id: string }> }
@@ -86,13 +88,14 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<num
     const range = encodeURIComponent(JSON.stringify({ since: startYmd, until: endYmd }))
     for (const c of campData.data ?? []) {
       const url = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${range}&fields=spend&access_token=${token}`
-      const res = await fetch(url)
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = (await res.json()) as { data?: Array<{ spend?: string }> }
       total += safeNum(data.data?.[0]?.spend)
     }
     return roundMoney(total)
-  } catch {
+  } catch (err) {
+    console.warn('[financial-intelligence] fetchAdSpendPeriod failed:', err instanceof Error ? err.message : err)
     return 0
   }
 }

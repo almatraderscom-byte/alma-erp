@@ -11,6 +11,49 @@ import { runAutoQc, formatQcNotification, SHADOW_MODE } from '@/agent/lib/auto-q
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
+const TRUSTED_IMAGE_HOSTS = new Set([
+  'api.telegram.org',
+  'scontent.xx.fbcdn.net',
+  'lookaside.fbsbx.com',
+  'platform-lookaside.fbsbx.com',
+])
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+function isTrustedImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return false
+    if (TRUSTED_IMAGE_HOSTS.has(parsed.hostname)) return true
+    if (parsed.hostname.endsWith('.fbcdn.net')) return true
+    if (parsed.hostname.endsWith('.supabase.co')) return true
+    if (parsed.hostname.endsWith('.cdninstagram.com')) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+async function fetchImageSafe(url: string): Promise<{ buf: Buffer; mime: string } | null> {
+  if (!isTrustedImageUrl(url)) {
+    console.warn('[assess-task-proof] rejected untrusted image URL:', url.slice(0, 120))
+    return null
+  }
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+  if (!res.ok) return null
+  const contentLength = Number(res.headers.get('content-length') ?? '0')
+  if (contentLength > MAX_IMAGE_BYTES) {
+    console.warn('[assess-task-proof] image too large:', contentLength)
+    return null
+  }
+  const buf = Buffer.from(await res.arrayBuffer())
+  if (buf.length > MAX_IMAGE_BYTES) return null
+  const mime = res.headers.get('content-type')?.startsWith('image/')
+    ? res.headers.get('content-type')!
+    : 'image/jpeg'
+  return { buf, mime }
+}
+
 function checkToken(req: NextRequest): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN
   if (!expected) return false
@@ -65,19 +108,16 @@ export async function POST(req: NextRequest) {
       },
     ]
 
+    let cachedImage: { buf: Buffer; mime: string } | null = null
     if (proofImageUrl) {
-      const imgRes = await fetch(proofImageUrl)
-      if (imgRes.ok) {
-        const buf = Buffer.from(await imgRes.arrayBuffer())
-        const mime = imgRes.headers.get('content-type')?.startsWith('image/')
-          ? (imgRes.headers.get('content-type') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp')
-          : 'image/jpeg'
+      cachedImage = await fetchImageSafe(proofImageUrl)
+      if (cachedImage) {
         userContent.push({
           type: 'image',
           source: {
             type: 'base64',
-            media_type: mime,
-            data: buf.toString('base64'),
+            media_type: cachedImage.mime as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+            data: cachedImage.buf.toString('base64'),
           },
         })
       }
@@ -109,29 +149,21 @@ export async function POST(req: NextRequest) {
       autoQc: undefined as { score?: number; verdict?: string; issues?: string[]; notification?: string } | undefined,
     }
 
-    // Auto-QC hook (shadow mode): for product_photo tasks with image proof
-    if (taskType === 'product_photo' && proofImageUrl) {
+    if (taskType === 'product_photo' && cachedImage) {
       try {
-        const imgRes2 = await fetch(proofImageUrl)
-        if (imgRes2.ok) {
-          const buf2 = Buffer.from(await imgRes2.arrayBuffer())
-          const mime2 = imgRes2.headers.get('content-type')?.startsWith('image/')
-            ? imgRes2.headers.get('content-type')!
-            : 'image/jpeg'
-          const qcResult = await runAutoQc(buf2.toString('base64'), mime2)
-          if (qcResult.ran) {
-            result.autoQc = {
-              score: qcResult.score,
-              verdict: qcResult.verdict,
-              issues: qcResult.issues,
-              notification: qcResult.belowThreshold
-                ? formatQcNotification(qcResult, body.taskTitle)
-                : undefined,
-            }
-            if (qcResult.belowThreshold && !SHADOW_MODE) {
-              result.matches = false
-              result.note = `QC score ${qcResult.score}/100 — threshold এর নিচে`
-            }
+        const qcResult = await runAutoQc(cachedImage.buf.toString('base64'), cachedImage.mime)
+        if (qcResult.ran) {
+          result.autoQc = {
+            score: qcResult.score,
+            verdict: qcResult.verdict,
+            issues: qcResult.issues,
+            notification: qcResult.belowThreshold
+              ? formatQcNotification(qcResult, body.taskTitle)
+              : undefined,
+          }
+          if (qcResult.belowThreshold && !SHADOW_MODE) {
+            result.matches = false
+            result.note = `QC score ${qcResult.score}/100 — threshold এর নিচে`
           }
         }
       } catch (qcErr) {
@@ -142,6 +174,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result)
   } catch (err) {
     console.error('[assess-task-proof]', err)
-    return NextResponse.json({ matches: true, confidence: 'low', note: 'assessment_failed' })
+    return NextResponse.json({ matches: false, confidence: 'low', note: 'assessment_error' })
   }
 }

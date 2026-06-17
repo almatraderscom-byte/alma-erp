@@ -140,7 +140,8 @@ function parseCandidates(raw: string): ReflectionCandidate[] {
       out.push({ businessId, domain, heuristic, evidence, confidence })
     }
     return out.slice(0, 5)
-  } catch {
+  } catch (err) {
+    console.warn('[reflection] parseReflectionResponse failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

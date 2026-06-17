@@ -45,8 +45,8 @@ export async function runHealthScan(dateYmd?: string): Promise<HealthScanReport>
         })
       }
     }
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[health-scan] duty log scan failed:', err instanceof Error ? err.message : err)
   }
 
   try {
@@ -64,8 +64,8 @@ export async function runHealthScan(dateYmd?: string): Promise<HealthScanReport>
         })
       }
     }
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[health-scan] heartbeat scan failed:', err instanceof Error ? err.message : err)
   }
 
   try {
@@ -90,8 +90,8 @@ export async function runHealthScan(dateYmd?: string): Promise<HealthScanReport>
         })
       }
     }
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[health-scan] cost event scan failed:', err instanceof Error ? err.message : err)
   }
 
   try {
@@ -108,8 +108,8 @@ export async function runHealthScan(dateYmd?: string): Promise<HealthScanReport>
         signal: 'AgentPendingAction status=pending',
       })
     }
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[health-scan] pending actions scan failed:', err instanceof Error ? err.message : err)
   }
 
   issues.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])

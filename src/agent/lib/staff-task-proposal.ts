@@ -101,7 +101,9 @@ async function getStaffProfiles(): Promise<Record<string, StaffProfile>> {
       _profileCache = { ...DEFAULT_PROFILES, ...(setting.value as Record<string, StaffProfile>) }
       return _profileCache
     }
-  } catch { /* use defaults */ }
+  } catch (err) {
+    console.warn('[staff-task-proposal] getStaffProfiles failed:', err instanceof Error ? err.message : err)
+  }
   _profileCache = DEFAULT_PROFILES
   return _profileCache
 }

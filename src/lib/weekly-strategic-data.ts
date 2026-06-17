@@ -68,7 +68,8 @@ async function fetchGasOrders(): Promise<Order[]> {
   try {
     const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
-  } catch {
+  } catch (err) {
+    console.warn('[weekly-strategic] fetchGasOrders failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
@@ -137,7 +138,7 @@ async function gatherAdsWeekMetrics(): Promise<{ spend: number | null; ctrAvg: n
 
     for (const c of campData.data ?? []) {
       const url = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: weekStart, until: today }))}&fields=spend,ctr&access_token=${token}`
-      const res = await fetch(url)
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = (await res.json()) as { data?: Array<{ spend?: string; ctr?: string }> }
       const row = data.data?.[0]
@@ -154,7 +155,8 @@ async function gatherAdsWeekMetrics(): Promise<{ spend: number | null; ctrAvg: n
       spend: totalSpend > 0 ? Math.round(totalSpend) : null,
       ctrAvg: ctrCount > 0 ? Math.round((ctrSum / ctrCount) * 10000) / 100 : null,
     }
-  } catch {
+  } catch (err) {
+    console.warn('[weekly-strategic] getWeekAdSpend failed:', err instanceof Error ? err.message : err)
     return { spend: null, ctrAvg: null }
   }
 }
@@ -332,7 +334,8 @@ async function gatherStallingProducts(): Promise<WeeklyStrategicData['movers']['
         driver: 'কন্টেন্ট/প্রোমো গ্যাপ — বিক্রি স্থির হতে পারে',
       }
     })
-  } catch {
+  } catch (err) {
+    console.warn('[weekly-strategic] findContentGaps failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

@@ -80,7 +80,8 @@ async function loadPinnedMemories(
         })
 
     return filtered.slice(0, 30).map((r) => ({ id: r.id, content: r.content, scope: r.scope })) as PinnedMemory[]
-  } catch {
+  } catch (err) {
+    console.warn('[run-owner-turn] loadPinnedMemories failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
@@ -105,7 +106,8 @@ async function loadOwnerDecisions(businessId: AgentBusinessId): Promise<OwnerDec
       })
       .slice(0, 5)
       .map((r) => ({ content: r.content, createdAt: r.createdAt }))
-  } catch {
+  } catch (err) {
+    console.warn('[run-owner-turn] loadOwnerDecisions failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

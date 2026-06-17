@@ -52,7 +52,9 @@ export async function getCostDashboardData() {
   try {
     const { getCsAnalyticsSummary } = await import('@/agent/lib/cs/analytics')
     csAnalytics = await getCsAnalyticsSummary(7)
-  } catch { /* CS tables may not exist yet */ }
+  } catch (err) {
+    console.warn('[cost-dashboard] CS analytics load failed:', err instanceof Error ? err.message : err)
+  }
 
   const csCostRows = await prisma.$queryRaw<Array<{ kind: string; total: string }>>(
     Prisma.sql`SELECT kind, SUM(cost_usd)::text AS total

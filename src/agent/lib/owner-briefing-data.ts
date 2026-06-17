@@ -85,7 +85,8 @@ async function gatherSalesSignals() {
       sevenDayAvg: Math.round(roundMoney(week.totalRevenue) / 7),
       sevenDayOrderAvg: Math.round(week.totalOrders / 7),
     }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherSalesSignals failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -101,7 +102,8 @@ async function gatherPendingOrders() {
       note: check.note,
       unknownCount: check.unknownCount,
     }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherPendingOrders failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -126,7 +128,8 @@ async function gatherInventoryAndReorder() {
         sku: i.id,
       }))
     return { inventory: { items }, reorderSuggestions }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherInventoryAndReorder failed:', err instanceof Error ? err.message : err)
     return { inventory: null, reorderSuggestions: [] as ReorderSuggestion[] }
   }
 }
@@ -146,7 +149,8 @@ async function gatherCsWaiting() {
       nearWindowCount: nearWindow.length,
       openAlerts: Number(openAlerts) || 0,
     }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherCsWaiting failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -166,6 +170,7 @@ async function gatherAdsDigest() {
     const sevenDaysAgo = daysAgoYmd(6)
     const campRes = await fetch(
       `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE"]&fields=id,name&limit=10&access_token=${token}`,
+      { signal: AbortSignal.timeout(20_000) },
     )
     if (!campRes.ok) return null
     const campData = (await campRes.json()) as { data?: Array<{ id: string; name: string }> }
@@ -175,7 +180,10 @@ async function gatherAdsDigest() {
     for (const c of campData.data ?? []) {
       const todayUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: today, until: today }))}&fields=spend,ctr,cpc&access_token=${token}`
       const weekUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: sevenDaysAgo, until: today }))}&fields=ctr&access_token=${token}`
-      const [todayIns, weekIns] = await Promise.all([fetch(todayUrl), fetch(weekUrl)])
+      const [todayIns, weekIns] = await Promise.all([
+        fetch(todayUrl, { signal: AbortSignal.timeout(15_000) }),
+        fetch(weekUrl, { signal: AbortSignal.timeout(15_000) }),
+      ])
       if (!todayIns.ok) continue
       const todayData = (await todayIns.json()) as { data?: Array<{ spend?: string; ctr?: string; cpc?: string }> }
       const weekData = weekIns.ok
@@ -199,7 +207,8 @@ async function gatherAdsDigest() {
       }
     }
     return campaigns.length ? { campaigns, anomalies } : null
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherAdsDigest failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -251,7 +260,8 @@ async function gatherStaffYesterday() {
     }
 
     return { summary, done: done.length, total: work.length, lowPerformers }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherStaffYesterday failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -295,7 +305,8 @@ async function gatherStaffPatterns(): Promise<Array<{ name: string; type: string
       }
     }
     return flags
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherStaffPatterns failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
@@ -323,7 +334,8 @@ async function gatherReturnPricingInsights() {
         costDataMissing: pricing.costDataMissing,
       },
     }
-  } catch {
+  } catch (err) {
+    console.warn('[briefing] gatherReturnPricingInsights failed:', err instanceof Error ? err.message : err)
     return { returns: null, pricing: null }
   }
 }

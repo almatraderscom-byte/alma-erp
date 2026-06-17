@@ -14,7 +14,8 @@ async function fetchRecentOrders(): Promise<Order[]> {
   try {
     const raw = await getLifestyleOrders({ business_id: 'ALMA_LIFESTYLE', limit: '500' })
     return raw.orders ?? []
-  } catch {
+  } catch (err) {
+    console.warn('[outcome-metrics] fetchRecentOrders failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
@@ -49,7 +50,8 @@ export async function getSalesTotal7d(): Promise<number | null> {
   try {
     const week = await getAgentOrdersSummary('week')
     return roundMoney(week.totalRevenue)
-  } catch {
+  } catch (err) {
+    console.warn('[outcome-metrics] getSalesTotal7d failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

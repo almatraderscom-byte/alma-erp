@@ -48,7 +48,9 @@ export async function buildStaffContext(staffId: string, staffName: string): Pro
       if ((doneCount / tasks.length) >= 0.7) consecutiveGoodDays++
       else break
     }
-  } catch { /* fallback to defaults */ }
+  } catch (err) {
+    console.warn('[staff-comms] task context load failed:', err instanceof Error ? err.message : err)
+  }
 
   let recentMood: StaffContext['recentMood'] = 'unknown'
   try {
@@ -64,7 +66,9 @@ export async function buildStaffContext(staffId: string, staffName: string): Pro
       else if (text.includes('ভালো') || text.includes('ধন্যবাদ') || text.includes('হয়ে গেছে')) recentMood = 'positive'
       else recentMood = 'neutral'
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[staff-comms] mood detection failed:', err instanceof Error ? err.message : err)
+  }
 
   return {
     staffName,

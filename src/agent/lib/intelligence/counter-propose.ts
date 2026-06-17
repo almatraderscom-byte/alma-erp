@@ -42,7 +42,9 @@ export async function detectInstructionConflicts(
         })
       }
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[counter-propose] playbook rule check failed:', err instanceof Error ? err.message : err)
+  }
 
   // 2. Check outcome learnings for negative patterns
   try {
@@ -81,7 +83,9 @@ export async function detectInstructionConflicts(
         })
       }
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[counter-propose] outcome/decision check failed:', err instanceof Error ? err.message : err)
+  }
 
   return conflicts.filter(c => c.confidence >= 60).slice(0, 3)
 }

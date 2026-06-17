@@ -152,8 +152,8 @@ export async function selectToolsForTurnAsync(
       const tools = assembleSelectedTools([...merged])
       return applyToolCacheControl(toolsToDefinitions(tools))
     }
-  } catch {
-    // Embedding unavailable — widen fallback
+  } catch (err) {
+    console.warn('[select-tools] semantic fallback failed:', err instanceof Error ? err.message : err)
   }
 
   // Widen to safe defaults so agent isn't capability-starved

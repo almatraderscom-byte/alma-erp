@@ -314,7 +314,8 @@ export async function getStaffCompletionRate(staffId: string, taskType: string):
     if (!tasks.length) return 50
     const done = tasks.filter((t: any) => t.status === 'done' || t.status === 'done_verified').length
     return Math.round((done / tasks.length) * 100)
-  } catch {
+  } catch (err) {
+    console.warn('[task-intelligence] getHistoricalCompletionRate failed:', err instanceof Error ? err.message : err)
     return 50
   }
 }

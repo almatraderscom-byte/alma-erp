@@ -76,7 +76,8 @@ async function getRecentSalesData(daysBack: number): Promise<{
       avgDailyRevenue: Math.round(totalRevenue / days),
       avgOrderValue: totalUnits > 0 ? Math.round(totalRevenue / totalUnits) : 0,
     }
-  } catch {
+  } catch (err) {
+    console.warn('[simulate-tools] getBaselineSales failed:', err instanceof Error ? err.message : err)
     return { totalUnits: 0, totalRevenue: 0, avgDailyUnits: 0, avgDailyRevenue: 0, avgOrderValue: 0 }
   }
 }
@@ -95,7 +96,8 @@ async function getProductStock(productId: string): Promise<{ currentStock: numbe
       currentStock: product?.currentStock ?? 0,
       avgDailySold: Math.max(1, Math.round(orderCount / 30)),
     }
-  } catch {
+  } catch (err) {
+    console.warn('[simulate-tools] getProductStock failed:', err instanceof Error ? err.message : err)
     return { currentStock: 0, avgDailySold: 1 }
   }
 }

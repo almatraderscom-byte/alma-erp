@@ -174,8 +174,8 @@ export async function retrieveRelevantMemories(
 
     try {
       await reinforceMemoriesOnUse(selectedIds)
-    } catch {
-      /* reinforcement must never break the turn */
+    } catch (err) {
+      console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
     }
 
     return ranked.map((m) => ({
@@ -184,7 +184,8 @@ export async function retrieveRelevantMemories(
       scope: m.scope,
       score: Math.round(blendedScore(m, now) * 100) / 100,
     }))
-  } catch {
+  } catch (err) {
+    console.warn('[agent-memory] retrieveRelevantMemories failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

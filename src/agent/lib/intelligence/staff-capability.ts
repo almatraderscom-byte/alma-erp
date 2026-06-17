@@ -87,7 +87,8 @@ export async function buildStaffCapabilityProfile(
       .map(c => c.taskType)
 
     return { staffId, staffName, capabilities, overallCompletionRate, strongTypes, weakTypes }
-  } catch {
+  } catch (err) {
+    console.warn('[staff-capability] buildProfile failed:', staffId, err instanceof Error ? err.message : err)
     return { staffId, staffName, capabilities: [], overallCompletionRate: 0, strongTypes: [], weakTypes: [] }
   }
 }
@@ -103,7 +104,8 @@ export async function getAllStaffCapabilities(businessId: string = 'ALMA_LIFESTY
       staffRows.map((s: any) => buildStaffCapabilityProfile(s.id, s.displayName, businessId))
     )
     return profiles
-  } catch {
+  } catch (err) {
+    console.warn('[staff-capability] getAllStaffCapabilities failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

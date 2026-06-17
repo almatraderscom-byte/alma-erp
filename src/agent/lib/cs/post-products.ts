@@ -63,15 +63,36 @@ export async function getPostProductCodes(postId: string, pageId: string): Promi
   return Array.isArray(codes) ? codes.map(String) : []
 }
 
+function isTrustedImageHost(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return false
+    return parsed.hostname.endsWith('.fbcdn.net')
+      || parsed.hostname.endsWith('.supabase.co')
+      || parsed.hostname.endsWith('.cdninstagram.com')
+      || parsed.hostname === 'scontent.xx.fbcdn.net'
+      || parsed.hostname === 'lookaside.fbsbx.com'
+      || parsed.hostname === 'platform-lookaside.fbsbx.com'
+  } catch {
+    return false
+  }
+}
+
 export async function suggestPostProductsFromImage(input: {
   postId: string
   pageId: string
   imageUrl: string
 }): Promise<void> {
   try {
-    const res = await fetch(input.imageUrl)
+    if (!isTrustedImageHost(input.imageUrl)) {
+      console.warn('[post-products] rejected untrusted image URL:', input.imageUrl.slice(0, 120))
+      return
+    }
+    const res = await fetch(input.imageUrl, { signal: AbortSignal.timeout(15_000) })
     if (!res.ok) return
-    const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > 10 * 1024 * 1024) return
+    const b64 = buf.toString('base64')
     const mime = res.headers.get('content-type') ?? 'image/jpeg'
     const hits = await searchVisualIndexFromImage(b64, mime, 3)
     if (!hits.length) return
@@ -102,6 +123,11 @@ export async function suggestPostProductsFromImage(input: {
           ]],
         },
       }),
-    }).catch(() => {})
-  } catch { /* non-fatal */ }
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err) => {
+      console.warn('[post-products] telegram suggest send failed:', err.message)
+    })
+  } catch (err) {
+    console.warn('[post-products] suggestPostProducts failed:', err instanceof Error ? err.message : err)
+  }
 }

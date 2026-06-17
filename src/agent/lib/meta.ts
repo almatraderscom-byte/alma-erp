@@ -5,9 +5,12 @@ import { agentStorageDownload } from '@/agent/lib/storage'
 
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
 
-const PAGE_TOKENS: Record<string, string | undefined> = {
-  '1044848232034171': process.env.FB_PAGE_TOKEN_LIFESTYLE,
-  '827260860637393': process.env.FB_PAGE_TOKEN_ONLINESHOP,
+function getPageToken(pageId: string): string | undefined {
+  const tokens: Record<string, string | undefined> = {
+    '1044848232034171': process.env.FB_PAGE_TOKEN_LIFESTYLE,
+    '827260860637393': process.env.FB_PAGE_TOKEN_ONLINESHOP,
+  }
+  return tokens[pageId]
 }
 
 const PAGE_NAMES: Record<string, string> = {
@@ -29,7 +32,7 @@ export function pageLabel(pageId: string): string {
 }
 
 function tokenFor(pageId: string): string {
-  const tok = PAGE_TOKENS[pageId]
+  const tok = getPageToken(pageId)
   if (!tok) throw new Error(`No FB_PAGE_TOKEN configured for page ${pageId}`)
   return tok
 }
@@ -255,6 +258,7 @@ export async function getRecentPosts(opts: {
   const limit = Math.min(opts.limit ?? 10, 25)
   const res = await fetch(
     `${GRAPH_BASE}/${opts.pageId}/feed?fields=id,message,created_time,permalink_url&limit=${limit}&access_token=${token}`,
+    { signal: AbortSignal.timeout(20_000) },
   )
   if (!res.ok) {
     const err = await res.text()

@@ -38,7 +38,7 @@ function formatPrice(taka: number): string {
 async function loadImageBytes(imageRef: string): Promise<{ b64: string; mime: string }> {
   const ref = imageRef.trim()
   if (ref.startsWith('http')) {
-    const res = await fetch(ref)
+    const res = await fetch(ref, { signal: AbortSignal.timeout(15_000) })
     if (!res.ok) throw new Error('image fetch failed')
     const mime = res.headers.get('content-type') ?? 'image/jpeg'
     const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
@@ -63,7 +63,7 @@ async function visionPickProduct(
   for (const c of candidates.slice(0, 3)) {
     if (!c.imageUrl) continue
     try {
-      const res = await fetch(c.imageUrl)
+      const res = await fetch(c.imageUrl, { signal: AbortSignal.timeout(10_000) })
       if (!res.ok) continue
       const mime = res.headers.get('content-type') ?? 'image/jpeg'
       const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
@@ -75,7 +75,9 @@ async function visionPickProduct(
         type: 'image',
         source: { type: 'base64', media_type: mime as 'image/jpeg', data: b64 },
       })
-    } catch { /* skip */ }
+    } catch (err) {
+      console.warn('[cs-tools] candidate image fetch failed:', c.productCode, err instanceof Error ? err.message : err)
+    }
   }
 
   const res = await client.messages.create({
@@ -421,7 +423,10 @@ const create_order_draft: AgentTool = {
               ]],
             },
           }),
-        }).catch(() => {})
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn('[cs-tools] owner draft notify failed:', err instanceof Error ? err.message : err)
+        })
       }
 
       await recordCsEvent('draft_created', {
@@ -440,7 +445,10 @@ const create_order_draft: AgentTool = {
             chat_id: eyafi.telegramChatId,
             text: `🛒 CS Order Draft\n${summary}\nফোন: ${input.phone}\nID: ${draft.id}`,
           }),
-        }).catch(() => {})
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn('[cs-tools] eyafi draft notify failed:', err instanceof Error ? err.message : err)
+        })
       }
 
       return {
@@ -541,7 +549,10 @@ const handoff_to_human: AgentTool = {
           chat_id: eyafi.telegramChatId,
           text: `🙋 CS Handoff\n${input.reason}\nConv: ${csConversationId}`,
         }),
-      }).catch(() => {})
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err) => {
+        console.warn('[cs-tools] eyafi handoff notify failed:', err instanceof Error ? err.message : err)
+      })
     }
 
     return { success: true, data: { handedOff: true, silentUntilResume: true } }

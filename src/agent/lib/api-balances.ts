@@ -111,7 +111,8 @@ export async function getApiBalanceCredit(provider: BalanceProviderId): Promise<
       lastTopup: parsed.lastTopup ?? new Date(0).toISOString(),
       currency: parsed.currency === 'USD' ? 'USD' : 'USD',
     }
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] getApiBalanceCredit parse failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -167,12 +168,14 @@ async function fetchTwilioBalance(): Promise<number | null> {
     const auth = Buffer.from(`${sid}:${token}`).toString('base64')
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Balance.json`, {
       headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return null
     const data = await res.json() as { balance?: string; currency?: string }
     const bal = parseFloat(data.balance ?? '')
     return Number.isFinite(bal) ? bal : null
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] fetchTwilioBalance failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -189,6 +192,7 @@ async function fetchAnthropicMonthSpendUsd(monthStart: Date, monthEnd: Date): Pr
         'x-api-key': adminKey,
         'anthropic-version': '2023-06-01',
       },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return null
     const data = await res.json() as {
@@ -201,7 +205,8 @@ async function fetchAnthropicMonthSpendUsd(monthStart: Date, monthEnd: Date): Pr
       }
     }
     return cents / 100
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] fetchAnthropicMonthSpend failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -215,12 +220,13 @@ async function fetchOpenAIMonthSpendUsd(monthStart: Date, monthEnd: Date): Promi
     const end = Math.floor(monthEnd.getTime() / 1000)
     const res = await fetch(
       `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}`,
-      { headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId } },
+      { headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId }, signal: AbortSignal.timeout(15_000) },
     )
     if (!res.ok) return null
     const data = await res.json() as { data?: Array<{ amount?: { value?: number } }> }
     return (data.data ?? []).reduce((s, b) => s + (b.amount?.value ?? 0), 0) / 100
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] fetchOpenAIMonthSpend failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -232,6 +238,7 @@ async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
   try {
     const res = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
       headers: { 'xi-api-key': apiKey },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return null
     const data = await res.json() as { character_count?: number; character_limit?: number }
@@ -239,7 +246,8 @@ async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
     const used = data.character_count ?? 0
     const remainingChars = Math.max(0, limit - used)
     return roundUsd((remainingChars / 1000) * 0.30)
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] fetchElevenLabsBalance failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -266,7 +274,8 @@ export async function readBalanceCache(): Promise<ApiBalanceCache | null> {
   if (!row?.value) return null
   try {
     return JSON.parse(row.value) as ApiBalanceCache
-  } catch {
+  } catch (err) {
+    console.warn('[api-balances] readBalanceCache parse failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

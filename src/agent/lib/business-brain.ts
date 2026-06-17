@@ -71,7 +71,8 @@ async function getStaffReality(): Promise<string> {
 
     return `- **Eyafi**: Creative — FB post, ad, content, video। শিখছে, professional না।
 - **Mustahid**: Photo, basic video, office। Step-by-step instruction দরকার।`
-  } catch {
+  } catch (err) {
+    console.warn('[business-brain] getStaffReality failed:', err instanceof Error ? err.message : err)
     return '(Staff data unavailable — basic skill level assume করুন)'
   }
 }
@@ -104,7 +105,8 @@ async function getRecentTaskPerformance(): Promise<string> {
       const rate = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0
       return `- ${type}: ${rate}% done (${data.done}/${data.total})`
     }).join('\n')
-  } catch {
+  } catch (err) {
+    console.warn('[business-brain] getRecentTaskPerformance failed:', err instanceof Error ? err.message : err)
     return '(Task performance data unavailable)'
   }
 }
@@ -134,7 +136,8 @@ async function getRecentApprovalPatterns(): Promise<string> {
         : 'Owner অনেক reject করেন — task quality বাড়ানো দরকার।'
 
     return `${total}টি action, ${approveRate}% approved। ${insight}`
-  } catch {
+  } catch (err) {
+    console.warn('[business-brain] getRecentApprovalPatterns failed:', err instanceof Error ? err.message : err)
     return 'Owner concise Bangla instructions দেন, result-oriented।'
   }
 }

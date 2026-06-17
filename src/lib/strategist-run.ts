@@ -121,7 +121,8 @@ function parseMoves(raw: string): StrategistMove[] {
       })
     }
     return out.slice(0, 3)
-  } catch {
+  } catch (err) {
+    console.warn('[strategist] parseStrategistResponse failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
