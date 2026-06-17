@@ -29,8 +29,28 @@ function loadEnvFile(path: string) {
 loadEnvFile('.env')
 
 const DUTY_DONE = /✅ Sir,.+শেষ/i
+const WINDOW_KEY = 'dayshift_window_utc'
+const DEFAULT_WINDOW = '2-16'
 
 async function main() {
+  await prisma.agentKvSetting.upsert({
+    where: { key: WINDOW_KEY },
+    update: { value: '0-23' },
+    create: { key: WINDOW_KEY, value: '0-23' },
+  })
+
+  try {
+    await runVerify()
+  } finally {
+    await prisma.agentKvSetting.upsert({
+      where: { key: WINDOW_KEY },
+      update: { value: DEFAULT_WINDOW },
+      create: { key: WINDOW_KEY, value: DEFAULT_WINDOW },
+    })
+  }
+}
+
+async function runVerify() {
   const { tickDayShift, loadDayShiftState, startDayShift } = await import('../src/agent/lib/day-shift')
   const date = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
