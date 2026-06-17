@@ -26,7 +26,8 @@ async function main() {
   }
 
   console.log('[test-voice] synthesizing + sending...')
-  const bot = new Telegraf(token)
+  const apiRoot = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '') || 'https://api.telegram.org'
+  const bot = new Telegraf(token, { telegram: { apiRoot } })
   await sendVoiceMessage(bot, ownerChatId, TEST_TEXT, { elevenLabsOnly: true })
   console.log('✅ Test voice sent to owner Telegram')
 }
