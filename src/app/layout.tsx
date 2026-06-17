@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
 
@@ -85,6 +86,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <div className="alma-boot-spinner" />
         </div>
         <AppProviders session={session}>{children}</AppProviders>
+        {/* Drives --kb-inset / body.kb-open app-wide so ERP screens can pin
+            focused inputs above the keyboard (Keyboard.resize is None). */}
+        <GlobalKeyboardManager />
         <GlobalPlatformChrome />
         <Toaster
           position="top-right"

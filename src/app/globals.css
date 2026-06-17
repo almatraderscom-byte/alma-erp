@@ -38,6 +38,10 @@
   --radius-md: 14px;
   --radius-lg: 20px;
 
+  /* On-screen keyboard height — app-wide default; GlobalKeyboardManager keeps
+     this in sync with the real keyboard (Keyboard.resize: None, app owns layout). */
+  --kb-inset: 0px;
+
   color-scheme: light;
 }
 
@@ -60,6 +64,16 @@ body {
   main.scrollbar-hide {
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
+  }
+
+  /* Kill iOS auto-zoom-on-focus the right way: a focused control < 16px makes
+     iOS zoom in. Keep pinch-zoom available for accessibility; just guarantee
+     ≥16px so focusing never triggers the jarring auto-zoom. (Reinforced for
+     touch devices in the coarse-pointer block below.) */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
 
