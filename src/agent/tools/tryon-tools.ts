@@ -1,19 +1,14 @@
-import { prisma } from '@/lib/prisma'
 import {
   getModelLibrary,
   addBrandModel,
   removeBrandModel,
   setDefaultBrandModel,
-  resolveModel,
-  buildTryOnPrompt,
-  getOrClassifyGarment,
-  normalizeGarmentType,
   listModelsByRole,
-  type SavedModel,
   type TryOnStyle,
   type TryOnPose,
   type ModelRole,
 } from '@/lib/tryon/model-library'
+import { CHAT_TRYON_VARIANTS, queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
 import type { AgentTool } from './registry'
 
 const VALID_ROLES: ModelRole[] = ['father', 'mother', 'son', 'daughter', 'single']
@@ -127,31 +122,18 @@ const manage_model_library: AgentTool = {
 const generate_on_model_image: AgentTool = {
   name: 'generate_on_model_image',
   description:
-    'Virtual try-on: put a PRODUCT (from a product photo) onto one of ALMA\'s SAVED MODELS, with a realistic ' +
-    'Bangladesh-photoshoot background. Owner gives the product image (productImagePath) and optionally which ' +
-    'model, style, and pose. The agent builds the expert prompt automatically — owner does NOT write image ' +
-    'prompts. Creates a PENDING ACTION; owner must approve before rendering. Use this (not generate_image) ' +
-    'whenever the owner wants a product shown on a model.',
+    'Virtual try-on: PRODUCT photo onto a SAVED MODEL. Owner says "Model Maruf" → resolve modelId. ' +
+    'Garment 99% unchanged from product; face/body from model reference. Pending approval before render. ' +
+    'Use generate_on_model_batch for family matching (ma-meye, baba-chele, etc.).',
   input_schema: {
     type: 'object' as const,
     properties: {
-      productImagePath: {
-        type: 'string',
-        description: 'agent-files storage path of the product photo (the reseller image with the garment)',
-      },
-      modelId: { type: 'string', description: 'Which saved model (id or name). Omit to use the default model.' },
-      style: {
-        type: 'string',
-        enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'],
-        description: 'Background/scene style. Default studio.',
-      },
-      pose: {
-        type: 'string',
-        enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'],
-        description: 'Default front.',
-      },
-      garmentType: { type: 'string', description: 'Optional garment description, e.g. "premium silk panjabi" — improves accuracy.' },
-      extra: { type: 'string', description: 'Optional free-text tweak from owner, e.g. "festive mood, slight smile".' },
+      productImagePath: { type: 'string', description: 'Product/reseller/mannequin photo path' },
+      modelId: { type: 'string', description: 'Model name or id, e.g. "Maruf", "model-maruf"' },
+      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'] },
+      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'] },
+      garmentType: { type: 'string' },
+      extra: { type: 'string' },
       conversationId: { type: 'string' },
     },
     required: ['productImagePath'],
@@ -159,78 +141,110 @@ const generate_on_model_image: AgentTool = {
   handler: async (input) => {
     const productImagePath = String(input.productImagePath ?? '').trim()
     if (!productImagePath) return { success: false, error: 'productImagePath লাগবে।' }
-
-    const model = await resolveModel(input.modelId ? String(input.modelId) : undefined)
-    if (!model) {
-      return {
-        success: false,
-        error: 'কোনো saved মডেল নেই। আগে manage_model_library (action=add, role=...) দিয়ে মডেল ছবি যোগ করুন।',
-      }
-    }
-
-    const attrs = await getOrClassifyGarment(productImagePath)
-    const garmentType = input.garmentType
-      ? normalizeGarmentType(String(input.garmentType), attrs.garmentType)
-      : attrs.garmentType
-
-    const prompt = buildTryOnPrompt({
-      style: input.style as TryOnStyle | undefined,
-      pose: input.pose as TryOnPose | undefined,
-      modelNotes: model.notes,
-      garmentType,
-      attrs,
-      extra: input.extra ? String(input.extra) : undefined,
-    })
-
-    const summary =
-      `🧍 On-model try-on (pro)\n` +
-      `মডেল: ${model.name}${model.role ? ` (${model.role})` : ''}\n` +
-      `গার্মেন্ট: ${garmentType}${attrs.notes ? ` — ${attrs.notes.slice(0, 80)}` : ''}\n` +
-      `স্টাইল: ${input.style ?? 'studio'} | পোজ: ${input.pose ?? 'front'}\n` +
-      `প্রোডাক্ট: ${productImagePath.split('/').pop()}`
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const action = await (prisma as any).agentPendingAction.create({
-      data: {
+    try {
+      const { items, model } = await queueTryOnBatch({
+        productImagePath,
+        modelId: input.modelId ? String(input.modelId) : undefined,
+        variants: ['single'],
+        style: input.style as TryOnStyle | undefined,
+        pose: input.pose as TryOnPose | undefined,
+        garmentType: input.garmentType ? String(input.garmentType) : undefined,
+        extra: input.extra ? String(input.extra) : undefined,
         conversationId: input.conversationId ? String(input.conversationId) : null,
-        type: 'image_gen',
-        payload: {
-          prompt,
-          quality: 'pro',
-          referenceImageId: model.imagePath,
-          secondReferenceImageId: productImagePath,
-          tryOn: true,
-          conversationId: input.conversationId ?? null,
+      })
+      const item = items[0]
+      return {
+        success: true,
+        data: {
+          pendingActionId: item.pendingActionId,
+          summary: item.summary,
+          model: model.name,
+          message: 'Try-on request তৈরি — owner approve করলে রেন্ডার হবে।',
         },
-        summary,
-        costEstimate: 4.5,
-        status: 'pending',
-      },
-    })
-
-    return {
-      success: true,
-      data: {
-        pendingActionId: action.id,
-        summary,
-        message: 'Try-on request তৈরি — owner approve করলে রেন্ডার হবে।',
-      },
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('no_model')) {
+        return {
+          success: false,
+          error: 'কোনো saved মডেল নেই। manage_model_library (action=add) দিয়ে আগে save করুন।',
+        }
+      }
+      return { success: false, error: msg }
     }
   },
 }
 
-export const TRYON_TOOLS: AgentTool[] = [manage_model_library, generate_on_model_image]
+const generate_on_model_batch: AgentTool = {
+  name: 'generate_on_model_batch',
+  description:
+    'Multiple try-on renders from ONE product — single, father_son, mother_son, mother_daughter, full_family. ' +
+    'Each variant = separate approval card. For matching family sets with child age 5–10.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      productImagePath: { type: 'string' },
+      modelId: { type: 'string', description: 'Override for single variant' },
+      variants: {
+        type: 'array',
+        items: { type: 'string', enum: CHAT_TRYON_VARIANTS },
+      },
+      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'] },
+      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'] },
+      extra: { type: 'string' },
+      conversationId: { type: 'string' },
+    },
+    required: ['productImagePath'],
+  },
+  handler: async (input) => {
+    const productImagePath = String(input.productImagePath ?? '').trim()
+    if (!productImagePath) return { success: false, error: 'productImagePath লাগবে।' }
+    const variants = Array.isArray(input.variants)
+      ? (input.variants as ChatTryOnVariant[])
+      : (['single'] as ChatTryOnVariant[])
+    try {
+      const { items, model } = await queueTryOnBatch({
+        productImagePath,
+        modelId: input.modelId ? String(input.modelId) : undefined,
+        variants,
+        style: input.style as TryOnStyle | undefined,
+        pose: input.pose as TryOnPose | undefined,
+        extra: input.extra ? String(input.extra) : undefined,
+        conversationId: input.conversationId ? String(input.conversationId) : null,
+      })
+      return {
+        success: true,
+        data: {
+          count: items.length,
+          pendingActionIds: items.map((i) => i.pendingActionId),
+          summaries: items.map((i) => i.summary),
+          model: model.name,
+          message: `${items.length}টি try-on card — প্রতিটি approve করুন।`,
+        },
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('no_model')) {
+        return { success: false, error: 'role অনুযায়ী মডেল missing — list_by_role চেক করুন।' }
+      }
+      return { success: false, error: msg }
+    }
+  },
+}
+
+export const TRYON_TOOLS: AgentTool[] = [
+  manage_model_library,
+  generate_on_model_image,
+  generate_on_model_batch,
+]
 
 export const TRYON_ROLE_PROMPT = `
-## ব্র্যান্ড মডেল লাইব্রেরি (আগে সেটআপ — content engine-এর জন্য বাধ্যতামূলক)
-owner full-body ছবি আপলোড করলে → manage_model_library (action=add, role=father|mother|son|daughter|single)।
-এক role-এ এক মডেল — নতুন add করলে সেই role আপডেট হয়।
-list_by_role দিয়ে কোন role আছে/নেই দেখুন। father+son+mother+daughter স্টক করলে family-matching পোস্ট ভালো হয়।
-ছবির টিপস: full body, সামনে/হালকা কোণ, plain background, ভালো আলো, heavy filter নয়।
+## ব্র্যান্ড মডেল লাইব্রেরি + virtual try-on (designer brain)
+Workflow: owner product/mannequin ছবি + নিজের full-body ছবি → manage_model_library (add, name="Maruf", role=...) save।
+তারপর "Model Maruf use koro" / "ei product e amar model boshao" → generate_on_model_image বা generate_on_model_batch।
 
-## ভার্চুয়াল ট্রাই-অন
-owner প্রোডাক্ট ছবি দিলে এবং মডেলে দেখাতে চাইলে → generate_on_model_image (generate_image নয়)।
-- owner image prompt লিখবেন না — style/pose আপনি বেছে expert prompt বানাবেন।
-- background বাস্তব বাংলাদেশি ফটোশুট-টাইপ — built-in।
-- garment ৯৯% হুবহু রাখতে হবে।
+Image 1 = saved model (face identity), Image 2 = product (garment 99% unchanged)। Owner prompt লিখবেন না।
+
+Family matching: mother_daughter (মা+মেয়ে ৫–১০), father_son, mother_son, full_family → generate_on_model_batch variants।
+list_by_role দিয়ে father/mother/son/daughter stock আছে কিনা দেখুন।
 `

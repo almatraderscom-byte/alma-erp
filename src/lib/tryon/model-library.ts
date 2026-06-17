@@ -176,11 +176,25 @@ export async function getDefaultModel(): Promise<SavedModel | null> {
 export async function resolveModel(idOrName?: string): Promise<SavedModel | null> {
   await migrateKvToDbIfNeeded()
   if (!idOrName) return getDefaultModel()
-  const q = idOrName.toLowerCase().trim()
-  const byId = await db.agentBrandModel.findUnique({ where: { id: q } })
+
+  let q = idOrName.trim().toLowerCase()
+  q = q.replace(/^model\s+/i, '').replace(/^মডেল\s+/i, '').replace(/\s+/g, ' ')
+  const slug = q.replace(/\s+/g, '-')
+
+  const byId = await db.agentBrandModel.findUnique({ where: { id: slug } })
   if (byId) return mapRow(byId)
+
   const lib = await getModelLibrary()
-  return lib.find((m) => m.name.toLowerCase().includes(q)) ?? null
+  const exact = lib.find((m) => m.name.toLowerCase() === q || m.id === slug)
+  if (exact) return exact
+
+  const tokens = q.split(/[\s-]+/).filter(Boolean)
+  return (
+    lib.find((m) => {
+      const hay = `${m.name} ${m.id} ${m.role ?? ''}`.toLowerCase()
+      return tokens.every((t) => hay.includes(t)) || hay.includes(q)
+    }) ?? null
+  )
 }
 
 export async function getModelByRole(role: ModelRole): Promise<SavedModel | null> {
@@ -209,7 +223,14 @@ export function buildFamilyVariantExtra(variant: string, fabric?: string): strin
   }
   if (variant === 'mother_son') {
     return [
-      'COMPOSITION: Bangladeshi mother and young son together in ONE scene, matching family outfits from the product.',
+      'COMPOSITION: Bangladeshi mother and young son (age 5–12) together in ONE scene, matching family outfits from the product.',
+      fabricNote,
+    ].filter(Boolean).join(' ')
+  }
+  if (variant === 'mother_daughter') {
+    return [
+      'COMPOSITION: Bangladeshi mother and young daughter (age 5–10) together in ONE scene,',
+      'both wearing matching coordinated outfits from the product reference — family fashion shoot.',
       fabricNote,
     ].filter(Boolean).join(' ')
   }

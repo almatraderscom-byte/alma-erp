@@ -101,6 +101,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Owner-only Phase C UI mock — dev preview without full local auth env.
+  if (process.env.NODE_ENV !== 'production' && (
+    pathname === '/agent/creative-studio-demo'
+    || pathname === '/agent/creative-studio'
+  )) {
+    return NextResponse.next()
+  }
+
   if (!secret) {
     console.error('[middleware] NEXTAUTH_SECRET missing')
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })

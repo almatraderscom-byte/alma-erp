@@ -79,7 +79,7 @@ export const MUTATING_TOOLS = new Set([
   'update_owner_todo', 'update_product_web', 'update_setting', 'update_staff_task_profile',
   'update_staff_task_status', 'delegate_to_specialist', 'call_family_member',
   'prepare_staff_task_proposal', 'propose_staff_tasks', 'request_salah_delay',
-  'run_health_scan', 'web_research', 'generate_image', 'generate_on_model_image',
+  'run_health_scan', 'web_research', 'generate_image', 'generate_on_model_image', 'generate_on_model_batch',
   'make_ad_creatives', 'make_product_reel',
   'make_plan', 'execute_plan',
 ])

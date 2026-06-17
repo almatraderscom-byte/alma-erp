@@ -14,7 +14,19 @@ export function isPublicAppPath(pathname: string): boolean {
   return PUBLIC_APP_PREFIXES.some(p => path === p || path.startsWith(`${p}/`))
 }
 
+/** Dev-only Phase C UI mock — no login, no API (production stays owner-gated). */
+function isDevCreativeStudioDemo(pathname: string): boolean {
+  return (
+    process.env.NODE_ENV !== 'production'
+    && (pathname === '/agent/creative-studio-demo'
+      || pathname.startsWith('/agent/creative-studio-demo/')
+      || pathname === '/agent/creative-studio'
+      || pathname.startsWith('/agent/creative-studio/'))
+  )
+}
+
 export function isPublicPath(pathname: string): boolean {
+  if (isDevCreativeStudioDemo(pathname)) return true
   return isAuthPath(pathname) || isPublicAppPath(pathname)
 }
 
