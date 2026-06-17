@@ -44,7 +44,7 @@ alwaysApply: true
 - Tier KV keys: `model.routing.tier.lightModelId`, `heavyModelId`, `criticalSubagentModelId`
 - CRITICAL (`analyst`/`ops`) locked to Claude; HEAVY/LIGHT try OpenRouter first
 - OpenRouter failure → native `gemini-3.1-flash-lite` (not Claude) when `GEMINI_API_KEY` set
-- `OPENROUTER_API_KEY` not yet on Vercel — add via `scripts/setup-openrouter-vercel.mjs` after creating key at openrouter.ai/keys
+- `OPENROUTER_API_KEY` on Vercel Production + VPS worker `.env` (verified 2026-06-17 — heavy researcher $0.0005 vs critical analyst $0.038 on Claude)
 - Verify: `npx tsx scripts/verify-tier-routing.ts` (unit), `npx tsx scripts/verify-tier-routing-live.ts` (live)
 
 ## VPS Deploy Process
