@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, type RefObject } from 'react'
+import { useMemo, useRef, type RefObject } from 'react'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { AgentTodoPanel } from './AgentTodoPanel'
 import { CollapsibleGrid } from './OfficeShiftThreadBlocks'
+import { ScrollAffordances } from './ScrollAffordances'
 import {
   filterOwnerTasksToday,
   isAgentTodoSource,
@@ -17,6 +18,7 @@ import {
  */
 export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
   const ctx = useAgentTodosOptional()
+  const panelScrollRef = useRef<HTMLDivElement>(null)
 
   const todos = ctx?.todos ?? []
   const loading = ctx?.loading ?? true
@@ -99,8 +101,17 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
         </button>
 
         <CollapsibleGrid open={panelExpanded}>
-          <div className="border-t border-black/[0.05] max-h-[min(70dvh,520px)] overflow-y-auto overscroll-y-contain">
+          <div
+            ref={panelScrollRef}
+            className="relative border-t border-black/[0.05] max-h-[min(70dvh,520px)] overflow-y-auto overscroll-y-contain"
+          >
             <AgentTodoPanel embedded />
+            <ScrollAffordances
+              containerRef={panelScrollRef}
+              topThreshold={120}
+              bottomThreshold={80}
+              bottomOffsetClass="bottom-4 md:bottom-5"
+            />
           </div>
         </CollapsibleGrid>
       </div>

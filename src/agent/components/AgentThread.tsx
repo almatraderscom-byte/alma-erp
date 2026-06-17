@@ -592,7 +592,16 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         <div ref={bottomRef} />
       </div>
 
-      <ScrollAffordances containerRef={containerRef} topThreshold={400} bottomThreshold={120} />
+      <ScrollAffordances
+        containerRef={containerRef}
+        topThreshold={400}
+        bottomThreshold={isOfficeShift ? 80 : 120}
+        bottomOffsetClass={
+          isOfficeShift
+            ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-8'
+            : undefined
+        }
+      />
     </div>
   )
 }
