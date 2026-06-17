@@ -2,6 +2,7 @@
  * CS-1 — Process pending customer reply jobs.
  */
 import { sendTypingOn, sendMessengerText, sendMessengerImage } from './meta-send.mjs'
+import { sendWaText } from '../wa/wa-send.mjs'
 import { notifyShadowDraft } from './shadow-notify.mjs'
 import { resilientFetch } from '../fetch-retry.mjs'
 
@@ -21,13 +22,19 @@ function randomDelay() {
   return 2000 + Math.floor(Math.random() * 2000)
 }
 
+function isWaChannel(pageId) {
+  return String(pageId ?? '').startsWith('wa:')
+}
+
 export async function processCsReplyJob(job, bot) {
   const { id: jobId, conversationId, messageId, conversation } = job
   const pageId = conversation?.pageId
   const psid = conversation?.psid
   if (!pageId || !psid) throw new Error('missing pageId/psid')
 
-  await sendTypingOn(pageId, psid)
+  if (!isWaChannel(pageId)) {
+    await sendTypingOn(pageId, psid)
+  }
   await sleep(randomDelay())
 
   const res = await resilientFetch(`${APP_URL()}/api/assistant/internal/cs-run`, {
@@ -74,10 +81,19 @@ export async function processCsReplyJob(job, bot) {
   const parts = data.parts ?? []
   for (const part of parts) {
     if (part.type === 'text' && part.text) {
-      await sendMessengerText(pageId, psid, part.text)
+      if (isWaChannel(pageId)) {
+        await sendWaText(pageId, psid, part.text)
+      } else {
+        await sendMessengerText(pageId, psid, part.text)
+      }
       await sleep(800)
     } else if (part.type === 'image' && part.imageUrl) {
-      await sendMessengerImage(pageId, psid, part.imageUrl)
+      if (isWaChannel(pageId)) {
+        // Image send via WA media upload not in phase-1 — send link as text fallback.
+        await sendWaText(pageId, psid, part.imageUrl)
+      } else {
+        await sendMessengerImage(pageId, psid, part.imageUrl)
+      }
       await sleep(800)
     }
   }

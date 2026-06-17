@@ -20,6 +20,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/trading/screenshot-compliance') return true
   if (pathname.startsWith('/api/invoice/public')) return true
   if (pathname === '/api/telegram/webhook') return true
+  if (pathname === '/api/wa/webhook') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   // Sentry browser tunnel (POST) — must not redirect to /login (see docs/SENTRY.md).
