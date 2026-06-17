@@ -4,19 +4,20 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useAgentTodosOptional, type Todo } from './AgentTodoContext'
+import { brandTodo } from './todo-brand-tokens'
 import {
+  filterOwnerTasksToday,
   isAgentTodoSource,
   isApprovalPendingTodo,
+  isFailedStatus,
   isInProgressStatus,
   isOwnerTodoSource,
+  isRejectedStatus,
+  ownerDueDateIso,
   sortAgentTodosByDutyTime,
   sortOwnerTodos,
   tryOpenOfficeLiveThread,
 } from './todo-panel-utils'
-
-export function isFailedStatus(status: string): boolean {
-  return status === 'failed' || status === 'cancelled'
-}
 
 export function TodoStatusIcon({
   status,
@@ -30,7 +31,9 @@ export function TodoStatusIcon({
   onClick?: () => void
 }) {
   const completed = status === 'completed'
-  const failed = isFailedStatus(status)
+  const rejected = isRejectedStatus(status)
+  const cancelled = status === 'cancelled' || status === 'failed'
+  const failed = cancelled || rejected
   const running = isInProgressStatus(status)
   const pending = !completed && !failed && !running
 
@@ -44,8 +47,10 @@ export function TodoStatusIcon({
     >
       <motion.path d="M2 5l2.5 2.5L8 3" />
     </motion.svg>
-  ) : failed ? (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round">
+  ) : rejected ? (
+    <span className="text-[8px] font-bold text-red-700 leading-none">✕</span>
+  ) : cancelled ? (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round">
       <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
     </svg>
   ) : running ? (
@@ -64,11 +69,13 @@ export function TodoStatusIcon({
       ? 'border-orange-300 bg-orange-50'
       : completed
         ? 'border-emerald-400 bg-emerald-100'
-        : failed
-          ? 'border-red-300 bg-red-100'
-          : running
-            ? 'border-amber-400 bg-amber-50'
-            : 'border-slate-200 bg-slate-50'
+        : rejected
+          ? 'border-red-300 bg-red-50'
+          : cancelled
+            ? 'border-slate-300 bg-slate-100'
+            : running
+              ? 'border-amber-400 bg-amber-50'
+              : 'border-slate-200 bg-slate-50'
   }`
 
   if (readOnly) {
@@ -79,19 +86,12 @@ export function TodoStatusIcon({
     <button
       type="button"
       onClick={onClick}
-      aria-label={completed ? 'Completed' : failed ? 'Failed' : running ? 'Running' : approvalPending ? 'Approval pending' : 'Pending'}
+      aria-label={completed ? 'Completed' : rejected ? 'Rejected' : cancelled ? 'Cancelled' : running ? 'Running' : approvalPending ? 'Approval pending' : 'Pending'}
       className={className}
     >
       {inner}
     </button>
   )
-}
-
-const PRIORITY_COLORS: Record<string, string> = {
-  urgent: 'bg-red-500',
-  high: 'bg-amber-500',
-  normal: 'bg-[#E07A5F]',
-  low: 'bg-slate-400',
 }
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -101,68 +101,46 @@ const PRIORITY_LABELS: Record<string, string> = {
   low: 'Low',
 }
 
-function SectionHeader({
-  emoji,
-  title,
-  count,
-  live,
-}: {
-  emoji: string
-  title: string
-  count: number
-  live?: boolean
-}) {
-  return (
-    <div className="flex items-center gap-2 mb-2.5 mt-1 first:mt-0">
-      <span className="text-sm">{emoji}</span>
-      <h3 className="text-xs font-bold text-slate-700 flex-1">{title}</h3>
-      {live && (
-        <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded-full animate-pulse">
-          live
-        </span>
-      )}
-      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full tabular-nums">
-        {count}
-      </span>
-    </div>
-  )
-}
-
 function TodoRow({
   todo,
   readOnly,
+  compact,
   expanded,
   onToggleExpand,
   onToggleComplete,
   onDelete,
-  onOpenOffice,
 }: {
   todo: Todo
   readOnly?: boolean
+  compact?: boolean
   expanded: boolean
   onToggleExpand: () => void
   onToggleComplete?: () => void
   onDelete?: () => void
-  onOpenOffice?: () => void
 }) {
   const approvalPending = isApprovalPendingTodo(todo)
   const running = isInProgressStatus(todo.status)
   const completed = todo.status === 'completed'
+  const rejected = isRejectedStatus(todo.status)
+  const cancelled = todo.status === 'cancelled' || todo.status === 'failed'
   const hasFeedback = Boolean(todo.description?.trim())
   const showFeedback = hasFeedback && (completed || expanded || approvalPending)
 
   const rowClass = running
-    ? 'bg-amber-50/90 border-amber-200/70 ring-1 ring-amber-200/50 shadow-sm'
+    ? 'bg-amber-50/90 border-amber-200/70 ring-1 ring-amber-200/50'
     : approvalPending
       ? 'bg-orange-50/40 border-orange-200/60'
-      : 'bg-white border-black/[0.06] hover:shadow-sm'
+      : rejected
+        ? 'bg-red-50/30 border-red-200/50 opacity-80'
+        : cancelled
+          ? 'bg-slate-50/80 border-slate-200/60 opacity-70'
+          : 'bg-white border-black/[0.06] hover:shadow-sm'
 
   const handleRowClick = () => {
     if (readOnly && (running || todo.dutyKey)) {
       if (!tryOpenOfficeLiveThread()) {
         toast('🏢 Live office thread — tap the green banner at the top', { duration: 3500 })
       }
-      onOpenOffice?.()
       return
     }
     if (hasFeedback && readOnly) onToggleExpand()
@@ -174,13 +152,12 @@ function TodoRow({
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -12 }}
-      className={`group flex items-start gap-3 rounded-xl border p-3.5 transition-shadow ${rowClass} ${
-        readOnly && (running || hasFeedback) ? 'cursor-pointer' : ''
-      }`}
+      className={`group flex items-start gap-2.5 rounded-xl border transition-shadow ${
+        compact ? 'p-2' : 'p-3.5'
+      } ${rowClass} ${readOnly && (running || hasFeedback) ? 'cursor-pointer' : ''}`}
       onClick={readOnly ? handleRowClick : undefined}
-      role={readOnly && running ? 'button' : undefined}
     >
-      <div className="mt-0.5">
+      <div className={compact ? 'mt-0' : 'mt-0.5'}>
         <TodoStatusIcon
           status={todo.status}
           approvalPending={approvalPending}
@@ -190,14 +167,21 @@ function TodoRow({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-start gap-2 flex-wrap">
-          <p className={`text-sm font-medium leading-snug flex-1 min-w-0 ${
+          <p className={`font-medium leading-snug flex-1 min-w-0 ${
+            compact ? 'text-xs truncate' : 'text-sm'
+          } ${
             completed ? 'text-slate-500 line-through decoration-slate-300/80' : 'text-slate-800'
-          }`}>
+          } ${cancelled || rejected ? 'line-through decoration-slate-300/70 text-slate-500' : ''}`}>
             {todo.title}
           </p>
           {approvalPending && (
             <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-orange-800 bg-orange-100 border border-orange-200/80 px-1.5 py-0.5 rounded-full">
-              ⏳ approval
+              pending
+            </span>
+          )}
+          {rejected && (
+            <span className="shrink-0 text-[9px] font-semibold text-red-800 bg-red-100 border border-red-200/80 px-1.5 py-0.5 rounded-full">
+              Reject by Boss
             </span>
           )}
           {running && readOnly && (
@@ -205,18 +189,15 @@ function TodoRow({
               working…
             </span>
           )}
-          {!readOnly && todo.priority !== 'normal' && (
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${PRIORITY_COLORS[todo.priority] ?? 'bg-slate-400'}`} />
-          )}
         </div>
-        {showFeedback && (
+        {showFeedback && !compact && (
           <p className={`text-xs mt-1.5 leading-relaxed ${
             approvalPending ? 'text-orange-800/90' : 'text-slate-600'
           } ${expanded || running || approvalPending ? '' : 'line-clamp-2'}`}>
             {todo.description}
           </p>
         )}
-        {readOnly && hasFeedback && !running && !approvalPending && (
+        {readOnly && hasFeedback && !running && !approvalPending && !compact && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
@@ -224,11 +205,6 @@ function TodoRow({
           >
             {expanded ? 'কম দেখান' : 'ফলাফল দেখুন'}
           </button>
-        )}
-        {!readOnly && todo.dueDate && (
-          <p className="text-[10px] text-slate-400 mt-1">
-            Due {new Date(todo.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-          </p>
         )}
       </div>
       {!readOnly && onDelete && (
@@ -247,101 +223,75 @@ function TodoRow({
   )
 }
 
-function TodoSection({
-  emoji,
-  title,
-  activeTodos,
-  completedTodos,
+function UnifiedTodoList({
+  todos,
   readOnly,
-  live,
-  showAdd,
-  onAddClick,
+  compact,
   onToggle,
   onDelete,
 }: {
-  emoji: string
-  title: string
-  activeTodos: Todo[]
-  completedTodos: Todo[]
+  todos: Todo[]
   readOnly?: boolean
-  live?: boolean
-  showAdd?: boolean
-  onAddClick?: () => void
+  compact?: boolean
   onToggle: (todo: Todo) => void
   onDelete: (id: string) => void
 }) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const count = activeTodos.length + completedTodos.length
 
-  if (count === 0 && !showAdd) {
-    return (
-      <div className="mb-6 last:mb-0">
-        <SectionHeader emoji={emoji} title={title} count={0} live={live} />
-        <p className="text-xs text-slate-400 pl-1">কিছু নেই</p>
-      </div>
-    )
+  const openList = useMemo(
+    () => todos.filter((t) => t.status !== 'completed'),
+    [todos],
+  )
+  const completedList = useMemo(
+    () => todos.filter((t) => t.status === 'completed'),
+    [todos],
+  )
+
+  if (todos.length === 0) {
+    return <p className="text-xs text-slate-400 pl-0.5">কিছু নেই</p>
   }
 
   return (
-    <div className="mb-6 last:mb-0">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <SectionHeader emoji={emoji} title={title} count={count} live={live} />
-        {showAdd && onAddClick && (
-          <button
-            type="button"
-            onClick={onAddClick}
-            className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#E07A5F]/10 text-[#E07A5F] text-[10px] font-semibold hover:bg-[#E07A5F]/20 transition-colors"
-          >
-            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M7 3v8M3 7h8" />
-            </svg>
-            Add
-          </button>
-        )}
+    <>
+      <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+        <AnimatePresence>
+          {openList.map((todo) => (
+            <TodoRow
+              key={todo.id}
+              todo={todo}
+              readOnly={readOnly}
+              compact={compact}
+              expanded={expandedIds.has(todo.id)}
+              onToggleExpand={() => {
+                setExpandedIds((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(todo.id)) next.delete(todo.id)
+                  else next.add(todo.id)
+                  return next
+                })
+              }}
+              onToggleComplete={() => onToggle(todo)}
+              onDelete={() => onDelete(todo.id)}
+            />
+          ))}
+        </AnimatePresence>
       </div>
 
-      {activeTodos.length === 0 ? (
-        <p className="text-xs text-slate-400 pl-1 mb-2">সব শেষ — completed দেখুন নিচে</p>
-      ) : (
-        <div className="space-y-2">
-          <AnimatePresence>
-            {activeTodos.map((todo) => (
-              <TodoRow
-                key={todo.id}
-                todo={todo}
-                readOnly={readOnly}
-                expanded={expandedIds.has(todo.id)}
-                onToggleExpand={() => {
-                  setExpandedIds((prev) => {
-                    const next = new Set(prev)
-                    if (next.has(todo.id)) next.delete(todo.id)
-                    else next.add(todo.id)
-                    return next
-                  })
-                }}
-                onToggleComplete={() => onToggle(todo)}
-                onDelete={() => onDelete(todo.id)}
-              />
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-
-      {completedTodos.length > 0 && (
-        <div className="mt-3">
+      {completedList.length > 0 && (
+        <div className={compact ? 'mt-2' : 'mt-3'}>
           <button
             type="button"
             onClick={() => setShowCompleted(!showCompleted)}
-            className="flex items-center gap-2 text-xs text-slate-500 font-semibold hover:text-slate-700 transition-colors mb-2"
+            className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold hover:text-slate-700 transition-colors mb-1.5"
           >
             <svg
-              width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
+              width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
               className={`transition-transform ${showCompleted ? 'rotate-90' : ''}`}
             >
               <path d="M4.5 2.5l4 3.5-4 3.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            {completedTodos.length} completed
+            {completedList.length} done
           </button>
           <AnimatePresence>
             {showCompleted && (
@@ -349,13 +299,14 @@ function TodoSection({
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden space-y-2"
+                className={`overflow-hidden ${compact ? 'space-y-1.5' : 'space-y-2'}`}
               >
-                {completedTodos.map((todo) => (
+                {completedList.map((todo) => (
                   <TodoRow
                     key={todo.id}
                     todo={todo}
                     readOnly={readOnly}
+                    compact={compact}
                     expanded={expandedIds.has(todo.id)}
                     onToggleExpand={() => {
                       setExpandedIds((prev) => {
@@ -374,6 +325,215 @@ function TodoSection({
           </AnimatePresence>
         </div>
       )}
+    </>
+  )
+}
+
+function AgentCompactCard({
+  todos,
+  dayShiftActive,
+  onToggle,
+  onDelete,
+}: {
+  todos: Todo[]
+  dayShiftActive: boolean
+  onToggle: (todo: Todo) => void
+  onDelete: (id: string) => void
+}) {
+  const done = todos.filter((t) => t.status === 'completed').length
+  const total = todos.length
+
+  return (
+    <div className={`${brandTodo.agentCompact} p-3 h-full flex flex-col`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs">🤖</span>
+        <h3 className="text-[11px] font-bold text-slate-700 flex-1">এজেন্টের কাজ</h3>
+        {dayShiftActive && (
+          <span className="text-[8px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded-full animate-pulse">
+            live
+          </span>
+        )}
+        <span className="text-[10px] font-bold text-slate-500 tabular-nums">
+          {done}/{total}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0">
+        <UnifiedTodoList todos={todos} readOnly compact onToggle={onToggle} onDelete={onDelete} />
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          if (!tryOpenOfficeLiveThread()) {
+            toast('🏢 অফিস chat — উপরে সবুজ বanner ট্যাপ করুন', { duration: 3500 })
+          }
+        }}
+        className="mt-2.5 w-full text-left text-[10px] font-medium text-slate-500 hover:text-[#E07A5F] transition-colors"
+      >
+        🏢 অফিস chat-এ live
+      </button>
+    </div>
+  )
+}
+
+function BossTodoFrame({
+  todos,
+  showAddForm,
+  onShowAdd,
+  onAdd,
+  onToggle,
+  onDelete,
+  adding,
+  newTitle,
+  setNewTitle,
+  newPriority,
+  setNewPriority,
+}: {
+  todos: Todo[]
+  showAddForm: boolean
+  onShowAdd: () => void
+  onAdd: () => void
+  onToggle: (todo: Todo) => void
+  onDelete: (id: string) => void
+  adding: boolean
+  newTitle: string
+  setNewTitle: (v: string) => void
+  newPriority: string
+  setNewPriority: (v: string) => void
+}) {
+  const firstActive = todos.find(
+    (t) => t.status !== 'completed' && !isFailedStatus(t.status),
+  )
+
+  return (
+    <div className={`${brandTodo.bossFrame} p-3.5 sm:p-4 h-full flex flex-col`}>
+      <div className="flex items-center gap-2 mb-2.5">
+        <span className="text-sm">🧑‍💼</span>
+        <h3 className={`text-xs font-bold flex-1 ${brandTodo.coralDark}`}>
+          Boss-এর আজকের কাজ
+        </h3>
+        {!showAddForm && (
+          <button
+            type="button"
+            onClick={onShowAdd}
+            className={`shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${brandTodo.coralBg} ${brandTodo.coral} ${brandTodo.coralHover}`}
+          >
+            <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M7 3v8M3 7h8" />
+            </svg>
+            কাজ যোগ করুন
+          </button>
+        )}
+      </div>
+
+      {firstActive && (
+        <div className={`mb-2.5 rounded-xl border px-3 py-2 text-[11px] leading-snug ${brandTodo.coralBorderSoft} ${brandTodo.coralBg} ${brandTodo.coralDark}`}>
+          💬 Sir, &ldquo;{firstActive.title.length > 42 ? `${firstActive.title.slice(0, 42)}…` : firstActive.title}&rdquo; টা কি হয়েছে? লাগলে বলুন — সাহায্য করব।
+        </div>
+      )}
+
+      <AnimatePresence>
+        {showAddForm && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden mb-3"
+          >
+            <div className="rounded-xl border border-white/60 bg-white/80 p-3 space-y-2.5">
+              <input
+                type="text"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="আপনার কাজ লিখুন…"
+                className="w-full bg-white border border-black/[0.06] rounded-lg px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
+                onKeyDown={(e) => { if (e.key === 'Enter') void onAdd() }}
+                autoFocus
+              />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(['low', 'normal', 'high', 'urgent'] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setNewPriority(p)}
+                    className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-colors ${
+                      newPriority === p
+                        ? `${brandTodo.coralBtn} text-white`
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    }`}
+                  >
+                    {PRIORITY_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => onShowAdd()}
+                  className="flex-1 py-1.5 rounded-lg border border-black/[0.06] text-[10px] text-slate-500 font-semibold hover:bg-slate-50"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onAdd()}
+                  disabled={!newTitle.trim() || adding}
+                  className={`flex-1 py-1.5 rounded-lg text-white text-[10px] font-bold transition-colors disabled:opacity-40 ${brandTodo.coralBtn}`}
+                >
+                  {adding ? '…' : 'যোগ করুন'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 min-h-0">
+        <UnifiedTodoList todos={todos} onToggle={onToggle} onDelete={onDelete} />
+      </div>
+    </div>
+  )
+}
+
+function AgentFullWidthSection({
+  todos,
+  dayShiftActive,
+  onToggle,
+  onDelete,
+}: {
+  todos: Todo[]
+  dayShiftActive: boolean
+  onToggle: (todo: Todo) => void
+  onDelete: (id: string) => void
+}) {
+  const done = todos.filter((t) => t.status === 'completed').length
+  const active = todos.filter((t) => t.status !== 'completed').length
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-sm">🤖</span>
+        <h3 className="text-xs font-bold text-slate-700 flex-1">এজেন্টের আজকের কাজ</h3>
+        {dayShiftActive && (
+          <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded-full animate-pulse">
+            live
+          </span>
+        )}
+        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full tabular-nums">
+          {active} active · {done} done
+        </span>
+      </div>
+      <UnifiedTodoList todos={todos} readOnly onToggle={onToggle} onDelete={onDelete} />
+      <button
+        type="button"
+        onClick={() => {
+          if (!tryOpenOfficeLiveThread()) {
+            toast('🏢 অফিস chat — উপরে সবুজ banner ট্যাপ করুন', { duration: 3500 })
+          }
+        }}
+        className="mt-3 text-[10px] font-medium text-slate-500 hover:text-[#E07A5F] transition-colors"
+      >
+        🏢 অফিস chat-এ live — কাজ চললে এখানে দেখুন
+      </button>
     </div>
   )
 }
@@ -415,35 +575,16 @@ export function AgentTodoPanel() {
   const dayShiftActive = ctx?.dayShiftActive ?? localDayShiftActive
 
   const agentTodos = useMemo(
-    () => todos.filter((t) => isAgentTodoSource(t.source)),
-    [todos],
-  )
-  const ownerTodos = useMemo(
-    () => todos.filter((t) => isOwnerTodoSource(t.source)),
+    () => sortAgentTodosByDutyTime(todos.filter((t) => isAgentTodoSource(t.source))),
     [todos],
   )
 
-  const agentActive = useMemo(
-    () => sortAgentTodosByDutyTime(agentTodos.filter((t) => t.status !== 'completed' && !isFailedStatus(t.status))),
-    [agentTodos],
-  )
-  const agentCompleted = useMemo(
-    () => sortAgentTodosByDutyTime(agentTodos.filter((t) => t.status === 'completed')),
-    [agentTodos],
-  )
-  const ownerActive = useMemo(
-    () => sortOwnerTodos(ownerTodos.filter((t) => t.status !== 'completed' && !isFailedStatus(t.status))),
-    [ownerTodos],
-  )
-  const ownerCompleted = useMemo(
-    () => sortOwnerTodos(ownerTodos.filter((t) => t.status === 'completed')),
-    [ownerTodos],
-  )
-
-  const cancelledTodos = useMemo(
-    () => todos.filter((t) => isFailedStatus(t.status)),
+  const ownerTasksToday = useMemo(
+    () => sortOwnerTodos(filterOwnerTasksToday(todos)),
     [todos],
   )
+
+  const hasOwnerSplit = ownerTasksToday.length > 0
 
   async function addTodo() {
     if (!newTitle.trim() || adding) return
@@ -455,7 +596,12 @@ export function AgentTodoPanel() {
         const res = await fetch('/api/assistant/todos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: newTitle.trim(), priority: newPriority, source: 'owner' }),
+          body: JSON.stringify({
+            title: newTitle.trim(),
+            priority: newPriority,
+            source: 'owner',
+            dueDate: ownerDueDateIso(),
+          }),
         })
         if (res.ok) void localLoad()
       }
@@ -498,7 +644,9 @@ export function AgentTodoPanel() {
     )
   }
 
-  const totalActive = agentActive.length + ownerActive.length
+  const totalActive = todos.filter(
+    (t) => t.status !== 'completed' && !isFailedStatus(t.status),
+  ).length
 
   return (
     <div className="px-4 py-5 sm:px-5 sm:py-6">
@@ -506,103 +654,43 @@ export function AgentTodoPanel() {
         <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
         <p className="text-xs text-slate-500 mt-0.5">
           {totalActive} active
-          {agentCompleted.length + ownerCompleted.length > 0
-            ? ` · ${agentCompleted.length + ownerCompleted.length} done`
-            : ''}
+          {hasOwnerSplit ? ' · Boss + Agent split' : ''}
         </p>
       </div>
 
-      <AnimatePresence>
-        {showAdd && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden mb-4"
-          >
-            <div className="bg-white border border-black/[0.06] rounded-2xl p-4 shadow-sm space-y-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">🧑‍💼 আপনার কাজ (Sir)</p>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="আপনার কাজ লিখুন…"
-                className="w-full bg-slate-50 border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-base text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 md:text-sm"
-                onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
-                autoFocus
-              />
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Priority</span>
-                {(['low', 'normal', 'high', 'urgent'] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setNewPriority(p)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors ${
-                      newPriority === p
-                        ? 'bg-[#E07A5F] text-white'
-                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                    }`}
-                  >
-                    {PRIORITY_LABELS[p]}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAdd(false)}
-                  className="flex-1 py-2 rounded-xl border border-black/[0.06] text-xs text-slate-500 font-semibold hover:bg-slate-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void addTodo()}
-                  disabled={!newTitle.trim() || adding}
-                  className="flex-1 py-2 rounded-xl bg-[#E07A5F] text-white text-xs font-bold hover:bg-[#C45A3C] transition-colors disabled:opacity-40"
-                >
-                  {adding ? 'Adding...' : 'Add Task'}
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <TodoSection
-        emoji="🤖"
-        title="এজেন্টের আজকের কাজ"
-        activeTodos={agentActive}
-        completedTodos={agentCompleted}
-        readOnly
-        live={dayShiftActive}
-        onToggle={toggleTodo}
-        onDelete={deleteTodo}
-      />
-
-      <TodoSection
-        emoji="🧑‍💼"
-        title="আপনার কাজ (Sir)"
-        activeTodos={ownerActive}
-        completedTodos={ownerCompleted}
-        showAdd={!showAdd}
-        onAddClick={() => setShowAdd(true)}
-        onToggle={toggleTodo}
-        onDelete={deleteTodo}
-      />
-
-      {cancelledTodos.length > 0 && (
-        <div className="mt-2 pt-3 border-t border-black/[0.05]">
-          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-            {cancelledTodos.length} বাতিল · আজ করা হয়নি
-          </p>
-          <div className="space-y-1.5 opacity-70">
-            {cancelledTodos.slice(0, 8).map((todo) => (
-              <p key={todo.id} className="text-xs text-slate-400 line-through px-1">{todo.title}</p>
-            ))}
+      {hasOwnerSplit ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch">
+          <div className="order-2 md:order-1">
+            <AgentCompactCard
+              todos={agentTodos}
+              dayShiftActive={dayShiftActive}
+              onToggle={toggleTodo}
+              onDelete={deleteTodo}
+            />
+          </div>
+          <div className="order-1 md:order-2">
+            <BossTodoFrame
+              todos={ownerTasksToday}
+              showAddForm={showAdd}
+              onShowAdd={() => setShowAdd((v) => !v)}
+              onAdd={addTodo}
+              onToggle={toggleTodo}
+              onDelete={deleteTodo}
+              adding={adding}
+              newTitle={newTitle}
+              setNewTitle={setNewTitle}
+              newPriority={newPriority}
+              setNewPriority={setNewPriority}
+            />
           </div>
         </div>
+      ) : (
+        <AgentFullWidthSection
+          todos={agentTodos}
+          dayShiftActive={dayShiftActive}
+          onToggle={toggleTodo}
+          onDelete={deleteTodo}
+        />
       )}
     </div>
   )

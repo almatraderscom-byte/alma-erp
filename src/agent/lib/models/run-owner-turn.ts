@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
@@ -146,7 +147,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -158,6 +159,7 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
+    personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
   ])
 
   const promptArgs = {
@@ -179,6 +181,7 @@ async function* runAlternateProviderTurn(
     ownerDecisions,
     conflictSignals,
     businessContext,
+    ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)

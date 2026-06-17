@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo, type RefObject } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { AgentTodoPanel } from './AgentTodoPanel'
-import { isAgentTodoSource, isOwnerTodoSource } from './todo-panel-utils'
+import { isAgentTodoSource, filterOwnerTasksToday } from './todo-panel-utils'
 
 /**
  * Single, scroll-aware todo dock — the ONLY todo component in the agent chat.
@@ -50,11 +50,13 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
     () => todos.filter((t) => isAgentTodoSource(t.source) && t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
     [todos],
   )
-  const sirActive = useMemo(
-    () => todos.filter((t) => isOwnerTodoSource(t.source) && t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
-    [todos],
+  const ownerTasksToday = useMemo(() => filterOwnerTasksToday(todos), [todos])
+  const sirActiveToday = useMemo(
+    () => ownerTasksToday.filter((t) => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'failed'),
+    [ownerTasksToday],
   )
-  const total = agentActive.length + sirActive.length + completed.length
+  const hasBossSplit = ownerTasksToday.length > 0
+  const total = agentActive.length + sirActiveToday.length + completed.length
 
   if (!ctx) return null
   if (loading || total === 0) return null
@@ -91,9 +93,9 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
                     <span className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]" />
                     🤖 {agentActive.length}
                   </span>
-                  <span className="inline-flex items-center gap-1 text-slate-600">
-                    <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-                    Sir {sirActive.length}
+                  <span className={`inline-flex items-center gap-1 ${hasBossSplit ? 'text-[#E07A5F]' : 'text-slate-600'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${hasBossSplit ? 'bg-[#E07A5F]' : 'bg-slate-400'}`} />
+                    Boss {sirActiveToday.length}
                   </span>
                   <span className="inline-flex items-center gap-1 text-emerald-600">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />

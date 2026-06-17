@@ -4,6 +4,7 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
@@ -398,7 +399,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, selectedTools] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, selectedTools] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -417,6 +418,10 @@ export async function* runAgentTurn(
     }),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch((err) => {
       console.warn('[core] businessContext build failed:', err instanceof Error ? err.message : String(err))
+      return ''
+    }),
+    personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch((err) => {
+      console.warn('[core] ownerActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
       return ''
     }),
     selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
@@ -482,6 +487,7 @@ export async function* runAgentTurn(
     activePlaybook,
     teachingBlock,
     intakeContextBlock,
+    ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,

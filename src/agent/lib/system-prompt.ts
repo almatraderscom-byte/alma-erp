@@ -530,6 +530,7 @@ export type BuildSystemPromptArgs = {
   activePlaybook?: ActivePlaybookEntry[]
   teachingBlock?: string
   intakeContextBlock?: string
+  ownerActiveTasksBlock?: string
   outcomeLearnings?: OutcomeLearning[]
   ownerDecisions?: OwnerDecision[]
   conflictSignals?: Array<{ source: string; detail: string; confidence: number }>
@@ -557,6 +558,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     activePlaybook,
     teachingBlock,
     intakeContextBlock,
+    ownerActiveTasksBlock,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,
@@ -615,6 +617,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     if (intakeContextBlock) {
       volatileParts.push(intakeContextBlock)
+    }
+
+    if (ownerActiveTasksBlock) {
+      volatileParts.push(ownerActiveTasksBlock)
     }
 
     if (businessContext) {

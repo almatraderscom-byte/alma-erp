@@ -3,6 +3,45 @@ import type { Todo } from './AgentTodoContext'
 
 const DUTY_ORDER = new Map<string, number>(DAILY_DUTIES.map((d, i) => [d.duty, i]))
 
+export function todayYmdClient(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Dhaka',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+}
+
+/** Owner todo counts for today's Boss panel split. */
+export function isOwnerDueToday(todo: Todo, today = todayYmdClient()): boolean {
+  if (!isOwnerTodoSource(todo.source)) return false
+  if (todo.dueDate) {
+    return todo.dueDate.slice(0, 10) === today
+  }
+  return todo.createdAt.slice(0, 10) === today
+    || new Date(todo.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' }) === today
+}
+
+export function filterOwnerTasksToday(todos: Todo[], today = todayYmdClient()): Todo[] {
+  return todos.filter((t) => isOwnerDueToday(t, today))
+}
+
+export function isRejectedStatus(status: string): boolean {
+  return status === 'rejected'
+}
+
+export function isCancelledStatus(status: string): boolean {
+  return status === 'cancelled' || status === 'failed'
+}
+
+export function isFailedStatus(status: string): boolean {
+  return isCancelledStatus(status) || isRejectedStatus(status)
+}
+
+export function ownerDueDateIso(today = todayYmdClient()): string {
+  return `${today}T00:00:00+06:00`
+}
+
 export function isAgentTodoSource(source: string): boolean {
   return source === 'day_shift' || source === 'scheduler' || source === 'agent'
 }

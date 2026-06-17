@@ -12,6 +12,7 @@ import {
 } from 'react'
 import toast from 'react-hot-toast'
 import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
+import { ownerDueDateIso } from './todo-panel-utils'
 
 export interface Todo {
   id: string
@@ -151,6 +152,7 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
           priority: input.priority ?? 'normal',
           description: input.description,
           source: 'owner',
+          dueDate: ownerDueDateIso(),
         }),
       })
       if (res.ok) {
