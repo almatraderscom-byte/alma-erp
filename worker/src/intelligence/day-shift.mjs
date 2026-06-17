@@ -1,6 +1,6 @@
 /**
  * Day Shift runner — autonomous office session in owner agent chat.
- * Calls Vercel internal API — cycle start at 00:05 Dhaka (midnight), tick every 12 min (24h).
+ * Calls Vercel internal API — office hours 08:00–22:00 Dhaka, sparse patrol after core duties.
  */
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -27,9 +27,20 @@ async function callDayShift(action) {
   return data
 }
 
-/** 08:00 Dhaka — open shift + first task. */
+async function gateOutsideOfficeHours(supabase) {
+  if (!supabase) return null
+  const { getDayShiftWindowUtc, isWithinDayShiftWindowUtc } = await import('../schedulers/dayshift-settings.mjs')
+  const window = await getDayShiftWindowUtc(supabase)
+  if (!isWithinDayShiftWindowUtc(new Date(), window)) {
+    console.log('[day-shift] tick skipped — outside office window (UTC', window, ')')
+    return { dutyStatus: 'skipped', dutyDetail: 'outside_office_hours' }
+  }
+  return null
+}
+
+/** 08:05 Dhaka — open shift + first task. */
 export async function runDayShiftStart() {
-  console.log('[day-shift] morning start...')
+  console.log('[day-shift] office start (08:05 Dhaka)...')
   const result = await callDayShift('start')
   if (result.ok) {
     const tick = await callDayShift('tick')
@@ -38,7 +49,7 @@ export async function runDayShiftStart() {
   return { dutyStatus: 'skipped', dutyDetail: result.detail ?? 'start_failed' }
 }
 
-/** 08:00 Dhaka — morning summary for owner (shift runs at midnight). */
+/** 08:00 Dhaka — morning summary for owner. */
 export async function runDayShiftMorningBrief() {
   console.log('[day-shift] morning brief...')
   const result = await callDayShift('morning_brief')
@@ -48,9 +59,15 @@ export async function runDayShiftMorningBrief() {
   }
 }
 
-/** Every 12 min during office hours — run next task. */
-export async function runDayShiftTick() {
+/** Every 12 min during office hours — run next core duty or sparse patrol. */
+export async function runDayShiftTick(context = {}) {
+  const gated = await gateOutsideOfficeHours(context.supabase)
+  if (gated) return gated
+
   const result = await callDayShift('tick')
+  if (result.detail === 'patrol_wait' || result.detail === 'outside_office_hours') {
+    console.log(`[day-shift] tick no-op: ${result.detail}`)
+  }
   return {
     dutyStatus: result.ok ? 'done' : 'skipped',
     dutyDetail: result.detail ?? 'tick_failed',

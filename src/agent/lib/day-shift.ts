@@ -17,6 +17,11 @@ import {
 } from '@/agent/lib/duty-approval-block'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { enabledDutiesForToday } from '@/agent/lib/duty-enabled'
+import {
+  getDayShiftSettings,
+  isDayShiftOfficeHoursDhaka,
+  isWithinDayShiftWindowUtc,
+} from '@/agent/lib/dayshift-settings'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 
@@ -27,18 +32,9 @@ const SHIFT_KV_PREFIX = 'day_shift:'
 const BUSINESS_ID = 'ALMA_LIFESTYLE'
 const SKIP_DUTY_TODO = new Set(['salah_init'])
 
-/** ALMA Lifestyle office hours — banner stays active during patrol until close. */
-function isOfficeHoursDhaka(now = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Dhaka',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(now)
-  const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
-  const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
-  const mins = hh * 60 + mm
-  return mins >= 9 * 60 + 30 && mins < 20 * 60
+async function patrolIntervalMs(): Promise<number> {
+  const { patrolIntervalMin } = await getDayShiftSettings()
+  return patrolIntervalMin * 60 * 1000
 }
 
 async function shiftDutiesForToday(now = new Date()) {
@@ -372,15 +368,14 @@ async function runDeterministicTask(
   }
 }
 
-const PATROL_INTERVAL_MS = 60 * 60 * 1000 // hourly light check after main queue
-
 async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detail: string; conversationId: string }> {
   const now = Date.now()
-  if (state.lastPatrolAt && now - new Date(state.lastPatrolAt).getTime() < PATROL_INTERVAL_MS) {
+  const intervalMs = await patrolIntervalMs()
+  if (state.lastPatrolAt && now - new Date(state.lastPatrolAt).getTime() < intervalMs) {
     return { ok: true, detail: 'patrol_wait', conversationId: state.conversationId }
   }
 
-  const lines: string[] = ['🔄 **অফিস প্যাট্রোল** — ২৪ ঘণ্টা অফিস চালু। মূল কাজ শেষ; হালকা মনিটরিং চলছে।']
+  const lines: string[] = ['🔄 **অফিস প্যাট্রোল** — মূল duty শেষ; হালকা মনিটরিং (ঘণ্টায় একবার)।']
 
   try {
     const briefing = await buildOwnerBriefingData()
@@ -415,9 +410,9 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
   if (!state) {
     await appendShiftNarrative(
       conversationId,
-      `🏢 **অফিস সাইকেল শুরু** (রাত ১২:০৫ মধ্যরাত — ২৪ ঘণ্টা অফিস)\n\n` +
-        `আসসালামু আলাইকুম Sir। আজকের (রাত ১২টা → পরের রাত ১১:৫৫) duty roster (${duties.length}টি) panel-এ ready। ` +
-        `অফিস ২৪ ঘণ্টা চালু — আপনি যেকোনো সময় এই chat-এ live দেখতে পারবেন।\n\n` +
+      `🏢 **অফিস সাইকেল শুরু** (সকাল ৮:০৫ — অফিস সময় ৮:০০–২২:০০)\n\n` +
+        `আসসালামু আলাইকুম Sir। আজকের duty roster (${duties.length}টি) panel-এ ready। ` +
+        `অফিস সময়ে প্রতি ১২ মিনিটে core duty, শেষে ঘণ্টায় একবার প্যাট্রোল।\n\n` +
         `প্রথমে briefing data টানছি...`,
     )
 
@@ -464,8 +459,20 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
 
 /** Run the next duty in today's roster (one per tick — cost control). */
 export async function tickDayShift(): Promise<{ ok: boolean; detail: string; conversationId?: string }> {
+  const settings = await getDayShiftSettings()
+  if (!isWithinDayShiftWindowUtc(new Date(), settings.windowUtc)) {
+    return { ok: true, detail: 'outside_office_hours' }
+  }
+
   const date = todayYmdDhaka()
   let state = await loadDayShiftState(date)
+
+  if (state?.status === 'done') {
+    const intervalMs = settings.patrolIntervalMin * 60 * 1000
+    if (state.lastPatrolAt && Date.now() - new Date(state.lastPatrolAt).getTime() < intervalMs) {
+      return { ok: true, detail: 'patrol_wait', conversationId: state.conversationId }
+    }
+  }
 
   if (!state) {
     const started = await startDayShift()
@@ -492,13 +499,13 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
       await appendShiftNarrative(
         conversationId,
         `✅ **মূল duty roster সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
-          `অফিস **২৪ ঘণ্টা চালু** (রাত ১২টা → পরের রাত ১১:৫৫) — প্রতি ঘণ্টায় হালকা প্যাট্রোল। ` +
-          `পরের সাইকেল **মধ্যরাত ১২:০৫**-এ শুরু।`,
+          `অফিস সময় (৮:০০–২২:০০) — প্রতি ঘণ্টায় হালকা প্যাট্রোল। ` +
+          `পরের সাইকেল **সকাল ৮:০৫**-এ শুরু।`,
       )
       state.status = 'done'
       state.completedAt = new Date().toISOString()
       await saveDayShiftState(state)
-      void sendOwnerText(`🌙 Agent অফিস মূল duty শেষ — ${total}টি সম্পন্ন। অফিস ২৪ ঘণ্টা চালু।`).catch(() => {})
+      void sendOwnerText(`🌙 Agent অফিস মূল duty শেষ — ${total}টি সম্পন্ন। প্যাট্রোল ঘণ্টায় একবার।`).catch(() => {})
     }
     return { ok: true, detail: 'shift_complete', conversationId }
   }
@@ -637,6 +644,6 @@ export async function getDayShiftToday(): Promise<{
     conversationId,
     title,
     active:
-      (state?.status === 'running' || state?.status === 'done') && isOfficeHoursDhaka(),
+      (state?.status === 'running' || state?.status === 'done') && isDayShiftOfficeHoursDhaka(),
   }
 }

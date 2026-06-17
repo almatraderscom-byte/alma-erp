@@ -129,9 +129,9 @@ export const SCHEDULER_REGISTRY = [
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
   { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
-  { name: 'day-shift-start',         cronUtc: '5 18 * * *',    description: 'Agent office cycle start (00:05 Dhaka — midnight, 24h day)' },
+  { name: 'day-shift-start',         cronUtc: '5 2 * * *',     description: 'Agent office cycle start (08:05 Dhaka — office hours)' },
   { name: 'day-shift-morning-brief', cronUtc: '0 2 * * *',     description: 'Day shift morning summary for owner (08:00 Dhaka)' },
-  { name: 'day-shift-tick',          cronUtc: '*/12 * * * *', description: 'Agent day shift — tick every 12 min (24h office + patrol)' },
+  { name: 'day-shift-tick',          cronUtc: '*/12 2-16 * * *', description: 'Agent day shift — tick every 12 min (08:00–22:00 Dhaka office + patrol)' },
   { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
   { name: 'todo-reconcile',          cronUtc: '55 17 * * *',  description: 'End-of-day: cancel agent todos not done today (23:55 Dhaka)' },
   { name: 'agent-scorecard',        cronUtc: '30 3 * * 6',  description: 'Weekly agent tool scorecard (Sat 09:30 Dhaka)' },
@@ -448,7 +448,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'day-shift-tick': {
       const { runDayShiftTick } = await lazy.dayShift()
-      dutyResult = await runDayShiftTick() ?? { dutyStatus: 'done' }
+      dutyResult = await runDayShiftTick(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'evening-todo-summary': {
@@ -503,6 +503,14 @@ export async function setupSchedulers({ connection, supabase, bot }) {
   // Sync repeatable jobs — only re-register when cron changed (avoids boot gap)
   const existing = await schedulerQueue.getRepeatableJobs()
   const existingByName = new Map(existing.map((j) => [j.name, j]))
+
+  const { getDayShiftTickCron } = await import('./dayshift-settings.mjs')
+  const dayShiftTickCron = await getDayShiftTickCron(supabase)
+  const tickEntry = SCHEDULER_REGISTRY.find((e) => e.name === 'day-shift-tick')
+  if (tickEntry) {
+    tickEntry.cronUtc = dayShiftTickCron
+    console.log(`[schedulers] day-shift-tick window cron: ${dayShiftTickCron}`)
+  }
 
   for (const entry of SCHEDULER_REGISTRY) {
     const ex = existingByName.get(entry.name)
@@ -677,11 +685,38 @@ export async function setupSchedulers({ connection, supabase, bot }) {
     }
   }, 5 * 60_000)
 
+  // Poll dayshift window KV — re-register day-shift-tick cron without redeploy
+  let lastDayShiftTickCron = tickEntry?.cronUtc ?? null
+  const dayshiftSettingsPoll = setInterval(async () => {
+    try {
+      const { getDayShiftTickCron } = await import('./dayshift-settings.mjs')
+      const newCron = await getDayShiftTickCron(supabase)
+      if (!newCron || newCron === lastDayShiftTickCron) return
+
+      const entry = SCHEDULER_REGISTRY.find((e) => e.name === 'day-shift-tick')
+      if (!entry) return
+      entry.cronUtc = newCron
+
+      const repeatables = await schedulerQueue.getRepeatableJobs()
+      for (const rep of repeatables) {
+        if (rep.name === 'day-shift-tick') await schedulerQueue.removeRepeatableByKey(rep.key)
+      }
+      await schedulerQueue.add('day-shift-tick', { jobName: 'day-shift-tick' }, {
+        repeat: { pattern: newCron, tz: 'UTC' },
+      })
+      lastDayShiftTickCron = newCron
+      console.log(`[schedulers] day-shift-tick cron updated from KV: ${newCron}`)
+    } catch (err) {
+      console.warn('[schedulers] dayshift settings poll error:', err.message)
+    }
+  }, 5 * 60_000)
+
   return {
     schedulerQueue,
     schedulerWorker,
     retriggerPoll,
     dutyTimePoll,
+    dayshiftSettingsPoll,
     runSchedulerJob: (jobName, opts) => runSchedulerJob(jobName, context, opts),
   }
 }
