@@ -28,8 +28,14 @@ export function useVoiceRecorder(opts: {
 
   const start = useCallback(async () => {
     if (mrRef.current) return
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      callbacksRef.current.onError?.('মাইক্রোফোন এই ব্রাউজারে সাপোর্ট করে না — HTTPS বা অ্যাপ থেকে খুলুন।')
+      return
+    }
     try {
-      const ms = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const ms = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      })
       setStream(ms)
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
@@ -76,8 +82,15 @@ export function useVoiceRecorder(opts: {
       setRecordSecs(0)
       callbacksRef.current.onRecordingStart?.()
       timerRef.current = setInterval(() => setRecordSecs(s => s + 1), 1000)
-    } catch {
-      callbacksRef.current.onError?.('মাইক্রোফোন ব্যবহার করা যাচ্ছে না')
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : ''
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        callbacksRef.current.onError?.('মাইক্রোফোনের অনুমতি দিন — orb-এ ট্যাপ করে Allow করুন।')
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        callbacksRef.current.onError?.('মাইক্রোফোন পাওয়া যায়নি।')
+      } else {
+        callbacksRef.current.onError?.('মাইক্রোফোন ব্যবহার করা যাচ্ছে না — orb-এ ট্যাপ করে আবার চেষ্টা করুন।')
+      }
     }
   }, [])
 

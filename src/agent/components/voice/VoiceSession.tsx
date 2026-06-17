@@ -55,15 +55,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
             audioRef.current = audio
             audio.onended = () => {
               audioRef.current = null
-              if (openRef.current) {
-                setState('idle')
-                setTimeout(() => {
-                  if (openRef.current && stateRef.current === 'idle') {
-                    recorder.start()
-                    setState('listening')
-                  }
-                }, 400)
-              }
+              if (openRef.current) setState('idle')
             }
             await audio.play()
           } catch {
@@ -115,17 +107,6 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
     setTranscript('')
     onClose()
   }, [recorder, stopTts, onClose])
-
-  useEffect(() => {
-    if (open && state === 'idle') {
-      const t = setTimeout(() => {
-        if (openRef.current && stateRef.current === 'idle') {
-          recorder.start()
-        }
-      }, 350)
-      return () => clearTimeout(t)
-    }
-  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) {
