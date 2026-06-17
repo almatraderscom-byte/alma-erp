@@ -321,6 +321,26 @@ async function processImageGen(job) {
     return
   }
 
+  if (payload.provider === 'fashn') {
+    try {
+      const { processFashnImageGen } = await import('./fashn/process.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processFashnImageGen({ supabase, pendingActionId, payload, logCost })
+      await callJobResult(pendingActionId, 'success', {
+        storagePath: result.storagePath,
+        allPaths: result.allPaths,
+        provider: 'fashn',
+        creativeStudio: true,
+        studioMode: payload.studioMode,
+      })
+      console.log(`[worker] fashn ${pendingActionId} — done → ${result.storagePath}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] fashn ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   const {
     prompt: basePrompt,
     quality,

@@ -2,225 +2,551 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { motion, AnimatePresence, LayoutGroup } from 'framer-motion'
-import toast from 'react-hot-toast'
-import { brandTodo } from '@/agent/components/todo-brand-tokens'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Toaster, toast } from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import {
+  STUDIO_MODES,
+  FAMILY_PRESETS,
+  ASPECT_RATIOS,
+  RESOLUTIONS,
+  GEN_MODES,
+  BACKGROUND_PRESETS,
+  VIDEO_VIBES,
+  type StudioModeId,
+  type StudioProvider,
+  type FamilyPresetId,
+} from '@/lib/creative-studio/constants'
+import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import {
+  fetchStudioConfig,
+  fetchGallery,
+  fetchModels,
+  runStudioJob,
+  saveModel,
+  uploadStudioFile,
+  type GalleryItem,
+  type StudioConfig,
+} from '@/agent/components/creative-studio/studio-api'
 
-type ChatTryOnVariant =
-  | 'single'
-  | 'father_son'
-  | 'mother_son'
-  | 'mother_daughter'
-  | 'full_family'
+type MainView = 'studio' | 'gallery' | 'models'
 
-type StudioTab = 'brief' | 'models' | 'tryon'
-type BriefKind = 'reel' | 'fb_post' | 'ad_hook' | 'story'
-type ViewMode = 'studio' | 'chat'
+export default function CreativeStudio() {
+  const [view, setView] = useState<MainView>('studio')
+  const [config, setConfig] = useState<StudioConfig | null>(null)
 
-type SavedModelRow = {
-  id: string
-  name: string
-  role: string | null
-  isDefault: boolean
-  notes?: string
-}
-
-type Product = { code: string; name: string; type: string }
-
-const TABS: Array<{ id: StudioTab; label: string; sub: string }> = [
-  { id: 'brief', label: 'Creative Brief', sub: 'Hooks & captions' },
-  { id: 'models', label: 'Model Library', sub: 'Save your face' },
-  { id: 'tryon', label: 'Try-On', sub: 'Product → model' },
-]
-
-const ROLES = [
-  { id: 'single', label: 'Single / Owner' },
-  { id: 'father', label: 'Father' },
-  { id: 'mother', label: 'Mother' },
-  { id: 'son', label: 'Son (5–12)' },
-  { id: 'daughter', label: 'Daughter (5–10)' },
-] as const
-
-const VARIANT_OPTS: Array<{ id: ChatTryOnVariant; label: string }> = [
-  { id: 'single', label: 'Single' },
-  { id: 'father_son', label: 'Baba + Chele' },
-  { id: 'mother_son', label: 'Ma + Chele' },
-  { id: 'mother_daughter', label: 'Ma + Meyе' },
-  { id: 'full_family', label: 'Full family' },
-]
-
-const spring = { type: 'spring' as const, stiffness: 420, damping: 32 }
-
-function Pressable({
-  className,
-  children,
-  disabled,
-  onClick,
-  type = 'button',
-}: {
-  className?: string
-  children: React.ReactNode
-  disabled?: boolean
-  onClick?: () => void
-  type?: 'button' | 'submit'
-}) {
-  return (
-    <motion.div whileHover={disabled ? undefined : { scale: 1.02, y: -1 }} whileTap={disabled ? undefined : { scale: 0.97 }} transition={spring}>
-      <button type={type} disabled={disabled} onClick={onClick} className={className}>
-        {children}
-      </button>
-    </motion.div>
-  )
-}
-
-async function uploadFile(file: File, folder: string): Promise<string> {
-  const fd = new FormData()
-  fd.append('file', file)
-  fd.append('conversationId', folder)
-  const res = await fetch('/api/assistant/upload', { method: 'POST', body: fd })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'upload_failed')
-  return data.path as string
-}
-
-// --- Brief mock (Phase C lite preview) ---
-const PRODUCTS: Product[] = [
-  { code: 'ALM-8842', name: 'Premium Cotton Panjabi', type: 'panjabi' },
-  { code: 'ALM-7710', name: 'Embroidered Kurti Set', type: 'kurti' },
-  { code: 'ALM-5521', name: 'Father-Son Combo', type: 'family_match' },
-]
-
-const MOCK_BRIEFS: Record<BriefKind, (p: Product) => { title: string; concept: string; hooks: string[] }> = {
-  reel: (p) => ({
-    title: `${p.name} — রিল ব্রিফ`,
-    concept: 'ঈদ vibe — fabric close-up → full reveal → Inbox CTA।',
-    hooks: ['Premium fabric feel', 'Baba-chele combo', 'Dhaka heat comfortable'],
-  }),
-  fb_post: (p) => ({
-    title: `${p.name} — FB পোস্ট`,
-    concept: 'Gate 1 fabric check → Gate 2 publish।',
-    hooks: ['Limited stock', 'Office + jamaat friendly', 'Photo = product'],
-  }),
-  ad_hook: (p) => ({
-    title: `${p.name} — Ad hooks`,
-    concept: '3 hooks × separate ad sets, kill after 48h.',
-    hooks: ['Eid shopping bookmark', 'COD risk-free', 'Inbox now'],
-  }),
-  story: (p) => ({
-    title: `${p.name} — Story arc`,
-    concept: '3 slides: hook → detail → CTA.',
-    hooks: ['Swipe fabric macro', 'DM for size', 'Today deal'],
-  }),
-}
-
-function BriefPanel() {
-  const [kind, setKind] = useState<BriefKind>('reel')
-  const [product, setProduct] = useState(PRODUCTS[0])
-  const [view, setView] = useState<ViewMode>('studio')
-  const [generating, setGenerating] = useState(false)
-  const brief = useMemo(() => MOCK_BRIEFS[kind](product), [kind, product])
-
-  const regenerate = () => {
-    setGenerating(true)
-    window.setTimeout(() => setGenerating(false), 900)
-  }
+  useEffect(() => {
+    void fetchStudioConfig().then(setConfig).catch(() => {})
+  }, [])
 
   return (
-    <div className="space-y-3">
-      <div className="flex rounded-xl border border-black/[0.06] bg-white/80 p-1">
-        {(['studio', 'chat'] as const).map((v) => (
-          <Pressable
-            key={v}
-            type="button"
-            onClick={() => setView(v)}
-            className={cn(
-              'flex-1 rounded-lg py-2 text-xs font-semibold transition-colors',
-              view === v ? `${brandTodo.coralBtn} text-white shadow-sm` : 'text-[#1a1a2e]/55',
-            )}
-          >
-            {v === 'studio' ? 'Studio view' : 'Chat view'}
-          </Pressable>
-        ))}
-      </div>
+    <div className="flex h-[100dvh] max-h-[100dvh] w-full overflow-hidden bg-[#FAF9F6] text-[#1a1a2e]">
+      <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
+      {/* Desktop sidebar */}
+      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-black/[0.06] bg-white/90 py-4 md:flex">
+        <NavIcon href="/agent" label="Chat" active={false}>
+          <ChatSvg />
+        </NavIcon>
+        <NavIcon label="Studio" active={view === 'studio'} onClick={() => setView('studio')}>
+          <StudioSvg />
+        </NavIcon>
+        <NavIcon label="Gallery" active={view === 'gallery'} onClick={() => setView('gallery')}>
+          <GallerySvg />
+        </NavIcon>
+        <NavIcon label="Models" active={view === 'models'} onClick={() => setView('models')}>
+          <UserSvg />
+        </NavIcon>
+      </aside>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {(
-          [
-            ['reel', 'রিল'],
-            ['fb_post', 'FB'],
-            ['ad_hook', 'Ad'],
-            ['story', 'Story'],
-          ] as const
-        ).map(([id, label]) => (
-          <Pressable
-            key={id}
-            type="button"
-            onClick={() => {
-              setKind(id)
-              regenerate()
-            }}
-            className={cn(
-              'rounded-xl border px-2 py-2 text-xs font-bold transition-all',
-              kind === id ? `${brandTodo.coralBorder} ${brandTodo.coralBgStrong}` : 'border-black/[0.06] bg-white/85',
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between border-b border-black/[0.06] bg-white/95 px-3 py-2.5 backdrop-blur-md sm:px-4">
+          <div>
+            <p className="text-sm font-bold text-[#1a1a2e]">Creative Studio</p>
+            <p className="text-[10px] text-[#64748b]">{config?.organization ?? 'Alma Traders'}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {config && (
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                  config.fashnConfigured ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
+                )}
+              >
+                {config.fashnConfigured ? 'FASHN Pro ready' : 'Add FASHN_API_KEY'}
+              </span>
             )}
-          >
-            {label}
-          </Pressable>
-        ))}
-      </div>
+            <Link
+              href="/agent"
+              className="rounded-lg bg-[#E07A5F] px-2.5 py-1.5 text-[11px] font-semibold text-white md:hidden"
+            >
+              Chat
+            </Link>
+          </div>
+        </header>
 
-      <AnimatePresence mode="wait">
-        {view === 'studio' ? (
-          <motion.div key="s" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-2">
-            <motion.h2 layout className="text-base font-bold text-[#1a1a2e]">
-              {generating ? '…' : brief.title}
-            </motion.h2>
-            <motion.div layout className={cn('rounded-xl p-3', brandTodo.agentCard)}>
-              <p className={cn('text-[10px] font-bold uppercase', brandTodo.coralDark)}>Concept</p>
-              <p className="mt-1 text-[13px] leading-relaxed">{brief.concept}</p>
-            </motion.div>
-            <motion.div layout className={cn('rounded-xl p-3', brandTodo.agentCard)}>
-              <p className={cn('text-[10px] font-bold uppercase', brandTodo.coralDark)}>Hooks</p>
-              <ul className="mt-1 list-disc pl-4 text-[12px]">
-                {brief.hooks.map((h) => (
-                  <li key={h}>{h}</li>
-                ))}
-              </ul>
-            </motion.div>
-          </motion.div>
-        ) : (
-          <motion.div key="c" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
-            <div className={cn('ml-auto max-w-[85%] rounded-2xl rounded-br-md px-3 py-2 text-[13px]', brandTodo.bossFrame)}>
-              {product.code} — ঈদ রিল idea দাও
-            </div>
-            <div className="max-w-[92%] rounded-2xl border border-black/[0.06] bg-white/95 px-3 py-3 text-[12px] shadow-sm">
-              Sir, {brief.concept}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <main className="relative min-h-0 flex-1 overflow-hidden">
+          <AnimatePresence mode="wait">
+            {view === 'studio' && (
+              <motion.div key="studio" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <StudioWorkspace config={config} onOpenGallery={() => setView('gallery')} />
+              </motion.div>
+            )}
+            {view === 'gallery' && (
+              <motion.div key="gallery" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <GalleryView />
+              </motion.div>
+            )}
+            {view === 'models' && (
+              <motion.div key="models" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <ModelsView />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+
+        {/* Mobile bottom nav */}
+        <nav
+          className="flex shrink-0 border-t border-black/[0.06] bg-white md:hidden"
+          style={{ paddingBottom: 'max(0.35rem, env(safe-area-inset-bottom))' }}
+        >
+          {(
+            [
+              ['studio', 'Studio', StudioSvg],
+              ['gallery', 'Gallery', GallerySvg],
+              ['models', 'Models', UserSvg],
+            ] as const
+          ).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setView(id)}
+              className={cn(
+                'flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium',
+                view === id ? 'text-[#E07A5F]' : 'text-[#94A3B8]',
+              )}
+            >
+              <Icon className="h-5 w-5" />
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
     </div>
   )
 }
 
-function ModelsPanel() {
-  const [models, setModels] = useState<SavedModelRow[]>([])
+function NavIcon({
+  label,
+  active,
+  onClick,
+  href,
+  children,
+}: {
+  label: string
+  active: boolean
+  onClick?: () => void
+  href?: string
+  children: React.ReactNode
+}) {
+  const cls = cn(
+    'mb-3 flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[9px] font-medium transition-colors',
+    active ? 'bg-[#E07A5F]/12 text-[#E07A5F]' : 'text-[#94A3B8] hover:text-[#64748b]',
+  )
+  if (href) {
+    return (
+      <Link href={href} className={cls}>
+        {children}
+        {label}
+      </Link>
+    )
+  }
+  return (
+    <button type="button" onClick={onClick} className={cls}>
+      {children}
+      {label}
+    </button>
+  )
+}
+
+function StudioWorkspace({
+  config,
+  onOpenGallery,
+}: {
+  config: StudioConfig | null
+  onOpenGallery: () => void
+}) {
+  const [mode, setMode] = useState<StudioModeId>('product_to_model')
+  const [provider, setProvider] = useState<StudioProvider>('fashn')
+  const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
+  const [productPreview, setProductPreview] = useState<string | null>(null)
+  const [modelPreview, setModelPreview] = useState<string | null>(null)
+  const [sourcePreview, setSourcePreview] = useState<string | null>(null)
+  const [productPath, setProductPath] = useState<string | null>(null)
+  const [modelPath, setModelPath] = useState<string | null>(null)
+  const [sourcePath, setSourcePath] = useState<string | null>(null)
+  const [modelId, setModelId] = useState('')
+  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null }>>([])
+  const [prompt, setPrompt] = useState('')
+  const [backgroundId, setBackgroundId] = useState('studio')
+  const [aspectRatio, setAspectRatio] = useState('4:5')
+  const [resolution, setResolution] = useState<FashnResolution>('2k')
+  const [genMode, setGenMode] = useState<FashnGenerationMode>('balanced')
+  const [numImages, setNumImages] = useState(1)
+  const [durationSec, setDurationSec] = useState(6)
+  const [vibe, setVibe] = useState<'premium' | 'festival' | 'offer' | 'lifestyle'>('premium')
+  const [running, setRunning] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(true)
+
+  const modeDef = useMemo(() => STUDIO_MODES.find((m) => m.id === mode)!, [mode])
+  const bgPrompt = BACKGROUND_PRESETS.find((b) => b.id === backgroundId)?.prompt ?? ''
+
+  useEffect(() => {
+    void fetchModels()
+      .then((d) => setModels(d.models ?? []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (config?.fashnConfigured && mode !== 'image_to_video') setProvider('fashn')
+    else if (mode === 'image_to_video') setProvider('gemini')
+    else setProvider('gemini')
+  }, [config, mode])
+
+  const upload = async (file: File, kind: 'product' | 'model' | 'source') => {
+    const path = await uploadStudioFile(file, `studio-${kind}`)
+    const url = URL.createObjectURL(file)
+    if (kind === 'product') {
+      if (productPreview) URL.revokeObjectURL(productPreview)
+      setProductPreview(url)
+      setProductPath(path)
+    } else if (kind === 'model') {
+      if (modelPreview) URL.revokeObjectURL(modelPreview)
+      setModelPreview(url)
+      setModelPath(path)
+    } else {
+      if (sourcePreview) URL.revokeObjectURL(sourcePreview)
+      setSourcePreview(url)
+      setSourcePath(path)
+    }
+  }
+
+  const canRun = useMemo(() => {
+    if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
+    if (modeDef.needsProduct && !productPath) return false
+    if (modeDef.needsModel && !modelPath && !modelId) return false
+    if (modeDef.needsSource && !sourcePath) return false
+    return true
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath])
+
+  const handleRun = async () => {
+    if (!canRun) {
+      toast.error('Required images missing')
+      return
+    }
+    setRunning(true)
+    try {
+      const result = await runStudioJob({
+        mode,
+        provider,
+        productImagePath: productPath ?? undefined,
+        modelImagePath: modelPath ?? undefined,
+        sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
+        modelId: modelId || undefined,
+        familyPreset: mode === 'product_to_model' || mode === 'try_on' ? familyPreset : undefined,
+        prompt,
+        backgroundPrompt: backgroundId !== 'custom' ? bgPrompt : prompt,
+        aspectRatio,
+        resolution,
+        generationMode: genMode,
+        numImages,
+        durationSec,
+        vibe,
+      })
+      toast.success(result.message)
+      onOpenGallery()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Canvas / drop zone */}
+      <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 pt-3', panelOpen ? 'pb-[min(58vh,480px)] md:pb-[min(52vh,420px)]' : 'pb-28 md:pb-20')}>
+        <div className="mx-auto flex max-w-2xl flex-col gap-3">
+          <UploadTile
+            label={modeDef.needsProduct ? 'Product / mannequin' : 'Product (optional)'}
+            preview={productPreview}
+            onFile={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
+            required={modeDef.needsProduct}
+          />
+          {(modeDef.needsModel || mode === 'try_on') && (
+            <UploadTile
+              label="Model photo"
+              preview={modelPreview}
+              onFile={(f) => void upload(f, 'model').catch((e) => toast.error(String(e)))}
+              required={modeDef.needsModel}
+            />
+          )}
+          {modeDef.needsSource && (
+            <UploadTile
+              label={mode === 'image_to_video' ? 'Source image for reel' : 'Source image'}
+              preview={sourcePreview}
+              onFile={(f) => void upload(f, 'source').catch((e) => toast.error(String(e)))}
+              required
+            />
+          )}
+
+          {models.length > 0 && (
+            <select
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              className="w-full rounded-xl border border-black/[0.08] bg-white px-3 py-2.5 text-sm"
+            >
+              <option value="">Saved model (optional)</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.role})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom control dock — FASHN-style */}
+      <div
+        className={cn(
+          'absolute inset-x-0 bottom-[52px] z-20 border-t border-black/[0.08] bg-white/98 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] backdrop-blur-lg md:bottom-0',
+        )}
+        style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}
+      >
+        <button
+          type="button"
+          onClick={() => setPanelOpen((o) => !o)}
+          className="flex w-full items-center justify-center py-1 text-[#94A3B8]"
+        >
+          <span className="h-1 w-10 rounded-full bg-black/10" />
+        </button>
+
+        {panelOpen && (
+          <div className="max-h-[min(50vh,400px)] overflow-y-auto px-3 pb-3">
+            {/* Mode chips */}
+            <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {STUDIO_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMode(m.id)}
+                  className={cn(
+                    'shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all',
+                    mode === m.id ? 'bg-[#1a1a2e] text-white shadow-sm' : 'bg-[#f1f5f9] text-[#64748b]',
+                  )}
+                >
+                  {m.short}
+                </button>
+              ))}
+            </div>
+
+            {/* Family presets */}
+            {(mode === 'product_to_model' || mode === 'try_on') && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {FAMILY_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setFamilyPreset(p.id)}
+                    className={cn(
+                      'rounded-full px-2.5 py-1 text-[10px] font-semibold',
+                      familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-black/[0.08] bg-white',
+                    )}
+                  >
+                    {p.labelBn}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Optional: Blonde hair, studio photoshoot, festive mood…"
+              className="mb-2 w-full rounded-xl border border-black/[0.08] bg-[#fafafa] px-3 py-2 text-[13px] outline-none focus:border-[#E07A5F]/40"
+            />
+
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {mode !== 'image_to_video' && (
+                <>
+                  <select
+                    value={provider}
+                    onChange={(e) => setProvider(e.target.value as StudioProvider)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    <option value="fashn" disabled={!config?.fashnConfigured}>
+                      Pro (FASHN)
+                    </option>
+                    <option value="gemini">Draft (Gemini)</option>
+                  </select>
+                  <select
+                    value={backgroundId}
+                    onChange={(e) => setBackgroundId(e.target.value)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {BACKGROUND_PRESETS.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        BG: {b.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={aspectRatio}
+                    onChange={(e) => setAspectRatio(e.target.value)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {ASPECT_RATIOS.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={resolution}
+                    onChange={(e) => setResolution(e.target.value as FashnResolution)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {RESOLUTIONS.map((r) => (
+                      <option key={r} value={r}>
+                        {r.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={genMode}
+                    onChange={(e) => setGenMode(e.target.value as FashnGenerationMode)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {GEN_MODES.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center rounded-lg border border-black/[0.08] bg-white">
+                    <button type="button" className="px-2 py-1.5 text-[11px]" onClick={() => setNumImages((n) => Math.max(1, n - 1))}>
+                      −
+                    </button>
+                    <span className="min-w-[1.5rem] text-center text-[11px] font-bold">{numImages}</span>
+                    <button type="button" className="px-2 py-1.5 text-[11px]" onClick={() => setNumImages((n) => Math.min(4, n + 1))}>
+                      +
+                    </button>
+                  </div>
+                </>
+              )}
+              {mode === 'image_to_video' && (
+                <>
+                  <select
+                    value={vibe}
+                    onChange={(e) => setVibe(e.target.value as typeof vibe)}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {VIDEO_VIBES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={durationSec}
+                    onChange={(e) => setDurationSec(Number(e.target.value))}
+                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                  >
+                    {[4, 5, 6, 7, 8].map((s) => (
+                      <option key={s} value={s}>
+                        {s}s reel
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
+
+            <motion.button
+              type="button"
+              disabled={!canRun || running}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => void handleRun()}
+              className={cn(
+                'flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white transition-opacity',
+                canRun && !running ? 'bg-[#1a1a2e]' : 'bg-[#94A3B8]',
+              )}
+            >
+              {running ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Generating…
+                </>
+              ) : (
+                <>Run — {provider === 'fashn' ? 'FASHN Pro' : 'Gemini Draft'}</>
+              )}
+            </motion.button>
+            <p className="mt-1.5 text-center text-[10px] text-[#94A3B8]">No LLM cost — direct render queue</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function UploadTile({
+  label,
+  preview,
+  onFile,
+  required,
+}: {
+  label: string
+  preview: string | null
+  onFile: (f: File) => void
+  required?: boolean
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => ref.current?.click()}
+      onKeyDown={(e) => e.key === 'Enter' && ref.current?.click()}
+      className={cn(
+        'overflow-hidden rounded-2xl border-2 border-dashed transition-colors',
+        preview ? 'border-[#E07A5F]/25 bg-white' : 'border-black/[0.1] bg-white/80',
+      )}
+    >
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+      {preview ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={preview} alt={label} className="mx-auto max-h-44 w-full object-contain p-2" />
+      ) : (
+        <div className="px-4 py-8 text-center">
+          <p className="text-sm font-semibold text-[#64748b]">
+            {label}
+            {required && <span className="text-[#E07A5F]"> *</span>}
+          </p>
+          <p className="mt-1 text-[11px] text-[#94A3B8]">Tap to upload or drop image</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GalleryView() {
+  const [items, setItems] = useState<GalleryItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [name, setName] = useState('')
-  const [role, setRole] = useState<string>('single')
-  const [notes, setNotes] = useState('')
-  const [preview, setPreview] = useState<string | null>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [saving, setSaving] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
     try {
-      const res = await fetch('/api/assistant/brand-models')
-      const data = await res.json()
-      if (res.ok) setModels(data.models ?? [])
+      const data = await fetchGallery(1)
+      setItems(data.items)
     } finally {
       setLoading(false)
     }
@@ -228,34 +554,105 @@ function ModelsPanel() {
 
   useEffect(() => {
     void load()
+    const t = window.setInterval(() => void load(), 8000)
+    return () => window.clearInterval(t)
   }, [load])
 
-  const onPick = (f: File | null) => {
-    if (preview) URL.revokeObjectURL(preview)
-    setFile(f)
-    setPreview(f ? URL.createObjectURL(f) : null)
-  }
+  return (
+    <div className="px-3 py-3 pb-20 md:pb-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold">Library</h2>
+        <button type="button" onClick={() => void load()} className="text-[11px] font-semibold text-[#E07A5F]">
+          Refresh
+        </button>
+      </div>
+      {loading && items.length === 0 ? (
+        <p className="text-sm text-[#94A3B8]">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-[#94A3B8]">No generations yet — Studio থেকে Run করুন।</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          {items.map((item) => (
+            <motion.div
+              key={item.id}
+              layout
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="overflow-hidden rounded-xl border border-black/[0.06] bg-white shadow-sm"
+            >
+              <div className="relative aspect-[4/5] bg-[#f8fafc]">
+                {item.previewUrl ? (
+                  item.storagePath?.endsWith('.mp4') || item.type === 'video_gen' ? (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <video src={item.previewUrl} className="h-full w-full object-cover" controls playsInline />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                  )
+                ) : (
+                  <div className="flex h-full items-center justify-center p-2 text-center text-[10px] text-[#94A3B8]">
+                    {item.status === 'approved' || item.status === 'pending'
+                      ? 'Rendering…'
+                      : item.status}
+                  </div>
+                )}
+                <span
+                  className={cn(
+                    'absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                    item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
+                  )}
+                >
+                  {item.provider}
+                </span>
+              </div>
+              <div className="p-2">
+                <p className="truncate text-[10px] font-semibold">{item.mode}</p>
+                <p className="text-[9px] text-[#94A3B8]">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
-  const save = async () => {
-    if (!file || !name.trim()) {
-      toast.error('নাম + ছবি দিন')
+function ModelsView() {
+  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null; isDefault: boolean }>>([])
+  const [name, setName] = useState('')
+  const [role, setRole] = useState('single')
+  const [preview, setPreview] = useState<string | null>(null)
+  const [path, setPath] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const ref = useRef<HTMLInputElement>(null)
+
+  const load = useCallback(async () => {
+    const d = await fetchModels()
+    setModels(d.models ?? [])
+  }, [])
+
+  useEffect(() => {
+    void load().catch(() => {})
+  }, [load])
+
+  const onSave = async () => {
+    if (!name.trim() || !path) {
+      toast.error('Name + photo required')
       return
     }
     setSaving(true)
     try {
-      const imagePath = await uploadFile(file, 'model-library')
-      const id = name.trim().toLowerCase().replace(/\s+/g, '-')
-      const res = await fetch('/api/assistant/brand-models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add', id, name: name.trim(), imagePath, role, notes: notes || undefined }),
+      await saveModel({
+        id: name.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: name.trim(),
+        imagePath: path,
+        role,
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'save_failed')
-      toast.success(`Model "${name}" saved`)
+      toast.success(`Model "${name}" saved — chat এ "Model ${name}" বলুন`)
       setName('')
-      setNotes('')
-      onPick(null)
+      setPath(null)
+      if (preview) URL.revokeObjectURL(preview)
+      setPreview(null)
       await load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed')
@@ -265,285 +662,109 @@ function ModelsPanel() {
   }
 
   return (
-    <div className="space-y-3">
-      <p className="text-[11px] leading-snug text-[#1a1a2e]/60">
-        Full-body photo save করুন — chat-এ &quot;Model {name || 'Maruf'} use koro&quot; বললে agent এটা ব্যবহার করবে।
+    <div className="mx-auto max-w-lg px-3 py-4 pb-8">
+      <h2 className="mb-1 text-sm font-bold">Model Library</h2>
+      <p className="mb-3 text-[11px] leading-snug text-[#64748b]">
+        Full-body photo save করুন। Chat: &quot;Model Maruf use koro&quot; — agent মনে রাখবে।
       </p>
 
-      <motion.div
-        layout
-        className={cn(
-          'relative overflow-hidden rounded-2xl border-2 border-dashed p-4 text-center transition-colors',
-          preview ? brandTodo.coralBorderSoft : 'border-black/[0.1] bg-white/60',
-        )}
-        onClick={() => inputRef.current?.click()}
+      <div
+        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-black/[0.1] bg-white"
+        onClick={() => ref.current?.click()}
       >
         <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-        />
-        {preview ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview} alt="Model preview" className="mx-auto max-h-48 rounded-xl object-contain" />
-        ) : (
-          <p className="py-8 text-sm font-semibold text-[#1a1a2e]/50">Tap to upload model photo</p>
-        )}
-      </motion.div>
-
-      <div className="grid gap-2 sm:grid-cols-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Model name (e.g. Maruf)"
-          className="rounded-xl border border-black/[0.08] bg-white/90 px-3 py-2.5 text-sm outline-none focus:border-[#E07A5F]/40"
-        />
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="rounded-xl border border-black/[0.08] bg-white/90 px-3 py-2.5 text-sm"
-        >
-          {ROLES.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <input
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        placeholder="Notes (age, build — optional)"
-        className="w-full rounded-xl border border-black/[0.08] bg-white/90 px-3 py-2.5 text-sm"
-      />
-
-      <Pressable
-        type="button"
-        disabled={saving}
-        onClick={() => void save()}
-        className={cn('w-full rounded-xl py-3 text-sm font-bold text-white disabled:opacity-50', brandTodo.coralBtn)}
-      >
-        {saving ? 'Saving…' : 'Save to agent memory'}
-      </Pressable>
-
-      <div className="space-y-2">
-        <p className={cn('text-xs font-bold', brandTodo.coralDark)}>Saved models</p>
-        {loading ? (
-          <p className="text-xs text-[#1a1a2e]/50">Loading…</p>
-        ) : models.length === 0 ? (
-          <p className="text-xs text-[#1a1a2e]/50">No models yet — upload above or save via chat.</p>
-        ) : (
-          models.map((m) => (
-            <motion.div
-              key={m.id}
-              layout
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              className={cn('flex items-center justify-between rounded-xl px-3 py-2', brandTodo.agentCard)}
-            >
-              <div>
-                <p className="text-sm font-semibold">{m.name}</p>
-                <p className="text-[10px] text-[#1a1a2e]/55">
-                  {m.role ?? '—'} {m.isDefault ? '· default' : ''}
-                </p>
-              </div>
-              <span className="font-mono text-[10px] text-[#1a1a2e]/40">{m.id}</span>
-            </motion.div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
-function TryOnPanel() {
-  const [models, setModels] = useState<SavedModelRow[]>([])
-  const [productFile, setProductFile] = useState<File | null>(null)
-  const [productPreview, setProductPreview] = useState<string | null>(null)
-  const [modelId, setModelId] = useState('')
-  const [variants, setVariants] = useState<ChatTryOnVariant[]>(['single'])
-  const [busy, setBusy] = useState(false)
-  const productRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    void fetch('/api/assistant/brand-models')
-      .then((r) => r.json())
-      .then((d) => setModels(d.models ?? []))
-      .catch(() => {})
-  }, [])
-
-  const toggleVariant = (v: ChatTryOnVariant) => {
-    setVariants((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]))
-  }
-
-  const run = async () => {
-    if (!productFile) {
-      toast.error('Product photo upload করুন')
-      return
-    }
-    if (!variants.length) {
-      toast.error('At least one variant')
-      return
-    }
-    setBusy(true)
-    try {
-      const productImagePath = await uploadFile(productFile, 'tryon')
-      const res = await fetch('/api/assistant/brand-models/tryon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productImagePath,
-          modelId: modelId || undefined,
-          variants,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message ?? data.error ?? 'tryon_failed')
-      toast.success(data.message ?? `${data.items?.length ?? variants.length} approval cards created`)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Try-on failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <p className="text-[11px] leading-snug text-[#1a1a2e]/60">
-        Reseller/mannequin product photo + saved model → Gemini try-on (garment unchanged, face from model). Approve in chat/Telegram.
-      </p>
-
-      <motion.div
-        className={cn('rounded-2xl border-2 border-dashed p-3 text-center', productPreview ? brandTodo.coralBorderSoft : 'border-black/[0.1]')}
-        onClick={() => productRef.current?.click()}
-      >
-        <input
-          ref={productRef}
+          ref={ref}
           type="file"
           accept="image/*"
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0] ?? null
-            if (productPreview) URL.revokeObjectURL(productPreview)
-            setProductFile(f)
-            setProductPreview(f ? URL.createObjectURL(f) : null)
+            const f = e.target.files?.[0]
+            if (!f) return
+            if (preview) URL.revokeObjectURL(preview)
+            setPreview(URL.createObjectURL(f))
+            void uploadStudioFile(f, 'model-library')
+              .then(setPath)
+              .catch((err) => toast.error(String(err)))
           }}
         />
-        {productPreview ? (
+        {preview ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={productPreview} alt="Product" className="mx-auto max-h-40 rounded-lg object-contain" />
+          <img src={preview} alt="Model" className="mx-auto max-h-52 object-contain p-2" />
         ) : (
-          <p className="py-6 text-sm text-[#1a1a2e]/50">Upload product / mannequin photo</p>
+          <p className="py-10 text-center text-sm text-[#94A3B8]">Upload model photo</p>
         )}
-      </motion.div>
-
-      <select
-        value={modelId}
-        onChange={(e) => setModelId(e.target.value)}
-        className="w-full rounded-xl border border-black/[0.08] bg-white/90 px-3 py-2.5 text-sm"
-      >
-        <option value="">Default model (single)</option>
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name} ({m.role})
-          </option>
-        ))}
-      </select>
-
-      <div className="flex flex-wrap gap-1.5">
-        {VARIANT_OPTS.map((v) => (
-          <Pressable
-            key={v.id}
-            type="button"
-            onClick={() => toggleVariant(v.id)}
-            className={cn(
-              'rounded-full px-3 py-1.5 text-[11px] font-semibold',
-              variants.includes(v.id) ? `${brandTodo.coralBtn} text-white` : 'border border-black/[0.08] bg-white/80',
-            )}
-          >
-            {v.label}
-          </Pressable>
-        ))}
       </div>
 
-      <Pressable
+      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name (e.g. Maruf)"
+          className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-sm"
+        />
+        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-sm">
+          <option value="single">Single / Owner</option>
+          <option value="father">Father</option>
+          <option value="mother">Mother</option>
+          <option value="son">Son (5–12)</option>
+          <option value="daughter">Daughter (5–10)</option>
+        </select>
+      </div>
+
+      <button
         type="button"
-        disabled={busy}
-        onClick={() => void run()}
-        className={cn(
-          'relative w-full overflow-hidden rounded-xl py-3.5 text-sm font-bold text-white disabled:opacity-50',
-          brandTodo.coralBtn,
-        )}
+        disabled={saving}
+        onClick={() => void onSave()}
+        className="mb-6 w-full rounded-xl bg-[#E07A5F] py-3 text-sm font-bold text-white disabled:opacity-50"
       >
-        {busy ? 'Creating approval cards…' : 'Generate try-on (approve in chat)'}
-      </Pressable>
+        {saving ? 'Saving…' : 'Save to agent memory'}
+      </button>
+
+      <div className="space-y-2">
+        {models.map((m) => (
+          <div key={m.id} className="flex items-center justify-between rounded-xl border border-black/[0.06] bg-white px-3 py-2.5">
+            <div>
+              <p className="font-semibold">{m.name}</p>
+              <p className="text-[10px] text-[#94A3B8]">{m.role}{m.isDefault ? ' · default' : ''}</p>
+            </div>
+            <code className="text-[9px] text-[#cbd5e1]">{m.id}</code>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-export default function CreativeStudio() {
-  const [tab, setTab] = useState<StudioTab>('tryon')
-
+function ChatSvg({ className }: { className?: string }) {
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col px-3 pb-24 pt-3 sm:px-4">
-      <motion.div
-        initial={{ opacity: 0, y: -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={cn('mb-3 rounded-2xl border px-3 py-3', brandTodo.coralBorderSoft, brandTodo.coralBg)}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <p className={cn('text-sm font-bold', brandTodo.coralDark)}>Creative Studio</p>
-            <p className="text-[11px] text-[#1a1a2e]/65">Brief · Model library · Virtual try-on</p>
-          </div>
-          <Link href="/agent" className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-white', brandTodo.coralBtn)}>
-            ← Chat
-          </Link>
-        </div>
-      </motion.div>
-
-      <LayoutGroup>
-        <div className="relative mb-3 flex gap-1 rounded-2xl border border-black/[0.06] bg-white/75 p-1">
-          {TABS.map((t) => (
-            <Pressable
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={cn(
-                'relative z-10 flex-1 rounded-xl px-1 py-2 text-center transition-colors',
-                tab === t.id ? 'text-white' : 'text-[#1a1a2e]/55',
-              )}
-            >
-              {tab === t.id && (
-                <motion.span
-                  layoutId="studio-tab-pill"
-                  transition={spring}
-                  className={cn('absolute inset-0 rounded-xl', brandTodo.coralBtn)}
-                />
-              )}
-              <span className="relative block text-[11px] font-bold leading-tight">{t.label}</span>
-              <span className="relative block text-[9px] opacity-80">{t.sub}</span>
-            </Pressable>
-          ))}
-        </div>
-      </LayoutGroup>
-
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={tab}
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.22 }}
-          className="min-h-0 flex-1 overflow-y-auto pb-4"
-        >
-          {tab === 'brief' && <BriefPanel />}
-          {tab === 'models' && <ModelsPanel />}
-          {tab === 'tryon' && <TryOnPanel />}
-        </motion.div>
-      </AnimatePresence>
-    </div>
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  )
+}
+function StudioSvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18M3 9h18" />
+    </svg>
+  )
+}
+function GallerySvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" />
+    </svg>
+  )
+}
+function UserSvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4 4-6 8-6s8 2 8 6" />
+    </svg>
   )
 }

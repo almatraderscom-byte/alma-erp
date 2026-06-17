@@ -108,7 +108,9 @@ export async function POST(req: NextRequest) {
     const storagePath = typeof data?.storagePath === 'string' ? data.storagePath.trim() : ''
     const isVideo = action.type === 'video_gen' || storagePath.endsWith('.mp4') || data?.mediaType === 'video'
     const cp = payload.contentPipeline as { gate1Id?: string } | undefined
-    if (cp?.gate1Id && storagePath && !isVideo) {
+    if (payload.creativeStudio) {
+      messageText = null
+    } else if (cp?.gate1Id && storagePath && !isVideo) {
       try {
         const { onPipelineRenderComplete } = await import('@/lib/content-engine/pipeline')
         await onPipelineRenderComplete(pendingActionId, storagePath)

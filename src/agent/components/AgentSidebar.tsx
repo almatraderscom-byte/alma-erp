@@ -173,6 +173,13 @@ export default function AgentSidebar({
             📊
           </a>
           <a
+            href="/agent/creative-studio"
+            className="rounded-full border border-black/[0.06] bg-gray-50 px-2 py-0.5 text-[9px] text-gray-500 transition-all hover:border-[#81B29A]/40 hover:bg-[#81B29A]/10 hover:text-[#2d6a4f]"
+            title="Creative Studio — Fashion AI"
+          >
+            🎨
+          </a>
+          <a
             href="/agent/trading-staff"
             className="rounded-full border border-black/[0.06] bg-gray-50 px-2 py-0.5 text-[9px] text-gray-500 transition-all hover:border-amber-300/40 hover:bg-amber-50 hover:text-amber-600"
             title="Trading Staff"
