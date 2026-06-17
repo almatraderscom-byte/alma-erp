@@ -24,6 +24,7 @@ async function fetchLedgerBalances(person = null) {
         ? `get_ledger_balances for person "${person}"`
         : 'get_ledger_balances for all people',
     }),
+    signal: AbortSignal.timeout(60_000),
   })
 
   if (!res.ok) throw new Error(`Finance API ${res.status}`)

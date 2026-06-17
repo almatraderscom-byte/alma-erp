@@ -11,6 +11,7 @@ export async function runDailyStrategist() {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/run-strategist`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(60_000),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {

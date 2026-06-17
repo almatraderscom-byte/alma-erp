@@ -29,6 +29,7 @@ export function buildFinanceKeyboard(card) {
 export async function fetchActionMeta(appUrl, token, actionId) {
   const res = await fetch(`${appUrl}/api/assistant/actions/${actionId}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) return null
   return res.json()
@@ -42,6 +43,7 @@ export async function patchFinanceAction(appUrl, token, actionId, body) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)

@@ -173,6 +173,7 @@ export async function handleContentGate1Variant(ctx, gate1Id, variant, action) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gate1Id, variant, action }),
+    signal: AbortSignal.timeout(30_000),
   })
   const data = await res.json()
   if (!res.ok) {
@@ -219,6 +220,7 @@ export async function handleAdCreativeRegen(ctx, gateId, creativeId) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gateId, creativeId }),
+    signal: AbortSignal.timeout(30_000),
   })
   const data = await res.json()
   if (!res.ok) {
@@ -261,6 +263,7 @@ export async function handleAdsOptimizerExec(ctx, gateId, recIndex) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ gateId, recIndex: Number(recIndex) }),
+    signal: AbortSignal.timeout(30_000),
   })
   const data = await res.json()
   if (!res.ok) {

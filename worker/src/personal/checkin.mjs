@@ -27,6 +27,7 @@ async function sendPersonalCheckin({ bot, supabase, kind }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT()}` },
       body: JSON.stringify({ kind }),
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       throw new Error(`personal-checkin API HTTP ${res.status}`)

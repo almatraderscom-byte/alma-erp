@@ -11,6 +11,7 @@ export async function runWeeklyReflection() {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/run-reflection`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(60_000),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {

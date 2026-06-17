@@ -12,6 +12,7 @@ export async function runSessionSummarizer() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT()}` },
       body: JSON.stringify({ idleMinutes: 30, maxSessions: 5 }),
+      signal: AbortSignal.timeout(60_000),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {

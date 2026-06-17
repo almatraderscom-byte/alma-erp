@@ -14,6 +14,7 @@ async function callInternal(path, method = 'GET', body = null) {
     },
   }
   if (body) opts.body = JSON.stringify(body)
+  opts.signal = AbortSignal.timeout(15_000)
   const res = await fetch(`${getAppUrl()}${path}`, opts)
   const text = await res.text()
   try { return { ok: res.ok, status: res.status, data: JSON.parse(text) } }

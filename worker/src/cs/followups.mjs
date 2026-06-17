@@ -12,6 +12,7 @@ export async function runCsFollowups() {
       Authorization: `Bearer ${INT_TOKEN()}`,
     },
     body: JSON.stringify({ action: 'process' }),
+    signal: AbortSignal.timeout(30_000),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)

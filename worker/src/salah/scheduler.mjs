@@ -75,6 +75,7 @@ function salahApiBase() {
 async function getSettings(keys) {
   const res = await fetch(`${salahApiBase()}/api/assistant/internal/agent-settings?keys=${keys.join(',')}`, {
     headers: { Authorization: `Bearer ${getInternalToken()}` },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) return {}
   return res.json()
@@ -85,6 +86,7 @@ async function upsertSalahRecord(data) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify(data),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) {
     const errText = await res.text().catch(() => '(no body)')
@@ -99,6 +101,7 @@ async function claimReminderStep(date, waqt, expectedRemindersSent) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
     body: JSON.stringify({ date, waqt, incrementRemindersIf: expectedRemindersSent }),
+    signal: AbortSignal.timeout(15_000),
   })
   if (res.status === 409) return false
   if (!res.ok) {
@@ -112,6 +115,7 @@ async function claimReminderStep(date, waqt, expectedRemindersSent) {
 async function getSalahRecords(date) {
   const res = await fetch(`${salahApiBase()}/api/assistant/internal/salah-record?date=${date}`, {
     headers: { Authorization: `Bearer ${getInternalToken()}` },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) return []
   const data = await res.json()

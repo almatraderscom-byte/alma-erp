@@ -11,6 +11,7 @@ export async function runOrderWatch({ bot }) {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/order-issues`, {
       headers: { Authorization: `Bearer ${INT()}` },
       cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       console.warn('[order-watch] API', res.status)

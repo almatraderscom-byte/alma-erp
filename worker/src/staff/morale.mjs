@@ -61,6 +61,7 @@ async function fetchAdaptiveMorale(staffName, recentContext) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ staffName, recentContext }),
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       console.warn(`[staff-morale] adaptive API HTTP ${res.status}`)

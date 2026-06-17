@@ -74,6 +74,7 @@ export async function requireStaffApproval({
             chat_id: ownerChatId,
             text: `ℹ️ Auto-sent (trusted): ${staffName ?? 'Unknown'} (${type})\n${preview}\n\n✅ Trust tier: notify`,
           }),
+          signal: AbortSignal.timeout(10_000),
         })
       }
     } catch (notifyErr) {
@@ -114,6 +115,7 @@ export async function requireStaffApproval({
             ]],
           },
         }),
+        signal: AbortSignal.timeout(10_000),
       })
       cardSent = tgRes.ok
       if (!tgRes.ok) {

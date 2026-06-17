@@ -17,6 +17,7 @@ export async function runTasteDistillJob() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ days: 14 }),
+      signal: AbortSignal.timeout(60_000),
     })
     const data = await res.json()
     console.log('[taste-distill]', JSON.stringify(data))

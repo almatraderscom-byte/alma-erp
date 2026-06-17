@@ -11,6 +11,7 @@ async function updateReminder(id, action, minutes) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ id, action, minutes }),
+    signal: AbortSignal.timeout(15_000),
   })
   return res.json()
 }

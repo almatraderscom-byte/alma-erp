@@ -13,6 +13,7 @@ export async function runCustomerIntel({ bot }) {
   try {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/customer-segments`, {
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       console.warn('[customer-intel] API failed:', res.status)

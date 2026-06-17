@@ -171,6 +171,7 @@ async function pollPendingJobs() {
   try {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
       headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
       console.error(`[worker] pending-jobs poll failed: HTTP ${res.status}`)
@@ -422,6 +423,7 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
         Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ pendingActionId, status, data, error }),
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -701,6 +703,7 @@ async function pollAndEnqueueCsReplies() {
   try {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/cs-pending-replies`, {
       headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return
     const { jobs } = await res.json()

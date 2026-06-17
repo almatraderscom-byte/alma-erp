@@ -13,10 +13,12 @@ async function api(path) {
   try {
     const res = await fetch(`${APP_URL()}${path}`, {
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) return null
     return await res.json()
-  } catch {
+  } catch (err) {
+    console.warn('[owner-briefing] API fetch failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

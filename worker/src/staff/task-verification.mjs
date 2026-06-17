@@ -36,6 +36,7 @@ async function callTaskCallback(payload) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
@@ -213,7 +214,7 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
     if (photo) {
       const best = photo[photo.length - 1]
       const fileLink = await ctx.telegram.getFileLink(best.file_id)
-      const res = await fetch(fileLink.href ?? fileLink)
+      const res = await fetch(fileLink.href ?? fileLink, { signal: AbortSignal.timeout(30_000) })
       const buf = Buffer.from(await res.arrayBuffer())
       const imageUrl = await storeProofPhoto(supabase, taskId, buf)
       proofType = 'screenshot'

@@ -62,6 +62,7 @@ export async function pollApprovalEscalations() {
             voice: true,
             category: 'staff_approval_escalation',
           }),
+          signal: AbortSignal.timeout(30_000),
         })
         if (!res.ok) {
           const body = await res.text().catch(() => '')

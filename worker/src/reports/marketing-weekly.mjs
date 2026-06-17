@@ -16,6 +16,7 @@ export async function runMarketingWeekly({ bot }) {
   try {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/marketing-report?days=7`, {
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       console.warn('[marketing-weekly] API failed:', res.status)

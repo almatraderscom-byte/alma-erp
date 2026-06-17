@@ -17,11 +17,13 @@ export async function fetchOwnerDecisions() {
         limit: 8,
         metadataType: 'owner_decision',
       }),
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return []
     const data = await res.json()
     return data.memories ?? []
-  } catch {
+  } catch (err) {
+    console.warn('[owner-decisions] fetch failed:', err instanceof Error ? err.message : err)
     return []
   }
 }

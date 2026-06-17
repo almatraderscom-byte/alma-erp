@@ -23,6 +23,7 @@ export async function scoreImageViaApi({ appUrl, token, storagePath, productType
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ storagePath, productType, productImagePath }),
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
     const text = await res.text()

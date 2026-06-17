@@ -14,6 +14,7 @@ export async function runOutcomeMeasure() {
     const res = await fetch(`${APP_URL()}/api/assistant/internal/measure-outcomes`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${INT()}` },
+      signal: AbortSignal.timeout(60_000),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {

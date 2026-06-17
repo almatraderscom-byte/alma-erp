@@ -33,7 +33,7 @@ async function checkFbPageActivity(task) {
     if (!token) continue
     try {
       const url = `https://graph.facebook.com/v21.0/${page.id}/feed?limit=8&fields=message,story,created_time&access_token=${encodeURIComponent(token)}`
-      const res = await fetch(url)
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = await res.json()
       const posts = data.data ?? []
@@ -88,6 +88,7 @@ async function checkErpProductUpdate(task) {
         Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ action: 'listing', task }),
+      signal: AbortSignal.timeout(15_000),
     })
     const data = await res.json()
     return {
@@ -109,6 +110,7 @@ async function checkErpOrderUpdates(task) {
         Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify({ action: 'order', task }),
+      signal: AbortSignal.timeout(15_000),
     })
     const data = await res.json()
     return {
@@ -146,6 +148,7 @@ export async function assessProofQuality({ task, proofImageUrl, proofText }) {
         proofImageUrl: proofImageUrl ?? '',
         proofText: proofText ?? '',
       }),
+      signal: AbortSignal.timeout(30_000),
     })
     const data = await res.json()
     const matches = data.matches !== false

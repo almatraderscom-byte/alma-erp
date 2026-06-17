@@ -9,6 +9,7 @@ export async function runCostReconciliation() {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/cost-reconcile`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
       console.warn(`[cost-reconcile] HTTP ${res.status}`)

@@ -53,6 +53,7 @@ export async function synthesizeElevenLabs(text, opts = {}) {
         use_speaker_boost: true,
       },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {
