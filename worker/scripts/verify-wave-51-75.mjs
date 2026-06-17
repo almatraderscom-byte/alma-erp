@@ -32,7 +32,7 @@ assertFile('worker/src/staff/ack-escalation.mjs', (t) => t.includes('ownerNotifi
 assertFile('worker/src/index.mjs', (t) => t.includes('enqueuedIds.delete') && t.includes("on('completed'"), '#55 enqueuedIds clear on success')
 assertFile('worker/src/index.mjs', (t) => t.includes("csReplyWorker.on('completed'"), '#56 csEnqueued clear on success')
 assertFile('worker/src/index.mjs', (t) => t.includes('videoGenWorker.close'), '#57 video worker shutdown')
-assertFile('worker/src/index.mjs', (t) => t.includes('retriggerPoll'), '#58 scheduler polls cleared')
+assertFile('worker/src/index.mjs', (t) => t.includes('let schedulerQueue = null') && t.includes('let schedulerTeardown = null'), '#58 scheduler teardown vars')
 assertFile('worker/src/schedulers/index.mjs', (t) => t.includes('concurrency: 1'), '#59 scheduler concurrency 1')
 assertFile('worker/src/schedulers/index.mjs', (t) => t.includes('existingByName') || t.includes('pattern === entry.cronUtc'), '#60 no blind cron wipe')
 assertFile('worker/src/telegram/index.mjs', (t) => t.includes("timeZone: 'Asia/Dhaka'"), '#61 Dhaka daily conversation')

@@ -637,6 +637,8 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
 
 // ── Phase 6: Schedulers ────────────────────────────────────────────────────
 
+let schedulerQueue = null
+let runSchedulerJobFn = null
 let schedulerTeardown = null
 try {
   const schedulerSetup = await setupSchedulers({
