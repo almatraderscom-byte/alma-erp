@@ -147,8 +147,12 @@ export async function runNightReport({ supabase, bot }) {
       created_at:   new Date().toISOString(),
     }))
 
-    await supabase.from('staff_tasks').insert(carryData)
-    console.log(`[night-report] carried ${tasksToCarry.length} tasks → ${tomorrowStr} as proposed`)
+    const { error: carryErr } = await supabase.from('staff_tasks').insert(carryData)
+    if (carryErr) {
+      console.error(`[night-report] carry-forward insert failed:`, carryErr.message)
+    } else {
+      console.log(`[night-report] carried ${tasksToCarry.length} tasks → ${tomorrowStr} as proposed`)
+    }
   }
 
   // Get today's salah summary
@@ -165,17 +169,22 @@ export async function runNightReport({ supabase, bot }) {
       const missed = salahRecords.filter(r => r.status === 'missed').length
       salahSummary = `\n\n🕌 *নামাজ:* ${onTime}/5 সময়মতো${missed > 0 ? `, ${missed}টি মিস` : ''}`
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] salah summary failed:', err?.message ?? err)
+  }
 
   // Today's sales snapshot (best-effort)
   let salesSummary = ''
   try {
     const salesRes = await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings?keys=today_sales_summary`, {
       headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     const data = await salesRes.json()
     if (data.today_sales_summary) salesSummary = `\n\n📊 ${data.today_sales_summary}`
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] sales summary failed:', err?.message ?? err)
+  }
 
   // Reply-time stats (Phase 10)
   let replySummary = ''
@@ -185,7 +194,9 @@ export async function runNightReport({ supabase, bot }) {
       replySummary = '\n\n💬 *Messenger reply time:*\n' +
         replyStats.map((s) => `• ${s.name} গড় reply: ${s.avgMinutes} মিনিট (${s.count}টি)`).join('\n')
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] reply stats failed:', err?.message ?? err)
+  }
 
   // GPS gaps — field tasks done without location today
   let gpsGapLine = ''
@@ -208,18 +219,23 @@ export async function runNightReport({ supabase, bot }) {
     if (gaps > 0) {
       gpsGapLine = `\n\n📍 ফিল্ড টাস্ক Done কিন্তু লোকেশন নেই: ${gaps}টি`
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] GPS gap check failed:', err?.message ?? err)
+  }
 
   let csSummary = ''
   try {
-    const csRes = await fetch(`${process.env.APP_URL}/api/assistant/internal/cs-analytics?days=1`, {
-      headers: { Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN}` },
+    const csRes = await fetch(`${getAppUrl()}/api/assistant/internal/cs-analytics?days=1`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (csRes.ok) {
       const csData = await csRes.json()
       if (csData.formatted) csSummary = `\n\n${csData.formatted}`
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] CS analytics failed:', err?.message ?? err)
+  }
 
   let aiCostSummary = ''
   try {
@@ -253,7 +269,9 @@ export async function runNightReport({ supabase, bot }) {
     if (parts.length) {
       aiCostSummary = `\n\n💰 AI খরচ আজ: ${parts.join(', ')}`
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] AI cost summary failed:', err?.message ?? err)
+  }
 
   let patternSummary = ''
   try {
@@ -264,7 +282,9 @@ export async function runNightReport({ supabase, bot }) {
         '\n\n⚠️ *প্যাটার্ন সতর্কতা (৭ দিন):*\n' +
         flags.map((f) => `• ${f.name}: ${f.detail}`).join('\n')
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[night-report] pattern detection failed:', err?.message ?? err)
+  }
 
   const dateLabel = formatDhakaDateLabel(today)
   const carryLine = tasksToCarry.length > 0

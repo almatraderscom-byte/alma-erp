@@ -50,7 +50,9 @@ export async function runApprovalTracker({ supabase, bot }) {
       bot.telegram,
       ownerChatId,
       `⏰ ${staleRows.length}টি approval ৪৮ ঘণ্টা ধরে pending ছিল — auto-expire করা হলো। দরকার হলে আবার বলুন।`,
-    ).catch(() => {})
+    ).catch((err) => {
+      console.warn('[approval-tracker] expire notification to owner failed:', err.message)
+    })
   }
 
   const cutoff = new Date(Date.now() - 30 * 60_000).toISOString()

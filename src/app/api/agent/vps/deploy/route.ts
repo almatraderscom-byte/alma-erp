@@ -70,7 +70,9 @@ export async function POST(req: NextRequest) {
         update: { value: JSON.stringify({ ts: new Date().toISOString(), ok: data.ok, steps: data.steps ?? [], healthCheck: data.healthCheck }) },
         create: { key: 'worker.lastDeploy', value: JSON.stringify({ ts: new Date().toISOString(), ok: data.ok, steps: data.steps ?? [], healthCheck: data.healthCheck }) },
       })
-    } catch { /* non-critical */ }
+    } catch (err) {
+      console.warn('[deploy] KV write for lastDeploy failed:', err)
+    }
 
     return Response.json({ ok: data.ok, steps: data.steps, healthCheck: data.healthCheck })
   } catch (err) {

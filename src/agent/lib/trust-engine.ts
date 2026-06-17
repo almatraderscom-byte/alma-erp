@@ -79,7 +79,8 @@ export async function recordApproval(
     }
 
     return { promoted: false }
-  } catch {
+  } catch (err) {
+    console.warn(`[trust-engine] recordApproval failed (${domain}/${actionPattern}):`, err)
     return { promoted: false }
   }
 }
@@ -99,7 +100,9 @@ export async function recordRejection(
         tier: 'approve',
       },
     })
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn(`[trust-engine] recordRejection failed (${domain}/${actionPattern}):`, err)
+  }
 }
 
 export async function getAllTrustRules(businessId?: string) {
@@ -109,7 +112,8 @@ export async function getAllTrustRules(businessId?: string) {
       where,
       orderBy: [{ domain: 'asc' }, { actionPattern: 'asc' }],
     })
-  } catch {
+  } catch (err) {
+    console.warn('[trust-engine] getAllTrustRules failed:', err)
     return []
   }
 }
@@ -142,7 +146,9 @@ export async function seedDefaultTrustRules(businessId: string = 'ALMA_LIFESTYLE
         update: {}, // Don't overwrite if already exists
       })
       seeded++
-    } catch { /* ignore duplicates */ }
+    } catch (err) {
+      console.warn(`[trust-engine] seed rule failed (${rule.actionPattern}):`, err)
+    }
   }
   return seeded
 }
@@ -157,7 +163,8 @@ export async function setTrustTier(
       data: { tier, lastPromotedAt: new Date(), consecutiveApprovals: 0 },
     })
     return true
-  } catch {
+  } catch (err) {
+    console.warn(`[trust-engine] setTrustTier failed (${ruleId} → ${tier}):`, err)
     return false
   }
 }
