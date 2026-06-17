@@ -15,21 +15,18 @@ import { leaveRequestButton } from './leave.mjs'
 
 async function updateMorningDispatchDutyLog(supabase, result) {
   try {
+    const { upsertDutyLog } = await import('../schedulers/duty-log-utils.mjs')
     const dutyDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
     const anySent = (result?.sentTasks ?? 0) > 0
-    await supabase.from('agent_duty_log').upsert(
-      {
-        duty: 'morning_dispatch',
-        label: '📤 স্টাফ টাস্ক ডিসপ্যাচ',
-        duty_date: dutyDate,
-        status: anySent ? 'done' : 'skipped',
-        detail: anySent ? `${result.sentTasks}টি পাঠানো` : 'কোনো approved টাস্ক ছিল না',
-        ran_at: new Date().toISOString(),
-      },
-      { onConflict: 'duty,duty_date' },
-    )
+    await upsertDutyLog(supabase, {
+      duty: 'morning_dispatch',
+      label: '📤 স্টাফ টাস্ক ডিসপ্যাচ',
+      dutyDate,
+      status: anySent ? 'done' : 'skipped',
+      detail: anySent ? `${result.sentTasks}টি পাঠানো` : 'কোনো approved টাস্ক ছিল না',
+    })
   } catch (e) {
-    console.warn('[dispatch] duty-log update failed:', e.message)
+    console.error('[dispatch] duty-log update failed:', e.message)
   }
 }
 

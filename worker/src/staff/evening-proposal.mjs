@@ -10,6 +10,18 @@ import { normalizeStaffTaskSource } from './task-source.mjs'
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
+/** Must match staff_tasks_type_check in Postgres — unknown types map to misc. */
+const ALLOWED_STAFF_TASK_TYPES = new Set([
+  'ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update',
+  'order_followup', 'page_management', 'customer_reply', 'content_support', 'office_task',
+  'stock_check', 'misc', 'strategist_directive',
+])
+
+function normalizeStaffTaskType(type) {
+  const t = String(type ?? 'misc').trim()
+  return ALLOWED_STAFF_TASK_TYPES.has(t) ? t : 'misc'
+}
+
 /** Smart task brief cache — reset per proposal run */
 let _smartTaskCache = null
 
@@ -713,7 +725,7 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
       staff_id: t.staffId,
       title: t.title,
       detail: t.detail ?? null,
-      type: t.type,
+      type: normalizeStaffTaskType(t.type),
       product_ref: t.productRef ?? null,
       status: 'proposed',
       proposed_for: targetDate,

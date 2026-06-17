@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { clearAppCaches } from '@/lib/app-update'
+import { clearAppCaches, checkForAppUpdate, hardRefreshApp } from '@/lib/app-update'
 import { isAuthPath } from '@/lib/auth-paths'
+import { isCapacitorNative } from '@/lib/capacitor-native'
 
 const RECOVERY_COOLDOWN_MS = 15_000
 const RECOVERY_STORAGE_KEY = 'alma_boot_recovery_at'
@@ -77,12 +78,19 @@ export function AppBootRecovery() {
     window.addEventListener('error', onError)
     window.addEventListener('unhandledrejection', onRejection)
 
+    const watchdogMs = isCapacitorNative() ? 12_000 : 18_000
     const watchdog = window.setTimeout(() => {
       if (!pageLooksBlank()) return
       void recoverApp('blank-watchdog').then(reloaded => {
         if (!reloaded) setShowFallback(true)
       })
-    }, 18_000)
+    }, watchdogMs)
+
+    if (isCapacitorNative()) {
+      void checkForAppUpdate().then(({ updateAvailable }) => {
+        if (updateAvailable) void hardRefreshApp()
+      })
+    }
 
     return () => {
       window.removeEventListener('error', onError)
@@ -94,14 +102,14 @@ export function AppBootRecovery() {
   if (!showFallback) return null
 
   return (
-    <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-center gap-4 bg-black px-6 text-center">
-      <p className="text-sm font-semibold text-cream">অ্যাপ লোড হচ্ছে না</p>
-      <p className="max-w-sm text-xs text-zinc-500">
+    <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-center gap-4 bg-[#FAF9F6] px-6 text-center">
+      <p className="text-sm font-semibold text-[#1a1a2e]">অ্যাপ লোড হচ্ছে না</p>
+      <p className="max-w-sm text-xs text-slate-500">
         ক্যাশ পরিষ্কার করে আবার চেষ্টা করুন। বারবার সমস্যা হলে browser বন্ধ করে আবার খুলুন।
       </p>
       <button
         type="button"
-        className="rounded-xl border border-gold-dim/50 bg-gold/15 px-4 py-2 text-sm font-semibold text-gold-lt"
+        className="rounded-xl border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-4 py-2 text-sm font-semibold text-[#E07A5F]"
         onClick={() => {
           void clearAppCaches().finally(() => {
             try {

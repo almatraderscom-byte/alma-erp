@@ -481,6 +481,41 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   }
 }
 
+/** 08:00 Dhaka — owner-facing summary when shift ran overnight at midnight. */
+export async function sendMorningShiftBrief(): Promise<{ ok: boolean; detail: string }> {
+  const date = todayYmdDhaka()
+  const state = await loadDayShiftState(date)
+  const total = SHIFT_TASK_DEFS.length
+  const status = state?.status ?? 'idle'
+  const doneTasks = Math.min(state?.taskIndex ?? 0, total)
+
+  let todoLine = ''
+  if (state?.todoIds?.length) {
+    const todos = await prisma.agentTodo.findMany({
+      where: { id: { in: state.todoIds } },
+      select: { status: true },
+    })
+    const completed = todos.filter((t) => t.status === 'completed').length
+    const pending = todos.length - completed
+    todoLine = ` Todo ${completed}/${todos.length} সম্পন্ন${pending > 0 ? `, ${pending} বাকি` : ''}.`
+  }
+
+  const statusBn =
+    status === 'running' ? 'চলমান'
+    : status === 'done' ? 'প্রধান কাজ শেষ (প্যাট্রোল)'
+    : status === 'paused' ? 'বিরতি'
+    : 'অপেক্ষায়'
+
+  const text =
+    `☀️ সকাল ৮টা — অফিস শিফট সারাংশ\n\n` +
+    `অবস্থা: ${statusBn} · কাজ ${doneTasks}/${total}.${todoLine}\n` +
+    `Live দেখুন: ALMA ERP → Agent → 🏢 অফিস শিফট\n` +
+    `Staff Monitor-এ আজকের duty count চেক করুন।`
+
+  void sendOwnerText(text).catch(() => {})
+  return { ok: true, detail: `morning_brief_${status}_${doneTasks}` }
+}
+
 export async function getDayShiftToday(): Promise<{
   date: string
   state: DayShiftState | null

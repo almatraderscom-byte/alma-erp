@@ -65,7 +65,7 @@ export async function stopTelegramBot(signal = 'shutdown') {
   try {
     instance.stop(signal)
     // Give Telegraf time to release the getUpdates long-poll before pm2 spawns a new process
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await new Promise((resolve) => setTimeout(resolve, 3000))
     console.log(`[telegram] Bot stopped (${signal})`)
   } catch (err) {
     console.error('[telegram] Bot stop error:', err.message)

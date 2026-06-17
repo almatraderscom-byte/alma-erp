@@ -218,6 +218,7 @@ export default function AgentStaffMonitor() {
   const [trustRules, setTrustRules] = useState<TrustRule[]>([])
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
   const [healthScanning, setHealthScanning] = useState(false)
+  const [healthScanError, setHealthScanError] = useState<string | null>(null)
   const [autoFixActions, setAutoFixActions] = useState<AutoFixAction[]>([])
   const [fixingIssue, setFixingIssue] = useState<string | null>(null)
   const [staffCaps, setStaffCaps] = useState<StaffCap[]>([])
@@ -264,13 +265,27 @@ export default function AgentStaffMonitor() {
 
   async function loadHealthScan() {
     setHealthScanning(true)
+    setHealthScanError(null)
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const res = await fetch('/api/agent/health-scan', { cache: 'no-store' })
-          if (res.ok) { setHealthReport(await res.json() as HealthReport); return }
+          if (res.ok) {
+            setHealthReport(await res.json() as HealthReport)
+            setHealthScanError(null)
+            return
+          }
+          const errBody = await res.json().catch(() => ({})) as { error?: string; message?: string }
+          const msg = errBody.message ?? errBody.error ?? `HTTP ${res.status}`
           if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue }
-        } catch { if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue } }
+          setHealthScanError(msg)
+          showToast(`Health scan failed: ${msg}`, 'err')
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Network error'
+          if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue }
+          setHealthScanError(msg)
+          showToast(`Health scan failed: ${msg}`, 'err')
+        }
       }
     } finally { setHealthScanning(false) }
   }
@@ -703,16 +718,20 @@ export default function AgentStaffMonitor() {
                     </button>
                   }
                 >
-                  {!healthReport ? (
-                    <p className="py-2 text-[10px] text-[#94a3b8]">Loading health scan…</p>
-                  ) : healthReport.ok ? (
+                  {!healthReport && !healthScanError ? (
+                    <p className="py-2 text-[10px] text-[#94a3b8]">{healthScanning ? 'Scanning…' : 'Loading health scan…'}</p>
+                  ) : healthScanError && !healthReport ? (
+                    <div className="rounded-lg border border-red-500/20 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+                      ⚠️ Scan failed: {healthScanError}. Tap Scan Now to retry.
+                    </div>
+                  ) : healthReport?.ok ? (
                     <div className="flex items-center gap-2 py-1 text-[11px] text-emerald-700">
                       <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
                       {healthReport.summary}
                     </div>
                   ) : (
                     <div className="space-y-1.5">
-                      {healthReport.issues.map((issue, i) => (
+                      {(healthReport?.issues ?? []).map((issue, i) => (
                         <div key={i} className={cn('rounded-lg border p-2 text-[11px]',
                           issue.severity === 'high' ? 'border-red-500/20 bg-red-50' :
                           issue.severity === 'medium' ? 'border-amber-500/20 bg-amber-50' :

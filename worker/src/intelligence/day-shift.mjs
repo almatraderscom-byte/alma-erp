@@ -38,6 +38,16 @@ export async function runDayShiftStart() {
   return { dutyStatus: 'skipped', dutyDetail: result.detail ?? 'start_failed' }
 }
 
+/** 08:00 Dhaka — morning summary for owner (shift runs at midnight). */
+export async function runDayShiftMorningBrief() {
+  console.log('[day-shift] morning brief...')
+  const result = await callDayShift('morning_brief')
+  return {
+    dutyStatus: result.ok ? 'done' : 'skipped',
+    dutyDetail: result.detail ?? 'morning_brief_failed',
+  }
+}
+
 /** Every 12 min during office hours — run next task. */
 export async function runDayShiftTick() {
   const result = await callDayShift('tick')

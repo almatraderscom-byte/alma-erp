@@ -20,16 +20,17 @@ const config: CapacitorConfig = {
   },
   ios: {
     handleApplicationNotifications: false,
+    backgroundColor: '#FAF9F6',
   },
   android: {
     allowMixedContent: false,
-    backgroundColor: '#08080A',
+    backgroundColor: '#FAF9F6',
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 1400,
       launchAutoHide: true,
-      backgroundColor: '#08080A',
+      backgroundColor: '#FAF9F6',
       androidSplashResourceName: 'splash',
       showSpinner: true,
       spinnerColor: '#C9A84C',

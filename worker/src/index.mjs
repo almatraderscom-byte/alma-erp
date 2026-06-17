@@ -606,7 +606,7 @@ try {
     await initializeDailySalahRecords(supabase).catch(err =>
       console.error('[salah] init failed:', err.message)
     )
-    // Catch-up missed critical duties after worker was down
+    // Catch-up missed critical duties after worker was down (silent — no Telegram spam on restart)
     if (runSchedulerJobFn) {
       setTimeout(() => {
         import('./schedulers/catchup.mjs')
@@ -615,10 +615,11 @@ try {
               supabase,
               bot: telegramBot,
               runJob: (name, opts) => runSchedulerJobFn(name, opts),
+              opts: { notifyOwner: false, source: 'startup' },
             }),
           )
           .catch((e) => console.error('[catchup] startup:', e.message))
-      }, 15_000)
+      }, 30_000)
     }
   }
 } catch (err) {

@@ -5,7 +5,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { startDayShift, tickDayShift } from '@/agent/lib/day-shift'
+import { startDayShift, tickDayShift, sendMorningShiftBrief } from '@/agent/lib/day-shift'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -34,12 +34,16 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as { action?: string }
     if (body.action === 'start' || body.action === 'tick') action = body.action
+  if (body.action === 'morning_brief') action = body.action
   } catch {
     /* default tick */
   }
 
   try {
-    const result = action === 'start' ? await startDayShift() : await tickDayShift()
+    const result =
+      action === 'start' ? await startDayShift()
+      : action === 'morning_brief' ? await sendMorningShiftBrief()
+      : await tickDayShift()
     return NextResponse.json(result)
   } catch (err) {
     console.error('[internal/day-shift]', err)
