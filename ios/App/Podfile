@@ -26,4 +26,20 @@ end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+
+  # Xcode 15+/26 compatibility: CocoaPods 1.12 emits `DT_TOOLCHAIN_DIR` inside
+  # LIBRARY_SEARCH_PATHS, which newer Xcode rejects ("DT_TOOLCHAIN_DIR cannot be
+  # used to evaluate LIBRARY_SEARCH_PATHS, use TOOLCHAIN_DIR instead"). Rewrite it
+  # to TOOLCHAIN_DIR in every generated Pods xcconfig so the project builds.
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      ref = config.base_configuration_reference
+      next unless ref
+      path = ref.real_path
+      next unless File.exist?(path)
+      contents = File.read(path)
+      next unless contents.include?('DT_TOOLCHAIN_DIR')
+      File.write(path, contents.gsub('DT_TOOLCHAIN_DIR', 'TOOLCHAIN_DIR'))
+    end
+  end
 end
