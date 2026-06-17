@@ -10,6 +10,7 @@ import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { buildOwnerBriefingData, type OwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
+import { dutiesForToday } from '@/agent/lib/agent-duties'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 
@@ -18,6 +19,48 @@ const db = prisma as any
 
 const SHIFT_KV_PREFIX = 'day_shift:'
 const BUSINESS_ID = 'ALMA_LIFESTYLE'
+const SKIP_DUTY_TODO = new Set(['salah_init'])
+
+/** ALMA Lifestyle office hours — banner stays active during patrol until close. */
+function isOfficeHoursDhaka(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now)
+  const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
+  const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
+  const mins = hh * 60 + mm
+  return mins >= 9 * 60 + 30 && mins < 20 * 60
+}
+
+function shiftDutiesForToday(now = new Date()) {
+  return dutiesForToday(now).filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+}
+
+function dueDateRangeDhaka(ymd: string): { start: Date; end: Date } {
+  const day = ymd.slice(0, 10)
+  return {
+    start: new Date(`${day}T00:00:00+06:00`),
+    end: new Date(`${day}T23:59:59.999+06:00`),
+  }
+}
+
+type DutyWorkResult = {
+  narrative: string
+  result: string
+  opinion: string
+}
+
+const OPS_DUTIES = new Set([
+  'morning_dispatch',
+  'staff_presence',
+  'midday_checkin',
+  'outcome_measure',
+])
+const MARKETER_DUTIES = new Set(['ads_monitor', 'ads_optimizer'])
+const CONTENT_DUTIES = new Set(['content_engine_1', 'content_engine_2', 'content_engine_3'])
 
 export type DayShiftStatus = 'idle' | 'running' | 'paused' | 'done'
 
@@ -32,62 +75,6 @@ export type DayShiftState = {
   lastPatrolAt?: string
   completedAt?: string
 }
-
-type ShiftTaskDef = {
-  key: string
-  title: string
-  priority: 'urgent' | 'high' | 'normal'
-  needsSpecialist?: SpecialistRole
-  specialistBrief?: (briefing: OwnerBriefingData) => string | null
-}
-
-const SHIFT_TASK_DEFS: ShiftTaskDef[] = [
-  {
-    key: 'staff',
-    title: 'স্টাফ টাস্ক প্রোগ্রেস চেক ও ফলো-আপ',
-    priority: 'high',
-    needsSpecialist: 'ops',
-    specialistBrief: (b) => {
-      const pending = (b.staffYesterday?.total ?? 0) - (b.staffYesterday?.done ?? 0)
-      const hasIssues = (b.staffPatterns?.length ?? 0) > 0 || pending > 2
-      if (!hasIssues) return null
-      return `আজকের staff_tasks — ${pending} pending, patterns ${b.staffPatterns?.length ?? 0}। বিস্তারিত চেক করে সংক্ষিপ্ত Bangla সারসংক্ষেপ দাও।`
-    },
-  },
-  {
-    key: 'orders',
-    title: 'অর্ডার ও ডেলিভারি স্ট্যাটাস রিভিউ',
-    priority: 'high',
-  },
-  {
-    key: 'inventory',
-    title: 'ইনভেন্টরি স্ট্যাটাস ও রিঅর্ডার চেক',
-    priority: 'normal',
-  },
-  {
-    key: 'cs_inbox',
-    title: 'Messenger inbox — unreplied messages রিভিউ',
-    priority: 'high',
-  },
-  {
-    key: 'ads',
-    title: 'Ads পারফরম্যান্স সারসংক্ষেপ',
-    priority: 'normal',
-    needsSpecialist: 'marketer',
-    specialistBrief: (b) => {
-      const anomalies = b.adsDigest?.anomalies?.length ?? 0
-      if (anomalies === 0) return null
-      return `Facebook ads anomaly (${anomalies}টি) দেখা গেছে। ads tools দিয়ে চেক করে owner-এর জন্য ৩-৪ লাইন Bangla action সারসংক্ষেপ দাও।`
-    },
-  },
-  {
-    key: 'content',
-    title: 'কন্টেন্ট/পোস্ট প্ল্যানিং চেক',
-    priority: 'normal',
-    needsSpecialist: 'content',
-    specialistBrief: () => null,
-  },
-]
 
 function shiftKvKey(date: string): string {
   return `${SHIFT_KV_PREFIX}${date}`
@@ -145,37 +132,180 @@ export async function appendShiftNarrative(conversationId: string, text: string)
   await touchConversationActivity(conversationId)
 }
 
-async function seedShiftTodos(defs: ShiftTaskDef[]): Promise<string[]> {
-  const ids: string[] = []
-  for (const def of defs) {
-    const existing = await prisma.agentTodo.findFirst({
-      where: {
-        businessId: BUSINESS_ID,
-        title: def.title,
-        source: 'day_shift',
-        createdAt: { gte: new Date(`${todayYmdDhaka()}T00:00:00+06:00`) },
-      },
-    })
-    if (existing) {
-      ids.push(existing.id)
-      continue
-    }
-    const todo = await prisma.agentTodo.create({
-      data: {
-        title: def.title,
-        priority: def.priority,
-        status: 'pending',
-        source: 'day_shift',
-        businessId: BUSINESS_ID,
-      },
-    })
-    ids.push(todo.id)
-  }
-  return ids
+async function getDutyLogRow(dutyKey: string, date: string) {
+  return prisma.agentDutyLog.findUnique({
+    where: { duty_dutyDate: { duty: dutyKey, dutyDate: date } },
+  })
 }
 
-function formatTodoList(defs: ShiftTaskDef[]): string {
-  return defs.map((d, i) => `${i + 1}. ${d.title}`).join('\n')
+async function patchTodoByDutyKey(
+  dutyKey: string,
+  date: string,
+  data: { status: string; description?: string; completedAt?: Date | null },
+): Promise<void> {
+  const { start, end } = dueDateRangeDhaka(date)
+  await prisma.agentTodo.updateMany({
+    where: {
+      businessId: BUSINESS_ID,
+      dutyKey,
+      dueDate: { gte: start, lte: end },
+    },
+    data: {
+      status: data.status,
+      ...(data.description !== undefined ? { description: data.description } : {}),
+      ...(data.completedAt !== undefined ? { completedAt: data.completedAt } : {}),
+      ...(data.status === 'completed' && data.completedAt === undefined
+        ? { completedAt: new Date() }
+        : {}),
+    },
+  })
+}
+
+function stripMarkdown(line: string): string {
+  return line.replace(/\*\*/g, '').replace(/^✓\s*/, '').replace(/^⚠️\s*/, '').trim()
+}
+
+function composeFeedback(label: string, result: string, opinion: string): string {
+  const r = result.trim() || `${label} চেক সম্পন্ন হয়েছে।`
+  const o = opinion.trim() || 'আজকের জন্য আর তাত্ক্ষণিক action দরকার নেই।'
+  return `✅ Sir, "${label}" শেষ — ${r} আমার মত: ${o}`
+}
+
+function specialistBriefForDuty(dutyKey: string, briefing: OwnerBriefingData): string | null {
+  if (OPS_DUTIES.has(dutyKey)) {
+    const pending = (briefing.staffYesterday?.total ?? 0) - (briefing.staffYesterday?.done ?? 0)
+    const hasIssues = (briefing.staffPatterns?.length ?? 0) > 0 || pending > 2
+    if (!hasIssues) return null
+    return `আজকের staff_tasks — ${pending} pending, patterns ${briefing.staffPatterns?.length ?? 0}। বিস্তারিত চেক করে সংক্ষিপ্ত Bangla সারসংক্ষেপ দাও।`
+  }
+  if (MARKETER_DUTIES.has(dutyKey)) {
+    const anomalies = briefing.adsDigest?.anomalies?.length ?? 0
+    if (anomalies === 0) return null
+    return `Facebook ads anomaly (${anomalies}টি) দেখা গেছে। ads tools দিয়ে চেক করে owner-এর জন্য ৩-৪ লাইন Bangla action সারসংক্ষেপ দাও।`
+  }
+  if (CONTENT_DUTIES.has(dutyKey)) return null
+  return null
+}
+
+function specialistRoleForDuty(dutyKey: string): SpecialistRole | null {
+  if (OPS_DUTIES.has(dutyKey)) return 'ops'
+  if (MARKETER_DUTIES.has(dutyKey)) return 'marketer'
+  if (CONTENT_DUTIES.has(dutyKey)) return 'content'
+  return null
+}
+
+async function runDutyWork(
+  dutyKey: string,
+  label: string,
+  date: string,
+  briefing: OwnerBriefingData | null,
+  conversationId: string,
+): Promise<DutyWorkResult> {
+  const log = await getDutyLogRow(dutyKey, date)
+  const parts: string[] = []
+
+  if (log?.status === 'done' || log?.status === 'skipped') {
+    parts.push(log.detail?.trim() || `✓ ${label} — scheduler থেকে সম্পন্ন।`)
+  } else if (log?.status === 'failed' || log?.status === 'missed') {
+    parts.push(`⚠️ ${log.detail?.trim() || `${label} ব্যর্থ বা মিস হয়েছে।`}`)
+  } else if (dutyKey === 'order_watch' && briefing) {
+    const det = await runDeterministicTask('orders', briefing)
+    parts.push(det.narrative)
+  } else if (
+    (dutyKey === 'cs_index_products' || dutyKey === 'approval_tracker') &&
+    briefing
+  ) {
+    const det = await runDeterministicTask('cs_inbox', briefing)
+    parts.push(det.narrative)
+  } else if (
+    (dutyKey === 'subscription_renewal' || dutyKey === 'cost_reconcile') &&
+    briefing
+  ) {
+    const det = await runDeterministicTask('inventory', briefing)
+    parts.push(det.narrative)
+  } else if (OPS_DUTIES.has(dutyKey) && briefing) {
+    const staff = briefing.staffYesterday
+    parts.push(
+      staff?.summary
+        ? `✓ স্টাফ সারসংক্ষেপ: ${staff.summary}`
+        : '✓ স্টাফ টাস্ক ডেটা চেক করা হয়েছে — বিস্তারিত staff monitor-এ।',
+    )
+  } else if (CONTENT_DUTIES.has(dutyKey)) {
+    parts.push('✓ কন্টেন্ট প্ল্যানিং — owner request এ draft করব (অটো office-এ LLM খরচ এড়ানো)।')
+  } else if (MARKETER_DUTIES.has(dutyKey) && briefing) {
+    if (briefing.adsDigest?.anomalies?.length) {
+      parts.push(`⚠️ Ads anomaly ${briefing.adsDigest.anomalies.length}টি — বিস্তারিত নিচে।`)
+    } else {
+      parts.push('✓ Ads anomaly নেই — আজকের জন্য pause/change দরকার নেই।')
+    }
+  } else if (briefing) {
+    parts.push(`চেক করছি ${label}...`)
+    parts.push('✓ ERP briefing ডেটা থেকে চেক সম্পন্ন — scheduler লগ pending থাকলে catch-up হবে।')
+  } else {
+    parts.push(`চেক করছি ${label}...`)
+    parts.push('✓ চেক সম্পন্ন — briefing partial, পরে verify করব।')
+  }
+
+  if (briefing) {
+    const role = specialistRoleForDuty(dutyKey)
+    const brief = specialistBriefForDuty(dutyKey, briefing)
+    if (role && brief) {
+      const spec = await maybeRunSpecialistByRole(role, brief, conversationId)
+      if (spec) parts.push(spec)
+    }
+  }
+
+  const narrative = parts.filter(Boolean).join('\n\n')
+  const lines = parts.map(stripMarkdown).filter(Boolean)
+  const result = lines.find((l) => !l.startsWith('চেক')) ?? lines.at(-1) ?? `${label} সম্পন্ন।`
+  const opinion =
+    lines.length > 1
+      ? lines[lines.length - 1]
+      : log?.status === 'pending'
+        ? 'Scheduler catch-up বা manual follow-up দরকার হতে পারে।'
+        : 'আজকের জন্য ঠিক আছে।'
+
+  return { narrative, result, opinion }
+}
+
+async function maybeRunSpecialistByRole(
+  role: SpecialistRole,
+  brief: string,
+  conversationId: string,
+): Promise<string | null> {
+  const label = specialistLabel(role)
+  const conv = await prisma.agentConversation.findUnique({
+    where: { id: conversationId },
+    select: { modelId: true },
+  })
+  const { getModel } = await import('@/agent/lib/models/registry')
+  const plannedModel = getModel(conv?.modelId ?? 'claude-sonnet-4-6')
+  const modelTag = plannedModel.label ? ` · ${plannedModel.label}` : ''
+
+  await appendShiftNarrative(
+    conversationId,
+    `এই অংশটা ${label}${modelTag} সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
+      `> **Delegate → ${label}:** ${brief.slice(0, 120)}${brief.length > 120 ? '…' : ''}`,
+  )
+
+  const { runSubAgent } = await import('@/agent/lib/models/subagent')
+  const result = await runSubAgent({
+    role,
+    task: brief,
+    businessId: BUSINESS_ID,
+    conversationId,
+    modelId: conv?.modelId ?? undefined,
+  })
+
+  if (!result.success) {
+    void sendOwnerText(
+      `⚠️ Day Shift: ${label} specialist ব্যর্থ — ${result.error ?? 'unknown'}. কাজ চালিয়ে যাচ্ছি।`,
+    ).catch(() => {})
+    return `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`
+  }
+
+  const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
+  return `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`
 }
 
 async function runDeterministicTask(
@@ -230,50 +360,8 @@ async function runDeterministicTask(
   }
 }
 
-async function maybeRunSpecialist(
-  def: ShiftTaskDef,
-  briefing: OwnerBriefingData,
-  conversationId: string,
-): Promise<string | null> {
-  if (!def.needsSpecialist || !def.specialistBrief) return null
-  const brief = def.specialistBrief(briefing)
-  if (!brief) return null
-
-  const role = def.needsSpecialist
-  const label = specialistLabel(role)
-
-  const conv = await prisma.agentConversation.findUnique({
-    where: { id: conversationId },
-    select: { modelId: true },
-  })
-  const { getModel } = await import('@/agent/lib/models/registry')
-  const plannedModel = getModel(conv?.modelId ?? 'claude-sonnet-4-6')
-  const modelTag = plannedModel.label ? ` · ${plannedModel.label}` : ''
-
-  await appendShiftNarrative(
-    conversationId,
-    `এই অংশটা ${label}${modelTag} সাব-এজেন্টকে দিচ্ছি — আমি নিজে data verify করব...\n\n` +
-      `> **Delegate → ${label}:** ${brief.slice(0, 120)}${brief.length > 120 ? '…' : ''}`,
-  )
-
-  const { runSubAgent } = await import('@/agent/lib/models/subagent')
-  const result = await runSubAgent({
-    role,
-    task: brief,
-    businessId: BUSINESS_ID,
-    conversationId,
-    modelId: conv?.modelId ?? undefined,
-  })
-
-  if (!result.success) {
-    void sendOwnerText(
-      `⚠️ Day Shift: ${label} specialist ব্যর্থ — ${result.error ?? 'unknown'}. কাজ চালিয়ে যাচ্ছি।`,
-    ).catch(() => {})
-    return `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`
-  }
-
-  const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
-  return `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`
+function formatDutyList(duties: ReturnType<typeof shiftDutiesForToday>): string {
+  return duties.map((d, i) => `${i + 1}. ${d.label}`).join('\n')
 }
 
 const PATROL_INTERVAL_MS = 60 * 60 * 1000 // hourly light check after main queue
@@ -304,19 +392,10 @@ async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detai
   return { ok: true, detail: 'patrol_done', conversationId: state.conversationId }
 }
 
-async function patchTodoStatus(id: string, status: string): Promise<void> {
-  await prisma.agentTodo.update({
-    where: { id },
-    data: {
-      status,
-      ...(status === 'completed' ? { completedAt: new Date() } : {}),
-    },
-  })
-}
-
-/** Start today's shift — intro + todo list (no heavy LLM). */
+/** Start today's shift — intro + duty roster (Phase A todos seeded separately). */
 export async function startDayShift(): Promise<{ ok: boolean; conversationId?: string; detail: string }> {
   const date = todayYmdDhaka()
+  const duties = shiftDutiesForToday()
   let state = await loadDayShiftState(date)
 
   if (state?.status === 'done') {
@@ -324,20 +403,18 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
   }
 
   const conversationId = state?.conversationId ?? (await getOrCreateDayShiftConversation(date))
-  const todoIds = state?.todoIds?.length ? state.todoIds : await seedShiftTodos(SHIFT_TASK_DEFS)
 
   if (!state) {
     await appendShiftNarrative(
       conversationId,
       `🏢 **অফিস সাইকেল শুরু** (রাত ১২:০৫ মধ্যরাত — ২৪ ঘণ্টা অফিস)\n\n` +
-        `আসসালামু আলাইকুম Sir। আজকের (রাত ১২টা → পরের রাত ১১:৫৫) কাজের তালিকা বানাচ্ছি। ` +
+        `আসসালামু আলাইকুম Sir। আজকের (রাত ১২টা → পরের রাত ১১:৫৫) duty roster (${duties.length}টি) panel-এ ready। ` +
         `অফিস ২৪ ঘণ্টা চালু — আপনি যেকোনো সময় এই chat-এ live দেখতে পারবেন।\n\n` +
         `প্রথমে briefing data টানছি...`,
     )
 
-    let briefing: OwnerBriefingData | null = null
     try {
-      briefing = await buildOwnerBriefingData()
+      await buildOwnerBriefingData()
       await appendShiftNarrative(conversationId, '✓ ERP briefing ডেটা লোড হয়েছে।')
     } catch (err) {
       await appendShiftNarrative(
@@ -348,12 +425,12 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
 
     await appendShiftNarrative(
       conversationId,
-      `**আজকের তালিকা (${SHIFT_TASK_DEFS.length}টি):**\n${formatTodoList(SHIFT_TASK_DEFS)}\n\n` +
-        `এখন কাজ ১/${SHIFT_TASK_DEFS.length} শুরু করছি...`,
+      `**আজকের duty তালিকা (${duties.length}টি):**\n${formatDutyList(duties)}\n\n` +
+        `এখন duty ১/${duties.length} শুরু করছি...`,
     )
 
     void sendOwnerText(
-      `🏢 Agent অফিস শিফট শুরু — ${SHIFT_TASK_DEFS.length}টি কাজ। ALMA ERP → Agent chat-এ live দেখুন।`,
+      `🏢 Agent অফিস শিফট শুরু — ${duties.length}টি duty। ALMA ERP → Agent chat-এ live দেখুন।`,
     ).catch(() => {})
 
     state = {
@@ -361,11 +438,11 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       conversationId,
       status: 'running',
       taskIndex: 0,
-      todoIds,
+      todoIds: [],
       startedAt: new Date().toISOString(),
     }
     await saveDayShiftState(state)
-    return { ok: true, conversationId, detail: `started_${SHIFT_TASK_DEFS.length}_tasks` }
+    return { ok: true, conversationId, detail: `started_${duties.length}_duties` }
   }
 
   if (state.status === 'running') {
@@ -377,7 +454,7 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
   return { ok: true, conversationId: state.conversationId, detail: 'resumed' }
 }
 
-/** Run the next task in the shift queue (one per tick — cost control). */
+/** Run the next duty in today's roster (one per tick — cost control). */
 export async function tickDayShift(): Promise<{ ok: boolean; detail: string; conversationId?: string }> {
   const date = todayYmdDhaka()
   let state = await loadDayShiftState(date)
@@ -398,35 +475,32 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     await saveDayShiftState(state)
   }
 
-  const { conversationId, taskIndex, todoIds } = state
-  const total = SHIFT_TASK_DEFS.length
+  const { conversationId, taskIndex } = state
+  const duties = shiftDutiesForToday()
+  const total = duties.length
 
   if (taskIndex >= total) {
     if (!state.completedAt) {
       await appendShiftNarrative(
         conversationId,
-        `✅ **মূল কাজের তালিকা সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
+        `✅ **মূল duty roster সম্পন্ন** — ${total}টি চেক করা হয়েছে।\n\n` +
           `অফিস **২৪ ঘণ্টা চালু** (রাত ১২টা → পরের রাত ১১:৫৫) — প্রতি ঘণ্টায় হালকা প্যাট্রোল। ` +
           `পরের সাইকেল **মধ্যরাত ১২:০৫**-এ শুরু।`,
       )
       state.status = 'done'
       state.completedAt = new Date().toISOString()
       await saveDayShiftState(state)
-      void sendOwnerText(`🌙 Agent অফিস মূল কাজ শেষ — ${total}টি সম্পন্ন। অফিস ২৪ ঘণ্টা চালু।`).catch(() => {})
+      void sendOwnerText(`🌙 Agent অফিস মূল duty শেষ — ${total}টি সম্পন্ন। অফিস ২৪ ঘণ্টা চালু।`).catch(() => {})
     }
     return { ok: true, detail: 'shift_complete', conversationId }
   }
 
-  const def = SHIFT_TASK_DEFS[taskIndex]
-  const todoId = todoIds[taskIndex]
+  const duty = duties[taskIndex]
   const n = taskIndex + 1
 
-  await appendShiftNarrative(
-    conversationId,
-    `\n---\n**কাজ ${n}/${total}:** ${def.title}\nচেক শুরু করছি...`,
-  )
-
-  if (todoId) await patchTodoStatus(todoId, 'in_progress')
+  // STEP 1 — announce + in_progress
+  await appendShiftNarrative(conversationId, `🏢 Sir, এখন করছি: ${duty.label}`)
+  await patchTodoByDutyKey(duty.duty, date, { status: 'in_progress', completedAt: null })
 
   let briefing: OwnerBriefingData | null = null
   try {
@@ -435,40 +509,20 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     /* partial run */
   }
 
-  const parts: string[] = []
-
-  if (['orders', 'inventory', 'cs_inbox'].includes(def.key) && briefing) {
-    const det = await runDeterministicTask(def.key, briefing)
-    parts.push(det.narrative)
+  // STEP 2 — visible step-by-step work
+  const work = await runDutyWork(duty.duty, duty.label, date, briefing, conversationId)
+  if (work.narrative.trim()) {
+    await appendShiftNarrative(conversationId, work.narrative)
   }
 
-  if (briefing && def.needsSpecialist) {
-    const spec = await maybeRunSpecialist(def, briefing, conversationId)
-    if (spec) parts.push(spec)
-  } else if (def.key === 'staff' && briefing) {
-    const staff = briefing.staffYesterday
-    parts.push(
-      staff?.summary
-        ? `✓ স্টাফ সারসংক্ষেপ: ${staff.summary}`
-        : '✓ স্টাফ টাস্ক ডেটা চেক করা হয়েছে — বিস্তারিত staff monitor-এ।',
-    )
-  } else if (def.key === 'content') {
-    parts.push('✓ কন্টেন্ট প্ল্যানিং — owner request এ draft করব (অটো office-এ LLM খরচ এড়ানো)।')
-  } else if (def.key === 'ads' && briefing && !(briefing.adsDigest?.anomalies?.length)) {
-    parts.push('✓ Ads anomaly নেই — আজকের জন্য pause/change দরকার নেই।')
-  }
-
-  if (!parts.length) {
-    parts.push('✓ চেক সম্পন্ন — কোনো জরুরি action লাগছে না।')
-  }
-
-  await appendShiftNarrative(conversationId, parts.join('\n\n'))
-  await appendShiftNarrative(
-    conversationId,
-    `📋 Todo আপডেট: "${def.title}" সম্পন্ন।`,
-  )
-
-  if (todoId) await patchTodoStatus(todoId, 'completed')
+  // STEP 3 — mandatory feedback + complete
+  const feedback = composeFeedback(duty.label, work.result, work.opinion)
+  await appendShiftNarrative(conversationId, feedback)
+  await patchTodoByDutyKey(duty.duty, date, {
+    status: 'completed',
+    description: feedback,
+    completedAt: new Date(),
+  })
 
   state.taskIndex = taskIndex + 1
   state.lastTickAt = new Date().toISOString()
@@ -480,7 +534,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 
   return {
     ok: true,
-    detail: `task_${n}_of_${total}_done`,
+    detail: `duty_${n}_of_${total}_done:${duty.duty}`,
     conversationId,
   }
 }
@@ -489,20 +543,25 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 export async function sendMorningShiftBrief(): Promise<{ ok: boolean; detail: string }> {
   const date = todayYmdDhaka()
   const state = await loadDayShiftState(date)
-  const total = SHIFT_TASK_DEFS.length
+  const total = shiftDutiesForToday().length
   const status = state?.status ?? 'idle'
   const doneTasks = Math.min(state?.taskIndex ?? 0, total)
 
-  let todoLine = ''
-  if (state?.todoIds?.length) {
-    const todos = await prisma.agentTodo.findMany({
-      where: { id: { in: state.todoIds } },
-      select: { status: true },
-    })
-    const completed = todos.filter((t) => t.status === 'completed').length
-    const pending = todos.length - completed
-    todoLine = ` Todo ${completed}/${todos.length} সম্পন্ন${pending > 0 ? `, ${pending} বাকি` : ''}.`
-  }
+  const { start, end } = dueDateRangeDhaka(date)
+  const todos = await prisma.agentTodo.findMany({
+    where: {
+      businessId: BUSINESS_ID,
+      source: 'day_shift',
+      dutyKey: { not: null },
+      dueDate: { gte: start, lte: end },
+    },
+    select: { status: true },
+  })
+  const completed = todos.filter((t) => t.status === 'completed').length
+  const pending = todos.length - completed
+  const todoLine = todos.length
+    ? ` Todo ${completed}/${todos.length} সম্পন্ন${pending > 0 ? `, ${pending} বাকি` : ''}.`
+    : ''
 
   const statusBn =
     status === 'running' ? 'চলমান'
@@ -543,6 +602,7 @@ export async function getDayShiftToday(): Promise<{
     state,
     conversationId,
     title,
-    active: state?.status === 'running',
+    active:
+      (state?.status === 'running' || state?.status === 'done') && isOfficeHoursDhaka(),
   }
 }

@@ -9,6 +9,8 @@ export const DAILY_DUTIES = [
   { duty: 'owner_briefing', label: '☀️ সকালের ব্রিফিং', time: '07:30' },
   { duty: 'daily_strategist', label: '🎯 ডেইলি স্ট্র্যাটেজি পাস', time: '08:00' },
   { duty: 'cost_reconcile', label: '🧮 কস্ট রিকনসাইল', time: '08:15' },
+  { duty: 'daily_cashflow', label: '💰 ডেইলি ক্যাশফ্লো', time: '08:30' },
+  { duty: 'payment_reminders', label: '💳 পেমেন্ট রিমাইন্ডার', time: '12:00' },
   { duty: 'morning_dispatch', label: '📤 স্টাফ টাস্ক ডিসপ্যাচ', time: '09:00' },
   { duty: 'ads_monitor', label: '📢 অ্যাড মনিটর', time: '09:30' },
   { duty: 'ads_optimizer', label: '🎯 অ্যাড অপটিমাইজার', time: '09:45' },
