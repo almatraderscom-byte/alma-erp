@@ -63,12 +63,12 @@ export async function sendVoiceMessage(botOrApi, chatId, text, options = {}) {
   })
 
   const extra = options.caption ? { caption: String(options.caption).slice(0, 200) } : {}
-  const useElevenLabs =
+  const usedElevenLabs =
     !options.isSalah
-    && (options.elevenLabsOnly || options.useElevenLabs || options.useOwnerVoice)
+    && Boolean(options.elevenLabsOnly || options.useElevenLabs)
     && isElevenLabsAvailable()
 
-  if (useElevenLabs) {
+  if (usedElevenLabs) {
     await api.sendAudio(chatId, { source: mp3Buffer, filename: 'voice.mp3' }, extra)
     return
   }

@@ -1,6 +1,8 @@
 /** Fetch TTS audio from server, return an HTMLAudioElement ready to play. */
+import { prepareBanglaTtsText } from '@/agent/lib/voice-bangla'
+
 export async function fetchTtsAudio(text: string): Promise<HTMLAudioElement> {
-  const clean = text.replace(/\s+/g, ' ').trim().slice(0, 1200)
+  const clean = prepareBanglaTtsText(text.replace(/\s+/g, ' ').trim()).slice(0, 1200)
   if (!clean) throw new Error('empty text')
 
   const res = await fetch('/api/assistant/tts', {

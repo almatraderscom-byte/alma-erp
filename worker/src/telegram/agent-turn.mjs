@@ -181,11 +181,11 @@ export async function deliverAgentTurn(jobData) {
       )
     }
 
-    if (wantsVoice && (process.env.GOOGLE_TTS_CREDENTIALS || isElevenLabsAvailable())) {
+    if (wantsVoice && (process.env.GOOGLE_TTS_CREDENTIALS || (useElevenLabs && isElevenLabsAvailable()))) {
       try {
         await sendVoiceMessage(bot.telegram, chatId, replyText, {
-          useOwnerVoice: true,
-          useElevenLabs: useElevenLabs || isElevenLabsAvailable(),
+          useOwnerVoice: !useElevenLabs,
+          useElevenLabs: Boolean(useElevenLabs),
           voiceProfile,
         })
       } catch (ttsErr) {

@@ -5,6 +5,7 @@
 
 import { createSign } from 'crypto'
 import { logCost, calcTtsCostUsd } from './cost-log.mjs'
+import { BANGLA_GOOGLE_TTS, prepareBanglaTtsText } from './voice-bangla.mjs'
 
 const SENTENCE_ENDS = ['।', '?', '!', '.']
 
@@ -38,7 +39,7 @@ export function stripMarkdown(text) {
  * @returns {string[]}
  */
 export function splitTextForTts(text, maxChars = 200) {
-  const cleaned = stripMarkdown(text)
+  const cleaned = prepareBanglaTtsText(stripMarkdown(text))
   if (!cleaned) return []
   if (cleaned.length <= maxChars) return [cleaned]
 
@@ -111,7 +112,7 @@ async function synthesizeChunk(text, accessToken) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({
       input: { text },
-      voice: { languageCode: 'bn-IN', name: 'bn-IN-Chirp3-HD-Charon' },
+      voice: { languageCode: BANGLA_GOOGLE_TTS.languageCode, name: BANGLA_GOOGLE_TTS.name },
       audioConfig: { audioEncoding: 'MP3', speakingRate: 1.0 },
     }),
     signal: AbortSignal.timeout(30_000),
@@ -135,7 +136,7 @@ export async function synthesizeSpeech(text, maxChars = 600, opts = {}) {
   const creds = getCredentials()
   if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not set or invalid JSON')
 
-  const cleaned = stripMarkdown(text).slice(0, maxChars)
+  const cleaned = prepareBanglaTtsText(stripMarkdown(text)).slice(0, maxChars)
   const chunks = splitTextForTts(cleaned, 200)
   if (chunks.length === 0) throw new Error('No text to synthesize')
 
@@ -150,7 +151,7 @@ export async function synthesizeSpeech(text, maxChars = 600, opts = {}) {
   void logCost({
     provider: 'google_tts',
     kind: 'tts',
-    units: { characters: cleaned.length, voice: 'bn-IN-Chirp3-HD-Charon', purpose },
+    units: { characters: cleaned.length, voice: BANGLA_GOOGLE_TTS.name, purpose },
     costUsd: calcTtsCostUsd(cleaned.length),
     dedupKey: `tts:worker:${purpose}:${cleaned.length}:${cleaned.slice(0, 24)}`,
   })

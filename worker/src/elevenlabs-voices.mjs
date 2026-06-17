@@ -95,5 +95,5 @@ export function parseOwnerVoiceIntent(text) {
 
   const voiceProfile = gender === 'female' ? 'female' : 'male'
 
-  return { wantsVoice, voiceProfile, useElevenLabs: useElevenLabs || wantsVoice }
+  return { wantsVoice, voiceProfile, useElevenLabs }
 }

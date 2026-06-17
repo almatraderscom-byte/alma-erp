@@ -9,6 +9,7 @@
 import { logCost } from './cost-log.mjs'
 import { stripMarkdown } from './tts.mjs'
 import { resolveVoiceId } from './elevenlabs-voices.mjs'
+import { prepareBanglaTtsText } from './voice-bangla.mjs'
 
 const ELEVENLABS_API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
 const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_v3'
@@ -22,7 +23,8 @@ const MAX_CHARS_PER_REQUEST = 4500
  * Minimal prep — playground sends text as typed; only strip markdown/noise.
  */
 export function prepareBanglaForElevenLabs(text) {
-  return stripMarkdown(text).replace(/\s{2,}/g, ' ').trim().slice(0, MAX_CHARS_PER_REQUEST)
+  const cleaned = stripMarkdown(text).replace(/\s{2,}/g, ' ').trim()
+  return prepareBanglaTtsText(cleaned).slice(0, MAX_CHARS_PER_REQUEST)
 }
 
 function voiceSettings(opts = {}) {
@@ -54,6 +56,7 @@ async function synthesizeChunk(preparedText, opts = {}) {
     text: preparedText,
     model_id: ELEVENLABS_MODEL_ID(),
     voice_settings: voiceSettings(opts),
+    language_code: 'ben',
   }
 
   const format = ELEVENLABS_OUTPUT_FORMAT()
@@ -119,7 +122,6 @@ export function isElevenLabsAvailable() {
 
 export async function smartTts(text, opts = {}) {
   const profile = opts.voiceProfile ?? (opts.elevenLabsOnly ? 'staff' : 'male')
-
   const purpose = opts.purpose ?? 'voice_message'
 
   if (opts.isSalah) {
@@ -127,15 +129,15 @@ export async function smartTts(text, opts = {}) {
     return synthesizeSpeech(text, 600, { purpose: 'salah_voice' })
   }
 
-  if (opts.elevenLabsOnly || opts.useElevenLabs) {
-    if (!isElevenLabsAvailable()) {
-      throw new Error('ElevenLabs required but ELEVENLABS_API_KEY not set')
-    }
-    return synthesizeElevenLabs(text, { voiceProfile: profile, purpose })
-  }
+  const wantsElevenLabs =
+    Boolean(opts.elevenLabsOnly || opts.useElevenLabs) && !opts.useGoogleBangla
 
-  if (opts.useOwnerVoice && isElevenLabsAvailable()) {
-    return synthesizeElevenLabs(text, { voiceProfile: profile, purpose })
+  if (wantsElevenLabs) {
+    if (!isElevenLabsAvailable()) {
+      console.warn('[smartTts] ElevenLabs requested but unavailable — falling back to Google Bangla TTS')
+    } else {
+      return synthesizeElevenLabs(text, { voiceProfile: profile, purpose })
+    }
   }
 
   const { synthesizeSpeech } = await import('./tts.mjs')

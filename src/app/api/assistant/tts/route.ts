@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { calcTtsCostUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
+import { BANGLA_GOOGLE_TTS, prepareBanglaTtsText } from '@/agent/lib/voice-bangla'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 
@@ -101,9 +102,10 @@ export async function POST(req: NextRequest) {
   const rawText = String(body.text ?? '').trim()
   if (!rawText) return Response.json({ error: 'text is required' }, { status: 400 })
 
-  // Strip markdown and cap at ~600 chars
-  const cleaned = stripMarkdown(rawText)
+  // Strip markdown, remove Hindi script leaks, cap at ~600 chars
+  const cleaned = prepareBanglaTtsText(stripMarkdown(rawText))
   const text = cleaned.slice(0, 600)
+  if (!text) return Response.json({ error: 'text is required' }, { status: 400 })
 
   try {
     const accessToken = await getAccessToken(creds)
@@ -119,8 +121,8 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           input: { text },
           voice: {
-            languageCode: 'bn-IN',
-            name: 'bn-IN-Chirp3-HD-Charon',
+            languageCode: BANGLA_GOOGLE_TTS.languageCode,
+            name: BANGLA_GOOGLE_TTS.name,
           },
           audioConfig: {
             audioEncoding: 'MP3',
@@ -143,7 +145,7 @@ export async function POST(req: NextRequest) {
     void logCost({
       provider: 'google_tts',
       kind: 'tts',
-      units: { characters: charCount, voice: 'bn-IN-Chirp3-HD-Charon', purpose: 'web_voice' },
+      units: { characters: charCount, voice: BANGLA_GOOGLE_TTS.name, purpose: 'web_voice' },
       costUsd: calcTtsCostUsd(charCount),
       dedupKey: `tts:web:${charCount}:${text.slice(0, 24)}`,
     })
