@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { recordCsEvent } from '@/agent/lib/cs/analytics'
+import { detectHardStopCategory, hardStopLabel } from '@/agent/lib/cs/hard-stops'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -44,7 +45,7 @@ export async function blockCsCustomer(input: {
 
 export type GuardResult =
   | { allowed: true }
-  | { allowed: false; reason: 'blocked' | 'rate_limited' | 'spam_silent'; message?: string }
+  | { allowed: false; reason: 'blocked' | 'rate_limited' | 'spam_silent' | 'hard_stop'; message?: string; hardStop?: string }
 
 export async function checkCsGuards(input: {
   conversationId: string
@@ -76,6 +77,25 @@ export async function checkCsGuards(input: {
       reason: 'rate_limited',
       message: 'ভাইয়া, আজ অনেক মেসেজ হয়ে গেছে। কাল আবার লিখুন বা ইনবক্সে কল করুন 🙏',
     }
+  }
+
+  const hardStop = detectHardStopCategory(input.userText)
+  if (hardStop) {
+    await db.csConversation.update({
+      where: { id: input.conversationId },
+      data: { mode: 'human', status: 'human' },
+    })
+    await notifyOwner({
+      tier: 1,
+      title: `🙋 CS Hard Stop: ${hardStopLabel(hardStop)}`,
+      message: `কাস্টমার ${input.psid} — auto-reply বন্ধ।\n"${input.userText.slice(0, 200)}"`,
+      category: 'urgent',
+    })
+    await recordCsEvent('hard_stop', {
+      conversationId: input.conversationId,
+      metadata: { category: hardStop, psid: input.psid },
+    })
+    return { allowed: false, reason: 'hard_stop', hardStop }
   }
 
   const spam = detectSpam(input.userText)

@@ -5,6 +5,8 @@ import { runCsTurn } from '@/agent/lib/cs/core'
 import { csReplyPermitted } from '@/agent/lib/cs/modes'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { checkCsGuards } from '@/agent/lib/cs/guards'
+import { scoreCsReplyConfidence } from '@/agent/lib/cs/confidence'
+import { notifyOwner } from '@/agent/lib/notify-owner'
 import { appendCsMessage } from '@/agent/lib/cs/conversations'
 import { prisma } from '@/lib/prisma'
 
@@ -90,6 +92,22 @@ export async function POST(req: NextRequest) {
   })
 
   if (!guard.allowed) {
+    if (guard.reason === 'hard_stop') {
+      if (jobId) {
+        await db.csReplyJob.update({
+          where: { id: jobId },
+          data: { status: 'done', processedAt: new Date(), lastError: 'hard_stop' },
+        })
+      }
+      return Response.json({
+        ok: true,
+        skipped: true,
+        reason: 'hard_stop',
+        handedOff: true,
+        parts: [],
+        shadowOnly: false,
+      })
+    }
     const sendParts = guard.reason === 'rate_limited' && guard.message
       ? [{ type: 'text', text: guard.message }]
       : []
@@ -124,6 +142,32 @@ export async function POST(req: NextRequest) {
       shadowOnly,
     })
 
+    // Live auto-send gate: confidence must meet threshold (shadow always drafts, never sends).
+    let sendParts = result.parts
+    let confidenceBlocked = false
+    if (!shadowOnly && effectiveMode === 'auto' && !result.handedOff) {
+      const conf = scoreCsReplyConfidence({
+        userText: userText.trim(),
+        parts: result.parts,
+        handedOff: result.handedOff,
+        hadToolUse: result.hadToolUse,
+      })
+      if (conf.escalate) {
+        confidenceBlocked = true
+        sendParts = []
+        await db.csConversation.update({
+          where: { id: conv.id },
+          data: { mode: 'human', status: 'human' },
+        })
+        void notifyOwner({
+          tier: 1,
+          title: '⚠️ CS Low Confidence — Human Needed',
+          message: `Conv ${conv.id} · score ${conf.score.toFixed(2)}\nCustomer: "${userText.slice(0, 120)}"`,
+          category: 'urgent',
+        })
+      }
+    }
+
     let shadowDraftId: string | null = null
     if (shadowOnly && !result.handedOff) {
       const text = result.parts.filter((p): p is { type: 'text'; text: string } => p.type === 'text').map((p) => p.text).join('\n\n')
@@ -139,7 +183,7 @@ export async function POST(req: NextRequest) {
         },
       })
       shadowDraftId = draft.id
-    } else if (!shadowOnly && !result.handedOff) {
+    } else if (!shadowOnly && !result.handedOff && !confidenceBlocked) {
       const { incrementCsReplyCount } = await import('@/agent/lib/cs/guards')
       await incrementCsReplyCount(conv.id)
     }
@@ -164,10 +208,11 @@ export async function POST(req: NextRequest) {
 
     return Response.json({
       ok: true,
-      parts: result.parts,
+      parts: confidenceBlocked ? [] : sendParts,
       shadowOnly,
       shadowDraftId,
-      handedOff: result.handedOff,
+      handedOff: result.handedOff || confidenceBlocked,
+      confidenceBlocked,
       costUsd: result.costUsd,
     })
   } catch (err) {

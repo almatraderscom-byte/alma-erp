@@ -24,6 +24,7 @@ export type CsTurnResult = {
   tokensOut: number
   costUsd: number
   followupHints: CsFollowupHint[]
+  hadToolUse: boolean
 }
 
 const globalForAnthropic = globalThis as unknown as { anthropicCs: Anthropic | undefined }
@@ -90,6 +91,7 @@ export async function runCsTurn(input: {
   const parts: CsReplyPart[] = []
   const followupHints: CsFollowupHint[] = []
   let handedOff = false
+  let hadToolUse = false
   let tokensIn = 0
   let tokensOut = 0
   let halfOrderNudge = false
@@ -132,6 +134,7 @@ export async function runCsTurn(input: {
       break
     }
 
+    hadToolUse = true
     messages.push({ role: 'assistant', content: res.content })
     const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
 
@@ -207,5 +210,6 @@ export async function runCsTurn(input: {
     tokensOut,
     costUsd,
     followupHints,
+    hadToolUse,
   }
 }

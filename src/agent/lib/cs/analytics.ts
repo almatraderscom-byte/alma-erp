@@ -16,6 +16,8 @@ export type CsAnalyticsKind =
   | 'rate_limited'
   | 'product_asked'
   | 'lost_sale'
+  | 'hard_stop'
+  | 'low_confidence'
 
 export async function recordCsEvent(
   kind: CsAnalyticsKind,
