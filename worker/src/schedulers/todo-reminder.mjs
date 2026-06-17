@@ -5,9 +5,10 @@
 
 import { sendMarkdownSafe, escapeMarkdown } from '../telegram/markdown-safe.mjs'
 
+import { getOwnerChatId } from '../telegram/owner-id.mjs'
+
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-const OWNER_ID  = process.env.TELEGRAM_OWNER_CHAT_ID ?? ''
 
 const PRIORITY_EMOJI = { urgent: '🔴', high: '🟡', normal: '🔵', low: '⚪' }
 
@@ -129,7 +130,7 @@ export async function runMorningTodoReminder({ bot }) {
     `মোট *${todos.length}টি* কাজ বাকি আছে।`,
   ]
 
-  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+  await sendMarkdownSafe(bot.telegram, getOwnerChatId(), lines.join('\n'))
 
   console.log(`[todo-reminder] morning: sent ${todos.length} todos`)
   return {
@@ -174,7 +175,7 @@ export async function runEveningTodoSummary({ bot }) {
     lines.push('আজ কোনো কাজ ছিল না।')
   }
 
-  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+  await sendMarkdownSafe(bot.telegram, getOwnerChatId(), lines.join('\n'))
 
   const detail = `done=${completed.length} pending=${pending.length}`
   console.log(`[todo-reminder] evening: ${detail}`)
@@ -216,7 +217,7 @@ export async function runEndOfDayTodoReconcile({ bot }) {
     '',
     'কালকে সকালে নতুন তালিকা তৈরি হবে, ইনশাআল্লাহ।',
   ]
-  await sendMarkdownSafe(bot.telegram, OWNER_ID, lines.join('\n'))
+  await sendMarkdownSafe(bot.telegram, getOwnerChatId(), lines.join('\n'))
 
   console.log(`[todo-reminder] reconcile: cancelled ${cancelled}/${toCancel.length}`)
   return { dutyStatus: 'done', dutyDetail: `cancelled=${cancelled}` }

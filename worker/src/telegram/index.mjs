@@ -63,12 +63,12 @@ import {
 } from './command-defaults.mjs'
 import { ownerState, isOwnerTurnInFlight, markOwnerTurnStart, releaseOwnerTurn } from './owner-state.mjs'
 import { callAgentApi as sendToAgent } from './agent-turn.mjs'
+import { getOwnerChatId, isOwnerChatId } from './owner-id.mjs'
 
 import { createClient } from '@supabase/supabase-js'
 
 const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-const OWNER_ID  = String(process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
 
 function createSupabase() {
   return createClient(
@@ -95,7 +95,7 @@ function checkFlood(chatId) {
 }
 
 function isOwner(chatId) {
-  return OWNER_ID && String(chatId) === OWNER_ID
+  return isOwnerChatId(chatId)
 }
 
 // ── Daily conversation helper ──────────────────────────────────────────────
@@ -1481,14 +1481,14 @@ export function createTelegramBot() {
           await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
         }
 
-        if (outcome.instant && OWNER_ID && outcome.result?.staffName) {
+        if (outcome.instant && getOwnerChatId() && outcome.result?.staffName) {
           const { notifyStaffTaskProgress, resolveTaskProgressContext } = await import('../staff/task-progress.mjs')
           const progressCtx = await resolveTaskProgressContext(supabase, taskId).catch(() => null)
           const dateYmd = progressCtx?.dateYmd ?? new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
           const todayTasks = await notifyStaffTaskProgress(
             ctx.telegram,
             supabase,
-            OWNER_ID,
+            getOwnerChatId(),
             {
               staffId: staff.id,
               staffName: outcome.result.staffName,
@@ -1749,14 +1749,14 @@ export function createTelegramBot() {
   })
 
   // Register bot with notify module so Tier 1+ can use it
-  setTelegramForNotify(bot, OWNER_ID)
+  setTelegramForNotify(bot, getOwnerChatId())
 
   bot.catch((err) => {
     console.error('[telegram] polling error:', err.message)
     captureWorkerError('telegram.polling', err)
   })
 
-  void registerBotCommands(bot, OWNER_ID)
+  void registerBotCommands(bot, getOwnerChatId())
 
   return bot
 }

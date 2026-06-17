@@ -8,7 +8,7 @@ import { notifyStaffTaskProgress, resolveTaskProgressContext } from './task-prog
 
 const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
-const OWNER_ID = String(process.env.TELEGRAM_OWNER_CHAT_ID ?? '')
+import { getOwnerChatId } from '../telegram/owner-id.mjs'
 import { uploadTaskProofPhoto } from './task-proof-storage.mjs'
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 
@@ -52,7 +52,8 @@ function verifyRedoCb(taskId) {
 }
 
 export async function notifyOwnerForReview(telegram, taskRow, result) {
-  if (!OWNER_ID) return
+  const ownerId = getOwnerChatId()
+  if (!ownerId) return
   if (result.needsOwnerReview === false || result.alreadySubmitted || result.idempotent) return
 
   const staffName = result.staffName ?? 'স্টাফ'
@@ -93,15 +94,15 @@ export async function notifyOwnerForReview(telegram, taskRow, result) {
   }
 
   if (imageUrl) {
-    await telegram.sendPhoto(OWNER_ID, imageUrl, {
+    await telegram.sendPhoto(ownerId, imageUrl, {
       caption: body.slice(0, 1024),
       parse_mode: 'Markdown',
       reply_markup: keyboard,
     }).catch(async () => {
-      await sendMarkdownSafe(telegram, OWNER_ID, body, { reply_markup: keyboard })
+      await sendMarkdownSafe(telegram, ownerId, body, { reply_markup: keyboard })
     })
   } else {
-    await sendMarkdownSafe(telegram, OWNER_ID, body, { reply_markup: keyboard })
+    await sendMarkdownSafe(telegram, ownerId, body, { reply_markup: keyboard })
   }
 }
 
@@ -256,8 +257,8 @@ export async function finalizeOwnerApprove(ctx, supabase, taskId) {
   const staffId = result.staffId ?? progressCtx.staffId
   const staffName = result.staffName ?? progressCtx.staffName
 
-  if (OWNER_ID && staffName) {
-    await notifyStaffTaskProgress(ctx.telegram, supabase, OWNER_ID, {
+  if (ownerId && staffName) {
+    await notifyStaffTaskProgress(ctx.telegram, supabase, ownerId, {
       staffId,
       staffName,
       dateYmd,
