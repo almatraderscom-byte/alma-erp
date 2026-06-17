@@ -1490,11 +1490,39 @@ export function createTelegramBot() {
     } else if (data.startsWith('task_done:')) {
       const taskId = parseTaskIdFromCallback(data.slice('task_done:'.length))
       const supabase = createSupabase()
-      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      const ownerTap = isOwner(ctx.chat?.id)
+      let staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+
+      const { data: taskRow } = await supabase
+        .from('staff_tasks')
+        .select('id, staff_id, type, title')
+        .eq('id', taskId)
+        .maybeSingle()
+
+      if (!taskRow) {
+        await ctx.answerCbQuery('টাস্ক পাওয়া যায়নি')
+        return
+      }
+
+      if (!ownerTap) {
+        if (!staff || taskRow.staff_id !== staff.id) {
+          await ctx.answerCbQuery()
+          return
+        }
+      } else if (!staff) {
+        const { data: assignedStaff } = await supabase
+          .from('agent_staff')
+          .select('*')
+          .eq('id', taskRow.staff_id)
+          .maybeSingle()
+        staff = assignedStaff
+      }
+
       if (!staff) {
         await ctx.answerCbQuery('অনুমতি নেই')
         return
       }
+
       try {
         const { handleStaffTaskDone } = await import('../staff/task-verification.mjs')
         const outcome = await handleStaffTaskDone(ctx, supabase, taskId, staff)

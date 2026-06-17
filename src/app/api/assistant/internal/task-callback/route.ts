@@ -35,6 +35,8 @@ type TaskAction =
   | 'auto_verified'
   | 'approve'
   | 'redo'
+  | 'qc_pass'
+  | 'qc_redo'
   | 'timeout_unverified'
 
 export async function POST(req: NextRequest) {
@@ -258,6 +260,66 @@ export async function POST(req: NextRequest) {
       taskId,
       status: 'sent',
       verificationStatus: 'redo_requested' as VerificationStatus,
+      staffName: task.staff.name,
+      taskTitle: task.title,
+      staffChatId: task.staff.telegramChatId,
+      reviewerNote: reviewerNote?.trim() || null,
+      redoCount,
+    })
+  }
+
+  if (action === 'qc_pass') {
+    await db.agentStaffTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'done',
+        verificationStatus: 'owner_approved',
+        completedAt: now,
+        proofType: (proofType as ProofType) ?? task.proofType ?? 'screenshot',
+        proofData: {
+          ...(task.proofData as object ?? {}),
+          ...(proofData ?? {}),
+          autoQcPassed: true,
+          autoQcAt: now.toISOString(),
+        },
+      },
+    })
+    return NextResponse.json({
+      ok: true,
+      taskId,
+      status: 'done',
+      verificationStatus: 'owner_approved',
+      staffName: task.staff.name,
+      taskTitle: task.title,
+      staffId: task.staff.id,
+      autoQcPassed: true,
+    })
+  }
+
+  if (action === 'qc_redo') {
+    const redoCount = (task.redoCount ?? 0) + 1
+    await db.agentStaffTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'awaiting_proof',
+        verificationStatus: 'redo_requested',
+        reviewerNote: reviewerNote?.trim() || null,
+        redoCount,
+        proofType: null,
+        proofData: {
+          ...(task.proofData as object ?? {}),
+          ...(proofData ?? {}),
+          qcRedoAt: now.toISOString(),
+          redoCount,
+        },
+        completedAt: null,
+      },
+    })
+    return NextResponse.json({
+      ok: true,
+      taskId,
+      status: 'awaiting_proof',
+      verificationStatus: 'redo_requested',
       staffName: task.staff.name,
       taskTitle: task.title,
       staffChatId: task.staff.telegramChatId,

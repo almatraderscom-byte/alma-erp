@@ -24,7 +24,10 @@ const FB_PAGE_TYPES = new Set(['page_management', 'customer_reply'])
 
 const ERP_AUTO_TYPES = new Set(['listing_update', 'order_followup'])
 
-const GENERIC_PROOF_TYPES = new Set(['office_task', 'content_support', 'stock_check'])
+const GENERIC_PROOF_TYPES = new Set(['content_support', 'stock_check'])
+
+/** Pure office tasks — instant Done, no proof, zero LLM. */
+const INSTANT_DONE_TYPES = new Set(['office_task', 'learning', 'misc'])
 
 export async function isTaskVerificationEnabled(): Promise<boolean> {
   const row = await prisma.agentKvSetting.findUnique({ where: { key: KV_VERIFICATION_ENABLED } })
@@ -44,8 +47,7 @@ export async function getVerificationSkipTypes(): Promise<string[]> {
 }
 
 export async function shouldVerifyTaskType(taskType: string): Promise<boolean> {
-  // Learning tasks are growth-oriented — encourage completion, no strict proof chain
-  if (taskType === 'learning') return false
+  if (INSTANT_DONE_TYPES.has(taskType)) return false
   const enabled = await isTaskVerificationEnabled()
   if (!enabled) return false
   const skip = await getVerificationSkipTypes()
@@ -57,7 +59,7 @@ export function proofPromptForType(taskType: string): {
   message: string
 } {
   if (CONTENT_TYPES.has(taskType)) {
-    return { mode: 'photo', message: 'কাজের ফটো/স্ক্রিনশট পাঠান 📸' }
+    return { mode: 'photo', message: '📸 ভাই, কাজের একটা screenshot/ছবি পাঠান — verify করে দিচ্ছি।' }
   }
   if (FB_PAGE_TYPES.has(taskType)) {
     return { mode: 'auto_then_fallback', message: '✅ চেক করা হচ্ছে...' }

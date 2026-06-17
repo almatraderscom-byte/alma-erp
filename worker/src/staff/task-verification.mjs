@@ -21,12 +21,15 @@ const proofInFlight = new Set()
 export const awaitingRedoNote = new Map()
 
 const CONTENT_TYPES = new Set([
-  'ad_creative', 'product_content', 'product_photo', 'video_reel',
+  'ad_creative', 'product_content', 'product_photo', 'video_reel', 'organic_marketing',
 ])
+const QC_TYPES = CONTENT_TYPES
 const AUTO_FIRST_TYPES = new Set([
   'page_management', 'customer_reply', 'listing_update', 'order_followup',
 ])
 const TEXT_PROOF_TYPES = new Set(['order_followup'])
+
+const PROOF_REQUEST_MSG = '📸 ভাই, কাজের একটা screenshot/ছবি পাঠান — verify করে দিচ্ছি।'
 
 async function callTaskCallback(payload) {
   const res = await fetch(`${getAppUrl()}/api/assistant/internal/task-callback`, {
@@ -41,6 +44,62 @@ async function callTaskCallback(payload) {
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
   return data
+}
+
+async function runTaskAutoQc(task, proofImageUrl) {
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/task-auto-qc`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getInternalToken()}`,
+    },
+    body: JSON.stringify({
+      taskType: task.type,
+      taskTitle: task.title,
+      proofImageUrl,
+    }),
+    signal: AbortSignal.timeout(35_000),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  return data
+}
+
+async function notifyOwnerBrief(telegram, staffName, taskTitle) {
+  const ownerId = getOwnerChatId()
+  if (!ownerId) return
+  await telegram.sendMessage(ownerId, `✅ ${staffName}: "${taskTitle}" — verify হয়েছে।`).catch((err) => {
+    console.warn('[task-verification] owner brief notify failed:', err.message)
+  })
+}
+
+async function escalateQcToOwner(telegram, task, staff, { reason, score, imageUrl, redoCount }) {
+  const ownerId = getOwnerChatId()
+  if (!ownerId) return
+  const scoreLine = score != null ? ` (score: ${score}/100)` : ''
+  let body =
+    `⚠️ *QC Escalation* — ${staff.name}\n\n` +
+    `📋 ${task.title}\n` +
+    `🔁 ${redoCount} বার redo — pass হয়নি।\n` +
+    `কারণ: ${reason}${scoreLine}\n\n` +
+    `_Approve করবেন নাকি আবার করতে বলবেন?_`
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '✅ Approve', callback_data: verifyApproveCb(task.id) },
+      { text: '🔄 আবার করো', callback_data: verifyRedoCb(task.id) },
+    ]],
+  }
+  if (imageUrl) {
+    await telegram.sendPhoto(ownerId, imageUrl, {
+      caption: body.slice(0, 1024),
+      parse_mode: 'Markdown',
+      reply_markup: keyboard,
+    }).catch(async () => {
+      await sendMarkdownSafe(telegram, ownerId, body, { reply_markup: keyboard })
+    })
+  } else {
+    await sendMarkdownSafe(telegram, ownerId, body, { reply_markup: keyboard })
+  }
 }
 
 function verifyApproveCb(taskId) {
@@ -122,13 +181,15 @@ export async function handleStaffTaskDone(ctx, supabase, taskId, staff) {
   const result = await callTaskCallback({ taskId, staffId: staff.id, action: 'done' })
 
   if (result.instant) {
-    return { instant: true, result }
+    await notifyOwnerBrief(ctx.telegram, result.staffName ?? staff.name, result.taskTitle ?? taskRow?.title ?? 'টাস্ক')
+    return { instant: true, result, learning: taskRow?.type === 'learning' }
   }
 
   const staffChatId = String(ctx.chat?.id ?? staff.telegramChatId ?? '')
   if (staffChatId) awaitingProof.set(staffChatId, taskId)
 
-  await ctx.reply(result.staffMessage ?? 'কাজের প্রমাণ পাঠান 📸')
+  const useQcPrompt = QC_TYPES.has(result.taskType ?? taskRow?.type ?? '')
+  await ctx.reply(useQcPrompt ? PROOF_REQUEST_MSG : (result.staffMessage ?? PROOF_REQUEST_MSG))
 
   if (AUTO_FIRST_TYPES.has(result.taskType) && !CONTENT_TYPES.has(result.taskType)) {
     const { data: taskRow } = await supabase
@@ -193,13 +254,14 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
 
   const { data: task } = await supabase
     .from('staff_tasks')
-    .select('id, title, detail, type, status, verification_status')
+    .select('id, title, detail, type, status, verification_status, redo_count')
     .eq('id', taskId)
     .eq('staff_id', staff.id)
     .maybeSingle()
 
   const vStatus = task?.verification_status ?? task?.verificationStatus
-  if (!task || task.status !== 'awaiting_proof' || vStatus !== 'awaiting_proof') {
+  const allowedV = vStatus === 'awaiting_proof' || vStatus === 'redo_requested'
+  if (!task || task.status !== 'awaiting_proof' || !allowedV) {
     awaitingProof.delete(chatId)
     return vStatus === 'proof_submitted'
   }
@@ -218,27 +280,12 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
       const buf = Buffer.from(await res.arrayBuffer())
       const imageUrl = await storeProofPhoto(supabase, taskId, buf)
       proofType = 'screenshot'
-      proofData = { imageUrl }
+      proofData = { imageUrl, fileId: best.file_id, receivedAt: new Date().toISOString() }
     } else if (text?.trim()) {
       proofType = 'text'
       proofData = { text: text.trim().slice(0, 2000) }
     } else {
       return true
-    }
-
-    let proofQuality = null
-    if (CONTENT_TYPES.has(task.type)) {
-      proofQuality = await assessProofQuality({
-        task,
-        proofImageUrl: proofData.imageUrl,
-        proofText: proofData.text,
-      })
-
-      // Track failure patterns for personalized improvement
-      if (proofQuality && !proofQuality.matches && proofQuality.confidence === 'high') {
-        const failedAspects = proofQuality.feedback?.hints ?? [proofQuality.note].filter(Boolean)
-        await trackProofFailurePattern(supabase, staff.id, task.type, failedAspects).catch(() => {})
-      }
     }
 
     const result = await callTaskCallback({
@@ -253,12 +300,79 @@ export async function handleStaffProofMessage(ctx, supabase, staff, { photo, tex
       return true
     }
 
-    // Send specific feedback to staff if proof quality assessment has improvement tips
+    const redoCount = task.redo_count ?? 0
+    const needsQc = QC_TYPES.has(task.type) && proofData.imageUrl
+
+    if (needsQc) {
+      let qc = null
+      try {
+        qc = await runTaskAutoQc(task, proofData.imageUrl)
+      } catch (err) {
+        console.warn('[task-verification] auto-qc call failed:', err.message)
+      }
+
+      if (qc?.ran && !qc.shadowMode) {
+        if (qc.passed) {
+          await callTaskCallback({
+            taskId,
+            action: 'qc_pass',
+            proofType,
+            proofData: { ...proofData, autoQcScore: qc.score, autoQcVerdict: qc.verdict },
+          })
+          await ctx.reply('✅ verify হয়েছে — ভালো কাজ!')
+          await notifyOwnerBrief(ctx.telegram, staff.name, task.title)
+          return true
+        }
+
+        const fixReason = qc.reason || 'ছবি/কনটেন্ট আরেকটু ঠিক করতে হবে।'
+        if (redoCount < 2) {
+          await callTaskCallback({
+            taskId,
+            staffId: staff.id,
+            action: 'qc_redo',
+            reviewerNote: fixReason,
+            proofData: { autoQcScore: qc.score, autoQcIssues: qc.issues },
+          })
+          awaitingProof.set(chatId, taskId)
+          await ctx.reply(`🔁 ভাই, একটু ঠিক করতে হবে: ${fixReason}\nআবার screenshot পাঠান।`)
+          return true
+        }
+
+        await ctx.reply('⚠️ ২ বার চেষ্টা হয়েছে — Boss-কে জানানো হয়েছে।')
+        await escalateQcToOwner(ctx.telegram, task, staff, {
+          reason: fixReason,
+          score: qc.score,
+          imageUrl: proofData.imageUrl,
+          redoCount,
+        })
+        return true
+      }
+
+      if (qc?.ran && qc.shadowMode) {
+        console.log(`[task-verification] auto-qc shadow: task=${taskId} score=${qc.score} passed=${qc.passed}`)
+      }
+    }
+
+    let proofQuality = null
+    if (CONTENT_TYPES.has(task.type) && !needsQc) {
+      proofQuality = await assessProofQuality({
+        task,
+        proofImageUrl: proofData.imageUrl,
+        proofText: proofData.text,
+      })
+      if (proofQuality && !proofQuality.matches && proofQuality.confidence === 'high') {
+        const failedAspects = proofQuality.feedback?.hints ?? [proofQuality.note].filter(Boolean)
+        await trackProofFailurePattern(supabase, staff.id, task.type, failedAspects).catch(() => {})
+      }
+    }
+
     if (proofQuality && !proofQuality.matches && proofQuality.confidence === 'high' && proofQuality.feedback?.hints?.length) {
       const feedbackMsg = `📝 প্রমাণ পেয়েছি। কিছু বিষয় next time মনে রাখবেন:\n${proofQuality.feedback.hints.slice(0, 3).join('\n')}`
       await ctx.reply(feedbackMsg)
-    } else {
+    } else if (!needsQc || !QC_TYPES.has(task.type)) {
       await ctx.reply('✅ প্রমাণ পেয়েছি — Boss যাচাই করবেন।')
+    } else {
+      await ctx.reply('✅ প্রমাণ পেয়েছি — QC shadow mode, Boss যাচাই করবেন।')
     }
     await notifyOwnerForReview(ctx.telegram, task, { ...result, proofQuality })
     return true
