@@ -5,7 +5,7 @@
 
 import { createSign } from 'crypto'
 import { logCost, calcTtsCostUsd } from './cost-log.mjs'
-import { BANGLA_GOOGLE_TTS, prepareBanglaTtsText } from './voice-bangla.mjs'
+import { BANGLA_GOOGLE_TTS } from './voice-bangla.mjs'
 
 const SENTENCE_ENDS = ['।', '?', '!', '.']
 
@@ -39,7 +39,7 @@ export function stripMarkdown(text) {
  * @returns {string[]}
  */
 export function splitTextForTts(text, maxChars = 200) {
-  const cleaned = prepareBanglaTtsText(stripMarkdown(text))
+  const cleaned = stripMarkdown(text)
   if (!cleaned) return []
   if (cleaned.length <= maxChars) return [cleaned]
 
@@ -136,7 +136,7 @@ export async function synthesizeSpeech(text, maxChars = 600, opts = {}) {
   const creds = getCredentials()
   if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not set or invalid JSON')
 
-  const cleaned = prepareBanglaTtsText(stripMarkdown(text)).slice(0, maxChars)
+  const cleaned = stripMarkdown(text).slice(0, maxChars)
   const chunks = splitTextForTts(cleaned, 200)
   if (chunks.length === 0) throw new Error('No text to synthesize')
 

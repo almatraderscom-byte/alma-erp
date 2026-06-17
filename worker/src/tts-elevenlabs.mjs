@@ -9,7 +9,6 @@
 import { logCost } from './cost-log.mjs'
 import { stripMarkdown } from './tts.mjs'
 import { resolveVoiceId } from './elevenlabs-voices.mjs'
-import { prepareBanglaTtsText } from './voice-bangla.mjs'
 
 const ELEVENLABS_API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
 const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_v3'
@@ -23,8 +22,7 @@ const MAX_CHARS_PER_REQUEST = 4500
  * Minimal prep — playground sends text as typed; only strip markdown/noise.
  */
 export function prepareBanglaForElevenLabs(text) {
-  const cleaned = stripMarkdown(text).replace(/\s{2,}/g, ' ').trim()
-  return prepareBanglaTtsText(cleaned).slice(0, MAX_CHARS_PER_REQUEST)
+  return stripMarkdown(text).replace(/\s{2,}/g, ' ').trim().slice(0, MAX_CHARS_PER_REQUEST)
 }
 
 function voiceSettings(opts = {}) {

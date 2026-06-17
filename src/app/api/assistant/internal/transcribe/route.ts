@@ -5,7 +5,7 @@ import { calcWhisperCostUsd, estimateAudioDurationSeconds } from '@/agent/lib/pr
 import { logCost } from '@/agent/lib/cost-events'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { WHISPER_BANGLA_PROMPT } from '@/agent/lib/voice-bangla'
+import { transcribeVoiceBangla } from '@/agent/lib/voice-bangla'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
@@ -85,13 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     const client = getClient()
-    // Whisper has no official `bn` ISO code — steer with Bangla-only prompt (not Hindi auto-detect).
-    const transcription = await client.audio.transcriptions.create({
-      file: audioFile,
-      model: 'whisper-1',
-      response_format: 'json',
-      prompt: WHISPER_BANGLA_PROMPT,
-    })
+    const transcription = await transcribeVoiceBangla(client, audioFile)
 
     const durationSec = estimateAudioDurationSeconds(audioFile.size)
     const costUsd = calcWhisperCostUsd(durationSec)

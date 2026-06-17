@@ -142,7 +142,7 @@ async function autoMarkSalahFromText(text) {
   }
 }
 
-async function handleOwnerText(ctx, text, extra = {}) {
+async function handleOwnerText(ctx, text) {
   const chatId = ctx.chat?.id
 
   if (ownerState.financeEdit) {
@@ -188,10 +188,7 @@ async function handleOwnerText(ctx, text, extra = {}) {
 
   await ctx.reply('⏳ ভাবছি স্যার...')
   const { enqueueAgentTurn } = await import('./agent-turn.mjs')
-  const parsed = parseOwnerVoiceIntent(text)
-  const voiceIntent = extra.fromVoiceNote
-    ? { wantsVoice: true, voiceProfile: parsed.voiceProfile, useElevenLabs: parsed.useElevenLabs }
-    : parsed
+  const voiceIntent = parseOwnerVoiceIntent(text)
   await enqueueAgentTurn({
     chatId: String(chatId),
     text,
@@ -205,7 +202,7 @@ async function handleOwnerText(ctx, text, extra = {}) {
 }
 
 /** One owner turn at a time per chat — returns immediately; agent runs in background queue. */
-function dispatchOwnerText(ctx, text, extra = {}) {
+function dispatchOwnerText(ctx, text) {
   const chatId = String(ctx.chat?.id ?? '')
   if (!chatId) return
   if (isOwnerTurnInFlight(chatId)) {
@@ -213,7 +210,7 @@ function dispatchOwnerText(ctx, text, extra = {}) {
     return
   }
   markOwnerTurnStart(chatId)
-  void handleOwnerText(ctx, text, extra)
+  void handleOwnerText(ctx, text)
     .then((r) => {
       if (!r?.queued) releaseOwnerTurn(chatId)
     })
@@ -1034,7 +1031,7 @@ export function createTelegramBot() {
         return
       }
       await ctx.reply(`📝 _"${transcribed}"_`, { parse_mode: 'Markdown' })
-      dispatchOwnerText(ctx, transcribed, { fromVoiceNote: true })
+      dispatchOwnerText(ctx, transcribed)
     } catch (err) {
       console.error('[telegram] voice transcription error:', err.message)
       await ctx.reply(`❌ ভয়েস নোট প্রসেস করা যায়নি: ${err.message}`)
