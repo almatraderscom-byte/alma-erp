@@ -3,8 +3,18 @@ import type { NotificationPriority } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
 
-const FROM = process.env.EMAIL_FROM || 'Alma ERP <onboarding@resend.dev>'
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
+function getFrom() {
+  return process.env.EMAIL_FROM || 'Alma ERP <onboarding@resend.dev>'
+}
+
+let _resend: Resend | null = null
+function getResend(): Resend | null {
+  if (_resend) return _resend
+  const key = process.env.RESEND_API_KEY
+  if (!key) return null
+  _resend = new Resend(key)
+  return _resend
+}
 
 type EmailInput = {
   to: string | string[]
@@ -133,6 +143,7 @@ export async function sendEmail(input: EmailInput) {
   if (input.dedupeKey && await alreadySent(input.dedupeKey)) {
     return { ok: true, skipped: true, duplicatePrevented: true }
   }
+  const resend = getResend()
   if (!resend) {
     logEvent('warn', 'resend_not_configured', { subject: input.subject })
     const result = { ok: false, skipped: true, error: 'RESEND_API_KEY is not configured' }
@@ -151,7 +162,7 @@ export async function sendEmail(input: EmailInput) {
 
   try {
     const result = await resend.emails.send({
-      from: FROM,
+      from: getFrom(),
       to,
       subject: input.subject,
       html,

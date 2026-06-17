@@ -51,7 +51,10 @@ function verifyInternalToken(provided: string): boolean {
     const b = Buffer.from(provided, 'utf8')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch { return false }
+  } catch (err) {
+    console.warn('[chat] token compare failed:', err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -163,7 +166,9 @@ export async function POST(req: NextRequest) {
               where: { id: conversationId },
               data: { businessId },
             })
-          } catch { /* non-critical */ }
+          } catch (err) {
+            console.warn('[chat] businessId backfill failed:', err instanceof Error ? err.message : err)
+          }
         }
       }
       if (personalMode && conv.projectId !== requestedProjectId && requestedProjectId) {
@@ -316,7 +321,9 @@ export async function POST(req: NextRequest) {
                 where: { id: conversationId },
                 data: { totalCostUsd: { increment: turnCost } },
               })
-            } catch { /* non-critical */ }
+            } catch (err) {
+              console.warn('[chat] cost increment failed:', err instanceof Error ? err.message : err)
+            }
           }
           break
         }
@@ -366,7 +373,7 @@ export async function POST(req: NextRequest) {
       let streamClosed = false
       const keepAlive = setInterval(() => {
         if (streamClosed) return
-        try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* closed */ }
+        try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* stream closed — expected */ }
       }, 10_000)
 
       enqueue({ type: 'conversation_id', id: conversationId })
@@ -378,11 +385,13 @@ export async function POST(req: NextRequest) {
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {
-                await prisma.agentConversation.update({
-                  where: { id: conversationId },
-                  data: { totalCostUsd: { increment: turnCost } },
-                })
-              } catch { /* non-critical */ }
+              await prisma.agentConversation.update({
+                where: { id: conversationId },
+                data: { totalCostUsd: { increment: turnCost } },
+              })
+            } catch (err) {
+              console.warn('[chat] SSE cost increment failed:', err instanceof Error ? err.message : err)
+            }
             }
             break
           }

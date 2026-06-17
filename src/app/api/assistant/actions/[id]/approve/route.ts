@@ -22,7 +22,10 @@ function verifyInternalToken(provided: string): boolean {
     const b = Buffer.from(provided, 'utf8')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch { return false }
+  } catch (err) {
+    console.warn('[approve] token compare failed:', err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 function resolveConversationId(action: { conversationId?: string | null; payload: unknown }) {
@@ -96,7 +99,9 @@ export async function POST(
     action.type.startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'
   const trustBiz = (action.businessId as string) ?? 'ALMA_LIFESTYLE'
-  void recordApproval(trustDomain, action.type as string, trustBiz).catch(() => {})
+  void recordApproval(trustDomain, action.type as string, trustBiz).catch((err) => {
+    console.warn('[approve] recordApproval failed:', err instanceof Error ? err.message : err)
+  })
 
   const payload = action.payload as Record<string, unknown>
 
@@ -168,7 +173,9 @@ export async function POST(
           contentType,
           page: String(payload.page ?? 'lifestyle'),
         }),
-      ).catch(() => {})
+      ).catch((err) => {
+        console.warn('[approve] trackPublishedContent failed:', err instanceof Error ? err.message : err)
+      })
 
       // Append result to conversation if present
       if (payload.conversationId) {
@@ -1016,7 +1023,9 @@ export async function POST(
           body: JSON.stringify({ actionId, issue: payload }),
           signal: AbortSignal.timeout(10_000),
         })
-      } catch { /* worker dispatch is best-effort */ }
+      } catch (err) {
+        console.warn('[approve] auto-fix worker dispatch failed:', err instanceof Error ? err.message : err)
+      }
     }
     await appendConversationNote(db, action, '✅ Auto-Fix অনুমোদিত — Cursor agent শুরু হচ্ছে।')
     return Response.json({

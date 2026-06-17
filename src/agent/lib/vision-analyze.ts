@@ -37,6 +37,7 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
       }],
       generationConfig: { temperature: 0.1, maxOutputTokens: opts.maxTokens ?? 1024 },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {

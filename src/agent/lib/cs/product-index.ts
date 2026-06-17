@@ -38,7 +38,7 @@ export async function indexProductVisual(productCode: string, business = DEFAULT
   if (imgRow?.storagePath) {
     buffer = await agentStorageDownload(imgRow.storagePath)
   } else {
-    const res = await fetch(imageUrl)
+    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
     if (!res.ok) return false
     buffer = Buffer.from(await res.arrayBuffer())
     mimeType = res.headers.get('content-type') ?? 'image/jpeg'

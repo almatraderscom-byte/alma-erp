@@ -30,7 +30,8 @@ async function loadLogoBuffer(transparent: boolean): Promise<Buffer | null> {
   try {
     const path = await getLogoPath(transparent)
     return await agentStorageDownload(path)
-  } catch {
+  } catch (err) {
+    console.warn('[brand-frame] logo download failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

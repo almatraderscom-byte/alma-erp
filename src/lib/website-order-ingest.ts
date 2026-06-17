@@ -91,7 +91,8 @@ async function findExistingWebsiteOrder(websiteOrderId: string): Promise<string 
     if (!res.ok) return null
     const rows = await res.json() as Array<{ id: string }>
     return rows?.[0]?.id ?? null
-  } catch {
+  } catch (err) {
+    console.warn('[website-order-ingest] customer lookup failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

@@ -279,7 +279,8 @@ async function buildGate1Summary(productCode: string, payload: ContentPipelinePa
       try {
         const url = await agentStorageSignedUrl(path, 3600)
         lines.push(`• ${keepTag} ${variantLabel(v.key)}: ![${v.key}](${url})`)
-      } catch {
+      } catch (err) {
+        console.warn('[pipeline] signed URL failed for variant:', err instanceof Error ? err.message : err)
         lines.push(`• ${keepTag} ${variantLabel(v.key)}: ${path}`)
       }
     } else if (v.renderActionId) {
@@ -386,7 +387,8 @@ export async function onPipelineRenderComplete(
     try {
       const url = await agentStorageSignedUrl(v.framedImagePath, 3600)
       imageLines.push(`![${v.key}](${url})`)
-    } catch {
+    } catch (err) {
+      console.warn('[pipeline] gate2 signed URL failed:', err instanceof Error ? err.message : err)
       imageLines.push(v.framedImagePath)
     }
   }

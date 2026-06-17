@@ -6,8 +6,8 @@
  * Adds the secret + route before forwarding to Google Apps Script.
  */
 
-const BASE    = process.env.NEXT_PUBLIC_API_URL ?? ''
-const SECRET  = process.env.API_SECRET ?? ''
+function getBase() { return process.env.NEXT_PUBLIC_API_URL ?? '' }
+function getSecret() { return process.env.API_SECRET ?? '' }
 /** Default for most GAS routes (cold start + small payload). */
 const DEFAULT_TIMEOUT_MS = 25_000
 /** Invoice: PDF + Drive can take 20–40s+; keep headroom above Vercel/server limits. */
@@ -21,7 +21,8 @@ export async function serverGet<T>(
   params: Record<string, string> = {},
   revalidate = 30,
 ): Promise<T> {
-  assertConfigured_()
+  const BASE = getBase(), SECRET = getSecret()
+  assertConfigured_(BASE, SECRET)
   const url = new URL(BASE)
   url.searchParams.set('route', route)
   url.searchParams.set('secret', SECRET)
@@ -54,7 +55,8 @@ export async function serverPost<T>(
   payload: Record<string, unknown> = {},
   options?: ServerFetchOptions,
 ): Promise<T> {
-  assertConfigured_()
+  const BASE = getBase(), SECRET = getSecret()
+  assertConfigured_(BASE, SECRET)
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const ctrl  = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
@@ -103,11 +105,11 @@ export async function serverPost<T>(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function assertConfigured_() {
-  if (!BASE || BASE.includes('YOUR_GOOGLE_SHEET_ID')) {
+function assertConfigured_(base: string, secret: string) {
+  if (!base || base.includes('YOUR_GOOGLE_SHEET_ID')) {
     throw new Error('NEXT_PUBLIC_API_URL is not configured — check .env.local')
   }
-  if (!SECRET || /alma-dev-secret|REPLACE_|YOUR_/i.test(SECRET)) {
+  if (!secret || /alma-dev-secret|REPLACE_|YOUR_/i.test(secret)) {
     throw new Error('API_SECRET is not configured securely')
   }
 }

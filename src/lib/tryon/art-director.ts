@@ -200,7 +200,8 @@ async function readGarmentCache(cacheKey: string): Promise<GarmentAttrs | null> 
     })
     if (!row?.value) return null
     return parseGarmentAttrs(JSON.parse(row.value))
-  } catch {
+  } catch (err) {
+    console.warn('[art-director] cached garment attrs read failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -213,8 +214,8 @@ async function writeGarmentCache(cacheKey: string, attrs: GarmentAttrs): Promise
       create: { key: cacheKey, value: JSON.stringify(attrs) },
       update: { value: JSON.stringify(attrs) },
     })
-  } catch {
-    /* non-critical */
+  } catch (err) {
+    console.warn('[art-director] garment attrs cache write failed:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -232,7 +233,8 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
   let buffer: Buffer
   try {
     buffer = await agentStorageDownload(productImagePath)
-  } catch {
+  } catch (err) {
+    console.warn('[art-director] product image download failed:', err instanceof Error ? err.message : err)
     return { ...UNKNOWN_ATTRS }
   }
 
@@ -253,6 +255,7 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
         }],
         generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
       }),
+      signal: AbortSignal.timeout(30_000),
     })
 
     if (!res.ok) return { ...UNKNOWN_ATTRS }
@@ -276,7 +279,8 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
     })
 
     return parsed
-  } catch {
+  } catch (err) {
+    console.warn('[art-director] garment attrs analysis failed:', err instanceof Error ? err.message : err)
     return { ...UNKNOWN_ATTRS }
   }
 }

@@ -19,7 +19,8 @@ function checkToken(req: NextRequest): boolean {
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
   try {
     return timingSafeEqual(Buffer.from(token), Buffer.from(expected))
-  } catch {
+  } catch (err) {
+    console.warn('[fb-token-health] token compare failed:', err instanceof Error ? err.message : err)
     return false
   }
 }
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest) {
     try {
       const debugRes = await fetch(
         `https://graph.facebook.com/v21.0/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(token)}`,
+        { signal: AbortSignal.timeout(15_000) },
       )
       const debug = (await debugRes.json()) as { data?: { is_valid?: boolean; type?: string; expires_at?: number }; error?: { message?: string } }
       const d = debug.data
@@ -54,6 +56,7 @@ export async function GET(req: NextRequest) {
 
       const convRes = await fetch(
         `https://graph.facebook.com/v21.0/${page.pageId}/conversations?limit=1&access_token=${encodeURIComponent(token)}`,
+        { signal: AbortSignal.timeout(15_000) },
       )
       const conv = (await convRes.json()) as { error?: { message?: string } }
 

@@ -17,7 +17,10 @@ function verifyInternalToken(provided: string): boolean {
     const b = Buffer.from(provided, 'utf8')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch { return false }
+  } catch (err) {
+    console.warn('[reject] token compare failed:', err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 export async function POST(
@@ -65,7 +68,9 @@ export async function POST(
     (action.type as string).startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'
   const trustBiz = (action.businessId as string) ?? 'ALMA_LIFESTYLE'
-  void recordRejection(trustDomain, action.type as string, trustBiz).catch(() => {})
+  void recordRejection(trustDomain, action.type as string, trustBiz).catch((err) => {
+    console.warn('[reject] recordRejection failed:', err instanceof Error ? err.message : err)
+  })
 
   const payload = action.payload as Record<string, unknown>
 
@@ -95,7 +100,9 @@ export async function POST(
           })
         }
       }
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      console.warn('[reject] taste signal capture failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Append rejection note to conversation

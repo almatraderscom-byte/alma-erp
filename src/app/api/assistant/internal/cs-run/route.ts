@@ -19,7 +19,10 @@ function verifyToken(provided: string): boolean {
     const b = Buffer.from(provided, 'utf8')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch { return false }
+  } catch (err) {
+    console.warn('[cs-run] token compare failed:', err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -70,7 +73,9 @@ export async function POST(req: NextRequest) {
         const buf = await agentStorageDownload(block.path)
         imageB64 = buf.toString('base64')
         imageMime = block.mimeType ?? 'image/jpeg'
-      } catch { /* */ }
+      } catch (err) {
+        console.warn('[cs-run] image download failed:', err instanceof Error ? err.message : err)
+      }
     }
     if (block.type === 'image_url' && block.url) imageRef = block.url
   }

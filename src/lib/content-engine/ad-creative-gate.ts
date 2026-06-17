@@ -71,7 +71,8 @@ export async function buildAdCreativeSummary(payload: AdCreativeGatePayload): Pr
       const url = await agentStorageSignedUrl(c.imagePath, 3600)
       lines.push(`• **${c.angle}** (${c.aspect}): ${c.hookBn}`)
       lines.push(`  ![${c.id}](${url})`)
-    } catch {
+    } catch (err) {
+      console.warn('[ad-creative-gate] signed URL failed:', err instanceof Error ? err.message : err)
       lines.push(`• ${c.angle} (${c.aspect}): ${c.imagePath}`)
     }
   }

@@ -49,7 +49,9 @@ export async function getQcLevel(): Promise<QCLevel> {
     const row = await prisma.agentKvSetting.findUnique({ where: { key: QC_KV_KEY } })
     const v = row?.value?.trim().toLowerCase()
     if (v === 'off' || v === 'strict' || v === 'normal') return v
-  } catch { /* default */ }
+  } catch (err) {
+    console.warn('[qc-gate] KV setting read failed:', err instanceof Error ? err.message : err)
+  }
   return 'normal'
 }
 
@@ -186,6 +188,7 @@ export async function scoreCreativeQC(args: {
       contents: [{ parts }],
       generationConfig: { temperature: 0.15, maxOutputTokens: 768 },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {
@@ -234,7 +237,9 @@ export async function scoreCreativeQCFromPath(args: {
       const pbuf = await agentStorageDownload(args.productImagePath)
       productImageBase64 = pbuf.toString('base64')
       productMimeType = args.productImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
-    } catch { /* optional */ }
+    } catch (err) {
+      console.warn('[qc-gate] product image download failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   return scoreCreativeQC({

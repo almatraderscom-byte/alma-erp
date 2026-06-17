@@ -16,7 +16,10 @@ function verifyToken(provided: string): boolean {
     const b = Buffer.from(provided, 'utf8')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch { return false }
+  } catch (err) {
+    console.warn('[cost-reconcile] token compare failed:', err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -63,14 +66,14 @@ export async function POST(req: NextRequest) {
       const end = Math.floor(Date.now() / 1000)
       const res = await fetch(
         `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}`,
-        { headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId } },
+        { headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId }, signal: AbortSignal.timeout(15_000) },
       )
       if (res.ok) {
         const data = await res.json() as { data?: Array<{ amount?: { value?: number } }> }
         openaiReported = (data.data ?? []).reduce((s, b) => s + (b.amount?.value ?? 0), 0) / 100
       }
-    } catch {
-      /* fall through */
+    } catch (err) {
+      console.warn('[cost-reconcile] OpenAI usage fetch failed:', err instanceof Error ? err.message : err)
     }
   }
 

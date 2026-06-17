@@ -24,7 +24,8 @@ export function verifyMetaWebhookSignature(rawBody: string, signatureHeader: str
     const b = Buffer.from(provided, 'hex')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
-  } catch {
+  } catch (err) {
+    console.warn('[meta-messenger] verifyMetaWebhookSignature failed:', err instanceof Error ? err.message : err)
     return false
   }
 }
@@ -34,6 +35,7 @@ async function graphPost(path: string, token: string, body: Record<string, unkno
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, access_token: token }),
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await res.json() as { error?: { message?: string }; message_id?: string }
   if (!res.ok) throw new Error(data.error?.message ?? `Graph API ${res.status}`)
@@ -46,7 +48,9 @@ export async function sendTypingOn(pageId: string, psid: string): Promise<void> 
   await graphPost('me/messages', token, {
     recipient: { id: psid },
     sender_action: 'typing_on',
-  }).catch(() => {})
+  }).catch((err) => {
+    console.warn('[meta-messenger] sendTypingOn failed:', err instanceof Error ? err.message : err)
+  })
 }
 
 export async function sendMessengerText(pageId: string, psid: string, text: string): Promise<string | undefined> {
@@ -72,7 +76,7 @@ export async function sendMessengerImage(pageId: string, psid: string, imageUrl:
 }
 
 export async function downloadMessengerAttachment(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
   if (!res.ok) throw new Error(`Attachment download ${res.status}`)
   const mimeType = res.headers.get('content-type') ?? 'image/jpeg'
   const buffer = Buffer.from(await res.arrayBuffer())
@@ -110,6 +114,7 @@ export async function fetchPostImageUrl(pageId: string, postId: string): Promise
   try {
     const res = await fetch(
       `https://graph.facebook.com/v21.0/${postId}?fields=full_picture,attachments{media}&access_token=${token}`,
+      { signal: AbortSignal.timeout(15_000) },
     )
     const data = await res.json() as {
       full_picture?: string
@@ -118,7 +123,8 @@ export async function fetchPostImageUrl(pageId: string, postId: string): Promise
     return data.full_picture
       ?? data.attachments?.data?.[0]?.media?.image?.src
       ?? null
-  } catch {
+  } catch (err) {
+    console.warn('[meta-messenger] fetchPostImageUrl failed:', err instanceof Error ? err.message : err)
     return null
   }
 }

@@ -37,6 +37,7 @@ export async function describeReferenceCreative(
         }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 120 },
       }),
+      signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) throw new Error('why failed')
     const data = await res.json() as {
@@ -47,7 +48,8 @@ export async function describeReferenceCreative(
     const parsed = JSON.parse(match?.[0] ?? '{}') as { why_it_works?: string }
     const whyItWorks = String(parsed.why_it_works ?? '').trim() || inferWhyFromAttrs(attrs)
     return { attrs, whyItWorks }
-  } catch {
+  } catch (err) {
+    console.warn('[reference-vision] why-it-works analysis failed:', err instanceof Error ? err.message : err)
     return { attrs, whyItWorks: inferWhyFromAttrs(attrs) }
   }
 }

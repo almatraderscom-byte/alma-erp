@@ -32,9 +32,8 @@ function getGoogleCredentials(): { client_email: string; private_key: string } |
   // Try to parse as JSON string first
   try {
     return JSON.parse(raw)
-  } catch {
-    // Not JSON — treat as a file path
-    // On Vercel, file paths don't work; recommend JSON string
+  } catch (err) {
+    console.warn('[tts] GOOGLE_TTS_CREDENTIALS parse failed (not JSON):', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -66,6 +65,7 @@ async function getAccessToken(creds: { client_email: string; private_key: string
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
       assertion: jwt,
     }),
+    signal: AbortSignal.timeout(10_000),
   })
   if (!tokenRes.ok) {
     const err = await tokenRes.text()
@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
             speakingRate: 1.0,
           },
         }),
+        signal: AbortSignal.timeout(15_000),
       },
     )
 

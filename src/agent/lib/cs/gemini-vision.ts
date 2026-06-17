@@ -52,6 +52,7 @@ export async function describeProductImage(imageBase64: string, mimeType: string
       }],
       generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {

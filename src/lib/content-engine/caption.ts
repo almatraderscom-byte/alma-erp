@@ -59,7 +59,8 @@ export async function generateCaption(
       caption: [caption, footer].filter(Boolean).join('\n\n'),
       footer,
     }
-  } catch {
+  } catch (err) {
+    console.warn('[caption] generateCaption failed:', err instanceof Error ? err.message : err)
     return {
       hook: opts?.hook ?? 'নতুন কালেকশন',
       caption: raw || `${product.name ?? product.productCode} — Alma Lifestyle`,
@@ -140,7 +141,8 @@ export async function generateAdCopySet(
       primaryTextBn: String(row.primaryTextBn ?? '').trim(),
       ctaBn: String(row.ctaBn ?? 'অর্ডার করতে ইনবক্সে মেসেজ করুন').trim(),
     }))
-  } catch {
+  } catch (err) {
+    console.warn('[caption] generateAdCopyAngles failed:', err instanceof Error ? err.message : err)
     const fallback: AdCopyAngle[] = []
     for (let i = 0; i < count; i++) {
       fallback.push({

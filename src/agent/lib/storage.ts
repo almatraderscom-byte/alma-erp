@@ -27,6 +27,7 @@ async function ensureAgentBucket() {
   const { url, serviceKey } = getStorageBase()
   const check = await fetch(`${url}/storage/v1/bucket/${AGENT_BUCKET}`, {
     headers: storageHeaders(serviceKey),
+    signal: AbortSignal.timeout(10_000),
   })
   if (check.ok) return { url, serviceKey }
 
@@ -39,6 +40,7 @@ async function ensureAgentBucket() {
       public: false,
       file_size_limit: 10 * 1024 * 1024,
     }),
+    signal: AbortSignal.timeout(10_000),
   })
   if (!create.ok && create.status !== 409) {
     throw new Error(`Failed to create agent-files bucket: ${create.status}`)
@@ -61,6 +63,7 @@ export async function agentStorageUpload(
       'x-upsert': opts?.upsert ? 'true' : 'false',
     },
     body: data,
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
     throw new Error(`Agent file upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
@@ -75,6 +78,7 @@ export async function agentStorageSignedUrl(objectPath: string, expiresIn = 3600
     method: 'POST',
     headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
     body: JSON.stringify({ expiresIn }),
+    signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) {
     throw new Error(`Agent signed URL failed (${res.status}): ${(await res.text()).slice(0, 200)}`)

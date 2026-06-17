@@ -42,6 +42,7 @@ export async function describeCreativeTaste(imageBase64: string, mimeType: strin
       }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {

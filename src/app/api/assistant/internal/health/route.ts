@@ -16,7 +16,8 @@ function checkToken(req: NextRequest): boolean {
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
   try {
     return timingSafeEqual(Buffer.from(token), Buffer.from(expected))
-  } catch {
+  } catch (err) {
+    console.warn('[health] token compare failed:', err instanceof Error ? err.message : err)
     return false
   }
 }
@@ -49,8 +50,8 @@ export async function GET(req: NextRequest) {
       create: { service: 'app-health', lastBeatAt: now },
       update: { lastBeatAt: now },
     })
-  } catch {
-    /* table may not exist yet */
+  } catch (err) {
+    console.warn('[health] heartbeat upsert failed (table may not exist yet):', err instanceof Error ? err.message : err)
   }
 
   return NextResponse.json({
