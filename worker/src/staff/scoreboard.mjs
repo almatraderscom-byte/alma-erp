@@ -105,6 +105,7 @@ export async function sendScoreboardToStaff({ supabase, bot, perStaff, businessI
       content: row.line,
       chatId: row.chatId,
       requiresAck: false,
+      extra: { skipApproval: true },
     }).catch((err) => {
       console.warn(`[scoreboard] staff send failed ${row.staffName}:`, err.message)
       return bot.telegram.sendMessage(row.chatId, row.line).catch(() => {})

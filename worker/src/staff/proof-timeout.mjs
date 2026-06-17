@@ -47,7 +47,7 @@ function anchorTime(task) {
   const pd = task.proof_data ?? {}
   if (pd.proofRequestedAt) return new Date(pd.proofRequestedAt).getTime()
   if (pd.sentAt) return new Date(pd.sentAt).getTime()
-  if (task.updated_at) return new Date(task.updated_at).getTime()
+  if (task.created_at) return new Date(task.created_at).getTime()
   return Date.now()
 }
 
@@ -64,6 +64,7 @@ async function sendStaffNudge({ bot, supabase, task, message }) {
     chatId: staffChat,
     relatedTaskIds: [task.id],
     requiresAck: false,
+    extra: { skipApproval: true },
   }).catch((err) => {
     console.warn(`[proof-timeout] nudge send failed ${task.id}:`, err.message)
     return bot.telegram.sendMessage(staffChat, message).catch(() => {})
@@ -77,7 +78,7 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
 
   const { data: tasks } = await supabase
     .from('staff_tasks')
-    .select('id, title, staff_id, status, verification_status, proof_data, business_id, updated_at, agent_staff(telegramChatId, name)')
+    .select('id, title, staff_id, status, verification_status, proof_data, business_id, created_at, agent_staff(telegramChatId, name)')
     .in('status', ['awaiting_proof', 'sent'])
     .neq('type', 'learning')
 
