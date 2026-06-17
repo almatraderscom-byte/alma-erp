@@ -26,11 +26,10 @@ export async function transcribeVoiceNote(bot, fileId) {
   const fileUrl  = `https://api.telegram.org/file/bot${botToken}/${filePath}`
 
   // Download the OGG
-  const audioRes = await fetch(fileUrl)
+  const audioRes = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) })
   if (!audioRes.ok) throw new Error(`Telegram file download failed: ${audioRes.status}`)
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer())
 
-  // Raw audio body — reliable server-to-server (multipart field names vary across runtimes).
   const transcribeRes = await fetch(`${APP_URL()}/api/assistant/internal/transcribe`, {
     method: 'POST',
     headers: {
@@ -38,6 +37,7 @@ export async function transcribeVoiceNote(bot, fileId) {
       'Content-Type': 'audio/ogg',
     },
     body: audioBuffer,
+    signal: AbortSignal.timeout(60_000),
   })
   if (!transcribeRes.ok) {
     const err = await transcribeRes.text()

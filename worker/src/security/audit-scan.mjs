@@ -11,7 +11,7 @@
  */
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 const SENSITIVE_TOOLS = new Set([
   'outbound_phone_call', 'call_family_member', 'send_urgent_alert',
@@ -23,7 +23,7 @@ const SENSITIVE_TOOLS = new Set([
 
 export async function runSecurityAudit(context) {
   const { supabase, bot } = context
-  if (!OWNER_CHAT_ID || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner' }
+  if (!OWNER_CHAT_ID() || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner' }
 
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
   const findings = []
@@ -108,7 +108,9 @@ export async function runSecurityAudit(context) {
     }
   }
 
-  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, L.join('\n'))
+  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID(), L.join('\n')).catch((err) => {
+    console.warn('[audit-scan] owner send failed:', err.message)
+  })
 
   return {
     dutyStatus: 'done',

@@ -7,17 +7,18 @@
 
 import { notify } from '../notify/index.mjs'
 
-const META_ADS_TOKEN = process.env.META_ADS_TOKEN
-const AD_ACCOUNT_ID  = process.env.META_AD_ACCOUNT_ID // e.g. act_1234567890
+const META_ADS_TOKEN  = () => process.env.META_ADS_TOKEN ?? ''
+const AD_ACCOUNT_ID   = () => process.env.META_AD_ACCOUNT_ID ?? ''
 
 async function adsApi(path, params = {}) {
-  if (!META_ADS_TOKEN) throw new Error('META_ADS_TOKEN not set')
+  const token = META_ADS_TOKEN()
+  if (!token) throw new Error('META_ADS_TOKEN not set')
   const url = new URL(`https://graph.facebook.com/v21.0/${path}`)
-  url.searchParams.set('access_token', META_ADS_TOKEN)
+  url.searchParams.set('access_token', token)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v))
   }
-  const res = await fetch(url.toString())
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(20_000) })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`Ads API ${res.status}: ${err.slice(0, 200)}`)
@@ -31,7 +32,7 @@ function safeNum(v) {
 }
 
 export async function runAdsMonitor({ supabase }) {
-  if (!META_ADS_TOKEN || !AD_ACCOUNT_ID) {
+  if (!META_ADS_TOKEN() || !AD_ACCOUNT_ID()) {
     console.warn('[ads] META_ADS_TOKEN or META_AD_ACCOUNT_ID not set — skipping')
     return { dutyStatus: 'skipped', dutyDetail: 'Ads credentials not configured' }
   }
@@ -41,7 +42,7 @@ export async function runAdsMonitor({ supabase }) {
   try {
     // Get active campaigns
     const campaigns = await adsApi(
-      `${AD_ACCOUNT_ID}/campaigns`,
+      `${AD_ACCOUNT_ID()}/campaigns`,
       { effective_status: '["ACTIVE"]', fields: 'id,name', limit: 20 },
     )
 

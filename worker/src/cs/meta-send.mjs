@@ -29,7 +29,9 @@ async function graphPost(path, accessToken, body) {
 export async function sendTypingOn(pageId, psid) {
   const t = token(pageId)
   if (!t) return
-  await graphPost('me/messages', t, { recipient: { id: psid }, sender_action: 'typing_on' }).catch(() => {})
+  await graphPost('me/messages', t, { recipient: { id: psid }, sender_action: 'typing_on' }).catch((err) => {
+    console.warn('[meta-send] typing indicator failed:', err.message)
+  })
 }
 
 export async function sendMessengerText(pageId, psid, text) {

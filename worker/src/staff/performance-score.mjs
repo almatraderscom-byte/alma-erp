@@ -12,7 +12,7 @@
  */
 import { bnNum } from './bn-format.mjs'
 
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 function dhakaYmd(daysAgo = 0) {
   const d = new Date(Date.now() - daysAgo * 86400_000)
@@ -99,7 +99,7 @@ export async function runWeeklyPerformanceScore(context) {
     updated_at: new Date().toISOString(),
   })
 
-  if (bot && OWNER_CHAT_ID && scores.length > 0) {
+  if (bot && OWNER_CHAT_ID() && scores.length > 0) {
     let msg = `📊 *সাপ্তাহিক স্টাফ পারফরম্যান্স*\n\n`
     for (const s of scores) {
       const emoji = s.score >= 80 ? '🟢' : s.score >= 60 ? '🟡' : '🔴'
@@ -107,7 +107,9 @@ export async function runWeeklyPerformanceScore(context) {
       msg += `   টাস্ক: ${bnNum(s.doneTasks)}/${bnNum(s.totalTasks)} | `
       msg += `কোয়ালিটি: ${bnNum(s.breakdown.quality)}%\n\n`
     }
-    await bot.telegram.sendMessage(OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {})
+    await bot.telegram.sendMessage(OWNER_CHAT_ID(), msg, { parse_mode: 'Markdown' }).catch((err) => {
+      console.warn('[performance-score] owner send failed:', err.message)
+    })
   }
 
   return { dutyStatus: 'done', dutyDetail: scores.map(s => `${s.staffName}:${s.score}`).join(', ') }

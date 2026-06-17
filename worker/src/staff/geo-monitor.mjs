@@ -13,7 +13,7 @@ import { bnNum } from './bn-format.mjs'
 const OFFICE_LAT = Number(process.env.OFFICE_ALMA_LIFESTYLE_LAT || process.env.OFFICE_LAT || 0)
 const OFFICE_LNG = Number(process.env.OFFICE_ALMA_LIFESTYLE_LNG || process.env.OFFICE_LNG || 0)
 const OFFICE_RADIUS_M = Number(process.env.OFFICE_ALMA_LIFESTYLE_RADIUS_M || process.env.OFFICE_RADIUS_M || 300)
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 const STALE_LOCATION_MINUTES = 10
 const GRACE_PERIOD_MS = 5 * 60 * 1000
@@ -144,10 +144,10 @@ export async function runGeoMonitor(context) {
     }
   }
 
-  if (alerts.length > 0 && bot && OWNER_CHAT_ID) {
+  if (alerts.length > 0 && bot && OWNER_CHAT_ID()) {
     for (const alert of alerts) {
       try {
-        await bot.telegram.sendMessage(OWNER_CHAT_ID, alert.message, { parse_mode: 'HTML' })
+        await bot.telegram.sendMessage(OWNER_CHAT_ID(), alert.message, { parse_mode: 'HTML' })
       } catch (err) {
         console.warn(`[geo-monitor] telegram alert failed for ${alert.staffName}:`, err.message)
       }
@@ -236,8 +236,10 @@ export async function checkGhostCheckins(context) {
       const dist = formatDistance(haversineDistanceM(OFFICE_LAT, OFFICE_LNG, leftWithin30.lat, leftWithin30.lng))
       const msg = `👻 *Ghost Check-in সন্দেহ*\n${staff.name} — চেক-ইন করার ${bnNum(Math.round((new Date(leftWithin30.recorded_at).getTime() - checkInTime.getTime()) / 60_000))} মিনিটের মধ্যে অফিস ছেড়েছে (${dist} দূরে)।`
 
-      if (bot && OWNER_CHAT_ID) {
-        await bot.telegram.sendMessage(OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {})
+      if (bot && OWNER_CHAT_ID()) {
+        await bot.telegram.sendMessage(OWNER_CHAT_ID(), msg, { parse_mode: 'Markdown' }).catch((err) => {
+          console.warn('[geo-monitor] ghost check-in send failed:', err.message)
+        })
       }
     }
 

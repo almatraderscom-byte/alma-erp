@@ -502,7 +502,9 @@ longTaskWorker.on('failed', async (job, err) => {
   console.error(`[worker] long-agent-task ${job?.id} failed:`, err.message)
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch(() => {})
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch((e) => {
+      console.warn('[worker] callJobResult(failed) failed:', e.message)
+    })
   }
 })
 
@@ -529,7 +531,9 @@ const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {
         await bot.telegram.sendMessage(
           ownerChatId,
           `❌ Task dispatch ব্যর্থ: ${err.message?.slice(0, 150)}। আবার চেষ্টা করুন।`,
-        ).catch(() => {})
+        ).catch((e) => {
+          console.warn('[worker] dispatch fail notify failed:', e.message)
+        })
       }
     }
 
@@ -578,13 +582,17 @@ staffDispatchWorker.on('failed', async (job, err) => {
   console.error(`[worker] staff-dispatch ${job?.id} failed:`, err.message)
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch(() => {})
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message).catch((e) => {
+      console.warn('[worker] dispatch callJobResult(failed) failed:', e.message)
+    })
     const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
     if (ownerChatId && telegramBot) {
       await telegramBot.telegram.sendMessage(
         ownerChatId,
         `❌ Task dispatch ব্যর্থ: ${err.message?.slice(0, 150)}। আবার চেষ্টা করুন।`,
-      ).catch(() => {})
+      ).catch((e) => {
+        console.warn('[worker] dispatch fail notify failed:', e.message)
+      })
     }
   }
 })
@@ -634,7 +642,9 @@ if (process.env.ASSISTANT_BOT_TOKEN) {
     // ntfy alert so owner knows bot is down
     import('./notify/ntfy.mjs').then(({ sendNtfy }) =>
       sendNtfy('critical', 'Telegram bot down', `Worker started but Telegram bot failed: ${err.message}`, 'urgent')
-    ).catch(() => {})
+    ).catch((e) => {
+      console.error('[worker] CRITICAL: ntfy alert for bot failure also failed:', e.message)
+    })
   }
 } else {
   console.warn('[worker] ASSISTANT_BOT_TOKEN not set — Telegram bot disabled')

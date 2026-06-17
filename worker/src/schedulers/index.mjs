@@ -553,7 +553,9 @@ export async function setupSchedulers({ connection, supabase, bot }) {
       const msg = `⚠️ *Scheduler FAILED* (${maxAttempts} attempts exhausted)\n\nJob: \`${name}\`\nError: ${err.message?.slice(0, 200)}\n\nCatch-up scan will retry at 10:00 Dhaka.`
       try {
         await bot.telegram.sendMessage(process.env.TELEGRAM_OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' })
-      } catch { /* notification best-effort */ }
+      } catch (notifyErr) {
+        console.warn(`[schedulers] critical job failure notification failed for ${name}:`, notifyErr.message)
+      }
     }
   })
 
@@ -595,8 +597,8 @@ export async function setupSchedulers({ connection, supabase, bot }) {
           console.error(`[retrigger-poll] ✗ ${jobName} failed:`, err.message)
         }
       }
-    } catch {
-      // Silently ignore polling errors
+    } catch (err) {
+      console.warn('[retrigger-poll] poll cycle failed:', err.message)
     }
   }, 120_000)
 

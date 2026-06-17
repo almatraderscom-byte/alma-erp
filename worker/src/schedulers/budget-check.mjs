@@ -3,31 +3,36 @@
  */
 import { notify } from '../notify/index.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function fetchSpend(period) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/cost-spend?period=${period}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${APP_URL()}/api/assistant/internal/cost-spend?period=${period}`, {
+    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`cost-spend HTTP ${res.status}`)
   return res.json()
 }
 
 async function markAlert(key) {
-  await fetch(`${APP_URL}/api/assistant/internal/agent-settings`, {
+  await fetch(`${APP_URL()}/api/assistant/internal/agent-settings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${INT_TOKEN}`,
+      Authorization: `Bearer ${INT_TOKEN()}`,
     },
     body: JSON.stringify({ key, value: new Date().toISOString() }),
-  }).catch(() => {})
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err) => {
+    console.warn('[budget-check] markAlert failed:', key, err.message)
+  })
 }
 
 async function wasAlerted(key) {
-  const res = await fetch(`${APP_URL}/api/assistant/internal/agent-settings?keys=${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${APP_URL()}/api/assistant/internal/agent-settings?keys=${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+    signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) return false
   const data = await res.json()

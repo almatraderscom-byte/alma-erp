@@ -3,8 +3,8 @@
  */
 import { notify } from '../notify/index.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 function addMonths(dateStr, months) {
   const d = new Date(dateStr + 'T12:00:00Z')

@@ -4,18 +4,19 @@
  */
 import { notify } from '../notify/index.mjs'
 
-const APP_URL = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 export async function runAgentScorecard() {
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/internal/tool-scorecard`, {
+    const res = await fetch(`${APP_URL()}/api/assistant/internal/tool-scorecard`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${INT_TOKEN}`,
+        Authorization: `Bearer ${INT_TOKEN()}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ days: 7 }),
+      signal: AbortSignal.timeout(30_000),
     })
 
     if (!res.ok) {

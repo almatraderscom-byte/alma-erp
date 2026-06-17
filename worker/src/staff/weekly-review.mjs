@@ -12,12 +12,13 @@ import { aggregateReplyStats } from '../messenger/reply-stats.mjs'
 import { salahDateFilter } from '../salah/dhaka-date.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
-const APP_URL   = process.env.APP_URL?.replace(/\/$/, '') ?? ''
-const INT_TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
+const APP_URL   = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
+const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function callInternal(path) {
-  const res = await fetch(`${APP_URL}${path}`, {
-    headers: { Authorization: `Bearer ${INT_TOKEN}` },
+  const res = await fetch(`${APP_URL()}${path}`, {
+    headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) return null
   return res.json()
@@ -117,7 +118,9 @@ export async function runWeeklyReview({ supabase, bot }) {
       return `• ${name}: গড় ${thisAvg} মিনিট${lastAvg != null ? ` (গত সপ্তাহ ${lastAvg}) ${trend}` : ''}`
     }).filter(Boolean)
     if (lines.length) replySection = `\n\n💬 *Messenger reply (৭ দিন):*\n${lines.join('\n')}`
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[weekly-review] reply stats failed:', err?.message ?? err)
+  }
 
   // ── Growth ideas based on rotation data ──────────────────────────────────
 
@@ -147,7 +150,9 @@ export async function runWeeklyReview({ supabase, bot }) {
         growthIdeas += `\n• ${top.code} নিয়ে ${top.count} জন জিজ্ঞেস করেছে — আরও কন্টেন্ট/ছবি দিন`
       }
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[weekly-review] CS analytics failed:', err?.message ?? err)
+  }
 
   let patternSection = ''
   try {
@@ -158,20 +163,25 @@ export async function runWeeklyReview({ supabase, bot }) {
         '\n\n⚠️ *প্যাটার্ন সতর্কতা:*\n' +
         flags.map((f) => `• ${f.name}: ${f.detail}`).join('\n')
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[weekly-review] pattern detection failed:', err?.message ?? err)
+  }
 
   // ── Outcome scorecard (Intelligence A) ─────────────────────────────────────
 
   let outcomeSection = ''
   try {
-    const scoreRes = await fetch(`${APP_URL}/api/assistant/internal/outcome-scorecard?days=7`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    const scoreRes = await fetch(`${APP_URL()}/api/assistant/internal/outcome-scorecard?days=7`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (scoreRes.ok) {
       const { text } = await scoreRes.json()
       if (text) outcomeSection = `\n\n${text}`
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    console.warn('[weekly-review] outcome scorecard failed:', err?.message ?? err)
+  }
 
   // ── Final report ──────────────────────────────────────────────────────────
 
@@ -199,11 +209,11 @@ export async function runWeeklyReview({ supabase, bot }) {
     const { runWeeklyStrategicBatch, runWeeklyStrategicSync } = await import('../intelligence/weekly-strategic-batch.mjs')
     let stratMessage = null
     try {
-      stratMessage = await runWeeklyStrategicBatch({ appUrl: APP_URL, intToken: INT_TOKEN })
+      stratMessage = await runWeeklyStrategicBatch({ appUrl: APP_URL(), intToken: INT_TOKEN() })
       console.log('[weekly-review] strategic section via batch API')
     } catch (batchErr) {
       console.warn('[weekly-review] batch strategic failed, sync fallback:', batchErr?.message ?? batchErr)
-      stratMessage = await runWeeklyStrategicSync({ appUrl: APP_URL, intToken: INT_TOKEN })
+      stratMessage = await runWeeklyStrategicSync({ appUrl: APP_URL(), intToken: INT_TOKEN() })
     }
     if (stratMessage) {
       const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
@@ -225,8 +235,9 @@ export async function runWeeklyReview({ supabase, bot }) {
   // ── Financial health brief (Intelligence E) ───────────────────────────────
 
   try {
-    const finRes = await fetch(`${APP_URL}/api/assistant/internal/financial-health?days=30`, {
-      headers: { Authorization: `Bearer ${INT_TOKEN}` },
+    const finRes = await fetch(`${APP_URL()}/api/assistant/internal/financial-health?days=30`, {
+      headers: { Authorization: `Bearer ${INT_TOKEN()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     const finData = await finRes.json().catch(() => ({}))
     if (finData.text) {

@@ -38,7 +38,9 @@ export async function runAckEscalation({ supabase, bot }) {
       'Ack escalation broken',
       'TELEGRAM_OWNER_CHAT_ID/bot missing — staff unseen alerts not running',
       'urgent',
-    ).catch(() => {})
+    ).catch((err) => {
+      console.warn('[ack-escalation] critical ntfy failed:', err.message)
+    })
     return { ok: false, reason: 'missing_owner_chat' }
   }
 
@@ -55,7 +57,9 @@ export async function runAckEscalation({ supabase, bot }) {
 
   if (error) {
     console.warn('[ack-escalation] query failed:', error.message)
-    await sendNtfy('critical', 'Ack escalation query failed', error.message, 'urgent').catch(() => {})
+    await sendNtfy('critical', 'Ack escalation query failed', error.message, 'urgent').catch((err) => {
+      console.warn('[ack-escalation] query fail ntfy failed:', err.message)
+    })
     return { ok: false, reason: 'query_failed' }
   }
   if (!unseen?.length) return { ok: true, escalated: 0 }
@@ -76,7 +80,9 @@ export async function runAckEscalation({ supabase, bot }) {
       console.warn('[ack-escalation] owner notify failed:', err.message)
     }
     if (ownerNotified) {
-      await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch(() => {})
+      await sendNtfy('critical', 'Staff unseen message', `${m.staff_name ?? 'Staff'} 10 min e dekheni`, 'urgent').catch((err) => {
+        console.warn('[ack-escalation] staff unseen ntfy failed:', err.message)
+      })
     }
 
     if (!ownerNotified) continue
@@ -108,7 +114,9 @@ export async function runAckEscalation({ supabase, bot }) {
           bot.telegram,
           chatId,
           `⏰ ${staff.name} ভাই, একটি মেসেজ এখনো দেখেননি — দয়া করে দেখে "👀 দেখেছি" চাপুন।`,
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn(`[ack-escalation] staff re-ping failed for ${staff.name}:`, err.message)
+        })
       }
     }
 

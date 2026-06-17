@@ -69,7 +69,10 @@ export function splitTextForTts(text, maxChars = 200) {
 function getCredentials() {
   const raw = process.env.GOOGLE_TTS_CREDENTIALS
   if (!raw) return null
-  try { return JSON.parse(raw) } catch { return null }
+  try { return JSON.parse(raw) } catch (err) {
+    console.warn('[tts] GOOGLE_TTS_CREDENTIALS JSON parse failed:', err.message)
+    return null
+  }
 }
 
 async function getAccessToken(creds) {
@@ -92,6 +95,7 @@ async function getAccessToken(creds) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`Google auth failed: ${await res.text()}`)
   const data = await res.json()
@@ -107,6 +111,7 @@ async function synthesizeChunk(text, accessToken) {
       voice: { languageCode: 'bn-IN', name: 'bn-IN-Chirp3-HD-Charon' },
       audioConfig: { audioEncoding: 'MP3', speakingRate: 1.0 },
     }),
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) throw new Error(`Google TTS error ${res.status}: ${await res.text()}`)
   const data = await res.json()
@@ -158,18 +163,19 @@ export async function mp3ToTelephonyWav(mp3Buffer) {
   const { promisify } = await import('util')
   const execFileAsync = promisify(execFile)
 
-  const tmpIn  = join(tmpdir(), `alma_tts_${Date.now()}.mp3`)
-  const tmpOut = join(tmpdir(), `alma_tts_${Date.now()}.wav`)
+  const ts = Date.now()
+  const tmpIn  = join(tmpdir(), `alma_tts_${ts}.mp3`)
+  const tmpOut = join(tmpdir(), `alma_tts_${ts}.wav`)
   try {
     await writeFile(tmpIn, mp3Buffer)
     await execFileAsync('ffmpeg', [
       '-y', '-i', tmpIn,
       '-ar', '8000', '-ac', '1', '-f', 'wav',
       tmpOut,
-    ])
+    ], { timeout: 30_000 })
     return await readFile(tmpOut)
   } finally {
-    unlink(tmpIn).catch(() => {})
-    unlink(tmpOut).catch(() => {})
+    unlink(tmpIn).catch((err) => console.warn('[tts] temp cleanup failed:', tmpIn, err.message))
+    unlink(tmpOut).catch((err) => console.warn('[tts] temp cleanup failed:', tmpOut, err.message))
   }
 }

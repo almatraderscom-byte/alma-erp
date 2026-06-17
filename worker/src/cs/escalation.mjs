@@ -14,6 +14,7 @@ export async function runCsEscalation(bot) {
       Authorization: `Bearer ${INT_TOKEN()}`,
     },
     body: JSON.stringify({}),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) {
     console.error('[cs-escalation] API failed', res.status)
@@ -25,7 +26,9 @@ export async function runCsEscalation(bot) {
 
   for (const item of data.actions ?? []) {
     if (item.type === 'staff_reminder' && item.staffChatId) {
-      await bot.telegram.sendMessage(item.staffChatId, item.message).catch(() => {})
+      await bot.telegram.sendMessage(item.staffChatId, item.message).catch((err) => {
+        console.warn('[cs-escalation] staff reminder send failed:', err.message)
+      })
     } else if (item.type === 'owner_escalation') {
       await sendMarkdownSafe(bot.telegram, ownerChatId, item.message, {
         reply_markup: item.draftId ? {
@@ -34,9 +37,13 @@ export async function runCsEscalation(bot) {
             { text: '✏️ সম্পাদনা', callback_data: `cs_edit:${item.draftId}` },
           ]],
         } : undefined,
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn('[cs-escalation] owner escalation send failed:', err.message)
+      })
     } else if (item.type === 'owner_critical') {
-      await sendMarkdownSafe(bot.telegram, ownerChatId, `🚨 ${item.message}`).catch(() => {})
+      await sendMarkdownSafe(bot.telegram, ownerChatId, `🚨 ${item.message}`).catch((err) => {
+        console.warn('[cs-escalation] owner critical send failed:', err.message)
+      })
     }
   }
 

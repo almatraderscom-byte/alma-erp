@@ -7,6 +7,7 @@ import { notify } from '../notify/index.mjs'
 async function wasAlerted(key) {
   const res = await fetch(`${getAppUrl()}/api/assistant/internal/agent-settings?keys=${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${getInternalToken()}` },
+    signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) return false
   const data = await res.json()
@@ -21,7 +22,10 @@ async function markAlert(key) {
       Authorization: `Bearer ${getInternalToken()}`,
     },
     body: JSON.stringify({ key, value: new Date().toISOString() }),
-  }).catch(() => {})
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err) => {
+    console.warn('[balance-check] markAlert failed:', key, err.message)
+  })
 }
 
 export async function runBalanceCheck() {
@@ -29,6 +33,7 @@ export async function runBalanceCheck() {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/balance-refresh`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
       console.warn(`[balance-check] HTTP ${res.status}`)

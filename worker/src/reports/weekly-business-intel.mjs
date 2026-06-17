@@ -15,7 +15,7 @@ import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 function dhakaYmd(daysAgo = 0) {
   const d = new Date(Date.now() - daysAgo * 86_400_000)
@@ -24,7 +24,7 @@ function dhakaYmd(daysAgo = 0) {
 
 export async function runWeeklyBusinessIntel(context) {
   const { supabase, bot } = context
-  if (!OWNER_CHAT_ID || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner chat' }
+  if (!OWNER_CHAT_ID() || !bot) return { dutyStatus: 'skipped', dutyDetail: 'no owner chat' }
 
   const thisWeekStart = dhakaYmd(6)
   const thisWeekEnd = dhakaYmd(0)
@@ -87,7 +87,9 @@ export async function runWeeklyBusinessIntel(context) {
   }
 
   let scores = null
-  try { scores = JSON.parse(staffScores?.data?.value ?? 'null') } catch {}
+  try { scores = JSON.parse(staffScores?.data?.value ?? 'null') } catch (err) {
+    console.warn('[weekly-bi] staff scores JSON parse failed:', err.message)
+  }
 
   const dataContext = [
     `Period: ${thisWeekStart} to ${thisWeekEnd}`,
@@ -112,19 +114,24 @@ export async function runWeeklyBusinessIntel(context) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INT()}` },
       body: JSON.stringify({ type: 'weekly-bi', data: dataContext, anomalies }),
+      signal: AbortSignal.timeout(30_000),
     })
     if (aiRes.ok) {
       const aiData = await aiRes.json()
       report = aiData.report ?? ''
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[weekly-bi] AI report generation failed:', err.message)
+  }
 
   if (!report) {
     report = buildFallbackReport({ twRevenue, lwRevenue, revenueChange, twOrders, twDelivered, twCancelled, twReturned, topProducts, uniqueCustomers, newCustomers, totalAiCost, anomalies })
   }
 
   const msg = `📊 *সাপ্তাহিক বিজনেস ইন্টেলিজেন্স*\n${thisWeekStart} → ${thisWeekEnd}\n\n${report}`
-  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID, msg)
+  await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID(), msg).catch((err) => {
+    console.warn('[weekly-bi] owner send failed:', err.message)
+  })
 
   return {
     dutyStatus: 'done',

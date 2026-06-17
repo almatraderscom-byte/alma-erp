@@ -68,6 +68,8 @@ export async function runStaffPresence({ supabase, bot }) {
           ],
         },
       },
-    }).catch(() => {})
+    }).catch((err) => {
+      console.warn(`[presence-nudge] send failed for ${staff.name}:`, err.message)
+    })
   }
 }

@@ -44,7 +44,9 @@ export async function runLunchWatch({ supabase, bot }) {
           'লাঞ্চ শেষ',
           `${staff?.name ?? 'স্টাফ'}, ৪৫ মিনিট হয়ে গেছে — ফিরে আসুন।`,
           'urgent',
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn('[lunch-watch] ntfy send failed:', err.message)
+        })
       }
       const chatId = staffTelegramChatId(staff)
       if (chatId) {
@@ -52,14 +54,18 @@ export async function runLunchWatch({ supabase, bot }) {
           bot.telegram,
           chatId,
           `⏰ ${staff.name} ভাই, ৪৫ মিনিট হয়ে গেছে — কাজে ফিরে "ফিরেছি" লিখুন। 🙂`,
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn(`[lunch-watch] staff send failed for ${staff.name}:`, err.message)
+        })
       }
       if (ownerChatId) {
         await sendMarkdownSafe(
           bot.telegram,
           ownerChatId,
           `🟡 ${l.staff_name} লাঞ্চে ৪৫ মিনিট পার করেছে — এখনো ফেরেনি।`,
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn('[lunch-watch] owner 45-min alert failed:', err.message)
+        })
       }
       await supabase.from('staff_lunch').update({ warned_45: true, overage: true }).eq('id', l.id)
     }
@@ -70,14 +76,18 @@ export async function runLunchWatch({ supabase, bot }) {
           bot.telegram,
           ownerChatId,
           `🔴 ${l.staff_name} লাঞ্চে ${mins} মিনিট — ৬০+ মিনিট পার! এখনো ফেরেনি। action নিন।`,
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn('[lunch-watch] owner 60-min alert failed:', err.message)
+        })
       }
       await sendNtfy(
         'critical',
         'Staff lunch overrun',
         `${l.staff_name} lunch ${mins} min — fereni`,
         'urgent',
-      ).catch(() => {})
+      ).catch((err) => {
+        console.warn('[lunch-watch] ntfy critical failed:', err.message)
+      })
       await supabase.from('staff_lunch').update({ alerted_60: true }).eq('id', l.id)
     }
   }

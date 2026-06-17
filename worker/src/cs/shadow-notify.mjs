@@ -39,5 +39,8 @@ export async function notifyShadowDraft(bot, { draftId, pageId, psid, parts, cus
       Authorization: `Bearer ${INT_TOKEN()}`,
     },
     body: JSON.stringify({ draftId, action: 'notified' }),
-  }).catch(() => {})
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err) => {
+    console.warn('[cs-shadow] draft notify API failed:', err.message)
+  })
 }

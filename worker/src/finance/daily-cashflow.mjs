@@ -11,7 +11,7 @@
 import { notify } from '../notify/index.mjs'
 import { bnNum } from '../staff/bn-format.mjs'
 
-const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID
+const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 
 function dhakaYmd(daysAgo = 0) {
   const d = new Date(Date.now() - daysAgo * 86400_000)
@@ -75,8 +75,10 @@ export async function runDailyCashflow(context) {
     msg += `\n${arrow} গত সপ্তাহের একই দিনের তুলনায়: ${weekChange >= 0 ? '+' : ''}${bnNum(weekChange)}%`
   }
 
-  if (bot && OWNER_CHAT_ID) {
-    await bot.telegram.sendMessage(OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {})
+  if (bot && OWNER_CHAT_ID()) {
+    await bot.telegram.sendMessage(OWNER_CHAT_ID(), msg, { parse_mode: 'Markdown' }).catch((err) => {
+      console.warn('[daily-cashflow] owner send failed:', err.message)
+    })
   }
 
   return { dutyStatus: 'done', dutyDetail: `sales: ${totalSales}, profit: ${totalProfit}, orders: ${orderCount}` }
@@ -115,8 +117,10 @@ export async function runPaymentReminders(context) {
     msg += `...আরো ${bnNum(overdueOrders.length - 5)}টি`
   }
 
-  if (bot && OWNER_CHAT_ID) {
-    await bot.telegram.sendMessage(OWNER_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {})
+  if (bot && OWNER_CHAT_ID()) {
+    await bot.telegram.sendMessage(OWNER_CHAT_ID(), msg, { parse_mode: 'Markdown' }).catch((err) => {
+      console.warn('[daily-cashflow] payment reminder send failed:', err.message)
+    })
   }
 
   return { dutyStatus: 'done', dutyDetail: `${overdueOrders.length} overdue orders, total: ${totalOverdue}` }

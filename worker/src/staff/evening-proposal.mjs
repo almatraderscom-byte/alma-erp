@@ -37,7 +37,9 @@ async function fetchSmartTaskBrief(staffName, taskType, productName, completionR
       _smartTaskCache[key] = brief
       return brief
     }
-  } catch { /* fall through to existing logic */ }
+  } catch (err) {
+    console.warn('[evening-proposal] smart task API failed:', err?.message ?? err)
+  }
   return null
 }
 
@@ -689,7 +691,9 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
         title: label === 'evening-proposal' ? '🌙 আজ কোনো টাস্ক প্রস্তাব নেই' : 'টাস্ক প্রস্তাব',
         message: `${targetDate} — কোনো task তৈরি হয়নি।`,
         category: 'task',
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn(`[${label}] no-tasks notify failed:`, err.message)
+      })
       return {
         dutyStatus: 'skipped',
         dutyDetail: proposal.error ?? 'zero tasks generated',
@@ -827,7 +831,9 @@ export async function runTaskProposal(supabase, { targetOffsetDays = 0 } = {}) {
           title: '❌ Task proposal পাঠানো যায়নি',
           message: 'আজকের evening proposal owner-কে পৌঁছানো যায়নি। Manually /proposal চালান বা worker চেক করুন।',
           category: 'urgent',
-        }).catch(() => {})
+        }).catch((err) => {
+          console.warn(`[${label}] fallback notify failed:`, err.message)
+        })
       }
     }
 

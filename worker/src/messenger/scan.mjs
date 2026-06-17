@@ -41,7 +41,8 @@ async function getCsMode() {
     if (!res.ok) return 'off'
     const data = await res.json()
     return data.cs_mode ?? 'off'
-  } catch {
+  } catch (err) {
+    console.warn('[messenger-scan] cs_mode fetch failed:', err.message)
     return 'off'
   }
 }
@@ -51,19 +52,20 @@ async function isCsHandledConversation(fbConversationId) {
   try {
     const res = await fetch(
       `${APP_URL()}/api/assistant/internal/cs-is-handled?conversationId=${encodeURIComponent(fbConversationId)}`,
-      { headers: { Authorization: `Bearer ${INT_TOKEN()}` } },
+      { headers: { Authorization: `Bearer ${INT_TOKEN()}` }, signal: AbortSignal.timeout(10_000) },
     )
     if (!res.ok) return false
     const data = await res.json()
     return Boolean(data.handled)
-  } catch {
+  } catch (err) {
+    console.warn('[messenger-scan] cs-is-handled check failed:', err.message)
     return false
   }
 }
 
 async function fbGet(pageId, path, token) {
   const url = `https://graph.facebook.com/v21.0/${pageId}${path}&access_token=${token}`
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`FB API ${res.status}: ${err.slice(0, 200)}`)
@@ -199,7 +201,9 @@ export async function runMessengerScan({ supabase, bot }) {
         title: `⚠️ ${page.name} token নেই`,
         message: `${page.envKey} environment variable সেট করা হয়নি — messenger scan চলবে না।`,
         category: 'urgent',
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn(`[messenger-scan] token-missing notify failed for ${page.name}:`, err.message)
+      })
       continue
     }
 

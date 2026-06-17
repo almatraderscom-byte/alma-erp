@@ -73,7 +73,9 @@ export async function runMorningStaffReminder({ supabase, bot }) {
               ]],
             },
           },
-        ).catch(() => {})
+        ).catch((err) => {
+          console.warn('[morning-staff-reminder] approval escalation send failed:', err.message)
+        })
       }
       return { dutyStatus: 'skipped', dutyDetail: `${proposedCount}টি কাজ approve হয়নি` }
     }
@@ -147,7 +149,9 @@ export async function runMorningStaffReminder({ supabase, bot }) {
       `🌅 *সকাল ৯টা — স্টাফ ট্র্যাকিং শুরু*\n\n` +
         `${names}: মোট ${total}টি কাজ active। দুপুর ১:৩০ ও রাত ৯টায় আপডেট আসবে।`,
       { parse_mode: 'Markdown' },
-    ).catch(() => {})
+    ).catch((err) => {
+      console.warn('[morning-staff-reminder] owner summary send failed:', err.message)
+    })
   }
 
   console.log(`[morning-staff-reminder] reminded ${Object.keys(byStaff).length} staff`)

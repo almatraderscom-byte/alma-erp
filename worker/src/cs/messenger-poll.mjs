@@ -9,14 +9,14 @@ const PAGES = [
 ]
 
 /** Only messages newer than this are candidates (hours). */
-const MAX_MESSAGE_AGE_MS = Number(process.env.CS_POLL_MAX_AGE_HOURS ?? 4) * 60 * 60 * 1000
+const MAX_MESSAGE_AGE_MS = () => Number(process.env.CS_POLL_MAX_AGE_HOURS ?? 4) * 60 * 60 * 1000
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function fbGet(path, token) {
   const url = `https://graph.facebook.com/v21.0/${path}&access_token=${encodeURIComponent(token)}`
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`FB API ${res.status}: ${err.slice(0, 200)}`)
@@ -49,6 +49,7 @@ async function syncMessage(page, msg) {
       messageCreatedAt: msg.created_time,
       source: 'poll',
     }),
+    signal: AbortSignal.timeout(15_000),
   })
 
   const data = await res.json().catch(() => ({}))
@@ -88,7 +89,7 @@ export async function pollMessengerInbox() {
         }
 
         const ageMs = now - new Date(latest.created_time).getTime()
-        if (!Number.isFinite(ageMs) || ageMs > MAX_MESSAGE_AGE_MS) {
+        if (!Number.isFinite(ageMs) || ageMs > MAX_MESSAGE_AGE_MS()) {
           skipped++
           continue
         }
