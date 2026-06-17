@@ -415,6 +415,19 @@ export async function* runAgentTurn(
   let memoryNudgeSent = false
   let verifyRetries = 0
 
+  let approvalReminderPrefix = ''
+  if (!personalMode && lastUserText) {
+    try {
+      const { buildPendingApprovalReminderPrefix } = await import('@/agent/lib/pending-approval-reminder')
+      approvalReminderPrefix = await buildPendingApprovalReminderPrefix()
+      if (approvalReminderPrefix) {
+        yield { type: 'text_delta', delta: approvalReminderPrefix }
+      }
+    } catch (err) {
+      console.warn('[core] pending approval reminder failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
@@ -739,7 +752,13 @@ export async function* runAgentTurn(
 
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-    const storedContent = textContent.length > 0 ? textContent : [{ type: 'text', text: '' }]
+    const joinedText = textContent.map((b) => b.text).join('\n')
+    const storedContent = joinedText || approvalReminderPrefix
+      ? [{
+          type: 'text' as const,
+          text: approvalReminderPrefix + (joinedText || ''),
+        }]
+      : [{ type: 'text' as const, text: '' }]
     const costUsd = calcModelTurnCostUsd(chatModel, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,

@@ -103,6 +103,12 @@ export async function POST(
     console.warn('[approve] recordApproval failed:', err instanceof Error ? err.message : err)
   })
 
+  void import('@/agent/lib/duty-approval-block')
+    .then((m) => m.resolveDutyBlocksForLinkedAction(actionId))
+    .catch((err) => {
+      console.warn('[approve] resolveDutyBlocks failed:', err instanceof Error ? err.message : err)
+    })
+
   const payload = action.payload as Record<string, unknown>
 
   // ── Execute by type ────────────────────────────────────────────────────────

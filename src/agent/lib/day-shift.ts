@@ -9,6 +9,12 @@ import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 import { buildOwnerBriefingData, type OwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import {
+  checkDutyApprovalBlock,
+  DUTY_PENDING_APPROVAL_DESCRIPTION,
+  notifyDutyApprovalBlocked,
+  recordDutyApprovalBlock,
+} from '@/agent/lib/duty-approval-block'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { dutiesForToday } from '@/agent/lib/agent-duties'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -515,7 +521,33 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     await appendShiftNarrative(conversationId, work.narrative)
   }
 
-  // STEP 3 — mandatory feedback + complete
+  // STEP 3 — approval gate: leave pending, notify, continue roster (Phase C)
+  const approvalBlock = await checkDutyApprovalBlock(duty.duty, date, duty.label)
+  if (approvalBlock) {
+    await patchTodoByDutyKey(duty.duty, date, {
+      status: 'pending',
+      description: DUTY_PENDING_APPROVAL_DESCRIPTION,
+      completedAt: null,
+    })
+    await recordDutyApprovalBlock(approvalBlock, date, conversationId)
+    await notifyDutyApprovalBlocked(duty.label, (text) => appendShiftNarrative(conversationId, text))
+
+    state.taskIndex = taskIndex + 1
+    state.lastTickAt = new Date().toISOString()
+    await saveDayShiftState(state)
+
+    if (state.taskIndex >= total) {
+      return tickDayShift()
+    }
+
+    return {
+      ok: true,
+      detail: `duty_${n}_pending_approval:${duty.duty}`,
+      conversationId,
+    }
+  }
+
+  // STEP 4 — mandatory feedback + complete
   const feedback = composeFeedback(duty.label, work.result, work.opinion)
   await appendShiftNarrative(conversationId, feedback)
   await patchTodoByDutyKey(duty.duty, date, {

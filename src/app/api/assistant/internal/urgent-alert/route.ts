@@ -24,7 +24,10 @@ function checkToken(req: NextRequest): boolean {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-const PRE_AUTH_TIER3_CATEGORIES = new Set(['staff_approval_escalation'])
+const PRE_AUTH_TIER3_CATEGORIES = new Set([
+  'staff_approval_escalation',
+  'duty_approval_escalation',
+])
 
 export async function POST(req: NextRequest) {
   if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

@@ -381,7 +381,7 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
     case 'staff-approval-escalation': {
       const { pollApprovalEscalations } = await import('../approval/escalation-poller.mjs')
-      dutyResult = await pollApprovalEscalations() ?? { dutyStatus: 'done' }
+      dutyResult = await pollApprovalEscalations({ bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'auto-fix-scan': {
