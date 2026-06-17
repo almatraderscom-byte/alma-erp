@@ -11,7 +11,7 @@ import { stripMarkdown } from './tts.mjs'
 
 const ELEVENLABS_API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
 const ELEVENLABS_VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'
-const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2'
+const ELEVENLABS_MODEL_ID = () => process.env.ELEVENLABS_MODEL_ID ?? 'eleven_v3'
 const ELEVENLABS_OUTPUT_FORMAT = () => process.env.ELEVENLABS_OUTPUT_FORMAT ?? 'mp3_44100_128'
 
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
@@ -26,14 +26,21 @@ export function prepareBanglaForElevenLabs(text) {
 }
 
 function voiceSettings(opts = {}) {
-  const stability = opts.stability ?? Number(process.env.ELEVENLABS_STABILITY ?? 0.62)
-  const similarity = opts.similarity_boost ?? opts.similarity ?? Number(process.env.ELEVENLABS_SIMILARITY_BOOST ?? 0.8)
-  return {
+  const model = ELEVENLABS_MODEL_ID()
+  // eleven_v3: stability 0.0 | 0.5 | 1.0 only; multilingual_v2: 0.0–1.0 continuous
+  const defaultStability = model === 'eleven_v3' ? 0.5 : 0.62
+  const defaultSimilarity = model === 'eleven_v3' ? 0.75 : 0.8
+  const stability = opts.stability ?? Number(process.env.ELEVENLABS_STABILITY ?? defaultStability)
+  const similarity = opts.similarity_boost ?? opts.similarity ?? Number(process.env.ELEVENLABS_SIMILARITY_BOOST ?? defaultSimilarity)
+  const settings = {
     stability,
     similarity_boost: similarity,
-    style: opts.style ?? 0.0,
     use_speaker_boost: opts.use_speaker_boost !== false,
   }
+  if (model !== 'eleven_v3') {
+    settings.style = opts.style ?? 0.0
+  }
+  return settings
 }
 
 async function synthesizeChunk(preparedText, opts = {}) {
