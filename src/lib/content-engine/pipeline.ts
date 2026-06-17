@@ -587,6 +587,12 @@ export async function publishContentGate2(gate2Id: string): Promise<{ postId: st
     primaryImagePath: string | null
   }
 
+  const { runContentQcGate } = await import('@/lib/content-engine/qc-gate')
+  const qc = await runContentQcGate(payload.primaryImagePath)
+  if (qc.blocked) {
+    throw new Error(`content_qc_failed: score ${qc.score ?? 0} — ${(qc.issues ?? []).slice(0, 2).join('; ')}`)
+  }
+
   const { createPagePost, verifyPost } = await import('@/agent/lib/meta')
   const { postId, postedAsPhoto } = await createPagePost({
     pageId: payload.pageId,

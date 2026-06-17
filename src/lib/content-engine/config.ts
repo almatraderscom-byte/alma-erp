@@ -41,10 +41,20 @@ function envInt(key: string, defaultValue: number): number {
 
 /** Env defaults — KV `content_engine_enabled` overrides when set. */
 export function contentEngineConfigFromEnv(): ContentEngineConfig {
+  const phase = Number(process.env.CONTENT_ENGINE_PHASE ?? 1)
+  const phaseVariants =
+    phase >= 3 ? PHASE2_FULL_VARIANTS
+      : phase >= 2 ? [...PHASE1_VARIANTS, 'mother_son' as ContentVariant]
+        : PHASE1_VARIANTS
+
+  const envVariants = process.env.CONTENT_ENGINE_VARIANTS?.trim()
+    ? parseVariants(process.env.CONTENT_ENGINE_VARIANTS)
+    : null
+
   return {
     enabled: envBool('CONTENT_ENGINE_ENABLED', false),
-    perDay: envInt('CONTENT_ENGINE_PER_DAY', 1),
-    variants: parseVariants(process.env.CONTENT_ENGINE_VARIANTS),
+    perDay: envInt('CONTENT_ENGINE_PER_DAY', phase >= 3 ? 3 : 1),
+    variants: envVariants ?? phaseVariants,
     draftFirst: envBool('CONTENT_ENGINE_QUALITY_DRAFT_FIRST', true),
     minDaysBetweenPosts: envInt('CONTENT_ENGINE_MIN_DAYS_BETWEEN', 2),
     maxPendingApprovals: envInt('CONTENT_ENGINE_MAX_PENDING', 2),
