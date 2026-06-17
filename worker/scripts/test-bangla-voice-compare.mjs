@@ -36,19 +36,13 @@ const CANDIDATES = [
     voice_settings: { stability: 0.68, similarity_boost: 0.78, style: 0, use_speaker_boost: true },
   },
   {
-    label: '৩. মারুফ ভয়েস (প্রফেশনাল)',
-    voiceId: 'By4jq2fy39jCEmzrDekD',
-    model_id: 'eleven_multilingual_v2',
-    voice_settings: { stability: 0.62, similarity_boost: 0.8, style: 0, use_speaker_boost: true },
-  },
-  {
-    label: '৪. টেস্ট মারুফ — আপনার ক্লোন',
+    label: '৩. টেস্ট মারুফ — আপনার ক্লোন',
     voiceId: 'Z0rjYjGcQoE8iaTf7Gm6',
     model_id: 'eleven_multilingual_v2',
     voice_settings: { stability: 0.62, similarity_boost: 0.8, style: 0, use_speaker_boost: true },
   },
   {
-    label: '৫. অ্যাডাম প্রিমেড (বর্তমান)',
+    label: '৪. অ্যাডাম প্রিমেড (বর্তমান)',
     voiceId: 'pNInz6obpgDQGcFmaJgB',
     model_id: 'eleven_multilingual_v2',
     voice_settings: { stability: 0.62, similarity_boost: 0.8, style: 0, use_speaker_boost: true },
@@ -95,23 +89,30 @@ async function main() {
 
   await bot.telegram.sendMessage(
     ownerChatId,
-    '🎙 বাংলা ভয়েস তুলনা — নিচে ৫টা স্যাম্পল। যেটা সবচেয়ে পরিষ্কার শুনতে পাবেন সেটার নম্বর জানাবেন।',
+    '🎙 বাংলা ভয়েস তুলনা — নিচে ৪টা স্যাম্পল। যেটা সবচেয়ে পরিষ্কার শুনতে পাবেন সেটার নম্বর জানাবেন।',
   )
 
   let best = { label: '', bytes: 0 }
 
   for (const c of CANDIDATES) {
     console.log(`[compare] ${c.label}...`)
-    const buf = await synthesize(c)
-    console.log(`  → ${buf.length} bytes`)
-    await bot.telegram.sendMessage(ownerChatId, `🔊 ${c.label}`)
-    await bot.telegram.sendVoice(ownerChatId, { source: buf })
-    if (buf.length > best.bytes) best = { label: c.label, bytes: buf.length, voiceId: c.voiceId }
+    try {
+      const buf = await synthesize(c)
+      console.log(`  → ${buf.length} bytes`)
+      await bot.telegram.sendMessage(ownerChatId, `🔊 ${c.label}`)
+      await bot.telegram.sendVoice(ownerChatId, { source: buf })
+      if (buf.length > best.bytes) best = { label: c.label, bytes: buf.length, voiceId: c.voiceId }
+    } catch (err) {
+      console.warn(`  skip: ${err.message}`)
+      await bot.telegram.sendMessage(ownerChatId, `⚠️ ${c.label} — তৈরি হয়নি (${err.message.slice(0, 60)})`)
+    }
     await new Promise((r) => setTimeout(r, 1200))
   }
 
-  console.log(`\n✅ Sent ${CANDIDATES.length} samples`)
-  console.log(`Recommended pick (Biju S #1): FhOnCtjmaAIRIS1Dg2bk`)
+  await bot.telegram.sendMessage(
+    ownerChatId,
+    '✅ আমার সুপারিশ: ১ নম্বর বিজু এস (বাংলা প্রফেশনাল) — ElevenLabs-এ সবচেয়ে পরিষ্কার বাংলা। যেটা ভালো লাগে নম্বর জানাবেন।',
+  )
 }
 
 main().catch((err) => {
