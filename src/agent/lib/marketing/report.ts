@@ -73,7 +73,7 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
       orderBy: { createdAt: 'desc' },
       take: 8,
       select: { title: true, type: true, status: true },
-    }).catch((err) => {
+    }).catch((err: unknown) => {
       console.warn('[marketing-report] staff tasks query failed:', err instanceof Error ? err.message : String(err))
       return []
     }),

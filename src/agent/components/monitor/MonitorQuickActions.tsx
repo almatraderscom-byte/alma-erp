@@ -39,8 +39,8 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-black/[0.06] bg-white overflow-hidden shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm">
+        <div className="flex items-center gap-2 rounded-t-2xl border-b border-black/[0.06] px-4 py-2.5">
           <span className="text-sm">⚡</span>
           <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Quick Actions</h3>
         </div>
@@ -88,7 +88,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
                     placeholder="Search duty…"
                     value={retriggerSearch}
                     onChange={e => setRetriggerSearch(e.target.value)}
-                    className="mb-2 w-full rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-1.5 text-[10px] text-[#1a1a2e] outline-none placeholder:text-[#94a3b8]"
+                    className="mb-2 w-full rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-2 text-[13px] text-[#1a1a2e] outline-none placeholder:text-[#94a3b8]"
                   />
                   <div className="max-h-48 overflow-y-auto space-y-0.5">
                     {filteredDuties.map(key => (

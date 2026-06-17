@@ -1,6 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
+import { VoiceOrb } from './voice/VoiceOrb'
 
 const SUGGESTIONS = [
   { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
@@ -24,44 +25,21 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
         >
-          <motion.div
-            className="absolute h-40 w-40 rounded-full blur-3xl"
-            style={{ background: 'radial-gradient(circle, rgba(224,122,95,0.28) 0%, rgba(56,189,248,0.08) 55%, transparent 75%)' }}
-            animate={{ opacity: [0.35, 0.65, 0.35], scale: [0.92, 1.08, 0.92] }}
-            transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-          />
           <motion.button
             type="button"
             onClick={onStartVoiceSession}
-            className="relative flex h-[140px] w-[140px] items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/50"
+            className="relative flex items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/50"
             whileTap={{ scale: 0.95 }}
             aria-label="ভয়েস মোড শুরু করুন"
           >
-            <div
-              className="absolute inset-0 rounded-full"
-              style={{
-                background: 'radial-gradient(circle at 35% 30%, #F6E6DF 0%, #E8B4A0 25%, #E07A5F 50%, #c45a42 85%)',
-                boxShadow: '0 8px 36px rgba(224,122,95,0.3), inset 0 -10px 28px rgba(0,0,0,0.08), inset 0 4px 16px rgba(255,255,255,0.3)',
-              }}
-            />
-            <div
-              className="absolute rounded-full"
-              style={{
-                width: 48,
-                height: 32,
-                top: 18,
-                left: '50%',
-                transform: 'translateX(-50%) rotate(-15deg)',
-                background: 'radial-gradient(ellipse, rgba(255,255,255,0.5) 0%, transparent 70%)',
-                filter: 'blur(5px)',
-              }}
-            />
-            <svg className="relative z-10" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))' }}>
-              <rect x="9" y="1" width="6" height="11" rx="3" />
-              <path d="M19 10v2a7 7 0 01-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="23" />
-              <line x1="8" y1="23" x2="16" y2="23" />
-            </svg>
+            <VoiceOrb state="idle" size={132}>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>
+                <rect x="9" y="1" width="6" height="11" rx="3" />
+                <path d="M19 10v2a7 7 0 01-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </VoiceOrb>
           </motion.button>
         </motion.div>
 

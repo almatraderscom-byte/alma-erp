@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Viewport } from 'next'
 import { AgentBottomNav } from '@/agent/components/AgentBottomNav'
+import { AgentKeyboardManager } from '@/agent/components/AgentKeyboardManager'
 import { AgentTodoProvider } from '@/agent/components/AgentTodoContext'
 import '@/agent/styles/agent-ambient.css'
 
@@ -8,6 +9,10 @@ import '@/agent/styles/agent-ambient.css'
  * Agent-only viewport: locks scale so iOS Safari doesn't auto-zoom on input focus.
  * Tradeoff: pinch-to-zoom disabled on /agent/* (acceptable for chat/dashboard UX).
  * ERP routes keep the root layout viewport (zoom remains available there).
+ *
+ * No `interactiveWidget: resizes-content` here on purpose: we drive the keyboard
+ * inset ourselves via useKeyboardInset (--kb-inset), so letting the layout
+ * viewport ALSO resize would double-count and push the composer off-screen.
  */
 export const viewport: Viewport = {
   themeColor: '#FAF9F6',
@@ -16,12 +21,12 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: 'cover',
-  interactiveWidget: 'resizes-content',
 }
 
 export default function AgentLayout({ children }: { children: ReactNode }) {
   return (
     <AgentTodoProvider>
+      <AgentKeyboardManager />
       <div className="agent-shell relative min-h-[100dvh] bg-[#FAF9F6] text-[#1a1a2e]">
         {/* Warm mesh gradient background */}
         <div

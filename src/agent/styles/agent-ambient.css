@@ -10,13 +10,38 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* Keyboard inset, driven by useKeyboardInset (--kb-inset). 0 by default. */
+.agent-shell {
+  --kb-inset: 0px;
+}
+
 /* Layout: account for fixed bottom nav on mobile + iOS safe area */
 .agent-main-height {
-  height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px));
+  height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px));
+}
+
+/* When the keyboard is open the bottom nav is hidden, so reclaim its space and
+ * pin the composer flush above the keyboard (no nav gap, no bottom safe-area). */
+body.kb-open .agent-main-height {
+  height: calc(100dvh - var(--kb-inset, 0px));
+}
+
+/* Hide the floating bottom nav while typing (ChatGPT-style). */
+body.kb-open .agent-bottom-nav {
+  display: none;
+}
+
+/* Drop the home-indicator padding on the composer while the keyboard covers it. */
+body.kb-open .agent-composer-wrap {
+  padding-bottom: 8px;
 }
 
 @media (min-width: 768px) {
   .agent-main-height {
+    height: 100dvh;
+  }
+  /* Desktop keeps full height; keyboard handling is mobile-only. */
+  body.kb-open .agent-main-height {
     height: 100dvh;
   }
 }

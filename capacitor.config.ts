@@ -1,4 +1,5 @@
 import type { CapacitorConfig } from '@capacitor/cli'
+import { KeyboardResize } from '@capacitor/keyboard'
 
 /**
  * Alma ERP Android shell — loads production from Vercel (remote URL).
@@ -27,6 +28,12 @@ const config: CapacitorConfig = {
     backgroundColor: '#FAF9F6',
   },
   plugins: {
+    Keyboard: {
+      /** We own the layout: keep the WebView full-height and pin the composer
+       *  ourselves via --kb-inset. 'none' stops iOS from also resizing/scrolling. */
+      resize: KeyboardResize.None,
+      resizeOnFullScreen: true,
+    },
     SplashScreen: {
       launchShowDuration: 1400,
       launchAutoHide: true,

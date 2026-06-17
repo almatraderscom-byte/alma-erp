@@ -15,7 +15,7 @@ export default async function TradingStaffPage() {
   if (!isSystemOwner(session)) notFound()
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto text-white">
+    <div className="h-full min-h-0 overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] text-white">
       <TradingStaffAdmin />
     </div>
   )

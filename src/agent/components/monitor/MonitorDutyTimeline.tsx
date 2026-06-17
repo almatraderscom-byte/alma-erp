@@ -162,7 +162,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
 
         <div className="p-3">
           <div className="mb-4 overflow-x-auto pb-2">
-            <div className="flex min-w-[600px] items-end gap-1 px-2">
+            <div className="flex min-w-[520px] items-end gap-1 px-2">
               {(['morning', 'afternoon', 'evening', 'night'] as const).map(slot => {
                 const cfg = slotConfig[slot]
                 const slotDuties = grouped[slot]

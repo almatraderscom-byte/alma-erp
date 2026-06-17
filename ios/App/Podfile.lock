@@ -7,6 +7,8 @@ PODS:
   - CapacitorGeolocation (7.1.8):
     - Capacitor
     - IONGeolocationLib (= 1.0.1)
+  - CapacitorKeyboard (7.0.6):
+    - Capacitor
   - CapacitorSplashScreen (7.0.5):
     - Capacitor
   - CapacitorStatusBar (7.0.6):
@@ -70,6 +72,7 @@ DEPENDENCIES:
   - "CapacitorApp (from `../../node_modules/@capacitor/app`)"
   - "CapacitorCordova (from `../../node_modules/@capacitor/ios`)"
   - "CapacitorGeolocation (from `../../node_modules/@capacitor/geolocation`)"
+  - "CapacitorKeyboard (from `../../node_modules/@capacitor/keyboard`)"
   - "CapacitorSplashScreen (from `../../node_modules/@capacitor/splash-screen`)"
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
   - "OnesignalCapacitorPlugin (from `../../node_modules/@onesignal/capacitor-plugin`)"
@@ -88,6 +91,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@capacitor/ios"
   CapacitorGeolocation:
     :path: "../../node_modules/@capacitor/geolocation"
+  CapacitorKeyboard:
+    :path: "../../node_modules/@capacitor/keyboard"
   CapacitorSplashScreen:
     :path: "../../node_modules/@capacitor/splash-screen"
   CapacitorStatusBar:
@@ -100,12 +105,13 @@ SPEC CHECKSUMS:
   CapacitorApp: 6b89831465d6bc99bc89779b1b7f5327e33011ce
   CapacitorCordova: 3a4e0027a89a59421c918d19aee9d6ba1c7a3556
   CapacitorGeolocation: de4b0ccf90140528184e31676dd5e3a328eb589a
+  CapacitorKeyboard: c94c84755e1500d2c6dccd74bad018bb359e3543
   CapacitorSplashScreen: b3d12b4324d93ce605fe57f05a199ade7f26189e
   CapacitorStatusBar: a3acb591ff56301e28aa1a01791ba74a8e1faabb
   IONGeolocationLib: 20f9d0248a0b5264511fb57a37e25dd2badf797a
   OnesignalCapacitorPlugin: 4fa3fe705beed7295290b24025e12b7f5bc1ba7e
   OneSignalXCFramework: 2f46ff87ccefd9afe8e3b5f9fe357072191205ff
 
-PODFILE CHECKSUM: a27e8ed5e7c1effb74dd9cd75e124601831b7ec8
+PODFILE CHECKSUM: 2b4fd95ae8561070e1a7f38334ac4cee227ec6e1
 
 COCOAPODS: 1.12.1

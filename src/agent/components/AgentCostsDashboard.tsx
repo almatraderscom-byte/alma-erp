@@ -229,7 +229,7 @@ export default function AgentCostsDashboard() {
 
   if (loading) {
     return (
-      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-screen">
+      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-[100dvh]">
         <div className="skeleton h-8 w-48 rounded-lg" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {[0, 1, 2].map((i) => (
@@ -243,7 +243,7 @@ export default function AgentCostsDashboard() {
 
   if (error || !data) {
     return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center bg-[#FAF9F6]">
+      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-[#FAF9F6]">
         <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
         <button onClick={() => void load()} className="rounded-xl border border-black/[0.06] bg-white px-4 py-2 text-xs text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 shadow-sm transition-all">
           আবার চেষ্টা
@@ -253,7 +253,7 @@ export default function AgentCostsDashboard() {
   }
 
   return (
-    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-[#FAF9F6] min-h-screen">
+    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-[#FAF9F6] min-h-[100dvh]">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/[0.06] bg-white px-4 py-3 shadow-sm">
         <div>
           <h1 className="text-lg font-bold text-[#1a1a2e]">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
@@ -375,7 +375,7 @@ export default function AgentCostsDashboard() {
               step="0.01"
               value={budgetDaily}
               onChange={(e) => setBudgetDaily(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-1.5 text-xs text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-2 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>
@@ -386,7 +386,7 @@ export default function AgentCostsDashboard() {
               step="0.01"
               value={budgetMonthly}
               onChange={(e) => setBudgetMonthly(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-1.5 text-xs text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-2 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>

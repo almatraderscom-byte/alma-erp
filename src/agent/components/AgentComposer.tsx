@@ -85,7 +85,7 @@ export default function AgentComposer({
   const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming
 
   return (
-    <div className="safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
+    <div className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
       {files.length > 0 && (
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {files.map((f, i) => (

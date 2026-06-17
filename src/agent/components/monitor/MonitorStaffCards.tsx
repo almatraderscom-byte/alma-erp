@@ -130,10 +130,10 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
                     <span className="ml-auto font-medium">🎯 {s.tasksDone}/{s.tasksTotal}</span>
                   </div>
                 </div>
-              </div>
 
-              <div className="absolute right-3 top-3 opacity-70 transition-opacity group-hover:opacity-100">
-                <ProgressRing percent={s.completionPct} size={28} />
+                <div className="shrink-0 opacity-80 transition-opacity group-hover:opacity-100">
+                  <ProgressRing percent={s.completionPct} size={32} />
+                </div>
               </div>
             </motion.div>
           )

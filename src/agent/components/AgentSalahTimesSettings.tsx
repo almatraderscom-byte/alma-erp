@@ -73,40 +73,40 @@ export default function AgentSalahTimesSettings() {
   }
 
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md overflow-hidden">
+    <div className="rounded-xl border border-black/[0.06] bg-white overflow-hidden shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-[#FAFAF8] hover:bg-white/[0.02] transition-colors"
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-[#1a1a2e] hover:bg-black/[0.02] transition-colors"
       >
         <span>🕌 নামাজের সময় (৩×৫ ওয়াক্ত)</span>
         <span className={cn(
-          'text-[#C9A84C] transition-transform duration-200',
+          'text-[#E07A5F] transition-transform duration-200',
           open && 'rotate-180',
         )}>▼</span>
       </button>
 
       {open && (
-        <div className="border-t border-white/[0.06] px-4 py-4">
-          <p className="mb-4 text-[10px] text-[#6B6B72]">
+        <div className="border-t border-black/[0.06] px-4 py-4">
+          <p className="mb-4 text-[10px] text-[#94a3b8]">
             আযান · জামাত · ওয়াক্ত শেষ — HH:MM (২৪ঘ) Dhaka। জুম্মায় যোহর আযান ১:০০ কোডে থাকে।
           </p>
 
           {!cfg ? (
-            <p className="text-xs text-[#6B6B72]">লোড হচ্ছে…</p>
+            <p className="text-xs text-[#94a3b8]">লোড হচ্ছে…</p>
           ) : (
             <div className="space-y-4">
               {WAQT_ORDER.map((waqt) => (
-                <div key={waqt} className="grid gap-2 sm:grid-cols-4 sm:items-end rounded-lg bg-white/[0.02] p-2">
-                  <div className="text-xs font-semibold text-[#FAFAF8] sm:pb-2">{WAQT_LABELS[waqt]}</div>
+                <div key={waqt} className="grid gap-2 sm:grid-cols-4 sm:items-end rounded-lg bg-[#FAF9F6] p-2">
+                  <div className="text-xs font-semibold text-[#1a1a2e] sm:pb-2">{WAQT_LABELS[waqt]}</div>
                   {(['azan', 'prayer', 'end'] as const).map((field) => (
-                    <label key={field} className="block text-[10px] text-[#6B6B72]">
+                    <label key={field} className="block text-[10px] text-[#64748b]">
                       {FIELD_LABELS[field]}
                       <input
                         type="time"
                         value={cfg[waqt][field].length === 5 ? cfg[waqt][field] : cfg[waqt][field]}
                         onChange={(e) => patch(waqt, field, e.target.value)}
-                        className="mt-0.5 w-full rounded-lg border border-white/[0.1] bg-white/[0.03] backdrop-blur-sm px-2 py-1.5 text-xs text-[#FAFAF8] focus:outline-none focus:border-[#C9A84C]/40 focus:shadow-[0_0_10px_rgba(201,168,76,0.1)] transition-all"
+                        className="mt-0.5 w-full rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 transition-all"
                       />
                     </label>
                   ))}
@@ -119,16 +119,16 @@ export default function AgentSalahTimesSettings() {
                   onClick={() => void save()}
                   disabled={saving}
                   className={cn(
-                    'rounded-lg bg-[#C9A84C]/10 border border-[#C9A84C]/30 backdrop-blur-sm px-4 py-2 text-xs font-semibold text-[#E8C96A] transition-all',
+                    'rounded-lg border border-[#E07A5F]/25 bg-[#E07A5F]/[0.08] px-4 py-2 text-xs font-semibold text-[#E07A5F] transition-all',
                     saving
                       ? 'opacity-50'
-                      : 'hover:bg-[#C9A84C]/15 hover:shadow-[0_0_16px_rgba(201,168,76,0.15)]',
+                      : 'hover:bg-[#E07A5F]/15',
                   )}
                 >
                   {saving ? 'সেভ…' : '💾 সেভ করুন'}
                 </button>
-                {ok && <span className="text-xs text-emerald-400 font-medium">✓ সেভ হয়েছে</span>}
-                {err && <span className="text-xs text-red-400">{err}</span>}
+                {ok && <span className="text-xs text-emerald-600 font-medium">✓ সেভ হয়েছে</span>}
+                {err && <span className="text-xs text-red-600">{err}</span>}
               </div>
             </div>
           )}

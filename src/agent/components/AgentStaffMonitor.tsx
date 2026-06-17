@@ -434,7 +434,7 @@ export default function AgentStaffMonitor() {
 
   if (err && !displayData) {
     return (
-      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
+      <div className="flex min-h-[40dvh] flex-col items-center justify-center gap-3 p-6">
         <div className="rounded-xl border border-red-500/20 bg-red-50 px-6 py-4 text-center text-sm text-red-700">
           লোড করা যায়নি: {err}
         </div>
@@ -447,7 +447,7 @@ export default function AgentStaffMonitor() {
 
   if (!liveData) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
+      <div className="flex min-h-[40dvh] items-center justify-center">
         <div className="flex items-center gap-3 text-[#94a3b8]">
           <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
           <span className="text-sm">Loading command center…</span>
@@ -668,8 +668,8 @@ export default function AgentStaffMonitor() {
                             a.type === 'slow_task' && 'border-orange-200 bg-orange-50',
                             a.type === 'proof_sent' && 'border-blue-200 bg-blue-50',
                           )}>
-                            <span className="font-semibold">{a.staffName}</span>
-                            <span className="text-zinc-600">{a.message}</span>
+                            <span className="shrink-0 font-semibold">{a.staffName}</span>
+                            <span className="min-w-0 flex-1 text-zinc-600">{a.message}</span>
                           </div>
                         ))}
                       </div>
@@ -742,7 +742,7 @@ export default function AgentStaffMonitor() {
                               issue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-zinc-100 text-[#64748b]')}>
                               {issue.severity}
                             </span>
-                            <span className="font-semibold text-[#1a1a2e]/80">{issue.title}</span>
+                            <span className="min-w-0 flex-1 truncate font-semibold text-[#1a1a2e]/80">{issue.title}</span>
                           </div>
                           <div className="mt-1 flex items-center justify-between">
                             <p className="text-[10px] text-[#64748b]">{issue.detail}</p>
@@ -891,10 +891,10 @@ export default function AgentStaffMonitor() {
                           'bg-[#FAF9F6] border-l-2 border-l-amber-500/25')}>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-[#1a1a2e]/70">{m.staffName ?? '—'}</span>
-                              <span className="rounded bg-black/[0.04] px-1 py-0.5 text-[9px] font-semibold text-[#94a3b8]">{typeLabel(m.type)}</span>
-                              <AckBadge m={m} />
-                              <span className="ml-auto shrink-0 tabular-nums text-[10px] text-[#94a3b8]">{fmtTime(m.createdAt)}</span>
+                              <span className="min-w-0 flex-1 truncate font-medium text-[#1a1a2e]/70">{m.staffName ?? '—'}</span>
+                              <span className="shrink-0 rounded bg-black/[0.04] px-1 py-0.5 text-[9px] font-semibold text-[#94a3b8]">{typeLabel(m.type)}</span>
+                              <span className="shrink-0"><AckBadge m={m} /></span>
+                              <span className="shrink-0 tabular-nums text-[10px] text-[#94a3b8]">{fmtTime(m.createdAt)}</span>
                             </div>
                             <FeedMessage content={m.content ?? ''} />
                           </div>
@@ -1008,7 +1008,7 @@ export default function AgentStaffMonitor() {
       {/* ── History Sidebar ── */}
       <aside className={cn(
         'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-black/[0.06] lg:bg-white lg:shadow-sm lg:p-3',
-        historyOpen ? 'fixed inset-y-0 right-0 z-40 w-64 border-l border-black/[0.06] bg-white/95 backdrop-blur-2xl p-4 shadow-xl' : 'hidden',
+        historyOpen ? 'fixed inset-y-0 right-0 z-[60] w-64 border-l border-black/[0.06] bg-white/95 backdrop-blur-2xl px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl' : 'hidden',
       )}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">History</h2>

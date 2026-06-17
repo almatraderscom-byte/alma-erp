@@ -132,8 +132,8 @@ export function MonitorKPIStrip({ data, brainStats }: {
         >
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#E07A5F]/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
-            <div className="flex items-center justify-between">
-              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#94a3b8]">{kpi.label}</p>
+            <div className="flex items-center justify-between gap-1">
+              <p className="min-w-0 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-[#94a3b8]">{kpi.label}</p>
               {kpi.trend && (
                 <span className={cn(
                   'text-[10px]',
@@ -143,7 +143,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
                 </span>
               )}
             </div>
-            <p className={cn('mt-1 text-2xl font-black tabular-nums tracking-tight', kpi.color)}>
+            <p className={cn('mt-1 text-xl font-black tabular-nums tracking-tight sm:text-2xl', kpi.color)}>
               {kpi.displayValue ?? <AnimatedNumber value={kpi.value} />}
             </p>
             <p className="mt-0.5 text-[10px] text-[#94a3b8]">{kpi.sub}</p>

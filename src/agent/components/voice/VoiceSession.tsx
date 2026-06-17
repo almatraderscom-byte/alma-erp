@@ -6,6 +6,7 @@ import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
 import { fetchTtsAudio } from '@/agent/lib/voice-tts-client'
 import type { VoiceState } from '@/agent/lib/voice-types'
+import { VoiceOrb } from './VoiceOrb'
 import toast from 'react-hot-toast'
 
 interface VoiceSessionProps {
@@ -135,15 +136,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const orbScale = state === 'listening'
-    ? 1 + micLevel * 0.18
-    : state === 'speaking'
-      ? 1 + Math.sin(Date.now() / 200) * 0.06
-      : state === 'thinking' || state === 'transcribing'
-        ? 1
-        : 1
-
-  const orbPulseClass = state === 'thinking' || state === 'transcribing' ? 'animate-pulse' : ''
+  const orbScale = state === 'listening' ? 1 + Math.min(micLevel, 1) * 0.12 : 1
 
   return (
     <AnimatePresence>
@@ -168,97 +161,27 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
 
           {/* Main content */}
           <div className="flex flex-col items-center gap-6">
-            {/* Glow behind orb */}
-            <div className="relative">
-              <motion.div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-                style={{
-                  width: 260,
-                  height: 260,
-                  background: state === 'listening'
-                    ? 'radial-gradient(circle, rgba(224,122,95,0.4) 0%, rgba(224,122,95,0.08) 50%, transparent 70%)'
-                    : state === 'speaking'
-                      ? 'radial-gradient(circle, rgba(56,189,248,0.35) 0%, rgba(56,189,248,0.06) 50%, transparent 70%)'
-                      : 'radial-gradient(circle, rgba(224,122,95,0.2) 0%, transparent 60%)',
-                }}
-                animate={{
-                  scale: state === 'listening' ? [1, 1.08 + micLevel * 0.12, 1] : [1, 1.04, 1],
-                  opacity: state === 'listening' ? [0.6, 0.9, 0.6] : [0.4, 0.6, 0.4],
-                }}
-                transition={{ duration: state === 'listening' ? 0.8 : 3, repeat: Infinity, ease: 'easeInOut' }}
-              />
-
-              {/* The orb itself */}
-              <motion.button
-                type="button"
-                onClick={handleTapOrb}
-                className={`relative z-10 flex items-center justify-center rounded-full focus:outline-none ${orbPulseClass}`}
-                style={{ width: 180, height: 180 }}
-                animate={{ scale: orbScale }}
-                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                whileTap={{ scale: 0.94 }}
-              >
-                {/* Outer ring */}
-                <div
-                  className="absolute inset-0 rounded-full"
-                  style={{
-                    background: state === 'listening'
-                      ? 'conic-gradient(from 0deg, #E07A5F, #F4A261, #E07A5F)'
-                      : state === 'speaking'
-                        ? 'conic-gradient(from 0deg, #38BDF8, #818CF8, #38BDF8)'
-                        : 'conic-gradient(from 0deg, #E07A5F, #F6D5C8, #E07A5F)',
-                    padding: 3,
-                    WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                    WebkitMaskComposite: 'xor',
-                    maskComposite: 'exclude',
-                    opacity: state === 'idle' ? 0.5 : 0.9,
-                    animation: (state === 'listening' || state === 'speaking') ? 'spin 3s linear infinite' : undefined,
-                  }}
-                />
-                {/* Inner sphere with gradient + glass effect */}
-                <div
-                  className="absolute rounded-full"
-                  style={{
-                    inset: 4,
-                    background: state === 'speaking'
-                      ? 'radial-gradient(circle at 35% 30%, #dbeafe 0%, #60a5fa 30%, #3b82f6 55%, #1d4ed8 85%)'
-                      : state === 'listening'
-                        ? 'radial-gradient(circle at 35% 30%, #FEE2D5 0%, #F4A261 25%, #E07A5F 55%, #c45a42 85%)'
-                        : 'radial-gradient(circle at 35% 30%, #F6E6DF 0%, #E8B4A0 30%, #D4846A 55%, #c45a42 85%)',
-                    boxShadow: state === 'listening'
-                      ? '0 12px 48px rgba(224,122,95,0.45), inset 0 -12px 32px rgba(0,0,0,0.1), inset 0 6px 20px rgba(255,255,255,0.35)'
-                      : state === 'speaking'
-                        ? '0 12px 48px rgba(59,130,246,0.4), inset 0 -12px 32px rgba(0,0,0,0.1), inset 0 6px 20px rgba(255,255,255,0.4)'
-                        : '0 8px 36px rgba(224,122,95,0.25), inset 0 -8px 24px rgba(0,0,0,0.06), inset 0 4px 16px rgba(255,255,255,0.3)',
-                  }}
-                />
-                {/* Highlight/reflection spot */}
-                <div
-                  className="absolute rounded-full"
-                  style={{
-                    width: 56,
-                    height: 36,
-                    top: 24,
-                    left: '50%',
-                    transform: 'translateX(-50%) rotate(-15deg)',
-                    background: 'radial-gradient(ellipse, rgba(255,255,255,0.55) 0%, transparent 70%)',
-                    filter: 'blur(6px)',
-                  }}
-                />
-                {/* Center icon */}
-                <div className="relative z-10 flex items-center justify-center">
-                  {state === 'listening' ? (
-                    <MicWaveIcon />
-                  ) : state === 'speaking' ? (
-                    <SpeakerIcon />
-                  ) : state === 'thinking' || state === 'transcribing' ? (
-                    <ThinkingIcon />
-                  ) : (
-                    <MicIcon />
-                  )}
-                </div>
-              </motion.button>
-            </div>
+            <motion.button
+              type="button"
+              onClick={handleTapOrb}
+              className="relative flex items-center justify-center rounded-full focus:outline-none"
+              animate={{ scale: orbScale }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              whileTap={{ scale: 0.94 }}
+              aria-label="ভয়েস কন্ট্রোল"
+            >
+              <VoiceOrb state={state} micLevel={micLevel} size={188}>
+                {state === 'listening' ? (
+                  <MicWaveIcon />
+                ) : state === 'speaking' ? (
+                  <SpeakerIcon />
+                ) : state === 'thinking' || state === 'transcribing' ? (
+                  <ThinkingIcon />
+                ) : (
+                  <MicIcon />
+                )}
+              </VoiceOrb>
+            </motion.button>
 
             {/* Status */}
             <motion.div
@@ -289,9 +212,6 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
             </button>
           </div>
 
-          <style jsx>{`
-            @keyframes spin { to { transform: rotate(360deg); } }
-          `}</style>
         </motion.div>
       )}
     </AnimatePresence>

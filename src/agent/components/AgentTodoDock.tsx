@@ -59,7 +59,6 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
               exit={{ y: -48, opacity: 0 }}
               transition={{ type: 'spring', damping: 26, stiffness: 320 }}
               className="pointer-events-auto border-b border-black/[0.06] bg-white/80 backdrop-blur-xl"
-              style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
             >
               <button
                 type="button"
@@ -70,9 +69,9 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
                   <rect x="3" y="4" width="18" height="18" rx="2" />
                   <path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" />
                 </svg>
-                <span className="text-[12px] font-semibold text-[#1a1a2e]">{dateLabel}</span>
-                <span className="text-[11px] text-[#94a3b8]">·</span>
-                <span className="flex items-center gap-2 text-[11px] font-medium">
+                <span className="min-w-0 truncate text-[12px] font-semibold text-[#1a1a2e]">{dateLabel}</span>
+                <span className="shrink-0 text-[11px] text-[#94a3b8]">·</span>
+                <span className="flex shrink-0 items-center gap-2 text-[11px] font-medium">
                   <span className="text-[#1a1a2e]">{total} Tasks</span>
                   <span className="inline-flex items-center gap-1 text-emerald-600">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -102,7 +101,7 @@ export function AgentTodoDock({ containerRef }: { containerRef: RefObject<HTMLDi
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden border-t border-black/[0.05]"
                   >
-                    <div className="mx-auto max-h-[55vh] max-w-2xl overflow-y-auto">
+                    <div className="mx-auto max-h-[55dvh] max-w-2xl overflow-y-auto">
                       <AgentTodoPanel />
                     </div>
                   </motion.div>

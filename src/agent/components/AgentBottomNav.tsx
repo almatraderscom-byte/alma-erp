@@ -16,7 +16,7 @@ export function AgentBottomNav() {
   const pathname = usePathname()
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
+    <nav className="agent-bottom-nav fixed bottom-0 left-0 right-0 z-50 md:hidden">
       <div className="absolute inset-0 bg-white border-t border-black/[0.06]" />
 
       <div

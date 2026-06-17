@@ -13,6 +13,10 @@ export function buildMismatchReloadScript(): string | null {
   const autoCount = 'alma_build_auto_reload_n'
   const b = APP_BUILD_ID
   return `(function(){try{
+    // Capacitor native shell: never self-reload / wipe SW+caches on launch.
+    // On a cold start over slow network this can loop or white-screen, forcing
+    // the user to kill & reopen the app. Native updates via PwaBootstrap instead.
+    var C=window.Capacitor;if(C&&C.isNativePlatform&&C.isNativePlatform())return;
     if(/[?&]_alma_v=/.test(location.search))return;
     var manual=sessionStorage.getItem(${JSON.stringify(manualAt)});
     if(manual&&Date.now()-Number(manual)<180000)return;
