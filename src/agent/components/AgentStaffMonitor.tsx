@@ -228,6 +228,7 @@ export default function AgentStaffMonitor() {
   const [feedExpanded, setFeedExpanded] = useState(false)
   const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview')
   const [geoFenceToggling, setGeoFenceToggling] = useState(false)
+  const [dutyToggling, setDutyToggling] = useState<string | null>(null)
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
@@ -379,6 +380,44 @@ export default function AgentStaffMonitor() {
       }
     }
     setDeploying(false); setTimeout(() => setDeployMsg(null), 10000)
+  }
+
+  async function toggleDutyEnabled(dutyKey: string, enabled: boolean) {
+    const prevMap = liveData?.dutyEnabled ?? {}
+    setDutyToggling(dutyKey)
+    setLiveData((prev) =>
+      prev ? { ...prev, dutyEnabled: { ...prev.dutyEnabled, [dutyKey]: enabled } } : prev,
+    )
+    try {
+      const res = await fetch('/api/agent/staff-monitor/duty-enabled', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dutyKey, enabled }),
+      })
+      const data = await res.json() as {
+        enabled?: boolean
+        critical?: boolean
+        dutyEnabled?: Record<string, boolean>
+        error?: string
+      }
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      setLiveData((prev) =>
+        prev ? { ...prev, dutyEnabled: data.dutyEnabled ?? prev.dutyEnabled } : prev,
+      )
+      if (!enabled && data.critical) {
+        showToast('⚠️ Critical duty OFF — CS/finance/scheduler coverage may be affected', 'err')
+      } else {
+        showToast(enabled ? `${dutyKey} চালু — scheduler + todo তালিকায় ফিরবে` : `${dutyKey} বন্ধ — auto-run ও todo বাদ`, enabled ? 'ok' : 'err')
+      }
+      void loadLive()
+    } catch {
+      setLiveData((prev) =>
+        prev ? { ...prev, dutyEnabled: prevMap } : prev,
+      )
+      showToast('Duty toggle ব্যর্থ', 'err')
+    } finally {
+      setDutyToggling(null)
+    }
   }
 
   async function toggleGeoFenceMonitoring(enabled: boolean) {
@@ -764,6 +803,9 @@ export default function AgentStaffMonitor() {
                   retriggering={retriggering}
                   isLive={isLive}
                   dutyTimeOverrides={displayData.dutyTimeOverrides}
+                  dutyEnabled={displayData.dutyEnabled}
+                  onToggleDuty={isLive ? toggleDutyEnabled : undefined}
+                  dutyToggling={dutyToggling}
                 />
                 {isLive && <MonitorSalahTimeline salahDuties={displayData.salahDuties} />}
                 {isLive && (

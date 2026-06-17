@@ -137,8 +137,11 @@ export async function runCatchup({ supabase, bot, runJob, opts = {} }) {
   const recovered = []
   const missed = []
   const missedCritical = []
+  const { isDutyEnabled } = await import('./duty-enabled.mjs')
 
   for (const [duty, policy] of Object.entries(DUTY_CATCHUP)) {
+    if (!(await isDutyEnabled(supabase, duty))) continue
+
     const status = ran.get(duty)
     if (status === 'done' || status === 'skipped' || status === 'missed') continue
 

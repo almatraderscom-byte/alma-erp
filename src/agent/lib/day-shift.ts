@@ -16,7 +16,7 @@ import {
   recordDutyApprovalBlock,
 } from '@/agent/lib/duty-approval-block'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
-import { dutiesForToday } from '@/agent/lib/agent-duties'
+import { enabledDutiesForToday } from '@/agent/lib/duty-enabled'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 
@@ -41,8 +41,12 @@ function isOfficeHoursDhaka(now = new Date()): boolean {
   return mins >= 9 * 60 + 30 && mins < 20 * 60
 }
 
-function shiftDutiesForToday(now = new Date()) {
-  return dutiesForToday(now).filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+async function shiftDutiesForToday(now = new Date()) {
+  return (await enabledDutiesForToday(now)).filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+}
+
+function formatDutyList(duties: Awaited<ReturnType<typeof shiftDutiesForToday>>): string {
+  return duties.map((d, i) => `${i + 1}. ${d.label}`).join('\n')
 }
 
 function dueDateRangeDhaka(ymd: string): { start: Date; end: Date } {
@@ -368,10 +372,6 @@ async function runDeterministicTask(
   }
 }
 
-function formatDutyList(duties: ReturnType<typeof shiftDutiesForToday>): string {
-  return duties.map((d, i) => `${i + 1}. ${d.label}`).join('\n')
-}
-
 const PATROL_INTERVAL_MS = 60 * 60 * 1000 // hourly light check after main queue
 
 async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detail: string; conversationId: string }> {
@@ -403,7 +403,7 @@ async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detai
 /** Start today's shift — intro + duty roster (Phase A todos seeded separately). */
 export async function startDayShift(): Promise<{ ok: boolean; conversationId?: string; detail: string }> {
   const date = todayYmdDhaka()
-  const duties = shiftDutiesForToday()
+  const duties = await shiftDutiesForToday()
   let state = await loadDayShiftState(date)
 
   if (state?.status === 'done') {
@@ -484,7 +484,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   }
 
   const { conversationId, taskIndex } = state
-  const duties = shiftDutiesForToday()
+  const duties = await shiftDutiesForToday()
   const total = duties.length
 
   if (taskIndex >= total) {
@@ -577,7 +577,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
 export async function sendMorningShiftBrief(): Promise<{ ok: boolean; detail: string }> {
   const date = todayYmdDhaka()
   const state = await loadDayShiftState(date)
-  const total = shiftDutiesForToday().length
+  const total = (await shiftDutiesForToday()).length
   const status = state?.status ?? 'idle'
   const doneTasks = Math.min(state?.taskIndex ?? 0, total)
 

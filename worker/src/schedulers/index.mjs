@@ -148,6 +148,17 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
   const { supabase, bot } = context
   let dutyResult = null
 
+  if (isTrackedDuty(jobName)) {
+    const { isDutyEnabled } = await import('./duty-enabled.mjs')
+    const { JOB_TO_DUTY } = await import('./duties.mjs')
+    const dutyKey = JOB_TO_DUTY[jobName]
+    if (dutyKey && !(await isDutyEnabled(supabase, dutyKey))) {
+      console.log(`[schedulers] skipped — disabled by owner: ${jobName} (${dutyKey})`)
+      await logDuty(supabase, jobName, 'skipped', 'skipped — disabled by owner')
+      return { dutyStatus: 'skipped', dutyDetail: 'disabled by owner' }
+    }
+  }
+
   switch (jobName) {
     case 'salah-init': {
       const { initializeDailySalahRecords } = await lazy.salahScheduler()

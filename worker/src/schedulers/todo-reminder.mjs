@@ -57,9 +57,13 @@ async function fetchTodos(query) {
  * Idempotent daily seed — one agent_todos row per duty (except salah), source=day_shift.
  * @returns {Promise<{ seeded: number, total: number, skipped?: boolean }>}
  */
-export async function seedDailyTodos() {
+export async function seedDailyTodos(supabase) {
   const today = todayYmdDhaka()
-  const duties = dutiesForToday().filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+  const { getDutyEnabledMap, isDutyEnabledSync } = await import('./duty-enabled.mjs')
+  const enabledMap = supabase ? await getDutyEnabledMap(supabase) : {}
+  const duties = dutiesForToday()
+    .filter((d) => !SKIP_DUTY_TODO.has(d.duty))
+    .filter((d) => isDutyEnabledSync(d.duty, enabledMap))
   const url = `${getAppUrl()}/api/assistant/todos`
 
   const existing = await fetchTodos('?includeCompleted=true')
@@ -178,10 +182,11 @@ function shouldCancelStaleDutyTodo(todo, dutyStatuses) {
 
 // ── Morning Reminder (08:00) ─────────────────────────────────────────────────
 
-export async function runMorningTodoReminder({ bot }) {
+export async function runMorningTodoReminder(context) {
+  const { bot, supabase } = context
   console.log('[todo-reminder] morning check...')
 
-  const seed = await seedDailyTodos()
+  const seed = await seedDailyTodos(supabase)
 
   const todos = await fetchTodos('?status=pending,in_progress')
 

@@ -14,7 +14,9 @@ export function isTrackedDuty(jobName) {
  */
 export async function seedDailyDuties(supabase) {
   const dutyDate = dhakaDateYmd()
+  const { isDutyEnabled } = await import('./duty-enabled.mjs')
   for (const d of dutiesForToday()) {
+    if (!(await isDutyEnabled(supabase, d.duty))) continue
     await insertPendingDutyLog(supabase, {
       duty: d.duty,
       label: d.label,

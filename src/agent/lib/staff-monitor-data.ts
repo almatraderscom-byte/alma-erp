@@ -8,6 +8,7 @@ import {
 import { isEffectivelyDone } from '@/agent/lib/salah-resolve'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 import { getGeoFenceMonitoringEnabled } from '@/agent/lib/geo-fence-settings'
+import { getResolvedDutyEnabledMap } from '@/agent/lib/duty-enabled'
 import type {
   ActiveReminderRow,
   ActiveTodoRow,
@@ -419,7 +420,10 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
 
   const continuousServices = hbPack.services
 
-  const geoFenceMonitoringEnabled = await getGeoFenceMonitoringEnabled()
+  const [geoFenceMonitoringEnabled, dutyEnabled] = await Promise.all([
+    getGeoFenceMonitoringEnabled(),
+    getResolvedDutyEnabledMap(),
+  ])
   const [geoStatus, productivityAlerts] = await Promise.all([
     geoFenceMonitoringEnabled ? getGeoStatus().catch(() => [] as GeoStaffStatus[]) : Promise.resolve([] as GeoStaffStatus[]),
     getProductivityAlerts().catch(() => [] as ProductivityAlert[]),
@@ -632,6 +636,7 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     geoStatus,
     productivityAlerts,
     geoFenceMonitoringEnabled,
+    dutyEnabled,
     generatedAt: new Date().toISOString(),
   }
 }
