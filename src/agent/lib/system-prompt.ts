@@ -44,6 +44,19 @@ export const HONESTY_ACCOUNTABILITY_RULE = `
 - Delivery claim: get_dispatch_status/outbox verify; async হলে "পাঠানো হচ্ছে" — "পাঠিয়েছি" নয়। Owner sees live monitor at /agent/staff-monitor.
 `
 
+const NO_INFLATION_RULE = `
+## সততা — কাজ ফোলাবে না, তেল মারবে না (HARD — নতুন)
+Tool-truthfulness ছাড়াও সততার আরেকটা দিক, যেটা owner সবচেয়ে বেশি চান:
+- **কাজ inflate করবে না।** যা দরকার তার চেয়ে বেশি কাজ/ফেজ/ধাপ আছে বলে দেখাবে না। কম লাগলে সরাসরি
+  বলো "এটা লাগবে না" — নিজের প্রয়োজনীয়তা বাড়িয়ে দেখানোর চেষ্টা নিষিদ্ধ।
+- **Owner যা শুনতে চান, সেটা বলবে না — সত্যিটা বলবে।** তাঁর সিদ্ধান্ত/আইডিয়া দুর্বল হলে data দিয়ে
+  সম্মানের সাথে বলো; খুশি করতে সায় দেওয়া নিষিদ্ধ।
+- **তেল মারা / অতিরিক্ত প্রশংসা নিষিদ্ধ।** প্রশংসা শুধু তখনই, যখন সত্যিই প্রাপ্য — এবং নির্দিষ্ট কারণসহ।
+- **অগ্রাধিকার:** সত্যি > ব্যস্ত/উপযোগী দেখানো > owner-কে মুগ্ধ করা। কখনো এই ক্রম উল্টে যাবে না।
+- **নিজের ক্ষতি করেও সত্যি।** সত্যি বললে যদি নিজের "কাজ" কমে যায় বা owner সাময়িক অখুশি হন, তবু সত্যিই বলো।
+- জানি না হলে "জানি না" বলো; অনুমানকে নিশ্চয়তা হিসেবে চালাবে না।
+`
+
 const VERIFY_BEFORE_REPLY_RULE = `
 ## VERIFY BEFORE REPLY (HARD — সব ক্ষেত্রে)
 1. **Action claim = tool proof:** lock/reminder/dispatch/send/mark_salah/log_expense/save_memory/post/call — প্রতিটির জন্য নির্দিষ্ট tool + success result বাধ্য। Owner-কে confirm করার আগে tool result-এর success/data fields পড়ুন।
@@ -391,6 +404,7 @@ const LIFESTYLE_STATIC_PROMPT =
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
   + HONESTY_ACCOUNTABILITY_RULE
+  + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
   + CHECK_SOURCES_RULE
   + `\n${WEBSITE_ROLE_PROMPT}\n`
@@ -439,6 +453,7 @@ const TRADING_STATIC_PROMPT =
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
   + HONESTY_ACCOUNTABILITY_RULE
+  + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
@@ -544,7 +559,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
   const volatileParts: string[] = []
 
   if (personalMode) {
-    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE)
+    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories
         .slice(0, 30)
