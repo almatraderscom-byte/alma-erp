@@ -7,6 +7,7 @@ import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-intern
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
 import { getDutyEnabledMap, isDutyEnabledSync } from '@/agent/lib/duty-enabled'
+import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
 function dueDateRangeDhaka(ymd: string): { start: Date; end: Date } {
   const day = ymd.slice(0, 10)
@@ -49,14 +50,21 @@ export async function GET(req: NextRequest) {
     orderBy: [{ createdAt: 'desc' }],
   })
 
-  // Hide todos whose duty the owner has switched OFF in the Control Center, so
-  // the persistent list (home + office) and its count reflect only active
-  // duties — 20 duties minus 1 disabled = 19, not a stale 20. Ad-hoc todos with
-  // no dutyKey are always kept.
+  // Make the persistent list match today's agent duties:
+  //  - drop salah (never a to-do, per owner),
+  //  - drop duties the owner switched OFF in the Control Center,
+  //  - drop stale rows from previous days (the count was inflated by all-time
+  //    history) — keep anything due/created today, plus active ad-hoc tasks.
   const dutyEnabled = await getDutyEnabledMap()
-  const visibleTodos = todos.filter(
-    (t) => !t.dutyKey || isDutyEnabledSync(t.dutyKey, dutyEnabled),
-  )
+  const { start, end } = dueDateRangeDhaka(todayYmdDhaka())
+  const visibleTodos = todos.filter((t) => {
+    if (t.dutyKey === 'salah_init') return false
+    if (t.dutyKey && !isDutyEnabledSync(t.dutyKey, dutyEnabled)) return false
+    const dueToday = t.dueDate ? t.dueDate >= start && t.dueDate <= end : false
+    const createdToday = t.createdAt >= start && t.createdAt <= end
+    const activeAdhoc = !t.dutyKey && t.status !== 'completed' && t.status !== 'cancelled'
+    return dueToday || createdToday || activeAdhoc
+  })
 
   const serialized = sortTodosForDisplay(visibleTodos).map((t) => ({
     ...t,

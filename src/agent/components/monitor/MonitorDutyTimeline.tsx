@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type { AgentDutyRow, SalahDutyRow, StaffMonitorData } from '@/agent/lib/staff-monitor-types'
 import { DUTY_TO_JOB } from '@/agent/lib/staff-monitor-types'
+import { DUTY_CATEGORY_META, dutyCategory } from '@/agent/lib/agent-duties'
 
 const fadeIn = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } }
 
@@ -257,52 +258,69 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
             )}
           </AnimatePresence>
 
-          <div className="mt-2 space-y-0.5">
-            {duties.map(d => {
-              const isFailed = d.status === 'failed' || d.status === 'missed'
-              const isActive = expandedDuty === d.duty
-              const enabled = (dutyEnabled ?? {})[d.duty] !== false
+          {/* Category-grouped duty toggles — easier to find what to switch off/on. */}
+          <div className="mt-3 space-y-3">
+            {DUTY_CATEGORY_META.map((cat) => {
+              const catDuties = duties.filter((d) => dutyCategory(d.duty) === cat.key)
+              if (catDuties.length === 0) return null
+              const catEnabled = catDuties.filter((d) => (dutyEnabled ?? {})[d.duty] !== false).length
               return (
-                <div
-                  key={d.id}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-all',
-                    !enabled && 'opacity-50',
-                    isFailed ? 'border-l-2 border-l-red-500/60' :
-                    d.status === 'done' ? 'border-l-2 border-l-emerald-500/40' :
-                    'border-l-2 border-l-amber-500/30',
-                    isActive && 'bg-black/[0.02]',
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setExpandedDuty(isActive ? null : d.duty)}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  >
-                    <span className={cn(
-                      'inline-block h-2 w-2 shrink-0 rounded-full',
-                      !enabled ? 'bg-zinc-400' :
-                      d.status === 'done' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]' :
-                      isFailed ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]' :
-                      d.status === 'skipped' ? 'bg-zinc-400' :
-                      'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
-                    )} />
-                    <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/80">
-                      {d.label}
-                      {!enabled && <span className="ml-1 text-[9px] font-bold text-zinc-400">OFF</span>}
-                    </span>
-                    <span className="shrink-0 text-[10px] tabular-nums text-[#94a3b8]">
-                      {(dutyTimeOverrides ?? {})[d.duty] ?? (d.ranAt ? fmtTime(d.ranAt) : d.time ?? '')}
-                    </span>
-                  </button>
-                  {isLive && onToggleDuty && (
-                    <DutyToggleSwitch
-                      dutyKey={d.duty}
-                      enabled={enabled}
-                      toggling={dutyToggling === d.duty}
-                      onToggle={onToggleDuty}
-                    />
-                  )}
+                <div key={cat.key}>
+                  <div className="mb-1 flex items-center gap-1.5 px-1">
+                    <span className="text-[12px]">{cat.icon}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">{cat.label}</span>
+                    <span className="text-[9px] tabular-nums text-[#cbd5e1]">{catEnabled}/{catDuties.length} চালু</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {catDuties.map(d => {
+                      const isFailed = d.status === 'failed' || d.status === 'missed'
+                      const isActive = expandedDuty === d.duty
+                      const enabled = (dutyEnabled ?? {})[d.duty] !== false
+                      return (
+                        <div
+                          key={d.id}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-all',
+                            !enabled && 'opacity-50',
+                            isFailed ? 'border-l-2 border-l-red-500/60' :
+                            d.status === 'done' ? 'border-l-2 border-l-emerald-500/40' :
+                            'border-l-2 border-l-amber-500/30',
+                            isActive && 'bg-black/[0.02]',
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDuty(isActive ? null : d.duty)}
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                          >
+                            <span className={cn(
+                              'inline-block h-2 w-2 shrink-0 rounded-full',
+                              !enabled ? 'bg-zinc-400' :
+                              d.status === 'done' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]' :
+                              isFailed ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]' :
+                              d.status === 'skipped' ? 'bg-zinc-400' :
+                              'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
+                            )} />
+                            <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/80">
+                              {d.label}
+                              {!enabled && <span className="ml-1 text-[9px] font-bold text-zinc-400">OFF</span>}
+                            </span>
+                            <span className="shrink-0 text-[10px] tabular-nums text-[#94a3b8]">
+                              {(dutyTimeOverrides ?? {})[d.duty] ?? (d.ranAt ? fmtTime(d.ranAt) : d.time ?? '')}
+                            </span>
+                          </button>
+                          {isLive && onToggleDuty && (
+                            <DutyToggleSwitch
+                              dutyKey={d.duty}
+                              enabled={enabled}
+                              toggling={dutyToggling === d.duty}
+                              onToggle={onToggleDuty}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )
             })}
