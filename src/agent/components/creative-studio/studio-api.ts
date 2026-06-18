@@ -68,6 +68,17 @@ export async function runStudioJob(payload: RunPayload) {
   return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
 }
 
+export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean }) {
+  const res = await fetch('/api/assistant/creative-studio/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto: true, ...input }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? data.message ?? 'run_failed')
+  return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
+}
+
 export async function fetchGallery(page = 1): Promise<{ items: GalleryItem[]; hasMore: boolean; total: number }> {
   const res = await fetch(`/api/assistant/creative-studio/gallery?page=${page}&limit=24`)
   if (!res.ok) throw new Error('gallery_failed')

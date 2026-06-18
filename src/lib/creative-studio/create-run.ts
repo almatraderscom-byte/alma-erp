@@ -4,6 +4,7 @@ import { buildVideoBrief, estimateReelCostUsd } from '@/lib/content-engine/video
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
+import { getDefaultModel, getModelByRole } from '@/lib/tryon/model-library'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -251,4 +252,62 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     type: 'image_gen',
   })
   return { jobs, provider: 'gemini', fashnReady }
+}
+
+export type AutoStudioResult = {
+  jobs: CreativeStudioJobRef[]
+  provider: StudioProvider
+  modelName: string
+  variants: ChatTryOnVariant[]
+}
+
+/**
+ * One-tap Auto: owner uploads only a product image. We auto-pick the default
+ * brand model, auto-classify the garment + auto-write the prompt (inside
+ * queueTryOnBatch), and queue a curated on-model set. Family variants are
+ * added only when the required role models exist, so it never fails for a
+ * missing model. No prompt / no manual settings required.
+ */
+export async function runAutoStudio(input: {
+  productImagePath: string
+  includeFamily?: boolean
+}): Promise<AutoStudioResult> {
+  const productImagePath = input.productImagePath?.trim()
+  if (!productImagePath) throw new Error('product_image_required')
+
+  const defaultModel = await getDefaultModel()
+  if (!defaultModel) throw new Error('no_default_model')
+
+  const variants: ChatTryOnVariant[] = ['single']
+  if (input.includeFamily) {
+    const [father, mother, son, daughter] = await Promise.all([
+      getModelByRole('father'),
+      getModelByRole('mother'),
+      getModelByRole('son'),
+      getModelByRole('daughter'),
+    ])
+    if (father && son) variants.push('father_son')
+    if (mother && son) variants.push('mother_son')
+    if (mother && daughter) variants.push('mother_daughter')
+  }
+
+  const batch = await queueTryOnBatch({
+    productImagePath,
+    modelId: defaultModel.id,
+    variants,
+    conversationId: null,
+  })
+
+  const jobs: CreativeStudioJobRef[] = []
+  for (const item of batch.items) {
+    await mergeApprovedPayload(item.pendingActionId, {
+      studioMode: 'product_to_model',
+      provider: 'gemini',
+      auto: true,
+      familyPreset: item.variant,
+    })
+    jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
+  }
+
+  return { jobs, provider: 'gemini', modelName: defaultModel.name, variants }
 }
