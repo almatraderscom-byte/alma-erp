@@ -14,6 +14,7 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { assembleSelectedTools, toolsToDefinitions } from '@/agent/tools/select-tools'
 import { executeTool } from '@/agent/tools/registry'
+import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { SPECIALIST_ROLES, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -134,7 +135,7 @@ async function runAnthropicSubAgent(args: {
         conversationId: args.conversationId,
         businessId: args.businessId,
       })
-      toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) })
+      toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(annotateEmptyResult(result)) })
     }
     messages = [...messages, { role: 'user', content: toolResults }]
   }

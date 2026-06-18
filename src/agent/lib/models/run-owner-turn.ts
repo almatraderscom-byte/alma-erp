@@ -21,6 +21,8 @@ import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
+import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -150,7 +152,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -164,6 +166,7 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
 
   const promptArgs = {
@@ -187,6 +190,7 @@ async function* runAlternateProviderTurn(
     businessContext,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
+    businessSnapshot,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
@@ -365,7 +369,7 @@ async function* runAlternateProviderTurn(
           }
         }
 
-        toolResults.push({ id: call.id, name: call.name, result })
+        toolResults.push({ id: call.id, name: call.name, result: annotateEmptyResult(result) })
       }
 
       messages = appendToolExchange(messages, calls, toolResults)

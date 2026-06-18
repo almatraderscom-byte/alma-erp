@@ -47,6 +47,7 @@ export function selectToolGroupsSync(
   if (/website|almatraders|publish|catalog/i.test(t)) g.add('website')
   if (/salah|নামাজ|prayer|namaz|fajr|dhuhr|asr|maghrib|isha|ফজর|যোহর|আসর|মাগরিব|ইশা|জুম্মা|poreci|porlam|পড়েছি|পড়লাম|নামায/i.test(t)) g.add('salah')
   if (/expense|ledger|finance|খরচ|টাকা|bdt|aed|simulate|projection|what.?if|restock|break.?even/i.test(t)) g.add('finance')
+  if (/api.?(credit|balance|key)|subscription|সাবস্ক্রিপশন|ক্রেডিট|recharge|রিচার্জ|credit.?balance|api.?bill/i.test(t)) g.add('cost')
   if (/সমস্যা|error|bug|diagnose|health|watchdog/i.test(t)) g.add('diag')
   if (/qc|screenshot|invoice|রসিদ|receipt|brand.?check|ছবি.*(?:check|দেখ|inspect)|photo.*(?:check|inspect|qc)|poster.*(?:check|read|দেখ)/i.test(t)) g.add('vision')
 

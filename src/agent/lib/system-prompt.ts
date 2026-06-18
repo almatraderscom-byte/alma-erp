@@ -345,8 +345,8 @@ set_reminder mandatory; urgent→tier2; "call me"→tier3 confirm. outbound_phon
 ## ERP data
 sales/orders/inventory/staff/attendance → relevant tools; if empty, say so honestly; ৳ whole taka.
 
-## ask_user
-ambiguous + material impact → one MC question (max once/turn).
+## ask_user / brevity
+ambiguous + material impact → one MC question (max once/turn), ≤3 options. When blocked or missing input, ask only the 1-2 things you actually need to move forward — never dump a long menu of every possible path/alternative (a 5-6 item list overwhelms the owner). Offer the single most likely next step; mention other options only if the owner asks.
 
 ## Confirm cards
 generate_image/post_to_facebook/pending actions → wait for Approve/Reject.
@@ -365,6 +365,7 @@ For task proposals, briefings, staff plans, or "what should I do" — don't answ
 - Relevant tools: get_orders/check_order_issues, get_inventory_status/get_reorder_suggestions, get_sales_summary, get_website_health/get_website_catalog, get_fb_recent_posts/get_marketing_history/get_marketing_intel, recall_business_knowledge/search_memory.
 - Then diagnose gaps/opportunities (e.g. "no post in 7 days", pending pile-up, bestseller low stock, not published to website) — then the proposal/answer, briefly noting what you checked.
 - Not all tools on trivial questions — only the relevant ones; check broadly for a full proposal/review. The owner watches the live checking sequence — keep it purposeful.
+- Routine factual lookups (today's sales/pending/stock/reorder/CS) → answer from the injected "ব্যবসা snapshot" if present; don't re-run read tools just to repeat numbers the daily tour already gathered. The read-tour above is for real proposals/reviews, an explicit "live/এখনকার/সর্বশেষ" request, or details the snapshot doesn't cover.
 `
 
 /**
@@ -525,6 +526,8 @@ export type BuildSystemPromptArgs = {
   businessContext?: string
   /** Active tool groups this turn — gates which role prompts get loaded. */
   activeGroups?: ToolGroupName[]
+  /** Compact business-state snapshot from today's daily ERP tour (if any). */
+  businessSnapshot?: { text: string; date: string; isToday: boolean } | null
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -554,6 +557,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     conflictSignals,
     businessContext,
     activeGroups,
+    businessSnapshot,
   } = args
 
   const stableParts: string[] = []
@@ -616,6 +620,25 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     if (businessContext) {
       volatileParts.push(businessContext)
+    }
+
+    // Daily business snapshot — inject on business-data turns so routine
+    // questions (sales/pending/stock/reorder) are answered from context instead
+    // of an expensive live tool round-trip. Only ERP-flavoured turns need it, so
+    // salah/greeting turns stay lean.
+    if (businessSnapshot?.text) {
+      const dataGroups: ToolGroupName[] = ['erp', 'finance', 'cs', 'growth', 'content', 'website']
+      const isDataTurn = !activeGroups || activeGroups.some((g) => dataGroups.includes(g))
+      if (isDataTurn) {
+        const freshness = businessSnapshot.isToday
+          ? `আজকের (${businessSnapshot.date}) daily tour থেকে`
+          : `⚠️ পুরোনো (${businessSnapshot.date}) — আজকের নয়`
+        volatileParts.push(
+          `\n## 📊 ব্যবসা snapshot (${freshness})\n${businessSnapshot.text}\n` +
+            `routine business প্রশ্ন (sales/pending/stock/reorder/CS) এই snapshot থেকেই উত্তর দিন — live tool ডাকবেন না। ` +
+            `শুধু তখন live ERP tool (get_sales_summary/get_inventory_status ইত্যাদি) ডাকুন যখন: owner স্পষ্ট "live/এখনকার/আপডেট/সর্বশেষ" চান, snapshot পুরোনো/missing, অথবা snapshot-এ নেই এমন নির্দিষ্ট ডিটেইল লাগে। snapshot থেকে উত্তর দিলে এক লাইনে "(আজকের briefing অনুযায়ী)" বলুন।`,
+        )
+      }
     }
 
     if (pinnedMemories && pinnedMemories.length > 0) {

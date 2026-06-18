@@ -20,6 +20,8 @@ import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
+import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { bumpPlaybookRulesForDomains } from '@/agent/lib/learning/learned-rules'
 import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
@@ -400,7 +402,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -426,6 +428,7 @@ export async function* runAgentTurn(
       return ''
     }),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
   const selectedTools = toolSelection.tools
   const activeGroups = toolSelection.groups
@@ -496,6 +499,7 @@ export async function* runAgentTurn(
     conflictSignals,
     businessContext,
     activeGroups,
+    businessSnapshot,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
@@ -800,7 +804,7 @@ export async function* runAgentTurn(
         toolResultContent.push({
           type: 'tool_result',
           tool_use_id: tb.id,
-          content: JSON.stringify(result),
+          content: JSON.stringify(annotateEmptyResult(result)),
         })
       }
 
