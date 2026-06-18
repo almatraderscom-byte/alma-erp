@@ -116,8 +116,8 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'loading') {
     return (
-      <motion.div layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-        className="mt-3 flex min-h-[140px] items-center justify-center rounded-xl border border-amber-200 bg-amber-50/50 p-6">
+      <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 flex min-h-[140px] items-center justify-center rounded-[18px] border border-amber-200 bg-amber-50/50 p-6 shadow-card">
         <AgentSparkleLoader label={loadingLabel} size="lg" />
       </motion.div>
     )
@@ -125,8 +125,8 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'approved') {
     return (
-      <motion.div layout initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
-        className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm shadow-sm">
+      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm shadow-card">
         <span className="text-3xl">✅</span>
         <p className="mt-2 text-sm font-semibold text-emerald-600">অনুমোদিত হয়েছে</p>
       </motion.div>
@@ -135,8 +135,8 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'rejected') {
     return (
-      <motion.div layout initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
-        className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-5 text-center text-sm shadow-sm">
+      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 rounded-[18px] border border-red-200 bg-red-50 px-4 py-5 text-center text-sm shadow-card">
         <span className="text-3xl">❌</span>
         <p className="mt-2 text-sm font-semibold text-red-500">বাতিল করা হয়েছে</p>
       </motion.div>
@@ -144,8 +144,8 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   }
 
   return (
-    <motion.div layout className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-sm"
-      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+    <motion.div layout className="mt-3 rounded-[18px] border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-card"
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
       <div className="mb-1 flex items-center gap-2 font-semibold text-amber-700">
         <span>⚠️</span>
         <span>অনুমোদন প্রয়োজন</span>
