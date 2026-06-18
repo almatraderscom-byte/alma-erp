@@ -21,6 +21,15 @@ function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 }
 
+/** @cursor/sdk cloud API requires repos[].url (not owner/name) and startingRef (not branch). */
+function buildCloudRepos() {
+  const repo = GITHUB_REPO.trim()
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    throw new Error(`AUTOFIX_GITHUB_REPO must be owner/repo (got: ${repo || '(empty)'})`)
+  }
+  return [{ url: `https://github.com/${repo}`, startingRef: GITHUB_BRANCH }]
+}
+
 /**
  * Dispatches a Cursor cloud agent to fix an issue.
  * The agent creates a PR — NEVER auto-merges.
@@ -62,15 +71,24 @@ export async function dispatchAutoFix({ actionId, issue }) {
   }
 
   const prompt = buildSafeFixPrompt(issue)
-  const [repoOwner, repoName] = GITHUB_REPO.split('/')
+
+  let cloudRepos
+  try {
+    cloudRepos = buildCloudRepos()
+  } catch (err) {
+    const msg = err.message ?? 'Invalid AUTOFIX_GITHUB_REPO'
+    console.error('[auto-fix]', msg)
+    await updateAction(supabase, actionId, 'failed', { error: msg })
+    await notifyOwner(`❌ Auto-Fix ব্যর্থ\n\n📋 ${issue.title}\n\n${msg}`)
+    return { ok: false, error: msg }
+  }
 
   try {
     const result = await Agent.prompt(prompt, {
       apiKey,
       model: { id: 'composer-2.5' },
       cloud: {
-        repos: [{ owner: repoOwner, name: repoName }],
-        branch: GITHUB_BRANCH,
+        repos: cloudRepos,
         autoCreatePR: true,
       },
     })
