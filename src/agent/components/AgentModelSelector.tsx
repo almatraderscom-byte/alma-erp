@@ -92,7 +92,7 @@ export default function AgentModelSelector({
         disabled={disabled || loading}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-all',
+          'flex items-center gap-1.5 rounded-full border border-black/[0.08] px-3 py-1.5 text-[13px] font-medium transition-all',
           open ? 'bg-black/[0.05] text-gray-700' : 'text-gray-500 hover:bg-black/[0.04] hover:text-gray-700',
           (disabled || loading) && 'opacity-50',
         )}

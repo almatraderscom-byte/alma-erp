@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
@@ -338,6 +338,7 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const reduceMotion = useReducedMotion()
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
   const todoCtx = useAgentTodosOptional()
   const isOfficeShift = Boolean(
@@ -432,9 +433,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           {(isOfficeShift ? messages.filter((m) => m.streaming) : messages).map((msg, index) => (
             <motion.div
               key={msg.id}
-              initial={{ opacity: 0, y: 6 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, delay: index < 10 ? index * 0.02 : 0 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: 'easeOut', delay: index < 10 ? index * 0.02 : 0 }}
               className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
               {msg.role === 'user' ? (

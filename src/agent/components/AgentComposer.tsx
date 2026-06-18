@@ -158,47 +158,64 @@ export default function AgentComposer({
         </div>
       )}
 
+      {/* Floating frosted composer — Claude anatomy: text on top, then
+          [ + · model pill ··· mic · voice · coral-send ] (FOUND-1B). */}
       <div
-        className={cn(
-          'flex flex-col gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
-          streaming
-            ? 'border-[#E07A5F]/25 bg-white shadow-[0_2px_12px_rgba(224,122,95,0.08)]'
-            : 'border-black/[0.08] bg-white focus-within:border-black/[0.14]',
-        )}
+        className="agent-composer-box alma-frost flex flex-col gap-1 p-2 transition-colors duration-200"
+        style={{
+          borderRadius: 'var(--radius-composer)',
+          ...(streaming ? { borderColor: 'rgba(224,122,95,0.35)' } : null),
+        }}
       >
-        <div className="flex items-end gap-1">
+        {/* Row 1 — text (≥16px so iOS never auto-zooms; grows with content) */}
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled || streaming}
+          placeholder="বার্তা লিখুন…"
+          rows={1}
+          className="max-h-[120px] min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-base leading-relaxed text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40"
+        />
+
+        {/* Row 2 — controls */}
+        <div className="flex items-center gap-1">
+          {/* Left: circular "+" (attach/add) */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled || streaming}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 hover:bg-black/[0.04] disabled:opacity-30 md:h-9 md:w-9"
-            aria-label="ফাইল"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 disabled:opacity-30"
+            aria-label="যোগ করুন"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
           <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple className="hidden" onChange={handleFileChange} />
 
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={disabled || streaming}
-            placeholder="বার্তা লিখুন…"
-            rows={1}
-            className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base leading-snug text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40 md:min-h-[40px] md:text-sm"
-          />
+          {/* Middle: tappable model/effort pill */}
+          {activeModelId && onModelChange && (
+            <AgentModelSelector
+              conversationId={conversationId}
+              modelId={activeModelId}
+              onModelChange={onModelChange}
+              disabled={streaming}
+            />
+          )}
 
+          <div className="min-w-0 flex-1" />
+
+          {/* Right: mic (dictation) */}
           {!streaming && (
             <button
               type="button"
               onClick={toggleDictation}
               disabled={disabled}
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all disabled:opacity-30 md:h-9 md:w-9',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-30',
                 recording
                   ? 'bg-[#E07A5F] text-white'
-                  : 'text-gray-400 hover:bg-[#E07A5F]/8 hover:text-[#E07A5F]',
+                  : 'text-gray-500 hover:bg-[#E07A5F]/10 hover:text-[#E07A5F]',
               )}
               aria-label={recording ? 'ভয়েস থামান' : 'ভয়েসে লিখুন'}
             >
@@ -209,20 +226,22 @@ export default function AgentComposer({
               )}
             </button>
           )}
+          {/* Right: voice-to-voice session */}
           {!streaming && onVoiceStart && (
             <button
               type="button"
               onClick={onVoiceStart}
               disabled={disabled}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30 md:h-9 md:w-9"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30"
               aria-label="ভয়েস টু ভয়েস"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" opacity="0"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
             </button>
           )}
 
+          {/* Right: coral circular send (or stop while streaming) */}
           {streaming ? (
-            <button type="button" onClick={onStop} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-100 md:h-9 md:w-9" aria-label="থামান">
+            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500" aria-label="থামান">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
           ) : (
@@ -231,8 +250,8 @@ export default function AgentComposer({
               onClick={send}
               disabled={!canSend}
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all md:h-9 md:w-9',
-                canSend ? 'bg-[#E07A5F] text-white' : 'bg-gray-100 text-gray-300',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all',
+                canSend ? 'bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)] active:scale-95' : 'bg-gray-100 text-gray-300',
               )}
               aria-label="পাঠান"
             >
@@ -240,17 +259,6 @@ export default function AgentComposer({
             </button>
           )}
         </div>
-
-        {activeModelId && onModelChange && (
-          <div className="flex items-center border-t border-black/[0.04] px-1 pt-1">
-            <AgentModelSelector
-              conversationId={conversationId}
-              modelId={activeModelId}
-              onModelChange={onModelChange}
-              disabled={streaming}
-            />
-          </div>
-        )}
       </div>
     </div>
     </>

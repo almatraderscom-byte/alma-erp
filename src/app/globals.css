@@ -42,6 +42,19 @@
      this in sync with the real keyboard (Keyboard.resize: None, app owns layout). */
   --kb-inset: 0px;
 
+  /* ── FOUND-1B "Claude-app feel" tokens (frosted, floating, soft motion) ──
+     Light cream/coral — copy the FEEL of the Claude app, never its dark color. */
+  --frost-surface: rgba(250, 249, 246, 0.72);   /* translucent cream */
+  --frost-blur: 20px;
+  --frost-saturate: 1.1;
+  --hairline: rgba(0, 0, 0, 0.06);              /* 1px soft border */
+  --radius-pill: 9999px;                        /* circular pods/controls */
+  --radius-composer: 24px;
+  --radius-card-feel: 18px;
+  --shadow-float: 0 4px 24px rgba(0, 0, 0, 0.08); /* one soft floating shadow */
+  --motion-enter: 180ms;                        /* fade + 8px slide-up, ease-out */
+  --motion-exit: 120ms;
+
   color-scheme: light;
 }
 
@@ -269,6 +282,36 @@ a,
     padding-left: max(0px, env(safe-area-inset-left));
     padding-right: max(0px, env(safe-area-inset-right));
   }
+}
+
+/* ── FOUND-1B frosted surfaces (header pods, composer, floating pills) ──
+   Solid cream fallback by default; translucent blur only where supported so
+   browsers without backdrop-filter still get a clean opaque surface. */
+.alma-frost {
+  background-color: #FAF9F6;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-float);
+}
+@supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+  .alma-frost {
+    background-color: var(--frost-surface);
+    -webkit-backdrop-filter: blur(var(--frost-blur)) saturate(var(--frost-saturate));
+    backdrop-filter: blur(var(--frost-blur)) saturate(var(--frost-saturate));
+  }
+}
+/* Pod = circular frosted control group. */
+.alma-pod { border-radius: var(--radius-pill); }
+
+/* Enter motion: fade + 8px slide-up, 180ms ease-out. No pop/bounce. */
+@keyframes alma-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.alma-enter {
+  animation: alma-enter var(--motion-enter) ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-enter { animation: none; }
 }
 
 /* Agent chat — always allow text selection for copy */
