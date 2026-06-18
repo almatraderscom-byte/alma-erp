@@ -10,7 +10,7 @@ export function CostsScrollWrapper({ children }: { children: ReactNode }) {
       <div ref={scrollRef} className="h-full min-h-0 overflow-y-auto">
         {children}
       </div>
-      <ScrollAffordances containerRef={scrollRef} topThreshold={400} bottomThreshold={400} />
+      <ScrollAffordances containerRef={scrollRef} bottomThreshold={400} />
     </>
   )
 }

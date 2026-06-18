@@ -147,7 +147,7 @@ export default function AgentComposer({
       {/* Floating frosted composer — Claude anatomy: text on top, then
           [ + · model pill ··· mic · voice · coral-send ] (FOUND-1B). */}
       <div
-        className="agent-composer-box alma-frost flex flex-col gap-1 p-2 transition-colors duration-200"
+        className="agent-composer-box alma-frost alma-neon flex flex-col gap-1 p-2 transition-colors duration-200"
         style={{
           borderRadius: 'var(--radius-composer)',
           ...(streaming ? { borderColor: 'rgba(224,122,95,0.35)' } : null),

@@ -611,7 +611,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
       <ScrollAffordances
         containerRef={containerRef}
-        topThreshold={400}
         bottomThreshold={isOfficeShift ? 80 : 120}
         bottomOffsetClass={
           isOfficeShift

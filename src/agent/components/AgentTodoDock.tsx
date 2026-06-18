@@ -108,7 +108,6 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
             <AgentTodoPanel embedded />
             <ScrollAffordances
               containerRef={panelScrollRef}
-              topThreshold={120}
               bottomThreshold={80}
               bottomOffsetClass="bottom-4 md:bottom-5"
             />

@@ -340,6 +340,43 @@ a,
   }
 }
 
+/* Premium neon running-light border (composer). A coral highlight sweeps around
+   the rounded frame via a masked conic-gradient ring. Subtle + slow. */
+@property --neon-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.alma-neon { position: relative; }
+.alma-neon::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--neon-angle),
+    rgba(224,122,95,0) 0%,
+    rgba(224,122,95,0) 55%,
+    rgba(244,162,140,0.7) 72%,
+    #E07A5F 82%,
+    rgba(224,122,95,0) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: alma-neon-rotate 4.5s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+@keyframes alma-neon-rotate {
+  to { --neon-angle: 360deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-neon::before { animation: none; }
+}
+
 /* Agent chat — always allow text selection for copy */
 .agent-chat-root .prose-agent,
 .agent-chat-root .prose-agent p,

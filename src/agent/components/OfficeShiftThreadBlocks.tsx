@@ -184,6 +184,16 @@ export function OfficeShiftThreadRenderer({
     </div>
   )
 
+  // Split the non-duty messages into the agent's own intro/patrol lines and the
+  // owner↔agent conversation (everything from the first owner message onward),
+  // so the latter can be tucked into one distinct "Boss meeting" collapsible.
+  const firstUserIdx = preamble.findIndex((m) => m.role === 'user')
+  const introMsgs = firstUserIdx === -1 ? preamble : preamble.slice(0, firstUserIdx)
+  const convoMsgs = firstUserIdx === -1 ? [] : preamble.slice(firstUserIdx)
+
+  const renderMsg = (msg: OfficeShiftMessage) =>
+    msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)
+
   return (
     <div className="space-y-4">
       {/* Duty task cards (collapses) pinned ABOVE the conversation, so the
@@ -194,16 +204,57 @@ export function OfficeShiftThreadRenderer({
           key={block.id}
           block={block}
           defaultOpen={block.status === 'running'}
-          renderMessage={(msg) =>
-            msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)
-          }
+          renderMessage={renderMsg}
         />
       ))}
-      {preamble.map((msg) => (
-        <div key={msg.id}>
-          {msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)}
-        </div>
+      {introMsgs.map((msg) => (
+        <div key={msg.id}>{renderMsg(msg)}</div>
       ))}
+      {convoMsgs.length > 0 && (
+        <BossMeetingBlock messages={convoMsgs} renderMessage={renderMsg} />
+      )}
+    </div>
+  )
+}
+
+/** Distinct collapsible for the owner↔agent conversation inside an office shift. */
+function BossMeetingBlock({
+  messages,
+  renderMessage,
+}: {
+  messages: OfficeShiftMessage[]
+  renderMessage: (msg: OfficeShiftMessage) => ReactNode
+}) {
+  const [open, setOpen] = useState(true)
+  const turns = messages.filter((m) => m.role === 'user').length
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#E07A5F]/30 bg-[#E07A5F]/[0.05]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        <span className="shrink-0 text-sm">🗣️</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[#1a1a2e]">
+          Boss-এর সাথে কথোপকথন
+          <span className="font-normal text-[#64748b]"> · {turns} বার্তা</span>
+        </span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          className={`shrink-0 text-[#E07A5F]/70 transition-transform duration-[250ms] ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      <CollapsibleGrid open={open}>
+        <div className="space-y-3 border-t border-[#E07A5F]/15 px-3 py-3">
+          {messages.map((msg) => (
+            <div key={msg.id}>{renderMessage(msg)}</div>
+          ))}
+        </div>
+      </CollapsibleGrid>
     </div>
   )
 }
