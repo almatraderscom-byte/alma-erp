@@ -29,16 +29,19 @@ const config: CapacitorConfig = {
   },
   ios: {
     handleApplicationNotifications: false,
-    backgroundColor: '#FAF9F6',
+    backgroundColor: '#0c0b12',
   },
   android: {
     allowMixedContent: false,
-    backgroundColor: '#FAF9F6',
+    backgroundColor: '#0c0b12',
   },
   plugins: {
     Keyboard: {
-      /** We own the layout: keep the WebView full-height and pin the composer
-       *  ourselves via --kb-inset. 'none' stops iOS from also resizing/scrolling. */
+      /** Global default: ERP screens own their layout and pin footers via
+       *  --kb-inset, so 'none' stops iOS from also resizing/scrolling. The agent
+       *  screen overrides this at runtime (Keyboard.setResizeMode 'native') while
+       *  mounted so its composer rides above the keyboard like a native app, then
+       *  restores 'none' on unmount. See src/agent/hooks/useKeyboardInset.ts. */
       resize: KeyboardResize.None,
       resizeOnFullScreen: true,
     },
@@ -47,12 +50,12 @@ const config: CapacitorConfig = {
       // hand off to its ALMA animation fast instead of holding a static frame.
       launchShowDuration: 500,
       launchAutoHide: true,
-      backgroundColor: '#FAF9F6',
+      backgroundColor: '#0c0b12',
       androidSplashResourceName: 'splash',
       // The bootstrap page provides its own motion; the native spinner would
       // clash with it during the brief overlap.
       showSpinner: false,
-      spinnerColor: '#C9A84C',
+      spinnerColor: '#8b7cf6',
     },
     StatusBar: {
       style: 'DARK',

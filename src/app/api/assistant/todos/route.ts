@@ -54,16 +54,23 @@ export async function GET(req: NextRequest) {
   //  - drop salah (never a to-do, per owner),
   //  - drop duties the owner switched OFF in the Control Center,
   //  - drop stale rows from previous days (the count was inflated by all-time
-  //    history) — keep anything due/created today, plus active ad-hoc tasks.
+  //    history) — keep anything due/created today, plus active ad-hoc tasks,
+  //  - carry over recent UNFINISHED work (pending/in-progress) from the last few
+  //    days so genuinely-missed tasks don't silently vanish. Bounded window keeps
+  //    the count from re-inflating with old history; finished/failed rows stay hidden.
+  const CARRYOVER_DAYS = 3
+  const OPEN_STATUSES = new Set(['pending', 'in_progress', 'running'])
   const dutyEnabled = await getDutyEnabledMap()
   const { start, end } = dueDateRangeDhaka(todayYmdDhaka())
+  const carryoverStart = new Date(start.getTime() - CARRYOVER_DAYS * 24 * 60 * 60 * 1000)
   const visibleTodos = todos.filter((t) => {
     if (t.dutyKey === 'salah_init') return false
     if (t.dutyKey && !isDutyEnabledSync(t.dutyKey, dutyEnabled)) return false
     const dueToday = t.dueDate ? t.dueDate >= start && t.dueDate <= end : false
     const createdToday = t.createdAt >= start && t.createdAt <= end
     const activeAdhoc = !t.dutyKey && t.status !== 'completed' && t.status !== 'cancelled'
-    return dueToday || createdToday || activeAdhoc
+    const recentUnfinished = OPEN_STATUSES.has(t.status) && t.createdAt >= carryoverStart
+    return dueToday || createdToday || activeAdhoc || recentUnfinished
   })
 
   const serialized = sortTodosForDisplay(visibleTodos).map((t) => ({

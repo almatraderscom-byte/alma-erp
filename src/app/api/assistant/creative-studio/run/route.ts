@@ -2,9 +2,14 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { runCreativeStudio, type CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
+import { runAutoStudio, runCreativeStudio, type CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
 import { resolveModel } from '@/lib/tryon/model-library'
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
+
+const AUTO_ERRORS: Record<string, string> = {
+  no_default_model: 'প্রথমে Models ট্যাবে একটি মডেল সেভ করুন — তারপর শুধু product upload দিলেই হবে।',
+  product_image_required: 'Product ছবি upload করুন।',
+}
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -22,11 +27,35 @@ export async function POST(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  let body: CreativeStudioRunInput & { modelId?: string }
+  let body: CreativeStudioRunInput & { modelId?: string; auto?: boolean; includeFamily?: boolean; includeReel?: boolean }
   try {
     body = await req.json()
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+
+  if (body.auto) {
+    try {
+      const result = await runAutoStudio({
+        productImagePath: body.productImagePath ?? body.sourceImagePath ?? '',
+        includeFamily: body.includeFamily,
+        includeReel: body.includeReel,
+      })
+      const imageCount = result.jobs.filter((j) => j.type === 'image_gen').length
+      const engine = result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
+      const parts = [`✨ ${imageCount}টি ছবি`]
+      if (result.reelQueued) parts.push('১টি রিল')
+      return Response.json({
+        ok: true,
+        jobs: result.jobs,
+        provider: result.provider,
+        reelQueued: result.reelQueued,
+        message: `${parts.join(' + ')} তৈরি হচ্ছে · ${engine} · মডেল: ${result.modelName} — Gallery-তে দেখুন।`,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return Response.json({ error: AUTO_ERRORS[msg] ?? msg }, { status: 422 })
+    }
   }
 
   if (body.modelId && !body.modelImagePath) {

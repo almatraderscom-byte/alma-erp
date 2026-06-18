@@ -4,12 +4,22 @@
  */
 
 import http from 'http'
+import { execSync } from 'child_process'
 import { timingSafeEqual } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { runCodeSearch } from './diagnostic/code-search.mjs'
 
 let _runSchedulerJob = null
 export function setRetriggerHandler(fn) { _runSchedulerJob = fn }
+
+/** Short git HEAD of the repo on disk, or null if unavailable. */
+function readGitCommit(repo) {
+  try {
+    return execSync(`cd ${repo} && git rev-parse --short HEAD`, { timeout: 5_000, encoding: 'utf8' }).trim()
+  } catch {
+    return null
+  }
+}
 
 function verifyToken(token) {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -36,6 +46,12 @@ export function startDiagnosticHttpServer() {
   const publicBase = getDiagnosticPublicBase()
   const repo = process.env.AGENT_REPO_PATH || '/opt/alma-erp'
 
+  // Commit this process was STARTED from. After a successful deploy+restart a
+  // fresh process re-reads this and it equals the pulled commit — which is how
+  // the deploy proves the new code is actually running (not just pulled to disk).
+  const BOOT_COMMIT = readGitCommit(repo)
+  console.log(`[diagnostic-http] boot commit=${BOOT_COMMIT ?? 'unknown'}`)
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -46,7 +62,7 @@ export function startDiagnosticHttpServer() {
         const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
         if (verifyToken(token)) {
           res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo }))
+          res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo, bootCommit: BOOT_COMMIT }))
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ ok: true }))
@@ -105,8 +121,8 @@ export function startDiagnosticHttpServer() {
           return
         }
         console.log('[diagnostic-http] deploy request received')
-        const { execSync } = await import('child_process')
         const steps = []
+        const prevCommit = readGitCommit(repo)
 
         try {
           const pullOut = execSync(`cd ${repo} && git pull origin main 2>&1`, { timeout: 60_000, encoding: 'utf8' })
@@ -114,6 +130,10 @@ export function startDiagnosticHttpServer() {
         } catch (err) {
           steps.push({ step: 'git_pull', ok: false, error: err.message?.slice(0, 300) ?? 'git pull failed' })
         }
+
+        // Commit now on disk after the pull — the client polls /health until the
+        // worker reports a bootCommit equal to this, proving the restart landed.
+        const targetCommit = readGitCommit(repo)
 
         try {
           const npmOut = execSync(`cd ${repo}/worker && npm ci --omit=dev 2>&1`, { timeout: 120_000, encoding: 'utf8' })
@@ -125,27 +145,36 @@ export function startDiagnosticHttpServer() {
         // PM2 restart must run AFTER the HTTP response — restarting kills this process.
         const npmOk = steps.find(s => s.step === 'npm_install')?.ok ?? false
         const gitOk = steps.find(s => s.step === 'git_pull')?.ok ?? false
+        // The restart kills THIS process, so it must run after the response and
+        // cannot report its own success here. We mark it "scheduled" (not "ok")
+        // and the client verifies the real outcome via /health bootCommit.
         if (gitOk && npmOk) {
-          steps.push({ step: 'pm2_restart', ok: true, output: 'restart scheduled (post-response)' })
+          steps.push({ step: 'pm2_restart', ok: true, output: 'restart scheduled — verify via bootCommit' })
         } else {
           steps.push({ step: 'pm2_restart', ok: false, error: 'skipped — git pull or npm install failed' })
         }
 
         const allOk = steps.every(s => s.ok)
         res.writeHead(allOk ? 200 : 207, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: allOk, steps }))
+        res.end(JSON.stringify({ ok: allOk, steps, prevCommit, targetCommit }))
 
         if (gitOk && npmOk) {
           setImmediate(() => {
-            try {
-              execSync('pm2 restart agent-worker --update-env 2>&1', { timeout: 30_000, encoding: 'utf8' })
-            } catch {
+            // Try several pm2 invocations: process may be named differently and
+            // `pm2` may not be on PATH for the spawned shell (npm-global / nvm).
+            const candidates = [
+              'pm2 restart agent-worker --update-env',
+              'pm2 restart alma-agent-worker --update-env',
+              'npx pm2 restart agent-worker --update-env',
+              `${process.env.HOME ?? '/root'}/.npm-global/bin/pm2 restart agent-worker --update-env`,
+            ]
+            for (const cmd of candidates) {
               try {
-                execSync('pm2 restart alma-agent-worker --update-env 2>&1', { timeout: 30_000, encoding: 'utf8' })
-              } catch (err) {
-                console.error('[diagnostic-http] pm2 restart failed:', err.message?.slice(0, 200))
-              }
+                execSync(`${cmd} 2>&1`, { timeout: 30_000, encoding: 'utf8' })
+                return
+              } catch { /* try next */ }
             }
+            console.error('[diagnostic-http] pm2 restart failed — all candidates errored')
           })
         }
         return

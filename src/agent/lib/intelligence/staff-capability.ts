@@ -97,11 +97,11 @@ export async function getAllStaffCapabilities(businessId: string = 'ALMA_LIFESTY
   try {
     const staffRows = await db.agentStaff.findMany({
       where: { businessId, active: true },
-      select: { id: true, displayName: true },
+      select: { id: true, name: true },
     })
 
     const profiles = await Promise.all(
-      staffRows.map((s: any) => buildStaffCapabilityProfile(s.id, s.displayName, businessId))
+      staffRows.map((s: any) => buildStaffCapabilityProfile(s.id, s.name, businessId))
     )
     return profiles
   } catch (err) {

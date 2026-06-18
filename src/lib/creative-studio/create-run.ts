@@ -4,6 +4,7 @@ import { buildVideoBrief, estimateReelCostUsd } from '@/lib/content-engine/video
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
+import { getDefaultModel, getModelByRole } from '@/lib/tryon/model-library'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -251,4 +252,131 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     type: 'image_gen',
   })
   return { jobs, provider: 'gemini', fashnReady }
+}
+
+export type AutoStudioResult = {
+  jobs: CreativeStudioJobRef[]
+  provider: StudioProvider
+  modelName: string
+  variants: ChatTryOnVariant[]
+  reelQueued: boolean
+}
+
+/**
+ * One-tap Auto: owner uploads only a product image. We auto-pick the default
+ * brand model, auto-classify the garment + auto-write the prompt (inside
+ * queueTryOnBatch), and queue a curated on-model set. Family variants are
+ * added only when the required role models exist, so it never fails for a
+ * missing model. No prompt / no manual settings required.
+ *
+ * Phase 3 (best realism): when FASHN_API_KEY is set, the solo on-model shot is
+ * rendered through FASHN tryon-max (purpose-built virtual try-on, best realism)
+ * instead of Gemini. Family variants stay on Gemini (multi-person). Without the
+ * key everything gracefully falls back to Gemini.
+ *
+ * Phase 4 (video): includeReel queues a short product reel (Veo 3.1) from the
+ * same product image — owner-initiated, so spend stays under the owner's tap.
+ */
+export async function runAutoStudio(input: {
+  productImagePath: string
+  includeFamily?: boolean
+  includeReel?: boolean
+}): Promise<AutoStudioResult> {
+  const productImagePath = input.productImagePath?.trim()
+  if (!productImagePath) throw new Error('product_image_required')
+
+  const defaultModel = await getDefaultModel()
+  if (!defaultModel) throw new Error('no_default_model')
+
+  const useFashn = isFashnConfigured()
+  const jobs: CreativeStudioJobRef[] = []
+  const variants: ChatTryOnVariant[] = []
+
+  // Solo on-model shot: FASHN best-realism when available, else Gemini try-on.
+  if (useFashn) {
+    const id = await createApprovedAction({
+      type: 'image_gen',
+      payload: {
+        provider: 'fashn',
+        fashnModel: 'tryon-max',
+        fashnInputs: { product_image: productImagePath, model_image: defaultModel.imagePath },
+        fashnOptions: { resolution: '2k', generationMode: 'quality', numImages: 1, outputFormat: 'png' },
+        aspectRatio: '4:5',
+        studioMode: 'try_on',
+        auto: true,
+        familyPreset: 'single',
+        productImagePath,
+        modelImagePath: defaultModel.imagePath,
+      },
+      summary: '🎨 Auto Studio — On-model (FASHN best realism)',
+      costEstimate: 0.25,
+    })
+    jobs.push({ pendingActionId: id, label: 'On-model (best realism)', type: 'image_gen' })
+  } else {
+    variants.push('single')
+  }
+
+  if (input.includeFamily) {
+    const [father, mother, son, daughter] = await Promise.all([
+      getModelByRole('father'),
+      getModelByRole('mother'),
+      getModelByRole('son'),
+      getModelByRole('daughter'),
+    ])
+    if (father && son) variants.push('father_son')
+    if (mother && son) variants.push('mother_son')
+    if (mother && daughter) variants.push('mother_daughter')
+  }
+
+  if (variants.length > 0) {
+    const batch = await queueTryOnBatch({
+      productImagePath,
+      modelId: defaultModel.id,
+      variants,
+      conversationId: null,
+    })
+    for (const item of batch.items) {
+      await mergeApprovedPayload(item.pendingActionId, {
+        studioMode: 'product_to_model',
+        provider: 'gemini',
+        auto: true,
+        familyPreset: item.variant,
+      })
+      jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
+    }
+  }
+
+  let reelQueued = false
+  if (input.includeReel) {
+    const durationSec = 6
+    const aspect = '9:16' as const
+    const { prompt } = buildVideoBrief(
+      { productCode: 'studio-reel', name: null, category: null, fabric: null, imagePath: productImagePath, familyMatch: false },
+      { vibe: 'premium', aspect, durationSec },
+    )
+    const reelId = await createApprovedAction({
+      type: 'video_gen',
+      payload: {
+        prompt,
+        referenceImageId: productImagePath,
+        durationSec,
+        aspect,
+        studioMode: 'image_to_video',
+        provider: 'gemini',
+        auto: true,
+      },
+      summary: `🎬 Auto Studio Reel (${durationSec}s ${aspect})`,
+      costEstimate: estimateReelCostUsd(durationSec),
+    })
+    jobs.push({ pendingActionId: reelId, label: 'Product Reel (Veo 3.1)', type: 'video_gen' })
+    reelQueued = true
+  }
+
+  return {
+    jobs,
+    provider: useFashn ? 'fashn' : 'gemini',
+    modelName: defaultModel.name,
+    variants,
+    reelQueued,
+  }
 }

@@ -22,6 +22,7 @@ import {
   fetchStudioConfig,
   fetchGallery,
   fetchModels,
+  runAutoStudioJob,
   runStudioJob,
   saveModel,
   uploadStudioFile,
@@ -30,6 +31,7 @@ import {
 } from '@/agent/components/creative-studio/studio-api'
 
 type MainView = 'studio' | 'gallery' | 'models'
+type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
 
 export default function CreativeStudio() {
   const [view, setView] = useState<MainView>('studio')
@@ -185,7 +187,7 @@ function StudioWorkspace({
   const [modelPath, setModelPath] = useState<string | null>(null)
   const [sourcePath, setSourcePath] = useState<string | null>(null)
   const [modelId, setModelId] = useState('')
-  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null }>>([])
+  const [models, setModels] = useState<StudioModel[]>([])
   const [prompt, setPrompt] = useState('')
   const [backgroundId, setBackgroundId] = useState('studio')
   const [aspectRatio, setAspectRatio] = useState('4:5')
@@ -196,15 +198,55 @@ function StudioWorkspace({
   const [vibe, setVibe] = useState<'premium' | 'festival' | 'offer' | 'lifestyle'>('premium')
   const [running, setRunning] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
+  const [tab, setTab] = useState<'auto' | 'advanced'>('auto')
+  const [includeFamily, setIncludeFamily] = useState(false)
+  const [includeReel, setIncludeReel] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(false)
 
   const modeDef = useMemo(() => STUDIO_MODES.find((m) => m.id === mode)!, [mode])
   const bgPrompt = BACKGROUND_PRESETS.find((b) => b.id === backgroundId)?.prompt ?? ''
+
+  const defaultModel = useMemo(
+    () => models.find((m) => m.isDefault) ?? models[0] ?? null,
+    [models],
+  )
+  const familyAvailable = useMemo(() => {
+    const roles = new Set(models.map((m) => m.role))
+    return (roles.has('father') && roles.has('son'))
+      || (roles.has('mother') && roles.has('son'))
+      || (roles.has('mother') && roles.has('daughter'))
+  }, [models])
 
   useEffect(() => {
     void fetchModels()
       .then((d) => setModels(d.models ?? []))
       .catch(() => {})
   }, [])
+
+  const handleAutoRun = async () => {
+    if (!productPath) {
+      toast.error('Product ছবি upload করুন')
+      return
+    }
+    if (!defaultModel) {
+      toast.error('প্রথমে Models ট্যাবে একটি মডেল সেভ করুন')
+      return
+    }
+    setAutoRunning(true)
+    try {
+      const result = await runAutoStudioJob({
+        productImagePath: productPath,
+        includeFamily: includeFamily && familyAvailable,
+        includeReel,
+      })
+      toast.success(result.message)
+      onOpenGallery()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setAutoRunning(false)
+    }
+  }
 
   useEffect(() => {
     if (config?.fashnConfigured && mode !== 'image_to_video') setProvider('fashn')
@@ -273,6 +315,42 @@ function StudioWorkspace({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Auto / Advanced switch */}
+      <div className="flex shrink-0 gap-1.5 px-3 pb-1 pt-2.5">
+        {(['auto', 'advanced'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={cn(
+              'flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors',
+              tab === t ? 'bg-[#E07A5F] text-white shadow-sm' : 'border border-border bg-card/70 text-muted',
+            )}
+          >
+            {t === 'auto' ? '✨ Auto — এক ট্যাপ' : '⚙ Advanced'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'auto' && (
+        <AutoPanel
+          productPreview={productPreview}
+          onProduct={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
+          defaultModel={defaultModel}
+          familyAvailable={familyAvailable}
+          includeFamily={includeFamily}
+          setIncludeFamily={setIncludeFamily}
+          includeReel={includeReel}
+          setIncludeReel={setIncludeReel}
+          bestRealism={Boolean(config?.fashnConfigured)}
+          running={autoRunning}
+          canRun={Boolean(productPath && defaultModel)}
+          onRun={() => void handleAutoRun()}
+        />
+      )}
+
+      {tab === 'advanced' && (
+      <>
       {/* Canvas / drop zone */}
       <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 pt-3', panelOpen ? 'pb-[min(58vh,480px)] md:pb-[min(52vh,420px)]' : 'pb-28 md:pb-20')}>
         <div className="mx-auto flex max-w-2xl flex-col gap-3">
@@ -494,6 +572,158 @@ function StudioWorkspace({
             <p className="mt-1.5 text-center text-[10px] text-muted">No LLM cost — direct render queue</p>
           </div>
         )}
+      </div>
+      </>
+      )}
+    </div>
+  )
+}
+
+function AutoPanel({
+  productPreview,
+  onProduct,
+  defaultModel,
+  familyAvailable,
+  includeFamily,
+  setIncludeFamily,
+  includeReel,
+  setIncludeReel,
+  bestRealism,
+  running,
+  canRun,
+  onRun,
+}: {
+  productPreview: string | null
+  onProduct: (f: File) => void
+  defaultModel: StudioModel | null
+  familyAvailable: boolean
+  includeFamily: boolean
+  setIncludeFamily: (v: boolean) => void
+  includeReel: boolean
+  setIncludeReel: (v: boolean) => void
+  bestRealism: boolean
+  running: boolean
+  canRun: boolean
+  onRun: () => void
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-4">
+      <div className="mx-auto flex max-w-md flex-col gap-4">
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-cream">Product দিন — বাকিটা AI করবে</p>
+          <p className="mt-1 text-[12px] leading-snug text-muted">
+            শুধু পণ্যের ছবি upload করুন। সেভ করা মডেল, prompt, ব্যাকগ্রাউন্ড — সব AI নিজেই ঠিক রাখবে।
+          </p>
+        </div>
+
+        <UploadTile
+          label="Product ছবি"
+          preview={productPreview}
+          onFile={onProduct}
+          required
+        />
+
+        {/* Default model status */}
+        {defaultModel ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
+              <UserSvg className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
+              <p className="text-[10px] text-muted">
+                {bestRealism
+                  ? '🟢 FASHN — best realism engine চালু · Models ট্যাবে বদলানো যাবে'
+                  : 'Gemini engine · FASHN_API_KEY দিলে best realism পাবেন'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-50/10 px-3.5 py-3 text-[12px] text-amber-700">
+            ⚠ এখনো কোনো মডেল সেভ করা নেই। নিচের <b>Models</b> ট্যাবে গিয়ে একটি মডেলের ছবি সেভ করুন — তারপর শুধু product দিলেই হবে।
+          </div>
+        )}
+
+        {/* Family toggle */}
+        {familyAvailable && (
+          <button
+            type="button"
+            onClick={() => setIncludeFamily(!includeFamily)}
+            className={cn(
+              'flex items-center justify-between rounded-2xl border px-3.5 py-3 text-left transition-colors',
+              includeFamily ? 'border-[#E07A5F]/40 bg-[#E07A5F]/8' : 'border-border-subtle bg-card/70',
+            )}
+          >
+            <div>
+              <p className="text-[13px] font-semibold text-cream">পরিবার ভ্যারিয়েন্টও বানাও</p>
+              <p className="text-[10px] text-muted">বাবা+ছেলে / মা+মেয়ে — যাদের মডেল সেভ আছে</p>
+            </div>
+            <span
+              className={cn(
+                'relative h-6 w-10 shrink-0 rounded-full transition-colors',
+                includeFamily ? 'bg-[#E07A5F]' : 'bg-white/15',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                  includeFamily ? 'left-[1.125rem]' : 'left-0.5',
+                )}
+              />
+            </span>
+          </button>
+        )}
+
+        {/* Reel toggle (Phase 4 — Veo 3.1 video) */}
+        <button
+          type="button"
+          onClick={() => setIncludeReel(!includeReel)}
+          className={cn(
+            'flex items-center justify-between rounded-2xl border px-3.5 py-3 text-left transition-colors',
+            includeReel ? 'border-[#E07A5F]/40 bg-[#E07A5F]/8' : 'border-border-subtle bg-card/70',
+          )}
+        >
+          <div>
+            <p className="text-[13px] font-semibold text-cream">🎬 ছোট রিলও বানাও</p>
+            <p className="text-[10px] text-muted">৬ সেকেন্ড 9:16 প্রোডাক্ট রিল (Veo 3.1) · আলাদা খরচ</p>
+          </div>
+          <span
+            className={cn(
+              'relative h-6 w-10 shrink-0 rounded-full transition-colors',
+              includeReel ? 'bg-[#E07A5F]' : 'bg-white/15',
+            )}
+          >
+            <span
+              className={cn(
+                'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                includeReel ? 'left-[1.125rem]' : 'left-0.5',
+              )}
+            />
+          </span>
+        </button>
+
+        <motion.button
+          type="button"
+          disabled={!canRun || running}
+          whileTap={{ scale: 0.98 }}
+          onClick={onRun}
+          className={cn(
+            'flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity',
+            canRun && !running ? 'bg-[#E07A5F]' : 'bg-[#94A3B8]',
+          )}
+        >
+          {running ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              তৈরি হচ্ছে…
+            </>
+          ) : (
+            <>✨ Generate</>
+          )}
+        </motion.button>
+        <p className="text-center text-[10px] text-muted">
+          No LLM cost · ছবি render queue{includeReel ? ' · রিলে আলাদা ভিডিও খরচ' : ''}
+        </p>
       </div>
     </div>
   )

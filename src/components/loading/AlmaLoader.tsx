@@ -27,10 +27,10 @@ export function AlmaLoader({ size = 'md', label = 'Loading secure workspace', cl
         animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: [0.985, 1, 0.995], filter: 'blur(0px)' }}
         transition={reduceMotion ? { duration: 0 } : { duration: 1.25, ease: [0.22, 1, 0.36, 1], repeat: Infinity, repeatDelay: 1.2 }}
       >
-        <div className="pointer-events-none absolute inset-x-2 top-1/2 h-10 -translate-y-1/2 rounded-full bg-[#E07A5F]/10 blur-2xl" />
+        <div className="pointer-events-none absolute inset-x-2 top-1/2 h-10 -translate-y-1/2 rounded-full bg-[#8b7cf6]/12 blur-2xl" />
         <div className="relative overflow-hidden px-1 py-2">
           <motion.div
-            className="flex items-center justify-center pl-[0.34em] font-serif font-semibold leading-none text-[#E07A5F]"
+            className="alma-neon-wordmark flex items-center justify-center pl-[0.34em] font-serif font-semibold leading-none"
             aria-label="ALMA"
           >
             {LETTERS.map((letter, index) => (
@@ -50,12 +50,12 @@ export function AlmaLoader({ size = 'md', label = 'Loading secure workspace', cl
       </motion.div>
 
       <motion.div
-        className="mt-4 h-px w-24 overflow-hidden rounded-full bg-[#E07A5F]/15"
+        className="mt-4 h-px w-24 overflow-hidden rounded-full bg-[#8b7cf6]/15"
         initial={reduceMotion ? false : { opacity: 0, width: 48 }}
         animate={reduceMotion ? { opacity: 0.7 } : { opacity: [0.35, 0.9, 0.35], width: [56, 112, 72] }}
         transition={reduceMotion ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
       >
-        <div className="h-full w-full bg-gradient-to-r from-transparent via-[#E07A5F] to-transparent" />
+        <div className="h-full w-full bg-gradient-to-r from-transparent via-[#8b7cf6] to-transparent" />
       </motion.div>
 
       {label && (

@@ -35,6 +35,15 @@ body.kb-open .agent-main-height {
   height: calc(100lvh - var(--kb-inset, 0px));
 }
 
+/* Native shell only (Capacitor): the agent screen switches the WebView to
+ * Keyboard.resize=Native, so iOS/Android already shrinks the viewport to sit
+ * above the keyboard. Just fill the shrunk viewport — never subtract --kb-inset
+ * (that's the web/Safari path) and drop the now-hidden bottom-nav gap. Higher
+ * specificity than the rule above, so it wins on native. */
+html.cap-native-resize body.kb-open .agent-main-height {
+  height: 100dvh;
+}
+
 /* Hide the floating bottom nav while typing (ChatGPT-style). */
 body.kb-open .agent-bottom-nav {
   display: none;

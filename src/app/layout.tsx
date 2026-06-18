@@ -42,7 +42,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#FAF9F6',
+  themeColor: '#0c0b12',
   width: 'device-width',
   initialScale: 1,
   /** Native Capacitor shell: lock zoom so touch never triggers pinch/zoom drift or jitter on iPhone. */
@@ -94,7 +94,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
-          <div className="alma-boot-mark">A</div>
+          <div className="alma-boot-mark"><span>A</span></div>
           <p className="alma-boot-title">Alma ERP</p>
           <div className="alma-boot-spinner" />
         </div>

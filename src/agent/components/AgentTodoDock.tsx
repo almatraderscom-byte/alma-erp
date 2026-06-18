@@ -39,7 +39,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
   }, [todos])
 
   if (!ctx) return null
-  if (loading || stats.total === 0) return null
+  if (loading) return null
 
   const dateLabel = new Date().toLocaleDateString('en-US', {
     month: 'long',
