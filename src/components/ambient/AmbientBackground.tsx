@@ -9,6 +9,8 @@ export function AmbientBackground() {
       <div className="ambient-blob ambient-blob-1" />
       <div className="ambient-blob ambient-blob-2" />
       <div className="ambient-blob ambient-blob-3" />
+      <div className="ambient-blob ambient-blob-4" />
+      <div className="ambient-blob ambient-blob-5" />
     </div>
   )
 }

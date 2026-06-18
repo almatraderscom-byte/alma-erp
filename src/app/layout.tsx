@@ -10,6 +10,7 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { ACCENT_COOKIE, THEME_COOKIE, accentStyle, normalizeAccent, normalizeMode } from '@/lib/theme'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
@@ -91,13 +92,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
         <script dangerouslySetInnerHTML={{ __html: bootEscapeScript() }} />
       </head>
-      <body className="bg-bg-0 text-cream antialiased font-sans">
+      <body className="text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
           <div className="alma-boot-mark">A</div>
           <p className="alma-boot-title">Alma ERP</p>
           <div className="alma-boot-spinner" />
         </div>
         <ThemeProvider initialMode={themeMode} initialAccent={themeAccent}>
+          <AmbientBackground />
           <AppProviders session={session}>{children}</AppProviders>
         </ThemeProvider>
         {/* Drives --kb-inset / body.kb-open app-wide so ERP screens can pin

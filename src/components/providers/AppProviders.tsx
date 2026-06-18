@@ -14,7 +14,6 @@ import { DateRangeProvider } from '@/contexts/DateRangeContext'
 import { OrdersDataProvider } from '@/contexts/OrdersDataContext'
 import { OrdersDataErrorBoundary } from '@/components/providers/OrdersDataErrorBoundary'
 import { Sidebar } from '@/components/layout/Sidebar'
-import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { MobileBottomSpacer, MobileNavBar } from '@/components/layout/MobileNavChrome'
 import { AgentFab } from '@/components/layout/AgentAccess'
 import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
@@ -85,7 +84,6 @@ function ErpChrome({ children }: { children: ReactNode }) {
     <ApprovalCountProvider>
       <NotificationShellProvider>
         <SentryUserBridge />
-        <AmbientBackground />
         <div className="relative z-10 flex h-[100dvh] w-full min-w-0 overflow-hidden">
           {!isAgent && <Sidebar />}
           <main

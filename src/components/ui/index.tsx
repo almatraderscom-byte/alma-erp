@@ -36,7 +36,7 @@ export function Card({
   return (
     <div
       className={cn(
-        'min-w-0 rounded-2xl border bg-card shadow-card',
+        'min-w-0 rounded-2xl border bg-card/60 backdrop-blur-2xl shadow-card',
         gold ? 'border-gold/30' : 'border-border-subtle',
         interactive && 'card-interactive',
         className,
