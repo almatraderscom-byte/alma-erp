@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
+import AgentControlCenter from '@/agent/components/monitor/AgentControlCenter'
 import { StaffMonitorScrollWrapper } from './StaffMonitorScrollWrapper'
 
 /** Live monitor: agentDuties + salahDuties from /api/agent/staff-monitor */
@@ -19,6 +20,7 @@ export default async function StaffMonitorPage() {
 
   return (
     <StaffMonitorScrollWrapper>
+      <AgentControlCenter />
       <AgentStaffMonitor />
     </StaffMonitorScrollWrapper>
   )
