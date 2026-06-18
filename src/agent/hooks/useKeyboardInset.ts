@@ -64,3 +64,30 @@ export function useKeyboardInset() {
     }
   }, [])
 }
+
+/**
+ * On the native iOS/Android shell the status bar OVERLAYS the WebView. The agent
+ * UI is light (#FAF9F6), so the bar needs DARK text/icons or the clock + battery
+ * are invisible (the native default was light/white text → unreadable on light).
+ *
+ * Style.Light = dark content for light backgrounds. Web/PWA is a no-op.
+ */
+export function useNativeStatusBar() {
+  useEffect(() => {
+    let disposed = false
+    ;(async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core')
+        if (disposed || !Capacitor?.isNativePlatform?.()) return
+        const { StatusBar, Style } = await import('@capacitor/status-bar')
+        await StatusBar.setStyle({ style: Style.Light })
+        // Keep the bar overlaying the WebView so safe-area-inset-top stays > 0
+        // (the agent layout reserves that strip via `safe-top`).
+        try { await StatusBar.setOverlaysWebView({ overlay: true }) } catch {}
+      } catch {
+        /* plugin unavailable (web) — ignore */
+      }
+    })()
+    return () => { disposed = true }
+  }, [])
+}
