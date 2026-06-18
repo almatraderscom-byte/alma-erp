@@ -12,7 +12,7 @@ import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
-import { toolDisplay } from '@/agent/lib/tool-labels'
+import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
 
 export interface ChatMessage {
@@ -20,7 +20,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
-  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; input?: unknown }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
     id: string
@@ -326,8 +326,9 @@ function dedupeToolActivity(
   return [...byName.values()]
 }
 
-function ToolActivityChip({ name, done, success }: { name: string; done: boolean; success?: boolean }) {
+function ToolActivityChip({ name, done, success, input }: { name: string; done: boolean; success?: boolean; input?: unknown }) {
   const d = toolDisplay(name)
+  const detail = toolDetail(name, input)
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
       done
@@ -345,7 +346,7 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
       {done && success === false && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       )}
-      <span>{d.label}</span>
+      <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
     </span>
   )
 }
@@ -501,7 +502,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
                     <div className="mb-3 flex flex-wrap gap-1.5">
                       {dedupeToolActivity(msg.toolActivity).map((t) => (
-                        <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} />
+                        <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} input={t.input} />
                       ))}
                     </div>
                   )}

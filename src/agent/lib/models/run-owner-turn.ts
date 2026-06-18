@@ -283,6 +283,8 @@ async function* runAlternateProviderTurn(
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
+        // Re-emit tool_start with the parsed input so the UI shows the real target.
+        yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId })

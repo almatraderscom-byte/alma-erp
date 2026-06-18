@@ -43,7 +43,7 @@ import {
 export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
-  | { type: 'tool_start'; id: string; name: string }
+  | { type: 'tool_start'; id: string; name: string; input?: unknown }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
   | { type: 'subagent_end'; id: string; role: string; success: boolean; summary?: string; toolsUsed?: string[]; error?: string }
@@ -679,7 +679,9 @@ export async function* runAgentTurn(
           const task = String((tb.input as Record<string, unknown>).task ?? '')
           yield { type: 'subagent_start', id: tb.id, role, roleLabel: specialistLabel(role), task }
         } else {
-          yield { type: 'tool_start', id: tb.id, name: tb.name }
+          // Re-emit with the parsed input (now known) so the UI can show the
+          // real target — e.g. "order #1234", searching "winter jackets".
+          yield { type: 'tool_start', id: tb.id, name: tb.name, input: tb.input }
         }
 
         if (MUTATING_TOOLS.has(tb.name)) {

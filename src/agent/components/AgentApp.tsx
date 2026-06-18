@@ -447,11 +447,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           const d = toolDisplay(String(evt.name))
           setStreamMode('fetching')
           setStreamStatus(`${d.icon} ${d.label}`)
-          setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
-              : m
-          ))
+          // Upsert by id: tool_start fires twice (once at stream start, once with
+          // the parsed input) — merge so the chip gains its real target, no dupes.
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            const existing = m.toolActivity ?? []
+            const idx = existing.findIndex((t) => t.id === evt.id)
+            if (idx >= 0) {
+              const next = existing.slice()
+              next[idx] = { ...next[idx], input: evt.input ?? next[idx].input }
+              return { ...m, toolActivity: next }
+            }
+            return { ...m, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }] }
+          }))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
           setStreamMode('writing')
