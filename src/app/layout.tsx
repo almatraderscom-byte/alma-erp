@@ -91,7 +91,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
         <script dangerouslySetInnerHTML={{ __html: bootEscapeScript() }} />
       </head>
-      <body className="bg-[#FAF9F6] text-[#1a1a2e] antialiased font-sans">
+      <body className="bg-bg-0 text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
           <div className="alma-boot-mark">A</div>
           <p className="alma-boot-title">Alma ERP</p>

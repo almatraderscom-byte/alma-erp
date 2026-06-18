@@ -1,14 +1,14 @@
 /**
- * Full-viewport ambient light layer (CSS-only animation in globals.css).
- * Mounted once in root layout; pointer-events none; z-index 0 behind app chrome.
- * Warm coral/teal tinted — very subtle on the light background.
+ * Full-viewport ambient light layer (CSS-only drift animation in globals.css).
+ * Mounted behind app chrome; pointer-events none; z-index 0. Two blobs track the
+ * live accent token so the theme switcher recolors the whole glow in one toggle.
  */
 export function AmbientBackground() {
   return (
     <div className="ambient-bg-root" aria-hidden="true">
-      <div className="ambient-blob ambient-blob-1" style={{ opacity: 0.04, background: '#E07A5F' }} />
-      <div className="ambient-blob ambient-blob-2" style={{ opacity: 0.03, background: '#81B29A' }} />
-      <div className="ambient-blob ambient-blob-3" style={{ opacity: 0.035, background: '#D4A84B' }} />
+      <div className="ambient-blob ambient-blob-1" style={{ background: 'rgb(var(--c-accent))' }} />
+      <div className="ambient-blob ambient-blob-2" style={{ background: 'rgb(var(--c-accent-lt))' }} />
+      <div className="ambient-blob ambient-blob-3" style={{ background: '#81B29A' }} />
     </div>
   )
 }
