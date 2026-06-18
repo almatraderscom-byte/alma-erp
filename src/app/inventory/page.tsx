@@ -197,7 +197,7 @@ export default function InventoryPage() {
   }, [mutateInventory])
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="Inventory"
         subtitle={<>{summary?.total_skus ?? 0} SKUs · <BdtText value={fmt(totalValue)} /> stock value</>}
@@ -225,7 +225,7 @@ export default function InventoryPage() {
         )}
 
         <Card className="p-3 flex flex-wrap items-center justify-between gap-2 border-gold-dim/25 md:hidden">
-          <p className="text-[11px] text-zinc-500">Manual product entry</p>
+          <p className="text-[11px] text-muted">Manual product entry</p>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={openAddModal}>
               Add inventory
@@ -263,7 +263,7 @@ export default function InventoryPage() {
               className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
                 view === v.id
                   ? 'border-gold-dim/50 bg-gold/10 text-gold-lt'
-                  : 'border-border text-zinc-500 hover:text-zinc-300'
+                  : 'border-border text-muted hover:text-muted'
               }`}
             >
               {v.label}
@@ -291,7 +291,7 @@ export default function InventoryPage() {
                 {['SKU', 'Collection', 'Product', 'Type', 'Size/Variant', 'Available', 'Buying', 'Sold', 'Status', 'Value', 'Actions'].map(h => (
                   <th
                     key={h}
-                    className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-zinc-500 whitespace-nowrap"
+                    className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-muted whitespace-nowrap"
                   >
                     {h}
                   </th>
@@ -329,11 +329,11 @@ export default function InventoryPage() {
                           ? STATUS_STYLE['LOW STOCK']
                           : STATUS_STYLE['OUT OF STOCK']
                     return (
-                      <tr key={item.sku} className="border-b border-border/50 hover:bg-black/[0.02] transition-colors">
+                      <tr key={item.sku} className="border-b border-border/50 hover:bg-white/[0.02] transition-colors">
                         <td className="px-3 py-3.5 font-mono text-[11px] text-gold font-bold">{item.sku}</td>
                         <td className="px-3 py-3.5">
                           <p className="font-mono text-[11px] text-gold-lt">{item.collectionCode || '—'}</p>
-                          <p className="text-[10px] text-zinc-600">{item.barcode || item.sku}</p>
+                          <p className="text-[10px] text-muted-hi">{item.barcode || item.sku}</p>
                         </td>
                         <td className="px-3 py-3.5">
                           <p className="font-semibold text-cream">{item.product}</p>
@@ -341,11 +341,11 @@ export default function InventoryPage() {
                             <Progress value={utilPct} color="bg-gold" />
                           </div>
                         </td>
-                        <td className="px-3 py-3.5 text-zinc-500">{item.collectionType || item.category}</td>
-                        <td className="px-3 py-3.5 text-zinc-400">{inventoryPoolLabel(item)}</td>
+                        <td className="px-3 py-3.5 text-muted">{item.collectionType || item.category}</td>
+                        <td className="px-3 py-3.5 text-muted">{inventoryPoolLabel(item)}</td>
                         <td className="px-3 py-3.5 font-bold text-cream text-center">{item.available}</td>
-                        <td className="px-3 py-3.5 text-zinc-500 text-center"><Money amount={item.buyingPrice || 0} /></td>
-                        <td className="px-3 py-3.5 text-zinc-500 text-center">{item.sold}</td>
+                        <td className="px-3 py-3.5 text-muted text-center"><Money amount={item.buyingPrice || 0} /></td>
+                        <td className="px-3 py-3.5 text-muted text-center">{item.sold}</td>
                         <td className="px-3 py-3.5">
                           <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${statusCls}`}>
                             {item.archived ? 'ARCHIVED' : item.available <= 0 ? 'OUT' : item.available <= item.reorder_level ? 'LOW' : 'IN STOCK'}
@@ -354,8 +354,8 @@ export default function InventoryPage() {
                         <td className="px-3 py-3.5 font-bold text-gold tabular-nums"><Money amount={item.stock_value} /></td>
                         <td className="px-3 py-3.5">
                           <div className="flex flex-wrap gap-1">
-                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-zinc-400 hover:text-cream disabled:opacity-40" onClick={() => void adjustStock(item.sku, item.available, item.buyingPrice)}>Adjust</button>
-                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-zinc-400 hover:text-cream disabled:opacity-40" onClick={() => void updateBuyingPrice(item.sku, item.buyingPrice)}>Price</button>
+                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-muted hover:text-cream disabled:opacity-40" onClick={() => void adjustStock(item.sku, item.available, item.buyingPrice)}>Adjust</button>
+                            <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-border px-2 py-1 text-[10px] text-muted hover:text-cream disabled:opacity-40" onClick={() => void updateBuyingPrice(item.sku, item.buyingPrice)}>Price</button>
                             {item.archived ? (
                               <button disabled={!!pendingInventoryAction[item.sku]} className="rounded-lg border border-green-400/30 px-2 py-1 text-[10px] text-green-300 disabled:opacity-40" onClick={() => void mutateInventory({ action: 'restore', sku: item.sku })}>{pendingInventoryAction[item.sku] === 'restore' ? 'Restoring…' : 'Restore'}</button>
                             ) : (
@@ -400,30 +400,30 @@ export default function InventoryPage() {
                       <div>
                         <p className="font-mono text-[11px] text-gold font-bold">{item.sku}</p>
                         <p className="text-sm font-bold text-cream">{item.product}</p>
-                        <p className="text-[11px] text-zinc-500">
+                        <p className="text-[11px] text-muted">
                           {item.collectionCode || item.category} · {item.collectionType || item.color} · {inventoryPoolLabel(item)}
                         </p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-gold"><Money amount={item.stock_value} /></p>
-                        <p className="text-[10px] text-zinc-500 mt-0.5">Available: {item.available}</p>
+                        <p className="text-[10px] text-muted mt-0.5">Available: {item.available}</p>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-center mb-2">
                       <div>
                         <p className="text-sm font-bold text-cream">{item.current_stock}</p>
-                        <p className="text-[10px] text-zinc-600">Stock</p>
+                        <p className="text-[10px] text-muted-hi">Stock</p>
                       </div>
                       <div>
                         <p className="text-sm font-bold text-cream">{item.sold}</p>
-                        <p className="text-[10px] text-zinc-600">Sold</p>
+                        <p className="text-[10px] text-muted-hi">Sold</p>
                       </div>
                       <div>
                         <p className="text-sm font-bold text-cream">{item.returned}</p>
-                        <p className="text-[10px] text-zinc-600">Returns</p>
+                        <p className="text-[10px] text-muted-hi">Returns</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+                    <div className="flex items-center gap-2 text-[10px] text-muted">
                       <span>Utilisation {utilPct}%</span>
                       <div className="flex-1">
                         <Progress value={utilPct} color="bg-gold" />
@@ -448,7 +448,7 @@ export default function InventoryPage() {
             />
           )}
           {!loading && items.length > mobileItems.length && (
-            <p className="px-2 py-3 text-center text-[11px] text-zinc-500">
+            <p className="px-2 py-3 text-center text-[11px] text-muted">
               Showing first {mobileItems.length.toLocaleString()} matches. Use filters/search for the rest.
             </p>
           )}

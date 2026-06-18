@@ -43,7 +43,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
   }
 
   const panel = (
-    <div className="flex h-full flex-col bg-[rgba(12,12,16,0.8)] backdrop-blur-2xl">
+    <div className="flex h-full flex-col bg-[rgba(12,12,16,0.8)]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/[0.04] px-4 py-3">
         <span className="text-sm font-bold text-cream">আর্টিফ্যাক্ট</span>
@@ -60,7 +60,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
               className={`flex-shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium backdrop-blur-md transition-all ${
                 (activeId ? activeId === a.id : a.id === artifacts[artifacts.length - 1]?.id)
                   ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt shadow-[0_0_10px_rgba(201,168,76,0.1)]'
-                  : 'border border-white/[0.06] bg-card/55 backdrop-blur-xl text-muted-hi hover:text-cream hover:border-gold-dim/30'
+                  : 'border border-white/[0.06] bg-card/80 text-muted-hi hover:text-cream hover:border-gold-dim/30'
               }`}
             >
               {a.title ?? `আর্টিফ্যাক্ট ${artifacts.indexOf(a) + 1}`}
@@ -94,10 +94,10 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
       {/* Actions */}
       {active?.content && (
         <div className="flex gap-2 border-t border-white/[0.04] p-3">
-          <button onClick={copyContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/55 backdrop-blur-xl backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
+          <button onClick={copyContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             📋 কপি
           </button>
-          <button onClick={downloadContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/55 backdrop-blur-xl backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
+          <button onClick={downloadContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             ⬇️ ডাউনলোড
           </button>
         </div>

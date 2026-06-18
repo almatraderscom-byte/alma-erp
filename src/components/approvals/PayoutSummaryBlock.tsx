@@ -21,7 +21,7 @@ export function PayoutSummaryBlock({ payout }: { payout?: Payout | null }) {
     <div className="mt-2 rounded-lg border border-gold/25 bg-gold/5 px-2.5 py-2 text-[10px]">
       <p className="font-black uppercase tracking-wide text-gold-lt">Preferred payout</p>
       <p className="mt-1 font-bold text-cream">{payout.label}</p>
-      {payout.accountHolder && <p className="text-zinc-400">{payout.accountHolder}</p>}
+      {payout.accountHolder && <p className="text-muted">{payout.accountHolder}</p>}
       <p className="font-mono text-sm text-gold-lt">{number}</p>
       <p className={`mt-1 font-bold ${payout.isVerified ? 'text-green-300' : 'text-amber-300'}`}>
         {payout.isVerified ? 'Verified' : 'Not verified'}

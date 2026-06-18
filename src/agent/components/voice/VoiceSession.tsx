@@ -187,7 +187,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full border border-border bg-card/60 backdrop-blur-xl px-5 py-2 text-[13px] font-medium text-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-card/60 backdrop-blur-2xl"
+              className="rounded-full border border-border bg-card/80 px-5 py-2 text-[13px] font-medium text-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-card/80"
             >
               চ্যাটে ফিরুন
             </button>
@@ -216,7 +216,7 @@ function MicWaveIcon() {
       {[0, 1, 2, 3, 4].map(i => (
         <motion.div
           key={i}
-          className="w-[3px] rounded-full bg-card/60 backdrop-blur-2xl"
+          className="w-[3px] rounded-full bg-card/80"
           style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.15))' }}
           animate={{ height: [8, 20 + Math.random() * 12, 8] }}
           transition={{ duration: 0.6 + i * 0.1, repeat: Infinity, ease: 'easeInOut', delay: i * 0.08 }}

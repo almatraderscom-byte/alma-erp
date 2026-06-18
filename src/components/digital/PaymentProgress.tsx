@@ -30,7 +30,7 @@ export function PaymentProgressBar({
 
 export function PaymentStatusBadge({ status }: { status: CditPaymentStatus }) {
   const colors: Record<CditPaymentStatus, string> = {
-    Unpaid: 'text-zinc-400 bg-zinc-500/10 border-zinc-500/30',
+    Unpaid: 'text-muted bg-white/[0.04]0/10 border-zinc-500/30',
     'Partial Paid': 'text-amber-400 bg-amber-500/10 border-amber-500/30',
     Paid: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
   }
@@ -57,7 +57,7 @@ export function FinanceSummaryRow({
     : 'text-cream'
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-xs text-zinc-500">{label}</span>
+      <span className="text-xs text-muted">{label}</span>
       <Money amount={value} className={`text-sm font-bold ${color}`} />
     </div>
   )

@@ -33,7 +33,7 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             <button
               type="button"
               onClick={onClose}
-              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-zinc-400 hover:text-cream hover:bg-black/[0.04] transition-colors text-lg"
+              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-muted hover:text-cream hover:bg-white/[0.04] transition-colors text-lg"
             >
               ×
             </button>
@@ -66,10 +66,10 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
           <div className="mobile-modal-footer border-t border-border bg-surface/95 px-4 pt-3 backdrop-blur sm:px-5 sm:pt-4 md:backdrop-blur-none space-y-2">
             {totals.payable > 0 && (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-gold/5 border border-gold-dim/20 rounded-xl text-xs">
-                <span className="text-zinc-500 truncate max-w-[100px]">{form.items[0]?.product || 'Items'}</span>
-                <span className="text-zinc-600">×{totals.totalQty || 1}</span>
+                <span className="text-muted truncate max-w-[100px]">{form.items[0]?.product || 'Items'}</span>
+                <span className="text-muted-hi">×{totals.totalQty || 1}</span>
                 <Money amount={totals.payable} className="ml-auto font-bold text-gold" />
-                {form.customer && <span className="text-zinc-500 truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
+                {form.customer && <span className="text-muted truncate max-w-[70px]">→ {form.customer.split(' ')[0]}</span>}
               </div>
             )}
 

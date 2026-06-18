@@ -197,9 +197,9 @@ export function PwaBootstrap() {
   return (
     <>
       {staleBuild && (
-        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[225] mx-auto max-w-md rounded-2xl border border-gold-dim/45 bg-[#101014]/95 px-4 py-3 text-xs text-cream shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[225] mx-auto max-w-md rounded-2xl border border-gold-dim/45 bg-[#101014]/95 px-4 py-3 text-xs text-cream shadow-2xl shadow-black/40">
           <p className="font-black text-gold-lt">নতুন আপডেট পাওয়া গেছে</p>
-          <p className="mt-1 text-zinc-400">
+          <p className="mt-1 text-muted">
             {nativeShell
               ? 'সার্ভারে নতুন ভার্সন আছে। একবার রিফ্রেশ করলেই চলবে — APK আনইনস্টল করতে হবে না।'
               : 'আপনার ফোনে পুরনো ভার্সন আছে। একবার রিফ্রেশ করলেই নতুন ভার্সন চলবে — আনইনস্টল করতে হবে না।'}
@@ -215,26 +215,26 @@ export function PwaBootstrap() {
       )}
 
       {offline && (
-        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[220] mx-auto max-w-md rounded-2xl border border-amber-300/30 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-amber-100 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[220] mx-auto max-w-md rounded-2xl border border-amber-300/30 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-amber-100 shadow-2xl shadow-black/40">
           You&apos;re offline. Reconnect to continue.
         </div>
       )}
 
       {serverSlow && !offline && (
-        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[219] mx-auto max-w-md rounded-2xl border border-sky-400/25 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-sky-100 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="fixed inset-x-3 top-[calc(0.75rem+env(safe-area-inset-top,0px))] z-[219] mx-auto max-w-md rounded-2xl border border-sky-400/25 bg-[#101014]/95 px-4 py-3 text-xs font-semibold text-sky-100 shadow-2xl shadow-black/40">
           Server is slow to respond. Some data may be outdated.
         </div>
       )}
 
       {showInstall && (
-        <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[210] mx-auto max-w-md rounded-[26px] border border-gold-dim/40 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 backdrop-blur-2xl md:bottom-5">
+        <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[210] mx-auto max-w-md rounded-[26px] border border-gold-dim/40 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 md:bottom-5">
           <div className="flex items-start gap-3">
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-gold-dim/45 bg-gold/10 text-lg font-black text-gold-lt">
               A
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-black">Install Alma ERP</p>
-              <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+              <p className="mt-1 text-xs leading-relaxed text-muted">
                 {ios
                   ? 'For a full-screen app experience, tap Share, then Add to Home Screen.'
                   : 'Add Alma ERP to your home screen for faster launches and app-like navigation.'}
@@ -252,7 +252,7 @@ export function PwaBootstrap() {
                 <button
                   type="button"
                   onClick={dismissInstall}
-                  className="rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px] font-bold text-zinc-400 active:scale-[0.98]"
+                  className="rounded-xl border border-border bg-white/[0.04] px-3 py-2 text-[11px] font-bold text-muted active:scale-[0.98]"
                 >
                   Later
                 </button>

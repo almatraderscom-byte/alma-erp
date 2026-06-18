@@ -455,7 +455,7 @@ function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loa
     <motion.div
       whileHover={{ y: -3 }}
       transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-      className={`relative overflow-hidden rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-card will-change-transform ${borderColor} border-l-[3px]`}
+      className={`relative overflow-hidden rounded-2xl border border-border-subtle bg-card/80 shadow-card will-change-transform ${borderColor} border-l-[3px]`}
     >
       <div className={`absolute inset-0 bg-gradient-to-br ${accent} pointer-events-none`} />
       <div className="relative p-4 md:p-5">
@@ -498,7 +498,7 @@ function CompactKpi({ label, value, color, sub }: {
     <motion.div
       whileHover={{ y: -2 }}
       transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-      className="bg-card/60 backdrop-blur-2xl rounded-xl border border-border-subtle p-3.5 shadow-card will-change-transform">
+      className="bg-card/80 rounded-xl border border-border-subtle p-3.5 shadow-card will-change-transform">
       <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted mb-1">{label}</p>
       {typeof value === 'string' && value.includes('৳') ? (
         <BdtText

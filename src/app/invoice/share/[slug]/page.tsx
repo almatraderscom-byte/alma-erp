@@ -46,7 +46,7 @@ export default function PublicInvoiceSharePage() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-black text-zinc-500 p-8">
+      <div className="min-h-screen flex items-center justify-center bg-black text-muted p-8">
         {error}
       </div>
     )

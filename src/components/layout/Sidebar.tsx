@@ -31,9 +31,9 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
     ? path === href
     : path.startsWith(href)
   return (
-    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/15 border border-gold/30 shadow-[0_0_22px_rgba(224,122,95,.12)]' : 'border border-transparent hover:bg-white/[0.04] hover:border-border-subtle'}`}>
-      {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gold rounded-r-full" />}
-      <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-gold' : 'text-muted group-hover:text-muted-hi'}`}>
+    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gradient-to-r from-gold/25 via-gold/10 to-transparent border border-gold/40 shadow-[0_0_18px_rgba(224,122,95,0.32),inset_0_0_14px_rgba(224,122,95,0.10)]' : 'border border-transparent hover:bg-white/[0.05] hover:border-white/10 hover:shadow-[0_0_14px_rgba(255,255,255,0.04)]'}`}>
+      {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-gold rounded-r-full shadow-[0_0_10px_2px_rgba(224,122,95,0.7)]" />}
+      <span className={`relative text-base shrink-0 transition-all ${active ? 'text-gold drop-shadow-[0_0_6px_rgba(224,122,95,0.55)]' : 'text-muted group-hover:text-cream'}`}>
         {icon}
         {badge && collapsed && (
           <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
@@ -42,7 +42,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
       <AnimatePresence>
         {!collapsed && (
           <motion.span initial={{ opacity:0, width:0 }} animate={{ opacity:1, width:'auto' }} exit={{ opacity:0, width:0 }}
-            className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-colors ${active ? 'text-gold' : 'text-muted-hi group-hover:text-cream'}`}>
+            className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-colors ${active ? 'text-gold font-semibold drop-shadow-[0_0_6px_rgba(224,122,95,0.4)]' : 'text-muted-hi group-hover:text-cream'}`}>
             {label}
           </motion.span>
         )}
@@ -146,8 +146,8 @@ function MobileTab({
   )
   const content = (
     <>
-      {active && <motion.span layoutId="mobile-nav-glow" className="absolute inset-1 rounded-2xl border border-gold/25 bg-gold/10 shadow-[0_0_26px_rgba(224,122,95,.12)]" />}
-      <span className="relative text-[19px] leading-none">{icon}</span>
+      {active && <motion.span layoutId="mobile-nav-glow" className="absolute inset-1 rounded-2xl border border-gold/40 bg-gradient-to-b from-gold/20 to-gold/5 shadow-[0_0_22px_rgba(224,122,95,0.3),inset_0_0_12px_rgba(224,122,95,0.1)]" />}
+      <span className={cn('relative text-[19px] leading-none transition-all', active && 'drop-shadow-[0_0_7px_rgba(224,122,95,0.55)]')}>{icon}</span>
       <span className="relative truncate text-[9px] font-black tracking-[0.08em]">{label}</span>
       {!!badge && (
         <span className="absolute right-2 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-200/40">
@@ -171,8 +171,8 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
       className={cn(
         'flex items-center gap-3 rounded-2xl border px-3 py-3 transition-all duration-200',
         active
-          ? 'border-gold/30 bg-gold/10 text-gold shadow-[0_0_24px_rgba(224,122,95,.06)]'
-          : 'border-border-subtle bg-white/[0.04] text-muted-hi hover:border-gold/20 hover:bg-gold/[0.06]',
+          ? 'border-gold/40 bg-gradient-to-r from-gold/20 via-gold/8 to-transparent text-gold shadow-[0_0_18px_rgba(224,122,95,0.22),inset_0_0_12px_rgba(224,122,95,0.08)]'
+          : 'border-border-subtle bg-white/[0.04] text-muted-hi hover:border-gold/25 hover:bg-gold/[0.07] hover:text-cream',
       )}
     >
       <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border-subtle bg-card text-base">{item.icon}</span>

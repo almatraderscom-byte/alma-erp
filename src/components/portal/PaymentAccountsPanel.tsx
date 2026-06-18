@@ -131,7 +131,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payment accounts</p>
-          <p className="mt-1 text-[11px] text-zinc-500">
+          <p className="mt-1 text-[11px] text-muted">
             Used for salary payouts, wallet advances, and withdrawals. Numbers are masked on shared screens.
           </p>
         </div>
@@ -148,7 +148,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
             <div
               key={m.id}
               className={`rounded-2xl border px-4 py-3 ${
-                m.isPrimary ? 'border-gold/45 bg-gold/5' : 'border-border bg-black/[0.03]'
+                m.isPrimary ? 'border-gold/45 bg-gold/5' : 'border-border bg-white/[0.03]'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -195,7 +195,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
                 {revealed[m.id] ? m.accountNumber : m.accountNumberMasked}
               </p>
               {m.type === 'BANK_ACCOUNT' && m.bankName && (
-                <p className="mt-1 text-[11px] text-zinc-500">
+                <p className="mt-1 text-[11px] text-muted">
                   {m.bankName}
                   {m.branchName ? ` · ${m.branchName}` : ''}
                 </p>
@@ -203,7 +203,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
             </div>
           ))}
           {!methods.length && (
-            <p className="text-[11px] text-zinc-500">No payout accounts yet. Add bKash, Nagad, Rocket, or a bank account.</p>
+            <p className="text-[11px] text-muted">No payout accounts yet. Add bKash, Nagad, Rocket, or a bank account.</p>
           )}
         </div>
       )}
@@ -218,8 +218,8 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
       </div>
 
       {form === 'MOBILE_BANKING' && (
-        <form onSubmit={submitMobile} className="grid gap-3 rounded-2xl border border-border bg-black/[0.03] p-4">
-          <label className="block text-[11px] text-zinc-500">
+        <form onSubmit={submitMobile} className="grid gap-3 rounded-2xl border border-border bg-white/[0.03] p-4">
+          <label className="block text-[11px] text-muted">
             Provider
             <select name="provider" className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-cream">
               {PROVIDER_OPTIONS.map(o => (
@@ -227,18 +227,18 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
               ))}
             </select>
           </label>
-          <label className="block text-[11px] text-zinc-500">
+          <label className="block text-[11px] text-muted">
             Account type
             <select name="usage_type" className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-cream">
               <option value="PERSONAL">Personal</option>
               <option value="BUSINESS">Business</option>
             </select>
           </label>
-          <label className="block text-[11px] text-zinc-500">
+          <label className="block text-[11px] text-muted">
             Account holder name
             <Input name="account_holder_name" className="mt-1" required />
           </label>
-          <label className="block text-[11px] text-zinc-500">
+          <label className="block text-[11px] text-muted">
             Mobile number
             <Input name="account_number" className="mt-1" required placeholder="01XXXXXXXXX" />
           </label>
@@ -249,12 +249,12 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
       )}
 
       {form === 'BANK_ACCOUNT' && (
-        <form onSubmit={submitBank} className="grid gap-3 rounded-2xl border border-border bg-black/[0.03] p-4">
-          <label className="block text-[11px] text-zinc-500">Bank name<Input name="bank_name" className="mt-1" required /></label>
-          <label className="block text-[11px] text-zinc-500">Branch<Input name="branch_name" className="mt-1" /></label>
-          <label className="block text-[11px] text-zinc-500">Account name<Input name="account_holder_name" className="mt-1" required /></label>
-          <label className="block text-[11px] text-zinc-500">Account number<Input name="account_number" className="mt-1" required /></label>
-          <label className="block text-[11px] text-zinc-500">Routing (optional)<Input name="routing_number" className="mt-1" /></label>
+        <form onSubmit={submitBank} className="grid gap-3 rounded-2xl border border-border bg-white/[0.03] p-4">
+          <label className="block text-[11px] text-muted">Bank name<Input name="bank_name" className="mt-1" required /></label>
+          <label className="block text-[11px] text-muted">Branch<Input name="branch_name" className="mt-1" /></label>
+          <label className="block text-[11px] text-muted">Account name<Input name="account_holder_name" className="mt-1" required /></label>
+          <label className="block text-[11px] text-muted">Account number<Input name="account_number" className="mt-1" required /></label>
+          <label className="block text-[11px] text-muted">Routing (optional)<Input name="routing_number" className="mt-1" /></label>
           <Button type="submit" variant="gold" disabled={saving}>
             {saving ? 'Saving…' : 'Save bank account'}
           </Button>

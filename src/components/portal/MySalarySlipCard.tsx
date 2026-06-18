@@ -75,13 +75,13 @@ export function MySalarySlipCard({
     <Card className="p-5 border-gold-dim/25 bg-card space-y-4">
       <div>
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">My salary slip</p>
-        <p className="mt-1 text-[11px] text-zinc-500">Download your monthly salary statement</p>
+        <p className="mt-1 text-[11px] text-muted">Download your monthly salary statement</p>
       </div>
 
       {!empLinked ? (
         <div className="rounded-xl border border-amber-300/25 bg-amber-300/5 px-4 py-3 text-[11px] text-amber-100">
           <p>Link your HR employee ID to view salary slips.</p>
-          <p className="mt-2 text-zinc-500">Ask an admin or HR to link your account in Users settings.</p>
+          <p className="mt-2 text-muted">Ask an admin or HR to link your account in Users settings.</p>
           <Link
             href="/settings/session"
             className="mt-3 inline-block text-[11px] font-semibold text-gold-lt underline"
@@ -94,12 +94,12 @@ export function MySalarySlipCard({
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-[10px] text-zinc-500 flex items-center gap-1.5">
+            <label className="text-[10px] text-muted flex items-center gap-1.5">
               Period
               <select
                 value={slipPeriodYm}
                 onChange={e => setSlipPeriodYm(e.target.value)}
-                className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] text-cream"
+                className="rounded-lg border border-border bg-white/[0.03] px-2 py-1 text-[11px] text-cream"
               >
                 <option value={slipPeriodOptions.current}>
                   This month ({formatSalarySlipPeriodLabel(slipPeriodOptions.current)})
@@ -113,22 +113,22 @@ export function MySalarySlipCard({
               type="month"
               value={slipPeriodYm}
               onChange={e => setSlipPeriodYm(e.target.value || slipPeriodOptions.current)}
-              className="rounded-lg border border-border bg-black/[0.03] px-2 py-1 text-[11px] font-mono text-cream"
+              className="rounded-lg border border-border bg-white/[0.03] px-2 py-1 text-[11px] font-mono text-cream"
               aria-label="Custom slip period"
             />
           </div>
 
-          <div className="rounded-xl border border-border bg-black/[0.03] px-4 py-3 space-y-2 text-[11px]">
+          <div className="rounded-xl border border-border bg-white/[0.03] px-4 py-3 space-y-2 text-[11px]">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-zinc-500">Period</span>
+              <span className="text-muted">Period</span>
               <span className="font-medium text-cream">{slipBreakdown.periodLabel}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="text-zinc-500">Basic salary</span>
+              <span className="text-muted">Basic salary</span>
               <span className="font-mono text-cream">৳ {slipBreakdown.basicSalary.toLocaleString('en-BD')}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="text-zinc-500">Penalty</span>
+              <span className="text-muted">Penalty</span>
               <span className="font-mono text-red-300">৳ {slipBreakdown.penalty.toLocaleString('en-BD')}</span>
             </div>
             <div className="flex justify-between gap-3 border-t border-border pt-2">
@@ -136,7 +136,7 @@ export function MySalarySlipCard({
               <span className="font-mono font-bold text-gold-lt">৳ {slipBreakdown.netPay.toLocaleString('en-BD')}</span>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <span className="text-zinc-500">Status</span>
+              <span className="text-muted">Status</span>
               {slipBreakdown.isPaid ? (
                 <span className="inline-flex items-center gap-1 rounded-lg border border-green-400/35 bg-green-400/10 px-2 py-0.5 text-[10px] font-bold uppercase text-green-300">
                   <span aria-hidden>🟢</span> PAID

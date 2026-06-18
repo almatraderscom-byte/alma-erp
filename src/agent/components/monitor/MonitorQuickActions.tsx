@@ -39,7 +39,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-sm">
+      <div className="rounded-2xl border border-border-subtle bg-card/80 shadow-sm">
         <div className="flex items-center gap-2 rounded-t-2xl border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">⚡</span>
           <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Quick Actions</h3>
@@ -82,7 +82,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
                 )}
               </button>
               {retriggerOpen && (
-                <div className="absolute top-full left-0 z-30 mt-1 w-64 rounded-xl border border-border bg-card/60 backdrop-blur-2xl p-2 shadow-xl">
+                <div className="absolute top-full left-0 z-30 mt-1 w-64 rounded-xl border border-border bg-card/80 p-2 shadow-xl">
                   <input
                     type="text"
                     placeholder="Search duty…"

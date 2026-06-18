@@ -73,7 +73,7 @@ export default function AgentSalahTimesSettings() {
   }
 
   return (
-    <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-border-subtle bg-card/80 overflow-hidden shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -106,7 +106,7 @@ export default function AgentSalahTimesSettings() {
                         type="time"
                         value={cfg[waqt][field].length === 5 ? cfg[waqt][field] : cfg[waqt][field]}
                         onChange={(e) => patch(waqt, field, e.target.value)}
-                        className="mt-0.5 w-full rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-sm text-cream focus:outline-none focus:border-[#E07A5F]/40 transition-all"
+                        className="mt-0.5 w-full rounded-lg border border-border bg-card/80 px-2 py-1.5 text-sm text-cream focus:outline-none focus:border-[#E07A5F]/40 transition-all"
                       />
                     </label>
                   ))}

@@ -135,7 +135,7 @@ export function DeveloperWatermark() {
   const watermarkClass = cn(
     'developer-watermark pointer-events-none fixed right-3 select-none',
     'text-[10px] font-medium leading-none tracking-[0.14em] md:right-5 md:text-[11px]',
-    'text-slate-400/40 md:text-slate-400/45',
+    'text-muted/40 md:text-muted/45',
     'print:hidden',
     compactBottom
       ? 'bottom-[max(0.75rem,env(safe-area-inset-bottom))]'

@@ -11,21 +11,21 @@ const EFFECTIVE_DATE = '12 June 2026'
 
 export default function PrivacyPolicyPage() {
   return (
-    <main className="min-h-[100dvh] bg-zinc-50 text-zinc-900">
+    <main className="min-h-[100dvh] bg-white/[0.04] text-cream">
       <div className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
-        <header className="mb-10 border-b border-zinc-200 pb-8">
-          <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+        <header className="mb-10 border-b border-border pb-8">
+          <p className="text-sm font-medium uppercase tracking-wide text-muted">
             ALMA Lifestyle &amp; ALMA Online Shop
           </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-cream sm:text-4xl">
             Privacy Policy
           </h1>
-          <p className="mt-3 text-sm text-zinc-600">Effective date: {EFFECTIVE_DATE}</p>
+          <p className="mt-3 text-sm text-muted-hi">Effective date: {EFFECTIVE_DATE}</p>
         </header>
 
-        <article className="space-y-8 text-[15px] leading-7 text-zinc-700">
+        <article className="space-y-8 text-[15px] leading-7 text-cream">
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">1. Who we are</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">1. Who we are</h2>
             <p>
               This Privacy Policy describes how <strong>ALMA Lifestyle</strong> and{' '}
               <strong>ALMA Online Shop</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;, or &ldquo;our&rdquo;) collect,
@@ -36,7 +36,7 @@ export default function PrivacyPolicyPage() {
               Our public website is{' '}
               <a
                 href="https://www.almatraders.com"
-                className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
+                className="font-medium text-cream underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
               >
                 www.almatraders.com
               </a>
@@ -56,7 +56,7 @@ export default function PrivacyPolicyPage() {
             <p className="mt-3">
               <strong>About our internal management application:</strong> We use a private business management
               application hosted at{' '}
-              <span className="font-medium text-zinc-900">alma-erp-six.vercel.app</span> solely for internal
+              <span className="font-medium text-cream">alma-erp-six.vercel.app</span> solely for internal
               company operations. This system is <strong>not</strong> a public customer website. Access is restricted
               to authorised staff and management. It is used to run day-to-day business functions, including staff
               management, payroll, orders, inventory, finance, and customer-support workflows connected to our
@@ -66,7 +66,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">2. Facebook Messenger</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">2. Facebook Messenger</h2>
             <p>
               When you send a message to our Facebook Pages — <strong>ALMA Lifestyle</strong> or{' '}
               <strong>ALMA Online Shop</strong> — we receive the content of your message through the Facebook
@@ -85,7 +85,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">3. Information we collect</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">3. Information we collect</h2>
             <p>Depending on how you contact us, we may collect:</p>
             <ul className="mt-3 list-disc space-y-1 pl-6">
               <li>Your name (as provided in Messenger or during an order)</li>
@@ -100,7 +100,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">4. How we use your information</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">4. How we use your information</h2>
             <p>We use the information described above <strong>only</strong> for:</p>
             <ul className="mt-3 list-disc space-y-1 pl-6">
               <li>Customer support and responding to your messages</li>
@@ -114,7 +114,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">5. Sharing with third parties</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">5. Sharing with third parties</h2>
             <p>
               We do <strong>not</strong> sell customer data to third parties. We may share limited information only
               when required to operate our business, for example:
@@ -131,7 +131,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">6. Data retention</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">6. Data retention</h2>
             <p>
               We retain customer conversations and order-related records for as long as needed to provide support,
               fulfil orders, resolve disputes, and meet reasonable business and legal requirements.
@@ -144,7 +144,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">7. Data security</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">7. Data security</h2>
             <p>
               We take reasonable technical and organisational measures to protect customer information against
               unauthorised access, loss, or misuse. No method of transmission or storage is completely secure, but we
@@ -153,7 +153,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">8. Your rights and contact</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">8. Your rights and contact</h2>
             <p>
               You may contact us to ask questions about this policy, request access to your data, or request
               deletion of your conversation records where applicable.
@@ -162,7 +162,7 @@ export default function PrivacyPolicyPage() {
               <strong>Website:</strong>{' '}
               <a
                 href="https://www.almatraders.com"
-                className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
+                className="font-medium text-cream underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
               >
                 www.almatraders.com
               </a>
@@ -170,7 +170,7 @@ export default function PrivacyPolicyPage() {
               <strong>Email:</strong>{' '}
               <a
                 href="mailto:almatraders.com@gmail.com"
-                className="font-medium text-zinc-900 underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
+                className="font-medium text-cream underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900"
               >
                 almatraders.com@gmail.com
               </a>
@@ -183,7 +183,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900">9. Changes to this policy</h2>
+            <h2 className="mb-3 text-lg font-semibold text-cream">9. Changes to this policy</h2>
             <p>
               We may update this Privacy Policy from time to time. The effective date at the top of this page will
               reflect the latest version. Continued use of our Messenger channels after an update constitutes
@@ -192,7 +192,7 @@ export default function PrivacyPolicyPage() {
           </section>
         </article>
 
-        <footer className="mt-12 border-t border-zinc-200 pt-6 text-sm text-zinc-500">
+        <footer className="mt-12 border-t border-border pt-6 text-sm text-muted">
           &copy; {new Date().getFullYear()} ALMA Lifestyle &amp; ALMA Online Shop. All rights reserved.
         </footer>
       </div>

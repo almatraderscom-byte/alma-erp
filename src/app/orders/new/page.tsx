@@ -29,7 +29,7 @@ export default function NewOrderPage() {
 
   if (!allowRender || mdUp) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center text-zinc-500">
+      <div className="min-h-[50vh] flex items-center justify-center text-muted">
         <Spinner />
       </div>
     )
@@ -44,7 +44,7 @@ export default function NewOrderPage() {
         <div className="flex items-center gap-3 px-4 pb-3">
           <Link
             href="/orders"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-zinc-400 transition-colors hover:bg-black/[0.04] hover:text-cream"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:bg-white/[0.04] hover:text-cream"
             aria-label="Back to orders"
           >
             ←
@@ -86,16 +86,16 @@ export default function NewOrderPage() {
       >
         {totals.payable > 0 && (
           <div className="mb-2 flex items-center gap-2 rounded-xl border border-gold-dim/20 bg-gold/5 px-3 py-1.5 text-xs">
-            <span className="max-w-[120px] truncate text-zinc-500">{form.items[0]?.product || 'Items'}</span>
-            <span className="text-zinc-600">×{totals.totalQty || 1}</span>
+            <span className="max-w-[120px] truncate text-muted">{form.items[0]?.product || 'Items'}</span>
+            <span className="text-muted-hi">×{totals.totalQty || 1}</span>
             <Money amount={totals.payable} className="ml-auto font-bold text-gold" />
-            {form.customer && <span className="max-w-[80px] truncate text-zinc-500">→ {form.customer.split(' ')[0]}</span>}
+            {form.customer && <span className="max-w-[80px] truncate text-muted">→ {form.customer.split(' ')[0]}</span>}
           </div>
         )}
         <div className="flex gap-2">
           <Link
             href="/orders"
-            className={`inline-flex min-h-[48px] flex-1 items-center justify-center rounded-xl border border-border bg-transparent px-4 py-3 text-sm font-semibold text-zinc-400 transition-all hover:bg-black/[0.04] hover:text-cream ${loading ? 'pointer-events-none opacity-50' : ''}`}
+            className={`inline-flex min-h-[48px] flex-1 items-center justify-center rounded-xl border border-border bg-transparent px-4 py-3 text-sm font-semibold text-muted transition-all hover:bg-white/[0.04] hover:text-cream ${loading ? 'pointer-events-none opacity-50' : ''}`}
           >
             Cancel
           </Link>

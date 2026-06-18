@@ -94,7 +94,7 @@ function SectionCard({ title, icon, badge, children, className, accent, actions 
     gold: 'border-[#D4A84B]/20 shadow-sm',
   }
   return (
-    <div className={cn('rounded-2xl border bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm', accent ? accentColors[accent] : 'border-border-subtle', className)}>
+    <div className={cn('rounded-2xl border bg-card/80 overflow-hidden shadow-sm', accent ? accentColors[accent] : 'border-border-subtle', className)}>
       <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
         {icon && <span className="text-base">{icon}</span>}
         <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-muted sm:text-[11px]">{title}</h3>
@@ -630,11 +630,11 @@ export default function AgentStaffMonitor() {
             )}
 
             <button type="button" onClick={() => setHistoryOpen(v => !v)}
-              className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-1.5 text-[10px] font-bold text-muted transition-all hover:text-muted lg:hidden">
+              className="rounded-xl border border-border-subtle bg-card/80 px-3 py-1.5 text-[10px] font-bold text-muted transition-all hover:text-muted lg:hidden">
               📅
             </button>
 
-            <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-1.5 text-[10px] font-bold text-muted transition-all hover:text-muted">
+            <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/80 px-3 py-1.5 text-[10px] font-bold text-muted transition-all hover:text-muted">
               ← Chat
             </Link>
           </div>
@@ -720,7 +720,7 @@ export default function AgentStaffMonitor() {
               </motion.div>
             )}
             {monitorTab === 'agents' && !isLive && (
-              <div className="rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-4 py-8 text-center text-[11px] text-muted">
+              <div className="rounded-2xl border border-border-subtle bg-card/80 px-4 py-8 text-center text-[11px] text-muted">
                 Agent কন্ট্রোল শুধু লাইভ ভিউতে — &ldquo;Today&rdquo; চাপুন
               </div>
             )}
@@ -1198,8 +1198,8 @@ export default function AgentStaffMonitor() {
 
       {/* ── History Sidebar ── */}
       <aside className={cn(
-        'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-border-subtle lg:bg-card/60 backdrop-blur-2xl lg:shadow-sm lg:p-3',
-        historyOpen ? 'fixed inset-y-0 right-0 z-[60] w-64 border-l border-border-subtle bg-card/75 backdrop-blur-xl backdrop-blur-2xl px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl' : 'hidden',
+        'shrink-0 lg:block lg:w-52 lg:rounded-2xl lg:border lg:border-border-subtle lg:bg-card/80 lg:shadow-sm lg:p-3',
+        historyOpen ? 'fixed inset-y-0 right-0 z-[60] w-64 border-l border-border-subtle bg-card/85 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl' : 'hidden',
       )}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">History</h2>

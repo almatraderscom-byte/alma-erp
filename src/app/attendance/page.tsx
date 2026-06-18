@@ -316,8 +316,8 @@ function AttendancePageInner() {
 
       {showIntegrity && data?.integrity && (
         <Card className="p-5 border-amber-200 bg-amber-50/50">
-          <p className="text-sm font-bold text-slate-800">Attendance Integrity Monitor</p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="text-sm font-bold text-cream">Attendance Integrity Monitor</p>
+          <p className="mt-1 text-xs text-muted">
             {data.scopeAllBusinesses ? 'Viewing all businesses' : `Scoped to ${business.name}`}
             {' · '}{data.integrity.issueCount} issue(s)
           </p>
@@ -329,7 +329,7 @@ function AttendancePageInner() {
             </p>
           )}
           {data.integrity.issueCount > 0 && (
-            <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto text-[11px] text-slate-600">
+            <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto text-[11px] text-muted-hi">
               {data.integrity.issues.map((row, i) => (
                 <li key={`${row.kind}-${i}`}>
                   {row.kind.replace(/_/g, ' ')}
@@ -355,7 +355,7 @@ function AttendancePageInner() {
                 <svg className="w-5 h-5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
               </div>
               <p className="text-2xl font-bold text-emerald-700">{k.todayAttendance}</p>
-              <p className="text-xs text-slate-500 mt-1">Present</p>
+              <p className="text-xs text-muted mt-1">Present</p>
             </Card>
           </motion.div>
           <motion.div variants={_fadeUp}>
@@ -364,7 +364,7 @@ function AttendancePageInner() {
                 <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
               </div>
               <p className="text-2xl font-bold text-red-600">{k.absentEmployees}</p>
-              <p className="text-xs text-slate-500 mt-1">Absent</p>
+              <p className="text-xs text-muted mt-1">Absent</p>
             </Card>
           </motion.div>
           <motion.div variants={_fadeUp}>
@@ -373,7 +373,7 @@ function AttendancePageInner() {
                 <svg className="w-5 h-5 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" /></svg>
               </div>
               <p className="text-2xl font-bold text-amber-700">{k.lateEmployees}</p>
-              <p className="text-xs text-slate-500 mt-1">Late</p>
+              <p className="text-xs text-muted mt-1">Late</p>
             </Card>
           </motion.div>
         </motion.div>
@@ -391,7 +391,7 @@ function AttendancePageInner() {
 
       {canReview && analytics && (
         <Card className="p-5">
-          <p className="text-sm font-bold text-slate-800 mb-3">Penalty appeal analytics (this month)</p>
+          <p className="text-sm font-bold text-cream mb-3">Penalty appeal analytics (this month)</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[11px]">
             <AnalyticsStat label="Total penalties" value={money(analytics.totalPenalties)} tone="text-red-600" />
             <AnalyticsStat label="Waived / reduced" value={money(analytics.waivedAmount)} tone="text-emerald-600" />
@@ -399,7 +399,7 @@ function AttendancePageInner() {
             <AnalyticsStat label="Approval rate" value={`${analytics.approvalRate}%`} tone="text-[#E07A5F]" />
           </div>
           {analytics.repeatOffenders.length > 0 && (
-            <p className="mt-3 text-[10px] text-slate-500">
+            <p className="mt-3 text-[10px] text-muted">
               Repeat late penalties: {analytics.repeatOffenders.slice(0, 4).map(r => `${r.employeeId} (${money(r.penaltyTotal)})`).join(' · ')}
             </p>
           )}
@@ -409,8 +409,8 @@ function AttendancePageInner() {
       <Card className="p-5">
         <div className="flex justify-between items-center gap-3 mb-4">
           <div>
-            <p className="text-sm font-bold text-slate-800">Penalty review queue</p>
-            <p className="text-[11px] text-slate-500 mt-1">Original PENALTY ledger rows are preserved. Approvals post ADJUSTMENT credits (full or partial).</p>
+            <p className="text-sm font-bold text-cream">Penalty review queue</p>
+            <p className="text-[11px] text-muted mt-1">Original PENALTY ledger rows are preserved. Approvals post ADJUSTMENT credits (full or partial).</p>
           </div>
         </div>
         {loading ? <Skeleton className="h-28" /> : !(data?.pendingWaivers ?? []).length ? (
@@ -418,12 +418,12 @@ function AttendancePageInner() {
         ) : (
           <div className="grid gap-3">
             {data!.pendingWaivers.map(w => (
-              <div key={w.id} className="rounded-2xl border border-black/[0.06] bg-slate-50/50 p-4 text-[11px] flex flex-col md:flex-row md:items-center gap-3">
+              <div key={w.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4 text-[11px] flex flex-col md:flex-row md:items-center gap-3">
                 <EmployeeAvatar userId={w.requesterUserId} name={w.requesterName} imageUrl={w.requesterProfileImageUrl} size="sm" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-slate-800 font-bold">{w.requesterName} · {w.employeeId}</p>
-                  <p className="text-slate-600 mt-1">{w.reason}</p>
-                  <p className="text-slate-400 mt-1">
+                  <p className="text-cream font-bold">{w.requesterName} · {w.employeeId}</p>
+                  <p className="text-muted-hi mt-1">{w.reason}</p>
+                  <p className="text-muted mt-1">
                     Late {w.lateMinutes}m · {w.requestType?.replace(/_/g, ' ').toLowerCase() || 'appeal'} · asked {money(w.requestedReductionAmount ?? w.originalPenaltyAmount)} of {money(w.originalPenaltyAmount)}
                     {w.hasAttachment ? ' · 📎 attachment' : ''} · {w.createdAt.slice(0, 10)}
                   </p>
@@ -441,7 +441,7 @@ function AttendancePageInner() {
 
       <div className="grid lg:grid-cols-[1.5fr_1fr] gap-4">
         <Card className="p-5">
-          <p className="text-sm font-bold text-slate-800 mb-4">Today attendance log</p>
+          <p className="text-sm font-bold text-cream mb-4">Today attendance log</p>
           {loading ? <Skeleton className="h-40" /> : !(data?.records ?? []).length ? (
             <Empty
               icon="◇"
@@ -453,7 +453,7 @@ function AttendancePageInner() {
             <>
             <div className="hidden overflow-x-auto min-w-0 max-w-full max-h-[420px] md:block">
               <table className="w-full min-w-[760px] text-left text-[11px]">
-                <thead className="sticky top-0 z-[1] bg-white/95 backdrop-blur-sm border-b border-black/[0.06] text-slate-500 text-xs uppercase tracking-wider">
+                <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-muted text-xs uppercase tracking-wider">
                   <tr>
                     <th className="py-3 pr-3 font-medium">Employee</th>
                     {data?.scopeAllBusinesses && <th className="py-3 pr-3 font-medium">Business</th>}
@@ -466,24 +466,24 @@ function AttendancePageInner() {
                     <th className="py-3 font-medium" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-black/[0.04]">
+                <tbody className="divide-y divide-white/[0.04]">
                   {data!.records.map(r => (
-                    <tr key={r.id} className="transition-colors hover:bg-slate-50/80">
+                    <tr key={r.id} className="transition-colors hover:bg-white/[0.04]/80">
                       <td className="py-3 pr-3">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
                           <span>
-                            <span className="text-slate-800 font-medium">{r.employeeName}</span>
-                            <span className="block text-slate-400 font-mono text-[10px]">{r.employeeId}</span>
+                            <span className="text-cream font-medium">{r.employeeName}</span>
+                            <span className="block text-muted font-mono text-[10px]">{r.employeeId}</span>
                           </span>
                         </div>
                       </td>
                       {data?.scopeAllBusinesses && (
-                        <td className="py-3 pr-3 text-slate-500">{r.businessId?.replace(/_/g, ' ') || '—'}</td>
+                        <td className="py-3 pr-3 text-muted">{r.businessId?.replace(/_/g, ' ') || '—'}</td>
                       )}
-                      <td className="py-3 pr-3 font-mono text-slate-700">{time(r.checkInAt)}</td>
-                      <td className="py-3 pr-3 font-mono text-slate-700">{r.checkOutAt ? time(r.checkOutAt) : '--'}</td>
-                      <td className="py-3 pr-3 text-right font-mono text-slate-700">{duration(r.totalWorkMinutes)}</td>
+                      <td className="py-3 pr-3 font-mono text-cream">{time(r.checkInAt)}</td>
+                      <td className="py-3 pr-3 font-mono text-cream">{r.checkOutAt ? time(r.checkOutAt) : '--'}</td>
+                      <td className="py-3 pr-3 text-right font-mono text-cream">{duration(r.totalWorkMinutes)}</td>
                       <td className={`py-3 pr-3 text-right font-mono font-medium ${r.lateMinutes ? 'text-red-600' : 'text-emerald-600'}`}>{duration(r.lateMinutes)}</td>
                       <td className="py-3 text-right font-mono text-red-600">{money(r.penaltyAmount)}</td>
                       <td className="py-3 text-right">
@@ -526,8 +526,8 @@ function AttendancePageInner() {
                       <div className="flex min-w-0 items-center gap-2">
                         <EmployeeAvatar userId={r.userId} name={r.employeeName} imageUrl={r.profileImageUrl} size="sm" />
                         <div className="min-w-0">
-                          <p className="truncate font-semibold text-slate-800">{r.employeeName}</p>
-                          <p className="font-mono text-slate-400 text-[10px]">{r.employeeId}</p>
+                          <p className="truncate font-semibold text-cream">{r.employeeName}</p>
+                          <p className="font-mono text-muted text-[10px]">{r.employeeId}</p>
                         </div>
                       </div>
                       <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.trustStatus === 'TRUSTED' ? 'bg-emerald-50 text-emerald-700' : r.trustStatus === 'WARNING' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
@@ -535,21 +535,21 @@ function AttendancePageInner() {
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-xl bg-slate-50 py-2 px-1">
-                        <p className="font-mono text-slate-800 font-medium">{time(r.checkInAt)}</p>
-                        <p className="text-[10px] text-slate-500">In</p>
+                      <div className="rounded-xl bg-white/[0.04] py-2 px-1">
+                        <p className="font-mono text-cream font-medium">{time(r.checkInAt)}</p>
+                        <p className="text-[10px] text-muted">In</p>
                       </div>
-                      <div className="rounded-xl bg-slate-50 py-2 px-1">
-                        <p className="font-mono text-slate-800 font-medium">{r.checkOutAt ? time(r.checkOutAt) : '--'}</p>
-                        <p className="text-[10px] text-slate-500">Out</p>
+                      <div className="rounded-xl bg-white/[0.04] py-2 px-1">
+                        <p className="font-mono text-cream font-medium">{r.checkOutAt ? time(r.checkOutAt) : '--'}</p>
+                        <p className="text-[10px] text-muted">Out</p>
                       </div>
                       <div className={`rounded-xl py-2 px-1 ${r.lateMinutes ? 'bg-red-50' : 'bg-emerald-50'}`}>
                         <p className={`font-mono font-medium ${r.lateMinutes ? 'text-red-600' : 'text-emerald-600'}`}>{duration(r.lateMinutes)}</p>
-                        <p className="text-[10px] text-slate-500">Late</p>
+                        <p className="text-[10px] text-muted">Late</p>
                       </div>
                     </div>
-                    <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-black/[0.04]">
-                      <span className="text-slate-500">Worked {duration(r.totalWorkMinutes)}</span>
+                    <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-white/[0.04]">
+                      <span className="text-muted">Worked {duration(r.totalWorkMinutes)}</span>
                       <span className="font-mono font-medium text-red-600">{money(r.penaltyAmount)}</span>
                     </div>
                   </Card>
@@ -561,21 +561,21 @@ function AttendancePageInner() {
         </Card>
 
         <Card className="p-5">
-          <p className="text-sm font-bold text-slate-800 mb-4">Punctuality ranking</p>
+          <p className="text-sm font-bold text-cream mb-4">Punctuality ranking</p>
           {loading ? <Skeleton className="h-40" /> : !(data?.ranking ?? []).length ? (
-            <p className="text-[11px] text-slate-500">No linked employees for this business.</p>
+            <p className="text-[11px] text-muted">No linked employees for this business.</p>
           ) : (
             <div className="space-y-2 max-h-[420px] overflow-y-auto">
               {data!.ranking.slice(0, 20).map((r, i) => (
-                <div key={`${r.employeeId}-${i}`} className="rounded-2xl border border-black/[0.06] bg-slate-50/50 p-3 text-[11px] hover:bg-slate-50 transition-colors">
+                <div key={`${r.employeeId}-${i}`} className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-3 text-[11px] hover:bg-white/[0.04] transition-colors">
                   <div className="flex justify-between gap-2 items-center">
                     <span className="flex items-center gap-2 min-w-0">
                       <EmployeeAvatar userId={r.userId} name={r.name} imageUrl={r.profileImageUrl} size="sm" />
-                      <span className="text-slate-800 font-semibold truncate">{i + 1}. {r.name}</span>
+                      <span className="text-cream font-semibold truncate">{i + 1}. {r.name}</span>
                     </span>
                     <span className="font-mono text-[#E07A5F] font-bold">{r.punctualityScore}%</span>
                   </div>
-                  <p className="mt-1 text-slate-500">{r.presentDays} days · {r.lateCount} late · avg {r.averageWorkLabel} · penalty {money(r.penaltyTotal)}</p>
+                  <p className="mt-1 text-muted">{r.presentDays} days · {r.lateCount} late · avg {r.averageWorkLabel} · penalty {money(r.penaltyTotal)}</p>
                 </div>
               ))}
             </div>
@@ -584,7 +584,7 @@ function AttendancePageInner() {
       </div>
 
       <Card className="p-5">
-        <p className="text-sm font-bold text-slate-800 mb-4">Absent employees today</p>
+        <p className="text-sm font-bold text-cream mb-4">Absent employees today</p>
         {loading ? <Skeleton className="h-20" /> : !(data?.absentEmployees ?? []).length ? (
           <p className="text-[11px] text-emerald-600 font-medium">No absences among linked employees today.</p>
         ) : (
@@ -600,9 +600,9 @@ function AttendancePageInner() {
       </Card>
 
       <Card className="p-5">
-        <p className="text-sm font-bold text-slate-800 mb-4">Pending face verification reviews</p>
+        <p className="text-sm font-bold text-cream mb-4">Pending face verification reviews</p>
         {loading ? <Skeleton className="h-20" /> : !pendingSelfieReviews.length ? (
-          <p className="text-[11px] text-slate-500">No submitted verification photos awaiting review.</p>
+          <p className="text-[11px] text-muted">No submitted verification photos awaiting review.</p>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {pendingSelfieReviews.map(log => (
@@ -614,8 +614,8 @@ function AttendancePageInner() {
                   employeeId={log.employeeId}
                 />
                 <div className="mt-2 flex justify-between gap-2 flex-wrap">
-                  <span className="font-mono text-slate-600">{log.employeeId}</span>
-                  <span className="text-slate-500">{new Date(log.capturedAt).toLocaleString()}</span>
+                  <span className="font-mono text-muted-hi">{log.employeeId}</span>
+                  <span className="text-muted">{new Date(log.capturedAt).toLocaleString()}</span>
                 </div>
                 {data?.scopeAllBusinesses && (
                   <p className="mt-1 text-[10px] text-amber-700">{log.businessId.replace(/_/g, ' ')}</p>
@@ -633,13 +633,13 @@ function AttendancePageInner() {
       </Card>
 
       <Card className="p-5">
-        <p className="text-sm font-bold text-slate-800 mb-4">Selfie verification logs</p>
+        <p className="text-sm font-bold text-cream mb-4">Selfie verification logs</p>
         {loading ? <Skeleton className="h-20" /> : !(data?.selfieLogs ?? []).length ? (
-          <p className="text-[11px] text-slate-500">No selfie verification logs this month.</p>
+          <p className="text-[11px] text-muted">No selfie verification logs this month.</p>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {data!.selfieLogs.slice(0, 12).map(log => (
-              <div key={log.id} className="rounded-2xl border border-black/[0.06] bg-slate-50/30 p-3 text-[11px]">
+              <div key={log.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/30 p-3 text-[11px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <VerificationPhoto
                   src={log.imageUrl || log.imageDataUrl}
@@ -647,8 +647,8 @@ function AttendancePageInner() {
                   employeeId={log.employeeId}
                 />
                 <div className="mt-2 flex justify-between gap-2">
-                  <span className="font-mono text-slate-500">{log.employeeId}</span>
-                  <span className="text-slate-500">{new Date(log.capturedAt).toLocaleString()}</span>
+                  <span className="font-mono text-muted">{log.employeeId}</span>
+                  <span className="text-muted">{new Date(log.capturedAt).toLocaleString()}</span>
                 </div>
                 {log.reviewedAt ? (
                   <p className="mt-1 text-emerald-600 font-medium">Reviewed {new Date(log.reviewedAt).toLocaleString()}</p>
@@ -665,22 +665,22 @@ function AttendancePageInner() {
         <MobileModalPortal open zIndex={90} onBackdropClick={() => setReview(null)}>
           <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
+              <p className="text-xs text-muted mt-1">
                 {review.employeeId} · original penalty {money(review.originalPenalty)} · requested reduction {money(review.requestedAmount)}
               </p>
             </div>
             <div className="mobile-modal-body space-y-3 px-5">
               {review.action === 'APPROVE' && (
                 <label className="block space-y-1 text-[11px]">
-                  <span className="text-slate-500">Approved reduction (wallet credit)</span>
-                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2.5 text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
-                  <p className="text-slate-400">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
+                  <span className="text-muted">Approved reduction (wallet credit)</span>
+                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <p className="text-muted">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
                 </label>
               )}
               <label className="block space-y-1 text-[11px]">
-                <span className="text-slate-500">Admin note</span>
-                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <span className="text-muted">Admin note</span>
+                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
               </label>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
@@ -715,7 +715,7 @@ function VerificationPhoto({
     return (
       <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 text-center text-[10px] text-amber-700">
         <span className="font-black uppercase tracking-wide">Photo unavailable</span>
-        <span className="text-slate-500">Storage ref missing or expired for {employeeId}. Ask employee to re-verify if needed.</span>
+        <span className="text-muted">Storage ref missing or expired for {employeeId}. Ask employee to re-verify if needed.</span>
       </div>
     )
   }
@@ -724,7 +724,7 @@ function VerificationPhoto({
     <img
       src={src}
       alt="Verification selfie"
-      className="h-36 w-full rounded-xl object-cover bg-slate-100"
+      className="h-36 w-full rounded-xl object-cover bg-white/[0.06]"
       onError={() => setBroken(true)}
     />
   )
@@ -736,9 +736,9 @@ function money(value: unknown) {
 
 function AnalyticsStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-xl border border-black/[0.06] bg-slate-50/50 px-3 py-2.5">
-      <p className="text-[9px] uppercase tracking-wider text-slate-500 font-medium">{label}</p>
-      <p className={`mt-0.5 font-mono font-bold ${tone || 'text-slate-800'}`}>{value}</p>
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2.5">
+      <p className="text-[9px] uppercase tracking-wider text-muted font-medium">{label}</p>
+      <p className={`mt-0.5 font-mono font-bold ${tone || 'text-cream'}`}>{value}</p>
     </div>
   )
 }

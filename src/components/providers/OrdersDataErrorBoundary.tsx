@@ -34,7 +34,7 @@ export class OrdersDataErrorBoundary extends Component<Props, State> {
       <div className="p-6 md:p-10">
         <Card className="max-w-lg p-6 space-y-3 border-amber-500/30 bg-amber-500/5">
           <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Orders data unavailable</p>
-          <p className="text-sm text-zinc-300">
+          <p className="text-sm text-muted">
             This screen needs lifestyle orders data, but the provider is not active for your current business or route.
             Switch to Alma Lifestyle or open Trading from the business menu.
           </p>

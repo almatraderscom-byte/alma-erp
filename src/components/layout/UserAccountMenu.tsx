@@ -105,7 +105,7 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
       exit={{ opacity: 0, y: mobile ? 8 : 10, scale: 0.98 }}
       transition={{ duration: 0.16, ease: 'easeOut' }}
       className={cn(
-        'absolute z-[140] w-72 overflow-hidden rounded-2xl border border-border-subtle bg-card/98 shadow-xl shadow-black/10 backdrop-blur-xl',
+        'absolute z-[140] w-72 overflow-hidden rounded-2xl border border-border-subtle bg-card/98 shadow-xl shadow-black/10',
         mobile ? 'bottom-full right-2 mb-3' : 'bottom-full left-0 mb-3',
       )}
     >

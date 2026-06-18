@@ -48,7 +48,7 @@ function NeuralNode({ label, value, color, delay = 0 }: {
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.4, delay }}
-      className="group relative rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 transition-all hover:border-white/[0.12] hover:bg-card/60 backdrop-blur-2xl hover:shadow-sm"
+      className="group relative rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 transition-all hover:border-white/[0.12] hover:bg-card/80 hover:shadow-sm"
     >
       <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-[#E07A5F]/20 opacity-0 group-hover:opacity-100 transition-opacity" />
       <p className="text-[9px] font-bold uppercase tracking-wider text-muted">{label}</p>
@@ -109,7 +109,7 @@ export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/80 overflow-hidden shadow-sm">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🧠</span>
           <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">এজেন্ট ব্রেইন</h3>

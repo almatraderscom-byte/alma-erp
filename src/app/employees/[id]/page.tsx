@@ -88,7 +88,7 @@ function payrollTxHelper(txType: string): { text: string; className: string } {
   }
   return {
     text: 'Manual correction — can be positive or negative depending on amount sign in ledger mirror.',
-    className: 'text-slate-500 font-bold',
+    className: 'text-muted font-bold',
   }
 }
 
@@ -554,17 +554,17 @@ export default function EmployeeDetailPage() {
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800">{employee.name}</h2>
-                  <p className="text-sm text-slate-500 mt-0.5">{employee.role || 'Staff'} · <span className="font-mono">{employee.emp_id}</span></p>
-                  <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-500">
+                  <h2 className="text-lg font-bold text-cream">{employee.name}</h2>
+                  <p className="text-sm text-muted mt-0.5">{employee.role || 'Staff'} · <span className="font-mono">{employee.emp_id}</span></p>
+                  <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted">
                     {employee.phone && <span className="flex items-center gap-1"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>{employee.phone}</span>}
                     {employee.email && <span className="flex items-center gap-1"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>{employee.email}</span>}
                   </div>
-                  {employee.address && <p className="text-xs text-slate-400 mt-1">{employee.address}</p>}
+                  {employee.address && <p className="text-xs text-muted mt-1">{employee.address}</p>}
                 </div>
                 <div className="text-right space-y-1">
                   <p className="text-2xl font-bold text-[#E07A5F] font-mono">{formatMoneyBDT(employee.monthly_salary)}</p>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Monthly Salary</p>
+                  <p className="text-[10px] text-muted uppercase tracking-wider">Monthly Salary</p>
                 </div>
               </div>
             </div>
@@ -572,33 +572,33 @@ export default function EmployeeDetailPage() {
 
           {/* Wallet Summary Strip */}
           {!walletLoading && wallet && (
-            <div className="grid grid-cols-3 gap-3 mt-5 pt-5 border-t border-black/[0.06]">
+            <div className="grid grid-cols-3 gap-3 mt-5 pt-5 border-t border-white/[0.06]">
               <div className="text-center">
-                <p className="font-mono text-lg font-bold text-slate-800">৳ {Number(wallet.summary.lifetimeEarned).toLocaleString('en-BD')}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">Earned</p>
+                <p className="font-mono text-lg font-bold text-cream">৳ {Number(wallet.summary.lifetimeEarned).toLocaleString('en-BD')}</p>
+                <p className="text-[10px] text-muted mt-0.5">Earned</p>
               </div>
               <div className="text-center">
-                <p className="font-mono text-lg font-bold text-slate-800">৳ {Number(wallet.summary.lifetimeWithdrawn).toLocaleString('en-BD')}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">Withdrawn</p>
+                <p className="font-mono text-lg font-bold text-cream">৳ {Number(wallet.summary.lifetimeWithdrawn).toLocaleString('en-BD')}</p>
+                <p className="text-[10px] text-muted mt-0.5">Withdrawn</p>
               </div>
               <div className="text-center">
                 <p className="font-mono text-lg font-bold text-emerald-600">৳ {Number(wallet.summary.companyLiability).toLocaleString('en-BD')}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">Held Balance</p>
+                <p className="text-[10px] text-muted mt-0.5">Held Balance</p>
               </div>
             </div>
           )}
 
           {/* Toolbar */}
-          <div className="flex flex-wrap gap-2 pt-4 mt-4 border-t border-black/[0.06] items-center">
+          <div className="flex flex-wrap gap-2 pt-4 mt-4 border-t border-white/[0.06] items-center">
             <div className="flex flex-wrap items-center gap-2 flex-1">
               {slipModel ? (
                 <>
-                  <label className="text-[10px] text-slate-500 flex items-center gap-1.5">
+                  <label className="text-[10px] text-muted flex items-center gap-1.5">
                     Slip period
                     <select
                       value={slipPeriodYm}
                       onChange={e => setSlipPeriodYm(e.target.value)}
-                      className="rounded-lg border border-black/[0.06] bg-white px-2 py-1 text-[11px] text-slate-800 focus:outline-none"
+                      className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-[11px] text-cream focus:outline-none"
                     >
                       <option value={slipPeriodOptions.current}>
                         This month ({formatSalarySlipPeriodLabel(slipPeriodOptions.current)})
@@ -612,7 +612,7 @@ export default function EmployeeDetailPage() {
                     type="month"
                     value={slipPeriodYm}
                     onChange={e => setSlipPeriodYm(e.target.value || slipPeriodOptions.current)}
-                    className="rounded-lg border border-black/[0.06] bg-white px-2 py-1 text-[11px] font-mono text-slate-800 focus:outline-none"
+                    className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-[11px] font-mono text-cream focus:outline-none"
                     aria-label="Custom slip period"
                   />
                   <button
@@ -639,16 +639,16 @@ export default function EmployeeDetailPage() {
                 + Payroll entry
               </Button>
             )}
-            <Link href="/employees" className="text-[11px] text-slate-500 hover:text-slate-700 font-medium">← Roster</Link>
+            <Link href="/employees" className="text-[11px] text-muted hover:text-cream font-medium">← Roster</Link>
           </div>
         </Card>
       </motion.div>
 
       {/* Attendance Summary */}
       <Card className="p-5 mb-5">
-        <p className="text-sm font-bold text-slate-800 mb-3">Attendance summary</p>
+        <p className="text-sm font-bold text-cream mb-3">Attendance summary</p>
         {attendanceLoading ? <Skeleton className="h-36" /> : !attendance ? (
-          <p className="text-xs text-slate-500">No attendance data available for this employee/business.</p>
+          <p className="text-xs text-muted">No attendance data available for this employee/business.</p>
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -659,11 +659,11 @@ export default function EmployeeDetailPage() {
               <MiniStat label="Avg duration" valueLabel={durationLabel(attendance.summary.averageWorkMinutes)} />
             </div>
             {!attendance.records.length ? (
-              <p className="text-xs text-slate-500">No attendance records this month.</p>
+              <p className="text-xs text-muted">No attendance records this month.</p>
             ) : (
               <div className="max-h-72 overflow-auto text-[11px]">
                 <table className="w-full min-w-[720px]">
-                  <thead className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-black/[0.06] text-xs text-slate-500 uppercase tracking-wider">
+                  <thead className="sticky top-0 bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
                     <tr>
                       <th className="py-2.5 pr-3 text-left font-medium">Date</th>
                       <th className="py-2.5 pr-3 text-left font-medium">Check in</th>
@@ -674,13 +674,13 @@ export default function EmployeeDetailPage() {
                       {canResetAttendance ? <th className="py-2.5 text-right font-medium">Actions</th> : null}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-black/[0.04]">
+                  <tbody className="divide-y divide-white/[0.04]">
                     {attendance.records.map(row => (
-                      <tr key={row.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-2.5 pr-3 font-mono text-slate-700">{row.attendanceDate.slice(0, 10)}</td>
-                        <td className="py-2.5 pr-3 font-mono text-slate-700">{timeLabel(row.checkInAt)}</td>
-                        <td className="py-2.5 pr-3 font-mono text-slate-700">{row.checkOutAt ? timeLabel(row.checkOutAt) : '—'}</td>
-                        <td className="py-2.5 pr-3 text-right font-mono text-slate-700">{durationLabel(row.totalWorkMinutes)}</td>
+                      <tr key={row.id} className="hover:bg-white/[0.04]/50 transition-colors">
+                        <td className="py-2.5 pr-3 font-mono text-cream">{row.attendanceDate.slice(0, 10)}</td>
+                        <td className="py-2.5 pr-3 font-mono text-cream">{timeLabel(row.checkInAt)}</td>
+                        <td className="py-2.5 pr-3 font-mono text-cream">{row.checkOutAt ? timeLabel(row.checkOutAt) : '—'}</td>
+                        <td className="py-2.5 pr-3 text-right font-mono text-cream">{durationLabel(row.totalWorkMinutes)}</td>
                         <td className={`py-2.5 pr-3 text-right font-mono font-medium ${row.lateMinutes ? 'text-red-600' : 'text-emerald-600'}`}>{durationLabel(row.lateMinutes)}</td>
                         <td className="py-2.5 pr-3 text-right font-mono text-red-600">৳ {row.penaltyAmount.toLocaleString('en-BD')}</td>
                         {canResetAttendance ? (
@@ -709,8 +709,8 @@ export default function EmployeeDetailPage() {
       <Card className="p-5 mb-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
           <div>
-            <p className="text-sm font-bold text-slate-800">Salary settings</p>
-            <p className="text-[11px] text-slate-500 mt-1">Monthly base used for payroll accrual (GAS roster)</p>
+            <p className="text-sm font-bold text-cream">Salary settings</p>
+            <p className="text-[11px] text-muted mt-1">Monthly base used for payroll accrual (GAS roster)</p>
           </div>
           {canEditSalary ? (
             <Button size="xs" variant="ghost" onClick={() => setOpenSalary(true)}>Edit salary</Button>
@@ -719,15 +719,15 @@ export default function EmployeeDetailPage() {
         <p className="font-mono text-2xl font-bold text-[#E07A5F]">
           {formatMoneyBDT(employee.monthly_salary)}
         </p>
-        <p className="text-[10px] text-slate-400 mt-2">Past accruals are not recalculated when salary changes.</p>
+        <p className="text-[10px] text-muted mt-2">Past accruals are not recalculated when salary changes.</p>
       </Card>
 
       {/* Wallet Ledger */}
       <div id="postgres-wallet-ledger">
       <Card className="p-5 mb-5">
-        <p className="text-sm font-bold text-slate-800 mb-3">Postgres wallet ledger</p>
+        <p className="text-sm font-bold text-cream mb-3">Postgres wallet ledger</p>
         {walletLoading ? <Skeleton className="h-44" /> : !wallet ? (
-          <p className="text-xs text-slate-500">No wallet data available for this employee/business.</p>
+          <p className="text-xs text-muted">No wallet data available for this employee/business.</p>
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -737,11 +737,11 @@ export default function EmployeeDetailPage() {
               <MiniStat label="Lifetime withdrawn" value={wallet.summary.lifetimeWithdrawn} />
             </div>
             {!wallet.entries.length ? (
-              <p className="text-xs text-slate-500">No ledger entries yet. Run monthly accrual from Payroll.</p>
+              <p className="text-xs text-muted">No ledger entries yet. Run monthly accrual from Payroll.</p>
             ) : (
               <div className="max-h-80 overflow-auto text-[11px]">
                 <table className="w-full min-w-[760px]">
-                  <thead className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-black/[0.06] text-xs text-slate-500 uppercase tracking-wider">
+                  <thead className="sticky top-0 bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
                     <tr>
                       <th className="py-2.5 pr-3 text-left font-medium">Date</th>
                       <th className="py-2.5 pr-3 text-left font-medium">Type</th>
@@ -751,18 +751,18 @@ export default function EmployeeDetailPage() {
                       {canReverseSalary ? <th className="py-2.5 text-right font-medium">Actions</th> : null}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-black/[0.04]">
+                  <tbody className="divide-y divide-white/[0.04]">
                     {wallet.entries.slice().reverse().map(tx => (
-                      <tr key={tx.id || `${tx.date}-${tx.type}`} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-2.5 pr-3 font-mono text-slate-700">{String(tx.date).slice(0, 10)}</td>
+                      <tr key={tx.id || `${tx.date}-${tx.type}`} className="hover:bg-white/[0.04]/50 transition-colors">
+                        <td className="py-2.5 pr-3 font-mono text-cream">{String(tx.date).slice(0, 10)}</td>
                         <td className="py-2.5 pr-3">
-                          <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600">
+                          <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-lg bg-white/[0.06] text-muted-hi">
                             {tx.type.replace(/_/g, ' ')}
                           </span>
                         </td>
                         <td className={`py-2.5 pr-3 text-right font-mono font-medium ${tx.signedAmount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}</td>
                         <td className="py-2.5 pr-3 text-right font-mono text-[#E07A5F] font-medium">৳ {tx.runningBalance.toLocaleString('en-BD')}</td>
-                        <td className="py-2.5 text-slate-500 max-w-[200px] truncate">{tx.note || '—'}</td>
+                        <td className="py-2.5 text-muted max-w-[200px] truncate">{tx.note || '—'}</td>
                         {canReverseSalary ? (
                           <td className="py-2.5 text-right">
                             {tx.type === 'SALARY_ACCRUAL' && tx.id && tx.signedAmount > 0 ? (
@@ -792,8 +792,8 @@ export default function EmployeeDetailPage() {
         <Card className="p-5 mb-5">
           <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
             <div>
-              <p className="text-sm font-bold text-slate-800">Salary corrections</p>
-              <p className="text-[11px] text-slate-500 mt-1">Request approval to update an existing salary accrual</p>
+              <p className="text-sm font-bold text-cream">Salary corrections</p>
+              <p className="text-[11px] text-muted mt-1">Request approval to update an existing salary accrual</p>
             </div>
             <Button size="xs" variant="gold" onClick={openCorrectionModal}>
               + Request correction
@@ -816,12 +816,12 @@ export default function EmployeeDetailPage() {
                     <p className="font-bold text-amber-700">
                       Pending: {formatMoneyBDT(payload.currentAmount)} → {formatMoneyBDT(payload.proposedAmount)} ({periodLabel})
                     </p>
-                    <p className="mt-1 text-slate-500">
+                    <p className="mt-1 text-muted">
                       Requested by {row.requester?.name || 'Admin'} on {new Date(row.createdAt).toLocaleDateString()}
                     </p>
-                    <p className="mt-1 text-slate-600 line-clamp-2">Reason: {row.reason || payload.requestedReason}</p>
+                    <p className="mt-1 text-muted-hi line-clamp-2">Reason: {row.reason || payload.requestedReason}</p>
                     {payload.reversals?.length ? (
-                      <p className="mt-1 text-slate-500">Reversals: {payload.reversals.length} entries</p>
+                      <p className="mt-1 text-muted">Reversals: {payload.reversals.length} entries</p>
                     ) : null}
                   </div>
                 )
@@ -834,13 +834,13 @@ export default function EmployeeDetailPage() {
 
       {/* Legacy Payroll History */}
       <Card className="p-5">
-        <p className="text-sm font-bold text-slate-800 mb-3">Legacy GAS payroll history</p>
+        <p className="text-sm font-bold text-cream mb-3">Legacy GAS payroll history</p>
         {loading ? <Skeleton className="h-44" /> : transactions.length === 0 ? (
-          <p className="text-xs text-slate-500">No transactions logged yet.</p>
+          <p className="text-xs text-muted">No transactions logged yet.</p>
         ) : (
           <div className="max-h-96 overflow-auto text-[11px]">
             <table className="w-full min-w-[760px]">
-              <thead className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-black/[0.06] text-xs text-slate-500 uppercase tracking-wider">
+              <thead className="sticky top-0 bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
                 <tr>
                   <th className="py-2.5 pr-3 text-left font-medium">Date</th>
                   <th className="py-2.5 pr-3 text-left font-medium">Type</th>
@@ -849,18 +849,18 @@ export default function EmployeeDetailPage() {
                   <th className="py-2.5 text-left font-medium">Note</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-black/[0.04]">
+              <tbody className="divide-y divide-white/[0.04]">
                 {transactions.map(tx => (
-                  <tr key={tx.tx_id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="py-2.5 pr-3 font-mono text-slate-700">{tx.date.slice(0, 10)}</td>
+                  <tr key={tx.tx_id} className="hover:bg-white/[0.04]/50 transition-colors">
+                    <td className="py-2.5 pr-3 font-mono text-cream">{tx.date.slice(0, 10)}</td>
                     <td className="py-2.5 pr-3">
-                      <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600">
+                      <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-lg bg-white/[0.06] text-muted-hi">
                         {tx.tx_type}
                       </span>
                     </td>
                     <td className="py-2.5 pr-3 text-right font-mono text-[#E07A5F] font-medium">{tx.amount.toLocaleString('en-BD')}</td>
-                    <td className="py-2.5 pr-3 text-slate-600">{tx.period_ym}</td>
-                    <td className="py-2.5 text-slate-500">{tx.note}</td>
+                    <td className="py-2.5 pr-3 text-muted-hi">{tx.period_ym}</td>
+                    <td className="py-2.5 text-muted">{tx.note}</td>
                   </tr>
                 ))}
               </tbody>
@@ -874,20 +874,20 @@ export default function EmployeeDetailPage() {
         <MobileModalPortal open zIndex={120} onBackdropClick={() => !savingSalary && setOpenSalary(false)} aria-label="Update employee salary">
           <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Update salary for {employee.name}</p>
+              <p className="text-sm font-bold text-cream">Update salary for {employee.name}</p>
             </div>
             <form ref={salaryFormRef} id="edit-salary-form" onSubmit={submitSalary} className="flex min-h-0 flex-1 flex-col text-xs">
               <div className="mobile-modal-body space-y-3 px-5 pb-4">
                 <label className="block space-y-1">
-                  <span className="text-slate-500">Current salary</span>
+                  <span className="text-muted">Current salary</span>
                   <input
                     readOnly
                     value={formatMoneyBDT(employee.monthly_salary)}
-                    className="w-full rounded-xl bg-slate-50 border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-400"
+                    className="w-full rounded-xl bg-white/[0.04] border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-muted"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-slate-500">New monthly salary (৳)</span>
+                  <span className="text-muted">New monthly salary (৳)</span>
                   <input
                     name="new_salary"
                     type="number"
@@ -896,30 +896,30 @@ export default function EmployeeDetailPage() {
                     step={1}
                     required
                     defaultValue={employee.monthly_salary}
-                    className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-slate-500">Effective from</span>
+                  <span className="text-muted">Effective from</span>
                   <input
                     name="effective_date"
                     type="date"
                     defaultValue={todayIso}
                     required
-                    className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                   />
                 </label>
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[10px] text-muted">
                   New monthly accrual will start from the effective date you choose (stored in audit for now).
                 </p>
                 <label className="block space-y-1">
-                  <span className="text-slate-500">Reason (optional)</span>
+                  <span className="text-muted">Reason (optional)</span>
                   <textarea
                     name="reason"
                     rows={2}
                     maxLength={500}
                     placeholder="e.g. annual increment, role change"
-                    className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                   />
                 </label>
               </div>
@@ -941,13 +941,13 @@ export default function EmployeeDetailPage() {
           <Card className="mobile-modal-shell w-full max-w-md border-amber-200 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-amber-700">Confirm wallet debit</p>
-              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+              <p className="mt-2 text-xs text-muted-hi leading-relaxed">
                 This will <span className="font-bold text-red-600">DECREASE</span> {employee.name}&apos;s wallet balance by{' '}
                 <span className="font-mono text-[#E07A5F] font-bold">৳ {payConfirm.amount.toLocaleString('en-BD')}</span>.
               </p>
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-muted">
                 Current balance:{' '}
-                <span className="font-mono text-slate-800">
+                <span className="font-mono text-cream">
                   ৳ {Number(wallet?.summary.currentBalance ?? 0).toLocaleString('en-BD')}
                 </span>
                 <br />
@@ -989,13 +989,13 @@ export default function EmployeeDetailPage() {
         >
           <Card className="mobile-modal-shell w-full max-w-lg border-[#E07A5F]/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Request salary correction for {employee.name}</p>
+              <p className="text-sm font-bold text-cream">Request salary correction for {employee.name}</p>
             </div>
             <div className="mobile-modal-body space-y-4 px-5 pb-4 text-xs max-h-[70vh] overflow-y-auto">
               <section className="space-y-2">
-                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Step 1 · Target accrual</p>
+                <p className="text-[10px] font-black uppercase tracking-wide text-muted">Step 1 · Target accrual</p>
                 {!salaryAccrualEntries.length ? (
-                  <p className="text-slate-500">No SALARY_ACCRUAL entries in this wallet yet.</p>
+                  <p className="text-muted">No SALARY_ACCRUAL entries in this wallet yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {salaryAccrualEntries.map(entry => {
@@ -1007,7 +1007,7 @@ export default function EmployeeDetailPage() {
                       return (
                         <label
                           key={entry.id}
-                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 transition-all ${selected ? 'border-[#E07A5F]/40 bg-[#E07A5F]/5 shadow-sm' : 'border-black/[0.06] bg-slate-50/50 hover:bg-slate-50'}`}
+                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 transition-all ${selected ? 'border-[#E07A5F]/40 bg-[#E07A5F]/5 shadow-sm' : 'border-white/[0.06] bg-white/[0.04]/50 hover:bg-white/[0.04]'}`}
                         >
                           <input
                             type="radio"
@@ -1017,9 +1017,9 @@ export default function EmployeeDetailPage() {
                             onChange={() => setCorrectionAccrualId(entry.id || '')}
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="font-bold text-slate-800">{period}</p>
+                            <p className="font-bold text-cream">{period}</p>
                             <p className="font-mono text-[#E07A5F] mt-0.5">{formatMoneyBDT(amount)}</p>
-                            <p className="text-slate-500 mt-1 line-clamp-2">{entry.note || '—'}</p>
+                            <p className="text-muted mt-1 line-clamp-2">{entry.note || '—'}</p>
                           </div>
                         </label>
                       )
@@ -1029,7 +1029,7 @@ export default function EmployeeDetailPage() {
               </section>
 
               <section className="space-y-2">
-                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Step 2 · New amount</p>
+                <p className="text-[10px] font-black uppercase tracking-wide text-muted">Step 2 · New amount</p>
                 <input
                   type="number"
                   min={1}
@@ -1038,7 +1038,7 @@ export default function EmployeeDetailPage() {
                   onChange={e => setCorrectionProposed(e.target.value)}
                   disabled={!selectedAccrual}
                   placeholder={selectedAccrual ? `Current ${formatMoneyBDT(Number(selectedAccrual.amount || 0))}` : 'Select accrual first'}
-                  className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                 />
                 {correctionDelta != null ? (
                   <p className={`font-mono font-bold ${correctionDelta >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -1050,19 +1050,19 @@ export default function EmployeeDetailPage() {
 
               <section className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Step 3 · Reverse other entries (optional)</p>
+                  <p className="text-[10px] font-black uppercase tracking-wide text-muted">Step 3 · Reverse other entries (optional)</p>
                   <Button type="button" size="xs" variant="ghost" disabled={!selectedAccrual} onClick={addCorrectionReversal}>
                     + Add reversal
                   </Button>
                 </div>
                 {!correctionReversals.length ? (
-                  <p className="text-slate-500">Use this to cancel a wrong withdrawal or adjustment when approving.</p>
+                  <p className="text-muted">Use this to cancel a wrong withdrawal or adjustment when approving.</p>
                 ) : (
                   <div className="space-y-3">
                     {correctionReversals.map(row => (
-                      <div key={row.key} className="rounded-xl border border-black/[0.06] bg-slate-50/50 p-3 space-y-2">
+                      <div key={row.key} className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 p-3 space-y-2">
                         <div className="flex justify-between items-center gap-2">
-                          <span className="text-slate-500">Reversal</span>
+                          <span className="text-muted">Reversal</span>
                           <button
                             type="button"
                             className="text-red-600 text-[10px] font-bold"
@@ -1074,7 +1074,7 @@ export default function EmployeeDetailPage() {
                         <select
                           value={row.ledgerEntryId}
                           onChange={e => updateCorrectionReversal(row.key, { ledgerEntryId: e.target.value })}
-                          className="w-full rounded-lg bg-white border border-black/[0.06] px-2 py-1.5 text-slate-800 text-[11px] focus:outline-none"
+                          className="w-full rounded-lg bg-card/85 border border-white/[0.06] px-2 py-1.5 text-cream text-[11px] focus:outline-none"
                         >
                           <option value="">Select ledger entry…</option>
                           {reversalCandidateEntries.map(entry => (
@@ -1089,14 +1089,14 @@ export default function EmployeeDetailPage() {
                           value={row.amount}
                           onChange={e => updateCorrectionReversal(row.key, { amount: e.target.value })}
                           placeholder="Amount (+ credit back, − debit)"
-                          className="w-full rounded-lg bg-white border border-black/[0.06] px-2 py-1.5 font-mono text-sm focus:outline-none"
+                          className="w-full rounded-lg bg-card/85 border border-white/[0.06] px-2 py-1.5 font-mono text-sm focus:outline-none"
                         />
                         <input
                           type="text"
                           value={row.reason}
                           onChange={e => updateCorrectionReversal(row.key, { reason: e.target.value })}
                           placeholder="Why reverse this entry"
-                          className="w-full rounded-lg bg-white border border-black/[0.06] px-2 py-1.5 text-sm text-slate-800 focus:outline-none"
+                          className="w-full rounded-lg bg-card/85 border border-white/[0.06] px-2 py-1.5 text-sm text-cream focus:outline-none"
                         />
                       </div>
                     ))}
@@ -1105,7 +1105,7 @@ export default function EmployeeDetailPage() {
               </section>
 
               <section className="space-y-2">
-                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Step 4 · Reason (required)</p>
+                <p className="text-[10px] font-black uppercase tracking-wide text-muted">Step 4 · Reason (required)</p>
                 <textarea
                   value={correctionReason}
                   onChange={e => setCorrectionReason(e.target.value)}
@@ -1113,7 +1113,7 @@ export default function EmployeeDetailPage() {
                   minLength={5}
                   maxLength={800}
                   placeholder="Explain why this accrual amount should change"
-                  className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                 />
               </section>
             </div>
@@ -1147,17 +1147,17 @@ export default function EmployeeDetailPage() {
         <MobileModalPortal open zIndex={120} onBackdropClick={() => { setOpenPay(false); setPayConfirm(null) }} aria-label="Log payroll movement">
           <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Log payroll movement</p>
+              <p className="text-sm font-bold text-cream">Log payroll movement</p>
             </div>
             <form ref={payrollFormRef} id="log-payroll-form" onSubmit={submitPay} className="flex min-h-0 flex-1 flex-col text-xs">
               <div className="mobile-modal-body space-y-3 px-5 pb-4">
               <label className="block space-y-1">
-                <span className="text-slate-500">Type</span>
+                <span className="text-muted">Type</span>
                 <select
                   name="tx_type"
                   value={payTxType}
                   onChange={e => setPayTxType(e.target.value as LegacyPayTxType)}
-                  className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                   required
                 >
                   {LEGACY_PAY_TX_OPTIONS.map(opt => (
@@ -1169,22 +1169,22 @@ export default function EmployeeDetailPage() {
                 </p>
               </label>
               <label className="block space-y-1">
-                <span className="text-slate-500">Amount (৳)</span>
-                <input name="amount" type="number" step="0.01" required className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <span className="text-muted">Amount (৳)</span>
+                <input name="amount" type="number" step="0.01" required className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block space-y-1">
-                  <span className="text-slate-500">Effective date</span>
-                  <input name="date" type="date" className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <span className="text-muted">Effective date</span>
+                  <input name="date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-slate-500">Period (YYYY-MM)</span>
-                  <input name="period_ym" placeholder="2026-05" className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 font-mono text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <span className="text-muted">Period (YYYY-MM)</span>
+                  <input name="period_ym" placeholder="2026-05" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
                 </label>
               </div>
               <label className="block space-y-1">
-                <span className="text-slate-500">Note</span>
-                <textarea name="note" rows={2} className="w-full rounded-xl bg-white border border-black/[0.06] px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <span className="text-muted">Note</span>
+                <textarea name="note" rows={2} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
               </label>
               </div>
               <div className="mobile-modal-footer px-5 pt-3">
@@ -1203,10 +1203,10 @@ export default function EmployeeDetailPage() {
   )
 }
 
-function MiniStat({ label, value = 0, valueLabel, color = 'text-slate-800' }: { label: string; value?: number; valueLabel?: string; color?: string }) {
+function MiniStat({ label, value = 0, valueLabel, color = 'text-cream' }: { label: string; value?: number; valueLabel?: string; color?: string }) {
   return (
-    <div className="rounded-2xl border border-black/[0.06] bg-slate-50/50 p-3">
-      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-3">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${color}`}>{valueLabel ?? `৳ ${Number(value || 0).toLocaleString('en-BD')}`}</p>
     </div>
   )

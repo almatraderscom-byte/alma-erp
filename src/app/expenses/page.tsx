@@ -176,7 +176,7 @@ export default function ExpensesPage() {
 
       <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="p-5 md:p-6">
-          <p className="text-sm font-bold text-slate-800 mb-4">Expense mix</p>
+          <p className="text-sm font-bold text-cream mb-4">Expense mix</p>
           {loading ? <Skeleton className="h-52" /> : donut.length === 0 ? (
             <Empty icon="◫" title="No expenses" desc="Relax filters or capture your first receipt" />
           ) : (
@@ -184,12 +184,12 @@ export default function ExpensesPage() {
           )}
         </Card>
         <Card className="p-5 md:p-6 overflow-hidden">
-          <p className="text-sm font-bold text-slate-800 mb-4">Highest categories</p>
+          <p className="text-sm font-bold text-cream mb-4">Highest categories</p>
           {loading ? <Skeleton className="h-52" /> : (
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([cat, amt]) => (
-                <div key={cat} className="flex justify-between text-xs border-b border-black/[0.04] pb-2">
-                  <span className="text-slate-500">{cat}</span>
+                <div key={cat} className="flex justify-between text-xs border-b border-white/[0.04] pb-2">
+                  <span className="text-muted">{cat}</span>
                   <span className="text-gold font-mono">৳ {amt.toLocaleString('en-BD')}</span>
                 </div>
               ))}
@@ -202,8 +202,8 @@ export default function ExpensesPage() {
       <Card className="min-w-0 p-5 md:p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <p className="text-sm font-bold text-slate-800">Ledger lines</p>
-            <p className="text-[10px] text-slate-500">{label}</p>
+            <p className="text-sm font-bold text-cream">Ledger lines</p>
+            <p className="text-[10px] text-muted">{label}</p>
           </div>
         </div>
         {loading ? <Skeleton className="h-48" /> : expenses.length === 0 ? (
@@ -211,8 +211,8 @@ export default function ExpensesPage() {
         ) : (
           <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[480px]">
             <table className="w-full min-w-[760px] text-left text-[11px]">
-              <thead className="sticky top-0 bg-white border-b border-black/[0.06]">
-                <tr className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+              <thead className="sticky top-0 bg-card/85 border-b border-white/[0.06]">
+                <tr className="text-[11px] font-medium uppercase tracking-wider text-muted">
                   <th className="py-2 pr-3">Date</th>
                   <th className="py-2 pr-3">Title</th>
                   <th className="py-2 pr-3">Category</th>
@@ -223,9 +223,9 @@ export default function ExpensesPage() {
               </thead>
               <tbody>
                 {expenses.map(er => (
-                  <tr key={er.exp_id + er.date + er.amount} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
-                    <td className="py-2 pr-3 font-mono text-slate-400">{er.date.slice(0, 10)}</td>
-                    <td className="py-2 pr-3 text-slate-800">{er.title}</td>
+                  <tr key={er.exp_id + er.date + er.amount} className="border-b border-white/[0.04] hover:bg-white/[0.04]/50 transition-colors">
+                    <td className="py-2 pr-3 font-mono text-muted">{er.date.slice(0, 10)}</td>
+                    <td className="py-2 pr-3 text-cream">{er.title}</td>
                     <td className="py-2 pr-3">{er.category}</td>
                     <td className="py-2 pr-3 text-right font-mono text-gold-lt">{er.amount.toLocaleString('en-BD')}</td>
                     <td className="py-2 pr-3">
@@ -233,9 +233,9 @@ export default function ExpensesPage() {
                         <button type="button" onClick={() => openReceipt(er.receipt_ref)} className="rounded-full border border-green-400/25 bg-green-400/10 px-2 py-0.5 text-[9px] font-bold text-green-400">
                           Attachment
                         </button>
-                      ) : <span className="text-slate-400">—</span>}
+                      ) : <span className="text-muted">—</span>}
                     </td>
-                    <td className="py-2 text-slate-500">{er.payment_status ?? '—'}</td>
+                    <td className="py-2 text-muted">{er.payment_status ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -257,55 +257,55 @@ export default function ExpensesPage() {
         >
           <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Add expense</p>
+              <p className="text-sm font-bold text-cream">Add expense</p>
             </div>
             <form ref={expenseFormRef} id="add-expense-form" onSubmit={submit} className="flex min-h-0 flex-1 flex-col text-xs">
               <div className="mobile-modal-body space-y-3 px-5 pb-4">
                     <label className="block space-y-1">
-                      <span className="text-slate-500">Title</span>
-                      <input name="title" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm" />
+                      <span className="text-muted">Title</span>
+                      <input name="title" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm" />
                     </label>
                     <label className="block space-y-1">
-                      <span className="text-slate-500">Category</span>
-                      <select name="category" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm">
+                      <span className="text-muted">Category</span>
+                      <select name="category" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
                         <option value="">Select…</option>
                         {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block space-y-1">
-                        <span className="text-slate-500">Amount (৳)</span>
-                        <input name="amount" type="number" step="0.01" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 font-mono text-sm" />
+                        <span className="text-muted">Amount (৳)</span>
+                        <input name="amount" type="number" step="0.01" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream font-mono text-sm" />
                       </label>
                       <label className="block space-y-1">
-                        <span className="text-slate-500">Payment date</span>
-                        <input name="date" type="date" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 font-mono text-sm" />
+                        <span className="text-muted">Payment date</span>
+                        <input name="date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream font-mono text-sm" />
                       </label>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block space-y-1">
-                        <span className="text-slate-500">Payment status</span>
-                        <select name="payment_status" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm">
+                        <span className="text-muted">Payment status</span>
+                        <select name="payment_status" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
                           <option>Paid</option>
                           <option>Pending</option>
                           <option>Partial</option>
                         </select>
                       </label>
                       <label className="block space-y-1">
-                        <span className="text-slate-500">Payment method</span>
-                        <input name="payment_method" placeholder="bKash, bank…" className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm" />
+                        <span className="text-muted">Payment method</span>
+                        <input name="payment_method" placeholder="bKash, bank…" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm" />
                       </label>
                     </div>
-                    <label className="flex items-center gap-2 text-slate-500">
-                      <input name="recurring" type="checkbox" className="rounded border-black/[0.08]" /> Recurring
+                    <label className="flex items-center gap-2 text-muted">
+                      <input name="recurring" type="checkbox" className="rounded border-white/[0.08]" /> Recurring
                     </label>
                     <div className="space-y-2">
-                      <span className="text-slate-500">Receipt / document</span>
+                      <span className="text-muted">Receipt / document</span>
                       <div
                         onDragOver={e => { e.preventDefault(); setDragActive(true) }}
                         onDragLeave={() => setDragActive(false)}
                         onDrop={handleDrop}
-                        className={`rounded-2xl border border-dashed p-4 text-center transition-colors ${dragActive ? 'border-gold-dim/70 bg-gold/10' : 'border-black/[0.08] bg-black/[0.03]'}`}
+                        className={`rounded-2xl border border-dashed p-4 text-center transition-colors ${dragActive ? 'border-gold-dim/70 bg-gold/10' : 'border-white/[0.08] bg-white/[0.03]'}`}
                       >
                         <input
                           ref={fileInputRef}
@@ -322,16 +322,16 @@ export default function ExpensesPage() {
                         {receipt ? (
                           <div className="space-y-2">
                             {receipt.contentType.startsWith('image/') ? (
-                              <button type="button" onClick={() => openReceipt(receipt.url)} className="mx-auto block overflow-hidden rounded-xl border border-black/[0.08]">
+                              <button type="button" onClick={() => openReceipt(receipt.url)} className="mx-auto block overflow-hidden rounded-xl border border-white/[0.08]">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img src={receipt.url} alt="Receipt preview" className="max-h-36 max-w-full object-contain" />
                               </button>
                             ) : (
-                              <button type="button" onClick={() => openReceipt(receipt.url)} className="rounded-xl border border-black/[0.08] bg-white px-4 py-3 text-xs font-bold text-gold-lt">
+                              <button type="button" onClick={() => openReceipt(receipt.url)} className="rounded-xl border border-white/[0.08] bg-card/85 px-4 py-3 text-xs font-bold text-gold-lt">
                                 PDF receipt · open/download
                               </button>
                             )}
-                            <p className="text-[10px] text-slate-500">{receipt.fileName} · {(receipt.sizeBytes / 1024).toFixed(1)} KB</p>
+                            <p className="text-[10px] text-muted">{receipt.fileName} · {(receipt.sizeBytes / 1024).toFixed(1)} KB</p>
                             <div className="flex justify-center gap-2">
                               <Button size="xs" variant="secondary" type="button" onClick={() => openReceipt(receipt.url)}>Preview</Button>
                               <Button size="xs" variant="ghost" type="button" onClick={() => setReceipt(null)}>Remove</Button>
@@ -339,19 +339,19 @@ export default function ExpensesPage() {
                           </div>
                         ) : (
                           <div className="space-y-2">
-                            <p className="text-xs text-slate-500">Drop receipt here, or upload/capture from mobile camera.</p>
-                            <p className="text-[10px] text-slate-500">Images, screenshots, invoice scans, and PDF up to 10 MB.</p>
+                            <p className="text-xs text-muted">Drop receipt here, or upload/capture from mobile camera.</p>
+                            <p className="text-[10px] text-muted">Images, screenshots, invoice scans, and PDF up to 10 MB.</p>
                             <Button size="xs" variant="gold" type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                               {uploading ? 'Uploading…' : 'Upload receipt'}
                             </Button>
-                            {uploading && <div className="h-1.5 rounded-full bg-black/[0.08] overflow-hidden"><div className="h-full bg-gold" style={{ width: `${uploadProgress}%` }} /></div>}
+                            {uploading && <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden"><div className="h-full bg-gold" style={{ width: `${uploadProgress}%` }} /></div>}
                           </div>
                         )}
                       </div>
                     </div>
                     <label className="block space-y-1">
-                      <span className="text-slate-500">Notes</span>
-                      <textarea name="notes" rows={3} className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm" />
+                      <span className="text-muted">Notes</span>
+                      <textarea name="notes" rows={3} className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm" />
                     </label>
               </div>
               <div className="mobile-modal-footer px-5 pt-3">

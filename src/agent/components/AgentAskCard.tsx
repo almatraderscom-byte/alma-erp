@@ -35,7 +35,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/60 backdrop-blur-2xl px-4 py-3 text-sm shadow-card"
+        className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/80 px-4 py-3 text-sm shadow-card"
       >
         <p className="text-[12px] text-muted">{card.question}</p>
         <p className="mt-1 text-[12px] font-medium text-[#E07A5F]">
@@ -51,7 +51,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/60 backdrop-blur-2xl p-4 text-sm shadow-card"
+      className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/80 p-4 text-sm shadow-card"
     >
       <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-cream">
         <span>❓</span>

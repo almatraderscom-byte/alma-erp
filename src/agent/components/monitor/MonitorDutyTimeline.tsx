@@ -38,7 +38,7 @@ function DutyToggleSwitch({ dutyKey, enabled, toggling, onToggle }: {
     >
       <span
         className={cn(
-          'inline-block h-3.5 w-3.5 rounded-full bg-card/60 backdrop-blur-2xl shadow transition-transform ml-0.5',
+          'inline-block h-3.5 w-3.5 rounded-full bg-card/80 shadow transition-transform ml-0.5',
           enabled ? 'translate-x-4' : 'translate-x-0',
         )}
       />
@@ -203,7 +203,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/80 overflow-hidden shadow-sm">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🤖</span>
           <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Agent Duties</h3>
@@ -336,7 +336,7 @@ export function MonitorSalahTimeline({ salahDuties }: { salahDuties: SalahDutyRo
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-emerald-500/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+      <div className="rounded-2xl border border-emerald-500/20 bg-card/80 overflow-hidden shadow-sm">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🕌</span>
           <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Salah Reminders</h3>

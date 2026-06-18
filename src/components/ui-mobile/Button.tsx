@@ -18,7 +18,7 @@ const VARIANTS: Record<Variant, string> = {
   // Brand coral. Solid fill for the primary action.
   primary: 'bg-gold text-white hover:bg-gold-dim active:bg-gold-dim shadow-card',
   secondary: 'bg-card text-cream border border-border-strong hover:bg-bg-2 active:bg-bg-3',
-  ghost: 'bg-transparent text-muted-hi hover:bg-black/[0.04] active:bg-black/[0.06]',
+  ghost: 'bg-transparent text-muted-hi hover:bg-white/[0.04] active:bg-white/[0.06]',
   danger: 'bg-danger text-white hover:opacity-90 active:opacity-90',
 }
 

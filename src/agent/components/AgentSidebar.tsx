@@ -153,7 +153,7 @@ export default function AgentSidebar({
   }
 
   const sidebarContent = (
-    <div className={cn('flex h-full flex-col bg-[rgba(250,249,246,0.92)] backdrop-blur-2xl', isMobile && 'safe-top')}>
+    <div className={cn('flex h-full flex-col bg-card/85', isMobile && 'safe-top')}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
         <div className="flex items-center gap-2">
@@ -294,7 +294,7 @@ export default function AgentSidebar({
             onClick={() => setChatView('regular')}
             className={cn(
               'flex-1 rounded-full py-1.5 text-[12px] font-semibold transition-all',
-              chatView === 'regular' ? 'bg-card/60 backdrop-blur-2xl text-cream shadow-sm' : 'text-muted hover:text-cream',
+              chatView === 'regular' ? 'bg-card/80 text-cream shadow-sm' : 'text-muted hover:text-cream',
             )}
           >
             💬 চ্যাট
@@ -304,7 +304,7 @@ export default function AgentSidebar({
             onClick={() => setChatView('office')}
             className={cn(
               'flex-1 rounded-full py-1.5 text-[12px] font-semibold transition-all',
-              chatView === 'office' ? 'bg-card/60 backdrop-blur-2xl text-cream shadow-sm' : 'text-muted hover:text-cream',
+              chatView === 'office' ? 'bg-card/80 text-cream shadow-sm' : 'text-muted hover:text-cream',
             )}
           >
             🏢 অফিস{officeCount > 0 ? ` (${officeCount})` : ''}
@@ -375,7 +375,7 @@ export default function AgentSidebar({
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onBlur={() => setRenameId(null)}
-                  className="w-full rounded-lg bg-card/60 backdrop-blur-2xl border border-[#E07A5F]/30 px-2 py-1 text-xs text-cream focus:outline-none"
+                  className="w-full rounded-lg bg-card/80 border border-[#E07A5F]/30 px-2 py-1 text-xs text-cream focus:outline-none"
                 />
               </form>
             ) : (
@@ -404,7 +404,7 @@ export default function AgentSidebar({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-border bg-card/60 backdrop-blur-2xl shadow-lg"
+                      className="absolute right-2 top-8 z-50 w-40 rounded-xl border border-border bg-card/80 shadow-lg"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -468,7 +468,7 @@ export default function AgentSidebar({
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-border bg-card/60 backdrop-blur-2xl shadow-xl p-6"
+              className="w-full max-w-sm rounded-2xl border border-border bg-card/80 shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="mb-2 font-bold text-cream">কথোপকথন মুছবেন?</h3>
@@ -726,7 +726,7 @@ function MemoryView() {
           >
             <motion.div
               initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-              className="w-full max-w-sm rounded-2xl border border-border bg-card/60 backdrop-blur-2xl shadow-xl p-6"
+              className="w-full max-w-sm rounded-2xl border border-border bg-card/80 shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="mb-2 font-bold text-cream">স্মৃতি মুছবেন?</h3>
@@ -801,7 +801,7 @@ function ProjectDialog({
         initial={{ scale: 0.95 }}
         animate={{ scale: 1 }}
         exit={{ scale: 0.95 }}
-        className="w-full max-w-md rounded-2xl border border-border bg-card/60 backdrop-blur-2xl shadow-xl p-6"
+        className="w-full max-w-md rounded-2xl border border-border bg-card/80 shadow-xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-5 font-bold text-cream">{project ? 'প্রজেক্ট সম্পাদনা' : 'নতুন প্রজেক্ট'}</h3>

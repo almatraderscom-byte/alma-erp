@@ -32,11 +32,11 @@ export default function ForgotPasswordPage() {
     <div className="min-h-[100dvh] flex flex-col items-center justify-center px-4 bg-black">
       <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-8">
         <h1 className="text-lg font-bold text-cream mb-2">Forgot password</h1>
-        <p className="text-[11px] text-zinc-500 mb-6">
+        <p className="text-[11px] text-muted mb-6">
           Enter your email. If an account exists, we&apos;ll issue a short-lived reset link (logged server-side for admins on dev stacks).
         </p>
         {sent ? (
-          <p className="text-sm text-zinc-400 mb-4">Check your email inbox — or ask an administrator to reset your password from Users.</p>
+          <p className="text-sm text-muted mb-4">Check your email inbox — or ask an administrator to reset your password from Users.</p>
         ) : (
           <form onSubmit={submit} className="space-y-4">
             <input

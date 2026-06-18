@@ -171,7 +171,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       )}
 
       {phase === 'editing' && (
-        <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-card/60 backdrop-blur-2xl p-3">
+        <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-card/80 p-3">
           {!editField ? (
             <div className="flex flex-wrap gap-2">
               {(editFields.length ? editFields : Object.keys(EDIT_FIELDS)).map((f) => (
@@ -187,7 +187,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
             <>
               <p className="text-[10px] text-muted">{EDIT_FIELDS[editField] ?? editField} — নতুন মান:</p>
               <input value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                className="w-full rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-xs text-cream focus:outline-none focus:border-[#E07A5F]/40" />
+                className="w-full rounded-lg border border-border bg-card/80 px-2 py-1.5 text-xs text-cream focus:outline-none focus:border-[#E07A5F]/40" />
               <button type="button" onClick={() => void applyEdit()}
                 className="rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/25 px-3 py-1.5 text-[10px] text-[#E07A5F] hover:bg-[#E07A5F]/20">সংরক্ষণ</button>
             </>

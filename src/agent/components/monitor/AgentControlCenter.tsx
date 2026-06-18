@@ -191,7 +191,7 @@ function Toggle({
       <motion.span
         layout
         transition={{ type: 'spring', stiffness: 500, damping: 34 }}
-        className={`inline-block h-6 w-6 rounded-full bg-card/60 backdrop-blur-2xl shadow-[0_1px_3px_rgba(0,0,0,0.2)] ${
+        className={`inline-block h-6 w-6 rounded-full bg-card/80 shadow-[0_1px_3px_rgba(0,0,0,0.2)] ${
           on ? 'ml-[22px]' : 'ml-0.5'
         }`}
       />

@@ -372,7 +372,7 @@ export function OneSignalPushManager() {
   if (!showPrompt || registered || !pushReady) return null
 
   return (
-    <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[215] mx-auto max-w-md rounded-[26px] border border-gold-dim/40 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 backdrop-blur-2xl md:bottom-5">
+    <div className="fixed inset-x-3 bottom-[calc(5.8rem+env(safe-area-inset-bottom,0px))] z-[215] mx-auto max-w-md rounded-[26px] border border-gold-dim/40 bg-[#09090d]/95 p-4 text-cream shadow-2xl shadow-black/60 md:bottom-5">
       <div className="flex items-start gap-3">
         <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-gold-dim/45 bg-gold/10 text-lg font-black text-gold-lt">
           A
@@ -381,7 +381,7 @@ export function OneSignalPushManager() {
           <p className="text-sm font-black">
             {nativeApp ? 'Phone alert চালু করুন' : 'Enable Alma alerts'}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+          <p className="mt-1 text-xs leading-relaxed text-muted">
             {nativeApp
               ? `Alma ERP app থেকে lock-screen alert পাবেন — order, payroll, inventory alert ${business.shortName}-এর জন্য।`
               : `Get order, payroll, inventory, and admin alerts on your lock screen for ${business.shortName}.`}
@@ -411,7 +411,7 @@ export function OneSignalPushManager() {
                 localStorage.setItem(PROMPT_DISMISSED_KEY, String(Date.now()))
                 setShowPrompt(false)
               }}
-              className="rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px] font-bold text-zinc-400 active:scale-[0.98]"
+              className="rounded-xl border border-border bg-white/[0.04] px-3 py-2 text-[11px] font-bold text-muted active:scale-[0.98]"
             >
               Later
             </button>

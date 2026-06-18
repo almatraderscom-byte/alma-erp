@@ -199,22 +199,22 @@ function TtsProviderCard({
     <>
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">{callLabel}</p>
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">আজ — মিনিট</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayCalls.minutesUsed}</p>
           <p className="text-[10px] text-muted">{fmtUsd(todayCalls.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">আজ — ক্যারেক্টার</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayCalls.characters.toLocaleString()}</p>
           <p className="text-[10px] text-muted">{todayCallCount} calls</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">মাস — মিনিট</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthCalls.minutesUsed}</p>
           <p className="text-[10px] text-muted">{fmtUsd(monthCalls.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">মাস — ক্যারেক্টার</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthCalls.characters.toLocaleString()}</p>
           <p className="text-[10px] text-muted">{monthCallCount} calls</p>
@@ -233,22 +233,22 @@ function TtsProviderCard({
     <>
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">ভয়েস মেসেজ / voice reply</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">আজ — মিনিট</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayVoice.minutesUsed}</p>
           <p className="text-[10px] text-muted">{fmtUsd(todayVoice.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">আজ — ক্যারেক্টার</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayVoice.characters.toLocaleString()}</p>
           <p className="text-[10px] text-muted">{todayVoice.synthesisCount} synthesis</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">মাস — মিনিট</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthVoice.minutesUsed}</p>
           <p className="text-[10px] text-muted">{fmtUsd(monthVoice.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+        <div className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wider text-muted">মাস — ক্যারেক্টার</p>
           <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthVoice.characters.toLocaleString()}</p>
           <p className="text-[10px] text-muted">{monthVoice.synthesisCount} synthesis</p>
@@ -395,7 +395,7 @@ export default function AgentCostsDashboard() {
     return (
       <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-transparent">
         <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
-        <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
+        <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/80 px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
           আবার চেষ্টা
         </button>
       </div>
@@ -410,7 +410,7 @@ export default function AgentCostsDashboard() {
           <p className="text-[11px] text-muted">API + সাবস্ক্রিপশন — এক জায়গায়</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
+          <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
             ← চ্যাট
           </Link>
           <a
@@ -423,7 +423,7 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* API balances */}
-      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold text-[#E07A5F]">💳 API ব্যালেন্স</p>
           <div className="flex items-center gap-2">
@@ -541,7 +541,7 @@ export default function AgentCostsDashboard() {
             key={c.label}
             variants={staggerItem}
             className={cn(
-              'rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 transition-all hover:border-border shadow-card',
+              'rounded-[18px] border border-border-subtle bg-card/80 p-4 transition-all hover:border-border shadow-card',
               STAT_GLOWS[idx],
             )}
           >
@@ -553,7 +553,7 @@ export default function AgentCostsDashboard() {
       </motion.div>
 
       {/* Budget settings */}
-      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
         <p className="text-xs font-semibold text-[#E07A5F] mb-3">বাজেট সতর্কতা (USD)</p>
         <div className="flex flex-wrap gap-3 items-end">
           <label className="text-[11px] text-muted">
@@ -641,7 +641,7 @@ export default function AgentCostsDashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-muted mb-3">দৈনিক খরচ (৩০ দিন)</p>
           {chartData.length === 0 ? (
             <p className="py-12 text-center text-[11px] text-muted">এখনো কোনো ইভেন্ট নেই</p>
@@ -668,7 +668,7 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-muted mb-3">প্রোভাইডার (এই মাস)</p>
           {pieData.length === 0 ? (
             <p className="py-12 text-center text-[11px] text-muted">ডেটা নেই</p>
@@ -695,7 +695,7 @@ export default function AgentCostsDashboard() {
 
       {/* Top conversations */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-muted mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
           {data.topConversations.length === 0 ? (
             <p className="text-[11px] text-muted py-4 text-center">এখনো নেই</p>
@@ -713,7 +713,7 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-muted mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
           <p className="text-[10px] text-muted mb-3">
             আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
@@ -737,7 +737,7 @@ export default function AgentCostsDashboard() {
 
       {/* Telegram daily chart */}
       {(data.telegramDailyLast30?.length ?? 0) > 0 && (
-        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-muted mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={data.telegramDailyLast30.map((d) => ({
@@ -759,7 +759,7 @@ export default function AgentCostsDashboard() {
       )}
 
       {/* Subscriptions */}
-      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
         <p className="text-xs font-semibold text-muted mb-3">সাবস্ক্রিপশন</p>
         {data.subscriptions.length === 0 ? (
           <p className="text-[11px] text-muted py-4 text-center">
@@ -770,7 +770,7 @@ export default function AgentCostsDashboard() {
             {data.subscriptions.map((s) => {
               const badge = renewalBadge(s.nextRenewalAt)
               return (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 hover:bg-card/60 backdrop-blur-2xl hover:shadow-sm transition-all">
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 hover:bg-card/80 hover:shadow-sm transition-all">
                   <div>
                     <p className="text-xs font-medium text-cream">{s.name}</p>
                     <p className="text-[10px] text-muted">

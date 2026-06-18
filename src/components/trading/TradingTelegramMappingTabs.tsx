@@ -56,12 +56,12 @@ export function TelegramUsersTab({
     <div className="space-y-4">
       <Card className="p-4 sm:p-5">
         <p className="text-sm font-black text-cream">Link Telegram → ERP staff</p>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted">
           Map each trader&apos;s Telegram identity to their ERP profile and optional default trading account.
         </p>
         <form onSubmit={e => void saveUser(e)} className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Telegram numeric user ID
             </label>
             <Input
@@ -72,12 +72,12 @@ export function TelegramUsersTab({
               onChange={e => setNewUser({ ...newUser, telegramUserId: e.target.value.replace(/\D/g, '') })}
               required
             />
-            <p className="mt-1 text-[10px] text-zinc-600">
+            <p className="mt-1 text-[10px] text-muted-hi">
               Open Telegram and message <span className="text-gold-lt">@userinfobot</span> — it replies with your numeric ID.
             </p>
           </div>
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Telegram @username (optional)
             </label>
             <Input
@@ -87,7 +87,7 @@ export function TelegramUsersTab({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               ERP staff member
             </label>
             <SearchableSelect
@@ -101,7 +101,7 @@ export function TelegramUsersTab({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Default trading account (optional)
             </label>
             <SearchableSelect
@@ -114,8 +114,8 @@ export function TelegramUsersTab({
             />
           </div>
           {newUser.defaultTradingAccountId && (
-            <div className="sm:col-span-2 rounded-xl border border-border/60 bg-black/[0.03] px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Default alias (auto-filled)</p>
+            <div className="sm:col-span-2 rounded-xl border border-border/60 bg-white/[0.03] px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted">Default alias (auto-filled)</p>
               <p className="text-sm text-cream">
                 {newUser.defaultAccountAlias
                   ? newUser.defaultAccountAlias
@@ -137,7 +137,7 @@ export function TelegramUsersTab({
         <Empty icon="👤" title="No Telegram users linked yet" desc="Add a mapping above to allow draft trades from Telegram." />
       ) : (
         <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
-          <div className="hidden gap-2 bg-black/[0.03] px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
+          <div className="hidden gap-2 bg-white/[0.03] px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted md:grid md:grid-cols-[1fr_1.2fr_0.6fr_1fr_auto]">
             <span>Telegram</span>
             <span>ERP staff</span>
             <span>Status</span>
@@ -174,13 +174,13 @@ function TelegramUserRow({
       <span className="font-bold text-cream">
         {u.telegramUsername ? `@${u.telegramUsername}` : `ID ${u.telegramUserId}`}
       </span>
-      <span className="text-zinc-400">
+      <span className="text-muted">
         {u.user?.name || '—'}
-        {hrId ? <span className="text-zinc-600"> · {hrId}</span> : null}
-        {u.user?.role ? <span className="text-zinc-600"> · {u.user.role}</span> : null}
+        {hrId ? <span className="text-muted-hi"> · {hrId}</span> : null}
+        {u.user?.role ? <span className="text-muted-hi"> · {u.user.role}</span> : null}
       </span>
       <span className={u.approved ? 'text-green-400' : 'text-amber-300'}>{u.approved ? 'Approved' : 'Pending'}</span>
-      <span className="text-zinc-500">Default alias: {u.defaultAccountAlias || '—'}</span>
+      <span className="text-muted">Default alias: {u.defaultAccountAlias || '—'}</span>
       <span className="md:justify-self-end">
         {showRemove ? (
           <button
@@ -219,10 +219,10 @@ export function TelegramAliasesTab({
     <div className="space-y-4">
       <Card className="p-4 sm:p-5">
         <p className="text-sm font-black text-cream">Account short aliases</p>
-        <p className="mt-1 text-xs text-zinc-500">Traders type these in Telegram (e.g. <span className="text-gold-lt">sh</span>).</p>
+        <p className="mt-1 text-xs text-muted">Traders type these in Telegram (e.g. <span className="text-gold-lt">sh</span>).</p>
         <form onSubmit={e => void saveAlias(e)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.5fr_auto]">
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Alias</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">Alias</label>
             <Input
               placeholder="sh"
               value={newAlias.alias}
@@ -231,7 +231,7 @@ export function TelegramAliasesTab({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Trading account</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">Trading account</label>
             <SearchableSelect
               value={newAlias.tradingAccountId}
               onChange={tradingAccountId => setNewAlias({ ...newAlias, tradingAccountId })}

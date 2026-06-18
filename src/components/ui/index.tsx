@@ -36,7 +36,7 @@ export function Card({
   return (
     <div
       className={cn(
-        'min-w-0 rounded-2xl border bg-card/60 backdrop-blur-2xl shadow-card',
+        'min-w-0 rounded-2xl border bg-card/80 shadow-card',
         gold ? 'border-gold/30' : 'border-border-subtle',
         interactive && 'card-interactive',
         className,
@@ -151,7 +151,7 @@ export function RiskBadge({ level }: { level: RiskLevel }) {
 
 // ── Payment Tag ───────────────────────────────────────────────────────────
 export function PaymentTag({ method }: { method: string }) {
-  const cls = PAYMENT_COLORS[method] ?? 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20'
+  const cls = PAYMENT_COLORS[method] ?? 'text-muted bg-zinc-400/10 border-zinc-400/20'
   return <span className={cn('inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border', cls)}>{method}</span>
 }
 

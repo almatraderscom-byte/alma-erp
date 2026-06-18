@@ -89,7 +89,7 @@ export default function AnalyticsPage() {
   const isEmpty = !loading && kpis.total_orders === 0
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader title="Analytics" subtitle="Revenue · expenses · payroll context — synced to filters" />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-6 px-3 py-4 pb-24 sm:px-6 md:pb-6">
@@ -119,9 +119,9 @@ export default function AnalyticsPage() {
 
         {enabled && (
           <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-              <p className="text-sm font-bold text-slate-800 mb-1">Returns by Type</p>
-              <p className="text-[10px] text-slate-500 mb-4">Delivered vs paid vs refused</p>
+            <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+              <p className="text-sm font-bold text-cream mb-1">Returns by Type</p>
+              <p className="text-[10px] text-muted mb-4">Delivered vs paid vs refused</p>
               {loading ? (
                 <Skeleton className="h-48 w-full rounded-xl" />
               ) : returnsPie.length === 0 ? (
@@ -133,17 +133,17 @@ export default function AnalyticsPage() {
                     {returnsPie.map(c => (
                       <div key={c.name} className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: c.color }} />
-                        <span className="text-[11px] text-slate-500 flex-1">{c.name}</span>
-                        <span className="text-[11px] font-bold text-slate-800">{c.value}</span>
+                        <span className="text-[11px] text-muted flex-1">{c.name}</span>
+                        <span className="text-[11px] font-bold text-cream">{c.value}</span>
                       </div>
                     ))}
                   </div>
                 </>
               )}
             </Card>
-            <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-              <p className="text-sm font-bold text-slate-800 mb-1">Return Loss Trend</p>
-              <p className="text-[10px] text-slate-500 mb-4">Daily courier loss from returns</p>
+            <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+              <p className="text-sm font-bold text-cream mb-1">Return Loss Trend</p>
+              <p className="text-[10px] text-muted mb-4">Daily courier loss from returns</p>
               {loading ? (
                 <Skeleton className="h-48 w-full rounded-xl" />
               ) : returnLossTrend.length === 0 ? (
@@ -156,9 +156,9 @@ export default function AnalyticsPage() {
         )}
 
         <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-            <p className="text-sm font-bold text-slate-800 mb-1">Revenue vs Profit Trend</p>
-            <p className="text-[10px] text-slate-500 mb-4">Monthly · live data</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+            <p className="text-sm font-bold text-cream mb-1">Revenue vs Profit Trend</p>
+            <p className="text-[10px] text-muted mb-4">Monthly · live data</p>
             {loading ? (
               <Skeleton className="h-48 w-full rounded-xl" />
             ) : monthlyTrend.length === 0 ? (
@@ -168,9 +168,9 @@ export default function AnalyticsPage() {
             )}
           </Card>
 
-          <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-            <p className="text-sm font-bold text-slate-800 mb-1">Expense Breakdown</p>
-            <p className="text-[10px] text-slate-500 mb-4">
+          <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+            <p className="text-sm font-bold text-cream mb-1">Expense Breakdown</p>
+            <p className="text-[10px] text-muted mb-4">
               {totalExpenses > 0 ? <><BdtText value={formatBDTk(totalExpenses)} /> total · live data</> : 'No expense data yet'}
             </p>
             {loading ? (
@@ -184,9 +184,9 @@ export default function AnalyticsPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] overflow-hidden shadow-sm">
-            <div className="px-5 py-4 border-b border-black/[0.06]">
-              <p className="text-sm font-bold text-slate-800">Category Performance</p>
+          <Card className="rounded-2xl border border-white/[0.06] overflow-hidden shadow-sm">
+            <div className="px-5 py-4 border-b border-white/[0.06]">
+              <p className="text-sm font-bold text-cream">Category Performance</p>
             </div>
             {loading ? (
               <div className="p-5 space-y-3">
@@ -198,27 +198,27 @@ export default function AnalyticsPage() {
               <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
                 <table className="w-full min-w-[720px] text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-black/[0.06] bg-slate-50/50">
+                    <tr className="border-b border-white/[0.06] bg-white/[0.04]/50">
                       {['Category','Orders','Revenue','Profit','Margin'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold tracking-[0.08em] uppercase text-slate-500">{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold tracking-[0.08em] uppercase text-muted">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {catArr.map((c, i) => (
-                      <tr key={c.name} className="border-b border-black/[0.04] hover:bg-slate-50 transition-colors">
+                      <tr key={c.name} className="border-b border-white/[0.04] hover:bg-white/[0.04] transition-colors">
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div className="w-2 h-2 rounded-sm" style={{ background: PALETTE[i] ?? '#3D3020' }} />
-                            <span className="font-semibold text-slate-800">{c.name}</span>
+                            <span className="font-semibold text-cream">{c.name}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-slate-500">{c.orders}</td>
-                        <td className="px-4 py-3.5 font-bold text-slate-800 tabular-nums"><Money amount={c.revenue} /></td>
+                        <td className="px-4 py-3.5 text-muted">{c.orders}</td>
+                        <td className="px-4 py-3.5 font-bold text-cream tabular-nums"><Money amount={c.revenue} /></td>
                         <td className="px-4 py-3.5 font-bold text-green-600 tabular-nums"><Money amount={c.profit} /></td>
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2">
-                            <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden w-16">
+                            <div className="flex-1 h-1 bg-white/[0.06] rounded-full overflow-hidden w-16">
                               <div className="h-full bg-[#E07A5F] rounded-full" style={{ width: `${c.margin}%` }} />
                             </div>
                             <span className="text-[11px] font-bold text-[#E07A5F] w-8 text-right">{c.margin}%</span>
@@ -234,8 +234,8 @@ export default function AnalyticsPage() {
         </motion.div>
 
         <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-            <p className="text-sm font-bold text-slate-800 mb-4">Payment Method Mix</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+            <p className="text-sm font-bold text-cream mb-4">Payment Method Mix</p>
             {loading ? (
               <Skeleton className="h-40 w-full rounded-xl" />
             ) : payPie.length === 0 ? (
@@ -247,8 +247,8 @@ export default function AnalyticsPage() {
                   {payPie.map(p => (
                     <div key={p.name} className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: p.color }} />
-                      <span className="text-[11px] text-slate-500 flex-1">{p.name}</span>
-                      <span className="text-[11px] font-bold text-slate-800">{p.value}%</span>
+                      <span className="text-[11px] text-muted flex-1">{p.name}</span>
+                      <span className="text-[11px] font-bold text-cream">{p.value}%</span>
                     </div>
                   ))}
                 </div>
@@ -256,8 +256,8 @@ export default function AnalyticsPage() {
             )}
           </Card>
 
-          <Card className="rounded-2xl border border-black/[0.06] p-5 shadow-sm">
-            <p className="text-sm font-bold text-slate-800 mb-4">Orders by Channel</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+            <p className="text-sm font-bold text-cream mb-4">Orders by Channel</p>
             {loading ? (
               <Skeleton className="h-40 w-full rounded-xl" />
             ) : Object.keys(bySource).length === 0 ? (
@@ -267,13 +267,13 @@ export default function AnalyticsPage() {
                 {Object.entries(bySource).map(([source, v]) => (
                   <div key={source}>
                     <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="font-semibold text-slate-800">{source}</span>
+                      <span className="font-semibold text-cream">{source}</span>
                       <div className="flex gap-3">
-                        <span className="text-slate-500">{v.orders} orders</span>
+                        <span className="text-muted">{v.orders} orders</span>
                         <span className="font-bold text-[#E07A5F]"><Money amount={v.revenue} /></span>
                       </div>
                     </div>
-                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
                       <div
                         className="h-full bg-[#E07A5F] rounded-full"
                         style={{ width: `${Math.round(v.revenue / (kpis.total_revenue || 1) * 100)}%` }}

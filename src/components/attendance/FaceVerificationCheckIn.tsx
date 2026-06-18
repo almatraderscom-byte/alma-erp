@@ -379,7 +379,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           <p id="face-checkin-title" className="text-base font-black text-cream">
             {phase === 'success' ? '🟢 Attendance confirmed' : phase === 'error' ? '⚠ Check-in failed' : '📸 Start work verification'}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          <p className="mt-1 text-xs leading-relaxed text-muted">
             {phase === 'success'
               ? 'Your check-in was saved. This window will close automatically.'
               : phase === 'error'
@@ -397,7 +397,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               <p className="mt-4 text-lg font-black text-green-300">Attendance confirmed</p>
               {employeeName && <p className="mt-1 text-sm font-bold text-cream">{employeeName}</p>}
               {successAt && (
-                <p className="mt-2 font-mono text-sm text-zinc-400">
+                <p className="mt-2 font-mono text-sm text-muted">
                   {new Date(successAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
               )}
@@ -405,16 +405,16 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
           ) : phase === 'error' ? (
             <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-4 text-center">
               <p className="text-sm font-bold text-red-200">{submitError}</p>
-              <p className="mt-2 text-xs text-zinc-500">Your photo is still ready — tap Retry check-in below.</p>
+              <p className="mt-2 text-xs text-muted">Your photo is still ready — tap Retry check-in below.</p>
             </div>
           ) : processingPhoto ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/[0.03]">
+            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-white/[0.03]">
               <Spinner />
-              <p className="text-xs font-bold text-zinc-400">Processing photo…</p>
+              <p className="text-xs font-bold text-muted">Processing photo…</p>
             </div>
           ) : preview ? (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/[0.04]">
+              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-white/[0.04]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview}
@@ -438,10 +438,10 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
                   {gpsError}
                 </p>
               )}
-              <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/[0.03] px-4 text-center">
+              <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-white/[0.03] px-4 text-center">
                 <span className="text-3xl opacity-60">📷</span>
-                <p className="text-xs font-bold text-zinc-500">Front camera required</p>
-                <p className="text-[11px] text-zinc-600">After capture, a large Confirm button appears at the bottom</p>
+                <p className="text-xs font-bold text-muted">Front camera required</p>
+                <p className="text-[11px] text-muted-hi">After capture, a large Confirm button appears at the bottom</p>
               </div>
             </div>
           )}
@@ -517,7 +517,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
               <div className="grid grid-cols-2 gap-2">
                 <label
                   htmlFor="attendance-face-input"
-                  className={`inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-border bg-transparent text-xs font-semibold text-zinc-400 transition-all hover:bg-black/[0.04] hover:text-cream active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
+                  className={`inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-border bg-transparent text-xs font-semibold text-muted transition-all hover:bg-white/[0.04] hover:text-cream active:scale-[0.98] ${busy ? 'pointer-events-none opacity-40' : ''}`}
                   aria-disabled={busy}
                 >
                   Retake

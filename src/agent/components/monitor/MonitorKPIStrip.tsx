@@ -125,7 +125,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
           key={kpi.label}
           variants={fadeUp}
           className={cn(
-            'group relative overflow-hidden rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3.5 py-3 shadow-sm',
+            'group relative overflow-hidden rounded-2xl border border-border-subtle bg-card/80 px-3.5 py-3 shadow-sm',
             'transition-all duration-300 hover:border-white/[0.12] hover:shadow-md',
             kpi.pulse && 'animate-[pulse-status_2s_ease-in-out_infinite]',
           )}

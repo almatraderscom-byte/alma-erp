@@ -134,7 +134,7 @@ function TodoRow({
         ? 'bg-red-50/30 border-red-200/50 opacity-80'
         : cancelled
           ? 'bg-slate-50/80 border-border/60 opacity-70'
-          : 'bg-card/60 backdrop-blur-2xl border-border-subtle hover:shadow-sm'
+          : 'bg-card/80 border-border-subtle hover:shadow-sm'
 
   const handleRowClick = () => {
     if (readOnly && (running || todo.dutyKey)) {
@@ -377,13 +377,13 @@ function BossTodoFrame({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden mb-3"
           >
-            <div className="rounded-xl border border-white/60 bg-card/60 backdrop-blur-xl p-3 space-y-2.5">
+            <div className="rounded-xl border border-white/60 bg-card/80 p-3 space-y-2.5">
               <input
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder="আপনার কাজ লিখুন…"
-                className="w-full bg-card/60 backdrop-blur-2xl border border-border-subtle rounded-lg px-3 py-2 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
+                className="w-full bg-card/80 border border-border-subtle rounded-lg px-3 py-2 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
                 onKeyDown={(e) => { if (e.key === 'Enter') void onAdd() }}
                 autoFocus
               />
@@ -619,7 +619,7 @@ export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder="আপনার কাজ লিখুন…"
-                className="w-full bg-card/60 backdrop-blur-2xl border border-border-subtle rounded-xl px-3.5 py-2.5 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
+                className="w-full bg-card/80 border border-border-subtle rounded-xl px-3.5 py-2.5 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
                 onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
                 autoFocus
               />
@@ -627,7 +627,7 @@ export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
                 <button
                   type="button"
                   onClick={() => { setShowAdd(false); setNewTitle('') }}
-                  className="flex-1 py-2 rounded-xl border border-border-subtle text-xs text-muted font-semibold hover:bg-card/50 backdrop-blur-xl"
+                  className="flex-1 py-2 rounded-xl border border-border-subtle text-xs text-muted font-semibold hover:bg-card/78"
                 >
                   বাতিল
                 </button>

@@ -185,7 +185,7 @@ export function MonitorAgentsPanel({
   return (
     <div className="space-y-3">
       {/* ── Model Control Dial ── */}
-      <div className="overflow-hidden rounded-2xl border border-[#E07A5F]/20 bg-card/60 backdrop-blur-2xl shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-[#E07A5F]/20 bg-card/80 shadow-sm">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <span className="text-base">🎛️</span>
           <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-muted">Model Control</h3>
@@ -220,7 +220,7 @@ export function MonitorAgentsPanel({
             >
               <span
                 className={cn(
-                  'inline-block h-5 w-5 transform rounded-full bg-card/60 backdrop-blur-2xl shadow transition-transform',
+                  'inline-block h-5 w-5 transform rounded-full bg-card/80 shadow transition-transform',
                   draft.opusEnabled ? 'translate-x-[22px]' : 'translate-x-0.5',
                 )}
               />
@@ -247,7 +247,7 @@ export function MonitorAgentsPanel({
                         'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition-all',
                         active
                           ? 'border-[#E07A5F]/40 bg-[#E07A5F]/[0.08]'
-                          : 'border-border bg-card/60 backdrop-blur-2xl hover:bg-white/[0.03]',
+                          : 'border-border bg-card/80 hover:bg-white/[0.03]',
                       )}
                     >
                       <span className={cn('text-[12px] font-bold', active ? 'text-[#E07A5F]' : 'text-cream/80')}>
@@ -276,7 +276,7 @@ export function MonitorAgentsPanel({
                 <button
                   type="button"
                   onClick={() => setDraft({ ...draft, opusDailyCap: Math.max(0, draft.opusDailyCap - 1) })}
-                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/60 backdrop-blur-2xl text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/80 text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
                 >
                   −
                 </button>
@@ -286,7 +286,7 @@ export function MonitorAgentsPanel({
                 <button
                   type="button"
                   onClick={() => setDraft({ ...draft, opusDailyCap: Math.min(100, draft.opusDailyCap + 1) })}
-                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/60 backdrop-blur-2xl text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/80 text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
                 >
                   +
                 </button>
@@ -338,7 +338,7 @@ export function MonitorAgentsPanel({
                       'rounded-lg border px-3 py-1.5 text-[11px] font-bold tabular-nums transition-all',
                       draft.opusCriticalTaka === amt
                         ? 'border-[#E07A5F]/40 bg-[#E07A5F]/[0.10] text-[#E07A5F]'
-                        : 'border-border bg-card/60 backdrop-blur-2xl text-muted hover:bg-white/[0.03]',
+                        : 'border-border bg-card/80 text-muted hover:bg-white/[0.03]',
                     )}
                   >
                     ৳{amt.toLocaleString('en-US')}
@@ -368,7 +368,7 @@ export function MonitorAgentsPanel({
               <button
                 type="button"
                 onClick={() => setDraft(data.config)}
-                className="rounded-xl border border-border bg-card/60 backdrop-blur-2xl px-3 py-2.5 text-[12px] font-semibold text-muted hover:bg-white/[0.03]"
+                className="rounded-xl border border-border bg-card/80 px-3 py-2.5 text-[12px] font-semibold text-muted hover:bg-white/[0.03]"
               >
                 বাতিল
               </button>
@@ -378,7 +378,7 @@ export function MonitorAgentsPanel({
       </div>
 
       {/* ── What each agent did today (CCTV) ── */}
-      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/80 shadow-sm">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <span className="text-base">🎥</span>
           <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-muted">আজ কে কী করেছে</h3>
@@ -431,7 +431,7 @@ export function MonitorAgentsPanel({
                             {data.modelsToday.map((m) => (
                               <span
                                 key={m.modelId}
-                                className="rounded-md border border-border-subtle bg-card/60 backdrop-blur-2xl px-1.5 py-0.5 text-[9px] font-medium text-muted"
+                                className="rounded-md border border-border-subtle bg-card/80 px-1.5 py-0.5 text-[9px] font-medium text-muted"
                               >
                                 {m.label} · {m.conversations}
                               </span>
@@ -473,7 +473,7 @@ export function MonitorAgentsPanel({
                 {data.specialistsToday.map((s) => (
                   <div
                     key={`${s.modelId}-${s.role}`}
-                    className="rounded-lg border border-sky-200/50 bg-card/60 backdrop-blur-2xl px-2.5 py-2"
+                    className="rounded-lg border border-sky-200/50 bg-card/80 px-2.5 py-2"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex flex-col gap-0.5">
@@ -504,7 +504,7 @@ export function MonitorAgentsPanel({
                   {data.specialistDelegationsToday.map((d, i) => (
                     <div
                       key={`${d.modelId}-${d.at}-${i}`}
-                      className="rounded-lg border border-sky-100 bg-card/60 backdrop-blur-xl px-2.5 py-2"
+                      className="rounded-lg border border-sky-100 bg-card/80 px-2.5 py-2"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex flex-col gap-0.5">

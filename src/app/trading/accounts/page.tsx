@@ -74,19 +74,19 @@ export default function TradingAccountsPage() {
         ) : (
           <div className="max-h-[72vh] overflow-x-auto overflow-y-auto min-w-0 max-w-full">
             <table className="w-full min-w-[980px] border-collapse text-xs">
-              <thead className="sticky top-0 bg-white z-10">
-                <tr className="border-b border-black/[0.06]">
+              <thead className="sticky top-0 bg-card/85 z-10">
+                <tr className="border-b border-white/[0.06]">
                   {['Account', 'Staff', 'Current balance', 'Initial capital', 'Profit', 'Expenses', 'Withdrawals', 'Goal progress', 'Status', 'Actions'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-400">{h}</th>
+                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {accounts.map(account => (
-                  <tr key={account.id} className="border-b border-black/[0.04] transition-colors hover:bg-slate-50">
+                  <tr key={account.id} className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.04]">
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Link href={`/trading/accounts/${account.id}`} className="font-bold text-slate-800 hover:text-gold">{account.accountTitle}</Link>
+                        <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream hover:text-gold">{account.accountTitle}</Link>
                         {account.partnershipEnabled && (
                           <span className="rounded-full border border-gold/20 bg-gold/8 px-2 py-0.5 text-[10px] font-bold text-gold">
                             50/50
@@ -96,18 +96,18 @@ export default function TradingAccountsPage() {
                           </span>
                         )}
                       </div>
-                      <p className="mt-0.5 font-mono text-[10px] text-slate-400">{account.binanceUid || account.id}</p>
+                      <p className="mt-0.5 font-mono text-[10px] text-muted">{account.binanceUid || account.id}</p>
                     </td>
-                    <td className="px-4 py-3 text-slate-500">{account.assignedUser?.name || 'Unassigned'}</td>
+                    <td className="px-4 py-3 text-muted">{account.assignedUser?.name || 'Unassigned'}</td>
                     <td className={`px-4 py-3 font-bold ${Number(account.currentBalance) < 0 ? 'text-red-400' : 'text-gold'}`}><Money amount={Number(account.currentBalance)} /></td>
-                    <td className="px-4 py-3 font-bold text-slate-800"><Money amount={Number(account.startingCapital)} /></td>
+                    <td className="px-4 py-3 font-bold text-cream"><Money amount={Number(account.startingCapital)} /></td>
                     <td className="px-4 py-3 font-bold text-green-400"><Money amount={Number(account.totalProfit)} /></td>
                     <td className="px-4 py-3 font-bold text-amber-500"><Money amount={Number(account.totalExpenses)} /></td>
-                    <td className="px-4 py-3 font-bold text-slate-600"><Money amount={Number(account.totalWithdrawals)} /></td>
+                    <td className="px-4 py-3 font-bold text-muted-hi"><Money amount={Number(account.totalWithdrawals)} /></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <Progress value={Number(account.merchantProgress)} className="w-24" />
-                        <span className="font-bold text-slate-500">{money(account.merchantProgress)}%</span>
+                        <span className="font-bold text-muted">{money(account.merchantProgress)}%</span>
                       </div>
                     </td>
                     <td className="px-4 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-bold ${statusClass(account.status)}`}>{account.status}</span></td>
@@ -134,7 +134,7 @@ export default function TradingAccountsPage() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Link href={`/trading/accounts/${account.id}`} className="font-bold text-slate-800">{account.accountTitle}</Link>
+                  <Link href={`/trading/accounts/${account.id}`} className="font-bold text-cream">{account.accountTitle}</Link>
                   {account.partnershipEnabled && (
                     <span className="rounded-full border border-gold/20 bg-gold/8 px-2 py-0.5 text-[9px] font-bold text-gold">
                       50/50
@@ -144,7 +144,7 @@ export default function TradingAccountsPage() {
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500">{account.assignedUser?.name || 'Unassigned'} · {account.binanceUid || 'No UID'}</p>
+                <p className="text-[11px] text-muted">{account.assignedUser?.name || 'Unassigned'} · {account.binanceUid || 'No UID'}</p>
               </div>
               <span className={`rounded-full border px-2 py-1 text-[9px] font-bold ${statusClass(account.status)}`}>{account.status}</span>
             </div>
@@ -155,7 +155,7 @@ export default function TradingAccountsPage() {
             </div>
             <div className="mt-3">
               <Progress value={Number(account.merchantProgress)} />
-              <p className="mt-1 text-[10px] text-slate-500">Merchant Goal / Monthly Target progress {money(account.merchantProgress)}%</p>
+              <p className="mt-1 text-[10px] text-muted">Merchant Goal / Monthly Target progress {money(account.merchantProgress)}%</p>
             </div>
             {isAdmin && <div className="mt-3 flex gap-2"><Button size="xs" variant="secondary" onClick={() => openEdit(account)}>Edit</Button><Button size="xs" variant="danger" disabled={archiving} onClick={() => void archive(account)}>Archive</Button></div>}
           </Card>
@@ -178,9 +178,9 @@ export default function TradingAccountsPage() {
 
 function MiniStat({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-xl border border-black/[0.06] bg-slate-50 p-2">
-      <p className="text-[9px] uppercase tracking-wider text-slate-400">{label}</p>
-      <p className={`mt-1 text-xs font-bold ${className || 'text-slate-800'}`}>{value}</p>
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2">
+      <p className="text-[9px] uppercase tracking-wider text-muted">{label}</p>
+      <p className={`mt-1 text-xs font-bold ${className || 'text-cream'}`}>{value}</p>
     </div>
   )
 }

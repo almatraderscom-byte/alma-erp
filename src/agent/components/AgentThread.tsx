@@ -167,7 +167,7 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
   const [open, setOpen] = useState(false)
   const hasSummary = Boolean(d.summary)
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-card/55 backdrop-blur-xl backdrop-blur-sm">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-card/80 backdrop-blur-sm">
       <button
         type="button"
         onClick={() => hasSummary && setOpen((o) => !o)}
@@ -590,7 +590,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-auto my-4 max-w-sm rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-sm"
+            className="mx-auto my-4 max-w-sm rounded-2xl border border-border-subtle bg-card/80 p-4 shadow-sm"
           >
             <div className="mb-2 text-[13px] font-medium text-muted-hi">
               কথোপকথন কম্প্যাক্ট হচ্ছে…

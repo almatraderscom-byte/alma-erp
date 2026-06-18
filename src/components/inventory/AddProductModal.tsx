@@ -312,7 +312,7 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
             <h2 id="add-product-modal-title" className="text-sm font-bold text-cream tracking-tight">
               Add inventory
             </h2>
-            <p className="text-[10px] text-zinc-500 mt-0.5">Fashion collection inventory + lifecycle-safe stock rows</p>
+            <p className="text-[10px] text-muted mt-0.5">Fashion collection inventory + lifecycle-safe stock rows</p>
           </div>
           <Button variant="ghost" size="xs" onClick={() => onOpenChange(false)} disabled={saving}>
             Close
@@ -325,35 +325,35 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
             <button
               type="button"
               onClick={() => set('inventoryMode')('collection')}
-              className={`rounded-xl px-3 py-2 text-xs font-bold ${form.inventoryMode === 'collection' ? 'bg-gold/20 text-gold-lt' : 'text-zinc-500'}`}
+              className={`rounded-xl px-3 py-2 text-xs font-bold ${form.inventoryMode === 'collection' ? 'bg-gold/20 text-gold-lt' : 'text-muted'}`}
             >
               Collection
             </button>
             <button
               type="button"
               onClick={() => set('inventoryMode')('single')}
-              className={`rounded-xl px-3 py-2 text-xs font-bold ${form.inventoryMode === 'single' ? 'bg-gold/20 text-gold-lt' : 'text-zinc-500'}`}
+              className={`rounded-xl px-3 py-2 text-xs font-bold ${form.inventoryMode === 'single' ? 'bg-gold/20 text-gold-lt' : 'text-muted'}`}
             >
               Single SKU
             </button>
           </div>
 
           {form.inventoryMode === 'collection' && (
-            <div className="space-y-3 rounded-2xl border border-border bg-black/[0.03] p-3">
+            <div className="space-y-3 rounded-2xl border border-border bg-white/[0.03] p-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Collection code</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Collection code</label>
                   <input
                     value={form.collectionCode}
                     onChange={e => set('collectionCode')(e.target.value.toUpperCase())}
-                    className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream font-mono"
+                    className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream font-mono"
                     placeholder="133 / 590 / LUXE-01"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Collection structure</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Collection structure</label>
                   {knownCollection ? (
-                    <div className="flex h-10 items-center rounded-xl border border-border bg-black/[0.03] px-3 text-xs font-bold text-gold-lt">
+                    <div className="flex h-10 items-center rounded-xl border border-border bg-white/[0.03] px-3 text-xs font-bold text-gold-lt">
                       Known {knownCollection.collectionType}
                     </div>
                   ) : (
@@ -378,27 +378,27 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Collection name</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Collection name</label>
                   <input
                     value={form.name}
                     onChange={e => set('name')(e.target.value)}
-                    className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                    className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
                     placeholder="Auto if empty"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Category</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Category</label>
                   <Select value={form.category} onChange={v => set('category')(v)} options={catSelectOptions} />
                 </div>
               </div>
 
               {form.category === '__other__' && (
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Category name</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Category name</label>
                   <input
                     value={form.categoryOther}
                     onChange={e => set('categoryOther')(e.target.value)}
-                    className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                    className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
                     placeholder="New category label"
                   />
                 </div>
@@ -406,45 +406,45 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
 
               {effectiveCollectionType === 'MEN' ? (
                 <>
-                  <p className="text-[10px] text-zinc-500">MEN/FATHER-SON: sizes 16-36 share KIDS stock, 38-54 share ADULT stock. SKUs auto-generate like <span className="font-mono text-gold-lt">133-KIDS</span> and <span className="font-mono text-gold-lt">133-ADULT</span>.</p>
+                  <p className="text-[10px] text-muted">MEN/FATHER-SON: sizes 16-36 share KIDS stock, 38-54 share ADULT stock. SKUs auto-generate like <span className="font-mono text-gold-lt">133-KIDS</span> and <span className="font-mono text-gold-lt">133-ADULT</span>.</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Kids stock pool</label>
-                      <input inputMode="numeric" value={form.kidsStock} onChange={e => set('kidsStock')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Kids stock pool</label>
+                      <input inputMode="numeric" value={form.kidsStock} onChange={e => set('kidsStock')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Kids buying price</label>
-                      <input inputMode="decimal" value={form.kidsBuying} onChange={e => set('kidsBuying')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Kids buying price</label>
+                      <input inputMode="decimal" value={form.kidsBuying} onChange={e => set('kidsBuying')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Adult stock pool</label>
-                      <input inputMode="numeric" value={form.adultStock} onChange={e => set('adultStock')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Adult stock pool</label>
+                      <input inputMode="numeric" value={form.adultStock} onChange={e => set('adultStock')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Adult buying price</label>
-                      <input inputMode="decimal" value={form.adultBuying} onChange={e => set('adultBuying')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Adult buying price</label>
+                      <input inputMode="decimal" value={form.adultBuying} onChange={e => set('adultBuying')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream" />
                     </div>
                   </div>
                 </>
               ) : effectiveCollectionType === 'WOMEN' ? (
                 <>
-                  <p className="text-[10px] text-zinc-500">WOMEN: garment variants stay as stock rows. Age bands are order options only. SKUs auto-generate like <span className="font-mono text-gold-lt">133T-TWO-PIECE</span>.</p>
+                  <p className="text-[10px] text-muted">WOMEN: garment variants stay as stock rows. Age bands are order options only. SKUs auto-generate like <span className="font-mono text-gold-lt">133T-TWO-PIECE</span>.</p>
                   <div className="space-y-2">
                     {WOMEN_STOCK_VARIANT_GROUPS.map(variant => (
                       <div key={variant} className="grid grid-cols-[1.4fr_0.8fr_0.8fr] gap-2 items-end">
-                        <p className="pb-2 text-[10px] font-bold text-zinc-500">{variant}</p>
+                        <p className="pb-2 text-[10px] font-bold text-muted">{variant}</p>
                         <input
                           inputMode="numeric"
                           value={form.womenStocks[variant]}
                           onChange={e => setForm(prev => ({ ...prev, womenStocks: { ...prev.womenStocks, [variant]: e.target.value } }))}
-                          className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
+                          className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
                           placeholder="Stock"
                         />
                         <input
                           inputMode="decimal"
                           value={form.womenBuying[variant]}
                           onChange={e => setForm(prev => ({ ...prev, womenBuying: { ...prev.womenBuying, [variant]: e.target.value } }))}
-                          className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
+                          className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
                           placeholder="Buying"
                         />
                       </div>
@@ -453,36 +453,36 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
                 </>
               ) : effectiveCollectionType === 'SINGLE' ? (
                 <>
-                  <p className="text-[10px] text-zinc-500">SINGLE PRODUCT: creates one inventory row for this collection code.</p>
+                  <p className="text-[10px] text-muted">SINGLE PRODUCT: creates one inventory row for this collection code.</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <input value={form.sku} onChange={e => set('sku')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-gold" placeholder="SKU auto if empty" />
-                    <input inputMode="numeric" value={form.initial_stock} onChange={e => set('initial_stock')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Stock" />
-                    <input inputMode="decimal" value={form.default_cogs} onChange={e => set('default_cogs')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Buying price" />
-                    <input inputMode="decimal" value={form.default_price} onChange={e => set('default_price')(e.target.value)} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Sell price optional" />
+                    <input value={form.sku} onChange={e => set('sku')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-gold" placeholder="SKU auto if empty" />
+                    <input inputMode="numeric" value={form.initial_stock} onChange={e => set('initial_stock')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Stock" />
+                    <input inputMode="decimal" value={form.default_cogs} onChange={e => set('default_cogs')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Buying price" />
+                    <input inputMode="decimal" value={form.default_price} onChange={e => set('default_price')(e.target.value)} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Sell price optional" />
                   </div>
                 </>
               ) : (
                 <>
-                  <p className="text-[10px] text-zinc-500">CUSTOM COLLECTION: define one variant per line. Each variant gets independent stock, buying price, and SKU.</p>
+                  <p className="text-[10px] text-muted">CUSTOM COLLECTION: define one variant per line. Each variant gets independent stock, buying price, and SKU.</p>
                   <textarea
                     value={form.customVariantsText}
                     onChange={e => set('customVariantsText')(e.target.value)}
-                    className="w-full min-h-20 bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
+                    className="w-full min-h-20 bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream"
                     placeholder={'Variant A\nVariant B\nLimited Edition'}
                   />
                   <div className="space-y-2">
                     {customVariants.map(variant => (
                       <div key={variant} className="grid grid-cols-[1.4fr_0.8fr_0.8fr] gap-2 items-end">
-                        <p className="pb-2 text-[10px] font-bold text-zinc-500">{variant}</p>
-                        <input inputMode="numeric" value={form.customVariantStocks[variant] || '0'} onChange={e => setForm(prev => ({ ...prev, customVariantStocks: { ...prev.customVariantStocks, [variant]: e.target.value } }))} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Stock" />
-                        <input inputMode="decimal" value={form.customVariantBuying[variant] || ''} onChange={e => setForm(prev => ({ ...prev, customVariantBuying: { ...prev.customVariantBuying, [variant]: e.target.value } }))} className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Buying" />
+                        <p className="pb-2 text-[10px] font-bold text-muted">{variant}</p>
+                        <input inputMode="numeric" value={form.customVariantStocks[variant] || '0'} onChange={e => setForm(prev => ({ ...prev, customVariantStocks: { ...prev.customVariantStocks, [variant]: e.target.value } }))} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Stock" />
+                        <input inputMode="decimal" value={form.customVariantBuying[variant] || ''} onChange={e => setForm(prev => ({ ...prev, customVariantBuying: { ...prev.customVariantBuying, [variant]: e.target.value } }))} className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream" placeholder="Buying" />
                       </div>
                     ))}
                   </div>
                 </>
               )}
 
-              <div className="text-[10px] text-zinc-600">
+              <div className="text-[10px] text-muted-hi">
                 Will create {collectionRows().length} structured stock row(s). Archived/edit history stays compatible with old orders.
               </div>
             </div>
@@ -491,39 +491,39 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
           {form.inventoryMode === 'single' && (
           <>
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Product name *</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Product name *</label>
             <input
               required
               value={form.name}
               onChange={e => set('name')(e.target.value)}
-              className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold-dim/50"
+              className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold-dim/50"
               placeholder="e.g. Linen shirt — sage"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">SKU</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">SKU</label>
               <input
                 value={form.sku}
                 onChange={e => set('sku')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-gold focus:outline-none focus:border-gold-dim/50"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-gold focus:outline-none focus:border-gold-dim/50"
                 placeholder="Auto if empty"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Category</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Category</label>
               <Select value={form.category} onChange={v => set('category')(v)} options={catSelectOptions} />
             </div>
           </div>
 
           {form.category === '__other__' && (
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Category name</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Category name</label>
               <input
                 value={form.categoryOther}
                 onChange={e => set('categoryOther')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold-dim/50"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold-dim/50"
                 placeholder="New category label"
               />
             </div>
@@ -531,22 +531,22 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Sell price *</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Sell price *</label>
               <input
                 inputMode="decimal"
                 value={form.default_price}
                 onChange={e => set('default_price')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
                 placeholder="0"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">COGS *</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">COGS *</label>
               <input
                 inputMode="decimal"
                 value={form.default_cogs}
                 onChange={e => set('default_cogs')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
                 placeholder="0"
               />
             </div>
@@ -554,86 +554,86 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Opening stock *</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Opening stock *</label>
               <input
                 inputMode="numeric"
                 value={form.initial_stock}
                 onChange={e => set('initial_stock')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Reorder at</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Reorder at</label>
               <input
                 inputMode="numeric"
                 value={form.reorder_level}
                 onChange={e => set('reorder_level')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream tabular-nums"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Color</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Color</label>
               <input
                 value={form.color}
                 onChange={e => set('color')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Size</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Size</label>
               <input
                 value={form.size}
                 onChange={e => set('size')(e.target.value)}
-                className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Image URL</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Image URL</label>
             <input
               value={form.image_url}
               onChange={e => set('image_url')(e.target.value)}
-              className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-cream"
+              className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs font-mono text-cream"
               placeholder="https://…"
             />
-            <p className="text-[10px] text-zinc-600 mt-1">Paste a hosted image link (no file upload in this build).</p>
+            <p className="text-[10px] text-muted-hi mt-1">Paste a hosted image link (no file upload in this build).</p>
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Variants (one per line)</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Variants (one per line)</label>
             <textarea
               value={form.variantsText}
               onChange={e => set('variantsText')(e.target.value)}
               rows={3}
-              className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream font-mono"
+              className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-xs text-cream font-mono"
               placeholder={'S\nM\nL'}
             />
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Description</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Description</label>
             <textarea
               value={form.description}
               onChange={e => set('description')(e.target.value)}
               rows={2}
-              className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+              className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
             />
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Notes</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Notes</label>
             <input
               value={form.notes}
               onChange={e => set('notes')(e.target.value)}
-              className="w-full bg-black/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
+              className="w-full bg-white/[0.03] border border-border rounded-xl px-3 py-2 text-sm text-cream"
             />
           </div>
 
-          <label className="flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
             <input
               type="checkbox"
               checked={form.skip_duplicate_name_check}
@@ -643,7 +643,7 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
             Skip if product name already exists (recommended)
           </label>
 
-          <label className="flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
             <input
               type="checkbox"
               checked={form.sync_to_stock}

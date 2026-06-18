@@ -50,7 +50,7 @@ export function SheetModal({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="-mr-2 flex h-9 w-9 items-center justify-center rounded-full text-muted active:scale-95 active:bg-black/[0.05]"
+                className="-mr-2 flex h-9 w-9 items-center justify-center rounded-full text-muted active:scale-95 active:bg-white/[0.05]"
               >
                 ✕
               </button>

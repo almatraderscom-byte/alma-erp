@@ -105,13 +105,13 @@ export function TradingTelegramChatsTab({
     <div className="space-y-4">
       <Card className="p-4 sm:p-5">
         <p className="text-sm font-black text-cream">Register Telegram group</p>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted">
           Add the bot to the group and send any message. If unregistered, the bot replies with the chat ID
           (must include the <span className="text-gold-lt">minus sign</span>, e.g. <code className="text-gold-lt">-100…</code>).
         </p>
         <form onSubmit={e => void saveChat(e)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1.2fr_1fr_auto]">
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Group chat ID
             </label>
             <Input
@@ -122,7 +122,7 @@ export function TradingTelegramChatsTab({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Title</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">Title</label>
             <Input
               placeholder="ALMA Trading Live"
               value={newChat.title}
@@ -136,7 +136,7 @@ export function TradingTelegramChatsTab({
       </Card>
 
       {!chats.length ? (
-        <p className="text-center text-xs text-zinc-500">No groups registered yet.</p>
+        <p className="text-center text-xs text-muted">No groups registered yet.</p>
       ) : (
         <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
           {chats.map(c => (
@@ -154,8 +154,8 @@ export function TradingTelegramChatsTab({
                     {c.approved ? 'Approved' : 'Inactive'}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-zinc-400">{c.title || 'Untitled group'}</p>
-                <p className="mt-0.5 text-[10px] text-zinc-600">Last message: {formatSeen(c.lastSeenAt)}</p>
+                <p className="mt-1 text-xs text-muted">{c.title || 'Untitled group'}</p>
+                <p className="mt-0.5 text-[10px] text-muted-hi">Last message: {formatSeen(c.lastSeenAt)}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button

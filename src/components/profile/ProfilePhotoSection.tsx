@@ -33,7 +33,7 @@ export function ProfilePhotoSection({
       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gold">Your profile photo</p>
-          <p className="mt-1 text-sm text-zinc-400">
+          <p className="mt-1 text-sm text-muted">
             Shown on attendance, approvals, trading, and team views. Tap the camera to update anytime.
           </p>
         </div>

@@ -41,7 +41,7 @@ function RoleBadge({ role }: { role: UserRole }) {
         : role === 'HR'
           ? 'bg-sky-50 text-sky-600 border-sky-200'
           : role === 'STAFF'
-            ? 'bg-slate-100 text-slate-600 border-slate-200'
+            ? 'bg-white/[0.06] text-muted-hi border-border'
             : 'bg-emerald-50 text-emerald-600 border-emerald-200'
   return (
     <span className={`inline-flex text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tone}`}>
@@ -129,9 +129,9 @@ export default function UsersSettingsPage() {
       >
         <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-4">
         <motion.div variants={fadeUp}>
-        <Card className="min-w-0 bg-white">
-          <div className="p-4 border-b border-black/[0.04] flex justify-between items-center gap-3 flex-wrap">
-            <p className="text-xs text-slate-500">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
+        <Card className="min-w-0 bg-card/85">
+          <div className="p-4 border-b border-white/[0.04] flex justify-between items-center gap-3 flex-wrap">
+            <p className="text-xs text-muted">{users.length} accounts · bcrypt-hashed passwords · JWT sessions</p>
             <Button size="xs" variant="secondary" type="button" onClick={() => void load()}>Refresh</Button>
           </div>
           {loading ? (
@@ -141,7 +141,7 @@ export default function UsersSettingsPage() {
           ) : (
             <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[72vh]">
               <table className="w-full min-w-[980px] text-left text-[11px]">
-                <thead className="sticky top-0 bg-white border-b border-black/[0.04] text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                <thead className="sticky top-0 bg-card/85 border-b border-white/[0.04] text-[11px] font-medium uppercase tracking-wider text-muted">
                   <tr>
                     <th className="py-2 px-4">Name</th>
                     <th className="py-2 pr-3">Phone</th>
@@ -155,17 +155,17 @@ export default function UsersSettingsPage() {
                 </thead>
                 <tbody>
                   {users.map(u => (
-                    <tr key={u.id} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
+                    <tr key={u.id} className="border-b border-white/[0.04] hover:bg-white/[0.04]/50 transition-colors">
                       <td className="py-2 px-4">
                         <div className="flex items-center gap-2">
                           <EmployeeAvatar userId={u.id} name={u.name} email={u.email} imageUrl={u.profileImageUrl} size="sm" />
-                          <span className="text-slate-800 font-medium">{u.name}</span>
+                          <span className="text-cream font-medium">{u.name}</span>
                         </div>
                       </td>
                       <td className="py-2 pr-3 font-mono text-gold-lt">{u.phone ? displayBdPhone(u.phone) : '—'}</td>
-                      <td className="py-2 pr-3 font-mono text-slate-500">{u.email || '—'}</td>
+                      <td className="py-2 pr-3 font-mono text-muted">{u.email || '—'}</td>
                       <td className="py-2 pr-3"><RoleBadge role={u.role} /></td>
-                      <td className="py-2 pr-3 text-slate-500 max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
+                      <td className="py-2 pr-3 text-muted max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
                       <td className="py-2 pr-3 font-mono text-gold-dim">{u.employeeIdGas || '—'}</td>
                       <td className="py-2 pr-3">
                         <span className={u.active ? 'text-green-400' : 'text-red-400'}>{u.active ? 'Active' : 'Inactive'}</span>
@@ -173,10 +173,10 @@ export default function UsersSettingsPage() {
                       <td className="py-2 pr-4 text-right space-x-2 whitespace-nowrap">
                         <button type="button" className="text-gold hover:underline" onClick={() => setPermUser(u)}>Permissions</button>
                         <button type="button" className="text-gold-dim hover:underline" onClick={() => setEditUser(u)}>Edit</button>
-                        <button type="button" className="text-slate-500 hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
+                        <button type="button" className="text-muted hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
                         <button
                           type="button"
-                          className="text-slate-500 hover:text-amber-400"
+                          className="text-muted hover:text-amber-400"
                           onClick={() => void patchUser(u.id, { active: !u.active })}
                         >
                           {u.active ? 'Deactivate' : 'Activate'}
@@ -198,14 +198,14 @@ export default function UsersSettingsPage() {
           <Card className="w-full max-w-md p-6 border-gold-dim/30 space-y-4">
             <div className="flex justify-between gap-3 items-start">
               <div>
-                <p className="text-sm font-bold text-slate-800">Role capabilities</p>
-                <p className="text-[11px] text-slate-500 mt-1">{permUser.name} · server-enforced ERP scope</p>
+                <p className="text-sm font-bold text-cream">Role capabilities</p>
+                <p className="text-[11px] text-muted mt-1">{permUser.name} · server-enforced ERP scope</p>
               </div>
-              <button type="button" className="text-slate-500 hover:text-slate-800 text-lg leading-none" onClick={() => setPermUser(null)}>×</button>
+              <button type="button" className="text-muted hover:text-cream text-lg leading-none" onClick={() => setPermUser(null)}>×</button>
             </div>
             <RoleBadge role={permUser.role} />
-            <p className="text-[11px] text-slate-500">Business access: <span className="font-mono text-slate-400">{permUser.businessAccess}</span></p>
-            <p className="text-xs text-slate-600 leading-relaxed">
+            <p className="text-[11px] text-muted">Business access: <span className="font-mono text-muted">{permUser.businessAccess}</span></p>
+            <p className="text-xs text-muted-hi leading-relaxed">
               {ALMA_ROLE_OPTIONS.find(o => o.id === permUser.role)?.hint}
             </p>
             <Button variant="secondary" className="w-full justify-center" type="button" onClick={() => setPermUser(null)}>Close</Button>
@@ -340,17 +340,17 @@ function ResetPasswordModal({
         <div className="mobile-modal-header p-6 pb-3">
           <div className="flex justify-between gap-3">
             <div>
-              <p className="text-sm font-bold text-slate-800">Reset password</p>
-              <p className="text-[11px] text-slate-500 mt-1">{user.email}</p>
+              <p className="text-sm font-bold text-cream">Reset password</p>
+              <p className="text-[11px] text-muted mt-1">{user.email}</p>
             </div>
-            <button type="button" className="text-slate-500 hover:text-slate-800" onClick={onClose}>×</button>
+            <button type="button" className="text-muted hover:text-cream" onClick={onClose}>×</button>
           </div>
         </div>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="mobile-modal-body px-6">
             <label className="block space-y-1 text-xs">
-              <span className="text-slate-500">New password</span>
-              <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+              <span className="text-muted">New password</span>
+              <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
             </label>
           </div>
           <div className="mobile-modal-footer px-6 pt-3">
@@ -400,8 +400,8 @@ function UserFormModal({
       <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/30 sm:rounded-2xl">
         <div className="mobile-modal-header p-5 pb-3">
           <div className="flex justify-between gap-3">
-            <p className="text-sm font-bold text-slate-800">{title}</p>
-            <button type="button" className="text-slate-500 hover:text-slate-800" onClick={onClose}>×</button>
+            <p className="text-sm font-bold text-cream">{title}</p>
+            <button type="button" className="text-muted hover:text-cream" onClick={onClose}>×</button>
           </div>
         </div>
         <form onSubmit={wrapped} className="flex min-h-0 flex-1 flex-col text-xs">
@@ -409,32 +409,32 @@ function UserFormModal({
           {!initial && (
             <>
               <label className="block space-y-1">
-                <span className="text-slate-500">Email (optional)</span>
-                <input name="email" type="email" className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+                <span className="text-muted">Email (optional)</span>
+                <input name="email" type="email" className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-slate-500">Initial password</span>
-                <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+                <span className="text-muted">Initial password</span>
+                <input name="password" type="password" autoComplete="new-password" required minLength={8} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
               </label>
             </>
           )}
           <label className="block space-y-1">
-            <span className="text-slate-500">Full name</span>
-            <input name="name" required defaultValue={initial?.name || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+            <span className="text-muted">Full name</span>
+            <input name="name" required defaultValue={initial?.name || ''} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
           </label>
           {initial && (
             <label className="block space-y-1">
-              <span className="text-slate-500">Email (optional)</span>
-              <input name="email" type="email" defaultValue={initial.email || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+              <span className="text-muted">Email (optional)</span>
+              <input name="email" type="email" defaultValue={initial.email || ''} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
             </label>
           )}
           <label className="block space-y-1">
-            <span className="text-slate-500">Phone (Bangladesh)</span>
-            <input name="phone" required={!initial} inputMode="tel" autoComplete="tel" placeholder="+8801XXXXXXXXX" defaultValue={initial?.phone || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+            <span className="text-muted">Phone (Bangladesh)</span>
+            <input name="phone" required={!initial} inputMode="tel" autoComplete="tel" placeholder="+8801XXXXXXXXX" defaultValue={initial?.phone || ''} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
           </label>
           <label className="block space-y-1">
-            <span className="text-slate-500">Role</span>
-            <select name="role" required value={selectedRole} onChange={e => setSelectedRole(e.target.value as UserRole)} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50">
+            <span className="text-muted">Role</span>
+            <select name="role" required value={selectedRole} onChange={e => setSelectedRole(e.target.value as UserRole)} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50">
               {roleOptions.map(o => (
                 <option key={o.id} value={o.id}>{o.label}</option>
               ))}
@@ -445,39 +445,39 @@ function UserFormModal({
               System owner accounts control the ERP and are not linked to HR employee IDs, salary hints, attendance, or personal wallets.
             </p>
           )}
-          <div className="space-y-2 rounded-xl border border-black/[0.08] p-3 bg-slate-50/50">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Business access</p>
+          <div className="space-y-2 rounded-xl border border-white/[0.08] p-3 bg-white/[0.04]/50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted">Business access</p>
             {BUSINESS_LIST.map(b => (
               <label key={b.id} className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   name={`biz_${b.id}`}
                   defaultChecked={selectedBiz.includes(b.id)}
-                  className="rounded border-black/[0.08]"
+                  className="rounded border-white/[0.08]"
                 />
-                <span className="text-slate-800">{b.name}</span>
+                <span className="text-cream">{b.name}</span>
               </label>
             ))}
           </div>
           {!systemOwnerAccount && (
             <>
               <label className="block space-y-1">
-                <span className="text-slate-500">Linked HR employee ID (GAS)</span>
-                <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 font-mono text-[11px] focus:outline-none focus:border-gold/50" />
+                <span className="text-muted">Linked HR employee ID (GAS)</span>
+                <input name="employeeIdGas" defaultValue={initial?.employeeIdGas || ''} placeholder="e.g. EMP-1024" className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream font-mono text-[11px] focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-slate-500">Joining date</span>
-                <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 text-sm focus:outline-none focus:border-gold/50" />
+                <span className="text-muted">Joining date</span>
+                <input name="joining_date" type="date" defaultValue={initial?.joiningDate?.slice(0, 10) || ''} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream text-sm focus:outline-none focus:border-gold/50" />
               </label>
               <label className="block space-y-1">
-                <span className="text-slate-500">Salary hint (৳)</span>
-                <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2 text-slate-800 font-mono text-sm focus:outline-none focus:border-gold/50" />
+                <span className="text-muted">Salary hint (৳)</span>
+                <input name="salary_hint" type="number" step="0.01" defaultValue={initial?.salaryHint ? Number(initial.salaryHint) : ''} className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2 text-cream font-mono text-sm focus:outline-none focus:border-gold/50" />
               </label>
             </>
           )}
           {initial && (
-            <div className="rounded-xl border border-black/[0.08] bg-slate-50/50 p-4">
-              <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Profile photo</p>
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.04]/50 p-4">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Profile photo</p>
               <ProfilePhotoUploader
                 userId={initial.id}
                 name={initial.name}

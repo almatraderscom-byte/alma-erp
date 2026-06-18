@@ -113,7 +113,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="mb-2.5 flex justify-center"
       >
-        <div className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/70 backdrop-blur-xl px-2 py-1 shadow-[0_4px_20px_rgba(224,122,95,0.12)] backdrop-blur-sm">
+        <div className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/82 px-2 py-1 shadow-[0_4px_20px_rgba(224,122,95,0.12)] backdrop-blur-sm">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#E07A5F] opacity-40" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E07A5F]" />

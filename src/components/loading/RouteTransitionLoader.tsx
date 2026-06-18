@@ -57,7 +57,7 @@ export function RouteTransitionLoader() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-[2rem] border border-slate-200 bg-white/95 px-10 py-8 shadow-xl shadow-black/8"
+              className="rounded-[2rem] border border-border bg-card/88 px-10 py-8 shadow-xl shadow-black/8"
             >
               <AlmaLoader size="sm" label="Opening" />
             </motion.div>

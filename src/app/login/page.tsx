@@ -111,11 +111,11 @@ function LoginForm() {
         </div>
         <p className="text-[11px] font-black tracking-[0.2em] text-gold mb-2 text-center">ALMA ERP</p>
         <h1 className="text-xl font-bold text-cream text-center mb-1">Sign in</h1>
-        <p className="text-[11px] text-slate-500 text-center mb-8">Secure multi-business workspace</p>
+        <p className="text-[11px] text-muted text-center mb-8">Secure multi-business workspace</p>
 
         <form onSubmit={onSubmit} className="space-y-4" data-login-form>
           <label className="block space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500">Phone or Email</span>
+            <span className="text-[10px] uppercase tracking-wider text-muted">Phone or Email</span>
             <Input
               type="text"
               inputMode="email"
@@ -127,7 +127,7 @@ function LoginForm() {
             />
           </label>
           <label className="block space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500">Password</span>
+            <span className="text-[10px] uppercase tracking-wider text-muted">Password</span>
             <Input
               type="password"
               autoComplete="current-password"
@@ -141,7 +141,7 @@ function LoginForm() {
           </Button>
         </form>
 
-        <div className="mt-6 flex flex-col gap-2 text-center text-[11px] text-slate-500">
+        <div className="mt-6 flex flex-col gap-2 text-center text-[11px] text-muted">
           <Link href="/forgot-password" className="text-gold-lt hover:underline">Forgot password?</Link>
           <p className="text-[10px] leading-snug opacity-80">Use your assigned Alma ERP account.</p>
         </div>

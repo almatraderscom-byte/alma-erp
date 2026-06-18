@@ -43,7 +43,7 @@ export default function CreativeStudio() {
     <div className="flex h-[100dvh] max-h-[100dvh] w-full overflow-hidden bg-transparent text-cream">
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
       {/* Desktop sidebar */}
-      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/70 backdrop-blur-xl py-4 md:flex">
+      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/82 py-4 md:flex">
         <NavIcon href="/agent" label="Chat" active={false}>
           <ChatSvg />
         </NavIcon>
@@ -59,7 +59,7 @@ export default function CreativeStudio() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/75 backdrop-blur-xl px-3 py-2.5 backdrop-blur-md sm:px-4">
+        <header className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 py-2.5 backdrop-blur-md sm:px-4">
           <div>
             <p className="text-sm font-bold text-cream">Creative Studio</p>
             <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
@@ -106,7 +106,7 @@ export default function CreativeStudio() {
 
         {/* Mobile bottom nav */}
         <nav
-          className="flex shrink-0 border-t border-border-subtle bg-card/60 backdrop-blur-2xl md:hidden"
+          className="flex shrink-0 border-t border-border-subtle bg-card/80 md:hidden"
           style={{ paddingBottom: 'max(0.35rem, env(safe-area-inset-bottom))' }}
         >
           {(
@@ -303,7 +303,7 @@ function StudioWorkspace({
             <select
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
-              className="w-full rounded-xl border border-border bg-card/60 backdrop-blur-2xl px-3 py-2.5 text-sm"
+              className="w-full rounded-xl border border-border bg-card/80 px-3 py-2.5 text-sm"
             >
               <option value="">Saved model (optional)</option>
               {models.map((m) => (
@@ -319,7 +319,7 @@ function StudioWorkspace({
       {/* Bottom control dock — FASHN-style */}
       <div
         className={cn(
-          'absolute inset-x-0 bottom-[52px] z-20 border-t border-border bg-card/80 shadow-[0_-8px_30px_rgba(0,0,0,0.3)] backdrop-blur-2xl md:bottom-0',
+          'absolute inset-x-0 bottom-[52px] z-20 border-t border-border bg-card/80 shadow-[0_-8px_30px_rgba(0,0,0,0.3)] md:bottom-0',
         )}
         style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}
       >
@@ -360,7 +360,7 @@ function StudioWorkspace({
                     onClick={() => setFamilyPreset(p.id)}
                     className={cn(
                       'rounded-full px-2.5 py-1 text-[10px] font-semibold',
-                      familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-card/60 backdrop-blur-2xl',
+                      familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-card/80',
                     )}
                   >
                     {p.labelBn}
@@ -382,7 +382,7 @@ function StudioWorkspace({
                   <select
                     value={provider}
                     onChange={(e) => setProvider(e.target.value as StudioProvider)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     <option value="fashn" disabled={!config?.fashnConfigured}>
                       Pro (FASHN)
@@ -392,7 +392,7 @@ function StudioWorkspace({
                   <select
                     value={backgroundId}
                     onChange={(e) => setBackgroundId(e.target.value)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {BACKGROUND_PRESETS.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -403,7 +403,7 @@ function StudioWorkspace({
                   <select
                     value={aspectRatio}
                     onChange={(e) => setAspectRatio(e.target.value)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {ASPECT_RATIOS.map((a) => (
                       <option key={a} value={a}>
@@ -414,7 +414,7 @@ function StudioWorkspace({
                   <select
                     value={resolution}
                     onChange={(e) => setResolution(e.target.value as FashnResolution)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {RESOLUTIONS.map((r) => (
                       <option key={r} value={r}>
@@ -425,7 +425,7 @@ function StudioWorkspace({
                   <select
                     value={genMode}
                     onChange={(e) => setGenMode(e.target.value as FashnGenerationMode)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {GEN_MODES.map((g) => (
                       <option key={g} value={g}>
@@ -433,7 +433,7 @@ function StudioWorkspace({
                       </option>
                     ))}
                   </select>
-                  <div className="flex items-center rounded-lg border border-border bg-card/60 backdrop-blur-2xl">
+                  <div className="flex items-center rounded-lg border border-border bg-card/80">
                     <button type="button" className="px-2 py-1.5 text-[11px]" onClick={() => setNumImages((n) => Math.max(1, n - 1))}>
                       −
                     </button>
@@ -449,7 +449,7 @@ function StudioWorkspace({
                   <select
                     value={vibe}
                     onChange={(e) => setVibe(e.target.value as typeof vibe)}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {VIDEO_VIBES.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -460,7 +460,7 @@ function StudioWorkspace({
                   <select
                     value={durationSec}
                     onChange={(e) => setDurationSec(Number(e.target.value))}
-                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                   >
                     {[4, 5, 6, 7, 8].map((s) => (
                       <option key={s} value={s}>
@@ -519,7 +519,7 @@ function UploadTile({
       onKeyDown={(e) => e.key === 'Enter' && ref.current?.click()}
       className={cn(
         'overflow-hidden rounded-2xl border-2 border-dashed transition-colors',
-        preview ? 'border-[#E07A5F]/25 bg-card/60 backdrop-blur-2xl' : 'border-border bg-card/60 backdrop-blur-xl',
+        preview ? 'border-[#E07A5F]/25 bg-card/80' : 'border-border bg-card/80',
       )}
     >
       <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
@@ -578,7 +578,7 @@ function GalleryView() {
               layout
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="overflow-hidden rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-sm"
+              className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 shadow-sm"
             >
               <div className="relative aspect-[4/5] bg-bg-1">
                 {item.previewUrl ? (
@@ -669,7 +669,7 @@ function ModelsView() {
       </p>
 
       <div
-        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/60 backdrop-blur-2xl"
+        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
         onClick={() => ref.current?.click()}
       >
         <input
@@ -722,7 +722,7 @@ function ModelsView() {
 
       <div className="space-y-2">
         {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-2.5">
+          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
             <div>
               <p className="font-semibold">{m.name}</p>
               <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>

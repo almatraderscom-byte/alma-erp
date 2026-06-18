@@ -54,22 +54,22 @@ export function TradingTelegramMonitorTab({
     <div className="space-y-4">
       <Card className="border-gold-dim/30 bg-gold/5 p-4">
         <p className="text-sm font-black text-cream">Owner monitoring</p>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted">
           Observe staff confirmations and risk signals. Daily accounting is done by each trader on their own drafts.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Pending deletes</p>
+            <p className="text-[10px] uppercase tracking-wider text-muted">Pending deletes</p>
             <p className="text-2xl font-black text-amber-300">{data.pendingDeleteApprovals}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Pending drafts (all)</p>
+            <p className="text-[10px] uppercase tracking-wider text-muted">Pending drafts (all)</p>
             <p className="text-2xl font-black text-cream">
               {(data.draftCounts.PENDING ?? 0) + (data.draftCounts.LOCKED ?? 0)}
             </p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Posted today (queue)</p>
+            <p className="text-[10px] uppercase tracking-wider text-muted">Posted today (queue)</p>
             <p className="text-2xl font-black text-green-400">{data.draftCounts.POSTED ?? 0}</p>
           </div>
         </div>
@@ -79,9 +79,9 @@ export function TradingTelegramMonitorTab({
       </Card>
 
       <Card className="p-4">
-        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">Staff pending by user</p>
+        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">Staff pending by user</p>
         {!data.staffSummaries.length ? (
-          <p className="text-xs text-zinc-600">No pending drafts across staff.</p>
+          <p className="text-xs text-muted-hi">No pending drafts across staff.</p>
         ) : (
           <div className="divide-y divide-border">
             {data.staffSummaries.map(s => (
@@ -95,15 +95,15 @@ export function TradingTelegramMonitorTab({
       </Card>
 
       <Card className="p-4">
-        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">Suspicious bot activity</p>
+        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">Suspicious bot activity</p>
         {!data.suspiciousAudits.length ? (
-          <p className="text-xs text-zinc-600">No recent alerts.</p>
+          <p className="text-xs text-muted-hi">No recent alerts.</p>
         ) : (
           <div className="max-h-48 space-y-2 overflow-y-auto">
             {data.suspiciousAudits.map(a => (
-              <div key={a.id} className="rounded-lg bg-black/[0.03] p-2 text-[11px]">
+              <div key={a.id} className="rounded-lg bg-white/[0.03] p-2 text-[11px]">
                 <p className="font-bold text-amber-200">{a.eventType}</p>
-                <p className="text-zinc-500">{a.detail || a.rawMessage || '—'}</p>
+                <p className="text-muted">{a.detail || a.rawMessage || '—'}</p>
               </div>
             ))}
           </div>
@@ -112,7 +112,7 @@ export function TradingTelegramMonitorTab({
 
       {isSuperAdmin && (
         <div>
-          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Live operational feed</p>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Live operational feed</p>
           <TradingTelegramLiveFeed />
         </div>
       )}

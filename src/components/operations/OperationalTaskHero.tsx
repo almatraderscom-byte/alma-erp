@@ -14,7 +14,7 @@ import {
 import { OPS_PRIORITY_BADGE } from '@/lib/operational-task-spotlight-client'
 
 const PRIORITY_BADGE: Record<string, string> = {
-  LOW: 'border-zinc-500/40 bg-zinc-500/15 text-zinc-300',
+  LOW: 'border-zinc-500/40 bg-white/[0.04]0/15 text-muted',
   NORMAL: OPS_PRIORITY_BADGE.NORMAL,
   HIGH: OPS_PRIORITY_BADGE.HIGH,
   CRITICAL: OPS_PRIORITY_BADGE.CRITICAL,
@@ -147,7 +147,7 @@ export function OperationalTaskHero({
         {t.title}
       </h1>
       <p
-        className={`mt-4 max-w-sm text-base leading-relaxed text-zinc-400 ${expanded ? '' : 'line-clamp-4'}`}
+        className={`mt-4 max-w-sm text-base leading-relaxed text-muted ${expanded ? '' : 'line-clamp-4'}`}
       >
         {t.description}
       </p>
@@ -160,7 +160,7 @@ export function OperationalTaskHero({
           {expanded ? 'Show less' : 'Read more'}
         </button>
       )}
-      <p className="mt-5 text-xs text-zinc-500">
+      <p className="mt-5 text-xs text-muted">
         {t.assignedBy.name}
         {deadlineLabel ? ` · Due ${deadlineLabel}` : ''}
       </p>
@@ -168,7 +168,7 @@ export function OperationalTaskHero({
   )
 
   const actionBlock = (
-    <div className="shrink-0 border-t border-slate-200 bg-card px-6 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+    <div className="shrink-0 border-t border-border bg-card px-6 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         className="w-full rounded-xl bg-gold py-4 text-center text-base font-black text-black transition hover:bg-gold-lt disabled:opacity-60"
@@ -180,7 +180,7 @@ export function OperationalTaskHero({
       {canDismiss && (
         <button
           type="button"
-          className="mt-3 w-full text-center text-sm text-zinc-500 transition hover:text-zinc-300 disabled:opacity-50"
+          className="mt-3 w-full text-center text-sm text-muted transition hover:text-muted disabled:opacity-50"
           disabled={busy}
           onClick={() => void dismissTask()}
         >
@@ -190,7 +190,7 @@ export function OperationalTaskHero({
       {!blocking && (
         <button
           type="button"
-          className="mt-4 w-full text-center text-xs text-zinc-600 transition hover:text-zinc-400 disabled:opacity-50"
+          className="mt-4 w-full text-center text-xs text-muted-hi transition hover:text-muted disabled:opacity-50"
           disabled={busy}
           onClick={() => void continueWithoutAck()}
         >

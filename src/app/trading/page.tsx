@@ -181,7 +181,7 @@ export default function TradingDashboardPage() {
 
           <motion.div variants={fadeUp} className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
             <Card className="rounded-2xl p-5">
-              <p className="text-sm font-bold text-slate-800">Merchant Growth & Capital Risk</p>
+              <p className="text-sm font-bold text-cream">Merchant Growth & Capital Risk</p>
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <MetricPill label="Avg growth score" value={`${(data?.merchantGrowth.averageScore ?? 0).toFixed(1)}%`} tone="text-green-400" />
                 <MetricPill label="Growth trend" value={data?.merchantGrowth.trend ?? 'FLAT'} tone={data?.merchantGrowth.trend === 'UP' ? 'text-green-400' : data?.merchantGrowth.trend === 'DOWN' ? 'text-red-400' : 'text-blue-500'} />
@@ -191,11 +191,11 @@ export default function TradingDashboardPage() {
               <MiniOpsTrend rows={data?.trend ?? []} />
             </Card>
             <Card className="rounded-2xl p-5">
-              <p className="text-sm font-bold text-slate-800">Period snapshots</p>
+              <p className="text-sm font-bold text-cream">Period snapshots</p>
               <div className="mt-3 space-y-2">
                 {businessSummary && Object.entries(businessSummary.ranges).slice(0, 3).map(([label, range]) => (
                   <div key={label} className="flex items-center justify-between text-xs">
-                    <span className="text-slate-500">{label === 'last7' ? 'Last 7 days' : label}</span>
+                    <span className="text-muted">{label === 'last7' ? 'Last 7 days' : label}</span>
                     <span className={`font-bold tabular-nums ${signedClass(range.netResultBdt ?? 0)}`}>
                       ৳{(range.netResultBdt ?? 0).toLocaleString('en-BD')}
                     </span>
@@ -211,22 +211,22 @@ export default function TradingDashboardPage() {
 
           <motion.div variants={fadeUp}>
           <Card className="overflow-hidden rounded-2xl">
-            <div className="border-b border-black/[0.06] px-4 py-3">
-              <p className="text-sm font-bold text-slate-800">Staff Performance Rankings</p>
+            <div className="border-b border-white/[0.06] px-4 py-3">
+              <p className="text-sm font-bold text-cream">Staff Performance Rankings</p>
             </div>
             {loading ? <div className="p-4"><Skeleton className="h-24" /></div> : !data?.staffRankings.rows.length ? (
               <Empty icon="◇" title="No staff performance yet" />
             ) : (
-              <div className="divide-y divide-black/[0.06]">
+              <div className="divide-y divide-white/[0.06]">
                 {data.staffRankings.rows.map(staff => (
-                  <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-slate-50 md:grid-cols-[1.2fr_0.8fr_0.9fr_0.9fr_0.9fr_0.9fr_0.9fr]">
-                    <span className="font-bold text-slate-800">{staff.name}</span>
-                    <span className="text-slate-500">{staff.managedAccounts} accounts</span>
+                  <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-white/[0.04] md:grid-cols-[1.2fr_0.8fr_0.9fr_0.9fr_0.9fr_0.9fr_0.9fr]">
+                    <span className="font-bold text-cream">{staff.name}</span>
+                    <span className="text-muted">{staff.managedAccounts} accounts</span>
                     <span className="text-gold">Capital ৳{staff.managedCapital.toLocaleString('en-BD')}</span>
                     <span className={signedClass(staff.totalProfitGenerated)}>Profit ৳{staff.totalProfitGenerated.toLocaleString('en-BD')}</span>
                     <span className="text-green-400">Commission ৳{staff.commissionEarned.toLocaleString('en-BD')}</span>
                     <span className="text-blue-500">Consistency {staff.activityConsistency.toFixed(0)}%</span>
-                    <span className="font-bold text-slate-800">Score {staff.score.toFixed(0)}</span>
+                    <span className="font-bold text-cream">Score {staff.score.toFixed(0)}</span>
                   </div>
                 ))}
               </div>
@@ -239,10 +239,10 @@ export default function TradingDashboardPage() {
       <motion.div variants={fadeUp} className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <RecentCard title="Latest Trades" empty="No trades today" loading={loading}>
           {latest.trades.map(trade => (
-            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50">
+            <Link key={trade.id} href={`/trading/accounts/${trade.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/[0.04]">
               <div className="min-w-0">
-                <p className="truncate text-xs font-bold text-slate-800">{trade.tradingAccount?.accountTitle || trade.tradingAccountId}</p>
-                <p className="mt-0.5 text-[10px] text-slate-500">{trade.user?.name || 'Staff'} · {trade.tradeType} · {money(trade.usdtAmount)} USDT</p>
+                <p className="truncate text-xs font-bold text-cream">{trade.tradingAccount?.accountTitle || trade.tradingAccountId}</p>
+                <p className="mt-0.5 text-[10px] text-muted">{trade.user?.name || 'Staff'} · {trade.tradeType} · {money(trade.usdtAmount)} USDT</p>
               </div>
               <p className={`shrink-0 text-sm font-bold tabular-nums ${signedClass(trade.netProfit)}`}><Money amount={Number(trade.netProfit)} /></p>
             </Link>
@@ -250,10 +250,10 @@ export default function TradingDashboardPage() {
         </RecentCard>
         <RecentCard title="Latest Expenses" empty="No expenses" loading={loading}>
           {latest.expenses.map(expense => (
-            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50">
+            <Link key={expense.id} href={`/trading/accounts/${expense.tradingAccountId}`} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/[0.04]">
               <div className="min-w-0">
-                <p className="truncate text-xs font-bold text-slate-800">{expense.expenseType}</p>
-                <p className="mt-0.5 text-[10px] text-slate-500">{expense.tradingAccount?.accountTitle || expense.tradingAccountId}</p>
+                <p className="truncate text-xs font-bold text-cream">{expense.expenseType}</p>
+                <p className="mt-0.5 text-[10px] text-muted">{expense.tradingAccount?.accountTitle || expense.tradingAccountId}</p>
               </div>
               <p className="shrink-0 text-sm font-bold text-red-400 tabular-nums"><Money amount={Number(expense.amount)} /></p>
             </Link>
@@ -314,25 +314,25 @@ function AlertsPanel({
 }) {
   return (
     <Card className="overflow-hidden rounded-2xl">
-      <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
         <div>
-          <p className="text-sm font-bold text-slate-800">{isAdmin ? 'Action required' : 'Your tasks'}</p>
-          <p className="text-[11px] text-slate-500">Tap Upload Now or Add Summary to fix alerts</p>
+          <p className="text-sm font-bold text-cream">{isAdmin ? 'Action required' : 'Your tasks'}</p>
+          <p className="text-[11px] text-muted">Tap Upload Now or Add Summary to fix alerts</p>
         </div>
         <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold text-red-500">{alerts.length}</span>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-28" /></div> : !alerts.length ? (
         <Empty icon="✓" title="All clear — no pending tasks" />
       ) : (
-        <div className="divide-y divide-black/[0.06]">
+        <div className="divide-y divide-white/[0.06]">
           {alerts.slice(0, 8).map(alert => {
             const cta = getTradingAlertCta(alert.key)
             return (
               <div key={alert.key} className="px-4 py-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-800">{alert.title}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">{alert.message}</p>
+                    <p className="text-xs font-bold text-cream">{alert.title}</p>
+                    <p className="mt-1 text-[11px] text-muted">{alert.message}</p>
                   </div>
                   <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${alertTone(alert.severity)}`}>{alert.severity}</span>
                 </div>
@@ -354,26 +354,26 @@ function AlertsPanel({
 function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResponse['accountPerformance']; loading: boolean }) {
   return (
     <Card className="overflow-hidden rounded-2xl">
-      <div className="border-b border-black/[0.06] px-4 py-3">
-        <p className="text-sm font-bold text-slate-800">Account Performance & Health</p>
+      <div className="border-b border-white/[0.06] px-4 py-3">
+        <p className="text-sm font-bold text-cream">Account Performance & Health</p>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : !rows.length ? <Empty icon="◇" title="No account performance yet" /> : (
         <div className="overflow-x-auto">
-          <div className="min-w-[1080px] divide-y divide-black/[0.06]">
-            <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <div className="min-w-[1080px] divide-y divide-white/[0.06]">
+            <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
               <span>Account</span><span>Balance</span><span>Daily P/L</span><span>Weekly P/L</span><span>ROI</span><span>Expense</span><span>Fees</span><span>Progress</span><span>Staff</span><span>Health</span>
             </div>
             {rows.slice(0, 20).map(row => (
-              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs transition-colors hover:bg-slate-50">
-                <span><b className="text-slate-800">{row.accountTitle}</b><br /><span className="text-[10px] text-slate-400">{row.activityStatus.replace('_', ' ')} · {row.inactiveDays}d idle</span></span>
+              <Link key={row.id} href={`/trading/accounts/${row.id}`} className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-3 text-xs transition-colors hover:bg-white/[0.04]">
+                <span><b className="text-cream">{row.accountTitle}</b><br /><span className="text-[10px] text-muted">{row.activityStatus.replace('_', ' ')} · {row.inactiveDays}d idle</span></span>
                 <span className="text-gold">৳{row.currentBalance.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.dailyPl)}>৳{row.dailyPl.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.weeklyPl)}>৳{row.weeklyPl.toLocaleString('en-BD')}</span>
                 <span className={signedClass(row.roi)}>{row.roi.toFixed(1)}%</span>
-                <span className={row.expenseRatio > 35 ? 'text-red-400' : 'text-slate-500'}>{row.expenseRatio.toFixed(1)}%</span>
+                <span className={row.expenseRatio > 35 ? 'text-red-400' : 'text-muted'}>{row.expenseRatio.toFixed(1)}%</span>
                 <span className="text-amber-500">৳{row.feeTotals.toLocaleString('en-BD')}</span>
-                <span className="text-slate-600">{row.merchantProgress.toFixed(1)}%</span>
-                <span className="text-slate-500">{row.assignedStaff}</span>
+                <span className="text-muted-hi">{row.merchantProgress.toFixed(1)}%</span>
+                <span className="text-muted">{row.assignedStaff}</span>
                 <HealthBadge health={row.health} />
               </Link>
             ))}
@@ -391,8 +391,8 @@ function HealthBadge({ health }: { health: TradingDashboardResponse['accountPerf
 
 function MetricPill({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+    <div className="min-w-0 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-muted">{label}</p>
       <p className={`mt-2 min-w-0 break-words text-[clamp(0.875rem,0.5rem+0.8vw,1.125rem)] font-bold leading-tight tabular-nums ${tone}`}>{value}</p>
     </div>
   )
@@ -409,11 +409,11 @@ function MiniOpsTrend({ rows }: { rows: TradingDashboardResponse['trend'] }) {
     return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
   }).join(' ')
   return (
-    <div className="mt-4 rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
+    <div className="mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-3">
       <svg viewBox="0 0 100 100" className="h-28 w-full overflow-visible">
         <path d={path} fill="none" stroke="currentColor" strokeWidth="3" className="text-gold" vectorEffect="non-scaling-stroke" />
       </svg>
-      <p className="text-[11px] text-slate-500">Last {points.length} days net profit trend</p>
+      <p className="text-[11px] text-muted">Last {points.length} days net profit trend</p>
     </div>
   )
 }
@@ -429,13 +429,13 @@ function RecentCard({ title, empty, loading, children }: { title: string; empty:
   const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children)
   return (
     <Card className="overflow-hidden rounded-2xl">
-      <div className="border-b border-black/[0.06] px-4 py-3">
-        <p className="text-sm font-bold text-slate-800">{title}</p>
+      <div className="border-b border-white/[0.06] px-4 py-3">
+        <p className="text-sm font-bold text-cream">{title}</p>
       </div>
       {loading ? (
         <div className="p-4"><Skeleton className="h-28" /></div>
       ) : hasItems ? (
-        <div className="divide-y divide-black/[0.06]">{children}</div>
+        <div className="divide-y divide-white/[0.06]">{children}</div>
       ) : (
         <Empty icon="◇" title={empty} />
       )}

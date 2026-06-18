@@ -118,7 +118,7 @@ export default function CditClientDetailPage() {
         </div>
       }
     >
-      <Link href="/digital/clients" className="text-[11px] text-zinc-500 hover:text-gold">← All clients</Link>
+      <Link href="/digital/clients" className="text-[11px] text-muted hover:text-gold">← All clients</Link>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-5 md:col-span-2 space-y-3">
@@ -137,10 +137,10 @@ export default function CditClientDetailPage() {
         </Card>
         <Card className="p-5 space-y-2 text-sm">
           <p className="font-bold text-cream">Contact</p>
-          <p className="text-zinc-400">{client.phone || '—'}</p>
-          <p className="text-zinc-400">{client.email || '—'}</p>
-          <p className="text-zinc-500 text-[11px]">{client.service_type} · {client.country}</p>
-          {client.notes && <p className="text-[11px] text-zinc-500 mt-2">{client.notes}</p>}
+          <p className="text-muted">{client.phone || '—'}</p>
+          <p className="text-muted">{client.email || '—'}</p>
+          <p className="text-muted text-[11px]">{client.service_type} · {client.country}</p>
+          {client.notes && <p className="text-[11px] text-muted mt-2">{client.notes}</p>}
         </Card>
       </div>
 
@@ -195,12 +195,12 @@ export default function CditClientDetailPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-cream">{pr.project_name || pr.title}</p>
-                    <p className="text-[10px] text-zinc-500 font-mono">{pr.id} · {pr.status}</p>
+                    <p className="text-[10px] text-muted font-mono">{pr.id} · {pr.status}</p>
                   </div>
                   <PaymentStatusBadge status={pr.payment_status} />
                 </div>
                 <PaymentProgressBar percentage={pr.payment_percentage} status={pr.payment_status} />
-                <div className="flex gap-4 text-[11px] text-zinc-500">
+                <div className="flex gap-4 text-[11px] text-muted">
                   <span>Value <Money amount={pr.total_amount} /></span>
                   <span className="text-emerald-400">Paid <Money amount={pr.total_paid} /></span>
                   <span className="text-amber-400">Due <Money amount={pr.due_amount} /></span>
@@ -219,7 +219,7 @@ export default function CditClientDetailPage() {
           <div className="table-scroll">
           <table className="w-full min-w-[680px] text-left text-xs">
             <thead>
-              <tr className="text-zinc-500 border-b border-border">
+              <tr className="text-muted border-b border-border">
                 <th className="py-2 pr-2">ID</th>
                 <th className="py-2 pr-2">Date</th>
                 <th className="py-2 pr-2">Method</th>
@@ -233,7 +233,7 @@ export default function CditClientDetailPage() {
                   <td className="py-2 font-mono text-gold">{pay.id}</td>
                   <td className="py-2">{pay.payment_date || pay.date}</td>
                   <td className="py-2">{pay.payment_method || '—'}</td>
-                  <td className="py-2 text-zinc-500">{pay.transaction_id || pay.note || '—'}</td>
+                  <td className="py-2 text-muted">{pay.transaction_id || pay.note || '—'}</td>
                   <td className="py-2 text-right font-bold text-emerald-400"><Money amount={pay.amount} /></td>
                 </tr>
               ))}

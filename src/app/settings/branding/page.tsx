@@ -276,7 +276,7 @@ export default function BrandingSettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="Settings · Branding"
         subtitle={`Permanent brand assets for ${business.name}`}
@@ -288,14 +288,14 @@ export default function BrandingSettingsPage() {
         ) : (
           <>
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-5 shadow-sm">
+              <Card className="rounded-2xl border border-white/[0.06] p-6 space-y-5 shadow-sm">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800">Brand assets</h3>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <h3 className="text-sm font-bold text-cream">Brand assets</h3>
+                  <p className="mt-1 text-[11px] text-muted">
                     Files are stored permanently in Google Drive and used on invoices, PDFs, dashboards, and print layouts.
                   </p>
                 </div>
-                <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.04] p-4 text-[11px] text-slate-600 leading-relaxed space-y-1">
+                <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.04] p-4 text-[11px] text-muted-hi leading-relaxed space-y-1">
                   <p><span className="font-bold text-[#E07A5F]">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
                   <p><span className="font-bold text-[#E07A5F]">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
                   <p><span className="font-bold text-[#E07A5F]">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
@@ -307,26 +307,26 @@ export default function BrandingSettingsPage() {
                     const previewUrl = previewAssets[assetType]
                     const isLogo = assetType === 'logo'
                     return (
-                      <div key={assetType} className="space-y-3 rounded-xl border border-black/[0.06] bg-slate-50/50 p-4">
+                      <div key={assetType} className="space-y-3 rounded-xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{rules.label}</p>
-                          <p className="mt-1 text-[11px] text-slate-500">{rules.helper}</p>
-                          <p className="mt-1 text-[10px] text-slate-400">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">{rules.label}</p>
+                          <p className="mt-1 text-[11px] text-muted">{rules.helper}</p>
+                          <p className="mt-1 text-[10px] text-muted">Recommended: {rules.recommended} · Aspect ratio: {rules.ratioText}</p>
                         </div>
-                        <div className={`rounded-xl border border-black/[0.06] bg-[linear-gradient(45deg,#f1f1f1_25%,transparent_25%),linear-gradient(-45deg,#f1f1f1_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f1f1f1_75%),linear-gradient(-45deg,transparent_75%,#f1f1f1_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 h-28`}>
+                        <div className={`rounded-xl border border-white/[0.06] bg-[linear-gradient(45deg,#f1f1f1_25%,transparent_25%),linear-gradient(-45deg,#f1f1f1_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f1f1f1_75%),linear-gradient(-45deg,transparent_75%,#f1f1f1_75%)] bg-[length:18px_18px] bg-[position:0_0,0_9px,9px_-9px,-9px_0] flex items-center justify-center p-4 h-28`}>
                           {previewUrl ? (
                             <img
                               src={previewUrl}
                               alt={`${rules.label} preview`}
-                              className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-white border border-black/[0.06] p-1'}
+                              className={isLogo ? 'max-h-20 max-w-full object-contain' : 'h-16 w-16 rounded-xl object-contain bg-card/85 border border-white/[0.06] p-1'}
                             />
                           ) : (
-                            <span className="text-xs text-slate-400">No {rules.label.toLowerCase()}</span>
+                            <span className="text-xs text-muted">No {rules.label.toLowerCase()}</span>
                           )}
                         </div>
                         {draft && (
                           <div className="space-y-1">
-                            <p className="text-[10px] text-slate-500">
+                            <p className="text-[10px] text-muted">
                               Selected: {draft.width}x{draft.height} · {(draft.file.size / 1024).toFixed(0)} KB
                             </p>
                             {draft.warnings.map(w => <p key={w} className="text-[10px] text-amber-600">Warning: {w}</p>)}
@@ -338,12 +338,12 @@ export default function BrandingSettingsPage() {
                           <input
                             type="file"
                             accept={rules.accept}
-                            className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-[#E07A5F]/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-[#E07A5F]"
+                            className="block w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-[#E07A5F]/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-[#E07A5F]"
                             disabled={uploading === assetType}
                             onChange={e => void handleSelectAsset(assetType, e.target.files?.[0] ?? null)}
                           />
                         </label>
-                        <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                        <label className="flex items-center gap-2 text-[11px] text-muted-hi">
                           <input
                             type="checkbox"
                             checked={autoOptimize[assetType]}
@@ -369,8 +369,8 @@ export default function BrandingSettingsPage() {
             </motion.div>
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-800">Company details</h3>
+              <Card className="rounded-2xl border border-white/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-cream">Company details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {([
                     ['company_name', 'Company name'],
@@ -383,9 +383,9 @@ export default function BrandingSettingsPage() {
                     ['invoice_prefix', 'Invoice prefix'],
                   ] as const).map(([key, label]) => (
                     <label key={key} className="block">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                      <span className="text-[10px] text-muted uppercase tracking-wider font-medium">{label}</span>
                       <input
-                        className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+                        className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
                         value={form[key]}
                         onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                       />
@@ -396,15 +396,15 @@ export default function BrandingSettingsPage() {
             </motion.div>
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
+              <Card className="rounded-2xl border border-white/[0.06] p-6 space-y-4 shadow-sm">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800">Invoice watermark</h3>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <h3 className="text-sm font-bold text-cream">Invoice watermark</h3>
+                  <p className="mt-1 text-[11px] text-muted">
                     Uses the uploaded logo as a subtle centered invoice background. Defaults are print-safe and PDF optimized.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <label className="flex items-center gap-2 rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-700">
+                  <label className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream">
                     <input
                       type="checkbox"
                       checked={form.invoice_watermark_enabled}
@@ -414,9 +414,9 @@ export default function BrandingSettingsPage() {
                     Enable invoice watermark
                   </label>
                   <label className="block">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Watermark opacity</span>
+                    <span className="text-[10px] text-muted uppercase tracking-wider font-medium">Watermark opacity</span>
                     <select
-                      className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                       value={form.invoice_watermark_opacity}
                       onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
                     >
@@ -426,15 +426,15 @@ export default function BrandingSettingsPage() {
                     </select>
                   </label>
                 </div>
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[10px] text-muted">
                   These settings are backend-ready; current invoice PDFs use the safe default unless persisted branding config is available.
                 </p>
               </Card>
             </motion.div>
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-800">Brand colors</h3>
+              <Card className="rounded-2xl border border-white/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-cream">Brand colors</h3>
                 <div className="grid grid-cols-3 gap-4">
                   {([
                     ['color_primary', 'Primary'],
@@ -442,16 +442,16 @@ export default function BrandingSettingsPage() {
                     ['color_accent', 'Accent'],
                   ] as const).map(([key, label]) => (
                     <label key={key} className="block">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                      <span className="text-[10px] text-muted uppercase tracking-wider font-medium">{label}</span>
                       <div className="flex gap-2 mt-1 items-center">
                         <input
                           type="color"
                           value={form[key]}
                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                          className="w-10 h-10 rounded-lg border border-black/[0.06] bg-transparent cursor-pointer"
+                          className="w-10 h-10 rounded-lg border border-white/[0.06] bg-transparent cursor-pointer"
                         />
                         <input
-                          className="flex-1 bg-white border border-black/[0.06] rounded-xl px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                          className="flex-1 bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-cream font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                           value={form[key]}
                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                         />
@@ -463,17 +463,17 @@ export default function BrandingSettingsPage() {
             </motion.div>
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-6 space-y-4 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-800">Invoice footer</h3>
+              <Card className="rounded-2xl border border-white/[0.06] p-6 space-y-4 shadow-sm">
+                <h3 className="text-sm font-bold text-cream">Invoice footer</h3>
                 {([
                   ['invoice_footer_thanks', 'Thank you line'],
                   ['invoice_footer_policy', 'Policy / terms'],
                   ['invoice_footer_note', 'Legal note'],
                 ] as const).map(([key, label]) => (
                   <label key={key} className="block">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{label}</span>
+                    <span className="text-[10px] text-muted uppercase tracking-wider font-medium">{label}</span>
                     <textarea
-                      className="mt-1 w-full bg-white border border-black/[0.06] rounded-xl px-3 py-2.5 text-sm text-slate-800 min-h-[64px] focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream min-h-[64px] focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
                       value={form[key]}
                       onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                     />

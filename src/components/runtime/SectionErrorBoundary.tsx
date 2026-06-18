@@ -39,7 +39,7 @@ export class SectionErrorBoundary extends Component<Props, State> {
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">
           {this.props.title || `${this.props.section} unavailable`}
         </p>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-muted">
           This part of the page could not load. Other sections still work — try again or go to My Desk.
         </p>
         <div className="flex flex-wrap gap-2">

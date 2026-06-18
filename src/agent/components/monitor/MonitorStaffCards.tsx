@@ -84,7 +84,7 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
               key={s.staffId}
               variants={slideUp}
               className={cn(
-                'group relative overflow-hidden rounded-2xl border bg-card/60 backdrop-blur-2xl shadow-sm p-3.5',
+                'group relative overflow-hidden rounded-2xl border bg-card/80 shadow-sm p-3.5',
                 'transition-all duration-300 hover:shadow-md',
                 info.border,
               )}

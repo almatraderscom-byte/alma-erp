@@ -90,8 +90,8 @@ export default function NotificationSettingsPage() {
         <motion.div variants={fadeUp} className="grid lg:grid-cols-[420px_1fr] gap-4">
           <Card className="p-5 space-y-3">
             <div>
-              <p className="text-sm font-semibold text-slate-800">Admin broadcast</p>
-              <p className="text-[11px] text-slate-500 mt-1">Send persistent in-app notifications and OneSignal push alerts when configured.</p>
+              <p className="text-sm font-semibold text-cream">Admin broadcast</p>
+              <p className="text-[11px] text-muted mt-1">Send persistent in-app notifications and OneSignal push alerts when configured.</p>
             </div>
             <Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Notification title" />
             <textarea
@@ -99,7 +99,7 @@ export default function NotificationSettingsPage() {
               onChange={e => setForm({ ...form, message: e.target.value })}
               placeholder="Message"
               rows={5}
-              className="w-full rounded-xl bg-white border border-black/[0.08] px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-gold-dim/60"
+              className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-4 py-3 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-gold-dim/60"
             />
             <div className="grid grid-cols-2 gap-2">
               <Select value={form.priority} onChange={priority => setForm({ ...form, priority })} options={['LOW', 'NORMAL', 'HIGH', 'CRITICAL'].map(p => ({ label: p, value: p }))} />
@@ -109,7 +109,7 @@ export default function NotificationSettingsPage() {
             {form.target === 'BUSINESS' && <Select value={form.targetBusinessId} onChange={targetBusinessId => setForm({ ...form, targetBusinessId })} options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))} />}
             {form.target === 'USER' && <Select value={form.targetUserId} onChange={targetUserId => setForm({ ...form, targetUserId })} options={[{ label: 'Choose user', value: '' }, ...users.map(u => ({ label: `${u.name} · ${u.email}`, value: u.id }))]} />}
             <Input value={form.actionUrl} onChange={e => setForm({ ...form, actionUrl: e.target.value })} placeholder="Action URL, e.g. /payroll" />
-            <label className="flex items-center gap-2 text-xs text-slate-500">
+            <label className="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" checked={form.pinned} onChange={e => setForm({ ...form, pinned: e.target.checked })} />
               Pin this notification
             </label>
@@ -119,13 +119,13 @@ export default function NotificationSettingsPage() {
           </Card>
 
           <Card className="p-5">
-            <p className="text-sm font-semibold text-slate-800 mb-4">Delivery dashboard</p>
+            <p className="text-sm font-semibold text-cream mb-4">Delivery dashboard</p>
             {loading ? <Skeleton className="h-56" /> : !(stats?.broadcasts ?? []).length ? (
-              <p className="text-xs text-slate-400">No broadcasts sent yet.</p>
+              <p className="text-xs text-muted">No broadcasts sent yet.</p>
             ) : (
               <div className="table-scroll">
                 <table className="w-full min-w-[760px] text-left text-[11px]">
-                  <thead className="text-[11px] font-medium uppercase tracking-wider text-slate-400 border-b border-black/[0.08]">
+                  <thead className="text-[11px] font-medium uppercase tracking-wider text-muted border-b border-white/[0.08]">
                     <tr>
                       <th className="py-2 pr-3">Title</th>
                       <th className="py-2 pr-3">Target</th>
@@ -137,8 +137,8 @@ export default function NotificationSettingsPage() {
                   </thead>
                   <tbody>
                     {stats!.broadcasts.map(b => (
-                      <tr key={b.id} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
-                        <td className="py-2 pr-3 text-slate-800">{b.title}<span className="block text-[10px] text-slate-400">{new Date(b.createdAt).toLocaleString()}</span></td>
+                      <tr key={b.id} className="border-b border-white/[0.04] hover:bg-white/[0.04]/50 transition-colors">
+                        <td className="py-2 pr-3 text-cream">{b.title}<span className="block text-[10px] text-muted">{new Date(b.createdAt).toLocaleString()}</span></td>
                         <td className="py-2 pr-3">{b.target}</td>
                         <td className="py-2 pr-3">{b.priority}</td>
                         <td className="py-2 pr-3 text-right font-mono">{b.delivered}/{b.recipients}</td>

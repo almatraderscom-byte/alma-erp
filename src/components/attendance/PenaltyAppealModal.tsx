@@ -102,12 +102,12 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gold">Request review</p>
               <h3 className="mt-1 text-lg font-bold text-cream">Penalty appeal</h3>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-muted">
                 Late {target.lateMinutes}m · penalty {money(penalty)}
                 {target.attendanceDate ? ` · ${target.attendanceDate.slice(0, 10)}` : ''}
               </p>
             </div>
-            <button type="button" className="text-zinc-500 hover:text-cream text-xl leading-none" onClick={onClose} aria-label="Close">
+            <button type="button" className="text-muted hover:text-cream text-xl leading-none" onClick={onClose} aria-label="Close">
               ×
             </button>
           </div>
@@ -120,7 +120,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
               <label
                 key={opt.id}
                 className={`flex cursor-pointer flex-col rounded-xl border px-3 py-2.5 transition-colors ${
-                  requestType === opt.id ? 'border-gold-dim/50 bg-gold/10' : 'border-border bg-black/[0.03]'
+                  requestType === opt.id ? 'border-gold-dim/50 bg-gold/10' : 'border-border bg-white/[0.03]'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -133,14 +133,14 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
                   />
                   <span className="text-sm font-semibold text-cream">{opt.label}</span>
                 </span>
-                <span className="mt-0.5 pl-6 text-[10px] text-zinc-500">{opt.hint}</span>
+                <span className="mt-0.5 pl-6 text-[10px] text-muted">{opt.hint}</span>
               </label>
             ))}
           </div>
 
           {requestType === 'PARTIAL_REDUCE' && (
             <label className="block space-y-1 text-[11px]">
-              <span className="text-zinc-500">Amount to reduce (max {money(penalty)})</span>
+              <span className="text-muted">Amount to reduce (max {money(penalty)})</span>
               <input
                 type="number"
                 min={1}
@@ -148,21 +148,21 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
                 step={1}
                 value={partialAmount}
                 onChange={e => setPartialAmount(e.target.value)}
-                className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 font-mono text-cream"
+                className="w-full rounded-xl border border-border bg-white/[0.03] px-3 py-2.5 font-mono text-cream"
                 placeholder={String(Math.round(penalty / 2))}
               />
             </label>
           )}
 
           <label className="block space-y-1 text-[11px]">
-            <span className="text-zinc-500">Explanation</span>
+            <span className="text-muted">Explanation</span>
             <textarea
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={4}
               maxLength={1200}
               placeholder="Traffic, emergency, approved delay, transport issue..."
-              className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 text-sm text-cream"
+              className="w-full rounded-xl border border-border bg-white/[0.03] px-3 py-2.5 text-sm text-cream"
             />
           </label>
 

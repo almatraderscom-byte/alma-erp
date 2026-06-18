@@ -348,14 +348,14 @@ export function ScreenshotUploadModal({
           className="w-full"
         />
 
-        <label className="block text-xs font-bold text-zinc-400">
+        <label className="block text-xs font-bold text-muted">
           Screenshot date
           <input
             type="date"
             value={shotDate}
             onChange={e => setShotDate(e.target.value)}
             disabled={busy}
-            className="mt-1 w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 text-cream"
+            className="mt-1 w-full rounded-xl border border-border bg-white/[0.03] px-3 py-2.5 text-cream"
           />
         </label>
 
@@ -407,7 +407,7 @@ export function ScreenshotUploadModal({
           rows={2}
           disabled={busy}
           placeholder="Optional note — orders, completion rate, growth…"
-          className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/50"
+          className="w-full rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-sm text-cream outline-none focus:border-gold-dim/50"
         />
 
         {busy && phase === 'uploading' && (
@@ -546,7 +546,7 @@ function UploadPickerSection({
       />
 
       {file && (
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>
             {file.name || 'photo'} · {(file.size / 1024).toFixed(0)} KB
             {pickSource ? ` · ${pickSource}` : ''}
@@ -561,7 +561,7 @@ function UploadPickerSection({
       )}
 
       {phase === 'optimizing' && (
-        <p className="text-[11px] text-zinc-400">Preparing image for upload…</p>
+        <p className="text-[11px] text-muted">Preparing image for upload…</p>
       )}
 
       {cooldownMs > 0 && (
@@ -575,16 +575,16 @@ function UploadPickerSection({
       )}
 
       {showDebug && debugLines.length > 0 && (
-        <details className="rounded-xl border border-border bg-black/[0.03] p-2 text-[10px] text-zinc-500">
-          <summary className="cursor-pointer font-bold text-zinc-400">Upload debug log</summary>
+        <details className="rounded-xl border border-border bg-white/[0.03] p-2 text-[10px] text-muted">
+          <summary className="cursor-pointer font-bold text-muted">Upload debug log</summary>
           <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap">{JSON.stringify(debugLines.slice(-8), null, 2)}</pre>
         </details>
       )}
 
       {accountId && (
-        <div className="rounded-2xl border border-border bg-black/[0.03] p-3">
+        <div className="rounded-2xl border border-border bg-white/[0.03] p-3">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">Recent uploads</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-muted">Recent uploads</p>
             <Link href={`/trading/accounts/${accountId}?tab=PERFORMANCE`} className="text-[10px] font-bold text-gold-lt">
               Full history →
             </Link>
@@ -592,7 +592,7 @@ function UploadPickerSection({
           {recent.length ? (
             <RecentThumbnails recent={recent} />
           ) : (
-            <p className="mt-2 text-[11px] text-zinc-500">No screenshots yet for this account.</p>
+            <p className="mt-2 text-[11px] text-muted">No screenshots yet for this account.</p>
           )}
         </div>
       )}
@@ -636,7 +636,7 @@ function PreviewDropZone({
         setDragOver(false)
         pickFile(e.dataTransfer.files?.[0] ?? null, 'drop')
       }}
-      className={`rounded-2xl border-2 border-dashed p-4 text-center transition-colors ${dragOver ? 'border-gold-dim/60 bg-gold/10' : 'border-border bg-black/[0.03]'} ${busy ? 'opacity-60' : ''}`}
+      className={`rounded-2xl border-2 border-dashed p-4 text-center transition-colors ${dragOver ? 'border-gold-dim/60 bg-gold/10' : 'border-border bg-white/[0.03]'} ${busy ? 'opacity-60' : ''}`}
     >
       {previewUrl && file && !previewBroken && !isHeicLike(file) ? (
         <img
@@ -650,17 +650,17 @@ function PreviewDropZone({
           }}
         />
       ) : file && (previewBroken || isHeicLike(file)) ? (
-        <div className="mx-auto max-w-xs rounded-xl border border-border bg-black/[0.04] px-4 py-6">
+        <div className="mx-auto max-w-xs rounded-xl border border-border bg-white/[0.04] px-4 py-6">
           <span className="text-3xl" aria-hidden>🖼</span>
           <p className="mt-2 text-sm font-bold text-cream">Image ready to upload</p>
-          <p className="mt-1 text-[11px] text-zinc-500">
+          <p className="mt-1 text-[11px] text-muted">
             {isHeicLike(file) ? 'HEIC preview not supported in browser — server will convert.' : 'Preview unavailable — upload will still work.'}
           </p>
         </div>
       ) : (
         <>
           <p className="text-sm font-bold text-cream">Select a screenshot above</p>
-          <p className="mt-1 text-[11px] text-zinc-500">Or drag & drop on desktop</p>
+          <p className="mt-1 text-[11px] text-muted">Or drag & drop on desktop</p>
         </>
       )}
 
@@ -671,7 +671,7 @@ function PreviewDropZone({
       )}
 
       {file && !busy && (
-        <button type="button" onClick={clearSelection} className="mt-3 text-[11px] font-bold text-zinc-400 underline">
+        <button type="button" onClick={clearSelection} className="mt-3 text-[11px] font-bold text-muted underline">
           Remove image
         </button>
       )}
@@ -681,7 +681,7 @@ function PreviewDropZone({
 
 function UploadProgressBar({ percent }: { percent: number }) {
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-black/[0.04]">
+    <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.04]">
       <div
         className="h-full rounded-full bg-gold transition-[width] duration-200"
         style={{ width: `${Math.max(2, percent)}%` }}

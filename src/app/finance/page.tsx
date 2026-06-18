@@ -55,8 +55,8 @@ export default function FinanceHubPage() {
 
       <motion.div variants={fadeUp}>
       <Card className="p-5 md:p-6">
-        <p className="text-sm font-bold text-slate-800 mb-1">Revenue & margin trend</p>
-        <p className="text-[10px] text-slate-400 mb-4">{report?.period_label ?? label}</p>
+        <p className="text-sm font-bold text-cream mb-1">Revenue & margin trend</p>
+        <p className="text-[10px] text-muted mb-4">{report?.period_label ?? label}</p>
         {rLd ? <Skeleton className="h-48" /> : (report?.monthly_revenue ?? []).length === 0 ? (
           <Empty icon="◩" title="No range data" desc="Adjust the date filter or add orders / invoices" />
         ) : <MonthlyRevenueChart data={report!.monthly_revenue} />}
@@ -65,22 +65,22 @@ export default function FinanceHubPage() {
 
       <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="p-5 md:p-6 overflow-hidden">
-          <p className="text-sm font-bold text-slate-800 mb-3">Cashflow (report)</p>
+          <p className="text-sm font-bold text-cream mb-3">Cashflow (report)</p>
           {rLd ? <Skeleton className="h-24" /> : (
-            <div className="space-y-2 text-xs text-slate-500">
-              <div className="flex justify-between"><span>Inflow</span><span className="text-slate-800 font-mono"><Money amount={report?.cashflow.inflow ?? 0} /></span></div>
-              <div className="flex justify-between"><span>Outflow</span><span className="text-slate-800 font-mono"><Money amount={report?.cashflow.outflow ?? 0} /></span></div>
-              <div className="flex justify-between border-t border-black/[0.06] pt-2"><span className="text-gold">Net</span><span className="text-gold font-mono font-bold"><Money amount={report?.cashflow.net ?? 0} /></span></div>
+            <div className="space-y-2 text-xs text-muted">
+              <div className="flex justify-between"><span>Inflow</span><span className="text-cream font-mono"><Money amount={report?.cashflow.inflow ?? 0} /></span></div>
+              <div className="flex justify-between"><span>Outflow</span><span className="text-cream font-mono"><Money amount={report?.cashflow.outflow ?? 0} /></span></div>
+              <div className="flex justify-between border-t border-white/[0.06] pt-2"><span className="text-gold">Net</span><span className="text-gold font-mono font-bold"><Money amount={report?.cashflow.net ?? 0} /></span></div>
             </div>
           )}
         </Card>
         <Card className="p-5 md:p-6 overflow-hidden">
-          <p className="text-sm font-bold text-slate-800 mb-3">Payroll snapshot</p>
+          <p className="text-sm font-bold text-cream mb-3">Payroll snapshot</p>
           {hLd ? <Skeleton className="h-24" /> : (
-            <div className="space-y-2 text-xs text-slate-500">
-              <div className="flex justify-between"><span>Period salary paid</span><span className="text-slate-800 font-mono"><Money amount={k?.period_salary_paid ?? 0} /></span></div>
-              <div className="flex justify-between"><span>Period advances</span><span className="text-slate-800 font-mono"><Money amount={k?.period_advances ?? 0} /></span></div>
-              <div className="flex justify-between border-t border-black/[0.06] pt-2"><span>Ledger expenses</span><span className="text-slate-800 font-mono font-bold"><Money amount={k?.total_expenses ?? 0} /></span></div>
+            <div className="space-y-2 text-xs text-muted">
+              <div className="flex justify-between"><span>Period salary paid</span><span className="text-cream font-mono"><Money amount={k?.period_salary_paid ?? 0} /></span></div>
+              <div className="flex justify-between"><span>Period advances</span><span className="text-cream font-mono"><Money amount={k?.period_advances ?? 0} /></span></div>
+              <div className="flex justify-between border-t border-white/[0.06] pt-2"><span>Ledger expenses</span><span className="text-cream font-mono font-bold"><Money amount={k?.total_expenses ?? 0} /></span></div>
             </div>
           )}
         </Card>

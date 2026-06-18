@@ -77,26 +77,26 @@ export function SearchableSelect({
         aria-haspopup="listbox"
         onClick={() => setOpen(v => !v)}
         className={cn(
-          'flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-black/[0.03] px-3 py-2.5 text-left text-sm transition-colors',
+          'flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-white/[0.03] px-3 py-2.5 text-left text-sm transition-colors',
           'focus:outline-none focus:border-gold-dim/60 focus:ring-1 focus:ring-gold-dim/30',
           disabled && 'opacity-50',
         )}
       >
         <span className="min-w-0 flex-1">
           {loading ? (
-            <span className="text-zinc-500">Loading…</span>
+            <span className="text-muted">Loading…</span>
           ) : selected ? (
             <>
               <span className="block truncate font-medium text-cream">{selected.label}</span>
               {selected.sublabel && (
-                <span className="block truncate text-[10px] text-zinc-500">{selected.sublabel}</span>
+                <span className="block truncate text-[10px] text-muted">{selected.sublabel}</span>
               )}
             </>
           ) : (
-            <span className="text-zinc-500">{placeholder}</span>
+            <span className="text-muted">{placeholder}</span>
           )}
         </span>
-        <span className="shrink-0 text-zinc-500" aria-hidden>
+        <span className="shrink-0 text-muted" aria-hidden>
           {open ? '▴' : '▾'}
         </span>
       </button>
@@ -114,12 +114,12 @@ export function SearchableSelect({
               placeholder="Type to filter…"
               autoFocus
               required={required && !value}
-              className="w-full rounded-lg border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/50"
+              className="w-full rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/50"
             />
           </div>
           <ul className="max-h-44 overflow-y-auto overscroll-contain py-1">
             {filtered.length === 0 ? (
-              <li className="px-3 py-3 text-center text-xs text-zinc-500">{emptyMessage}</li>
+              <li className="px-3 py-3 text-center text-xs text-muted">{emptyMessage}</li>
             ) : (
               filtered.map(o => (
                 <li key={o.value}>
@@ -132,13 +132,13 @@ export function SearchableSelect({
                       setOpen(false)
                     }}
                     className={cn(
-                      'w-full px-3 py-2.5 text-left transition-colors hover:bg-black/[0.04]',
+                      'w-full px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]',
                       o.value === value && 'bg-gold/10',
                     )}
                   >
                     <span className="block truncate text-sm font-medium text-cream">{o.label}</span>
                     {o.sublabel && (
-                      <span className="block truncate text-[10px] text-zinc-500">{o.sublabel}</span>
+                      <span className="block truncate text-[10px] text-muted">{o.sublabel}</span>
                     )}
                   </button>
                 </li>

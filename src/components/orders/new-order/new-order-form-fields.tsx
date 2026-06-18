@@ -189,7 +189,7 @@ export function NewOrderFormFields({
               ? getCollectionVariantOptions(stockItems, collection)
               : []
             return (
-              <div key={item.id} className="rounded-2xl border border-border bg-black/[0.03] p-3 space-y-2">
+              <div key={item.id} className="rounded-2xl border border-border bg-white/[0.03] p-3 space-y-2">
                 {collection && isCustomCollection && (
                   <CustomVariantAutoSelect
                     index={index}
@@ -200,7 +200,7 @@ export function NewOrderFormFields({
                   />
                 )}
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">Item {index + 1}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Item {index + 1}</p>
                   {form.items.length > 1 && (
                     <button type="button" onClick={() => removeItem(index)} className="text-[11px] font-semibold text-red-300 hover:text-red-200">
                       Remove
@@ -285,7 +285,7 @@ export function NewOrderFormFields({
                   )}
                 </div>
                 {(collection || item.collection_type) && (
-                  <div className="rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-[10px] text-zinc-500">
+                  <div className="rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-[10px] text-muted">
                     {isMenCollection
                       ? 'Men/father-son collection detected. Sizes 16-36 deduct KIDS stock, 38-54 deduct ADULT stock.'
                       : isWomenCollection
@@ -316,13 +316,13 @@ export function NewOrderFormFields({
                   </NewOrderField>
                   {isMenCollection ? (
                     <NewOrderField label="Size Group">
-                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/[0.03] px-3 text-xs text-zinc-500">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-white/[0.03] px-3 text-xs text-muted">
                         {item.size_group || 'Auto'}
                       </div>
                     </NewOrderField>
                   ) : isCustomCollection ? (
                     <NewOrderField label="Stock pool">
-                      <div className="flex h-10 items-center rounded-xl border border-border bg-black/[0.03] px-3 text-xs text-zinc-500 truncate">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-white/[0.03] px-3 text-xs text-muted truncate">
                         {item.variant || 'Select variant/size'}
                       </div>
                     </NewOrderField>
@@ -368,18 +368,18 @@ export function NewOrderFormFields({
                     />
                   </NewOrderField>
                   <NewOrderField label="Subtotal">
-                    <div className="flex h-10 items-center justify-end rounded-xl border border-border bg-black/[0.03] px-3 text-xs font-bold text-gold-lt">
+                    <div className="flex h-10 items-center justify-end rounded-xl border border-border bg-white/[0.03] px-3 text-xs font-bold text-gold-lt">
                       <Money amount={subtotal} />
                     </div>
                   </NewOrderField>
                 </div>
-                <div className="flex items-center justify-between text-[10px] text-zinc-600">
+                <div className="flex items-center justify-between text-[10px] text-muted-hi">
                   <span>SKU: {item.sku || 'not connected'}</span>
                   {item.available != null && <span>Available: {item.available}</span>}
                 </div>
                 {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) > 0 && (
-                  <div className="flex items-center justify-between rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-[11px]">
-                    <span className="text-zinc-500">Item profit preview</span>
+                  <div className="flex items-center justify-between rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px]">
+                    <span className="text-muted">Item profit preview</span>
                     <span className={`font-bold ${itemProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
                       {itemProfit >= 0 ? '+' : ''}<Money amount={itemProfit} /> {itemProfit >= 0 ? 'PROFIT' : 'LOSS'}
                     </span>
@@ -479,14 +479,14 @@ export function NewOrderFormFields({
             </NewOrderField>
           </div>
           <div className="space-y-1 rounded-xl border border-gold-dim/20 bg-gold/[0.04] px-3 py-2 text-xs">
-            <div className="flex justify-between text-zinc-500"><span>Subtotal</span><Money amount={totals.subtotal} /></div>
-            <div className="flex justify-between text-zinc-500"><span>Discount</span><Money amount={totals.discount} /></div>
-            <div className="flex justify-between text-zinc-500"><span>Shipping (customer)</span><Money amount={totals.shipping} /></div>
+            <div className="flex justify-between text-muted"><span>Subtotal</span><Money amount={totals.subtotal} /></div>
+            <div className="flex justify-between text-muted"><span>Discount</span><Money amount={totals.discount} /></div>
+            <div className="flex justify-between text-muted"><span>Shipping (customer)</span><Money amount={totals.shipping} /></div>
             <div className="flex justify-between border-t border-gold-dim/20 pt-1 font-bold text-gold-lt"><span>Payable</span><Money amount={totals.payable} /></div>
-            <div className="flex justify-between text-zinc-400"><span>Due</span><Money amount={totals.due} /></div>
-            <div className="flex justify-between text-zinc-600"><span>Courier cost (you pay)</span><Money amount={totals.courierCost} /></div>
+            <div className="flex justify-between text-muted"><span>Due</span><Money amount={totals.due} /></div>
+            <div className="flex justify-between text-muted-hi"><span>Courier cost (you pay)</span><Money amount={totals.courierCost} /></div>
             {totals.shippingMargin !== 0 && (
-              <div className="flex justify-between text-zinc-600">
+              <div className="flex justify-between text-muted-hi">
                 <span>Shipping margin</span>
                 <span className={totals.shippingMargin >= 0 ? 'text-green-400' : 'text-red-300'}>
                   {totals.shippingMargin >= 0 ? '+' : ''}<Money amount={totals.shippingMargin} />
@@ -494,7 +494,7 @@ export function NewOrderFormFields({
               </div>
             )}
             <div className="flex justify-between border-t border-border pt-1">
-              <span className="text-zinc-500">Estimated Profit</span>
+              <span className="text-muted">Estimated Profit</span>
               <span className={`font-bold ${totals.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
                 {totals.estimatedProfit >= 0 ? '+' : ''}<Money amount={totals.estimatedProfit} /> {totals.estimatedProfit >= 0 ? 'PROFIT' : 'LOSS'}
               </span>

@@ -91,18 +91,18 @@ export default function TradingHrPage() {
 
       <motion.div variants={fadeUp} className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <Card className="min-w-0 rounded-2xl">
-          <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
-            <p className="text-sm font-bold text-slate-800">Trading Employee Profiles</p>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Business scoped</span>
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+            <p className="text-sm font-bold text-cream">Trading Employee Profiles</p>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Business scoped</span>
           </div>
           {loading ? <div className="p-4"><Skeleton className="h-56" /></div> : !employees.length ? <Empty icon="☷" title="No trading employees yet" /> : (
             <div className="overflow-x-auto min-w-0 max-w-full">
-              <div className="min-w-[1120px] divide-y divide-black/[0.06]">
-                <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <div className="min-w-[1120px] divide-y divide-white/[0.06]">
+                <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                   <span>Employee</span><span>Shift</span><span>Accounts</span><span>Trades</span><span>Net P/L</span><span>Wallet</span><span>Consistency</span><span>Actions</span>
                 </div>
                 {employees.map(employee => (
-                  <div key={employee.user.id} className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-3 text-xs transition-colors hover:bg-slate-50">
+                  <div key={employee.user.id} className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-3 text-xs transition-colors hover:bg-white/[0.04]">
                     <span className="flex items-center gap-2">
                       <EmployeeAvatar
                         userId={employee.user.id}
@@ -112,17 +112,17 @@ export default function TradingHrPage() {
                         size="sm"
                       />
                       <span>
-                        <b className="text-slate-800">{employee.user.name}</b>
+                        <b className="text-cream">{employee.user.name}</b>
                         <br />
-                        <span className="text-[10px] text-slate-400">{employee.profile?.roleTitle || employee.user.role} · {employee.user.employeeIdGas || 'No employee link'}</span>
+                        <span className="text-[10px] text-muted">{employee.profile?.roleTitle || employee.user.role} · {employee.user.employeeIdGas || 'No employee link'}</span>
                       </span>
                     </span>
-                    <span className="text-slate-500">{employee.profile?.shift || 'DAY'}</span>
-                    <span className="text-slate-500">{employee.metrics.totalAccountsManaged} total · {employee.metrics.activeAccounts} active</span>
+                    <span className="text-muted">{employee.profile?.shift || 'DAY'}</span>
+                    <span className="text-muted">{employee.metrics.totalAccountsManaged} total · {employee.metrics.activeAccounts} active</span>
                     <span className="text-gold">{employee.metrics.totalTrades.toLocaleString('en-BD')}</span>
                     <span className={signedClass(employee.metrics.netResult)}><Money amount={employee.metrics.netResult} /></span>
                     <span className="text-blue-500"><Money amount={employee.wallet?.currentBalance ?? 0} /></span>
-                    <span className="text-slate-500">{employee.metrics.activityConsistency.toFixed(0)}%</span>
+                    <span className="text-muted">{employee.metrics.activityConsistency.toFixed(0)}%</span>
                     <span className="flex flex-wrap gap-1">
                       <Button size="xs" variant="secondary" onClick={() => setProfileEmployee(employee)}>Profile</Button>
                       <Button size="xs" variant="ghost" onClick={() => setReportEmployee(employee)}>Report</Button>
@@ -135,17 +135,17 @@ export default function TradingHrPage() {
         </Card>
 
         <Card className="overflow-hidden rounded-2xl">
-          <div className="border-b border-black/[0.06] px-4 py-3">
-            <p className="text-sm font-bold text-slate-800">HR Alert Engine</p>
+          <div className="border-b border-white/[0.06] px-4 py-3">
+            <p className="text-sm font-bold text-cream">HR Alert Engine</p>
           </div>
           {!data?.alerts.length ? <Empty icon="◇" title="No HR alerts" /> : (
-            <div className="divide-y divide-black/[0.06]">
+            <div className="divide-y divide-white/[0.06]">
               {data.alerts.slice(0, 10).map((alert, idx) => (
                 <div key={`${alert.userId}-${alert.type}-${idx}`} className="px-4 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs font-bold text-slate-800">{alert.title}</p>
-                      <p className="mt-1 text-[11px] text-slate-500">{alert.message}</p>
+                      <p className="text-xs font-bold text-cream">{alert.title}</p>
+                      <p className="mt-1 text-[11px] text-muted">{alert.message}</p>
                     </div>
                     <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-600">{alert.severity}</span>
                   </div>
@@ -172,9 +172,9 @@ export default function TradingHrPage() {
           onBackdropClick={() => setProfileEmployee(null)}
           aria-label={`Trading profile · ${profileEmployee.user.name}`}
         >
-          <Card className="mobile-modal-shell w-full max-w-3xl rounded-2xl border-gold/20 bg-white shadow-2xl sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-3xl rounded-2xl border-gold/20 bg-card/85 shadow-2xl sm:rounded-2xl">
             <div className="mobile-modal-header flex items-center justify-between gap-3 p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Trading profile · {profileEmployee.user.name}</p>
+              <p className="text-sm font-bold text-cream">Trading profile · {profileEmployee.user.name}</p>
               <Button type="button" size="xs" variant="ghost" onClick={() => setProfileEmployee(null)}>Close</Button>
             </div>
             <form ref={profileFormRef} id="trading-hr-profile-form" onSubmit={onProfileSubmit} className="flex min-h-0 flex-1 flex-col text-xs">
@@ -183,8 +183,8 @@ export default function TradingHrPage() {
               <Field name="employeeIdGas" label="Employee ID" defaultValue={profileEmployee.profile?.employeeIdGas || profileEmployee.user.employeeIdGas || ''} />
               <Field name="roleTitle" label="Trading role" defaultValue={profileEmployee.profile?.roleTitle || ''} />
               <label className="space-y-1">
-                <span className="text-[10px] font-bold uppercase text-slate-400">Shift</span>
-                <select name="shift" defaultValue={profileEmployee.profile?.shift || 'DAY'} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800">
+                <span className="text-[10px] font-bold uppercase text-muted">Shift</span>
+                <select name="shift" defaultValue={profileEmployee.profile?.shift || 'DAY'} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream">
                   <option value="DAY">Day shift</option>
                   <option value="NIGHT">Night shift</option>
                 </select>
@@ -193,8 +193,8 @@ export default function TradingHrPage() {
               <Field name="joiningDate" label="Joining date" type="date" defaultValue={profileEmployee.user.joiningDate ? String(profileEmployee.user.joiningDate).slice(0, 10) : ''} />
               <Field name="salary" label="Salary" type="number" defaultValue={String(profileEmployee.profile?.salary || profileEmployee.user.salaryHint || 0)} />
               <label className="space-y-1">
-                <span className="text-[10px] font-bold uppercase text-slate-400">Commission type</span>
-                <select name="commissionType" defaultValue={profileEmployee.profile?.commissionType || 'NONE'} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800">
+                <span className="text-[10px] font-bold uppercase text-muted">Commission type</span>
+                <select name="commissionType" defaultValue={profileEmployee.profile?.commissionType || 'NONE'} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream">
                   <option value="NONE">None</option>
                   <option value="PERCENTAGE">Profit percentage</option>
                   <option value="FIXED">Fixed bonus</option>
@@ -230,9 +230,9 @@ export default function TradingHrPage() {
           onBackdropClick={() => setReportEmployee(null)}
           aria-label={`Daily report · ${reportEmployee.user.name}`}
         >
-          <Card className="mobile-modal-shell w-full max-w-3xl rounded-2xl border-gold/20 bg-white shadow-2xl sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-3xl rounded-2xl border-gold/20 bg-card/85 shadow-2xl sm:rounded-2xl">
             <div className="mobile-modal-header flex items-center justify-between gap-3 p-5 pb-3">
-              <p className="text-sm font-bold text-slate-800">Daily report · {reportEmployee.user.name}</p>
+              <p className="text-sm font-bold text-cream">Daily report · {reportEmployee.user.name}</p>
               <Button type="button" size="xs" variant="ghost" onClick={() => setReportEmployee(null)}>Close</Button>
             </div>
             <form ref={reportFormRef} id="trading-hr-report-form" onSubmit={onReportSubmit} className="flex min-h-0 flex-1 flex-col text-xs">
@@ -270,11 +270,11 @@ export default function TradingHrPage() {
 function RankingCard({ title, rows, metric }: { title: string; rows: TradingHrEmployee[]; metric: (row: TradingHrEmployee) => string }) {
   return (
     <Card className="rounded-2xl p-4">
-      <p className="text-sm font-bold text-slate-800">{title}</p>
+      <p className="text-sm font-bold text-cream">{title}</p>
       <div className="mt-3 space-y-2">
-        {!rows.length ? <p className="text-[11px] text-slate-400">No data yet</p> : rows.slice(0, 5).map((row, index) => (
+        {!rows.length ? <p className="text-[11px] text-muted">No data yet</p> : rows.slice(0, 5).map((row, index) => (
           <div key={row.user.id} className="flex items-center justify-between gap-2 text-xs">
-            <span className="min-w-0 truncate text-slate-600">{index + 1}. {row.user.name}</span>
+            <span className="min-w-0 truncate text-muted-hi">{index + 1}. {row.user.name}</span>
             <span className="font-mono text-gold">{metric(row)}</span>
           </div>
         ))}
@@ -286,8 +286,8 @@ function RankingCard({ title, rows, metric }: { title: string; rows: TradingHrEm
 function Field({ name, label, type = 'text', defaultValue = '' }: { name: string; label: string; type?: string; defaultValue?: string }) {
   return (
     <label className="space-y-1">
-      <span className="text-[10px] font-bold uppercase text-slate-400">{label}</span>
-      <input name={name} type={type} defaultValue={defaultValue} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
+      <span className="text-[10px] font-bold uppercase text-muted">{label}</span>
+      <input name={name} type={type} defaultValue={defaultValue} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
     </label>
   )
 }
@@ -295,8 +295,8 @@ function Field({ name, label, type = 'text', defaultValue = '' }: { name: string
 function Textarea({ name, label, defaultValue = '' }: { name: string; label: string; defaultValue?: string }) {
   return (
     <label className="space-y-1">
-      <span className="text-[10px] font-bold uppercase text-slate-400">{label}</span>
-      <textarea name={name} defaultValue={defaultValue} rows={3} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
+      <span className="text-[10px] font-bold uppercase text-muted">{label}</span>
+      <textarea name={name} defaultValue={defaultValue} rows={3} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
     </label>
   )
 }

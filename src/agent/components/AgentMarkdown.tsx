@@ -22,7 +22,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="absolute right-2 top-2 rounded-full bg-card/70 backdrop-blur-xl backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25"
+      className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25"
     >
       {copied ? '✓' : 'কপি'}
     </button>
@@ -74,7 +74,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           },
           table({ children }) {
             return (
-              <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-sm">
+              <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle bg-card/80 shadow-sm">
                 <table className="w-full min-w-[280px] text-sm">{children}</table>
               </div>
             )

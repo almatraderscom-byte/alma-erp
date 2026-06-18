@@ -367,7 +367,7 @@ export function PdfPreviewModal({
             <p className="text-sm font-bold text-cream truncate">
               {displayModel?.invoiceId || baseModel?.invoiceId || 'Invoice'}
             </p>
-            <p className="text-[10px] text-zinc-500">
+            <p className="text-[10px] text-muted">
               {displayModel?.branding.companyName || '—'}
               {showPreview && blobSize > 0 ? ` · ${(blobSize / 1024).toFixed(1)} KB` : ''}
               {showPreview && renderMs > 0 ? ` · ${(renderMs / 1000).toFixed(1)}s` : ''}
@@ -375,9 +375,9 @@ export function PdfPreviewModal({
             </p>
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end">
-            <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-zinc-400" onClick={() => setZoom(z => Math.max(50, z - 10))}>−</button>
-            <span className="text-[10px] text-zinc-500 w-10 text-center">{zoom}%</span>
-            <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-zinc-400" onClick={() => setZoom(z => Math.min(150, z + 10))}>+</button>
+            <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-muted" onClick={() => setZoom(z => Math.max(50, z - 10))}>−</button>
+            <span className="text-[10px] text-muted w-10 text-center">{zoom}%</span>
+            <button type="button" className="text-xs px-2 py-1 rounded-lg border border-border text-muted" onClick={() => setZoom(z => Math.min(150, z + 10))}>+</button>
             {displayModel && showPreview && <Button variant="gold" size="xs" onClick={handleDownload}>Download</Button>}
             <Button variant="ghost" size="xs" onClick={handlePrint} disabled={!showPreview && !displayModel}>Print</Button>
             {(externalUrl || blobUrl) && (
@@ -403,10 +403,10 @@ export function PdfPreviewModal({
           {loading && (
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <div className="w-10 h-10 border-2 border-gold/30 border-t-gold rounded-full animate-spin" />
-              <p className="text-sm text-zinc-400">
+              <p className="text-sm text-muted">
                 {externalLoading ? (readinessLabel || 'Resolving invoice assets…') : phase === 'preparing' ? 'Preparing invoice data…' : 'Generating print-ready PDF…'}
               </p>
-              <p className="text-[10px] text-zinc-600 font-mono">
+              <p className="text-[10px] text-muted-hi font-mono">
                 {baseModel?.invoiceId}
                 {pdfSafeMode() ? ' · safe mode' : ''}
               </p>
@@ -416,9 +416,9 @@ export function PdfPreviewModal({
           {showError && (
             <div className="max-w-md w-full rounded-2xl border border-red-400/30 bg-red-400/5 p-6 text-center space-y-4">
               <p className="text-sm font-bold text-red-400">Could not render PDF</p>
-              <p className="text-xs text-zinc-400">{error}</p>
+              <p className="text-xs text-muted">{error}</p>
               {errorDetails && pdfDebugEnabled() && (
-                <pre className="text-[9px] text-left text-zinc-600 overflow-auto max-h-24 p-2 bg-black/[0.04] rounded">{errorDetails}</pre>
+                <pre className="text-[9px] text-left text-muted-hi overflow-auto max-h-24 p-2 bg-white/[0.04] rounded">{errorDetails}</pre>
               )}
               <div className="flex gap-2 justify-center">
                 <Button variant="gold" size="sm" onClick={retry}>Retry</Button>
@@ -459,7 +459,7 @@ export function PdfPreviewModal({
           )}
 
           {phase === 'ready' && !blobUrl && (
-            <div className="text-center py-16 text-zinc-500 text-sm space-y-3">
+            <div className="text-center py-16 text-muted text-sm space-y-3">
               <p>Preview URL missing after generation.</p>
               <Button variant="gold" size="sm" onClick={retry}>Retry</Button>
             </div>

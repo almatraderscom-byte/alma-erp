@@ -246,7 +246,7 @@ export function SelfieVerificationModal({
           <p id="selfie-verify-title" className="text-base font-black text-cream">
             {phase === 'success' ? '🟢 Verification submitted' : '📸 Complete face verification'}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          <p className="mt-1 text-xs leading-relaxed text-muted">
             {phase === 'success'
               ? 'Your photo was saved. Admin will review it shortly.'
               : 'Admin requested verification. Use your front camera — attendance is already recorded.'}
@@ -260,16 +260,16 @@ export function SelfieVerificationModal({
                 ✓
               </div>
               <p className="mt-4 text-lg font-black text-green-300">Verification submitted</p>
-              <p className="mt-2 text-sm text-zinc-400">You can continue working while admin reviews.</p>
+              <p className="mt-2 text-sm text-muted">You can continue working while admin reviews.</p>
             </div>
           ) : processingPhoto ? (
-            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-black/[0.03]">
+            <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-white/[0.03]">
               <Spinner />
-              <p className="text-xs font-bold text-zinc-400">Processing photo…</p>
+              <p className="text-xs font-bold text-muted">Processing photo…</p>
             </div>
           ) : preview ? (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-black/[0.04]">
+              <div className="overflow-hidden rounded-2xl border border-gold-dim/25 bg-white/[0.04]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview}
@@ -287,10 +287,10 @@ export function SelfieVerificationModal({
               )}
             </div>
           ) : (
-            <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-black/[0.03] px-4 text-center">
+            <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 bg-white/[0.03] px-4 text-center">
               <span className="text-3xl opacity-60">📷</span>
-              <p className="text-xs font-bold text-zinc-500">Front camera required</p>
-              <p className="text-[11px] text-zinc-600">After capture, review your photo and submit</p>
+              <p className="text-xs font-bold text-muted">Front camera required</p>
+              <p className="text-[11px] text-muted-hi">After capture, review your photo and submit</p>
             </div>
           )}
         </div>

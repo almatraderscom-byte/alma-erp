@@ -24,7 +24,7 @@ export function LoadingOverlay({
       data-auth-gate={dataAuthGate ? true : undefined}
       className={[
         screen ? 'fixed inset-0 z-[240] min-h-[100dvh]' : 'min-h-[18rem] w-full',
-        'flex items-center justify-center overflow-hidden bg-[#FAF9F6] text-[#1a1a2e]',
+        'flex items-center justify-center overflow-hidden bg-transparent text-cream',
         className,
       ].join(' ')}
       initial={reduceMotion ? false : { opacity: 0 }}

@@ -49,7 +49,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pt-3 pb-1 md:px-6 safe-x">
-      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/70 backdrop-blur-xl shadow-sm backdrop-blur-sm">
+      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/82 shadow-sm backdrop-blur-sm">
         <button
           type="button"
           onClick={() => togglePanelExpanded?.()}
