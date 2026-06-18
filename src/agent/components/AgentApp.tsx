@@ -835,14 +835,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
           {/* Center — title + personal badge */}
           <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-cream">ALMA Agent</span>
+            <span className="alma-ai-wordmark truncate text-[15px] font-bold tracking-wide">ALMA AI</span>
             {activePersonalMode && (
-              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
                 ব্যক্তিগত
               </span>
             )}
             {dayShift?.active && activeConvId === dayShift.conversationId && (
-              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 animate-pulse">
+              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 animate-pulse">
                 অফিস লাইভ
               </span>
             )}

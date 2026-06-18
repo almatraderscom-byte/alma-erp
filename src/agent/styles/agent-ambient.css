@@ -153,6 +153,34 @@ body.kb-open .agent-composer-wrap {
   to { --neon-angle: 360deg; }
 }
 
+/* "ALMA AI" wordmark — multi-color gradient flowing inside the letters
+ * (white → blue → purple → magenta), lovable.dev "Meet Lovable" style. */
+.alma-ai-wordmark {
+  background-image: linear-gradient(
+    100deg,
+    #f8fafc 0%,
+    #f8fafc 14%,
+    #7cc4f5 30%,
+    #8b7cf6 46%,
+    #d36ad8 60%,
+    #f06595 72%,
+    #f8fafc 88%,
+    #f8fafc 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  letter-spacing: 0.02em;
+  animation: alma-ai-flow 6s linear infinite;
+}
+
+@keyframes alma-ai-flow {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -50% 50%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-shell {
     background: transparent;
@@ -161,6 +189,9 @@ body.kb-open .agent-composer-wrap {
     animation: none;
   }
   .agent-neon-input::before {
+    animation: none;
+  }
+  .alma-ai-wordmark {
     animation: none;
   }
 }
