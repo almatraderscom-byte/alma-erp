@@ -29,8 +29,11 @@ const config: CapacitorConfig = {
   },
   plugins: {
     Keyboard: {
-      /** We own the layout: keep the WebView full-height and pin the composer
-       *  ourselves via --kb-inset. 'none' stops iOS from also resizing/scrolling. */
+      /** Global default: ERP screens own their layout and pin footers via
+       *  --kb-inset, so 'none' stops iOS from also resizing/scrolling. The agent
+       *  screen overrides this at runtime (Keyboard.setResizeMode 'native') while
+       *  mounted so its composer rides above the keyboard like a native app, then
+       *  restores 'none' on unmount. See src/agent/hooks/useKeyboardInset.ts. */
       resize: KeyboardResize.None,
       resizeOnFullScreen: true,
     },
