@@ -47,7 +47,7 @@ export function DataList<T>({
 }: Props<T>) {
   if (rows.length === 0) {
     return (
-      <div className={cn('rounded-2xl border border-black/[0.06] bg-card p-8 text-center text-sm text-slate-400', className)}>
+      <div className={cn('rounded-2xl border border-border-subtle bg-card p-8 text-center text-sm text-muted', className)}>
         {empty ?? 'No records.'}
       </div>
     )
@@ -78,7 +78,7 @@ export function DataList<T>({
                 : undefined
             }
             className={cn(
-              'min-w-0 rounded-2xl border border-black/[0.06] bg-card p-4 shadow-card',
+              'min-w-0 rounded-2xl border border-border-subtle bg-card p-4 shadow-card',
               clickable && 'cursor-pointer transition-transform active:scale-[0.99]',
             )}
           >
@@ -86,7 +86,7 @@ export function DataList<T>({
             <dl className="flex flex-col gap-1.5">
               {mobileColumns.map((col) => (
                 <div key={col.key} className="flex items-baseline justify-between gap-3">
-                  <dt className="shrink-0 text-[12px] text-slate-500">{col.header}</dt>
+                  <dt className="shrink-0 text-[12px] text-muted">{col.header}</dt>
                   <dd className={cn('min-w-0 text-[13px] font-medium text-cream', alignClass(col.align ?? 'right'))}>
                     {col.render(row)}
                   </dd>
@@ -99,15 +99,15 @@ export function DataList<T>({
 
       {/* ── Wide: real table ── */}
       <div className="hidden md:block">
-        <div className="table-scroll rounded-2xl border border-black/[0.06] bg-card">
+        <div className="table-scroll rounded-2xl border border-border-subtle bg-card">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-black/[0.06]">
+              <tr className="border-b border-border-subtle">
                 {columns.map((col) => (
                   <th
                     key={col.key}
                     className={cn(
-                      'whitespace-nowrap px-4 py-3 text-[12px] font-semibold uppercase tracking-wide text-slate-500',
+                      'whitespace-nowrap px-4 py-3 text-[12px] font-semibold uppercase tracking-wide text-muted',
                       alignClass(col.align),
                       col.cellClassName,
                     )}
@@ -123,7 +123,7 @@ export function DataList<T>({
                   key={rowKey(row)}
                   onClick={clickable ? () => onRowClick!(row) : undefined}
                   className={cn(
-                    'border-b border-black/[0.04] last:border-0',
+                    'border-b border-border-subtle last:border-0',
                     clickable && 'cursor-pointer transition-colors hover:bg-bg-2',
                   )}
                 >

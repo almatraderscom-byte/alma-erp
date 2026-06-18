@@ -17,8 +17,8 @@ export type MobileButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & 
 const VARIANTS: Record<Variant, string> = {
   // Brand coral. Solid fill for the primary action.
   primary: 'bg-gold text-white hover:bg-gold-dim active:bg-gold-dim shadow-card',
-  secondary: 'bg-white text-cream border border-black/[0.1] hover:bg-bg-2 active:bg-bg-3',
-  ghost: 'bg-transparent text-slate-600 hover:bg-black/[0.04] active:bg-black/[0.06]',
+  secondary: 'bg-card text-cream border border-border-strong hover:bg-bg-2 active:bg-bg-3',
+  ghost: 'bg-transparent text-muted-hi hover:bg-black/[0.04] active:bg-black/[0.06]',
   danger: 'bg-danger text-white hover:opacity-90 active:opacity-90',
 }
 

@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { safeFetchJson } from '@/lib/safe-fetch'
 import { useApprovalCount } from '@/contexts/ApprovalCountContext'
 import { AgentSidebarLink } from '@/components/layout/AgentAccess'
+import { ThemeToggle, ThemePanel } from '@/components/layout/ThemeToggle'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -109,6 +110,7 @@ export function Sidebar() {
           </div>
         )}
         <UserAccountMenu collapsed={collapsed} />
+        <ThemeToggle collapsed={collapsed} />
         <button onClick={() => setCollapsed(c => !c)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 hover:bg-[#E07A5F]/[0.05] transition-colors text-slate-500 hover:text-slate-700">
           <span className="text-sm">{collapsed ? '→' : '←'}</span>
@@ -393,6 +395,7 @@ export function MobileNav() {
                 )}
               </div>
               <div className="max-h-[calc(86dvh-160px)] overflow-y-auto px-4 py-4">
+                <ThemePanel className="mb-4" />
                 <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Workspace modules</p>
                 <div className="grid gap-2">
                   {secondary.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}

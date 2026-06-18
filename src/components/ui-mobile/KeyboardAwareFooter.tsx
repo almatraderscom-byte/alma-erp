@@ -28,7 +28,7 @@ export function KeyboardAwareFooter({
     <div
       className={cn(
         'sticky bottom-0 z-30',
-        bordered && 'border-t border-black/[0.06] bg-white/95 backdrop-blur',
+        bordered && 'border-t border-border-subtle bg-card/95 backdrop-blur',
         className,
       )}
       style={{

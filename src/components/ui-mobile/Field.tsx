@@ -28,7 +28,7 @@ export function Field({
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       {label != null && (
-        <label htmlFor={htmlFor} className="text-[13px] font-medium text-slate-600">
+        <label htmlFor={htmlFor} className="text-[13px] font-medium text-muted-hi">
           {label}
           {required && <span className="ml-0.5 text-danger">*</span>}
         </label>
@@ -37,14 +37,14 @@ export function Field({
       {error ? (
         <p className="text-[12px] font-medium text-danger">{error}</p>
       ) : hint ? (
-        <p className="text-[12px] text-slate-400">{hint}</p>
+        <p className="text-[12px] text-muted">{hint}</p>
       ) : null}
     </div>
   )
 }
 
 const CONTROL_BASE =
-  'w-full rounded-xl border bg-white px-4 text-[16px] text-cream placeholder-slate-400 ' +
+  'w-full rounded-xl border bg-card px-4 text-[16px] text-cream placeholder-muted ' +
   'transition-colors focus:outline-none focus:border-gold/50 focus:ring-2 focus:ring-gold/15 ' +
   'disabled:opacity-50 disabled:bg-bg-2'
 
@@ -52,7 +52,7 @@ function controlClass(invalid?: boolean, extra?: string) {
   return cn(
     CONTROL_BASE,
     'min-h-[48px] py-3',
-    invalid ? 'border-danger/60' : 'border-black/[0.1]',
+    invalid ? 'border-danger/60' : 'border-border-strong',
     extra,
   )
 }
@@ -75,7 +75,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
   return (
     <textarea
       ref={ref}
-      className={cn(CONTROL_BASE, 'min-h-[96px] resize-y py-3', invalid ? 'border-danger/60' : 'border-black/[0.1]', className)}
+      className={cn(CONTROL_BASE, 'min-h-[96px] resize-y py-3', invalid ? 'border-danger/60' : 'border-border-strong', className)}
       {...props}
     />
   )

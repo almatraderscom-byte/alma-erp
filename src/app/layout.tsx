@@ -2,9 +2,12 @@ import type { Metadata, Viewport } from 'next'
 import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
 import './globals.css'
 import '@/components/providers/AppBootSplash.css'
+import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { AppProviders } from '@/components/providers/AppProviders'
+import { ThemeProvider } from '@/components/providers/ThemeProvider'
+import { ACCENT_COOKIE, THEME_COOKIE, accentStyle, normalizeAccent, normalizeMode } from '@/lib/theme'
 import { Toaster } from 'react-hot-toast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
@@ -68,8 +71,17 @@ async function loadServerSession() {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await loadServerSession()
   const buildReloadScript = buildMismatchReloadScript()
+  const cookieStore = cookies()
+  const themeMode = normalizeMode(cookieStore.get(THEME_COOKIE)?.value)
+  const themeAccent = normalizeAccent(cookieStore.get(ACCENT_COOKIE)?.value)
   return (
-    <html lang="en" className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      data-theme={themeMode}
+      style={accentStyle(themeAccent) as React.CSSProperties}
+      className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -85,7 +97,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <p className="alma-boot-title">Alma ERP</p>
           <div className="alma-boot-spinner" />
         </div>
-        <AppProviders session={session}>{children}</AppProviders>
+        <ThemeProvider initialMode={themeMode} initialAccent={themeAccent}>
+          <AppProviders session={session}>{children}</AppProviders>
+        </ThemeProvider>
         {/* Drives --kb-inset / body.kb-open app-wide so ERP screens can pin
             focused inputs above the keyboard (Keyboard.resize is None). */}
         <GlobalKeyboardManager />
