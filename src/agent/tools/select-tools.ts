@@ -42,7 +42,7 @@ export function selectToolGroupsSync(
   }
   if (/order|stock|inventory|product|দাম|price|reorder|catalog/i.test(t)) g.add('erp')
   if (/customer|messenger|cs|winback|segment|inbox/i.test(t)) g.add('cs')
-  if (/ad|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale|plan_marketing|marketing_report|মার্কেটিং|ফানেল/i.test(t)) g.add('growth')
+  if (/\bads?\b|advert|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale|plan_marketing|marketing_report|মার্কেটিং|ফানেল/i.test(t)) g.add('growth')
   if (/content|ছবি|image|post|model|try.?on|ব্র্যান্ড|facebook|fb|creative|অফার|offer|poster|reel|video|ভিডিও|রিল/i.test(t)) g.add('content')
   if (/website|almatraders|publish|catalog/i.test(t)) g.add('website')
   if (/salah|নামাজ|prayer|namaz|fajr|dhuhr|asr|maghrib|isha|ফজর|যোহর|আসর|মাগরিব|ইশা|জুম্মা|poreci|porlam|পড়েছি|পড়লাম|নামায/i.test(t)) g.add('salah')
@@ -131,16 +131,57 @@ export function selectToolsForTurn(
 const WIDE_FALLBACK: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
 
 /**
- * Async hybrid tool selection that also returns the *final* tool groups used
- * (after any semantic/widening fallback). The groups let the caller load only
- * the matching role prompts — keeping the system prompt aligned 1:1 with the
- * tools so both cache-bust together (no extra cache penalty) while cutting
- * tokens whenever fewer groups are active.
+ * STABLE owner-chat tool set (ALMA Lifestyle business chat).
+ *
+ * Why fixed instead of per-keyword: Anthropic prompt caching only reuses a
+ * byte-identical PREFIX (tools → system → history). Tools sit at the very front,
+ * so if the tool list changes between two messages, the WHOLE cached prefix
+ * (tools + role-prompt system block) is invalidated and rewritten at the
+ * expensive cache-WRITE rate ($3.75/M) every turn — which is ~90% of a chat
+ * message's cost. Keyword-picked tools differed wildly turn-to-turn (e.g. 52 vs
+ * 91 tools, not even prefix-compatible), so the cache was essentially never
+ * reused.
+ *
+ * Loading one fixed, comprehensive set makes the prefix identical every turn, so
+ * follow-up messages READ the cache ($0.30/M, 12.5× cheaper) instead of
+ * rewriting it. Trade-off: the first (cold) message in a 5-min window writes a
+ * slightly larger prefix; every message after that is much cheaper. Net win for
+ * the owner's real pattern (bursts of messages in one sitting).
+ *
+ * Excludes only the other-mode groups: 'trading' (separate business) and
+ * 'personal' (personal mode). 'salah' tools already live in 'base'.
+ */
+const OWNER_STABLE_GROUPS: ToolGroupName[] = [
+  'base',
+  'erp',
+  'staff',
+  'finance',
+  'cs',
+  'content',
+  'growth',
+  'website',
+  'diag',
+  'vision',
+  'cost',
+]
+
+/**
+ * Async tool selection. For owner business chat (ALMA Lifestyle) we return a
+ * STABLE comprehensive set so the prompt-cache prefix is identical every turn
+ * (see OWNER_STABLE_GROUPS). Personal mode and ALMA Trading keep their own
+ * already-stable narrow sets. Keyword/semantic routing is retained only for
+ * those narrow modes and for the sync selector (tests / refusal telemetry).
  */
 export async function selectToolsAndGroupsForTurnAsync(
   text: string,
   opts: { personalMode: boolean; businessId: AgentBusinessId },
 ): Promise<{ tools: Anthropic.Messages.Tool[]; groups: ToolGroupName[] }> {
+  // Owner business chat → fixed prefix for cache reuse.
+  if (!opts.personalMode && opts.businessId !== 'ALMA_TRADING') {
+    const tools = assembleSelectedTools(OWNER_STABLE_GROUPS)
+    return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups: OWNER_STABLE_GROUPS }
+  }
+
   const { groups, confident } = selectToolGroupsSync(text, opts)
 
   if (confident) {

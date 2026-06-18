@@ -595,8 +595,12 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     }
 
     if (activePlaybook && activePlaybook.length > 0) {
+      // NOTE: deliberately omit the per-turn `timesApplied` count. It lives in
+      // the cached stable block; rendering a number that bumps after every tool
+      // call would change this block's bytes each turn and bust the prompt cache
+      // (the expensive cache-WRITE we're trying to avoid). The count is cosmetic.
       const playbookLines = activePlaybook
-        .map((h) => `- [${h.domain}] ${h.heuristic}${h.timesApplied > 0 ? ` _(applied ${h.timesApplied}×)_` : ''}`)
+        .map((h) => `- [${h.domain}] ${h.heuristic}`)
         .join('\n')
       stableParts.push(
         `\n## Learned rules (playbook)\n` +
