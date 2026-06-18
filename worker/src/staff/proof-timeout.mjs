@@ -15,6 +15,7 @@ import {
   formatOwnerEscalation,
   sendOwnerEscalation,
 } from './task-nudge.mjs'
+import { isDutyEnabled } from '../schedulers/duty-enabled.mjs'
 
 async function callTaskCallback(payload, attempt = 0) {
   const base = getAppUrl()
@@ -76,13 +77,36 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   const duringOffice = isWithinOfficeHours('ALMA_LIFESTYLE')
 
+  // Owner Control Center: proof-timeout chasing/escalation can be switched off.
+  if (!(await isDutyEnabled(supabase, 'proof_timeout'))) {
+    return { nudged: 0, escalated: 0, disabled: true }
+  }
+
   const { data: tasks } = await supabase
     .from('staff_tasks')
-    .select('id, title, staff_id, status, verification_status, proof_data, business_id, created_at, agent_staff(telegramChatId, name)')
+    .select('id, title, staff_id, status, verification_status, proof_data, business_id, created_at, agent_staff(telegramChatId, name, user_id)')
     .in('status', ['awaiting_proof', 'sent'])
     .neq('type', 'learning')
 
   if (!tasks?.length) return { nudged: 0, escalated: 0 }
+
+  // Attendance gate: a staff member is only chased AFTER they have checked in
+  // today (gives attendance) — so a task assigned at 3 AM isn't tracked until
+  // they actually arrive. Linked staff (with user_id) are gated; unlinked staff
+  // keep the previous behavior so nudges never silently stop for them.
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  const userIds = [...new Set(tasks.map((t) => t.agent_staff?.user_id).filter(Boolean))]
+  const checkInByUser = new Map()
+  if (userIds.length) {
+    const { data: att } = await supabase
+      .from('attendance_records')
+      .select('employee_id, check_in_at')
+      .in('employee_id', userIds)
+      .eq('attendance_date', today)
+    for (const a of att ?? []) {
+      if (a.check_in_at) checkInByUser.set(a.employee_id, new Date(a.check_in_at).getTime())
+    }
+  }
 
   const now = Date.now()
   let nudged = 0
@@ -96,7 +120,17 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
       continue
     }
 
-    const elapsed = now - anchorTime(task)
+    // Start the chase clock at the staff's attendance check-in (when they're
+    // linked + checked in), never before they arrive. No check-in yet → skip.
+    const userId = task.agent_staff?.user_id
+    let effectiveAnchor = anchorTime(task)
+    if (userId) {
+      const checkIn = checkInByUser.get(userId)
+      if (!checkIn) continue
+      effectiveAnchor = Math.max(effectiveAnchor, checkIn)
+    }
+
+    const elapsed = now - effectiveAnchor
     const nudgeCount = getTaskNudgeCount(proofData)
     const staffName = task.agent_staff?.name ?? 'স্টাফ'
     const isProofWait = task.status === 'awaiting_proof'
