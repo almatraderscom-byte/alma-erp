@@ -122,6 +122,38 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ALMA neon wordmark — multi-color gradient flowing inside the letters
+   (white → blue → purple → magenta). Reused by the app loader so the brand
+   text reads as part of the aurora instead of a flat accent color. */
+.alma-neon-wordmark {
+  background-image: linear-gradient(
+    100deg,
+    #f8fafc 0%,
+    #f8fafc 12%,
+    #7cc4f5 30%,
+    #8b7cf6 46%,
+    #d36ad8 60%,
+    #f06595 72%,
+    #f8fafc 88%,
+    #f8fafc 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: alma-neon-flow 6s linear infinite;
+}
+
+@keyframes alma-neon-flow {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -50% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alma-neon-wordmark { animation: none; }
+}
+
 @media (max-width: 767px) {
   main.scrollbar-hide {
     overscroll-behavior-y: contain;
@@ -617,112 +649,26 @@ a,
   background: var(--aurora-base);
 }
 
-.ambient-blob {
+/* Tier-S aurora: the drifting blobs are painted by AuroraCanvas onto one
+   low-res <canvas>, upscaled here to fill the viewport. The upscale smooths the
+   bitmap into the same soft, dreamy wash the 5 blurred DOM blobs produced — but
+   glass panels now sample a single cheap layer instead of five animated
+   blur(110px) layers, so the UI stays smooth. */
+.ambient-canvas {
   position: absolute;
-  width: 65vw;
-  height: 65vw;
-  max-width: 900px;
-  max-height: 900px;
-  border-radius: 50%;
-  filter: blur(110px);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   opacity: var(--aurora-blob-opacity);
-  will-change: transform;
+  /* A light blur hides any low-res seams and deepens the bleed; one layer only. */
+  filter: blur(24px);
+  transform: translateZ(0);
   backface-visibility: hidden;
 }
 
-.ambient-blob-1 {
-  top: -18%;
-  left: -12%;
-  background: radial-gradient(circle at center, var(--aurora-blob-1), transparent 68%);
-  animation: aurora-drift-1 34s ease-in-out infinite;
-}
-
-.ambient-blob-2 {
-  top: -10%;
-  right: -14%;
-  background: radial-gradient(circle at center, var(--aurora-blob-2), transparent 68%);
-  animation: aurora-drift-2 42s ease-in-out infinite;
-}
-
-.ambient-blob-3 {
-  top: 28%;
-  left: 24%;
-  background: radial-gradient(circle at center, var(--aurora-blob-3), transparent 68%);
-  animation: aurora-drift-3 38s ease-in-out infinite;
-}
-
-.ambient-blob-4 {
-  bottom: -20%;
-  left: -8%;
-  background: radial-gradient(circle at center, var(--aurora-blob-4), transparent 68%);
-  animation: aurora-drift-4 46s ease-in-out infinite;
-}
-
-.ambient-blob-5 {
-  bottom: -18%;
-  right: -10%;
-  background: radial-gradient(circle at center, var(--aurora-blob-5), transparent 68%);
-  animation: aurora-drift-5 40s ease-in-out infinite;
-}
-
-/* Each blob roams the full viewport on its own offset path, so the colors
-   continuously slide past and blend into one another (vw/vh = corner-to-corner). */
-@keyframes aurora-drift-1 {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  25%  { transform: translate3d(46vw, 12vh, 0) scale(1.15); }
-  50%  { transform: translate3d(30vw, 48vh, 0) scale(1); }
-  75%  { transform: translate3d(8vw, 22vh, 0) scale(1.1); }
-  100% { transform: translate3d(0, 0, 0) scale(1); }
-}
-
-@keyframes aurora-drift-2 {
-  0%   { transform: translate3d(0, 0, 0) scale(1.1); }
-  25%  { transform: translate3d(-28vw, 26vh, 0) scale(1); }
-  50%  { transform: translate3d(-44vw, 6vh, 0) scale(1.18); }
-  75%  { transform: translate3d(-16vw, 40vh, 0) scale(1.05); }
-  100% { transform: translate3d(0, 0, 0) scale(1.1); }
-}
-
-@keyframes aurora-drift-3 {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  33%  { transform: translate3d(-30vw, 30vh, 0) scale(1.2); }
-  66%  { transform: translate3d(34vw, -20vh, 0) scale(1); }
-  100% { transform: translate3d(0, 0, 0) scale(1); }
-}
-
-@keyframes aurora-drift-4 {
-  0%   { transform: translate3d(0, 0, 0) scale(1.05); }
-  25%  { transform: translate3d(34vw, -22vh, 0) scale(1); }
-  50%  { transform: translate3d(58vw, -8vh, 0) scale(1.16); }
-  75%  { transform: translate3d(22vw, -34vh, 0) scale(1.05); }
-  100% { transform: translate3d(0, 0, 0) scale(1.05); }
-}
-
-@keyframes aurora-drift-5 {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  25%  { transform: translate3d(-40vw, -16vh, 0) scale(1.12); }
-  50%  { transform: translate3d(-20vw, -42vh, 0) scale(1); }
-  75%  { transform: translate3d(-52vw, -10vh, 0) scale(1.14); }
-  100% { transform: translate3d(0, 0, 0) scale(1); }
-}
-
 @media (max-width: 640px) {
-  /* Fewer, bigger blobs on phones = same vivid wash, lighter GPU load. */
-  .ambient-blob-2,
-  .ambient-blob-5 {
-    display: none;
-  }
-
-  .ambient-blob {
-    width: 110vw;
-    height: 110vw;
-    filter: blur(80px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ambient-blob {
-    animation: none;
-    transform: translateZ(0);
+  .ambient-canvas {
+    filter: blur(18px);
   }
 }

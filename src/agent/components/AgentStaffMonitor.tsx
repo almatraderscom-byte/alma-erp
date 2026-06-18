@@ -117,12 +117,12 @@ function MonitorTabs({
   feedCount: number
   staffCount: number
 }) {
-  const tabs: Array<{ id: MonitorTab; label: string; icon: string; badge?: number }> = [
-    { id: 'overview', label: 'Overview', icon: '📊', badge: alertCount > 0 ? alertCount : undefined },
-    { id: 'agents', label: 'Agents', icon: '🤖' },
-    { id: 'staff', label: 'Staff', icon: '👥', badge: staffCount > 0 ? staffCount : undefined },
-    { id: 'feed', label: 'Feed', icon: '📨', badge: feedCount > 0 ? feedCount : undefined },
-    { id: 'system', label: 'System', icon: '⚙️' },
+  const tabs: Array<{ id: MonitorTab; label: string; icon: string; neon: string; badge?: number }> = [
+    { id: 'overview', label: 'Overview', icon: '📊', neon: '#5B8CFF', badge: alertCount > 0 ? alertCount : undefined },
+    { id: 'agents', label: 'Agents', icon: '🤖', neon: '#A855F7' },
+    { id: 'staff', label: 'Staff', icon: '👥', neon: '#EC4899', badge: staffCount > 0 ? staffCount : undefined },
+    { id: 'feed', label: 'Feed', icon: '📨', neon: '#22D3A5', badge: feedCount > 0 ? feedCount : undefined },
+    { id: 'system', label: 'System', icon: '⚙️', neon: '#E07A5F' },
   ]
   return (
     <div className="flex gap-1 overflow-x-auto">
@@ -133,23 +133,43 @@ function MonitorTabs({
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
+            style={{ '--neon': t.neon } as React.CSSProperties}
             className={cn(
-              'inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-semibold transition-all',
+              'group relative inline-flex shrink-0 flex-col items-center gap-1 rounded-xl px-3 pt-1.5 pb-2 text-[12px] font-semibold transition-all',
               active
-                ? 'bg-[#E07A5F]/12 text-[#E07A5F]'
-                : 'text-muted hover:bg-white/[0.04] hover:text-cream',
+                ? 'text-[var(--neon)]'
+                : 'text-muted hover:text-cream',
             )}
           >
-            <span aria-hidden>{t.icon}</span>
-            <span>{t.label}</span>
-            {t.badge != null && (
-              <span className={cn(
-                'rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums',
-                active ? 'bg-[#E07A5F]/20 text-[#E07A5F]' : 'bg-white/[0.06] text-muted',
-              )}>
-                {t.badge}
-              </span>
-            )}
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden>{t.icon}</span>
+              <span>{t.label}</span>
+              {t.badge != null && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums"
+                  style={
+                    active
+                      ? { background: `color-mix(in srgb, ${t.neon} 22%, transparent)`, color: t.neon }
+                      : undefined
+                  }
+                >
+                  {t.badge}
+                </span>
+              )}
+            </span>
+            <span
+              aria-hidden
+              className={cn(
+                'h-[2px] w-full rounded-full transition-all duration-300',
+                active
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-40',
+              )}
+              style={{
+                background: `linear-gradient(90deg, transparent, ${t.neon}, transparent)`,
+                boxShadow: active ? `0 0 8px ${t.neon}, 0 0 16px ${t.neon}99` : 'none',
+              }}
+            />
           </button>
         )
       })}

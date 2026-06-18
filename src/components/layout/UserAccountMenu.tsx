@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useActor } from '@/contexts/ActorContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
@@ -37,7 +38,19 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
   const [notifications, setNotifications] = useState<Array<{ id: string; title: string; message: string; type: string; readAt: string | null; createdAt: string }>>([])
   const [unread, setUnread] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
+  const [coords, setCoords] = useState<{ left: number; bottom: number; width: number } | null>(null)
+
+  const measure = useCallback(() => {
+    const el = rootRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const width = mobile ? rect.width : 288
+    let left = mobile ? rect.right - width : rect.left
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8))
+    setCoords({ left, bottom: window.innerHeight - rect.top + 12, width })
+  }, [mobile])
 
   const { userId, profileImageUrl } = useMyProfileImage()
   const displayName = data?.user?.name || 'Account'
@@ -60,11 +73,23 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
     return () => { cancelled = true }
   }, [open])
 
+  useLayoutEffect(() => {
+    if (!open) return
+    measure()
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
+  }, [open, measure])
+
   useEffect(() => {
     if (!open) return
 
     function closeOnOutsideClick(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
         setBusinessOpen(false)
       }
@@ -98,16 +123,20 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
 
   const menu = (
     <motion.div
+      ref={menuRef}
       id={menuId}
       role="menu"
-      initial={{ opacity: 0, y: mobile ? 8 : 10, scale: 0.98 }}
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: mobile ? 8 : 10, scale: 0.98 }}
+      exit={{ opacity: 0, y: 10, scale: 0.98 }}
       transition={{ duration: 0.16, ease: 'easeOut' }}
-      className={cn(
-        'absolute z-[140] w-72 overflow-hidden rounded-2xl border border-border-subtle bg-card/98 shadow-xl shadow-black/10',
-        mobile ? 'bottom-full right-2 mb-3' : 'bottom-full left-0 mb-3',
-      )}
+      style={{
+        left: coords?.left ?? 0,
+        bottom: coords?.bottom ?? 0,
+        width: coords?.width ?? 288,
+        visibility: coords ? 'visible' : 'hidden',
+      }}
+      className="fixed z-[200] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-border-subtle bg-card/98 shadow-xl shadow-black/10 backdrop-blur-xl"
     >
       <div className="border-b border-border-subtle bg-gradient-to-br from-gold/[0.06] to-transparent p-4">
         <div className="flex items-start gap-3">
@@ -277,7 +306,8 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
         {!collapsed && !mobile && <span className="text-xs text-muted transition-colors group-hover:text-gold">⌄</span>}
       </button>
 
-      <AnimatePresence>{open && menu}</AnimatePresence>
+      {typeof document !== 'undefined' &&
+        createPortal(<AnimatePresence>{open && menu}</AnimatePresence>, document.body)}
     </div>
   )
 }
