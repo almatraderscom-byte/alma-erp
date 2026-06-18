@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { extractBearerToken, verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { sortTodosForDisplay } from '@/agent/lib/todo-sort'
+import { getDutyEnabledMap, isDutyEnabledSync } from '@/agent/lib/duty-enabled'
 
 function dueDateRangeDhaka(ymd: string): { start: Date; end: Date } {
   const day = ymd.slice(0, 10)
@@ -48,7 +49,16 @@ export async function GET(req: NextRequest) {
     orderBy: [{ createdAt: 'desc' }],
   })
 
-  const serialized = sortTodosForDisplay(todos).map((t) => ({
+  // Hide todos whose duty the owner has switched OFF in the Control Center, so
+  // the persistent list (home + office) and its count reflect only active
+  // duties — 20 duties minus 1 disabled = 19, not a stale 20. Ad-hoc todos with
+  // no dutyKey are always kept.
+  const dutyEnabled = await getDutyEnabledMap()
+  const visibleTodos = todos.filter(
+    (t) => !t.dutyKey || isDutyEnabledSync(t.dutyKey, dutyEnabled),
+  )
+
+  const serialized = sortTodosForDisplay(visibleTodos).map((t) => ({
     ...t,
     dueDate: t.dueDate?.toISOString() ?? null,
     createdAt: t.createdAt.toISOString(),
