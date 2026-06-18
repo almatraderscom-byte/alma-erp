@@ -311,6 +311,21 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
+/**
+ * Collapse the self-verification loop's repeated tool runs into one chip per
+ * tool (first-appearance order, latest status wins) — Claude-style, no clutter.
+ */
+function dedupeToolActivity(
+  items: NonNullable<ChatMessage['toolActivity']>,
+): NonNullable<ChatMessage['toolActivity']> {
+  const byName = new Map<string, NonNullable<ChatMessage['toolActivity']>[number]>()
+  for (const t of items) {
+    const prev = byName.get(t.name)
+    byName.set(t.name, prev ? { ...t, done: t.done || prev.done } : t)
+  }
+  return [...byName.values()]
+}
+
 function ToolActivityChip({ name, done, success }: { name: string; done: boolean; success?: boolean }) {
   const d = toolDisplay(name)
   return (
@@ -485,8 +500,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
                     <div className="mb-3 flex flex-wrap gap-1.5">
-                      {msg.toolActivity.map((t) => (
-                        <ToolActivityChip key={t.id} name={t.name} done={t.done} success={t.success} />
+                      {dedupeToolActivity(msg.toolActivity).map((t) => (
+                        <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} />
                       ))}
                     </div>
                   )}

@@ -17,33 +17,20 @@ export function AgentThinkingIndicator({
   if (mode === 'settled') return null
 
   return (
-    <div className={cn('flex items-center gap-2.5', className)}>
-      {/* Animated dots — coral */}
-      <div className="flex items-center gap-1">
-        {[0, 1, 2].map((i) => (
-          <motion.span
-            key={i}
-            className="h-1.5 w-1.5 rounded-full bg-[#E07A5F]/50"
-            animate={{
-              scale: [1, 1.4, 1],
-              opacity: [0.4, 1, 0.4],
-            }}
-            transition={{
-              duration: mode === 'fetching' ? 0.8 : 1.2,
-              repeat: Infinity,
-              ease: 'easeInOut',
-              delay: i * 0.15,
-            }}
-          />
-        ))}
-      </div>
+    <div className={cn('flex items-center gap-2', className)}>
+      {/* Calm sparkle — soft coral pulse (no bounce). */}
       <motion.span
-        className="text-[13px] text-[#64748b]"
-        animate={{ opacity: [0.5, 0.9, 0.5] }}
-        transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-      >
-        {label}
-      </motion.span>
+        aria-hidden
+        className="inline-block h-2 w-2 shrink-0 rounded-full bg-[#E07A5F]"
+        animate={{ scale: [1, 1.35, 1], opacity: [0.45, 1, 0.45] }}
+        transition={{
+          duration: mode === 'fetching' ? 1 : 1.3,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      />
+      {/* Claude-style shimmering status text. */}
+      <span className="alma-thinking-shimmer text-[13px] font-medium">{label}</span>
     </div>
   )
 }

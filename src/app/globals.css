@@ -314,6 +314,32 @@ a,
   .alma-enter { animation: none; }
 }
 
+/* Claude-style shimmering status text ("Thinking…", "checking…"). A soft
+   coral highlight sweeps across muted ink — calm, water-smooth, no bounce. */
+.alma-thinking-shimmer {
+  background: linear-gradient(
+    90deg,
+    #94a3b8 0%, #94a3b8 38%, #E07A5F 50%, #94a3b8 62%, #94a3b8 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: alma-text-shimmer 2s linear infinite;
+}
+@keyframes alma-text-shimmer {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-thinking-shimmer {
+    animation: none;
+    -webkit-text-fill-color: #64748b;
+    color: #64748b;
+  }
+}
+
 /* Agent chat — always allow text selection for copy */
 .agent-chat-root .prose-agent,
 .agent-chat-root .prose-agent p,

@@ -30,6 +30,22 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
 }
 
+/**
+ * For tools not in the explicit map, derive a readable label from the tool name
+ * itself (e.g. `get_warehouse_stock` → "warehouse stock দেখছি") so the owner
+ * sees WHAT is being checked — never a bare generic "চেক করছি".
+ */
+function humanizeToolName(name: string): string {
+  const cleaned = name
+    .replace(/^(get|fetch|list|load|read|check|scan|search|find|analyze|analyse|review|prepare|propose|generate|create|update|build|run)_/i, '')
+    .replace(/_/g, ' ')
+    .trim()
+  if (!cleaned) return 'চেক করছি'
+  return `${cleaned} দেখছি`
+}
+
 export function toolDisplay(name: string) {
-  return TOOL_LABELS[name] ?? { label: 'চেক করছি', icon: '🔧', color: '#71717a' }
+  const mapped = TOOL_LABELS[name]
+  if (mapped) return mapped
+  return { label: humanizeToolName(name), icon: '🔧', color: '#71717a' }
 }
