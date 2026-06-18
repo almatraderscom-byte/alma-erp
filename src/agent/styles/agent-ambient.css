@@ -100,11 +100,58 @@ body.kb-open .agent-composer-wrap {
   100% { background-position: -200% 0; }
 }
 
+/* Animated neon halo running around the chat input box. */
+.agent-neon-input {
+  position: relative;
+  isolation: isolate;
+}
+.agent-neon-input::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--neon-angle, 0deg),
+    rgba(224, 122, 95, 0.0) 0%,
+    rgba(224, 122, 95, 0.85) 18%,
+    rgba(245, 200, 120, 0.95) 30%,
+    rgba(120, 200, 245, 0.85) 45%,
+    rgba(224, 122, 95, 0.0) 62%,
+    rgba(224, 122, 95, 0.0) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  filter: drop-shadow(0 0 5px rgba(224, 122, 95, 0.35));
+  opacity: 0.9;
+  animation: agent-neon-spin 4.5s linear infinite;
+}
+
+@property --neon-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes agent-neon-spin {
+  to { --neon-angle: 360deg; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-shell {
     background: #FAF9F6;
   }
   .skeleton {
+    animation: none;
+  }
+  .agent-neon-input::before {
     animation: none;
   }
 }

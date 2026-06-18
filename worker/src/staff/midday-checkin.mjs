@@ -5,6 +5,9 @@
  */
 
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
+import { getCheckedInMap } from './attendance.mjs'
+import { progressButtonRow } from './progress-button.mjs'
+import { isStaffTaskEnabled } from './staff-toggle.mjs'
 
 export async function runMiddayCheckin({ supabase, bot }) {
   if (!bot) return { dutyStatus: 'skipped', dutyDetail: 'bot নেই' }
@@ -14,7 +17,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
 
   const { data: pendingTasks, error: dbErr } = await supabase
     .from('staff_tasks')
-    .select(`*, agent_staff(id, name, telegramChatId)`)
+    .select(`*, agent_staff(id, name, telegramChatId, user_id)`)
     .eq('proposed_for', today)
     .eq('status', 'sent')
     .neq('type', 'learning')
@@ -37,11 +40,22 @@ export async function runMiddayCheckin({ supabase, bot }) {
     byStaff[staffId].tasks.push(t)
   }
 
-  const stuckStaff = []
+  // Only remind staff who have actually checked in today.
+  const staffEntries = Object.values(byStaff)
+  const checkedIn = await getCheckedInMap(supabase, staffEntries.map((e) => e.staff).filter(Boolean))
+  const showProgress = await isStaffTaskEnabled(supabase, 'progress_ask')
 
-  for (const { staff, tasks } of Object.values(byStaff)) {
+  const stuckStaff = []
+  let skippedAbsent = 0
+
+  for (const { staff, tasks } of staffEntries) {
     const chatId = staff?.telegramChatId
     const staffName = staff?.name || 'স্টাফ'
+
+    if (!staff?.id || !checkedIn.has(staff.id)) {
+      skippedAbsent += 1
+      continue
+    }
 
     if (chatId) {
       const taskList = tasks.map(t => `• ${t.title}`).join('\n')
@@ -56,6 +70,7 @@ export async function runMiddayCheckin({ supabase, bot }) {
         content: msg,
         chatId,
         relatedTaskIds: tasks.map((t) => t.id),
+        extra: showProgress ? { reply_markup: { inline_keyboard: [progressButtonRow()] } } : undefined,
       }).catch(err => console.warn(`[midday] reminder to ${staffName} failed:`, err.message))
     }
 
@@ -71,9 +86,9 @@ export async function runMiddayCheckin({ supabase, bot }) {
     ).catch(err => console.warn('[midday] owner update failed:', err.message))
   }
 
-  console.log(`[midday-checkin] sent reminders for ${pendingTasks.length} pending tasks`)
+  console.log(`[midday-checkin] sent reminders for ${stuckStaff.length} checked-in staff (${skippedAbsent} absent skipped)`)
   return {
     dutyStatus: 'done',
-    dutyDetail: `${stuckStaff.length} স্টাফকে রিমাইন্ডার, ${pendingTasks.length}টি পেন্ডিং টাস্ক`,
+    dutyDetail: `${stuckStaff.length} স্টাফকে রিমাইন্ডার, ${skippedAbsent} জন চেক-ইন করেনি (বাদ)`,
   }
 }

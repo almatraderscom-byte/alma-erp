@@ -160,7 +160,7 @@ export default function AgentComposer({
 
       <div
         className={cn(
-          'flex flex-col gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
+          'agent-neon-input flex flex-col gap-1 rounded-2xl border p-1.5 transition-all duration-200 md:p-2',
           streaming
             ? 'border-[#E07A5F]/25 bg-white shadow-[0_2px_12px_rgba(224,122,95,0.08)]'
             : 'border-black/[0.08] bg-white focus-within:border-black/[0.14]',
