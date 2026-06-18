@@ -39,7 +39,16 @@ export async function POST(req: NextRequest) {
   const objectPath = `${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
   const buffer = Buffer.from(await file.arrayBuffer())
-  const result = await agentStorageUpload(objectPath, buffer, file.type)
 
-  return Response.json({ bucket: result.bucket, path: result.objectPath, mediaType: file.type }, { status: 201 })
+  // Storage can throw when Supabase env is missing on this deployment (a common
+  // Preview-vs-Production env gap) or when the bucket call fails. Surface the
+  // real reason instead of letting it become a silent 500 → generic "upload_failed".
+  try {
+    const result = await agentStorageUpload(objectPath, buffer, file.type)
+    return Response.json({ bucket: result.bucket, path: result.objectPath, mediaType: file.type }, { status: 201 })
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'unknown storage error'
+    console.error('[assistant/upload] storage upload failed:', detail)
+    return Response.json({ error: 'storage_unavailable', detail }, { status: 502 })
+  }
 }
