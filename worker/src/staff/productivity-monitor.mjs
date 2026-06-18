@@ -45,6 +45,18 @@ function dhakaToday() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 }
 
+/**
+ * agent_kv_settings.value is TEXT holding a JSON string (writes use
+ * JSON.stringify). Reads MUST parse it — accessing `.foo` straight off the raw
+ * value silently yields undefined, which broke per-day de-dup and made slow/idle
+ * alerts re-fire on every 10-min tick. Tolerates an already-parsed object too.
+ */
+function parseKvValue(value) {
+  if (value == null) return null
+  if (typeof value === 'object') return value
+  try { return JSON.parse(value) } catch { return null }
+}
+
 function randomInRange(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
@@ -85,7 +97,7 @@ export async function maybeRequestProof(context) {
       .eq('key', kvKey)
       .maybeSingle()
 
-    const proofsSentToday = existing?.value?.count ?? 0
+    const proofsSentToday = parseKvValue(existing?.value)?.count ?? 0
     if (proofsSentToday >= PROOF_MAX_PER_DAY) continue
 
     const probability = 0.18
@@ -237,7 +249,7 @@ export async function analyzeTaskTiming(context) {
     .eq('key', alertKey)
     .maybeSingle()
 
-  const alertedIds = new Set(alerted?.value?.taskIds ?? [])
+  const alertedIds = new Set(parseKvValue(alerted?.value)?.taskIds ?? [])
   const newSlowTasks = slowTasks.filter((t) => !alertedIds.has(`${t.staffId}:${t.title}`))
 
   if (!newSlowTasks.length) return
@@ -333,7 +345,7 @@ export async function detectIdleStaff(context) {
     .eq('key', idleAlertKey)
     .maybeSingle()
 
-  const prevAlertedStaff = new Set(prevAlert?.value?.staffIds ?? [])
+  const prevAlertedStaff = new Set(parseKvValue(prevAlert?.value)?.staffIds ?? [])
   const newIdle = idleStaff.filter((s) => !prevAlertedStaff.has(s.id))
 
   if (!newIdle.length) return
@@ -387,7 +399,7 @@ export async function recordStaffResponseTime(supabase, staffId, messageId, repl
     .eq('key', key)
     .maybeSingle()
 
-  const times = existing?.value?.times ?? []
+  const times = parseKvValue(existing?.value)?.times ?? []
   times.push({ messageId, repliedAt, replyMs: repliedAt - Date.now() })
 
   await supabase.from('agent_kv_settings').upsert({
