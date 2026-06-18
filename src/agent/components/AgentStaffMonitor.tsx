@@ -377,14 +377,19 @@ export default function AgentStaffMonitor() {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await fetch('/api/agent/vps/deploy', { method: 'POST' })
-        const json = await res.json().catch(() => ({})) as { ok?: boolean; steps?: Array<{ step: string; ok: boolean }>; healthCheck?: string; message?: string }
+        const json = await res.json().catch(() => ({})) as { ok?: boolean; verified?: boolean; steps?: Array<{ step: string; ok: boolean }>; healthCheck?: string; message?: string; targetCommit?: string | null; runningCommit?: string | null }
         if (res.ok || res.status === 207) {
           const stepLabels: Record<string, string> = { git_pull: 'Git Pull', npm_install: 'NPM Install', pm2_restart: 'PM2 Restart' }
           const summary = (json.steps ?? []).map(s => `${s.ok ? '✓' : '✗'} ${stepLabels[s.step] ?? s.step}`).join(' → ')
-          const health = json.healthCheck ? ` · Health: ${json.healthCheck}` : ''
-          setDeployMsg(json.ok ? `✓ ${summary}${health}` : `⚠ ${summary}${health}`)
+          if (json.verified) {
+            setDeployMsg(`✓ ${summary} · ✅ verified running ${json.targetCommit ?? ''}`.trim())
+          } else {
+            const got = json.runningCommit ?? '?'
+            const want = json.targetCommit ?? '?'
+            setDeployMsg(`⚠ ${summary} · ❌ restart NOT confirmed (running ${got}, expected ${want}) — worker may still be on old code`)
+          }
           setLastDeploy(new Date().toISOString()); setDeploying(false)
-          setTimeout(() => setDeployMsg(null), 10000); return
+          setTimeout(() => setDeployMsg(null), 15000); return
         }
         if (attempt < 2) { await new Promise(r => setTimeout(r, 2000)); continue }
         setDeployMsg(`✗ ${json.message ?? `Deploy failed (HTTP ${res.status})`}`)

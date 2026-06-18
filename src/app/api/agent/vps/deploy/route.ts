@@ -5,7 +5,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+export const maxDuration = 180
 
 type DeployStep = { step: string; ok: boolean; output?: string; error?: string }
 
@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json().catch(() => ({})) as {
       ok?: boolean; steps?: DeployStep[]; error?: string; healthCheck?: string
+      prevCommit?: string | null; targetCommit?: string | null
     }
 
     // Accept 207 (partial success) as well
@@ -51,30 +52,57 @@ export async function POST(req: NextRequest) {
       }, { status: 502 })
     }
 
-    // Health-check: wait 5s then ping /health
-    if (data.ok || data.steps?.find((s: DeployStep) => s.step === 'pm2_restart' && s.ok)) {
-      await new Promise(r => setTimeout(r, 5000))
-      try {
-        const healthRes = await fetch(`${workerUrl}/health`, { signal: AbortSignal.timeout(10_000) })
-        const healthData = await healthRes.json().catch(() => ({})) as { ok?: boolean }
-        data.healthCheck = healthData.ok ? 'healthy' : 'unhealthy'
-      } catch {
-        data.healthCheck = 'unreachable'
+    // Verify the restart actually landed the new code: poll /health until the
+    // worker reports a bootCommit equal to the just-pulled targetCommit. This is
+    // the real success signal — pm2_restart can't report its own outcome because
+    // the restart kills the process answering the deploy request.
+    const restartScheduled = data.steps?.find((s) => s.step === 'pm2_restart' && s.ok)
+    let verified = false
+    let runningCommit: string | null = null
+    if (restartScheduled && data.targetCommit) {
+      const deadline = Date.now() + 45_000
+      // Give pm2 a moment to tear down + boot before the first poll.
+      await new Promise(r => setTimeout(r, 4000))
+      while (Date.now() < deadline) {
+        try {
+          const healthRes = await fetch(`${workerUrl}/health`, {
+            headers: { Authorization: `Bearer ${internalToken}` },
+            signal: AbortSignal.timeout(8_000),
+          })
+          const healthData = await healthRes.json().catch(() => ({})) as { ok?: boolean; bootCommit?: string | null }
+          runningCommit = healthData.bootCommit ?? null
+          if (runningCommit && runningCommit === data.targetCommit) { verified = true; break }
+        } catch { /* worker mid-restart — keep polling */ }
+        await new Promise(r => setTimeout(r, 3000))
       }
     }
+    data.healthCheck = verified ? 'verified' : (restartScheduled ? 'unconfirmed' : 'skipped')
 
     // Store result
+    const record = {
+      ts: new Date().toISOString(),
+      ok: data.ok, steps: data.steps ?? [], healthCheck: data.healthCheck,
+      verified, prevCommit: data.prevCommit ?? null, targetCommit: data.targetCommit ?? null, runningCommit,
+    }
     try {
       await prisma.agentKvSetting.upsert({
         where: { key: 'worker.lastDeploy' },
-        update: { value: JSON.stringify({ ts: new Date().toISOString(), ok: data.ok, steps: data.steps ?? [], healthCheck: data.healthCheck }) },
-        create: { key: 'worker.lastDeploy', value: JSON.stringify({ ts: new Date().toISOString(), ok: data.ok, steps: data.steps ?? [], healthCheck: data.healthCheck }) },
+        update: { value: JSON.stringify(record) },
+        create: { key: 'worker.lastDeploy', value: JSON.stringify(record) },
       })
     } catch (err) {
       console.warn('[deploy] KV write for lastDeploy failed:', err)
     }
 
-    return Response.json({ ok: data.ok, steps: data.steps, healthCheck: data.healthCheck })
+    return Response.json({
+      ok: Boolean(data.ok) && verified,
+      verified,
+      steps: data.steps,
+      healthCheck: data.healthCheck,
+      prevCommit: data.prevCommit ?? null,
+      targetCommit: data.targetCommit ?? null,
+      runningCommit,
+    })
   } catch (err) {
     return Response.json({
       error: 'deploy_failed',

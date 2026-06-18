@@ -29,14 +29,33 @@ export function useKeyboardInset() {
       try {
         const { Capacitor } = await import('@capacitor/core')
         if (!Capacitor?.isNativePlatform?.()) return false
-        const { Keyboard } = await import('@capacitor/keyboard')
-        const show = await Keyboard.addListener('keyboardWillShow', (info) => {
-          if (!disposed) setInset(info.keyboardHeight)
+        const { Keyboard, KeyboardResize } = await import('@capacitor/keyboard')
+
+        // Let iOS/Android resize the native WebView so the composer sits directly
+        // above the keyboard — the same mechanism native apps use. Scoped to the
+        // agent screen ONLY: the global default stays resize:None so the ERP keeps
+        // its manual --kb-inset path and can't double-count. We restore None on
+        // unmount (leaving /agent/*).
+        //
+        // Why this and not CSS: with resize:None the WebView never shrinks, so the
+        // measured-inset CSS lift was unreliable inside WKWebView (worked in Safari,
+        // not in the installed app). Native resize removes that whole guess.
+        try { await Keyboard.setResizeMode({ mode: KeyboardResize.Native }) } catch { /* older shell */ }
+        document.documentElement.classList.add('cap-native-resize')
+
+        const openNav = () => { if (!disposed) document.body.classList.add('kb-open') }
+        const closeNav = () => { if (!disposed) document.body.classList.remove('kb-open') }
+        // iOS owns the lift now, so keep --kb-inset at 0 (subtracting it too would
+        // float the composer a full keyboard-height too high). We only toggle
+        // kb-open to hide the floating bottom nav while typing.
+        const show = await Keyboard.addListener('keyboardWillShow', openNav)
+        const hide = await Keyboard.addListener('keyboardWillHide', closeNav)
+
+        cleanups.push(() => {
+          void show.remove(); void hide.remove()
+          void Keyboard.setResizeMode({ mode: KeyboardResize.None }).catch(() => {})
+          document.documentElement.classList.remove('cap-native-resize')
         })
-        const hide = await Keyboard.addListener('keyboardWillHide', () => {
-          if (!disposed) setInset(0)
-        })
-        cleanups.push(() => { void show.remove(); void hide.remove() })
         return true
       } catch {
         return false
