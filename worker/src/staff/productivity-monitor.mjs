@@ -14,6 +14,9 @@ import { isWithinOfficeHours } from './office-hours.mjs'
 import { notify } from '../notify/index.mjs'
 import { bnNum, formatDhakaTimeBn } from './bn-format.mjs'
 import { sendStaffNudge } from './staff-voice-nudge.mjs'
+import { getCheckedInMap } from './attendance.mjs'
+import { isStaffTaskEnabled } from './staff-toggle.mjs'
+import { progressMarkup } from './progress-button.mjs'
 
 const OWNER_CHAT_ID = () => process.env.TELEGRAM_OWNER_CHAT_ID
 const PROOF_MAX_PER_DAY = 4
@@ -53,21 +56,27 @@ function randomInRange(min, max) {
 export async function maybeRequestProof(context) {
   const { supabase, bot } = context
   if (!isWithinOfficeHours()) return []
+  if (!(await isStaffTaskEnabled(supabase, 'proof_request'))) return []
 
   const today = dhakaToday()
 
   const { data: staffList } = await supabase
     .from('agent_staff')
-    .select('id, name, telegramChatId')
+    .select('id, name, telegramChatId, user_id')
     .eq('active', true)
     .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return []
 
+  // Only ask staff who have actually checked in today.
+  const checkedIn = await getCheckedInMap(supabase, staffList)
+  const proofMarkup = await progressMarkup(supabase)
+
   const proofRequests = []
 
   for (const staff of staffList) {
     if (!staff.telegramChatId) continue
+    if (!checkedIn.has(staff.id)) continue
 
     const kvKey = `proof_requests:${today}:${staff.id}`
     const { data: existing } = await supabase
@@ -99,7 +108,7 @@ export async function maybeRequestProof(context) {
     const voiceScript = voiceScripts[idx]
 
     try {
-      await sendStaffNudge(bot, staff.telegramChatId, msg, voiceScript)
+      await sendStaffNudge(bot, staff.telegramChatId, msg, voiceScript, proofMarkup ?? undefined)
       proofRequests.push({ staffId: staff.id, staffName: staff.name, sentAt: new Date().toISOString() })
 
       await supabase.from('agent_kv_settings').upsert({
@@ -172,6 +181,7 @@ export async function markProofReceived(supabase, staffId) {
 export async function analyzeTaskTiming(context) {
   const { supabase, bot } = context
   if (!isWithinOfficeHours()) return
+  if (!(await isStaffTaskEnabled(supabase, 'slow_task_alert'))) return
 
   const today = dhakaToday()
   const { data: tasks } = await supabase
@@ -182,22 +192,31 @@ export async function analyzeTaskTiming(context) {
 
   if (!tasks?.length) return
 
+  // Resolve assigned staff once so we can anchor timing to attendance check-in.
+  const staffIds = [...new Set(tasks.map((t) => t.staff_id).filter(Boolean))]
+  const { data: staffRows } = await supabase
+    .from('agent_staff')
+    .select('id, name, telegramChatId, user_id')
+    .in('id', staffIds)
+  const staffById = new Map((staffRows ?? []).map((s) => [s.id, s]))
+  const checkedIn = await getCheckedInMap(supabase, staffRows ?? [])
+
   const now = Date.now()
   const slowTasks = []
 
   for (const task of tasks) {
-    const startTime = new Date(task.created_at).getTime()
+    const checkInTime = checkedIn.get(task.staff_id)
+    // Count task time only after the staff has checked in. Not checked in → skip.
+    if (!checkInTime) continue
+
+    // Anchor on whichever is later: check-in or task creation.
+    const startTime = Math.max(checkInTime.getTime(), new Date(task.created_at).getTime())
     const elapsedMinutes = (now - startTime) / 60_000
     const expectedMinutes = estimateTaskMinutes(task.type)
     const threshold = expectedMinutes * SLOW_TASK_MULTIPLIER
 
     if (elapsedMinutes > threshold) {
-      const { data: staffRow } = await supabase
-        .from('agent_staff')
-        .select('name, telegramChatId')
-        .eq('id', task.staff_id)
-        .maybeSingle()
-
+      const staffRow = staffById.get(task.staff_id)
       slowTasks.push({
         staffName: staffRow?.name ?? 'অজানা',
         chatId: staffRow?.telegramChatId,
@@ -223,24 +242,25 @@ export async function analyzeTaskTiming(context) {
 
   if (!newSlowTasks.length) return
 
+  const slowMarkup = await progressMarkup(supabase)
   for (const task of newSlowTasks) {
     if (task.chatId) {
       const textNudge = `⏰ "${task.title}" — ${bnNum(task.elapsedMinutes)} মিনিট হয়ে গেছে। কতটুকু এগিয়েছে?`
       const firstName = task.staffName.split(/\s+/)[0] ?? 'ভাই'
       const voiceNudge = `${firstName} ভাই, "${task.title}" কতটুকু এগিয়েছে?`
-      await sendStaffNudge(bot, task.chatId, textNudge, voiceNudge).catch(() => {})
+      await sendStaffNudge(bot, task.chatId, textNudge, voiceNudge, slowMarkup ?? undefined).catch(() => {})
     }
     alertedIds.add(`${task.staffId}:${task.title}`)
   }
 
   if (bot && OWNER_CHAT_ID() && newSlowTasks.length > 0) {
-    const lines = newSlowTasks.map((t) =>
-      `• ${t.staffName}: "${t.title}" (${bnNum(t.elapsedMinutes)} min, expected ${bnNum(t.expectedMinutes)})`
-    ).join('\n')
+    // Short one-line digest — names only, no per-task minute dumps.
+    const names = [...new Set(newSlowTasks.map((t) => t.staffName))]
+    const shown = names.slice(0, 3).join(', ')
+    const more = names.length > 3 ? ` +${bnNum(names.length - 3)}` : ''
     await bot.telegram.sendMessage(
       OWNER_CHAT_ID(),
-      `🐢 *ধীর কাজ সনাক্ত:*\n${lines}`,
-      { parse_mode: 'Markdown' },
+      `🐢 ধীর চলছে: ${shown}${more} — মনিটরে বিস্তারিত।`,
     ).catch((e) => {
       console.warn('[productivity] slow task owner notify failed:', e.message)
     })
@@ -259,20 +279,25 @@ export async function analyzeTaskTiming(context) {
 export async function detectIdleStaff(context) {
   const { supabase, bot } = context
   if (!isWithinOfficeHours()) return
+  if (!(await isStaffTaskEnabled(supabase, 'idle_detect'))) return
 
   const today = dhakaToday()
   const { data: staffList } = await supabase
     .from('agent_staff')
-    .select('id, name, telegramChatId')
+    .select('id, name, telegramChatId, user_id')
     .eq('active', true)
     .eq('business_id', 'ALMA_LIFESTYLE')
 
   if (!staffList?.length) return
 
+  // Idle detection only applies to staff who have checked in today.
+  const checkedIn = await getCheckedInMap(supabase, staffList)
+
   const now = Date.now()
   const idleStaff = []
 
   for (const staff of staffList) {
+    if (!checkedIn.has(staff.id)) continue
     const { data: recentOutbox } = await supabase
       .from('agent_outbox')
       .select('sent_at')
@@ -313,6 +338,7 @@ export async function detectIdleStaff(context) {
 
   if (!newIdle.length) return
 
+  const idleMarkup = await progressMarkup(supabase)
   for (const staff of newIdle) {
     if (staff.telegramChatId) {
       const textMessages = [
@@ -326,7 +352,7 @@ export async function detectIdleStaff(context) {
         'কাজ চলছে? একটু জানান।',
       ]
       const idx = randomInRange(0, textMessages.length - 1)
-      await sendStaffNudge(bot, staff.telegramChatId, textMessages[idx], voiceMessages[idx]).catch(() => {})
+      await sendStaffNudge(bot, staff.telegramChatId, textMessages[idx], voiceMessages[idx], idleMarkup ?? undefined).catch(() => {})
     }
     prevAlertedStaff.add(staff.id)
   }

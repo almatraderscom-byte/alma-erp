@@ -162,6 +162,50 @@ function OfficeTaskBlockCard({
   )
 }
 
+function OfficeConversationBlock({
+  messages,
+  defaultOpen,
+  renderMessage,
+}: {
+  messages: OfficeShiftMessage[]
+  defaultOpen: boolean
+  renderMessage: (msg: OfficeShiftMessage) => ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const turns = messages.length
+
+  return (
+    <div className="rounded-xl border border-indigo-200/70 bg-indigo-50/40 overflow-hidden ring-1 ring-indigo-200/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        <span className="shrink-0 text-sm">💬</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[#312e81]">
+          Boss এর সাথে Conversation / Meeting
+          <span className="font-normal text-[#6366f1]/70"> · {turns} বার্তা</span>
+        </span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+          className={`shrink-0 text-[#818cf8] transition-transform duration-[250ms] ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      <CollapsibleGrid open={open}>
+        <div className="space-y-3 border-t border-indigo-200/40 px-3 py-3">
+          {messages.map((msg) => (
+            <div key={msg.id}>{renderMessage(msg)}</div>
+          ))}
+        </div>
+      </CollapsibleGrid>
+    </div>
+  )
+}
+
 export function OfficeShiftThreadRenderer({
   messages,
   renderUserMessage,
@@ -199,11 +243,15 @@ export function OfficeShiftThreadRenderer({
           }
         />
       ))}
-      {preamble.map((msg) => (
-        <div key={msg.id}>
-          {msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)}
-        </div>
-      ))}
+      {preamble.length > 0 && (
+        <OfficeConversationBlock
+          messages={preamble}
+          defaultOpen={blocks.length === 0}
+          renderMessage={(msg) =>
+            msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)
+          }
+        />
+      )}
     </div>
   )
 }

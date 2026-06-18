@@ -14,6 +14,8 @@ import { staffNtfyTopic } from './staff-fields.mjs'
 import { lunchButtonRow } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
 import { leaveRequestButton } from './leave.mjs'
+import { progressButtonRow } from './progress-button.mjs'
+import { isStaffTaskEnabled } from './staff-toggle.mjs'
 
 async function updateMorningDispatchDutyLog(supabase, result) {
   try {
@@ -360,6 +362,9 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     { text: `✅ ${i + 1} Done`, callback_data: taskDoneCallbackData(t.id) },
   ])
   if (staffId) {
+    if (await isStaffTaskEnabled(supabase, 'progress_ask')) {
+      rows.push(progressButtonRow())
+    }
     rows.push([{ text: '💬 Feedback দিন', callback_data: `staff_feedback_open:${staffId}` }])
     rows.push(lunchButtonRow())
     rows.push([leaveRequestButton()])

@@ -24,10 +24,12 @@ export function shouldUseVoiceNudge() {
  * @param {string|number} chatId
  * @param {string} textMessage Full text (used when channel is text)
  * @param {string} [voiceScript] Shorter script for ElevenLabs (defaults to textMessage)
+ * @param {object} [extra] Telegram sendMessage extra (e.g. reply_markup). Forces text channel so the buttons are tappable.
  */
-export async function sendStaffNudge(botOrApi, chatId, textMessage, voiceScript) {
+export async function sendStaffNudge(botOrApi, chatId, textMessage, voiceScript, extra) {
   const api = botOrApi?.telegram ?? botOrApi
-  const useVoice = shouldUseVoiceNudge()
+  // A reply_markup only makes sense on a text message — never send as voice then.
+  const useVoice = !extra?.reply_markup && shouldUseVoiceNudge()
   const script = (voiceScript ?? textMessage).trim()
 
   if (useVoice) {
@@ -35,7 +37,7 @@ export async function sendStaffNudge(botOrApi, chatId, textMessage, voiceScript)
     return { channel: 'voice' }
   }
 
-  await api.sendMessage(chatId, textMessage)
+  await api.sendMessage(chatId, textMessage, extra)
   return { channel: 'text' }
 }
 

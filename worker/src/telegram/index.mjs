@@ -1374,6 +1374,34 @@ export function createTelegramBot() {
       const { handleStaffFeedbackOpen } = await import('../staff/staff-feedback.mjs')
       await handleStaffFeedbackOpen(ctx, staffId)
 
+    } else if (data === 'task_prog_open') {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const { isStaffTaskEnabled } = await import('../staff/staff-toggle.mjs')
+      if (!(await isStaffTaskEnabled(supabase, 'progress_ask'))) {
+        await ctx.answerCbQuery()
+        return
+      }
+      const { handleProgressOpen } = await import('../staff/progress-button.mjs')
+      await handleProgressOpen(ctx)
+      return
+
+    } else if (data.startsWith('task_prog:')) {
+      const supabase = createSupabase()
+      const staff = await resolveStaffByChatId(supabase, ctx.chat?.id)
+      if (!staff) {
+        await ctx.answerCbQuery('অনুমতি নেই')
+        return
+      }
+      const levelKey = data.slice('task_prog:'.length)
+      const { handleProgressSelect } = await import('../staff/progress-button.mjs')
+      await handleProgressSelect(ctx, supabase, levelKey, staff)
+      return
+
     } else if (data.startsWith('msg_ack:')) {
       const shortId = data.slice('msg_ack:'.length)
       const supabase = createSupabase()

@@ -229,6 +229,9 @@ export default function AgentStaffMonitor() {
   const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview')
   const [geoFenceToggling, setGeoFenceToggling] = useState(false)
   const [dutyToggling, setDutyToggling] = useState<string | null>(null)
+  const [staffToggles, setStaffToggles] = useState<Record<string, boolean>>({})
+  const [staffToggleDefs, setStaffToggleDefs] = useState<Array<{ key: string; label: string; hint: string }>>([])
+  const [staffTaskToggling, setStaffTaskToggling] = useState<string | null>(null)
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
@@ -310,16 +313,27 @@ export default function AgentStaffMonitor() {
     try { const res = await fetch('/api/agent/staff-capabilities', { cache: 'no-store' }); if (res.ok) setStaffCaps(await res.json()) } catch { /* ignore */ }
   }
 
+  const loadStaffToggles = useCallback(async () => {
+    try {
+      const res = await fetch('/api/assistant/staff-toggles', { cache: 'no-store' })
+      if (!res.ok) return
+      const data = await res.json() as { toggles?: Record<string, boolean>; defs?: Array<{ key: string; label: string; hint: string }> }
+      if (data.toggles) setStaffToggles(data.toggles)
+      if (data.defs) setStaffToggleDefs(data.defs)
+    } catch { /* non-fatal */ }
+  }, [])
+
   useEffect(() => {
     let alive = true
     void loadLive().then(() => { if (!alive) return })
+    void loadStaffToggles()
     const t = setInterval(() => { if (alive) void loadLive() }, 10_000)
     fetch('/api/agent/vps/deploy', { cache: 'no-store' })
       .then(r => r.json())
       .then((d: { lastDeploy?: { ts?: string } }) => { if (alive && d?.lastDeploy?.ts) setLastDeploy(d.lastDeploy.ts) })
       .catch(() => {})
     return () => { alive = false; clearInterval(t) }
-  }, [loadLive])
+  }, [loadLive, loadStaffToggles])
 
   useEffect(() => {
     if (!liveData) return
@@ -417,6 +431,28 @@ export default function AgentStaffMonitor() {
       showToast('Duty toggle ব্যর্থ', 'err')
     } finally {
       setDutyToggling(null)
+    }
+  }
+
+  async function toggleStaffTask(key: string, enabled: boolean) {
+    const prev = staffToggles
+    setStaffTaskToggling(key)
+    setStaffToggles((m) => ({ ...m, [key]: enabled }))
+    try {
+      const res = await fetch('/api/assistant/staff-toggles', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, enabled }),
+      })
+      const data = await res.json() as { toggles?: Record<string, boolean>; error?: string }
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      if (data.toggles) setStaffToggles(data.toggles)
+      showToast(enabled ? 'চালু করা হলো' : 'বন্ধ করা হলো', enabled ? 'ok' : 'err')
+    } catch {
+      setStaffToggles(prev)
+      showToast('Toggle ব্যর্থ', 'err')
+    } finally {
+      setStaffTaskToggling(null)
     }
   }
 
@@ -790,6 +826,40 @@ export default function AgentStaffMonitor() {
                       </div>
                     </div>
                   ) : null}
+                  {staffToggleDefs.length > 0 && (
+                    <div className="mt-3 border-t border-black/[0.06] pt-3">
+                      <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">🎛️ Staff Task Controls</h4>
+                      <div className="space-y-1.5">
+                        {staffToggleDefs.map((def) => {
+                          const enabled = staffToggles[def.key] !== false
+                          return (
+                            <div key={def.key} className="flex items-center justify-between gap-2 rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-2">
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-bold text-[#1a1a2e]/80">{def.label}</p>
+                                <p className="mt-0.5 text-[10px] leading-tight text-zinc-500">{def.hint}</p>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={staffTaskToggling === def.key}
+                                onClick={() => void toggleStaffTask(def.key, !enabled)}
+                                className={cn(
+                                  'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors',
+                                  enabled
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : 'border-zinc-300 bg-zinc-100 text-zinc-600',
+                                  staffTaskToggling === def.key && 'opacity-60',
+                                )}
+                                aria-pressed={enabled}
+                              >
+                                <span className={cn('inline-block h-2 w-2 rounded-full', enabled ? 'bg-emerald-500' : 'bg-zinc-400')} />
+                                {enabled ? 'ON' : 'OFF'}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </SectionCard>
               </motion.div>
             ) : null}

@@ -100,15 +100,15 @@ export function ScrollAffordances({
           <motion.button
             key="top"
             type="button"
-            initial={{ opacity: 0, scale: 0.85, y: 6 }}
+            initial={{ opacity: 0, scale: 0.6, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.85, y: 6 }}
-            transition={{ duration: 0.16 }}
+            exit={{ opacity: 0, scale: 0.6, y: 8 }}
+            transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
             onClick={scrollToTop}
             aria-label="উপরে যান"
-            className="alma-frost pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-95"
+            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="h-[13px] w-[13px] md:h-[14px] md:w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 19V5M5 12l7-7 7 7" />
             </svg>
           </motion.button>
@@ -117,15 +117,15 @@ export function ScrollAffordances({
           <motion.button
             key="bottom"
             type="button"
-            initial={{ opacity: 0, scale: 0.85, y: -6 }}
+            initial={{ opacity: 0, scale: 0.6, y: -8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.85, y: -6 }}
-            transition={{ duration: 0.16 }}
+            exit={{ opacity: 0, scale: 0.6, y: -8 }}
+            transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
             onClick={scrollToBottom}
             aria-label="নিচে যান"
-            className="alma-frost pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-95"
+            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="h-[13px] w-[13px] md:h-[14px] md:w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M19 12l-7 7-7-7" />
             </svg>
           </motion.button>
