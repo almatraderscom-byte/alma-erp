@@ -108,7 +108,7 @@ function renewalBadge(dateStr: string) {
   if (days < 0) return { label: 'মেয়াদোত্তীর্ণ', cls: 'bg-red-50 border border-red-200 text-red-600 shadow-sm' }
   if (days <= 3) return { label: `${days} দিন`, cls: 'bg-amber-50 border border-amber-200 text-amber-700 shadow-sm' }
   if (days <= 14) return { label: `${days} দিন`, cls: 'bg-[#E07A5F]/10 border border-[#E07A5F]/20 text-[#E07A5F]' }
-  return { label: `${days} দিন`, cls: 'bg-[#FAF9F6] border border-black/[0.06] text-[#94a3b8]' }
+  return { label: `${days} দিন`, cls: 'bg-transparent border border-border-subtle text-muted' }
 }
 
 function fmtBalanceCell(row: BalanceProviderRow) {
@@ -137,7 +137,7 @@ function fmtCheckedAt(iso: string) {
 
 function balanceColor(row: BalanceProviderRow): string {
   if (row.free) return 'text-emerald-600'
-  if (row.balanceUsd == null) return 'text-[#94a3b8]'
+  if (row.balanceUsd == null) return 'text-muted'
   if (row.balanceUsd < 1) return 'text-red-500'
   if (row.balanceUsd < 5) return 'text-amber-600'
   return 'text-emerald-600'
@@ -197,31 +197,31 @@ function TtsProviderCard({
 
   const callGrid = (
     <>
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#64748b]">{callLabel}</p>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">{callLabel}</p>
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayCalls.minutesUsed}</p>
-          <p className="text-[10px] text-[#64748b]">{fmtUsd(todayCalls.costUsd)}</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">আজ — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayCalls.minutesUsed}</p>
+          <p className="text-[10px] text-muted">{fmtUsd(todayCalls.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayCalls.characters.toLocaleString()}</p>
-          <p className="text-[10px] text-[#64748b]">{todayCallCount} calls</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">আজ — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayCalls.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-muted">{todayCallCount} calls</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthCalls.minutesUsed}</p>
-          <p className="text-[10px] text-[#64748b]">{fmtUsd(monthCalls.costUsd)}</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">মাস — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthCalls.minutesUsed}</p>
+          <p className="text-[10px] text-muted">{fmtUsd(monthCalls.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthCalls.characters.toLocaleString()}</p>
-          <p className="text-[10px] text-[#64748b]">{monthCallCount} calls</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">মাস — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthCalls.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-muted">{monthCallCount} calls</p>
         </div>
       </div>
       {twilioToday && (
-        <p className="mb-3 text-[10px] text-[#94a3b8]">
+        <p className="mb-3 text-[10px] text-muted">
           Twilio: আজ {twilioToday.callCount} কল · ~{twilioToday.minutesUsed}m · {fmtUsd(twilioToday.costUsd)}
           {twilioMonth ? ` · মাসে ${twilioMonth.callCount} কল · ~${twilioMonth.minutesUsed}m` : ''}
         </p>
@@ -231,27 +231,27 @@ function TtsProviderCard({
 
   const voiceGrid = (
     <>
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#64748b]">ভয়েস মেসেজ / voice reply</p>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">ভয়েস মেসেজ / voice reply</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — মিনিট</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayVoice.minutesUsed}</p>
-          <p className="text-[10px] text-[#64748b]">{fmtUsd(todayVoice.costUsd)}</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">আজ — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayVoice.minutesUsed}</p>
+          <p className="text-[10px] text-muted">{fmtUsd(todayVoice.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">আজ — ক্যারেক্টার</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{todayVoice.characters.toLocaleString()}</p>
-          <p className="text-[10px] text-[#64748b]">{todayVoice.synthesisCount} synthesis</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">আজ — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{todayVoice.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-muted">{todayVoice.synthesisCount} synthesis</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — মিনিট</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthVoice.minutesUsed}</p>
-          <p className="text-[10px] text-[#64748b]">{fmtUsd(monthVoice.costUsd)}</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">মাস — মিনিট</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthVoice.minutesUsed}</p>
+          <p className="text-[10px] text-muted">{fmtUsd(monthVoice.costUsd)}</p>
         </div>
-        <div className="rounded-xl border border-black/[0.05] bg-white/80 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">মাস — ক্যারেক্টার</p>
-          <p className="mt-1 text-lg font-bold text-[#1a1a2e] tabular-nums">{monthVoice.characters.toLocaleString()}</p>
-          <p className="text-[10px] text-[#64748b]">{monthVoice.synthesisCount} synthesis</p>
+        <div className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-xl px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted">মাস — ক্যারেক্টার</p>
+          <p className="mt-1 text-lg font-bold text-cream tabular-nums">{monthVoice.characters.toLocaleString()}</p>
+          <p className="text-[10px] text-muted">{monthVoice.synthesisCount} synthesis</p>
         </div>
       </div>
     </>
@@ -263,21 +263,21 @@ function TtsProviderCard({
     <div className={cn('rounded-2xl border p-4 shadow-sm', borderClass, gradientClass)}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className={cn('text-xs font-semibold', accent)}>{title}</p>
-        <p className="text-[10px] text-[#94a3b8]">{priceNote}</p>
+        <p className="text-[10px] text-muted">{priceNote}</p>
       </div>
 
       {primaryMode === 'calls' ? (
         <>
           {callGrid}
           {(todayVoice.synthesisCount > 0 || monthVoice.synthesisCount > 0) && (
-            <div className="mt-1 border-t border-black/[0.05] pt-3">{voiceGrid}</div>
+            <div className="mt-1 border-t border-border-subtle pt-3">{voiceGrid}</div>
           )}
         </>
       ) : (
         <>
           {voiceGrid}
           {showCallsSecondary && (
-            <div className="mt-3 border-t border-black/[0.05] pt-3">{callGrid}</div>
+            <div className="mt-3 border-t border-border-subtle pt-3">{callGrid}</div>
           )}
         </>
       )}
@@ -379,7 +379,7 @@ export default function AgentCostsDashboard() {
 
   if (loading) {
     return (
-      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-[#FAF9F6] min-h-[100dvh]">
+      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-transparent min-h-[100dvh]">
         <div className="skeleton h-8 w-48 rounded-lg" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {[0, 1, 2].map((i) => (
@@ -393,9 +393,9 @@ export default function AgentCostsDashboard() {
 
   if (error || !data) {
     return (
-      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-[#FAF9F6]">
+      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-transparent">
         <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
-        <button onClick={() => void load()} className="rounded-xl border border-black/[0.06] bg-white px-4 py-2 text-xs text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 shadow-sm transition-all">
+        <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
           আবার চেষ্টা
         </button>
       </div>
@@ -403,14 +403,14 @@ export default function AgentCostsDashboard() {
   }
 
   return (
-    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-[#FAF9F6] min-h-[100dvh]">
+    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent min-h-[100dvh]">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] alma-frost px-4 py-3">
         <div>
-          <h1 className="text-lg font-bold text-[#1a1a2e]">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
-          <p className="text-[11px] text-[#94a3b8]">API + সাবস্ক্রিপশন — এক জায়গায়</p>
+          <h1 className="text-lg font-bold text-cream">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
+          <p className="text-[11px] text-muted">API + সাবস্ক্রিপশন — এক জায়গায়</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/agent" className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-xs text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 shadow-sm transition-all">
+          <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
             ← চ্যাট
           </Link>
           <a
@@ -423,31 +423,31 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* API balances */}
-      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
+      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold text-[#E07A5F]">💳 API ব্যালেন্স</p>
           <div className="flex items-center gap-2">
             {balances?.checkedAt && (
-              <p className="text-[10px] text-[#94a3b8]">
+              <p className="text-[10px] text-muted">
                 শেষ চেক: {fmtCheckedAt(balances.checkedAt)}
               </p>
             )}
             <button
               onClick={() => void refreshBalances()}
               disabled={refreshingBalances}
-              className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-1 text-[10px] text-[#64748b] hover:text-[#1a1a2e] hover:border-[#E07A5F]/30 disabled:opacity-50 transition-all"
+              className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-[10px] text-muted hover:text-cream hover:border-[#E07A5F]/30 disabled:opacity-50 transition-all"
             >
               {refreshingBalances ? 'রিফ্রেশ…' : '🔄 Refresh'}
             </button>
           </div>
         </div>
         {!balances?.providers?.length ? (
-          <p className="py-4 text-center text-[11px] text-[#94a3b8]">ব্যালেন্স লোড হচ্ছে…</p>
+          <p className="py-4 text-center text-[11px] text-muted">ব্যালেন্স লোড হচ্ছে…</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-left text-[11px]">
               <thead>
-                <tr className="border-b border-black/[0.06]">
+                <tr className="border-b border-border-subtle">
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">Provider</th>
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">ব্যালেন্স</th>
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">আজ খরচ</th>
@@ -457,8 +457,8 @@ export default function AgentCostsDashboard() {
               </thead>
               <tbody>
                 {balances.providers.map((row) => (
-                  <tr key={row.id} className="border-b border-black/[0.04] last:border-0 hover:bg-[#FAF9F6] transition-colors">
-                    <td className="py-2.5 pr-3 text-[#1a1a2e]">{row.label}</td>
+                  <tr key={row.id} className="border-b border-border-subtle last:border-0 hover:bg-white/[0.04] transition-colors">
+                    <td className="py-2.5 pr-3 text-cream">{row.label}</td>
                     <td className={cn('py-2.5 pr-3 font-medium', balanceColor(row))}>
                       {fmtBalanceCell(row)}
                       {row.free && (
@@ -467,9 +467,9 @@ export default function AgentCostsDashboard() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-3 text-[#64748b]">{fmtSpendCell(row.todayUsd, row.id)}</td>
-                    <td className="py-2.5 pr-3 text-[#64748b]">{fmtSpendCell(row.monthUsd, row.id)}</td>
-                    <td className="py-2.5 text-[#94a3b8]">{row.source}</td>
+                    <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.todayUsd, row.id)}</td>
+                    <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.monthUsd, row.id)}</td>
+                    <td className="py-2.5 text-muted">{row.source}</td>
                   </tr>
                 ))}
               </tbody>
@@ -480,7 +480,7 @@ export default function AgentCostsDashboard() {
 
       {(data.googleTts || data.elevenLabs) && (
         <div className="space-y-3">
-          <p className="text-[11px] font-semibold text-[#64748b]">🎙️ Voice API — Google TTS vs ElevenLabs (আলাদা হিসাব)</p>
+          <p className="text-[11px] font-semibold text-muted">🎙️ Voice API — Google TTS vs ElevenLabs (আলাদা হিসাব)</p>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {data.googleTts && (
               <TtsProviderCard
@@ -541,40 +541,40 @@ export default function AgentCostsDashboard() {
             key={c.label}
             variants={staggerItem}
             className={cn(
-              'rounded-[18px] border border-black/[0.06] bg-white p-4 transition-all hover:border-black/[0.1] shadow-card',
+              'rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 transition-all hover:border-border shadow-card',
               STAT_GLOWS[idx],
             )}
           >
-            <p className="text-[10px] uppercase tracking-wider text-[#94a3b8]">{c.label}</p>
-            <p className="mt-1 text-2xl font-bold text-[#1a1a2e]">{c.value}</p>
-            {c.sub && <p className="mt-1 text-[10px] text-[#94a3b8]">{c.sub}</p>}
+            <p className="text-[10px] uppercase tracking-wider text-muted">{c.label}</p>
+            <p className="mt-1 text-2xl font-bold text-cream">{c.value}</p>
+            {c.sub && <p className="mt-1 text-[10px] text-muted">{c.sub}</p>}
           </motion.div>
         ))}
       </motion.div>
 
       {/* Budget settings */}
-      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
+      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
         <p className="text-xs font-semibold text-[#E07A5F] mb-3">বাজেট সতর্কতা (USD)</p>
         <div className="flex flex-wrap gap-3 items-end">
-          <label className="text-[11px] text-[#94a3b8]">
+          <label className="text-[11px] text-muted">
             দৈনিক
             <input
               type="number"
               step="0.01"
               value={budgetDaily}
               onChange={(e) => setBudgetDaily(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-2 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-transparent border border-border px-2 py-2 text-sm text-cream focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>
-          <label className="text-[11px] text-[#94a3b8]">
+          <label className="text-[11px] text-muted">
             মাসিক
             <input
               type="number"
               step="0.01"
               value={budgetMonthly}
               onChange={(e) => setBudgetMonthly(e.target.value)}
-              className="mt-1 block w-28 rounded-lg bg-[#FAF9F6] border border-black/[0.08] px-2 py-2 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
+              className="mt-1 block w-28 rounded-lg bg-transparent border border-border px-2 py-2 text-sm text-cream focus:outline-none focus:border-[#E07A5F]/40 focus:shadow-[0_0_8px_rgba(224,122,95,0.1)] transition-all"
               placeholder="—"
             />
           </label>
@@ -586,18 +586,18 @@ export default function AgentCostsDashboard() {
             {savingBudget ? 'সংরক্ষণ…' : 'সংরক্ষণ'}
           </button>
         </div>
-        <p className="mt-2 text-[10px] text-[#94a3b8]">৮০% → Tier 1 সতর্কতা | ১০০% → Tier 2 critical</p>
+        <p className="mt-2 text-[10px] text-muted">৮০% → Tier 1 সতর্কতা | ১০০% → Tier 2 critical</p>
         {(data.dailyBudgetPct != null || data.monthlyBudgetPct != null) && (
           <div className="mt-3 space-y-2 text-[11px]">
             {data.dailyBudgetPct != null && data.budgets.dailyUsd != null && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-[#64748b]">
+                <div className="flex items-center justify-between text-muted">
                   <span>আজকের বাজেট ব্যবহার</span>
-                  <span className={data.dailyBudgetPct >= 100 ? 'text-red-500' : data.dailyBudgetPct >= 80 ? 'text-amber-600' : 'text-[#1a1a2e]'}>
+                  <span className={data.dailyBudgetPct >= 100 ? 'text-red-500' : data.dailyBudgetPct >= 80 ? 'text-amber-600' : 'text-cream'}>
                     {data.dailyBudgetPct}% ({fmtUsd(data.todayUsd)} / {fmtUsd(data.budgets.dailyUsd)})
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.04]">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.04]">
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-500',
@@ -614,13 +614,13 @@ export default function AgentCostsDashboard() {
             )}
             {data.monthlyBudgetPct != null && data.budgets.monthlyUsd != null && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-[#64748b]">
+                <div className="flex items-center justify-between text-muted">
                   <span>মাসিক বাজেট ব্যবহার</span>
-                  <span className={data.monthlyBudgetPct >= 100 ? 'text-red-500' : data.monthlyBudgetPct >= 80 ? 'text-amber-600' : 'text-[#1a1a2e]'}>
+                  <span className={data.monthlyBudgetPct >= 100 ? 'text-red-500' : data.monthlyBudgetPct >= 80 ? 'text-amber-600' : 'text-cream'}>
                     {data.monthlyBudgetPct}% ({fmtUsd(data.monthUsd)} / {fmtUsd(data.budgets.monthlyUsd)})
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.04]">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.04]">
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-500',
@@ -641,10 +641,10 @@ export default function AgentCostsDashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-          <p className="text-xs font-semibold text-[#64748b] mb-3">দৈনিক খরচ (৩০ দিন)</p>
+        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+          <p className="text-xs font-semibold text-muted mb-3">দৈনিক খরচ (৩০ দিন)</p>
           {chartData.length === 0 ? (
-            <p className="py-12 text-center text-[11px] text-[#94a3b8]">এখনো কোনো ইভেন্ট নেই</p>
+            <p className="py-12 text-center text-[11px] text-muted">এখনো কোনো ইভেন্ট নেই</p>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={chartData}>
@@ -668,10 +668,10 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-          <p className="text-xs font-semibold text-[#64748b] mb-3">প্রোভাইডার (এই মাস)</p>
+        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+          <p className="text-xs font-semibold text-muted mb-3">প্রোভাইডার (এই মাস)</p>
           {pieData.length === 0 ? (
-            <p className="py-12 text-center text-[11px] text-[#94a3b8]">ডেটা নেই</p>
+            <p className="py-12 text-center text-[11px] text-muted">ডেটা নেই</p>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
@@ -695,15 +695,15 @@ export default function AgentCostsDashboard() {
 
       {/* Top conversations */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-          <p className="text-xs font-semibold text-[#64748b] mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
+        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+          <p className="text-xs font-semibold text-muted mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
           {data.topConversations.length === 0 ? (
-            <p className="text-[11px] text-[#94a3b8] py-4 text-center">এখনো নেই</p>
+            <p className="text-[11px] text-muted py-4 text-center">এখনো নেই</p>
           ) : (
             <ul className="space-y-2">
               {data.topConversations.map((c) => (
-                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-[#FAF9F6] transition-colors">
-                  <Link href="/agent" className="truncate text-[#64748b] hover:text-[#E07A5F] transition-colors">
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.04] transition-colors">
+                  <Link href="/agent" className="truncate text-muted hover:text-[#E07A5F] transition-colors">
                     {c.title ?? c.conversationId.slice(0, 8)}
                   </Link>
                   <span className="shrink-0 text-[#E07A5F] font-medium">{fmtUsd(c.totalUsd)}</span>
@@ -713,20 +713,20 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-          <p className="text-xs font-semibold text-[#64748b] mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
-          <p className="text-[10px] text-[#94a3b8] mb-3">
+        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+          <p className="text-xs font-semibold text-muted mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
+          <p className="text-[10px] text-muted mb-3">
             আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
           </p>
           {data.topTelegramConversations.length === 0 ? (
-            <p className="text-[11px] text-[#94a3b8] py-4 text-center">
+            <p className="text-[11px] text-muted py-4 text-center">
               এখনো Telegram ট্যাগ করা কথোপকথন নেই — নতুন মেসেজ থেকে ট্র্যাক হবে
             </p>
           ) : (
             <ul className="space-y-2">
               {data.topTelegramConversations.map((c) => (
-                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-[#FAF9F6] transition-colors">
-                  <span className="truncate text-[#64748b]">{c.title ?? c.conversationId.slice(0, 8)}</span>
+                <li key={c.conversationId} className="flex items-center justify-between gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-white/[0.04] transition-colors">
+                  <span className="truncate text-muted">{c.title ?? c.conversationId.slice(0, 8)}</span>
                   <span className="shrink-0 text-[#E07A5F] font-medium">{fmtUsd(c.totalUsd)}</span>
                 </li>
               ))}
@@ -737,8 +737,8 @@ export default function AgentCostsDashboard() {
 
       {/* Telegram daily chart */}
       {(data.telegramDailyLast30?.length ?? 0) > 0 && (
-        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-          <p className="text-xs font-semibold text-[#64748b] mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
+        <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+          <p className="text-xs font-semibold text-muted mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={data.telegramDailyLast30.map((d) => ({
               date: d.date.slice(5),
@@ -759,10 +759,10 @@ export default function AgentCostsDashboard() {
       )}
 
       {/* Subscriptions */}
-      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
-        <p className="text-xs font-semibold text-[#64748b] mb-3">সাবস্ক্রিপশন</p>
+      <div className="rounded-[18px] border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-card">
+        <p className="text-xs font-semibold text-muted mb-3">সাবস্ক্রিপশন</p>
         {data.subscriptions.length === 0 ? (
-          <p className="text-[11px] text-[#94a3b8] py-4 text-center">
+          <p className="text-[11px] text-muted py-4 text-center">
             কোনো সাবস্ক্রিপশন নেই — এজেন্টকে বলুন: &quot;ChatGPT subscription add koro…&quot;
           </p>
         ) : (
@@ -770,10 +770,10 @@ export default function AgentCostsDashboard() {
             {data.subscriptions.map((s) => {
               const badge = renewalBadge(s.nextRenewalAt)
               return (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5 hover:bg-white hover:shadow-sm transition-all">
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 hover:bg-card/60 backdrop-blur-2xl hover:shadow-sm transition-all">
                   <div>
-                    <p className="text-xs font-medium text-[#1a1a2e]">{s.name}</p>
-                    <p className="text-[10px] text-[#94a3b8]">
+                    <p className="text-xs font-medium text-cream">{s.name}</p>
+                    <p className="text-[10px] text-muted">
                       {s.currency} {s.amount}/{s.billingCycle === 'yearly' ? 'বছর' : 'মাস'}
                       {s.category ? ` · ${s.category}` : ''}
                     </p>

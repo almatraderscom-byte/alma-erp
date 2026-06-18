@@ -31,7 +31,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
     ? path === href
     : path.startsWith(href)
   return (
-    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/10 border border-gold/25' : 'border border-transparent hover:bg-gold/[0.05] hover:border-border-subtle'}`}>
+    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gold/15 border border-gold/30 shadow-[0_0_22px_rgba(224,122,95,.12)]' : 'border border-transparent hover:bg-white/[0.04] hover:border-border-subtle'}`}>
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gold rounded-r-full" />}
       <span className={`relative text-base shrink-0 transition-colors ${active ? 'text-gold' : 'text-muted group-hover:text-muted-hi'}`}>
         {icon}
@@ -71,7 +71,7 @@ export function Sidebar() {
     <motion.aside
       animate={{ width: collapsed ? 64 : 220 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="hidden md:flex flex-col bg-card border-r border-border-subtle shrink-0 overflow-hidden"
+      className="hidden md:flex flex-col bg-card/55 backdrop-blur-2xl border-r border-border-subtle shrink-0 overflow-hidden"
     >
       <motion.div layout className={`flex items-center px-4 py-5 border-b border-border-subtle gap-2 ${collapsed ? 'justify-center' : ''}`}>
         <div className={`flex items-center min-w-0 ${collapsed ? 'justify-center' : 'flex-1 gap-3'}`}>
@@ -172,7 +172,7 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
         'flex items-center gap-3 rounded-2xl border px-3 py-3 transition-all duration-200',
         active
           ? 'border-gold/30 bg-gold/10 text-gold shadow-[0_0_24px_rgba(224,122,95,.06)]'
-          : 'border-border-subtle bg-bg-2 text-muted-hi hover:border-gold/20 hover:bg-gold/[0.04]',
+          : 'border-border-subtle bg-white/[0.04] text-muted-hi hover:border-gold/20 hover:bg-gold/[0.06]',
       )}
     >
       <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border-subtle bg-card text-base">{item.icon}</span>
@@ -326,7 +326,7 @@ export function MobileNav() {
   return (
     <>
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
-        <div className="mx-auto max-w-lg rounded-[26px] border border-border-subtle bg-card/95 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
+        <div className="mx-auto max-w-lg rounded-[26px] border border-border-subtle bg-card/80 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
           <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${mobileTabCount}, minmax(0, 1fr))` }}>
             {primary.slice(0, 3).map(item => (
               <MobileTab key={item.key} icon={item.icon} label={item.label} href={item.href} active={activePath(path, item.href)} />
@@ -353,7 +353,7 @@ export function MobileNav() {
               onClick={() => setDrawerOpen(false)}
             />
             <motion.aside
-              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-border-subtle bg-card shadow-xl shadow-black/10 md:hidden mobile-sheet"
+              className="fixed inset-x-0 bottom-0 z-[140] max-h-[86dvh] rounded-t-[30px] border-t border-border-subtle bg-card/85 backdrop-blur-2xl shadow-xl shadow-black/10 md:hidden mobile-sheet"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}

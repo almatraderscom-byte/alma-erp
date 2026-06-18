@@ -44,7 +44,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
         </motion.div>
 
         <motion.p
-          className="text-lg font-semibold text-[#1a1a2e]"
+          className="text-lg font-semibold text-cream"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.4 }}
@@ -52,7 +52,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
           আস্সালামু আলাইকুম
         </motion.p>
         <motion.p
-          className="mt-1.5 text-[13px] text-[#64748b]"
+          className="mt-1.5 text-[13px] text-muted"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15, duration: 0.4 }}
@@ -77,7 +77,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
               type="button"
               variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
               onClick={() => onSuggestion(s.text)}
-              className="alma-frost flex items-start gap-2.5 rounded-[18px] px-4 py-3 text-left text-[13px] font-medium text-[#1a1a2e]/85 transition-all hover:border-[#E07A5F]/30 hover:text-[#1a1a2e] active:scale-[0.98]"
+              className="alma-frost flex items-start gap-2.5 rounded-[18px] px-4 py-3 text-left text-[13px] font-medium text-cream/85 transition-all hover:border-[#E07A5F]/30 hover:text-cream active:scale-[0.98]"
             >
               <span className="text-base leading-none">{s.icon}</span>
               <span className="leading-snug">{s.text}</span>

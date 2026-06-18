@@ -150,7 +150,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         <span>⚠️</span>
         <span>অনুমোদন প্রয়োজন</span>
       </div>
-      <pre className="mb-3 whitespace-pre-wrap font-sans text-xs leading-relaxed text-gray-700">{summary}</pre>
+      <pre className="mb-3 whitespace-pre-wrap font-sans text-xs leading-relaxed text-cream">{summary}</pre>
 
       {meta.actionType === 'oxylabs_spend' && meta.costEstimate != null && (
         <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -171,23 +171,23 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       )}
 
       {phase === 'editing' && (
-        <div className="mb-3 space-y-2 rounded-lg border border-black/[0.06] bg-white p-3">
+        <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-card/60 backdrop-blur-2xl p-3">
           {!editField ? (
             <div className="flex flex-wrap gap-2">
               {(editFields.length ? editFields : Object.keys(EDIT_FIELDS)).map((f) => (
                 <button key={f} type="button" onClick={() => setEditField(f)}
-                  className="rounded-lg border border-black/[0.06] bg-gray-50 px-2 py-1 text-[10px] text-gray-700 hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5">
+                  className="rounded-lg border border-border-subtle bg-white/[0.04] px-2 py-1 text-[10px] text-cream hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5">
                   {EDIT_FIELDS[f] ?? f}
                 </button>
               ))}
               <button type="button" onClick={() => setPhase('idle')}
-                className="rounded-lg border border-black/[0.06] px-2 py-1 text-[10px] text-gray-500">বাতিল</button>
+                className="rounded-lg border border-border-subtle px-2 py-1 text-[10px] text-muted">বাতিল</button>
             </div>
           ) : (
             <>
-              <p className="text-[10px] text-gray-500">{EDIT_FIELDS[editField] ?? editField} — নতুন মান:</p>
+              <p className="text-[10px] text-muted">{EDIT_FIELDS[editField] ?? editField} — নতুন মান:</p>
               <input value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                className="w-full rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:border-[#E07A5F]/40" />
+                className="w-full rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-xs text-cream focus:outline-none focus:border-[#E07A5F]/40" />
               <button type="button" onClick={() => void applyEdit()}
                 className="rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/25 px-3 py-1.5 text-[10px] text-[#E07A5F] hover:bg-[#E07A5F]/20">সংরক্ষণ</button>
             </>

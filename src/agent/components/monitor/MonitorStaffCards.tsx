@@ -12,7 +12,7 @@ function statusInfo(s: StaffSummary): { dot: string; glow: string; border: strin
   if (s.completionPct >= 100) return { dot: 'bg-emerald-500', glow: 'shadow-[0_0_10px_rgba(16,185,129,0.5)]', border: 'border-emerald-500/25', label: 'Complete' }
   if (s.started && s.completionPct >= 50) return { dot: 'bg-amber-500', glow: 'shadow-[0_0_10px_rgba(245,158,11,0.5)]', border: 'border-amber-500/20', label: 'Working' }
   if (s.started) return { dot: 'bg-amber-500', glow: 'shadow-[0_0_8px_rgba(245,158,11,0.4)]', border: 'border-amber-500/15', label: 'Started' }
-  return { dot: 'bg-zinc-400', glow: '', border: 'border-black/[0.06]', label: 'Idle' }
+  return { dot: 'bg-zinc-400', glow: '', border: 'border-border-subtle', label: 'Idle' }
 }
 
 function ProgressRing({ percent, size = 36 }: { percent: number; size?: number }) {
@@ -71,7 +71,7 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
     <motion.div variants={stagger} initial="hidden" animate="show">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm">👥</span>
-        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Staff Overview</h3>
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Staff Overview</h3>
         <span className="rounded-md bg-[#E07A5F]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#E07A5F]">
           {staffSummaries.length} active
         </span>
@@ -84,7 +84,7 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
               key={s.staffId}
               variants={slideUp}
               className={cn(
-                'group relative overflow-hidden rounded-2xl border bg-white shadow-sm p-3.5',
+                'group relative overflow-hidden rounded-2xl border bg-card/60 backdrop-blur-2xl shadow-sm p-3.5',
                 'transition-all duration-300 hover:shadow-md',
                 info.border,
               )}
@@ -100,19 +100,19 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <h4 className="truncate text-[13px] font-semibold text-[#1a1a2e]">{s.staffName}</h4>
+                    <h4 className="truncate text-[13px] font-semibold text-cream">{s.staffName}</h4>
                     <span className={cn(
                       'shrink-0 rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider',
                       s.completionPct >= 100 ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600' :
                       s.completionPct >= 50 ? 'border-amber-500/25 bg-amber-500/10 text-amber-600' :
-                      'border-black/[0.06] bg-[#FAF9F6] text-[#94a3b8]',
+                      'border-border-subtle bg-transparent text-muted',
                     )}>
                       {info.label}
                     </span>
                   </div>
 
                   <div className="mt-2 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/[0.06]">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
                       <motion.div
                         className="h-full rounded-full bg-gradient-to-r from-[#E07A5F] via-[#81B29A] to-[#81B29A]"
                         initial={{ width: 0 }}
@@ -120,10 +120,10 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
                         transition={{ duration: 1, ease: 'easeOut', delay: 0.2 }}
                       />
                     </div>
-                    <span className="text-[11px] font-bold tabular-nums text-[#64748b]">{s.completionPct}%</span>
+                    <span className="text-[11px] font-bold tabular-nums text-muted">{s.completionPct}%</span>
                   </div>
 
-                  <div className="mt-2 flex items-center gap-3 text-[10px] text-[#94a3b8]">
+                  <div className="mt-2 flex items-center gap-3 text-[10px] text-muted">
                     <span className="flex items-center gap-1">📤 {s.dispatched}</span>
                     <span className="flex items-center gap-1">✓ {s.delivered}</span>
                     {s.failed > 0 && <span className="text-red-500">✗ {s.failed}</span>}

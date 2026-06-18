@@ -50,9 +50,9 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
     toast(
       (t) => (
         <div className="text-left text-xs leading-relaxed max-w-[min(90vw,320px)]">
-          <p className="font-bold text-slate-800 mb-1.5">Deploy info</p>
+          <p className="font-bold text-cream mb-1.5">Deploy info</p>
           {lines.map((line) => (
-            <p key={line} className="text-slate-600 break-words">{line}</p>
+            <p key={line} className="text-muted-hi break-words">{line}</p>
           ))}
           <div className="mt-2 flex flex-wrap gap-2">
             {remote?.githubCommitUrl && (
@@ -97,7 +97,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
           : 'hidden px-2 py-0.5 text-[9px] sm:inline-flex',
         stale
           ? 'border-amber-300 bg-amber-50 text-amber-800 animate-pulse'
-          : 'border-black/[0.06] bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700',
+          : 'border-border-subtle bg-slate-50 text-muted hover:bg-slate-100 hover:text-cream',
         className,
       )}
     >
@@ -113,7 +113,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="mb-2.5 flex justify-center"
       >
-        <div className="inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/90 px-2 py-1 shadow-[0_4px_20px_rgba(224,122,95,0.12)] backdrop-blur-sm">
+        <div className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/70 backdrop-blur-xl px-2 py-1 shadow-[0_4px_20px_rgba(224,122,95,0.12)] backdrop-blur-sm">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#E07A5F] opacity-40" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E07A5F]" />

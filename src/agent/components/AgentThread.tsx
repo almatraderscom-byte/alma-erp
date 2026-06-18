@@ -103,7 +103,7 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-[12px] font-medium text-[#94a3b8] transition-colors hover:text-[#64748b]"
+        className="flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-muted"
       >
         {live ? (
           <motion.span
@@ -139,7 +139,7 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
           >
             <div
               ref={bodyRef}
-              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-black/[0.07] pl-3 text-[13px] leading-relaxed text-[#64748b] whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-white/[0.07] pl-3 text-[13px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
             >
               {thinking}
             </div>
@@ -167,21 +167,21 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
   const [open, setOpen] = useState(false)
   const hasSummary = Boolean(d.summary)
   return (
-    <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white/70 backdrop-blur-sm">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-card/55 backdrop-blur-xl backdrop-blur-sm">
       <button
         type="button"
         onClick={() => hasSummary && setOpen((o) => !o)}
-        className={`flex w-full items-start gap-2.5 px-3 py-2.5 text-left ${hasSummary ? 'cursor-pointer hover:bg-black/[0.02]' : 'cursor-default'}`}
+        className={`flex w-full items-start gap-2.5 px-3 py-2.5 text-left ${hasSummary ? 'cursor-pointer hover:bg-white/[0.02]' : 'cursor-default'}`}
       >
         <span className="mt-0.5 text-[15px] leading-none">{ROLE_ICON[d.role] ?? '🤝'}</span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="text-[12px] font-semibold text-[#1a1a2e]">{d.roleLabel}</span>
+            <span className="text-[12px] font-semibold text-cream">{d.roleLabel}</span>
             <span className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-600">সাব-এজেন্ট</span>
           </span>
-          <span className="mt-0.5 block truncate text-[12px] leading-snug text-[#64748b]">{d.task}</span>
+          <span className="mt-0.5 block truncate text-[12px] leading-snug text-muted">{d.task}</span>
           {d.toolsUsed && d.toolsUsed.length > 0 && (
-            <span className="mt-1 block truncate text-[10px] text-gray-400">
+            <span className="mt-1 block truncate text-[10px] text-muted">
               {d.toolsUsed.map((t) => toolDisplay(t).label).join(' · ')}
             </span>
           )}
@@ -205,7 +205,7 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="border-t border-black/[0.06] px-3 py-2.5 text-[13px] leading-relaxed text-[#334155] whitespace-pre-wrap break-words">
+            <div className="border-t border-border-subtle px-3 py-2.5 text-[13px] leading-relaxed text-muted-hi whitespace-pre-wrap break-words">
               {d.summary}
             </div>
           </motion.div>
@@ -225,7 +225,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="rounded-lg p-1.5 text-gray-400 transition-all hover:bg-black/[0.05] hover:text-gray-600"
+      className="rounded-lg p-1.5 text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi"
       title={copied ? 'কপি হয়েছে' : 'কপি করুন'}
     >
       {copied ? (
@@ -297,7 +297,7 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
       onClick={speak}
       disabled={loading}
       data-message-id={messageId}
-      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-gray-400 hover:bg-black/[0.05] hover:text-gray-600'}`}
+      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-muted hover:bg-white/[0.05] hover:text-muted-hi'}`}
       title={playing ? 'থামান' : 'শুনুন'}
     >
       {loading ? (
@@ -335,7 +335,7 @@ function ToolActivityChip({ name, done, success, input }: { name: string; done: 
         ? success !== false
           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
           : 'border-red-200 bg-red-50 text-red-600'
-        : 'border-black/[0.08] bg-black/[0.02] text-gray-500'
+        : 'border-border bg-white/[0.02] text-muted'
     }`}>
       {!done && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
@@ -436,7 +436,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               }))}
               renderUserMessage={(msg) => (
                 <div className="mb-4 flex justify-end">
-                  <div className="max-w-[85%] min-w-0 rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-[#1a1a2e] whitespace-pre-wrap break-words select-text">
+                  <div className="max-w-[85%] min-w-0 rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-cream whitespace-pre-wrap break-words select-text">
                     {msg.text}
                   </div>
                 </div>
@@ -463,9 +463,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         {msg.files.map((f, i) => (
                           f.mediaType.startsWith('image/') ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-black/[0.06]" />
+                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-border-subtle" />
                           ) : (
-                            <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-black/[0.06] bg-gray-50 text-[10px] text-gray-500">
+                            <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                               <span className="mt-0.5">PDF</span>
                             </div>
@@ -474,7 +474,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     )}
                     {msg.text && (
-                      <div className="rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-[#1a1a2e] whitespace-pre-wrap break-words select-text">
+                      <div className="rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-cream whitespace-pre-wrap break-words select-text">
                         {msg.text}
                       </div>
                     )}
@@ -516,7 +516,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   )}
 
                   {(!msg.streaming || msg.text) && (
-                    <div className="text-[15px] leading-[1.7] text-[#1a1a2e] select-text break-words [overflow-wrap:anywhere]">
+                    <div className="text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
                         <div className="relative">
                           <AgentMarkdown content={msg.text} />
@@ -563,7 +563,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button
                           onClick={() => saveArtifact(msg)}
-                          className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition-all hover:bg-black/[0.05] hover:text-gray-600"
+                          className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi"
                         >
                           সংরক্ষণ
                         </button>
@@ -572,7 +572,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
                       )}
                       {msg.tokensIn != null && (
-                        <span className="ml-auto text-[10px] tabular-nums text-gray-400">
+                        <span className="ml-auto text-[10px] tabular-nums text-muted">
                           {msg.tokensIn != null && `↑${msg.tokensIn.toLocaleString()}`}{' '}
                           {msg.tokensOut != null && `↓${msg.tokensOut.toLocaleString()}`}{' '}
                           {msg.costUsd != null && <span className="text-[#E07A5F]/60">${msg.costUsd.toFixed(4)}</span>}
@@ -590,12 +590,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-auto my-4 max-w-sm rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm"
+            className="mx-auto my-4 max-w-sm rounded-2xl border border-border-subtle bg-card/60 backdrop-blur-2xl p-4 shadow-sm"
           >
-            <div className="mb-2 text-[13px] font-medium text-gray-600">
+            <div className="mb-2 text-[13px] font-medium text-muted-hi">
               কথোপকথন কম্প্যাক্ট হচ্ছে…
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-black/[0.06]">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
               <motion.div
                 className="h-full rounded-full bg-gradient-to-r from-[#E07A5F]/40 to-[#81B29A]/30"
                 initial={{ width: '0%' }}

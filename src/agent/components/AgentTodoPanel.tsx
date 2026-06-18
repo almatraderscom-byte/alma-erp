@@ -61,7 +61,7 @@ export function TodoStatusIcon({
       <path d="M21 12a9 9 0 11-6.219-8.56" />
     </motion.svg>
   ) : (
-    <span className="block h-2 w-2 rounded-full border border-slate-300 bg-transparent" />
+    <span className="block h-2 w-2 rounded-full border border-border bg-transparent" />
   )
 
   const className = `flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors ${
@@ -72,10 +72,10 @@ export function TodoStatusIcon({
         : rejected
           ? 'border-red-300 bg-red-50'
           : cancelled
-            ? 'border-slate-300 bg-slate-100'
+            ? 'border-border bg-white/[0.08]'
             : running
               ? 'border-amber-400 bg-amber-50'
-              : 'border-slate-200 bg-slate-50'
+              : 'border-border bg-slate-50'
   }`
 
   if (readOnly) {
@@ -133,8 +133,8 @@ function TodoRow({
       : rejected
         ? 'bg-red-50/30 border-red-200/50 opacity-80'
         : cancelled
-          ? 'bg-slate-50/80 border-slate-200/60 opacity-70'
-          : 'bg-white border-black/[0.06] hover:shadow-sm'
+          ? 'bg-slate-50/80 border-border/60 opacity-70'
+          : 'bg-card/60 backdrop-blur-2xl border-border-subtle hover:shadow-sm'
 
   const handleRowClick = () => {
     if (readOnly && (running || todo.dutyKey)) {
@@ -170,8 +170,8 @@ function TodoRow({
           <p className={`font-medium leading-snug flex-1 min-w-0 ${
             compact ? 'text-xs truncate' : 'text-sm'
           } ${
-            completed ? 'text-slate-500 line-through decoration-slate-300/80' : 'text-slate-800'
-          } ${cancelled || rejected ? 'line-through decoration-slate-300/70 text-slate-500' : ''}`}>
+            completed ? 'text-muted line-through decoration-slate-300/80' : 'text-cream'
+          } ${cancelled || rejected ? 'line-through decoration-slate-300/70 text-muted' : ''}`}>
             {todo.title}
           </p>
           {approvalPending && (
@@ -192,7 +192,7 @@ function TodoRow({
         </div>
         {showFeedback && !compact && (
           <p className={`text-xs mt-1.5 leading-relaxed ${
-            approvalPending ? 'text-orange-800/90' : 'text-slate-600'
+            approvalPending ? 'text-orange-800/90' : 'text-muted-hi'
           } ${expanded || running || approvalPending ? '' : 'line-clamp-2'}`}>
             {todo.description}
           </p>
@@ -211,7 +211,7 @@ function TodoRow({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onDelete() }}
-          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all shrink-0 mt-0.5 p-1"
+          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-muted hover:text-red-500 transition-all shrink-0 mt-0.5 p-1"
           aria-label="Remove task"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -239,7 +239,7 @@ function InPlaceTodoList({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   if (todos.length === 0) {
-    return <p className="text-xs text-slate-400 pl-0.5">কিছু নেই</p>
+    return <p className="text-xs text-muted pl-0.5">কিছু নেই</p>
   }
 
   return (
@@ -285,13 +285,13 @@ function AgentCompactCard({
     <div className={`${brandTodo.agentCompact} p-3 h-full flex flex-col`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs">🤖</span>
-        <h3 className="text-[11px] font-bold text-slate-700 flex-1">এজেন্টের কাজ</h3>
+        <h3 className="text-[11px] font-bold text-cream flex-1">এজেন্টের কাজ</h3>
         {dayShiftActive && (
           <span className="text-[8px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded-full animate-pulse">
             live
           </span>
         )}
-        <span className="text-[10px] font-bold text-slate-500 tabular-nums">
+        <span className="text-[10px] font-bold text-muted tabular-nums">
           {done}/{total}
         </span>
       </div>
@@ -305,7 +305,7 @@ function AgentCompactCard({
             toast('🏢 অফিস chat — উপরে সবুজ বanner ট্যাপ করুন', { duration: 3500 })
           }
         }}
-        className="mt-2.5 w-full text-left text-[10px] font-medium text-slate-500 hover:text-[#E07A5F] transition-colors"
+        className="mt-2.5 w-full text-left text-[10px] font-medium text-muted hover:text-[#E07A5F] transition-colors"
       >
         🏢 অফিস chat-এ live
       </button>
@@ -377,13 +377,13 @@ function BossTodoFrame({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden mb-3"
           >
-            <div className="rounded-xl border border-white/60 bg-white/80 p-3 space-y-2.5">
+            <div className="rounded-xl border border-white/60 bg-card/60 backdrop-blur-xl p-3 space-y-2.5">
               <input
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder="আপনার কাজ লিখুন…"
-                className="w-full bg-white border border-black/[0.06] rounded-lg px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
+                className="w-full bg-card/60 backdrop-blur-2xl border border-border-subtle rounded-lg px-3 py-2 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20"
                 onKeyDown={(e) => { if (e.key === 'Enter') void onAdd() }}
                 autoFocus
               />
@@ -396,7 +396,7 @@ function BossTodoFrame({
                     className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-colors ${
                       newPriority === p
                         ? `${brandTodo.coralBtn} text-white`
-                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        : 'bg-slate-100 text-muted hover:bg-slate-200'
                     }`}
                   >
                     {PRIORITY_LABELS[p]}
@@ -407,7 +407,7 @@ function BossTodoFrame({
                 <button
                   type="button"
                   onClick={() => onShowAdd()}
-                  className="flex-1 py-1.5 rounded-lg border border-black/[0.06] text-[10px] text-slate-500 font-semibold hover:bg-slate-50"
+                  className="flex-1 py-1.5 rounded-lg border border-border-subtle text-[10px] text-muted font-semibold hover:bg-slate-50"
                 >
                   বাতিল
                 </button>
@@ -450,13 +450,13 @@ function AgentFullWidthSection({
     <div>
       <div className="flex items-center gap-2 mb-3">
         <span className="text-sm">🤖</span>
-        <h3 className="text-xs font-bold text-slate-700 flex-1">এজেন্টের আজকের কাজ</h3>
+        <h3 className="text-xs font-bold text-cream flex-1">এজেন্টের আজকের কাজ</h3>
         {dayShiftActive && (
           <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded-full animate-pulse">
             live
           </span>
         )}
-        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full tabular-nums">
+        <span className="text-[10px] font-bold text-muted bg-slate-100 px-2 py-0.5 rounded-full tabular-nums">
           {active} active · {done} done
         </span>
       </div>
@@ -468,7 +468,7 @@ function AgentFullWidthSection({
             toast('🏢 অফিস chat — উপরে সবুজ banner ট্যাপ করুন', { duration: 3500 })
           }
         }}
-        className="mt-3 text-[10px] font-medium text-slate-500 hover:text-[#E07A5F] transition-colors"
+        className="mt-3 text-[10px] font-medium text-muted hover:text-[#E07A5F] transition-colors"
       >
         🏢 অফিস chat-এ live — কাজ চললে এখানে দেখুন
       </button>
@@ -592,8 +592,8 @@ export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
         <>
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-slate-800">Today&rsquo;s Tasks</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <h2 className="text-base font-bold text-cream">Today&rsquo;s Tasks</h2>
+              <p className="text-xs text-muted mt-0.5">
                 {totalActive} active
                 {hasOwnerSplit ? ' · Boss + Agent split' : ''}
               </p>
@@ -619,7 +619,7 @@ export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder="আপনার কাজ লিখুন…"
-                className="w-full bg-white border border-black/[0.06] rounded-xl px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
+                className="w-full bg-card/60 backdrop-blur-2xl border border-border-subtle rounded-xl px-3.5 py-2.5 text-sm text-cream placeholder-slate-400 focus:outline-none focus:border-[#E07A5F]/40 focus:ring-1 focus:ring-[#E07A5F]/20 mb-2"
                 onKeyDown={(e) => { if (e.key === 'Enter') void addTodo() }}
                 autoFocus
               />
@@ -627,7 +627,7 @@ export function AgentTodoPanel({ embedded = false }: { embedded?: boolean }) {
                 <button
                   type="button"
                   onClick={() => { setShowAdd(false); setNewTitle('') }}
-                  className="flex-1 py-2 rounded-xl border border-black/[0.06] text-xs text-slate-500 font-semibold hover:bg-white/60"
+                  className="flex-1 py-2 rounded-xl border border-border-subtle text-xs text-muted font-semibold hover:bg-card/50 backdrop-blur-xl"
                 >
                   বাতিল
                 </button>

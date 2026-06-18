@@ -38,7 +38,7 @@ function DutyToggleSwitch({ dutyKey, enabled, toggling, onToggle }: {
     >
       <span
         className={cn(
-          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ml-0.5',
+          'inline-block h-3.5 w-3.5 rounded-full bg-card/60 backdrop-blur-2xl shadow transition-transform ml-0.5',
           enabled ? 'translate-x-4' : 'translate-x-0',
         )}
       />
@@ -95,8 +95,8 @@ function DutyDot({ duty, isExpanded, onClick }: {
       )} />
       <span className={cn(
         'absolute -bottom-5 whitespace-nowrap text-[8px] text-transparent transition-all',
-        'group-hover/dot:text-[#94a3b8]',
-        isExpanded && 'text-[#64748b]',
+        'group-hover/dot:text-muted',
+        isExpanded && 'text-muted',
       )}>
         {duty.time ?? '—'}
       </span>
@@ -123,12 +123,12 @@ function DutyDetailInline({ duty, enabled, onRetrigger, retriggering, onToggleDu
     >
       <div className={cn(
         'mt-2 rounded-xl border px-3 py-2.5 text-[11px]',
-        isFailed ? 'border-red-500/20 bg-red-50' : 'border-black/[0.06] bg-[#FAF9F6]',
+        isFailed ? 'border-red-500/20 bg-red-50' : 'border-border-subtle bg-transparent',
       )}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-[#1a1a2e]/80">{duty.label}</span>
+          <span className="font-semibold text-cream/80">{duty.label}</span>
           {!enabled && (
-            <span className="rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-zinc-200 text-zinc-500">
+            <span className="rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-zinc-200 text-muted">
               OFF
             </span>
           )}
@@ -136,15 +136,15 @@ function DutyDetailInline({ duty, enabled, onRetrigger, retriggering, onToggleDu
             'rounded px-1.5 py-0.5 text-[9px] font-bold uppercase',
             duty.status === 'done' ? 'bg-emerald-500/15 text-emerald-600' :
             isFailed ? 'bg-red-500/15 text-red-600' :
-            duty.status === 'skipped' ? 'bg-zinc-200 text-zinc-500' :
+            duty.status === 'skipped' ? 'bg-zinc-200 text-muted' :
             'bg-amber-500/15 text-amber-600',
           )}>
             {duty.status}
           </span>
-          {duty.ranAt && <span className="text-[10px] text-[#94a3b8]">at {fmtTime(duty.ranAt)}</span>}
+          {duty.ranAt && <span className="text-[10px] text-muted">at {fmtTime(duty.ranAt)}</span>}
         </div>
         {duty.detail && (
-          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'text-red-600/70' : 'text-[#64748b]')}>{duty.detail}</p>
+          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'text-red-600/70' : 'text-muted')}>{duty.detail}</p>
         )}
         <div className="mt-2 flex items-center gap-2">
           {onToggleDuty && (
@@ -162,7 +162,7 @@ function DutyDetailInline({ duty, enabled, onRetrigger, retriggering, onToggleDu
             className={cn(
               'rounded-lg border px-2.5 py-1 text-[9px] font-bold transition-all',
               retriggering
-                ? 'border-black/[0.06] text-[#94a3b8] cursor-wait'
+                ? 'border-border-subtle text-muted cursor-wait'
                 : isFailed
                   ? 'border-red-400/30 bg-red-50 text-red-600 hover:bg-red-100'
                   : 'border-[#E07A5F]/30 bg-[#E07A5F]/[0.08] text-[#E07A5F] hover:bg-[#E07A5F]/15',
@@ -203,10 +203,10 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#E07A5F]/20 bg-white overflow-hidden shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🤖</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Agent Duties</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Agent Duties</h3>
           <span className="rounded-md bg-[#E07A5F]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#E07A5F]">
             {doneDuties}/{enabledCount} done
           </span>
@@ -229,7 +229,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                     <span className={cn('text-[9px] font-bold uppercase tracking-wider', cfg.color)}>
                       {cfg.icon} {cfg.label}
                     </span>
-                    <div className="flex items-center gap-1.5 rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-2 py-2">
+                    <div className="flex items-center gap-1.5 rounded-xl border border-border-subtle bg-transparent px-2 py-2">
                       {slotDuties.map(d => (
                         <DutyDot
                           key={d.id}
@@ -268,8 +268,8 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                 <div key={cat.key}>
                   <div className="mb-1 flex items-center gap-1.5 px-1">
                     <span className="text-[12px]">{cat.icon}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">{cat.label}</span>
-                    <span className="text-[9px] tabular-nums text-[#cbd5e1]">{catEnabled}/{catDuties.length} চালু</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted">{cat.label}</span>
+                    <span className="text-[9px] tabular-nums text-muted">{catEnabled}/{catDuties.length} চালু</span>
                   </div>
                   <div className="space-y-0.5">
                     {catDuties.map(d => {
@@ -285,7 +285,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                             isFailed ? 'border-l-2 border-l-red-500/60' :
                             d.status === 'done' ? 'border-l-2 border-l-emerald-500/40' :
                             'border-l-2 border-l-amber-500/30',
-                            isActive && 'bg-black/[0.02]',
+                            isActive && 'bg-white/[0.02]',
                           )}
                         >
                           <button
@@ -301,11 +301,11 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
                               d.status === 'skipped' ? 'bg-zinc-400' :
                               'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
                             )} />
-                            <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/80">
+                            <span className="min-w-0 flex-1 truncate text-cream/80">
                               {d.label}
-                              {!enabled && <span className="ml-1 text-[9px] font-bold text-zinc-400">OFF</span>}
+                              {!enabled && <span className="ml-1 text-[9px] font-bold text-muted">OFF</span>}
                             </span>
-                            <span className="shrink-0 text-[10px] tabular-nums text-[#94a3b8]">
+                            <span className="shrink-0 text-[10px] tabular-nums text-muted">
                               {(dutyTimeOverrides ?? {})[d.duty] ?? (d.ranAt ? fmtTime(d.ranAt) : d.time ?? '')}
                             </span>
                           </button>
@@ -336,25 +336,25 @@ export function MonitorSalahTimeline({ salahDuties }: { salahDuties: SalahDutyRo
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-emerald-500/20 bg-white overflow-hidden shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-emerald-500/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🕌</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Salah Reminders</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Salah Reminders</h3>
         </div>
         <div className="p-3 space-y-1">
           {salahDuties.map(s => (
-            <div key={s.waqt} className="flex items-center gap-2.5 rounded-lg bg-[#FAF9F6] px-2.5 py-2 text-[12px]">
+            <div key={s.waqt} className="flex items-center gap-2.5 rounded-lg bg-transparent px-2.5 py-2 text-[12px]">
               <span className={cn(
                 'inline-block h-2 w-2 shrink-0 rounded-full',
                 s.status === 'done' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]' :
                 s.status === 'missed' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]' :
                 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)] animate-pulse',
               )} />
-              <span className="min-w-0 flex-1 truncate text-[#1a1a2e]/90">
+              <span className="min-w-0 flex-1 truncate text-cream/90">
                 {s.label}
-                {s.reminders ? <span className="ml-1 text-[10px] text-[#94a3b8]">({s.reminders}×)</span> : null}
+                {s.reminders ? <span className="ml-1 text-[10px] text-muted">({s.reminders}×)</span> : null}
               </span>
-              <span className="shrink-0 text-[10px] font-medium tabular-nums text-[#94a3b8]">
+              <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted">
                 {s.status === 'done' && s.doneTime ? s.doneTime : s.scheduledTime}
               </span>
             </div>

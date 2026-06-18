@@ -40,10 +40,10 @@ export default function CreativeStudio() {
   }, [])
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full overflow-hidden bg-[#FAF9F6] text-[#1a1a2e]">
+    <div className="flex h-[100dvh] max-h-[100dvh] w-full overflow-hidden bg-transparent text-cream">
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
       {/* Desktop sidebar */}
-      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-black/[0.06] bg-white/90 py-4 md:flex">
+      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/70 backdrop-blur-xl py-4 md:flex">
         <NavIcon href="/agent" label="Chat" active={false}>
           <ChatSvg />
         </NavIcon>
@@ -59,10 +59,10 @@ export default function CreativeStudio() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-between border-b border-black/[0.06] bg-white/95 px-3 py-2.5 backdrop-blur-md sm:px-4">
+        <header className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/75 backdrop-blur-xl px-3 py-2.5 backdrop-blur-md sm:px-4">
           <div>
-            <p className="text-sm font-bold text-[#1a1a2e]">Creative Studio</p>
-            <p className="text-[10px] text-[#64748b]">{config?.organization ?? 'Alma Traders'}</p>
+            <p className="text-sm font-bold text-cream">Creative Studio</p>
+            <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
           </div>
           <div className="flex items-center gap-2">
             {config && (
@@ -106,7 +106,7 @@ export default function CreativeStudio() {
 
         {/* Mobile bottom nav */}
         <nav
-          className="flex shrink-0 border-t border-black/[0.06] bg-white md:hidden"
+          className="flex shrink-0 border-t border-border-subtle bg-card/60 backdrop-blur-2xl md:hidden"
           style={{ paddingBottom: 'max(0.35rem, env(safe-area-inset-bottom))' }}
         >
           {(
@@ -122,7 +122,7 @@ export default function CreativeStudio() {
               onClick={() => setView(id)}
               className={cn(
                 'flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium',
-                view === id ? 'text-[#E07A5F]' : 'text-[#94A3B8]',
+                view === id ? 'text-[#E07A5F]' : 'text-muted',
               )}
             >
               <Icon className="h-5 w-5" />
@@ -150,7 +150,7 @@ function NavIcon({
 }) {
   const cls = cn(
     'mb-3 flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[9px] font-medium transition-colors',
-    active ? 'bg-[#E07A5F]/12 text-[#E07A5F]' : 'text-[#94A3B8] hover:text-[#64748b]',
+    active ? 'bg-[#E07A5F]/12 text-[#E07A5F]' : 'text-muted hover:text-muted',
   )
   if (href) {
     return (
@@ -303,7 +303,7 @@ function StudioWorkspace({
             <select
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
-              className="w-full rounded-xl border border-black/[0.08] bg-white px-3 py-2.5 text-sm"
+              className="w-full rounded-xl border border-border bg-card/60 backdrop-blur-2xl px-3 py-2.5 text-sm"
             >
               <option value="">Saved model (optional)</option>
               {models.map((m) => (
@@ -319,16 +319,16 @@ function StudioWorkspace({
       {/* Bottom control dock — FASHN-style */}
       <div
         className={cn(
-          'absolute inset-x-0 bottom-[52px] z-20 border-t border-black/[0.08] bg-white/98 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] backdrop-blur-lg md:bottom-0',
+          'absolute inset-x-0 bottom-[52px] z-20 border-t border-border bg-card/80 shadow-[0_-8px_30px_rgba(0,0,0,0.3)] backdrop-blur-2xl md:bottom-0',
         )}
         style={{ paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))' }}
       >
         <button
           type="button"
           onClick={() => setPanelOpen((o) => !o)}
-          className="flex w-full items-center justify-center py-1 text-[#94A3B8]"
+          className="flex w-full items-center justify-center py-1 text-muted"
         >
-          <span className="h-1 w-10 rounded-full bg-black/10" />
+          <span className="h-1 w-10 rounded-full bg-white/15" />
         </button>
 
         {panelOpen && (
@@ -342,7 +342,7 @@ function StudioWorkspace({
                   onClick={() => setMode(m.id)}
                   className={cn(
                     'shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all',
-                    mode === m.id ? 'bg-[#1a1a2e] text-white shadow-sm' : 'bg-[#f1f5f9] text-[#64748b]',
+                    mode === m.id ? 'bg-gold/20 border border-gold/30 text-cream shadow-sm' : 'bg-white/[0.05] text-muted',
                   )}
                 >
                   {m.short}
@@ -360,7 +360,7 @@ function StudioWorkspace({
                     onClick={() => setFamilyPreset(p.id)}
                     className={cn(
                       'rounded-full px-2.5 py-1 text-[10px] font-semibold',
-                      familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-black/[0.08] bg-white',
+                      familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-card/60 backdrop-blur-2xl',
                     )}
                   >
                     {p.labelBn}
@@ -373,7 +373,7 @@ function StudioWorkspace({
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Optional: Blonde hair, studio photoshoot, festive mood…"
-              className="mb-2 w-full rounded-xl border border-black/[0.08] bg-[#fafafa] px-3 py-2 text-[13px] outline-none focus:border-[#E07A5F]/40"
+              className="mb-2 w-full rounded-xl border border-border bg-bg-1 text-cream px-3 py-2 text-[13px] outline-none focus:border-[#E07A5F]/40"
             />
 
             <div className="mb-2 flex flex-wrap gap-1.5">
@@ -382,7 +382,7 @@ function StudioWorkspace({
                   <select
                     value={provider}
                     onChange={(e) => setProvider(e.target.value as StudioProvider)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     <option value="fashn" disabled={!config?.fashnConfigured}>
                       Pro (FASHN)
@@ -392,7 +392,7 @@ function StudioWorkspace({
                   <select
                     value={backgroundId}
                     onChange={(e) => setBackgroundId(e.target.value)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {BACKGROUND_PRESETS.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -403,7 +403,7 @@ function StudioWorkspace({
                   <select
                     value={aspectRatio}
                     onChange={(e) => setAspectRatio(e.target.value)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {ASPECT_RATIOS.map((a) => (
                       <option key={a} value={a}>
@@ -414,7 +414,7 @@ function StudioWorkspace({
                   <select
                     value={resolution}
                     onChange={(e) => setResolution(e.target.value as FashnResolution)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {RESOLUTIONS.map((r) => (
                       <option key={r} value={r}>
@@ -425,7 +425,7 @@ function StudioWorkspace({
                   <select
                     value={genMode}
                     onChange={(e) => setGenMode(e.target.value as FashnGenerationMode)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {GEN_MODES.map((g) => (
                       <option key={g} value={g}>
@@ -433,7 +433,7 @@ function StudioWorkspace({
                       </option>
                     ))}
                   </select>
-                  <div className="flex items-center rounded-lg border border-black/[0.08] bg-white">
+                  <div className="flex items-center rounded-lg border border-border bg-card/60 backdrop-blur-2xl">
                     <button type="button" className="px-2 py-1.5 text-[11px]" onClick={() => setNumImages((n) => Math.max(1, n - 1))}>
                       −
                     </button>
@@ -449,7 +449,7 @@ function StudioWorkspace({
                   <select
                     value={vibe}
                     onChange={(e) => setVibe(e.target.value as typeof vibe)}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {VIDEO_VIBES.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -460,7 +460,7 @@ function StudioWorkspace({
                   <select
                     value={durationSec}
                     onChange={(e) => setDurationSec(Number(e.target.value))}
-                    className="rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-[11px]"
+                    className="rounded-lg border border-border bg-card/60 backdrop-blur-2xl px-2 py-1.5 text-[11px]"
                   >
                     {[4, 5, 6, 7, 8].map((s) => (
                       <option key={s} value={s}>
@@ -491,7 +491,7 @@ function StudioWorkspace({
                 <>Run — {provider === 'fashn' ? 'FASHN Pro' : 'Gemini Draft'}</>
               )}
             </motion.button>
-            <p className="mt-1.5 text-center text-[10px] text-[#94A3B8]">No LLM cost — direct render queue</p>
+            <p className="mt-1.5 text-center text-[10px] text-muted">No LLM cost — direct render queue</p>
           </div>
         )}
       </div>
@@ -519,7 +519,7 @@ function UploadTile({
       onKeyDown={(e) => e.key === 'Enter' && ref.current?.click()}
       className={cn(
         'overflow-hidden rounded-2xl border-2 border-dashed transition-colors',
-        preview ? 'border-[#E07A5F]/25 bg-white' : 'border-black/[0.1] bg-white/80',
+        preview ? 'border-[#E07A5F]/25 bg-card/60 backdrop-blur-2xl' : 'border-border bg-card/60 backdrop-blur-xl',
       )}
     >
       <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
@@ -528,11 +528,11 @@ function UploadTile({
         <img src={preview} alt={label} className="mx-auto max-h-44 w-full object-contain p-2" />
       ) : (
         <div className="px-4 py-8 text-center">
-          <p className="text-sm font-semibold text-[#64748b]">
+          <p className="text-sm font-semibold text-muted">
             {label}
             {required && <span className="text-[#E07A5F]"> *</span>}
           </p>
-          <p className="mt-1 text-[11px] text-[#94A3B8]">Tap to upload or drop image</p>
+          <p className="mt-1 text-[11px] text-muted">Tap to upload or drop image</p>
         </div>
       )}
     </div>
@@ -567,9 +567,9 @@ function GalleryView() {
         </button>
       </div>
       {loading && items.length === 0 ? (
-        <p className="text-sm text-[#94A3B8]">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : items.length === 0 ? (
-        <p className="text-sm text-[#94A3B8]">No generations yet — Studio থেকে Run করুন।</p>
+        <p className="text-sm text-muted">No generations yet — Studio থেকে Run করুন।</p>
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
           {items.map((item) => (
@@ -578,9 +578,9 @@ function GalleryView() {
               layout
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="overflow-hidden rounded-xl border border-black/[0.06] bg-white shadow-sm"
+              className="overflow-hidden rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl shadow-sm"
             >
-              <div className="relative aspect-[4/5] bg-[#f8fafc]">
+              <div className="relative aspect-[4/5] bg-bg-1">
                 {item.previewUrl ? (
                   item.storagePath?.endsWith('.mp4') || item.type === 'video_gen' ? (
                     // eslint-disable-next-line jsx-a11y/media-has-caption
@@ -590,7 +590,7 @@ function GalleryView() {
                     <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                   )
                 ) : (
-                  <div className="flex h-full items-center justify-center p-2 text-center text-[10px] text-[#94A3B8]">
+                  <div className="flex h-full items-center justify-center p-2 text-center text-[10px] text-muted">
                     {item.status === 'approved' || item.status === 'pending'
                       ? 'Rendering…'
                       : item.status}
@@ -607,7 +607,7 @@ function GalleryView() {
               </div>
               <div className="p-2">
                 <p className="truncate text-[10px] font-semibold">{item.mode}</p>
-                <p className="text-[9px] text-[#94A3B8]">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
+                <p className="text-[9px] text-muted">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
               </div>
             </motion.div>
           ))}
@@ -664,12 +664,12 @@ function ModelsView() {
   return (
     <div className="mx-auto max-w-lg px-3 py-4 pb-8">
       <h2 className="mb-1 text-sm font-bold">Model Library</h2>
-      <p className="mb-3 text-[11px] leading-snug text-[#64748b]">
+      <p className="mb-3 text-[11px] leading-snug text-muted">
         Full-body photo save করুন। Chat: &quot;Model Maruf use koro&quot; — agent মনে রাখবে।
       </p>
 
       <div
-        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-black/[0.1] bg-white"
+        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/60 backdrop-blur-2xl"
         onClick={() => ref.current?.click()}
       >
         <input
@@ -691,7 +691,7 @@ function ModelsView() {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={preview} alt="Model" className="mx-auto max-h-52 object-contain p-2" />
         ) : (
-          <p className="py-10 text-center text-sm text-[#94A3B8]">Upload model photo</p>
+          <p className="py-10 text-center text-sm text-muted">Upload model photo</p>
         )}
       </div>
 
@@ -700,9 +700,9 @@ function ModelsView() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Name (e.g. Maruf)"
-          className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-sm"
+          className="rounded-xl border border-border px-3 py-2.5 text-sm"
         />
-        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-sm">
+        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-border px-3 py-2.5 text-sm">
           <option value="single">Single / Owner</option>
           <option value="father">Father</option>
           <option value="mother">Mother</option>
@@ -722,12 +722,12 @@ function ModelsView() {
 
       <div className="space-y-2">
         {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between rounded-xl border border-black/[0.06] bg-white px-3 py-2.5">
+          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl px-3 py-2.5">
             <div>
               <p className="font-semibold">{m.name}</p>
-              <p className="text-[10px] text-[#94A3B8]">{m.role}{m.isDefault ? ' · default' : ''}</p>
+              <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>
             </div>
-            <code className="text-[9px] text-[#cbd5e1]">{m.id}</code>
+            <code className="text-[9px] text-muted">{m.id}</code>
           </div>
         ))}
       </div>

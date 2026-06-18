@@ -8,9 +8,9 @@ export const brandTodo = {
   coralBorderSoft: 'border-[#E07A5F]/20',
   coralHover: 'hover:bg-[#E07A5F]/15',
   coralBtn: 'bg-[#E07A5F] hover:bg-[#C45A3C]',
-  cream: 'bg-[#FAF9F6]',
+  cream: 'bg-card/60 backdrop-blur-xl',
   bossFrame:
     'rounded-2xl border-2 border-[#E07A5F]/30 bg-[#E07A5F]/[0.07] shadow-sm shadow-[#E07A5F]/5',
-  agentCard: 'rounded-xl border border-black/[0.06] bg-white/90',
-  agentCompact: 'rounded-xl border border-black/[0.06] bg-[#FAF9F6]/80',
+  agentCard: 'rounded-xl border border-border-subtle bg-card/60 backdrop-blur-2xl',
+  agentCompact: 'rounded-xl border border-border-subtle bg-card/50 backdrop-blur-xl',
 } as const

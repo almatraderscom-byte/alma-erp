@@ -35,9 +35,9 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border border-black/[0.07] bg-white px-4 py-3 text-sm shadow-card"
+        className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/60 backdrop-blur-2xl px-4 py-3 text-sm shadow-card"
       >
-        <p className="text-[12px] text-[#64748b]">{card.question}</p>
+        <p className="text-[12px] text-muted">{card.question}</p>
         <p className="mt-1 text-[12px] font-medium text-[#E07A5F]">
           ✓ নির্বাচন: {selected}
         </p>
@@ -51,13 +51,13 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="mt-3 rounded-[18px] border border-black/[0.07] bg-white p-4 text-sm shadow-card"
+      className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/60 backdrop-blur-2xl p-4 text-sm shadow-card"
     >
-      <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#1a1a2e]">
+      <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-cream">
         <span>❓</span>
         <span>একটি প্রশ্ন</span>
       </div>
-      <p className="mb-3 text-[13px] leading-relaxed text-[#334155]">{card.question}</p>
+      <p className="mb-3 text-[13px] leading-relaxed text-muted-hi">{card.question}</p>
       <div className="flex flex-col gap-2">
         {card.options.map((opt) => (
           <button
@@ -65,7 +65,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
             type="button"
             onClick={() => handleSelect(opt)}
             disabled={disabled}
-            className="rounded-xl border border-black/[0.08] bg-black/[0.02] px-4 py-2.5 text-left text-[13px] font-medium text-[#1a1a2e] transition-all hover:border-[#E07A5F]/40 hover:bg-[#E07A5F]/[0.06] active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-xl border border-border bg-white/[0.02] px-4 py-2.5 text-left text-[13px] font-medium text-cream transition-all hover:border-[#E07A5F]/40 hover:bg-[#E07A5F]/[0.06] active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
           >
             {opt}
           </button>

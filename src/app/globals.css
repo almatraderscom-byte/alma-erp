@@ -83,11 +83,11 @@
    Tailwind brand class recolors automatically. `--c-black` stays constant so
    modal scrims remain dark. */
 :root[data-theme='dark'] {
-  --c-ink: 237 234 228;          /* soft cream ink on dark */
+  --c-ink: 247 248 252;          /* near-white ink for readability over aurora */
   --c-surface: 30 30 36;         /* #1E1E24 raised surface */
   --c-card: 32 32 39;            /* #202027 card surface */
-  --c-muted: 148 150 162;        /* dimmed cool grey */
-  --c-muted-hi: 176 178 190;     /* brighter secondary text */
+  --c-muted: 174 178 192;        /* dimmed cool grey, brightened */
+  --c-muted-hi: 208 212 224;     /* brighter secondary text */
 
   --bg-0: #141418;
   --bg-1: #1C1C22;

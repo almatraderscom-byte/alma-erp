@@ -48,10 +48,10 @@ function NeuralNode({ label, value, color, delay = 0 }: {
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.4, delay }}
-      className="group relative rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-3 py-2.5 transition-all hover:border-black/[0.12] hover:bg-white hover:shadow-sm"
+      className="group relative rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 transition-all hover:border-white/[0.12] hover:bg-card/60 backdrop-blur-2xl hover:shadow-sm"
     >
       <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-[#E07A5F]/20 opacity-0 group-hover:opacity-100 transition-opacity" />
-      <p className="text-[9px] font-bold uppercase tracking-wider text-[#94a3b8]">{label}</p>
+      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">{label}</p>
       <p className={cn('mt-0.5 text-lg font-black tabular-nums', color)}>{value}</p>
     </motion.div>
   )
@@ -60,7 +60,7 @@ function NeuralNode({ label, value, color, delay = 0 }: {
 function PromptCacheLine({ cache }: { cache: PromptCacheMonitorSnapshot | null }) {
   if (!cache) {
     return (
-      <p className="text-[10px] text-[#94a3b8] tabular-nums">💾 ক্যাশ ডেটা লোড হচ্ছে…</p>
+      <p className="text-[10px] text-muted tabular-nums">💾 ক্যাশ ডেটা লোড হচ্ছে…</p>
     )
   }
 
@@ -80,7 +80,7 @@ function PromptCacheLine({ cache }: { cache: PromptCacheMonitorSnapshot | null }
       <p className="text-[11px] font-medium text-[#3d5c4a] tabular-nums">
         💾 ক্যাশ থেকে বাঁচানো: {fmtTokens(cache.tokensSaved)} টোকেন · ~${cache.usdSaved.toFixed(2)} আজ
       </p>
-      <p className="mt-0.5 text-[9px] text-[#64748b] tabular-nums">
+      <p className="mt-0.5 text-[9px] text-muted tabular-nums">
         hit {(cache.cacheHitRatio * 100).toFixed(0)}% · read {fmtTokens(cache.cacheReadTokens)} · fresh {fmtTokens(cache.inputTokens)} · {cache.chatTurns} turns
       </p>
     </div>
@@ -109,10 +109,10 @@ export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#E07A5F]/20 bg-white overflow-hidden shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-[#E07A5F]/20 bg-card/60 backdrop-blur-2xl overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🧠</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">এজেন্ট ব্রেইন</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">এজেন্ট ব্রেইন</h3>
           <div className="ml-auto flex items-center gap-1">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#E07A5F] shadow-[0_0_6px_rgba(224,122,95,0.6)] animate-pulse" />
             <span className="text-[9px] text-[#E07A5F]/60">Neural Active</span>
@@ -122,7 +122,7 @@ export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
           {!stats ? (
             <div className="flex items-center justify-center py-4">
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
-              <span className="ml-2 text-[10px] text-[#94a3b8]">Loading brain stats…</span>
+              <span className="ml-2 text-[10px] text-muted">Loading brain stats…</span>
             </div>
           ) : (
             <div className="space-y-3">
@@ -135,15 +135,15 @@ export function MonitorBrainCard({ stats }: { stats: BrainStats | null }) {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-2">
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#94a3b8]">Last Session</p>
-                  <p className="mt-0.5 text-[11px] tabular-nums text-[#64748b]">
+                <div className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-muted">Last Session</p>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-muted">
                     {stats.lastSessionSummary ? fmtTime(stats.lastSessionSummary) : '—'}
                   </p>
                 </div>
-                <div className="rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-2">
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#94a3b8]">Knowledge Build</p>
-                  <p className="mt-0.5 text-[11px] tabular-nums text-[#64748b]">
+                <div className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-muted">Knowledge Build</p>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-muted">
                     {stats.lastKnowledgeBuild ? fmtTime(stats.lastKnowledgeBuild) : '—'}
                   </p>
                 </div>

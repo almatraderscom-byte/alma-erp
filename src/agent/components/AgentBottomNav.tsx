@@ -21,7 +21,7 @@ export function AgentBottomNav() {
 
   return (
     <nav className="agent-bottom-nav fixed bottom-0 left-0 right-0 z-50 md:hidden">
-      <div className="absolute inset-0 bg-white border-t border-black/[0.06]" />
+      <div className="absolute inset-0 bg-card/60 backdrop-blur-2xl border-t border-border-subtle" />
 
       <div
         className="relative flex items-center justify-around px-4 pt-2"
@@ -40,7 +40,7 @@ export function AgentBottomNav() {
               href={item.href}
               className={cn(
                 'relative flex flex-col items-center gap-0.5 px-4 py-1.5 transition-all',
-                isActive ? 'text-[#E07A5F]' : 'text-[#94A3B8]',
+                isActive ? 'text-[#E07A5F]' : 'text-muted',
               )}
             >
               {isActive && (

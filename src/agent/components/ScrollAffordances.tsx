@@ -106,7 +106,7 @@ export function ScrollAffordances({
             transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
             onClick={scrollToTop}
             aria-label="উপরে যান"
-            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
+            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
           >
             <svg className="h-[13px] w-[13px] md:h-[14px] md:w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 19V5M5 12l7-7 7 7" />
@@ -123,7 +123,7 @@ export function ScrollAffordances({
             transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
             onClick={scrollToBottom}
             aria-label="নিচে যান"
-            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
+            className="alma-frost pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:text-[#E07A5F] active:scale-90 md:h-10 md:w-10"
           >
             <svg className="h-[13px] w-[13px] md:h-[14px] md:w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M19 12l-7 7-7-7" />
