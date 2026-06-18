@@ -59,6 +59,7 @@ export default function AgentSidebar({
   isMobile,
 }: AgentSidebarProps) {
   const [tab, setTab] = useState<'chats' | 'memory'>('chats')
+  const [chatView, setChatView] = useState<'regular' | 'office'>('regular')
   const [projects, setProjects] = useState<Project[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeProject, setActiveProject] = useState<string>(PROJECT_NONE)
@@ -106,19 +107,20 @@ export default function AgentSidebar({
 
   useEffect(() => { void loadData() }, [loadData])
 
+  const officeCount = conversations.filter((c) => !c.archived && c.source === 'day_shift').length
+
   const filtered = conversations
     .filter((c) => {
       if (c.archived) return false
+      // Keep office-shift history in its own view so it doesn't clutter the
+      // owner's day-to-day chats.
+      const isOffice = c.source === 'day_shift'
+      if (chatView === 'office' ? !isOffice : isOffice) return false
       if (activeProject !== PROJECT_NONE && c.projectId !== activeProject) return false
       if (search && !(c.title ?? '').toLowerCase().includes(search.toLowerCase())) return false
       return true
     })
-    .sort((a, b) => {
-      const aOffice = a.source === 'day_shift' ? 1 : 0
-      const bOffice = b.source === 'day_shift' ? 1 : 0
-      if (aOffice !== bOffice) return bOffice - aOffice
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    })
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 
   async function archiveConv(id: string) {
     await fetch(`/api/assistant/conversations/${id}`, {
@@ -280,6 +282,32 @@ export default function AgentSidebar({
             title="নতুন প্রজেক্ট"
           >
             ⊕
+          </button>
+        </div>
+      </div>
+
+      {/* Regular chats vs Office-shift history */}
+      <div className="px-3 pt-3">
+        <div className="flex gap-1 rounded-full border border-black/[0.08] bg-black/[0.03] p-1">
+          <button
+            type="button"
+            onClick={() => setChatView('regular')}
+            className={cn(
+              'flex-1 rounded-full py-1.5 text-[12px] font-semibold transition-all',
+              chatView === 'regular' ? 'bg-white text-[#1a1a2e] shadow-sm' : 'text-[#64748b] hover:text-[#1a1a2e]',
+            )}
+          >
+            💬 চ্যাট
+          </button>
+          <button
+            type="button"
+            onClick={() => setChatView('office')}
+            className={cn(
+              'flex-1 rounded-full py-1.5 text-[12px] font-semibold transition-all',
+              chatView === 'office' ? 'bg-white text-[#1a1a2e] shadow-sm' : 'text-[#64748b] hover:text-[#1a1a2e]',
+            )}
+          >
+            🏢 অফিস{officeCount > 0 ? ` (${officeCount})` : ''}
           </button>
         </div>
       </div>

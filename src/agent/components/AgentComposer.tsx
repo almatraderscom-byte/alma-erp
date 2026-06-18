@@ -5,7 +5,6 @@ import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import AgentModelSelector from './AgentModelSelector'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
-import { VoiceOrb } from './voice/VoiceOrb'
 
 export interface PendingFile {
   file: File
@@ -49,7 +48,7 @@ export default function AgentComposer({
     },
     onError: (m) => toast.error(m),
   })
-  const { recording, stream, start: startDictation, stop: stopDictation } = recorder
+  const { recording, recordSecs, stream, start: startDictation, stop: stopDictation, cancel: cancelDictation } = recorder
 
   // Live mic level (RMS) → drives the floating orb animation while listening.
   useEffect(() => {
@@ -128,19 +127,6 @@ export default function AgentComposer({
 
   return (
     <>
-      {recording && (
-        <button
-          type="button"
-          onClick={stopDictation}
-          className="fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+0.6rem)] z-[80] flex -translate-x-1/2 select-none items-center gap-2 rounded-full border border-black/[0.06] bg-white/90 py-1.5 pl-1.5 pr-3.5 shadow-[0_6px_24px_rgba(224,122,95,0.22)] backdrop-blur-xl [-webkit-touch-callout:none]"
-          aria-label="শোনা থামান"
-        >
-          <VoiceOrb state="listening" micLevel={micLevel} size={30} />
-          <span className="text-[12.5px] font-semibold text-[#1a1a2e]">
-            শুনছি… <span className="font-medium text-gray-400">ট্যাপ করে থামান</span>
-          </span>
-        </button>
-      )}
     <div className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
       {files.length > 0 && (
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -167,6 +153,15 @@ export default function AgentComposer({
           ...(streaming ? { borderColor: 'rgba(224,122,95,0.35)' } : null),
         }}
       >
+        {recording ? (
+          <RecordingBar
+            level={micLevel}
+            secs={recordSecs}
+            onCancel={cancelDictation}
+            onConfirm={stopDictation}
+          />
+        ) : (
+        <>
         {/* Row 1 — text (≥16px so iOS never auto-zooms; grows with content) */}
         <textarea
           ref={textareaRef}
@@ -259,8 +254,77 @@ export default function AgentComposer({
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
     </>
+  )
+}
+
+/** mm:ss for the recording timer. */
+function mmss(total: number): string {
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/** Claude-style scrolling voice waveform — coral bars driven by live mic level. */
+function VoiceWaveform({ level }: { level: number }) {
+  const BARS = 34
+  const [bars, setBars] = useState<number[]>(() => Array(BARS).fill(0.06))
+  useEffect(() => {
+    setBars((prev) => {
+      const next = prev.slice(1)
+      next.push(Math.max(0.06, Math.min(1, level)))
+      return next
+    })
+  }, [level])
+  return (
+    <div className="flex h-9 min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden px-1">
+      {bars.map((b, i) => (
+        <span
+          key={i}
+          className="w-[3px] shrink-0 rounded-full bg-[#E07A5F]"
+          style={{ height: `${Math.round(b * 100)}%`, opacity: 0.3 + b * 0.7 }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** Inline recording bar: cancel (✕) · live waveform · timer · confirm (✓). */
+function RecordingBar({
+  level,
+  secs,
+  onCancel,
+  onConfirm,
+}: {
+  level: number
+  secs: number
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2 px-1 py-1.5">
+      <button
+        type="button"
+        onClick={onCancel}
+        aria-label="বাতিল"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] active:scale-95"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+      <VoiceWaveform level={level} />
+      <span className="shrink-0 text-[12px] tabular-nums text-[#94a3b8]">{mmss(secs)}</span>
+      <button
+        type="button"
+        onClick={onConfirm}
+        aria-label="সম্পন্ন"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)] transition-all active:scale-95"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      </button>
+    </div>
   )
 }
