@@ -127,6 +127,8 @@ async function* runAlternateProviderTurn(
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
+  let totalCacheCreationTokens = 0
+  let totalCacheReadTokens = 0
 
   const rows = await prisma.agentMessage.findMany({
     where: { conversationId },
@@ -249,6 +251,8 @@ async function* runAlternateProviderTurn(
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
+          totalCacheCreationTokens += ev.cacheWrite ?? 0
+          totalCacheReadTokens += ev.cacheRead ?? 0
         }
       }
 
@@ -380,7 +384,7 @@ async function* runAlternateProviderTurn(
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
       },
     })
 
@@ -416,7 +420,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd }
   } catch (err) {
     if (signal?.aborted) return
     await captureAgentError(err, 'agent.provider.error', { conversationId })

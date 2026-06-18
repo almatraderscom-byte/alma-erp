@@ -39,9 +39,22 @@ export async function GET(
       tokensIn: true,
       tokensOut: true,
       costUsd: true,
+      usage: true,
       createdAt: true,
     },
   })
 
-  return Response.json(messages)
+  // Surface cache tokens (hidden inside the usage JSON) so the UI can show the
+  // real per-message token count, not just the tiny non-cached input_tokens.
+  const withCache = messages.map((m) => {
+    const u = (m.usage ?? {}) as Record<string, unknown>
+    const num = (v: unknown) => (typeof v === 'number' ? v : null)
+    return {
+      ...m,
+      cacheCreation: num(u.cache_creation_input_tokens),
+      cacheRead: num(u.cache_read_input_tokens),
+    }
+  })
+
+  return Response.json(withCache)
 }

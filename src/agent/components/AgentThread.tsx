@@ -15,6 +15,13 @@ import { AgentThinkingIndicator } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
 
+/** Compact token formatter: 36100 → "36.1k", 681 → "681". */
+function fmtTok(n: number): string {
+  if (n >= 10000) return `${(n / 1000).toFixed(1)}k`
+  if (n >= 1000) return `${(n / 1000).toFixed(2)}k`
+  return n.toLocaleString()
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -40,6 +47,8 @@ export interface ChatMessage {
   askCard?: AskCard
   tokensIn?: number
   tokensOut?: number
+  cacheCreation?: number
+  cacheRead?: number
   costUsd?: number
   streaming?: boolean
 }
@@ -571,13 +580,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       {artifactSaved.has(msg.id) && (
                         <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
                       )}
-                      {msg.tokensIn != null && (
-                        <span className="ml-auto text-[10px] tabular-nums text-muted">
-                          {msg.tokensIn != null && `↑${msg.tokensIn.toLocaleString()}`}{' '}
-                          {msg.tokensOut != null && `↓${msg.tokensOut.toLocaleString()}`}{' '}
-                          {msg.costUsd != null && <span className="text-[#E07A5F]/60">${msg.costUsd.toFixed(4)}</span>}
-                        </span>
-                      )}
+                      {msg.tokensIn != null && (() => {
+                        const tin = msg.tokensIn ?? 0
+                        const tout = msg.tokensOut ?? 0
+                        const cw = msg.cacheCreation ?? 0
+                        const cr = msg.cacheRead ?? 0
+                        const total = tin + tout + cw + cr
+                        return (
+                          <span
+                            className="ml-auto text-[10px] tabular-nums text-muted"
+                            title="Σ মোট টোকেন · ↑ইনপুট ⚡cache লেখা (দামি) ♻cache পড়া (সস্তা) ↓আউটপুট"
+                          >
+                            {`Σ${fmtTok(total)} · ↑${fmtTok(tin)}`}
+                            {cw > 0 && ` ⚡${fmtTok(cw)}`}
+                            {cr > 0 && ` ♻${fmtTok(cr)}`}
+                            {` ↓${fmtTok(tout)}`}{' '}
+                            {msg.costUsd != null && <span className="text-[#E07A5F]/60">${msg.costUsd.toFixed(4)}</span>}
+                          </span>
+                        )
+                      })()}
                     </div>
                   )}
                 </div>

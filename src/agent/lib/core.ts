@@ -57,7 +57,7 @@ export type AgentEvent =
       categories: string[]
       snippets: string[]
     }
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -467,7 +467,7 @@ export async function* runAgentTurn(
       },
     })
     await touchConversationActivity(conversationId)
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, costUsd: 0 }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
     return
   }
 
@@ -805,13 +805,15 @@ export async function* runAgentTurn(
     }
 
     // Persist assistant message.
+    // NOTE: the pending-approval reminder prefix is shown live (yielded as a
+    // text_delta above) but intentionally NOT persisted into the stored message.
+    // It is a transient, per-turn nudge regenerated each turn from current DB
+    // state; baking it into history made every past assistant message carry a
+    // stale reminder that was re-sent to the model every turn (token bloat).
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     const joinedText = textContent.map((b) => b.text).join('\n')
-    const storedContent = joinedText || approvalReminderPrefix
-      ? [{
-          type: 'text' as const,
-          text: approvalReminderPrefix + (joinedText || ''),
-        }]
+    const storedContent = joinedText
+      ? [{ type: 'text' as const, text: joinedText }]
       : [{ type: 'text' as const, text: '' }]
     const costUsd = calcModelTurnCostUsd(chatModel, {
       inputTokens: totalInputTokens,
@@ -859,7 +861,15 @@ export async function* runAgentTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
+    yield {
+      type: 'done',
+      messageId: savedMsg.id,
+      tokensIn: totalInputTokens,
+      tokensOut: totalOutputTokens,
+      cacheCreation: totalCacheCreationTokens,
+      cacheRead: totalCacheReadTokens,
+      costUsd,
+    }
   } catch (err) {
     if (signal?.aborted) return
     const requestId = extractAnthropicRequestId(err)
