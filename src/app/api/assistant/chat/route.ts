@@ -16,6 +16,7 @@ import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
 import { compactConversationIfNeeded, COMPACT_THRESHOLD_USD } from '@/agent/lib/conversation-compact'
+import { isAgentPaused } from '@/agent/lib/agent-controls'
 import {
   inheritConversationBusinessId,
   isAgentBusinessId,
@@ -83,6 +84,19 @@ export async function POST(req: NextRequest) {
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
+
+  // Master pause — owner stopped the agent from the Control Center. Applies to
+  // web + Telegram. Fail-open inside isAgentPaused() so a storage glitch can't
+  // accidentally lock the agent.
+  if (await isAgentPaused()) {
+    return Response.json(
+      {
+        error: 'agent_paused',
+        message: '🛑 Agent এখন pause করা আছে (মালিক বন্ধ করেছেন)। Staff Monitor → Control Center থেকে আবার চালু করুন।',
+      },
+      { status: 423 },
+    )
+  }
 
   if (isPersonalSnoozeMessage(message)) {
     try {

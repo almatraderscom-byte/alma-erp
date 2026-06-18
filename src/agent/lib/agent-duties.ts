@@ -108,3 +108,46 @@ export function dutiesForToday(now = new Date()) {
     return true
   })
 }
+
+// ── Owner-facing categories (for the Control Center / Monitor toggle UI) ──
+export type DutyCategory = 'staff' | 'sales' | 'finance' | 'marketing' | 'reports' | 'personal' | 'system'
+
+/** Display order + labels for the category-grouped duty toggles. */
+export const DUTY_CATEGORY_META: Array<{ key: DutyCategory; label: string; icon: string }> = [
+  { key: 'staff', label: 'স্টাফ', icon: '👥' },
+  { key: 'sales', label: 'সেলস ও কাস্টমার', icon: '📦' },
+  { key: 'finance', label: 'ফিন্যান্স', icon: '💰' },
+  { key: 'marketing', label: 'মার্কেটিং ও কন্টেন্ট', icon: '📣' },
+  { key: 'reports', label: 'রিপোর্ট ও অ্যাপ্রুভাল', icon: '📊' },
+  { key: 'personal', label: 'ব্যক্তিগত ও সালাহ', icon: '🤲' },
+  { key: 'system', label: 'সিস্টেম ও নলেজ', icon: '⚙️' },
+]
+
+/** Each duty key → its owner-facing category. */
+export const DUTY_CATEGORY: Record<string, DutyCategory> = {
+  // Staff
+  morning_dispatch: 'staff', staff_presence: 'staff', staff_morale: 'staff',
+  midday_checkin: 'staff', evening_proposal: 'staff',
+  // Sales & customers
+  order_watch: 'sales', customer_intel: 'sales',
+  // Finance
+  cost_reconcile: 'finance', daily_cashflow: 'finance', payment_reminders: 'finance',
+  subscription_renewal: 'finance',
+  // Marketing & content
+  ads_monitor: 'marketing', ads_optimizer: 'marketing', content_engine_1: 'marketing',
+  content_engine_2: 'marketing', content_engine_3: 'marketing', marketing_weekly: 'marketing',
+  // Reports & approvals
+  owner_briefing: 'reports', daily_strategist: 'reports', owner_task_intake: 'reports',
+  night_report: 'reports', daily_summary: 'reports', weekly_review: 'reports',
+  weekly_reflection: 'reports', approval_tracker: 'reports', approval_chase: 'reports',
+  outcome_measure: 'reports',
+  // Personal & salah
+  salah_init: 'personal', personal_midday: 'personal', personal_checkin: 'personal',
+  // System & knowledge
+  cs_index_products: 'system', knowledge_build: 'system', token_health: 'system',
+  catchup_scan: 'system',
+}
+
+export function dutyCategory(dutyKey: string): DutyCategory {
+  return DUTY_CATEGORY[dutyKey] ?? 'system'
+}

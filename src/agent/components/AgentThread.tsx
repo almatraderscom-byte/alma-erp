@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
@@ -12,7 +12,7 @@ import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { AgentThinkingIndicator } from './AgentThinkingIndicator'
-import { toolDisplay } from '@/agent/lib/tool-labels'
+import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
 
 export interface ChatMessage {
@@ -20,7 +20,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
-  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean }>
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; input?: unknown }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
     id: string
@@ -311,8 +311,24 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   )
 }
 
-function ToolActivityChip({ name, done, success }: { name: string; done: boolean; success?: boolean }) {
+/**
+ * Collapse the self-verification loop's repeated tool runs into one chip per
+ * tool (first-appearance order, latest status wins) — Claude-style, no clutter.
+ */
+function dedupeToolActivity(
+  items: NonNullable<ChatMessage['toolActivity']>,
+): NonNullable<ChatMessage['toolActivity']> {
+  const byName = new Map<string, NonNullable<ChatMessage['toolActivity']>[number]>()
+  for (const t of items) {
+    const prev = byName.get(t.name)
+    byName.set(t.name, prev ? { ...t, done: t.done || prev.done } : t)
+  }
+  return [...byName.values()]
+}
+
+function ToolActivityChip({ name, done, success, input }: { name: string; done: boolean; success?: boolean; input?: unknown }) {
   const d = toolDisplay(name)
+  const detail = toolDetail(name, input)
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
       done
@@ -330,7 +346,7 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
       {done && success === false && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       )}
-      <span>{d.label}</span>
+      <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
     </span>
   )
 }
@@ -338,6 +354,7 @@ function ToolActivityChip({ name, done, success }: { name: string; done: boolean
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const reduceMotion = useReducedMotion()
   const [artifactSaved, setArtifactSaved] = useState<Set<string>>(new Set())
   const todoCtx = useAgentTodosOptional()
   const isOfficeShift = Boolean(
@@ -432,9 +449,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           {(isOfficeShift ? messages.filter((m) => m.streaming) : messages).map((msg, index) => (
             <motion.div
               key={msg.id}
-              initial={{ opacity: 0, y: 6 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, delay: index < 10 ? index * 0.02 : 0 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: 'easeOut', delay: index < 10 ? index * 0.02 : 0 }}
               className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
               {msg.role === 'user' ? (
@@ -484,8 +501,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
                     <div className="mb-3 flex flex-wrap gap-1.5">
-                      {msg.toolActivity.map((t) => (
-                        <ToolActivityChip key={t.id} name={t.name} done={t.done} success={t.success} />
+                      {dedupeToolActivity(msg.toolActivity).map((t) => (
+                        <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} input={t.input} />
                       ))}
                     </div>
                   )}

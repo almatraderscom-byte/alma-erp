@@ -447,11 +447,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           const d = toolDisplay(String(evt.name))
           setStreamMode('fetching')
           setStreamStatus(`${d.icon} ${d.label}`)
-          setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: evt.id as string, name: evt.name as string, done: false }] }
-              : m
-          ))
+          // Upsert by id: tool_start fires twice (once at stream start, once with
+          // the parsed input) — merge so the chip gains its real target, no dupes.
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            const existing = m.toolActivity ?? []
+            const idx = existing.findIndex((t) => t.id === evt.id)
+            if (idx >= 0) {
+              const next = existing.slice()
+              next[idx] = { ...next[idx], input: evt.input ?? next[idx].input }
+              return { ...m, toolActivity: next }
+            }
+            return { ...m, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }] }
+          }))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
           setStreamMode('writing')
@@ -810,12 +818,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
           </button>
         )}
-        {/* Header — light theme */}
-        <header className="safe-top safe-x relative flex shrink-0 items-center gap-1 border-b border-black/[0.06] bg-white px-3 py-2 md:px-4">
+        {/* Header — floating translucent pods (FOUND-1B "Claude-app feel") */}
+        <header className="safe-top safe-x relative z-20 flex shrink-0 items-center gap-2 bg-transparent px-3 py-2 md:px-4">
+          {/* Left — ☰ menu in a circular frosted pod */}
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 active:scale-95 md:h-9 md:w-9"
+            className="alma-frost alma-pod flex h-10 w-10 shrink-0 items-center justify-center text-gray-500 transition-all hover:text-gray-700 active:scale-95 md:h-9 md:w-9"
             aria-label="সাইডবার"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -836,37 +845,37 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             )}
           </div>
 
-          {/* Right — refresh + new chat */}
-          <button
-            type="button"
-            onClick={() => {
-              if (activeConvId) {
-                void loadConversation({ id: activeConvId, title: null, projectId: activeConvProjectId, archived: false, updatedAt: '' })
-              } else {
-                window.location.reload()
-              }
-            }}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 active:scale-95 md:h-9 md:w-9"
-            aria-label="রিফ্রেশ"
-            title="রিফ্রেশ"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => newConversation()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600 active:scale-95 md:h-9 md:w-9"
-            aria-label="নতুন চ্যাট"
-            title="নতুন কথোপকথন"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
+          {/* Right — frosted pod group: refresh · new chat · (desktop: ERP · artifacts) */}
+          <div className="alma-frost alma-pod flex shrink-0 items-center gap-0.5 px-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (activeConvId) {
+                  void loadConversation({ id: activeConvId, title: null, projectId: activeConvProjectId, archived: false, updatedAt: '' })
+                } else {
+                  window.location.reload()
+                }
+              }}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 active:scale-95"
+              aria-label="রিফ্রেশ"
+              title="রিফ্রেশ"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => newConversation()}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 active:scale-95"
+              aria-label="নতুন চ্যাট"
+              title="নতুন কথোপকথন"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
 
-          {/* Desktop-only nav links */}
-          <div className="hidden items-center gap-1.5 md:flex">
+            {/* Desktop-only nav links */}
             <Link
               href="/"
-              className="flex h-8 items-center rounded-lg px-2.5 text-[11px] text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600"
+              className="hidden h-8 items-center rounded-full px-2.5 text-[11px] text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 md:flex"
             >
               ERP
             </Link>
@@ -874,15 +883,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               <button
                 type="button"
                 onClick={() => setArtifactsOpen((v) => !v)}
-                className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] text-gray-400 transition-all hover:bg-black/[0.04] hover:text-gray-600"
+                className="hidden h-8 items-center gap-1 rounded-full px-2.5 text-[11px] text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 md:flex"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2H22l-6 4.8 2.4 7.2L12 16.4l-6.4 4.8L8 14 2 9.2h7.6z"/></svg>
                 {artifacts.length}
               </button>
             )}
           </div>
-
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-black/[0.06] to-transparent" />
         </header>
 
         {activePersonalMode && (
