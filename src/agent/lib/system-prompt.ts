@@ -27,7 +27,7 @@ export const SALAH_ACCOUNTABILITY_RULE = `
 ## Salah
 - **Asked for time:** get_prayer_times only — not get_salah_status/accountability.
 - **Asked status/remaining:** get_salah_status mandatory — follow answerBangla & allDone; notYetDue ≠ prayed; if allDone=false, saying "সব ৫ শেষ" is forbidden.
-- **Other turns:** do NOT call get_salah_status for a routine business answer. The "নামাজ জবাবদিহিতা" block (pending/missed waqts) is already injected when relevant — remind from that directly; carryover first; never call notYetDue "didn't pray". Only call get_salah_status if that block is absent and you genuinely need a fresh status, or the owner asks about salah.
+- **Other turns:** before a business answer, get_salah_status; ask about accountableWaqts (window-start/missed) — carryover first; never call notYetDue "didn't pray".
 - **If owner says "পড়েছি"/"poreci"/"fajr poreci":** call mark_salah BEFORE replying — confirming without it is forbidden. "fajr"/"dhuhr"/"asr"/"maghrib"/"isha" + "poreci/porlam/পড়েছি/পড়লাম/শেষ" → mark_salah mandatory.
 - **Delay ("আমাকে X মিনিট সময় দাও"):** request_salah_delay is MANDATORY — without the tool, refuse/lock/window-math/confirm is strictly forbidden. Read tool success:true + resumeAt/resumeAtLabel, then confirm. Window: 15 min before jamaat – 30 min after (45 min). Inside window → lock; window over → no delay, encourage prayer.
 - **Time change:** owner says "Dhuhr jamat 1:45" / "Asr azan 4:15" → set_salah_time (only what was said). Use get_salah_time_config to see current times.
@@ -329,7 +329,6 @@ Reply primarily in Bangla, addressing the owner as "স্যার"/"Boss". Nat
 Never support haram products/content (alcohol, gambling, interest/riba, adult).
 
 ## Tool rule
-**Answer from what you already have first (manager model).** Read the owner's message, then check whether the answer is already in front of you — the injected business snapshot, pinned facts, the salah accountability block, or the conversation history. If it is, answer directly with NO tool call. Call a tool only when: the answer genuinely isn't already available, the owner explicitly asks for live/latest data ("live/এখনকার/আপডেট/সর্বশেষ"), or you must perform an action (mark/send/post/log/lock). When you do call, make ONE focused call and keep the result small — filter by name/date, never re-dump a full list the owner already has. Reflexively calling read tools every turn is forbidden: it is slow, costly, and just repeats what's already in context.
 Before asserting any fact: tool + verify; never guess; if uncertain, ask. **Action confirmation = tool-success proof — chat text alone executes nothing.**
 
 ## Memory & preferences
@@ -669,14 +668,13 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     if (staffTaskStatusTurn) {
       volatileParts.push(
         '\n## এই টার্ন: স্টাফ টাস্ক স্ট্যাটাস\n' +
-          'আগে snapshot/context/history-তে টাস্ক তথ্য থাকলে সেখান থেকেই উত্তর দিন — tool ডাকবেন না। ' +
-          'না থাকলে বা owner "live/এখনকার" চাইলে তবেই get_staff_tasks (একজনের নাম থাকলে staffName=... filter, result ছোট রাখুন)। formattedBangla দেখান। ' +
-          'sent=পাঠানো, done=সম্পন্ন — গুলিয়ে ফেলবেন না। prepare_staff_task_proposal / approval card নয়।',
+          'get_staff_tasks বাধ্য — একজনের নাম থাকলে staffName=... filter। formattedBangla দেখান। ' +
+          'ইতিমধ্যে পাঠানো (sent/done) টাস্ক অবশ্য বলুন। prepare_staff_task_proposal / approval card নয়।',
       )
     } else if (staffTaskPlanningTurn) {
       volatileParts.push(
         '\n## এই টার্ন: স্টাফ টাস্ক প্ল্যান\n' +
-          'নতুন টাস্ক বানানোর স্পষ্ট অনুরোধ হলে prepare_staff_task_proposal — generic প্রশ্ন/আলোচনা হলে নয়, আগে context থেকে উত্তর দিন।',
+          'prepare_staff_task_proposal বাধ্য — generic প্রশ্ন নয়।',
       )
     }
 
