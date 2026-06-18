@@ -200,6 +200,7 @@ function StudioWorkspace({
   const [panelOpen, setPanelOpen] = useState(true)
   const [tab, setTab] = useState<'auto' | 'advanced'>('auto')
   const [includeFamily, setIncludeFamily] = useState(false)
+  const [includeReel, setIncludeReel] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
 
   const modeDef = useMemo(() => STUDIO_MODES.find((m) => m.id === mode)!, [mode])
@@ -236,6 +237,7 @@ function StudioWorkspace({
       const result = await runAutoStudioJob({
         productImagePath: productPath,
         includeFamily: includeFamily && familyAvailable,
+        includeReel,
       })
       toast.success(result.message)
       onOpenGallery()
@@ -338,6 +340,9 @@ function StudioWorkspace({
           familyAvailable={familyAvailable}
           includeFamily={includeFamily}
           setIncludeFamily={setIncludeFamily}
+          includeReel={includeReel}
+          setIncludeReel={setIncludeReel}
+          bestRealism={Boolean(config?.fashnConfigured)}
           running={autoRunning}
           canRun={Boolean(productPath && defaultModel)}
           onRun={() => void handleAutoRun()}
@@ -581,6 +586,9 @@ function AutoPanel({
   familyAvailable,
   includeFamily,
   setIncludeFamily,
+  includeReel,
+  setIncludeReel,
+  bestRealism,
   running,
   canRun,
   onRun,
@@ -591,6 +599,9 @@ function AutoPanel({
   familyAvailable: boolean
   includeFamily: boolean
   setIncludeFamily: (v: boolean) => void
+  includeReel: boolean
+  setIncludeReel: (v: boolean) => void
+  bestRealism: boolean
   running: boolean
   canRun: boolean
   onRun: () => void
@@ -620,7 +631,11 @@ function AutoPanel({
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
-              <p className="text-[10px] text-muted">এই মডেল দিয়ে ছবি তৈরি হবে · Models ট্যাবে বদলানো যাবে</p>
+              <p className="text-[10px] text-muted">
+                {bestRealism
+                  ? '🟢 FASHN — best realism engine চালু · Models ট্যাবে বদলানো যাবে'
+                  : 'Gemini engine · FASHN_API_KEY দিলে best realism পাবেন'}
+              </p>
             </div>
           </div>
         ) : (
@@ -659,6 +674,34 @@ function AutoPanel({
           </button>
         )}
 
+        {/* Reel toggle (Phase 4 — Veo 3.1 video) */}
+        <button
+          type="button"
+          onClick={() => setIncludeReel(!includeReel)}
+          className={cn(
+            'flex items-center justify-between rounded-2xl border px-3.5 py-3 text-left transition-colors',
+            includeReel ? 'border-[#E07A5F]/40 bg-[#E07A5F]/8' : 'border-border-subtle bg-card/70',
+          )}
+        >
+          <div>
+            <p className="text-[13px] font-semibold text-cream">🎬 ছোট রিলও বানাও</p>
+            <p className="text-[10px] text-muted">৬ সেকেন্ড 9:16 প্রোডাক্ট রিল (Veo 3.1) · আলাদা খরচ</p>
+          </div>
+          <span
+            className={cn(
+              'relative h-6 w-10 shrink-0 rounded-full transition-colors',
+              includeReel ? 'bg-[#E07A5F]' : 'bg-white/15',
+            )}
+          >
+            <span
+              className={cn(
+                'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                includeReel ? 'left-[1.125rem]' : 'left-0.5',
+              )}
+            />
+          </span>
+        </button>
+
         <motion.button
           type="button"
           disabled={!canRun || running}
@@ -678,7 +721,9 @@ function AutoPanel({
             <>✨ Generate</>
           )}
         </motion.button>
-        <p className="text-center text-[10px] text-muted">No LLM cost — direct render queue</p>
+        <p className="text-center text-[10px] text-muted">
+          No LLM cost · ছবি render queue{includeReel ? ' · রিলে আলাদা ভিডিও খরচ' : ''}
+        </p>
       </div>
     </div>
   )

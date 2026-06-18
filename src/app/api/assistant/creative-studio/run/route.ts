@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  let body: CreativeStudioRunInput & { modelId?: string; auto?: boolean; includeFamily?: boolean }
+  let body: CreativeStudioRunInput & { modelId?: string; auto?: boolean; includeFamily?: boolean; includeReel?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -39,13 +39,18 @@ export async function POST(req: NextRequest) {
       const result = await runAutoStudio({
         productImagePath: body.productImagePath ?? body.sourceImagePath ?? '',
         includeFamily: body.includeFamily,
+        includeReel: body.includeReel,
       })
-      const count = result.jobs.length
+      const imageCount = result.jobs.filter((j) => j.type === 'image_gen').length
+      const engine = result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
+      const parts = [`✨ ${imageCount}টি ছবি`]
+      if (result.reelQueued) parts.push('১টি রিল')
       return Response.json({
         ok: true,
         jobs: result.jobs,
         provider: result.provider,
-        message: `✨ ${count}টি ছবি তৈরি হচ্ছে (মডেল: ${result.modelName}) — Gallery-তে দেখুন।`,
+        reelQueued: result.reelQueued,
+        message: `${parts.join(' + ')} তৈরি হচ্ছে · ${engine} · মডেল: ${result.modelName} — Gallery-তে দেখুন।`,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

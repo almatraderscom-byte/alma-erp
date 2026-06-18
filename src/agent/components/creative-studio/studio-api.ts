@@ -68,7 +68,7 @@ export async function runStudioJob(payload: RunPayload) {
   return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
 }
 
-export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean }) {
+export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean; includeReel?: boolean }) {
   const res = await fetch('/api/assistant/creative-studio/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
