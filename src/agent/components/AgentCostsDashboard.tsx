@@ -404,7 +404,7 @@ export default function AgentCostsDashboard() {
 
   return (
     <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-[#FAF9F6] min-h-[100dvh]">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/[0.06] bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] alma-frost px-4 py-3">
         <div>
           <h1 className="text-lg font-bold text-[#1a1a2e]">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
           <p className="text-[11px] text-[#94a3b8]">API + সাবস্ক্রিপশন — এক জায়গায়</p>
@@ -423,7 +423,7 @@ export default function AgentCostsDashboard() {
       </div>
 
       {/* API balances */}
-      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold text-[#E07A5F]">💳 API ব্যালেন্স</p>
           <div className="flex items-center gap-2">
@@ -541,7 +541,7 @@ export default function AgentCostsDashboard() {
             key={c.label}
             variants={staggerItem}
             className={cn(
-              'rounded-2xl border border-black/[0.06] bg-white p-4 transition-all hover:border-black/[0.1] shadow-sm',
+              'rounded-[18px] border border-black/[0.06] bg-white p-4 transition-all hover:border-black/[0.1] shadow-card',
               STAT_GLOWS[idx],
             )}
           >
@@ -553,7 +553,7 @@ export default function AgentCostsDashboard() {
       </motion.div>
 
       {/* Budget settings */}
-      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
         <p className="text-xs font-semibold text-[#E07A5F] mb-3">বাজেট সতর্কতা (USD)</p>
         <div className="flex flex-wrap gap-3 items-end">
           <label className="text-[11px] text-[#94a3b8]">
@@ -641,7 +641,7 @@ export default function AgentCostsDashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
           <p className="text-xs font-semibold text-[#64748b] mb-3">দৈনিক খরচ (৩০ দিন)</p>
           {chartData.length === 0 ? (
             <p className="py-12 text-center text-[11px] text-[#94a3b8]">এখনো কোনো ইভেন্ট নেই</p>
@@ -668,7 +668,7 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
           <p className="text-xs font-semibold text-[#64748b] mb-3">প্রোভাইডার (এই মাস)</p>
           {pieData.length === 0 ? (
             <p className="py-12 text-center text-[11px] text-[#94a3b8]">ডেটা নেই</p>
@@ -695,7 +695,7 @@ export default function AgentCostsDashboard() {
 
       {/* Top conversations */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
           <p className="text-xs font-semibold text-[#64748b] mb-3">🌐 Web — সবচেয়ে ব্যয়বহুল কথোপকথন</p>
           {data.topConversations.length === 0 ? (
             <p className="text-[11px] text-[#94a3b8] py-4 text-center">এখনো নেই</p>
@@ -713,7 +713,7 @@ export default function AgentCostsDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
           <p className="text-xs font-semibold text-[#64748b] mb-1">📱 Telegram — কথোপকথন খরচ (শীর্ষ)</p>
           <p className="text-[10px] text-[#94a3b8] mb-3">
             আজ {fmtUsd(data.telegramTodayUsd)} · এই মাসে {fmtUsd(data.telegramMonthUsd)}
@@ -737,7 +737,7 @@ export default function AgentCostsDashboard() {
 
       {/* Telegram daily chart */}
       {(data.telegramDailyLast30?.length ?? 0) > 0 && (
-        <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+        <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
           <p className="text-xs font-semibold text-[#64748b] mb-3">📱 Telegram — দৈনিক খরচ (৩০ দিন)</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={data.telegramDailyLast30.map((d) => ({
@@ -759,7 +759,7 @@ export default function AgentCostsDashboard() {
       )}
 
       {/* Subscriptions */}
-      <div className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
+      <div className="rounded-[18px] border border-black/[0.06] bg-white p-4 shadow-card">
         <p className="text-xs font-semibold text-[#64748b] mb-3">সাবস্ক্রিপশন</p>
         {data.subscriptions.length === 0 ? (
           <p className="text-[11px] text-[#94a3b8] py-4 text-center">
