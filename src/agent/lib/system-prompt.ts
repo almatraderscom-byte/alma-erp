@@ -20,6 +20,7 @@ import { VISION_ROLE_PROMPT } from '@/agent/tools/vision-tools'
 import { SIMULATE_ROLE_PROMPT } from '@/agent/tools/simulate-tools'
 import type { ActivePlaybookEntry } from '@/agent/lib/playbook'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+import type { ToolGroupName } from '@/agent/tools/tool-groups'
 import type { ConflictSignal } from '@/agent/lib/intelligence/counter-propose'
 
 export const SALAH_ACCOUNTABILITY_RULE = `
@@ -367,11 +368,11 @@ For task proposals, briefings, staff plans, or "what should I do" — don't answ
 `
 
 /**
- * Lifestyle-mode static prompt (default). Includes Lifestyle role tools
- * (website/research/SEO/competitor/tryon/content-engine/brand/owner-todo) and
- * the Lifestyle OPERATIONS_RULE.
+ * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
+ * rules), then a conditional role-prompt section, then the always-on tail
+ * (operations + staff + intelligence + communication rules).
  */
-const LIFESTYLE_STATIC_PROMPT =
+const LIFESTYLE_PROMPT_HEAD =
   SYSTEM_CORE
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
@@ -379,30 +380,16 @@ const LIFESTYLE_STATIC_PROMPT =
   + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
   + CHECK_SOURCES_RULE
-  + `\n${WEBSITE_ROLE_PROMPT}\n`
-  + `\n${RESEARCH_ROLE_PROMPT}\n`
-  + `\n${SEO_ROLE_PROMPT}\n`
-  + `\n${COMPETITOR_ROLE_PROMPT}\n`
-  + `\n${ADVISOR_ROLE_PROMPT}\n`
-  + `\n${OWNER_TODO_ROLE_PROMPT}\n`
-  + `\n${WORK_TODO_PROMPT}\n`
-  + `\n${PLAYBOOK_ROLE_PROMPT}\n`
-  + `\n${TRYON_ROLE_PROMPT}\n`
-  + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
-  + `\n${CONTENT_ENGINE_ROLE_PROMPT}\n`
-  + `\n${AD_CREATIVE_ROLE_PROMPT}\n`
-  + `\n${VIDEO_ROLE_PROMPT}\n`
-  + `\n${ADS_ROLE_PROMPT}\n`
-  + `\n${BRAND_ROLE_PROMPT}\n`
-  + `\n${VISION_ROLE_PROMPT}\n`
-  + `\n${SIMULATE_ROLE_PROMPT}\n`
-  + `
+
+const LIFESTYLE_PLANNING_BLOCK = `
 ## PLANNING (File 19)
 For complex tasks with ≥3 distinct actions (e.g. "Eid campaign full setup", "monthly closing"), call make_plan FIRST.
 Plan → owner reviews → execute_plan → each step runs with proper tools → self-check at end.
 Small tasks (1-2 steps): just call tools directly, no plan overhead.
 `
-  + OPERATIONS_RULE
+
+const LIFESTYLE_PROMPT_TAIL =
+  OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE
   + INTELLIGENCE_RULE
@@ -414,6 +401,41 @@ Small tasks (1-2 steps): just call tools directly, no plan overhead.
   + OWNER_ROUTINE_RULE
   + OWNER_BRIEFING_STYLE
   + WORK_MODE_PERSONAL_OFFER_RULE
+
+/**
+ * Role prompts are tool-specific instructions. A role prompt is useless if its
+ * tools weren't loaded this turn, so we only include the role prompts whose
+ * tool group is active. The base-group roles (owner-todo / work-todo /
+ * playbook) are always loaded, so they're always included. When `groups` is
+ * undefined (legacy callers / tests), include everything (safe full prompt).
+ */
+function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
+  const all = !groups
+  const has = (g: ToolGroupName) => all || groups!.includes(g)
+  const parts: string[] = []
+
+  // base group (always loaded → always relevant)
+  parts.push(OWNER_TODO_ROLE_PROMPT, WORK_TODO_PROMPT, PLAYBOOK_ROLE_PROMPT)
+
+  if (has('website')) parts.push(WEBSITE_ROLE_PROMPT)
+  if (has('growth')) parts.push(RESEARCH_ROLE_PROMPT, SEO_ROLE_PROMPT, COMPETITOR_ROLE_PROMPT, ADVISOR_ROLE_PROMPT, ADS_ROLE_PROMPT)
+  if (has('content')) parts.push(CONTENT_ENGINE_ROLE_PROMPT, AD_CREATIVE_ROLE_PROMPT, VIDEO_ROLE_PROMPT, BRAND_ROLE_PROMPT, TRYON_ROLE_PROMPT)
+  if (has('diag')) parts.push(DIAGNOSTIC_ROLE_PROMPT)
+  if (has('vision')) parts.push(VISION_ROLE_PROMPT)
+  // simulate tools live in both finance and growth groups
+  if (has('finance') || has('growth')) parts.push(SIMULATE_ROLE_PROMPT)
+
+  return parts.map((p) => `\n${p}\n`).join('')
+}
+
+function buildLifestyleStaticPrompt(groups?: ToolGroupName[]): string {
+  return (
+    LIFESTYLE_PROMPT_HEAD
+    + buildLifestyleRolePrompts(groups)
+    + LIFESTYLE_PLANNING_BLOCK
+    + LIFESTYLE_PROMPT_TAIL
+  )
+}
 
 /**
  * Trading-mode static prompt (ALMA Trading / Binance P2P). Excludes all
@@ -501,6 +523,8 @@ export type BuildSystemPromptArgs = {
   ownerDecisions?: OwnerDecision[]
   conflictSignals?: Array<{ source: string; detail: string; confidence: number }>
   businessContext?: string
+  /** Active tool groups this turn — gates which role prompts get loaded. */
+  activeGroups?: ToolGroupName[]
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -529,6 +553,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     ownerDecisions,
     conflictSignals,
     businessContext,
+    activeGroups,
   } = args
 
   const stableParts: string[] = []
@@ -553,7 +578,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
     }
   } else {
-    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : LIFESTYLE_STATIC_PROMPT
+    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups)
     stableParts.push(corePrompt)
 
     if (businessId === 'ALMA_TRADING') {

@@ -13,7 +13,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
@@ -400,7 +400,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, selectedTools] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -425,8 +425,10 @@ export async function* runAgentTurn(
       console.warn('[core] ownerActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
       return ''
     }),
-    selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
+    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
   ])
+  const selectedTools = toolSelection.tools
+  const activeGroups = toolSelection.groups
 
   type ToolRecord = {
     id: string; toolName: string; input: Record<string, unknown>
@@ -493,6 +495,7 @@ export async function* runAgentTurn(
     ownerDecisions,
     conflictSignals,
     businessContext,
+    activeGroups,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]

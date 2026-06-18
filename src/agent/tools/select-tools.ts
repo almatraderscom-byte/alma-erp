@@ -130,34 +130,48 @@ export function selectToolsForTurn(
 const WIDE_FALLBACK: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
 
 /**
- * Async hybrid tool selection: keyword fast-path when confident,
- * semantic embedding fallback when ambiguous.
+ * Async hybrid tool selection that also returns the *final* tool groups used
+ * (after any semantic/widening fallback). The groups let the caller load only
+ * the matching role prompts — keeping the system prompt aligned 1:1 with the
+ * tools so both cache-bust together (no extra cache penalty) while cutting
+ * tokens whenever fewer groups are active.
  */
-export async function selectToolsForTurnAsync(
+export async function selectToolsAndGroupsForTurnAsync(
   text: string,
   opts: { personalMode: boolean; businessId: AgentBusinessId },
-): Promise<Anthropic.Messages.Tool[]> {
+): Promise<{ tools: Anthropic.Messages.Tool[]; groups: ToolGroupName[] }> {
   const { groups, confident } = selectToolGroupsSync(text, opts)
 
   if (confident) {
     const tools = assembleSelectedTools(groups)
-    return applyToolCacheControl(toolsToDefinitions(tools))
+    return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups }
   }
 
   // Low confidence — try semantic fallback
   try {
     const semGroups = await semanticGroups(text)
     if (semGroups.length > 0) {
-      const merged = new Set<ToolGroupName>([...groups, ...semGroups])
-      const tools = assembleSelectedTools([...merged])
-      return applyToolCacheControl(toolsToDefinitions(tools))
+      const merged = [...new Set<ToolGroupName>([...groups, ...semGroups])]
+      const tools = assembleSelectedTools(merged)
+      return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups: merged }
     }
   } catch (err) {
     console.warn('[select-tools] semantic fallback failed:', err instanceof Error ? err.message : err)
   }
 
   // Widen to safe defaults so agent isn't capability-starved
-  const widened = new Set<ToolGroupName>([...groups, ...WIDE_FALLBACK])
-  const tools = assembleSelectedTools([...widened])
-  return applyToolCacheControl(toolsToDefinitions(tools))
+  const widened = [...new Set<ToolGroupName>([...groups, ...WIDE_FALLBACK])]
+  const tools = assembleSelectedTools(widened)
+  return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups: widened }
+}
+
+/**
+ * Async hybrid tool selection: keyword fast-path when confident,
+ * semantic embedding fallback when ambiguous. Returns tools only (back-compat).
+ */
+export async function selectToolsForTurnAsync(
+  text: string,
+  opts: { personalMode: boolean; businessId: AgentBusinessId },
+): Promise<Anthropic.Messages.Tool[]> {
+  return (await selectToolsAndGroupsForTurnAsync(text, opts)).tools
 }

@@ -16,7 +16,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -150,7 +150,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -163,6 +163,7 @@ async function* runAlternateProviderTurn(
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
+    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
   ])
 
   const promptArgs = {
@@ -185,6 +186,7 @@ async function* runAlternateProviderTurn(
     conflictSignals,
     businessContext,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
+    activeGroups: toolSelection.groups,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
@@ -194,7 +196,7 @@ async function* runAlternateProviderTurn(
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText([...stable, ...volatile]) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
-    await selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
+    toolSelection.tools,
     agentControls,
   )
   const neutralTools = anthropicToolsToNeutral(selectedTools)
