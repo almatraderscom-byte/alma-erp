@@ -151,7 +151,7 @@ export default function AgentSidebar({
   }
 
   const sidebarContent = (
-    <div className={cn('flex h-full flex-col bg-white/90 backdrop-blur-2xl', isMobile && 'safe-top')}>
+    <div className={cn('flex h-full flex-col bg-[rgba(250,249,246,0.92)] backdrop-blur-2xl', isMobile && 'safe-top')}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
         <div className="flex items-center gap-2">
@@ -475,7 +475,7 @@ export default function AgentSidebar({
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-              className="fixed inset-y-0 left-0 z-[60] w-72"
+              className="fixed inset-y-0 left-0 z-[60] w-72 overflow-hidden rounded-r-[24px] shadow-[0_4px_24px_rgba(0,0,0,0.10)]"
             >
               {sidebarContent}
             </motion.div>
