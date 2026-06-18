@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { MotionConfig } from 'framer-motion'
 import {
   ACCENTS,
   ACCENT_COOKIE,
@@ -77,7 +78,13 @@ export function ThemeProvider({
     [mode, accent, setMode, toggleMode, setAccent],
   )
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  return (
+    <ThemeContext.Provider value={value}>
+      <MotionConfig reducedMotion="user" transition={{ type: 'spring', stiffness: 260, damping: 28, mass: 0.7 }}>
+        {children}
+      </MotionConfig>
+    </ThemeContext.Provider>
+  )
 }
 
 export function useTheme(): ThemeContextValue {

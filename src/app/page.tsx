@@ -29,11 +29,11 @@ const StatusPieChart = dynamic(() => import('@/components/charts').then(m => m.S
 
 const stagger = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.04 } },
+  show: { transition: { staggerChildren: 0.05, delayChildren: 0.02 } },
 }
 const fadeUp = {
-  hidden: { opacity: 0, y: 8 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 260, damping: 26, mass: 0.7 } },
 }
 
 export default function DashboardPage() {
@@ -108,9 +108,9 @@ function LifestyleDashboard() {
       />
 
       {error && (
-        <div className="mx-4 md:mx-8 mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3">
-          <span className="text-red-500 text-sm shrink-0">⚠</span>
-          <p className="text-sm text-red-600">{error}</p>
+        <div className="mx-4 md:mx-8 mt-4 px-4 py-3 bg-danger/10 border border-danger/30 rounded-2xl flex items-center gap-3">
+          <span className="text-danger text-sm shrink-0">⚠</span>
+          <p className="text-sm text-danger">{error}</p>
         </div>
       )}
 
@@ -119,18 +119,18 @@ function LifestyleDashboard() {
           initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
           className="mx-4 md:mx-8 mt-4"
         >
-          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl">
-            <span className="text-amber-600 text-lg">⚡</span>
+          <div className="flex items-center gap-3 px-4 py-3 bg-warning/10 border border-warning/30 rounded-2xl">
+            <span className="text-warning text-lg">⚡</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-amber-800">
+              <p className="text-sm font-bold text-warning">
                 {slaBreaches.length} order{slaBreaches.length > 1 ? 's' : ''} need attention
               </p>
-              <p className="text-xs text-amber-600 mt-0.5 truncate">
+              <p className="text-xs text-warning mt-0.5 truncate">
                 {slaBreaches.slice(0, 3).map(b => `#${b.id}`).join(', ')}
                 {slaBreaches.length > 3 ? ` +${slaBreaches.length - 3} more` : ''}
               </p>
             </div>
-            <a href="/orders?status=sla" className="text-xs font-bold text-amber-700 hover:text-amber-900 transition-colors shrink-0">
+            <a href="/orders?status=sla" className="text-xs font-bold text-warning hover:text-warning transition-colors shrink-0">
               View all →
             </a>
           </div>
@@ -153,17 +153,17 @@ function LifestyleDashboard() {
             icon={<IconRevenue />}
             label="Revenue"
             value={loading ? null : fmt(kpis.total_revenue)}
-            accent="from-[#E07A5F]/10 to-[#E07A5F]/[0.02]"
-            borderColor="border-l-[#E07A5F]"
+            accent="from-gold/10 to-gold/[0.02]"
+            borderColor="border-l-gold"
             loading={loading}
           />
           <HeroKpi
             icon={<IconProfit />}
             label="Net Profit"
             value={loading ? null : fmt(profit)}
-            accent={profit < 0 ? 'from-red-100/50 to-red-50/20' : 'from-emerald-100/50 to-emerald-50/20'}
-            borderColor={profit < 0 ? 'border-l-red-400' : 'border-l-emerald-500'}
-            valueColor={profit < 0 ? 'text-red-600' : 'text-emerald-600'}
+            accent={profit < 0 ? 'from-danger/15 to-danger/5' : 'from-success/15 to-success/5'}
+            borderColor={profit < 0 ? 'border-l-danger' : 'border-l-success'}
+            valueColor={profit < 0 ? 'text-danger' : 'text-success'}
             sub="After return losses"
             loading={loading}
           />
@@ -171,18 +171,18 @@ function LifestyleDashboard() {
             icon={<IconOrders />}
             label="Total Orders"
             value={loading ? null : fmtNum(kpis.total_orders)}
-            accent="from-blue-100/50 to-blue-50/20"
-            borderColor="border-l-blue-500"
-            valueColor="text-blue-700"
+            accent="from-info/15 to-info/5"
+            borderColor="border-l-info"
+            valueColor="text-info"
             loading={loading}
           />
           <HeroKpi
             icon={<IconDelivered />}
             label="Delivered"
             value={loading ? null : fmtNum(kpis.delivered_count)}
-            accent="from-violet-100/50 to-violet-50/20"
+            accent="from-violet-500/10 to-violet-500/[0.04]"
             borderColor="border-l-violet-500"
-            valueColor="text-violet-700"
+            valueColor="text-violet-500"
             sub={pct(kpis.delivery_rate) + ' delivery rate'}
             loading={loading}
           />
@@ -194,25 +194,25 @@ function LifestyleDashboard() {
             <CompactKpi
               label="Return Loss"
               value={loading ? '—' : fmt(kpis.total_returns_loss ?? 0)}
-              color="text-red-600"
+              color="text-danger"
               sub={`${kpis.returned_paid_count ?? 0} paid · ${kpis.returned_unpaid_count ?? 0} refused`}
             />
             <CompactKpi
               label="Return Rate"
               value={loading ? '—' : pct(kpis.return_rate)}
-              color={kpis.return_rate > 20 ? 'text-red-600' : kpis.return_rate > 10 ? 'text-amber-600' : 'text-slate-600'}
+              color={kpis.return_rate > 20 ? 'text-danger' : kpis.return_rate > 10 ? 'text-warning' : 'text-muted-hi'}
               sub={`Paid ${kpis.return_rate_paid ?? 0}% · Refused ${kpis.return_rate_refused ?? 0}%`}
             />
             <CompactKpi
               label="Pending"
               value={loading ? '—' : fmtNum(kpis.pending_count)}
-              color="text-amber-600"
+              color="text-warning"
               sub="Awaiting action"
             />
             <CompactKpi
               label="Realized Profit"
               value={loading ? '—' : fmt(kpis.total_realized_profit ?? kpis.total_profit)}
-              color="text-emerald-600"
+              color="text-success"
               sub="Delivered orders only"
             />
           </div>
@@ -234,8 +234,8 @@ function LifestyleDashboard() {
             title="Monthly Revenue"
             subtitle={rangeLabel}
             legend={[
-              { color: 'bg-[#E07A5F]', label: 'Revenue' },
-              { color: 'bg-emerald-500', label: 'Profit' },
+              { color: 'bg-gold', label: 'Revenue' },
+              { color: 'bg-success', label: 'Profit' },
             ]}
           >
             {loading ? (
@@ -255,8 +255,8 @@ function LifestyleDashboard() {
             subtitle={rangeLabel}
             className="lg:col-span-2"
             legend={[
-              { color: 'bg-[#E07A5F]', label: 'Revenue' },
-              { color: 'bg-emerald-500', label: 'Profit' },
+              { color: 'bg-gold', label: 'Revenue' },
+              { color: 'bg-success', label: 'Profit' },
             ]}
           >
             {loading ? (
@@ -278,9 +278,9 @@ function LifestyleDashboard() {
                 <StatusPieChart data={statusPie} />
                 <div className="grid grid-cols-2 gap-1.5 mt-3">
                   {statusPie.map(s => (
-                    <div key={s.name} className="bg-slate-50 rounded-xl px-3 py-2 text-center">
-                      <p className="text-sm font-bold text-slate-800">{s.value}</p>
-                      <p className="text-[10px] text-slate-500">{s.name}</p>
+                    <div key={s.name} className="bg-bg-2 rounded-xl px-3 py-2 text-center">
+                      <p className="text-sm font-bold text-cream">{s.value}</p>
+                      <p className="text-[10px] text-muted">{s.name}</p>
                     </div>
                   ))}
                 </div>
@@ -303,8 +303,8 @@ function LifestyleDashboard() {
                   {catPie.map(c => (
                     <div key={c.name} className="flex items-center gap-3">
                       <span className="w-2.5 h-2.5 rounded-md shrink-0" style={{ background: c.color }} />
-                      <span className="text-xs text-slate-600 flex-1">{c.name}</span>
-                      <span className="text-xs font-bold text-slate-800 tabular-nums">{c.value}</span>
+                      <span className="text-xs text-muted-hi flex-1">{c.name}</span>
+                      <span className="text-xs font-bold text-cream tabular-nums">{c.value}</span>
                     </div>
                   ))}
                 </div>
@@ -326,13 +326,13 @@ function LifestyleDashboard() {
         {/* ── Top Products ──────────────────────────────────── */}
         <motion.div variants={fadeUp}>
           <Card className="overflow-hidden">
-            <div className="px-5 py-4 border-b border-black/[0.06] flex items-center justify-between">
+            <div className="px-5 py-4 border-b border-border-subtle flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">Top Products</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">{rangeLabel}</p>
+                <h3 className="text-sm font-bold text-cream">Top Products</h3>
+                <p className="text-[10px] text-muted mt-0.5">{rangeLabel}</p>
               </div>
             </div>
-            <div className="divide-y divide-black/[0.04]">
+            <div className="divide-y divide-border-subtle">
               {loading ? (
                 Array(4).fill(0).map((_, i) => (
                   <div key={i} className="px-5 py-4"><Skeleton className="h-3 w-full" /></div>
@@ -343,29 +343,29 @@ function LifestyleDashboard() {
                 </div>
               ) : (
                 topProducts.map((p, i) => (
-                  <div key={p.product} className="px-5 py-3.5 flex items-center gap-4 hover:bg-slate-50/80 transition-colors">
-                    <span className="w-7 h-7 rounded-lg bg-[#E07A5F]/10 text-[#E07A5F] text-xs font-bold flex items-center justify-center shrink-0">
+                  <div key={p.product} className="px-5 py-3.5 flex items-center gap-4 hover:bg-bg-2 transition-colors">
+                    <span className="w-7 h-7 rounded-lg bg-gold/10 text-gold text-xs font-bold flex items-center justify-center shrink-0">
                       {i + 1}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-800 truncate">{p.product}</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
+                      <p className="text-xs font-semibold text-cream truncate">{p.product}</p>
+                      <p className="text-[10px] text-muted mt-0.5">
                         {p.orders} orders
                         {p.pieces > 0 ? ` · ${fmtNum(p.pieces)} pcs` : ''}
                       </p>
                       {p.group_details.length > 0 ? (
-                        <p className="text-[10px] text-emerald-600 mt-0.5 leading-relaxed">
+                        <p className="text-[10px] text-success mt-0.5 leading-relaxed">
                           {p.group_details.slice(0, 2).map(formatGroupSizeLine).join(' | ')}
                         </p>
                       ) : p.top_size ? (
-                        <p className="text-[10px] text-emerald-600 mt-0.5 truncate">
+                        <p className="text-[10px] text-success mt-0.5 truncate">
                           Top: {p.top_size.label} · {fmtNum(p.top_size.pieces)} pcs
                         </p>
                       ) : null}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-xs font-bold text-[#E07A5F] tabular-nums"><Money amount={p.revenue} /></p>
-                      <p className="text-[10px] font-semibold text-emerald-600 tabular-nums mt-0.5"><Money amount={p.profit} /></p>
+                      <p className="text-xs font-bold text-gold tabular-nums"><Money amount={p.revenue} /></p>
+                      <p className="text-[10px] font-semibold text-success tabular-nums mt-0.5"><Money amount={p.profit} /></p>
                     </div>
                   </div>
                 ))
@@ -377,13 +377,13 @@ function LifestyleDashboard() {
         {/* ── Recent Orders ─────────────────────────────────── */}
         <motion.div variants={fadeUp}>
           <Card className="overflow-hidden">
-            <div className="px-5 py-4 border-b border-black/[0.06] flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800">Recent Orders</h3>
-              <a href="/orders" className="text-xs font-semibold text-[#E07A5F] hover:text-[#C45A3C] transition-colors">
+            <div className="px-5 py-4 border-b border-border-subtle flex items-center justify-between">
+              <h3 className="text-sm font-bold text-cream">Recent Orders</h3>
+              <a href="/orders" className="text-xs font-semibold text-gold hover:text-gold-dim transition-colors">
                 View all →
               </a>
             </div>
-            <div className="divide-y divide-black/[0.04]">
+            <div className="divide-y divide-border-subtle">
               {loading
                 ? Array(5).fill(0).map((_, i) => (
                     <div key={i} className="px-5 py-4 flex items-center gap-3">
@@ -396,14 +396,14 @@ function LifestyleDashboard() {
                 : recentOrders.length === 0
                   ? <div className="px-5 py-10"><Empty icon="◫" title="No orders" desc="Recent orders appear for the selected date range" /></div>
                   : (recentOrders as Partial<Order>[]).slice(0, 6).map(o => (
-                      <div key={o.id} className="px-5 py-3.5 flex items-center gap-3 hover:bg-slate-50/80 transition-colors">
-                        <span className="font-mono text-[11px] text-[#E07A5F] font-bold shrink-0 w-16">{o.id}</span>
+                      <div key={o.id} className="px-5 py-3.5 flex items-center gap-3 hover:bg-bg-2 transition-colors">
+                        <span className="font-mono text-[11px] text-gold font-bold shrink-0 w-16">{o.id}</span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-slate-800 truncate">{o.customer}</p>
-                          <p className="text-[10px] text-slate-500 truncate">{o.product}</p>
+                          <p className="text-xs font-semibold text-cream truncate">{o.customer}</p>
+                          <p className="text-[10px] text-muted truncate">{o.product}</p>
                         </div>
                         {o.status && <StatusBadge status={o.status} />}
-                        <span className="text-xs font-bold text-slate-800 tabular-nums shrink-0"><Money amount={o.sell_price ?? 0} /></span>
+                        <span className="text-xs font-bold text-cream tabular-nums shrink-0"><Money amount={o.sell_price ?? 0} /></span>
                       </div>
                     ))
               }
@@ -414,19 +414,19 @@ function LifestyleDashboard() {
         {/* ── SLA Breach Detail ─────────────────────────────── */}
         {slaBreaches.length > 0 && (
           <motion.div variants={fadeUp}>
-            <Card className="overflow-hidden border-amber-200">
-              <div className="px-5 py-3.5 flex items-center gap-3 border-b border-amber-200 bg-amber-50">
-                <span className="text-amber-600 text-lg">⚡</span>
-                <h3 className="text-sm font-bold text-amber-800">
+            <Card className="overflow-hidden border-warning/30">
+              <div className="px-5 py-3.5 flex items-center gap-3 border-b border-warning/30 bg-warning/10">
+                <span className="text-warning text-lg">⚡</span>
+                <h3 className="text-sm font-bold text-warning">
                   SLA Alerts — {slaBreaches.length} order{slaBreaches.length > 1 ? 's' : ''}
                 </h3>
               </div>
-              <div className="divide-y divide-amber-100">
+              <div className="divide-y divide-warning/20">
                 {slaBreaches.map((b, i) => (
-                  <div key={i} className="px-5 py-3 flex items-center gap-3 hover:bg-amber-50/50 transition-colors">
-                    <span className="font-mono text-[11px] text-[#E07A5F] font-bold w-16 shrink-0">{b.id}</span>
-                    <span className="text-xs text-slate-700 flex-1">{b.customer}</span>
-                    <span className="text-[10px] text-amber-700 font-semibold bg-amber-100 px-2.5 py-1 rounded-full">{b.sla_status}</span>
+                  <div key={i} className="px-5 py-3 flex items-center gap-3 hover:bg-warning/10 transition-colors">
+                    <span className="font-mono text-[11px] text-gold font-bold w-16 shrink-0">{b.id}</span>
+                    <span className="text-xs text-muted-hi flex-1">{b.customer}</span>
+                    <span className="text-[10px] text-warning font-semibold bg-warning/20 px-2.5 py-1 rounded-full">{b.sla_status}</span>
                   </div>
                 ))}
               </div>
@@ -452,7 +452,11 @@ function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loa
   loading?: boolean
 }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl border border-black/[0.06] bg-white shadow-sm ${borderColor} border-l-[3px]`}>
+    <motion.div
+      whileHover={{ y: -3 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      className={`relative overflow-hidden rounded-2xl border border-border-subtle bg-card shadow-card will-change-transform ${borderColor} border-l-[3px]`}
+    >
       <div className={`absolute inset-0 bg-gradient-to-br ${accent} pointer-events-none`} />
       <div className="relative p-4 md:p-5">
         {loading ? (
@@ -464,26 +468,26 @@ function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loa
         ) : (
           <>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-slate-400">{icon}</span>
-              <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">{label}</p>
+              <span className="text-muted">{icon}</span>
+              <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">{label}</p>
             </div>
             {value && (
               typeof value === 'string' && value.includes('৳') ? (
                 <BdtText
                   value={value}
-                  className={`block text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-slate-800'}`}
+                  className={`block text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-cream'}`}
                 />
               ) : (
-                <p className={`text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-slate-800'}`}>
+                <p className={`text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-cream'}`}>
                   {value}
                 </p>
               )
             )}
-            {sub && <p className="text-[10px] text-slate-500 mt-1">{sub}</p>}
+            {sub && <p className="text-[10px] text-muted mt-1">{sub}</p>}
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -491,8 +495,11 @@ function CompactKpi({ label, value, color, sub }: {
   label: string; value: string; color: string; sub: string
 }) {
   return (
-    <div className="bg-white rounded-xl border border-black/[0.04] p-3.5 hover:shadow-sm transition-shadow">
-      <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-slate-500 mb-1">{label}</p>
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      className="bg-card rounded-xl border border-border-subtle p-3.5 shadow-card will-change-transform">
+      <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted mb-1">{label}</p>
       {typeof value === 'string' && value.includes('৳') ? (
         <BdtText
           value={value}
@@ -501,8 +508,8 @@ function CompactKpi({ label, value, color, sub }: {
       ) : (
         <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
       )}
-      <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>
-    </div>
+      <p className="text-[10px] text-muted mt-0.5">{sub}</p>
+    </motion.div>
   )
 }
 
@@ -517,15 +524,15 @@ function ChartCard({ title, subtitle, legend, className, children }: {
     <Card className={`p-5 ${className ?? ''}`}>
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-          {subtitle && <p className="text-[10px] text-slate-500 mt-0.5">{subtitle}</p>}
+          <h3 className="text-sm font-bold text-cream">{title}</h3>
+          {subtitle && <p className="text-[10px] text-muted mt-0.5">{subtitle}</p>}
         </div>
         {legend && (
           <div className="flex gap-3">
             {legend.map(l => (
               <div key={l.label} className="flex items-center gap-1.5">
                 <div className={`w-2 h-2 rounded-full ${l.color}`} />
-                <span className="text-[10px] text-slate-500">{l.label}</span>
+                <span className="text-[10px] text-muted">{l.label}</span>
               </div>
             ))}
           </div>
