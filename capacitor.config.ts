@@ -29,11 +29,11 @@ const config: CapacitorConfig = {
   },
   ios: {
     handleApplicationNotifications: false,
-    backgroundColor: '#FAF9F6',
+    backgroundColor: '#0c0b12',
   },
   android: {
     allowMixedContent: false,
-    backgroundColor: '#FAF9F6',
+    backgroundColor: '#0c0b12',
   },
   plugins: {
     Keyboard: {
@@ -47,12 +47,12 @@ const config: CapacitorConfig = {
       // hand off to its ALMA animation fast instead of holding a static frame.
       launchShowDuration: 500,
       launchAutoHide: true,
-      backgroundColor: '#FAF9F6',
+      backgroundColor: '#0c0b12',
       androidSplashResourceName: 'splash',
       // The bootstrap page provides its own motion; the native spinner would
       // clash with it during the brief overlap.
       showSpinner: false,
-      spinnerColor: '#C9A84C',
+      spinnerColor: '#8b7cf6',
     },
     StatusBar: {
       style: 'DARK',

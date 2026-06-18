@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#FAF9F6" />
+    <meta name="theme-color" content="#0c0b12" />
     <title>Alma ERP</title>
 
     <!-- Warm the connection to production while the aura plays, so the
@@ -13,10 +13,12 @@
 
     <style>
       :root {
-        --gold: #c9a84c;
-        --gold-lt: #f4e2a6;
-        --gold-dk: #a87f2e;
-        --bg: #faf9f6;
+        --neon-blue: #7cc4f5;
+        --neon-violet: #8b7cf6;
+        --neon-magenta: #d36ad8;
+        --neon-pink: #f06595;
+        --neon-white: #f8fafc;
+        --bg: #0c0b12;
       }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       html, body { height: 100%; margin: 0; }
@@ -25,7 +27,9 @@
         place-items: center;
         overflow: hidden;
         background:
-          radial-gradient(130% 90% at 50% 42%, rgba(201, 168, 76, 0.08), transparent 60%),
+          radial-gradient(120% 80% at 30% 22%, rgba(139, 124, 246, 0.16), transparent 56%),
+          radial-gradient(120% 80% at 72% 82%, rgba(211, 106, 216, 0.14), transparent 58%),
+          radial-gradient(130% 90% at 50% 50%, rgba(124, 196, 245, 0.08), transparent 62%),
           var(--bg);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
         -webkit-font-smoothing: antialiased;
@@ -43,7 +47,7 @@
         position: absolute;
         width: 280px; height: 280px;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(201, 168, 76, 0.30), transparent 62%);
+        background: radial-gradient(circle, rgba(139, 124, 246, 0.32), transparent 62%);
         animation: breathe 3.8s ease-in-out infinite;
       }
       @keyframes breathe {
@@ -58,13 +62,13 @@
         border-radius: 50%;
         background: conic-gradient(
           from 0deg,
-          rgba(201, 168, 76, 0) 0%,
-          rgba(232, 201, 106, 0.55) 18%,
-          rgba(201, 168, 76, 0) 38%,
-          rgba(244, 226, 166, 0.45) 58%,
-          rgba(201, 168, 76, 0) 80%,
-          rgba(232, 201, 106, 0.40) 92%,
-          rgba(201, 168, 76, 0) 100%
+          rgba(124, 196, 245, 0) 0%,
+          rgba(124, 196, 245, 0.55) 18%,
+          rgba(139, 124, 246, 0) 38%,
+          rgba(211, 106, 216, 0.5) 58%,
+          rgba(240, 101, 149, 0) 80%,
+          rgba(240, 101, 149, 0.45) 92%,
+          rgba(124, 196, 245, 0) 100%
         );
         filter: blur(26px);
         opacity: 0.85;
@@ -77,7 +81,7 @@
         position: absolute;
         width: 150px; height: 150px;
         border-radius: 50%;
-        border: 1.5px solid rgba(201, 168, 76, 0.5);
+        border: 1.5px solid rgba(139, 124, 246, 0.5);
         animation: emanate 3.6s ease-out infinite;
       }
       .ring.r2 { animation-delay: 1.2s; }
@@ -99,26 +103,27 @@
         padding-left: 0.32em; /* re-centre the trailing tracking space */
         background: linear-gradient(
           100deg,
-          var(--gold-dk) 0%,
-          var(--gold) 28%,
-          var(--gold-lt) 50%,
-          var(--gold) 72%,
-          var(--gold-dk) 100%
+          var(--neon-white) 0%,
+          var(--neon-blue) 26%,
+          var(--neon-violet) 46%,
+          var(--neon-magenta) 62%,
+          var(--neon-pink) 76%,
+          var(--neon-white) 100%
         );
-        background-size: 220% 100%;
+        background-size: 250% 100%;
         -webkit-background-clip: text;
         background-clip: text;
         -webkit-text-fill-color: transparent;
         color: transparent;
         animation:
-          shimmer 3s linear infinite,
+          shimmer 6s linear infinite,
           glowpulse 3.8s ease-in-out infinite,
           markin 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
       }
-      @keyframes shimmer { to { background-position: -220% 0; } }
+      @keyframes shimmer { to { background-position: -250% 0; } }
       @keyframes glowpulse {
-        0%, 100% { filter: drop-shadow(0 2px 10px rgba(201, 168, 76, 0.30)); }
-        50%      { filter: drop-shadow(0 3px 22px rgba(201, 168, 76, 0.55)); }
+        0%, 100% { filter: drop-shadow(0 2px 12px rgba(139, 124, 246, 0.4)); }
+        50%      { filter: drop-shadow(0 3px 26px rgba(211, 106, 216, 0.6)); }
       }
       @keyframes markin {
         from { opacity: 0; transform: scale(0.86); letter-spacing: 0.5em; }
@@ -133,15 +138,15 @@
         margin: 0;
         white-space: nowrap;
         font-size: 12.5px;
-        color: #a1988a;
+        color: #9a93b8;
       }
       .retry {
         position: absolute;
         bottom: -104px; left: 50%;
         transform: translateX(-50%);
-        border: 1px solid rgba(201, 168, 76, 0.5);
-        background: rgba(201, 168, 76, 0.12);
-        color: var(--gold-dk);
+        border: 1px solid rgba(139, 124, 246, 0.5);
+        background: rgba(139, 124, 246, 0.14);
+        color: #c4b8ff;
         border-radius: 12px;
         padding: 11px 20px;
         font-weight: 700;
