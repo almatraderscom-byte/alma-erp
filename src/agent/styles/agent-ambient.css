@@ -21,9 +21,17 @@
 }
 
 /* When the keyboard is open the bottom nav is hidden, so reclaim its space and
- * pin the composer flush above the keyboard (no nav gap, no bottom safe-area). */
+ * pin the composer flush above the keyboard (no nav gap, no bottom safe-area).
+ *
+ * Use the LARGE viewport (lvh), NOT dvh: on real iOS the dynamic viewport (dvh)
+ * already shrinks when the keyboard opens, so `100dvh - --kb-inset` subtracts the
+ * keyboard TWICE and floats the composer a full keyboard-height above the keys.
+ * lvh is stable (ignores the keyboard), so we subtract --kb-inset exactly once.
+ * (Desktop preview has no keyboard, so dvh never shrinks there — which is why the
+ * double-count was invisible in preview but broke on the iPhone.) */
 body.kb-open .agent-main-height {
-  height: calc(100dvh - var(--kb-inset, 0px));
+  height: calc(100vh - var(--kb-inset, 0px)); /* fallback for engines without lvh */
+  height: calc(100lvh - var(--kb-inset, 0px));
 }
 
 /* Hide the floating bottom nav while typing (ChatGPT-style). */

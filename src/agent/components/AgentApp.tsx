@@ -800,8 +800,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         isMobile={isMobile}
       />
 
-      {/* Main area */}
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* Main area — safe-top reserves the iOS status-bar strip so neither the
+          green "অফিস লাইভ" banner nor the header renders under the clock/battery. */}
+      <div className="safe-top flex min-h-0 flex-1 flex-col">
         {dayShift?.conversationId && dayShift.active && activeConvId !== dayShift.conversationId && (
           <button
             type="button"
@@ -818,8 +819,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
           </button>
         )}
-        {/* Header — floating translucent pods (FOUND-1B "Claude-app feel") */}
-        <header className="safe-top safe-x relative z-20 flex shrink-0 items-center gap-2 bg-transparent px-3 py-2 md:px-4">
+        {/* Header — floating translucent pods (FOUND-1B "Claude-app feel").
+            Top inset now lives on the parent column (safe-top), so the header
+            keeps only safe-x to avoid double-padding below the status bar. */}
+        <header className="safe-x relative z-20 flex shrink-0 items-center gap-2 bg-transparent px-3 py-2 md:px-4">
           {/* Left — ☰ menu in a circular frosted pod */}
           <button
             type="button"
