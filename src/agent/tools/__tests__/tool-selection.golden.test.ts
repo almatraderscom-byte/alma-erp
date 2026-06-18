@@ -61,6 +61,10 @@ const GOLDEN_TABLE: GoldenRow[] = [
   { utterance: 'website catalog check koro', mustIncludeGroup: 'website', mustExposeTool: 'get_website_catalog' },
   { utterance: 'product publish koro website e', mustIncludeGroup: 'website', mustExposeTool: 'publish_product' },
 
+  // --- Cost (lazy group, gated out of base) ---
+  { utterance: 'api credit balance dekhao', mustIncludeGroup: 'cost', mustExposeTool: 'get_api_balances' },
+  { utterance: 'notun subscription add koro', mustIncludeGroup: 'cost', mustExposeTool: 'add_subscription' },
+
   // --- Short greeting: should NOT crash, should get base+erp ---
   { utterance: 'hi', mustIncludeGroup: 'erp', mustExposeTool: 'get_dashboard_snapshot' },
   { utterance: 'assalamu alaikum', mustIncludeGroup: 'erp', mustExposeTool: 'get_sales_summary' },

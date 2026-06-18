@@ -13,13 +13,15 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
+import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { bumpPlaybookRulesForDomains } from '@/agent/lib/learning/learned-rules'
 import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
@@ -57,7 +59,7 @@ export type AgentEvent =
       categories: string[]
       snippets: string[]
     }
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; costUsd: number }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -400,7 +402,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, selectedTools] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -425,8 +427,11 @@ export async function* runAgentTurn(
       console.warn('[core] ownerActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
       return ''
     }),
-    selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
+    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
+  const selectedTools = toolSelection.tools
+  const activeGroups = toolSelection.groups
 
   type ToolRecord = {
     id: string; toolName: string; input: Record<string, unknown>
@@ -467,7 +472,7 @@ export async function* runAgentTurn(
       },
     })
     await touchConversationActivity(conversationId)
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, costUsd: 0 }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
     return
   }
 
@@ -493,6 +498,8 @@ export async function* runAgentTurn(
     ownerDecisions,
     conflictSignals,
     businessContext,
+    activeGroups,
+    businessSnapshot,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
@@ -797,7 +804,7 @@ export async function* runAgentTurn(
         toolResultContent.push({
           type: 'tool_result',
           tool_use_id: tb.id,
-          content: JSON.stringify(result),
+          content: JSON.stringify(annotateEmptyResult(result)),
         })
       }
 
@@ -805,13 +812,15 @@ export async function* runAgentTurn(
     }
 
     // Persist assistant message.
+    // NOTE: the pending-approval reminder prefix is shown live (yielded as a
+    // text_delta above) but intentionally NOT persisted into the stored message.
+    // It is a transient, per-turn nudge regenerated each turn from current DB
+    // state; baking it into history made every past assistant message carry a
+    // stale reminder that was re-sent to the model every turn (token bloat).
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     const joinedText = textContent.map((b) => b.text).join('\n')
-    const storedContent = joinedText || approvalReminderPrefix
-      ? [{
-          type: 'text' as const,
-          text: approvalReminderPrefix + (joinedText || ''),
-        }]
+    const storedContent = joinedText
+      ? [{ type: 'text' as const, text: joinedText }]
       : [{ type: 'text' as const, text: '' }]
     const costUsd = calcModelTurnCostUsd(chatModel, {
       inputTokens: totalInputTokens,
@@ -859,7 +868,15 @@ export async function* runAgentTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
+    yield {
+      type: 'done',
+      messageId: savedMsg.id,
+      tokensIn: totalInputTokens,
+      tokensOut: totalOutputTokens,
+      cacheCreation: totalCacheCreationTokens,
+      cacheRead: totalCacheReadTokens,
+      costUsd,
+    }
   } catch (err) {
     if (signal?.aborted) return
     const requestId = extractAnthropicRequestId(err)

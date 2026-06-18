@@ -20,6 +20,34 @@ function setInset(px: number) {
   document.body.classList.toggle('kb-open', value > 1)
 }
 
+// Last measured keyboard height, cached per-device so we can lift the composer
+// optimistically the moment the input is focused — instead of waiting for the
+// native keyboardWillShow event, which can lag 2-5s on some Android devices.
+const KB_HEIGHT_KEY = 'alma-kb-height'
+function lastKnownKbHeight(): number {
+  if (typeof window === 'undefined') return 0
+  try {
+    const v = Number(window.localStorage.getItem(KB_HEIGHT_KEY) ?? '0')
+    return Number.isFinite(v) && v > 1 ? v : 0
+  } catch {
+    return 0
+  }
+}
+function rememberKbHeight(px: number) {
+  if (typeof window === 'undefined' || px <= 1) return
+  try {
+    window.localStorage.setItem(KB_HEIGHT_KEY, String(Math.round(px)))
+  } catch {
+    /* storage blocked — ignore */
+  }
+}
+function isEditableTarget(el: EventTarget | null): boolean {
+  const node = el as HTMLElement | null
+  if (!node || typeof node.tagName !== 'string') return false
+  const tag = node.tagName.toLowerCase()
+  return tag === 'textarea' || tag === 'input' || node.isContentEditable === true
+}
+
 export function useKeyboardInset() {
   useEffect(() => {
     let disposed = false
@@ -66,10 +94,25 @@ export function useKeyboardInset() {
       const unsub = subscribeIosVisualViewport(() => {
         const vv = window.visualViewport
         if (!vv) { setInset(0); return }
-        setInset(window.innerHeight - vv.height - vv.offsetTop)
+        const inset = window.innerHeight - vv.height - vv.offsetTop
+        rememberKbHeight(inset)
+        setInset(inset)
       })
       cleanups.push(unsub)
     }
+
+    // Optimistic lift: the moment an input/textarea is focused, raise the
+    // composer to the last measured keyboard height instead of waiting for the
+    // native keyboardWillShow event (which can lag 2-5s on some Android shells).
+    // Safe on desktop: lastKnownKbHeight stays 0 there, so this is a no-op.
+    function onFocusIn(e: FocusEvent) {
+      if (disposed || !isEditableTarget(e.target)) return
+      if (document.body.classList.contains('kb-open')) return
+      const h = lastKnownKbHeight()
+      if (h > 0) setInset(h)
+    }
+    document.addEventListener('focusin', onFocusIn)
+    cleanups.push(() => document.removeEventListener('focusin', onFocusIn))
 
     void setupNative().then((isNative) => {
       if (disposed) return

@@ -19,6 +19,7 @@ import { detectOrderIssues, type OrderIssue } from '@/lib/order-monitor'
 import { trackReorderOutcomes, trackBriefingDecisionOutcomes } from '@/lib/outcome-wiring'
 import { getKnowledgeNoteForProduct } from '@/lib/knowledge-graph'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
+import { saveBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import type { UpcomingSeason } from '@/lib/marketing-calendar'
 import type { MarketingIntel } from '@/lib/content-intelligence'
 
@@ -612,7 +613,7 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     console.warn('[briefing] decision outcome tracking failed:', err instanceof Error ? err.message : String(err))
   })
 
-  return {
+  const briefing: OwnerBriefingData = {
     today,
     ...signals,
     decisions,
@@ -621,4 +622,11 @@ export async function buildOwnerBriefingData(): Promise<OwnerBriefingData> {
     marketingIntel,
     marketingSeasons: marketingIntel?.upcomingSeasons ?? [],
   }
+
+  // Persist a compact snapshot of this once-a-day ERP tour so later chat turns
+  // can answer routine business questions from context instead of re-querying
+  // live ERP via (expensive, cache-busting) tool round-trips. Fire-and-forget.
+  void saveBusinessSnapshot(briefing).catch(() => {})
+
+  return briefing
 }

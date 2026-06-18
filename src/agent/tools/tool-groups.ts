@@ -50,6 +50,7 @@ export const TOOL_GROUP_NAMES = [
   'vision',
   'trading',
   'personal',
+  'cost',
 ] as const
 
 export type ToolGroupName = typeof TOOL_GROUP_NAMES[number]
@@ -63,7 +64,6 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...WORK_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,
     ...LEARNING_TOOLS,
-    ...COST_TOOLS,
     ...SALAH_TOOLS,
     ...ORCHESTRATOR_TOOLS,
   ],
@@ -79,4 +79,8 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   vision: [...VISION_TOOLS],
   trading: [...TRADING_EXTENSION_TOOLS],
   personal: [...PERSONAL_SAFE_TOOLS],
+  // Lazy group: API-credit / subscription bookkeeping. Owner-initiated only and
+  // keyword-distinctive, so it's gated out of the always-on base group to shave
+  // ~520 tok off the cold cache-write on every other turn.
+  cost: [...COST_TOOLS],
 }

@@ -56,6 +56,8 @@ type MessageRow = {
   }>
   tokensIn: number | null
   tokensOut: number | null
+  cacheCreation: number | null
+  cacheRead: number | null
   costUsd: string | null
 }
 
@@ -74,6 +76,8 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       })),
       tokensIn: r.tokensIn ?? undefined,
       tokensOut: r.tokensOut ?? undefined,
+      cacheCreation: r.cacheCreation ?? undefined,
+      cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
       pendingAction: confirmBlock?.pendingActionId
         ? {
@@ -565,9 +569,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   ...m,
                   id: evt.messageId as string,
                   streaming: false,
-                  askCard: undefined,
+                  // Keep askCard: the agent asked a question and is waiting for
+                  // the owner to pick an option. Clearing it here made the card
+                  // vanish the instant streaming finished. It's cleared instead
+                  // when the owner sends the next message (see handleSend).
                   tokensIn: evt.tokensIn as number,
                   tokensOut: evt.tokensOut as number,
+                  cacheCreation: evt.cacheCreation as number,
+                  cacheRead: evt.cacheRead as number,
                   costUsd: evt.costUsd as number,
                 }
               : m

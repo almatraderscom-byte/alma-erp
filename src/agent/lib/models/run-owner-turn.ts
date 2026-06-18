@@ -16,11 +16,13 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
+import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -127,6 +129,8 @@ async function* runAlternateProviderTurn(
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
+  let totalCacheCreationTokens = 0
+  let totalCacheReadTokens = 0
 
   const rows = await prisma.agentMessage.findMany({
     where: { conversationId },
@@ -148,7 +152,7 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock] = await Promise.all([
+  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
@@ -161,6 +165,8 @@ async function* runAlternateProviderTurn(
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
+    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
 
   const promptArgs = {
@@ -183,6 +189,8 @@ async function* runAlternateProviderTurn(
     conflictSignals,
     businessContext,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
+    activeGroups: toolSelection.groups,
+    businessSnapshot,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
@@ -192,7 +200,7 @@ async function* runAlternateProviderTurn(
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText([...stable, ...volatile]) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
-    await selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
+    toolSelection.tools,
     agentControls,
   )
   const neutralTools = anthropicToolsToNeutral(selectedTools)
@@ -249,6 +257,8 @@ async function* runAlternateProviderTurn(
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
+          totalCacheCreationTokens += ev.cacheWrite ?? 0
+          totalCacheReadTokens += ev.cacheRead ?? 0
         }
       }
 
@@ -359,7 +369,7 @@ async function* runAlternateProviderTurn(
           }
         }
 
-        toolResults.push({ id: call.id, name: call.name, result })
+        toolResults.push({ id: call.id, name: call.name, result: annotateEmptyResult(result) })
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
@@ -380,7 +390,7 @@ async function* runAlternateProviderTurn(
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
       },
     })
 
@@ -416,7 +426,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd }
   } catch (err) {
     if (signal?.aborted) return
     await captureAgentError(err, 'agent.provider.error', { conversationId })

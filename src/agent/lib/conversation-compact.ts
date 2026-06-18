@@ -6,11 +6,20 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL } from '@/agent/config'
+import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '8')
+// Compact aggressively so history never balloons: the dominant per-message cost
+// is the whole conversation history being re-written to the prompt cache on every
+// cold turn, so keeping history short is the real lever. $2 ≈ a short burst of
+// messages — after that the chat folds into a summary and the next turns stay lean.
+export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '2')
+
+// Minimum messages before a *daily* (day-boundary) compaction fires, so a tiny
+// 1–2 line chat from yesterday isn't summarized pointlessly.
+const DAILY_COMPACT_MIN_MESSAGES = 4
 
 export async function getConversationCostUsd(conversationId: string): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
@@ -79,12 +88,19 @@ export async function compactConversationIfNeeded(
 ): Promise<CompactResult | null> {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true, archived: true },
+    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true, archived: true, createdAt: true },
   })
   if (!conv || conv.compactedToId || conv.archived) return null
 
+  // Daily rhythm: if this conversation was started on an earlier Dhaka day, fold
+  // it into a summary so each new day begins lean (the "manager starts fresh every
+  // morning" model) — even if it hasn't hit the cost threshold yet.
+  const crossesDay = conv.createdAt
+    ? todayYmdDhaka(new Date(conv.createdAt)) !== todayYmdDhaka()
+    : false
+
   const costUsd = await getConversationCostUsd(conversationId)
-  if (costUsd < thresholdUsd) return null
+  if (costUsd < thresholdUsd && !crossesDay) return null
 
   const messages = await db.agentMessage.findMany({
     where: { conversationId },
@@ -92,6 +108,9 @@ export async function compactConversationIfNeeded(
     select: { role: true, content: true },
     take: 100,
   })
+
+  // Don't burn a summarization call on a trivial day-old chat below the cost bar.
+  if (costUsd < thresholdUsd && crossesDay && messages.length < DAILY_COMPACT_MIN_MESSAGES) return null
 
   let summary = ''
   try {
