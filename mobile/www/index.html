@@ -3,65 +3,225 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#C9A84C" />
+    <meta name="theme-color" content="#FAF9F6" />
     <title>Alma ERP</title>
+
+    <!-- Warm the connection to production while the aura plays, so the
+         hand-off (login) lands as fast as possible. -->
+    <link rel="preconnect" href="https://alma-erp-six.vercel.app" crossorigin />
+    <link rel="dns-prefetch" href="https://alma-erp-six.vercel.app" />
+
     <style>
-      * { box-sizing: border-box; }
+      :root {
+        --gold: #c9a84c;
+        --gold-lt: #f4e2a6;
+        --gold-dk: #a87f2e;
+        --bg: #faf9f6;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { height: 100%; margin: 0; }
       body {
-        margin: 0;
-        min-height: 100vh;
         display: grid;
         place-items: center;
-        padding: 24px;
-        font-family: system-ui, sans-serif;
-        background: radial-gradient(circle at top, rgba(201, 168, 76, 0.14), transparent 34%), #08080a;
-        color: #fafaf8;
-        text-align: center;
+        overflow: hidden;
+        background:
+          radial-gradient(130% 90% at 50% 42%, rgba(201, 168, 76, 0.08), transparent 60%),
+          var(--bg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
+
+      .stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 340px; height: 340px;
+      }
+
+      /* Layer 1 — breathing core glow. */
+      .glow {
+        position: absolute;
+        width: 280px; height: 280px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(201, 168, 76, 0.30), transparent 62%);
+        animation: breathe 3.8s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        0%, 100% { opacity: 0.55; transform: scale(0.9); }
+        50%      { opacity: 1;    transform: scale(1.08); }
+      }
+
+      /* Layer 2 — slowly rotating conic aura, blurred into a living gold ring. */
+      .aura {
+        position: absolute;
+        width: 300px; height: 300px;
+        border-radius: 50%;
+        background: conic-gradient(
+          from 0deg,
+          rgba(201, 168, 76, 0) 0%,
+          rgba(232, 201, 106, 0.55) 18%,
+          rgba(201, 168, 76, 0) 38%,
+          rgba(244, 226, 166, 0.45) 58%,
+          rgba(201, 168, 76, 0) 80%,
+          rgba(232, 201, 106, 0.40) 92%,
+          rgba(201, 168, 76, 0) 100%
+        );
+        filter: blur(26px);
+        opacity: 0.85;
+        animation: spin 7.5s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Layer 3 — emanating pulse rings (the "aura" radiating outward). */
+      .ring {
+        position: absolute;
+        width: 150px; height: 150px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(201, 168, 76, 0.5);
+        animation: emanate 3.6s ease-out infinite;
+      }
+      .ring.r2 { animation-delay: 1.2s; }
+      .ring.r3 { animation-delay: 2.4s; }
+      @keyframes emanate {
+        0%   { transform: scale(0.55); opacity: 0; }
+        14%  { opacity: 0.7; }
+        100% { transform: scale(2.1); opacity: 0; }
+      }
+
+      /* The hero wordmark — gold gradient + shimmer + a glow that pulses. */
       .mark {
-        width: 56px;
-        height: 56px;
-        border-radius: 16px;
-        border: 1px solid rgba(201, 168, 76, 0.45);
-        background: rgba(201, 168, 76, 0.12);
-        color: #e8c96a;
-        display: grid;
-        place-items: center;
-        font-weight: 900;
-        margin: 0 auto 12px;
+        position: relative;
+        z-index: 2;
+        margin: 0;
+        font-size: clamp(54px, 19vw, 104px);
+        font-weight: 400;
+        letter-spacing: 0.32em;
+        padding-left: 0.32em; /* re-centre the trailing tracking space */
+        background: linear-gradient(
+          100deg,
+          var(--gold-dk) 0%,
+          var(--gold) 28%,
+          var(--gold-lt) 50%,
+          var(--gold) 72%,
+          var(--gold-dk) 100%
+        );
+        background-size: 220% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        animation:
+          shimmer 3s linear infinite,
+          glowpulse 3.8s ease-in-out infinite,
+          markin 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
       }
-      h1 { font-size: 14px; letter-spacing: 0.2em; text-transform: uppercase; color: #c9a84c; margin: 0 0 8px; }
-      p { margin: 0; color: #a1a1aa; font-size: 13px; line-height: 1.5; max-width: 280px; }
-      button {
-        margin-top: 16px;
-        border: 1px solid rgba(201, 168, 76, 0.45);
+      @keyframes shimmer { to { background-position: -220% 0; } }
+      @keyframes glowpulse {
+        0%, 100% { filter: drop-shadow(0 2px 10px rgba(201, 168, 76, 0.30)); }
+        50%      { filter: drop-shadow(0 3px 22px rgba(201, 168, 76, 0.55)); }
+      }
+      @keyframes markin {
+        from { opacity: 0; transform: scale(0.86); letter-spacing: 0.5em; }
+        to   { opacity: 1; transform: scale(1); }
+      }
+
+      /* Quiet fallbacks — only appear if the network is offline or slow. */
+      .hint {
+        position: absolute;
+        bottom: -54px; left: 50%;
+        transform: translateX(-50%);
+        margin: 0;
+        white-space: nowrap;
+        font-size: 12.5px;
+        color: #a1988a;
+      }
+      .retry {
+        position: absolute;
+        bottom: -104px; left: 50%;
+        transform: translateX(-50%);
+        border: 1px solid rgba(201, 168, 76, 0.5);
         background: rgba(201, 168, 76, 0.12);
-        color: #e8c96a;
+        color: var(--gold-dk);
         border-radius: 12px;
-        padding: 10px 16px;
+        padding: 11px 20px;
         font-weight: 700;
         font-size: 13px;
+        cursor: pointer;
+      }
+      .retry:active { transform: translateX(-50%) scale(0.97); }
+      [hidden] { display: none !important; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .glow, .aura, .ring { animation: none; }
+        .mark { animation: none; background-position: 0 0; }
       }
     </style>
   </head>
   <body>
-    <div>
-      <div class="mark">A</div>
-      <h1>Alma ERP</h1>
-      <p id="msg">ইন্টারনেট সংযোগ চেক করুন…</p>
-      <button type="button" id="retry" hidden>আবার চেষ্টা</button>
+    <div class="stage">
+      <div class="glow"></div>
+      <div class="aura"></div>
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="ring r3"></div>
+      <h1 class="mark">ALMA</h1>
+      <p class="hint" id="hint" hidden></p>
+      <button class="retry" type="button" id="retry" hidden>রিফ্রেশ করুন</button>
     </div>
+
     <script>
       var PROD = 'https://alma-erp-six.vercel.app';
+      var hint = document.getElementById('hint');
+      var retry = document.getElementById('retry');
+      var waitTimer = null;
+      var slowTimer = null;
+
+      function clearTimers() {
+        if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
+        if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      }
+
       function go() {
+        // Navigate ASAP for the fastest login. The browser keeps this animated
+        // page on screen until production paints, so the ALMA aura covers the
+        // whole network wait — no white page.
+        clearTimers();
+        hint.hidden = true;
+        retry.hidden = true;
         location.replace(PROD);
       }
-      document.getElementById('retry').onclick = go;
+
+      // Stage 1 (~5s): reassure that we're working, so the wait makes sense.
+      function showWait() {
+        hint.textContent = 'প্রস্তুত হচ্ছে, একটু অপেক্ষা করুন…';
+        hint.hidden = false;
+      }
+
+      // Stage 2 (~10s): offer a manual refresh so it never feels stuck.
+      function showSlow() {
+        hint.textContent = 'সংযোগ একটু ধীর হচ্ছে';
+        hint.hidden = false;
+        retry.hidden = false;
+      }
+
+      function showOffline() {
+        hint.textContent = 'ইন্টারনেট সংযোগ নেই — সংযোগ চালু করুন';
+        hint.hidden = false;
+        retry.hidden = false;
+      }
+
+      // The refresh button re-attempts the hand-off to production.
+      retry.onclick = go;
+      window.addEventListener('online', function () {
+        if (!retry.hidden) go();
+      });
+
       if (navigator.onLine === false) {
-        document.getElementById('msg').textContent = 'অফলাইন। ইন্টারনেট চালু করে আবার চেষ্টা করুন।';
-        document.getElementById('retry').hidden = false;
+        showOffline();
       } else {
         go();
+        waitTimer = setTimeout(showWait, 5000);
+        slowTimer = setTimeout(showSlow, 10000);
       }
     </script>
   </body>
