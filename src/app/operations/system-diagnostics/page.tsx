@@ -82,10 +82,10 @@ function StatusBadge({ status }: { status: string }) {
     SENDING: 'border-blue-200 bg-blue-50 text-blue-700',
     SENT: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     FAILED: 'border-red-200 bg-red-50 text-red-700',
-    SKIPPED: 'border-slate-200 bg-slate-50 text-slate-600',
+    SKIPPED: 'border-border bg-white/[0.04] text-muted-hi',
   }
   return (
-    <span className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase border ${map[status] ?? 'text-slate-500 border-slate-200 bg-slate-50'}`}>
+    <span className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase border ${map[status] ?? 'text-muted border-border bg-white/[0.04]'}`}>
       {status}
     </span>
   )
@@ -146,7 +146,7 @@ export default function SystemDiagnosticsPage() {
   const s = data?.selfieStorage
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="System Diagnostics"
         subtitle="Read-only observability for Telegram queue and photo storage health. SUPER_ADMIN only."
@@ -159,8 +159,8 @@ export default function SystemDiagnosticsPage() {
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5 px-3 py-4 pb-24 sm:px-6 md:pb-6">
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">System config</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted">System config</p>
             {loading ? (
               <Skeleton className="h-8" />
             ) : (
@@ -197,9 +197,9 @@ export default function SystemDiagnosticsPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
+          <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Telegram queue</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted">Telegram queue</p>
               <div className="flex gap-2">
                 <Button
                   size="xs"
@@ -226,40 +226,40 @@ export default function SystemDiagnosticsPage() {
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {(q?.byStatus ?? []).map(s => (
-                    <div key={s.status} className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                      <p className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">{s.status}</p>
-                      <p className="mt-0.5 font-mono text-lg font-bold text-slate-800">{s.count}</p>
+                    <div key={s.status} className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                      <p className="text-[9px] uppercase tracking-wider text-muted font-semibold">{s.status}</p>
+                      <p className="mt-0.5 font-mono text-lg font-bold text-cream">{s.count}</p>
                     </div>
                   ))}
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-[11px]">
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-slate-500">Pending depth</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-muted">Pending depth</p>
                     <p className={`font-mono font-bold ${(q?.pendingDepth ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{q?.pendingDepth ?? 0}</p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-slate-500">Stuck sending</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-muted">Stuck sending</p>
                     <p className={`font-mono font-bold ${(q?.stuckSending ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{q?.stuckSending ?? 0}</p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-slate-500">Retry wait</p>
-                    <p className="font-mono font-bold text-slate-800">{q?.retryWaitCount ?? 0}</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-muted">Retry wait</p>
+                    <p className="font-mono font-bold text-cream">{q?.retryWaitCount ?? 0}</p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-slate-500">Dead letter (max attempts)</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-muted">Dead letter (max attempts)</p>
                     <p className={`font-mono font-bold ${(q?.failedDeadLetter ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                       {q?.failedDeadLetter ?? 0}
                       {q?.maxAttempts != null ? ` / ${q.maxAttempts}` : ''}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-slate-500">Avg delivery latency</p>
-                    <p className="font-mono font-bold text-slate-800">
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-muted">Avg delivery latency</p>
+                    <p className="font-mono font-bold text-cream">
                       {q?.averageDeliveryLatencyMs != null ? `${q.averageDeliveryLatencyMs}ms` : 'N/A'}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3 col-span-2 sm:col-span-1">
-                    <p className="text-slate-500">Oldest pending</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 col-span-2 sm:col-span-1">
+                    <p className="text-muted">Oldest pending</p>
                     {q?.oldestQueued ? (
                       <p className="font-mono font-bold text-amber-600">
                         {q.oldestQueued.eventType} · {q.oldestQueued.ageMinutes}min ago
@@ -275,19 +275,19 @@ export default function SystemDiagnosticsPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Selfie photo storage (last 24h)</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted">Selfie photo storage (last 24h)</p>
             {loading ? (
               <Skeleton className="h-16" />
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Total selfies</p>
-                    <p className="mt-0.5 font-mono text-lg font-bold text-slate-800">{s?.last24hTotal ?? 0}</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-wider text-muted font-semibold">Total selfies</p>
+                    <p className="mt-0.5 font-mono text-lg font-bold text-cream">{s?.last24hTotal ?? 0}</p>
                   </div>
-                  <div className="rounded-xl border border-black/[0.06] bg-white px-4 py-3">
-                    <p className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Missing storage ref</p>
+                  <div className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-wider text-muted font-semibold">Missing storage ref</p>
                     <p className={`mt-0.5 font-mono text-lg font-bold ${(s?.missingStorageRefCount ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                       {s?.missingStorageRefCount ?? 0}
                     </p>
@@ -300,10 +300,10 @@ export default function SystemDiagnosticsPage() {
                   </p>
                 )}
                 {(s?.recentLogs?.length ?? 0) > 0 && (
-                  <div className="overflow-x-auto rounded-xl border border-black/[0.06]">
+                  <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
                     <table className="w-full text-[10px]">
                       <thead>
-                        <tr className="border-b border-black/[0.06] bg-slate-50 text-slate-500 text-left">
+                        <tr className="border-b border-white/[0.06] bg-white/[0.04] text-muted text-left">
                           <th className="py-2 px-3 font-semibold">Employee</th>
                           <th className="py-2 px-3 font-semibold">Storage</th>
                           <th className="py-2 px-3 font-semibold">Size</th>
@@ -313,12 +313,12 @@ export default function SystemDiagnosticsPage() {
                       </thead>
                       <tbody>
                         {(s?.recentLogs ?? []).map(row => (
-                          <tr key={row.id} className="border-b border-black/[0.04] hover:bg-slate-50 transition-colors">
-                            <td className="py-2 px-3 font-mono text-slate-800">{row.employeeId}</td>
+                          <tr key={row.id} className="border-b border-white/[0.04] hover:bg-white/[0.04] transition-colors">
+                            <td className="py-2 px-3 font-mono text-cream">{row.employeeId}</td>
                             <td className="py-2 px-3"><StorageTypeBadge type={row.storageType} /></td>
-                            <td className="py-2 px-3 font-mono text-slate-600">{(row.sizeBytes / 1024).toFixed(0)}KB</td>
-                            <td className="py-2 px-3 text-slate-500">{new Date(row.capturedAt).toLocaleString()}</td>
-                            <td className="py-2 px-3 text-slate-500">{row.reviewedAt ? '✓' : '—'}</td>
+                            <td className="py-2 px-3 font-mono text-muted-hi">{(row.sizeBytes / 1024).toFixed(0)}KB</td>
+                            <td className="py-2 px-3 text-muted">{new Date(row.capturedAt).toLocaleString()}</td>
+                            <td className="py-2 px-3 text-muted">{row.reviewedAt ? '✓' : '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -331,17 +331,17 @@ export default function SystemDiagnosticsPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Recent Telegram delivery log</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted">Recent Telegram delivery log</p>
             {loading ? (
               <Skeleton className="h-40" />
             ) : !(data?.recentTelegramLogs?.length) ? (
-              <p className="text-[11px] text-slate-500">No Telegram queue rows found.</p>
+              <p className="text-[11px] text-muted">No Telegram queue rows found.</p>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-black/[0.06]">
+              <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
                 <table className="w-full text-[10px]">
                   <thead>
-                    <tr className="border-b border-black/[0.06] bg-slate-50 text-slate-500 text-left">
+                    <tr className="border-b border-white/[0.06] bg-white/[0.04] text-muted text-left">
                       <th className="py-2 px-3 font-semibold">Event</th>
                       <th className="py-2 px-3 font-semibold">Status</th>
                       <th className="py-2 px-3 font-semibold">Attempts</th>
@@ -352,11 +352,11 @@ export default function SystemDiagnosticsPage() {
                   </thead>
                   <tbody>
                     {data!.recentTelegramLogs.map(row => (
-                      <tr key={row.id} className="border-b border-black/[0.04] hover:bg-slate-50 transition-colors">
-                        <td className="py-2 px-3 font-mono text-[9px] text-slate-800 max-w-[140px] truncate">{row.eventType.replace('ATTENDANCE_', '')}</td>
+                      <tr key={row.id} className="border-b border-white/[0.04] hover:bg-white/[0.04] transition-colors">
+                        <td className="py-2 px-3 font-mono text-[9px] text-cream max-w-[140px] truncate">{row.eventType.replace('ATTENDANCE_', '')}</td>
                         <td className="py-2 px-3"><StatusBadge status={row.status} /></td>
-                        <td className="py-2 px-3 font-mono text-slate-600">{row.attempts}/{row.maxAttempts}</td>
-                        <td className="py-2 px-3 text-slate-500">{row.ageMinutes}m</td>
+                        <td className="py-2 px-3 font-mono text-muted-hi">{row.attempts}/{row.maxAttempts}</td>
+                        <td className="py-2 px-3 text-muted">{row.ageMinutes}m</td>
                         <td className="py-2 px-3 text-red-600 max-w-[160px] truncate" title={row.errorMessage ?? ''}>{row.errorMessage ?? '—'}</td>
                         <td className="py-2 px-3">
                           {(row.status === 'FAILED' || row.status === 'QUEUED') && (
@@ -376,7 +376,7 @@ export default function SystemDiagnosticsPage() {
               </div>
             )}
             {data && (
-              <p className="text-[9px] text-slate-400">
+              <p className="text-[9px] text-muted">
                 Generated {new Date(data.generatedAt).toLocaleString()} · Read-only diagnostics
               </p>
             )}

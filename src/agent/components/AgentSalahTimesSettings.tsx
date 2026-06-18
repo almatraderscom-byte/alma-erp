@@ -73,11 +73,11 @@ export default function AgentSalahTimesSettings() {
   }
 
   return (
-    <div className="rounded-xl border border-black/[0.06] bg-white overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-border-subtle bg-card/80 overflow-hidden shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-[#1a1a2e] hover:bg-black/[0.02] transition-colors"
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-cream hover:bg-white/[0.02] transition-colors"
       >
         <span>🕌 নামাজের সময় (৩×৫ ওয়াক্ত)</span>
         <span className={cn(
@@ -87,26 +87,26 @@ export default function AgentSalahTimesSettings() {
       </button>
 
       {open && (
-        <div className="border-t border-black/[0.06] px-4 py-4">
-          <p className="mb-4 text-[10px] text-[#94a3b8]">
+        <div className="border-t border-border-subtle px-4 py-4">
+          <p className="mb-4 text-[10px] text-muted">
             আযান · জামাত · ওয়াক্ত শেষ — HH:MM (২৪ঘ) Dhaka। জুম্মায় যোহর আযান ১:০০ কোডে থাকে।
           </p>
 
           {!cfg ? (
-            <p className="text-xs text-[#94a3b8]">লোড হচ্ছে…</p>
+            <p className="text-xs text-muted">লোড হচ্ছে…</p>
           ) : (
             <div className="space-y-4">
               {WAQT_ORDER.map((waqt) => (
-                <div key={waqt} className="grid gap-2 sm:grid-cols-4 sm:items-end rounded-lg bg-[#FAF9F6] p-2">
-                  <div className="text-xs font-semibold text-[#1a1a2e] sm:pb-2">{WAQT_LABELS[waqt]}</div>
+                <div key={waqt} className="grid gap-2 sm:grid-cols-4 sm:items-end rounded-lg bg-transparent p-2">
+                  <div className="text-xs font-semibold text-cream sm:pb-2">{WAQT_LABELS[waqt]}</div>
                   {(['azan', 'prayer', 'end'] as const).map((field) => (
-                    <label key={field} className="block text-[10px] text-[#64748b]">
+                    <label key={field} className="block text-[10px] text-muted">
                       {FIELD_LABELS[field]}
                       <input
                         type="time"
                         value={cfg[waqt][field].length === 5 ? cfg[waqt][field] : cfg[waqt][field]}
                         onChange={(e) => patch(waqt, field, e.target.value)}
-                        className="mt-0.5 w-full rounded-lg border border-black/[0.08] bg-white px-2 py-1.5 text-sm text-[#1a1a2e] focus:outline-none focus:border-[#E07A5F]/40 transition-all"
+                        className="mt-0.5 w-full rounded-lg border border-border bg-card/80 px-2 py-1.5 text-sm text-cream focus:outline-none focus:border-[#E07A5F]/40 transition-all"
                       />
                     </label>
                   ))}

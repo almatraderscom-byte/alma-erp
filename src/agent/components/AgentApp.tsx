@@ -827,7 +827,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="alma-frost alma-pod flex h-10 w-10 shrink-0 items-center justify-center text-gray-500 transition-all hover:text-gray-700 active:scale-95 md:h-9 md:w-9"
+            className="alma-frost alma-pod flex h-10 w-10 shrink-0 items-center justify-center text-muted transition-all hover:text-cream active:scale-95 md:h-9 md:w-9"
             aria-label="সাইডবার"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -835,14 +835,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
           {/* Center — title + personal badge */}
           <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-gray-700">ALMA Agent</span>
+            <span className="alma-ai-wordmark truncate text-[15px] font-bold tracking-wide">ALMA AI</span>
             {activePersonalMode && (
-              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
                 ব্যক্তিগত
               </span>
             )}
             {dayShift?.active && activeConvId === dayShift.conversationId && (
-              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 animate-pulse">
+              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 animate-pulse">
                 অফিস লাইভ
               </span>
             )}
@@ -859,7 +859,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   window.location.reload()
                 }
               }}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 active:scale-95"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream active:scale-95"
               aria-label="রিফ্রেশ"
               title="রিফ্রেশ"
             >
@@ -868,7 +868,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             <button
               type="button"
               onClick={() => newConversation()}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 active:scale-95"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream active:scale-95"
               aria-label="নতুন চ্যাট"
               title="নতুন কথোপকথন"
             >
@@ -878,7 +878,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             {/* Desktop-only nav links */}
             <Link
               href="/"
-              className="hidden h-8 items-center rounded-full px-2.5 text-[11px] text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 md:flex"
+              className="hidden h-8 items-center rounded-full px-2.5 text-[11px] text-muted transition-all hover:bg-white/[0.05] hover:text-cream md:flex"
             >
               ERP
             </Link>
@@ -886,7 +886,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               <button
                 type="button"
                 onClick={() => setArtifactsOpen((v) => !v)}
-                className="hidden h-8 items-center gap-1 rounded-full px-2.5 text-[11px] text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 md:flex"
+                className="hidden h-8 items-center gap-1 rounded-full px-2.5 text-[11px] text-muted transition-all hover:bg-white/[0.05] hover:text-cream md:flex"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2H22l-6 4.8 2.4 7.2L12 16.4l-6.4 4.8L8 14 2 9.2h7.6z"/></svg>
                 {artifacts.length}
@@ -912,7 +912,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               <p className="text-sm text-red-500/90">{convLoadError}</p>
               <button
                 onClick={() => activeConvId && loadConversation({ id: activeConvId, title: null, projectId: null, archived: false, updatedAt: '' })}
-                className="rounded-xl border border-black/[0.08] px-4 py-2 text-xs text-gray-500 transition-all hover:bg-black/[0.03] hover:text-gray-700"
+                className="rounded-xl border border-border px-4 py-2 text-xs text-muted transition-all hover:bg-white/[0.03] hover:text-cream"
               >
                 আবার চেষ্টা
               </button>

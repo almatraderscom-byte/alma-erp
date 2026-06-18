@@ -11,13 +11,32 @@
   --font-body: var(--font-sans);
   --font-mono-nums: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace;
 
+  /* ── Theme color CHANNELS (space-separated RGB) ──────────────────────────
+     These back the Tailwind brand tokens via rgb(var(--c-x) / <alpha-value>),
+     so existing opacity classes (e.g. bg-gold/10, border-black/[0.06]) keep
+     working AND recolor when the channels change per theme. Light values are
+     byte-identical to the original palette → zero light-mode regression.
+     `--accent-*` are overridable by the "custom" theme (accent picker). */
+  --c-accent: 224 122 95;        /* #E07A5F coral — the brand accent */
+  --c-accent-lt: 244 162 140;    /* #F4A28C */
+  --c-accent-dim: 196 90 60;     /* #C45A3C */
+  --c-ink: 26 26 46;             /* #1a1a2e — primary text ("cream" token) */
+  --c-surface: 255 255 255;      /* #FFFFFF — raised surface */
+  --c-card: 255 255 255;         /* #FFFFFF — card surface */
+  --c-muted: 148 163 184;        /* #94a3b8 */
+  --c-muted-hi: 100 116 139;     /* #64748b */
+  /* Constant in BOTH themes: drives modal/overlay scrims (bg-black/60) which
+     must stay dark. Hairline borders theme via --border-subtle instead. */
+  --c-black: 8 8 10;             /* #08080A */
+
   /* Elevation layers */
   --bg-0: #FAF9F6;
   --bg-1: #FFFFFF;
   --bg-2: #F8F7F4;
   --bg-3: #F3F2EF;
 
-  /* Borders */
+  /* Borders (themed — these flip to light hairlines in dark) */
+  --border: rgba(0, 0, 0, 0.08);
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border-strong: rgba(0, 0, 0, 0.12);
 
@@ -27,7 +46,7 @@
   --gold-active: #C45A3C;
   --gold-muted: rgba(224, 122, 95, 0.10);
 
-  /* Semantic (light-tuned) */
+  /* Semantic (theme-stable) */
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -58,9 +77,37 @@
   color-scheme: light;
 }
 
+/* ── DARK THEME ────────────────────────────────────────────────────────────
+   Deep neutral base, soft cream ink, coral accent kept (Claude-app dark feel).
+   Only the theme channels + elevation/border/frost tokens change; every
+   Tailwind brand class recolors automatically. `--c-black` stays constant so
+   modal scrims remain dark. */
+:root[data-theme='dark'] {
+  --c-ink: 247 248 252;          /* near-white ink for readability over aurora */
+  --c-surface: 30 30 36;         /* #1E1E24 raised surface */
+  --c-card: 32 32 39;            /* #202027 card surface */
+  --c-muted: 174 178 192;        /* dimmed cool grey, brightened */
+  --c-muted-hi: 208 212 224;     /* brighter secondary text */
+
+  --bg-0: #141418;
+  --bg-1: #1C1C22;
+  --bg-2: #232329;
+  --bg-3: #2A2A31;
+
+  --border: rgba(255, 255, 255, 0.10);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --frost-surface: rgba(20, 20, 24, 0.72);      /* translucent dark */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --shadow-float: 0 4px 24px rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
+}
+
 html {
   min-height: 100%;
-  background: #FAF9F6;
+  background: var(--bg-0);
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
   text-rendering: optimizeLegibility;
@@ -68,7 +115,9 @@ html {
 
 body {
   min-height: 100dvh;
-  background: #FAF9F6;
+  /* Transparent so the fixed aurora (z-index:-1) shows; <html> carries the
+     dark base canvas. An opaque body background would paint over the aurora. */
+  background: transparent;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
@@ -526,123 +575,154 @@ a,
   }
 }
 
-/* ── Ambient background (GPU-friendly, behind all UI; z-index 0 only) ── */
+/* ── Ambient aurora (living mesh-gradient, behind all UI) ──────────────────
+   Multiple vibrant light blobs (blue/indigo/violet/magenta/pink/orange) drift
+   corner-to-corner and blend into each other for a premium, futuristic glow.
+   GPU-accelerated: only transform is animated (compositor thread, 60fps); blur
+   is static. Fully reduced-motion aware. Covers the whole viewport, fixed,
+   behind every page (z-index -1). */
 :root {
-  --ambient-gold: rgba(224, 122, 95, 0.04);
-  --ambient-amber: rgba(212, 168, 75, 0.03);
-  --ambient-cream: rgba(129, 178, 154, 0.03);
-  --ambient-base: radial-gradient(
-    ellipse 120% 80% at 50% -20%,
-    rgba(224, 122, 95, 0.05) 0%,
-    rgba(250, 249, 246, 0) 55%
-  );
+  /* Light theme: a softer luminous base so text on light surfaces stays legible. */
+  --aurora-base:
+    radial-gradient(ellipse 120% 80% at 50% -10%, rgba(99, 102, 241, 0.1), transparent 60%),
+    radial-gradient(ellipse 120% 90% at 50% 115%, rgba(236, 72, 153, 0.12), transparent 62%);
+  --aurora-blob-1: rgba(56, 128, 255, 0.4);
+  --aurora-blob-2: rgba(124, 77, 255, 0.36);
+  --aurora-blob-3: rgba(214, 51, 255, 0.34);
+  --aurora-blob-4: rgba(255, 46, 134, 0.36);
+  --aurora-blob-5: rgba(255, 110, 80, 0.32);
+  --aurora-blob-opacity: 0.6;
+}
+
+:root[data-theme='dark'] {
+  /* Dark theme: full vivid aurora — colors glow against the near-black canvas. */
+  --aurora-base:
+    radial-gradient(ellipse 120% 80% at 50% -10%, rgba(37, 99, 235, 0.22), transparent 60%),
+    radial-gradient(ellipse 130% 95% at 50% 116%, rgba(236, 72, 153, 0.28), transparent 64%);
+  --aurora-blob-1: rgba(56, 128, 255, 0.85);
+  --aurora-blob-2: rgba(124, 77, 255, 0.8);
+  --aurora-blob-3: rgba(214, 51, 255, 0.78);
+  --aurora-blob-4: rgba(255, 46, 134, 0.82);
+  --aurora-blob-5: rgba(255, 110, 80, 0.7);
+  --aurora-blob-opacity: 0.9;
 }
 
 .ambient-bg-root {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   pointer-events: none;
   overflow: hidden;
-  transform: translate3d(0, 0, 0);
-  background: var(--ambient-base);
+  transform: translateZ(0);
+  background: var(--aurora-base);
 }
 
 .ambient-blob {
   position: absolute;
+  width: 65vw;
+  height: 65vw;
+  max-width: 900px;
+  max-height: 900px;
   border-radius: 50%;
-  filter: blur(80px);
+  filter: blur(110px);
+  opacity: var(--aurora-blob-opacity);
   will-change: transform;
-  opacity: 0.06;
+  backface-visibility: hidden;
 }
 
 .ambient-blob-1 {
-  width: 560px;
-  height: 560px;
-  background: var(--ambient-gold);
-  top: -120px;
-  left: -140px;
-  animation: ambient-drift-1 28s ease-in-out infinite;
+  top: -18%;
+  left: -12%;
+  background: radial-gradient(circle at center, var(--aurora-blob-1), transparent 68%);
+  animation: aurora-drift-1 34s ease-in-out infinite;
 }
 
 .ambient-blob-2 {
-  width: 480px;
-  height: 480px;
-  background: var(--ambient-amber);
-  top: 35%;
-  right: -120px;
-  animation: ambient-drift-2 32s ease-in-out infinite;
-  animation-delay: -8s;
+  top: -10%;
+  right: -14%;
+  background: radial-gradient(circle at center, var(--aurora-blob-2), transparent 68%);
+  animation: aurora-drift-2 42s ease-in-out infinite;
 }
 
 .ambient-blob-3 {
-  width: 520px;
-  height: 520px;
-  background: var(--ambient-cream);
-  bottom: -160px;
-  left: 25%;
-  animation: ambient-drift-3 26s ease-in-out infinite;
-  animation-delay: -14s;
+  top: 28%;
+  left: 24%;
+  background: radial-gradient(circle at center, var(--aurora-blob-3), transparent 68%);
+  animation: aurora-drift-3 38s ease-in-out infinite;
 }
 
-@keyframes ambient-drift-1 {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-    opacity: 0.04;
-  }
-  50% {
-    transform: translate3d(72px, 48px, 0);
-    opacity: 0.07;
-  }
+.ambient-blob-4 {
+  bottom: -20%;
+  left: -8%;
+  background: radial-gradient(circle at center, var(--aurora-blob-4), transparent 68%);
+  animation: aurora-drift-4 46s ease-in-out infinite;
 }
 
-@keyframes ambient-drift-2 {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-    opacity: 0.03;
-  }
-  50% {
-    transform: translate3d(-64px, 40px, 0);
-    opacity: 0.06;
-  }
+.ambient-blob-5 {
+  bottom: -18%;
+  right: -10%;
+  background: radial-gradient(circle at center, var(--aurora-blob-5), transparent 68%);
+  animation: aurora-drift-5 40s ease-in-out infinite;
 }
 
-@keyframes ambient-drift-3 {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-    opacity: 0.03;
-  }
-  50% {
-    transform: translate3d(48px, -56px, 0);
-    opacity: 0.05;
-  }
+/* Each blob roams the full viewport on its own offset path, so the colors
+   continuously slide past and blend into one another (vw/vh = corner-to-corner). */
+@keyframes aurora-drift-1 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  25%  { transform: translate3d(46vw, 12vh, 0) scale(1.15); }
+  50%  { transform: translate3d(30vw, 48vh, 0) scale(1); }
+  75%  { transform: translate3d(8vw, 22vh, 0) scale(1.1); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes aurora-drift-2 {
+  0%   { transform: translate3d(0, 0, 0) scale(1.1); }
+  25%  { transform: translate3d(-28vw, 26vh, 0) scale(1); }
+  50%  { transform: translate3d(-44vw, 6vh, 0) scale(1.18); }
+  75%  { transform: translate3d(-16vw, 40vh, 0) scale(1.05); }
+  100% { transform: translate3d(0, 0, 0) scale(1.1); }
+}
+
+@keyframes aurora-drift-3 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  33%  { transform: translate3d(-30vw, 30vh, 0) scale(1.2); }
+  66%  { transform: translate3d(34vw, -20vh, 0) scale(1); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes aurora-drift-4 {
+  0%   { transform: translate3d(0, 0, 0) scale(1.05); }
+  25%  { transform: translate3d(34vw, -22vh, 0) scale(1); }
+  50%  { transform: translate3d(58vw, -8vh, 0) scale(1.16); }
+  75%  { transform: translate3d(22vw, -34vh, 0) scale(1.05); }
+  100% { transform: translate3d(0, 0, 0) scale(1.05); }
+}
+
+@keyframes aurora-drift-5 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  25%  { transform: translate3d(-40vw, -16vh, 0) scale(1.12); }
+  50%  { transform: translate3d(-20vw, -42vh, 0) scale(1); }
+  75%  { transform: translate3d(-52vw, -10vh, 0) scale(1.14); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
 }
 
 @media (max-width: 640px) {
+  /* Fewer, bigger blobs on phones = same vivid wash, lighter GPU load. */
   .ambient-blob-2,
-  .ambient-blob-3 {
+  .ambient-blob-5 {
     display: none;
   }
 
-  .ambient-blob-1 {
-    width: 420px;
-    height: 420px;
-    animation-duration: 45s;
-    opacity: 0.04;
+  .ambient-blob {
+    width: 110vw;
+    height: 110vw;
+    filter: blur(80px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ambient-blob {
     animation: none;
-    transform: translate3d(0, 0, 0);
-    opacity: 0.04;
-  }
-
-  .ambient-bg-root {
-    background: var(--ambient-base);
+    transform: translateZ(0);
   }
 }

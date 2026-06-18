@@ -15,7 +15,7 @@ export default function PaymentAccountsPage() {
   if (systemOwner) {
     return (
       <FinancePageChrome title="Payment accounts" subtitle="">
-        <p className="text-sm text-zinc-400 p-4">
+        <p className="text-sm text-muted p-4">
           System owner accounts do not use employee payout profiles.{' '}
           <Link href="/portal" className="text-gold-lt font-bold">
             Back to My Desk

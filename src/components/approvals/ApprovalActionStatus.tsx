@@ -22,7 +22,7 @@ export function ApprovalProcessingBanner({
         <p className="text-sm font-black text-gold-lt">
           {count === 1 ? 'Processing approval…' : `Processing ${count} approvals…`}
         </p>
-        <p className="mt-0.5 text-xs text-zinc-400">
+        <p className="mt-0.5 text-xs text-muted">
           {message || 'Do not close this tab until the transaction finishes. Buttons are locked to prevent duplicates.'}
         </p>
       </div>
@@ -39,10 +39,10 @@ export function ApprovalRowProcessingBadge({ ui }: { ui: ApprovalRowUiState }) {
       : ui.state === 'committed'
         ? 'border-green-500/35 bg-green-500/10 text-green-300'
         : ui.state === 'rolled_back'
-          ? 'border-zinc-500/40 bg-zinc-700/30 text-zinc-300'
+          ? 'border-zinc-500/40 bg-zinc-700/30 text-muted'
           : ui.state === 'failed'
             ? 'border-red-500/40 bg-red-500/10 text-red-300'
-            : 'border-zinc-600 bg-zinc-800/40 text-zinc-400'
+            : 'border-zinc-600 bg-zinc-800/40 text-muted'
 
   return (
     <div className={`mt-2 flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold ${tone}`}>

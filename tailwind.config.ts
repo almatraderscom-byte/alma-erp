@@ -5,16 +5,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        black:   '#08080A',
-        surface: '#FFFFFF',
-        card:    '#FFFFFF',
-        border:  'rgba(0,0,0,0.08)',
-        gold:    '#E07A5F',
-        'gold-lt':'#F4A28C',
-        'gold-dim':'#C45A3C',
-        muted:   '#94a3b8',
-        'muted-hi':'#64748b',
-        cream:   '#1a1a2e',
+        // Channel-format tokens (rgb(var / <alpha-value>)) so opacity modifiers
+        // like bg-gold/10 keep working AND recolor per theme. See globals.css.
+        black:   'rgb(var(--c-black) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        card:    'rgb(var(--c-card) / <alpha-value>)',
+        border:  'var(--border)',
+        gold:    'rgb(var(--c-accent) / <alpha-value>)',
+        'gold-lt':'rgb(var(--c-accent-lt) / <alpha-value>)',
+        'gold-dim':'rgb(var(--c-accent-dim) / <alpha-value>)',
+        muted:   'rgb(var(--c-muted) / <alpha-value>)',
+        'muted-hi':'rgb(var(--c-muted-hi) / <alpha-value>)',
+        cream:   'rgb(var(--c-ink) / <alpha-value>)',
         'bg-0': 'var(--bg-0)',
         'bg-1': 'var(--bg-1)',
         'bg-2': 'var(--bg-2)',

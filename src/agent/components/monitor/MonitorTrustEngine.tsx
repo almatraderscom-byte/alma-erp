@@ -47,27 +47,27 @@ export function MonitorTrustEngine({ rules, onUpdateTier }: {
 }) {
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-[#81B29A]/20 bg-white overflow-hidden shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-[#81B29A]/20 bg-card/80 overflow-hidden shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">🛡️</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">ট্রাস্ট ইঞ্জিন</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">ট্রাস্ট ইঞ্জিন</h3>
           {rules.length > 0 && (
             <span className="rounded-md bg-[#81B29A]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#81B29A]">{rules.length} rules</span>
           )}
         </div>
         <div className="p-3">
           {rules.length === 0 ? (
-            <p className="py-2 text-center text-[10px] text-[#94a3b8]">
+            <p className="py-2 text-center text-[10px] text-muted">
               কোনো trust rule নেই — agent approve হতে থাকলে auto-promote হবে
             </p>
           ) : (
             <div className="space-y-2">
               {rules.map(rule => (
-                <div key={rule.id} className="group rounded-xl border border-black/[0.06] bg-[#FAF9F6] p-3 transition-all hover:border-black/[0.12] hover:bg-white hover:shadow-sm">
+                <div key={rule.id} className="group rounded-xl border border-border-subtle bg-transparent p-3 transition-all hover:border-white/[0.12] hover:bg-card/80 hover:shadow-sm">
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-semibold text-[#1a1a2e]/80">{rule.domain} / {rule.actionPattern}</p>
-                      <div className="mt-1 flex items-center gap-3 text-[9px] text-[#94a3b8]">
+                      <p className="text-[11px] font-semibold text-cream/80">{rule.domain} / {rule.actionPattern}</p>
+                      <div className="mt-1 flex items-center gap-3 text-[9px] text-muted">
                         <span className="flex items-center gap-1">
                           <span className="text-emerald-500">✅</span> {rule.approvalCount}
                         </span>
@@ -82,7 +82,7 @@ export function MonitorTrustEngine({ rules, onUpdateTier }: {
                       <select
                         value={rule.tier}
                         onChange={(e) => onUpdateTier(rule.id, e.target.value)}
-                        className="rounded-md border border-black/[0.08] bg-white px-1.5 py-0.5 text-[9px] font-bold text-[#64748b] cursor-pointer outline-none transition-colors hover:border-[#E07A5F]/30"
+                        className="rounded-md border border-border bg-card/80 px-1.5 py-0.5 text-[9px] font-bold text-muted cursor-pointer outline-none transition-colors hover:border-[#E07A5F]/30"
                       >
                         <option value="approve">🔒 Approve</option>
                         <option value="notify">📢 Notify</option>

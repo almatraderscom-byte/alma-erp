@@ -102,9 +102,9 @@ export default function TradingStaffAdmin() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <header className="rounded-2xl border border-slate-200 bg-black/[0.03] backdrop-blur-md px-5 py-4">
+      <header className="rounded-2xl border border-border bg-white/[0.03] backdrop-blur-md px-5 py-4">
         <h1 className="text-2xl font-bold text-cream">ALMA Trading — <span className="text-gold">Staff</span></h1>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 text-sm text-muted">
           Binance P2P trader-দের AgentStaff row লিঙ্ক করুন। প্রত্যেক TradingAccount-এর assigned User-এর সাথে
           এখান থেকে Telegram chat ID যোগ করুন — তাহলে agent এই staff-দের কাছে dispatch করতে পারবে।
         </p>
@@ -113,7 +113,7 @@ export default function TradingStaffAdmin() {
       <section>
         <h2 className="text-xs font-bold uppercase tracking-wider text-gold mb-3">Linked Trading staff ({data.staff.length})</h2>
         {data.staff.length === 0 ? (
-          <p className="text-sm text-zinc-500">এখনো কোনো Trading staff লিঙ্ক করা হয়নি।</p>
+          <p className="text-sm text-muted">এখনো কোনো Trading staff লিঙ্ক করা হয়নি।</p>
         ) : (
           <motion.div
             className="space-y-3"
@@ -126,9 +126,9 @@ export default function TradingStaffAdmin() {
                 key={s.id}
                 variants={staggerItem}
                 className={cn(
-                  'rounded-xl border bg-black/[0.03] backdrop-blur-md p-4 space-y-3 transition-all',
+                  'rounded-xl border bg-white/[0.03] backdrop-blur-md p-4 space-y-3 transition-all',
                   s.active
-                    ? 'border-slate-200 hover:border-gold/20'
+                    ? 'border-border hover:border-gold/20'
                     : 'border-red-500/15 opacity-70',
                 )}
               >
@@ -143,7 +143,7 @@ export default function TradingStaffAdmin() {
                           : 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]',
                       )} />
                     </div>
-                    <div className="text-xs text-zinc-500 mt-0.5">
+                    <div className="text-xs text-muted mt-0.5">
                       ERP: {s.user?.name ?? '— unlinked —'} · Role: {s.role} · {s.active ? 'Active' : 'Inactive'}
                     </div>
                   </div>
@@ -164,7 +164,7 @@ export default function TradingStaffAdmin() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   <label className="space-y-1">
-                    <span className="text-zinc-500 text-xs">Telegram chat ID</span>
+                    <span className="text-muted text-xs">Telegram chat ID</span>
                     <input
                       defaultValue={s.telegramChatId ?? ''}
                       onBlur={(e) => {
@@ -174,18 +174,18 @@ export default function TradingStaffAdmin() {
                         }
                       }}
                       placeholder="123456789"
-                      className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
                     />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-zinc-500 text-xs">Role label</span>
+                    <span className="text-muted text-xs">Role label</span>
                     <input
                       defaultValue={s.role}
                       onBlur={(e) => {
                         const v = e.target.value.trim() || 'p2p_trader'
                         if (v !== s.role) void upsert({ id: s.id, role: v })
                       }}
-                      className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
                     />
                   </label>
                 </div>
@@ -198,55 +198,55 @@ export default function TradingStaffAdmin() {
       <section>
         <h2 className="text-xs font-bold uppercase tracking-wider text-gold mb-3">Link a new Trading staff</h2>
         {availableUsers.length === 0 ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-muted">
             সব eligible User ইতিমধ্যে লিঙ্ক করা আছে। নতুন trader add করতে User Management থেকে User তৈরি করুন
             (businessAccess-এ ALMA_TRADING রাখুন)।
           </p>
         ) : (
-          <div className="rounded-xl border border-slate-200 bg-black/[0.03] backdrop-blur-md p-4 space-y-3">
+          <div className="rounded-xl border border-border bg-white/[0.03] backdrop-blur-md p-4 space-y-3">
             <label className="block space-y-1">
-              <span className="text-zinc-500 text-xs">ERP User</span>
+              <span className="text-muted text-xs">ERP User</span>
               <select
                 value={draft.userId}
                 onChange={(e) => {
                   const u = availableUsers.find((x) => x.id === e.target.value)
                   setDraft((d) => ({ ...d, userId: e.target.value, name: u?.name ?? d.name }))
                 }}
-                className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-2 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-2 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
               >
-                <option value="" className="bg-white text-zinc-500">— select user —</option>
+                <option value="" className="bg-card/60 backdrop-blur-2xl text-muted">— select user —</option>
                 {availableUsers.map((u) => (
-                  <option key={u.id} value={u.id} className="bg-white text-cream">
+                  <option key={u.id} value={u.id} className="bg-card/60 backdrop-blur-2xl text-cream">
                     {u.name} {u.email ? `(${u.email})` : ''} — {u.role}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block space-y-1">
-              <span className="text-zinc-500 text-xs">Staff name (override)</span>
+              <span className="text-muted text-xs">Staff name (override)</span>
               <input
                 value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                 placeholder="default = User.name"
-                className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
               />
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <label className="block space-y-1">
-                <span className="text-zinc-500 text-xs">Role</span>
+                <span className="text-muted text-xs">Role</span>
                 <input
                   value={draft.role}
                   onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
-                  className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-zinc-500 text-xs">Telegram chat ID</span>
+                <span className="text-muted text-xs">Telegram chat ID</span>
                 <input
                   value={draft.telegramChatId}
                   onChange={(e) => setDraft((d) => ({ ...d, telegramChatId: e.target.value }))}
                   placeholder="123456789"
-                  className="w-full rounded-lg bg-black/[0.03] border border-slate-200 backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
                 />
               </label>
             </div>

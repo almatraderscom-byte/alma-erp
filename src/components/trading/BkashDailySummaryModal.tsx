@@ -153,7 +153,7 @@ export function BkashDailySummaryModal({
           />
         </div>
         <div className={`rounded-2xl border p-4 ${net >= 0 ? 'border-green-400/25 bg-green-400/10' : 'border-red-400/25 bg-red-400/10'}`}>
-          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Net result</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted">Net result</p>
           <p className={`mt-1 text-2xl font-black tabular-nums ${signedClass(net)}`}>
             {net >= 0 ? '+' : '-'}৳{Math.abs(net).toLocaleString('en-BD')}
           </p>
@@ -163,7 +163,7 @@ export function BkashDailySummaryModal({
           onChange={e => setNotes(e.target.value)}
           rows={2}
           placeholder="Optional notes"
-          className="w-full rounded-xl border border-border bg-black/[0.03] px-3 py-2 text-sm text-cream"
+          className="w-full rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-sm text-cream"
         />
       </form>
     </ModalFrame>

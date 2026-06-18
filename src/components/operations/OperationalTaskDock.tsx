@@ -69,7 +69,7 @@ export function OperationalTaskDock({
                 Active operation
               </p>
               <p className="mt-1 truncate text-sm font-black text-cream">{t.title}</p>
-              <p className="mt-1 text-[10px] text-zinc-500">
+              <p className="mt-1 text-[10px] text-muted">
                 {statusLabel}
                 {extra > 0 ? ` · +${extra} more` : ''}
               </p>

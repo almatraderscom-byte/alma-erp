@@ -98,7 +98,7 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 bg-[radial-gradient(circle_at_top,rgba(224,122,95,0.10),transparent_34%),linear-gradient(180deg,#FAF9F6_0%,#FFF8F0_48%,#FAF9F6_100%)]">
+    <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 bg-[radial-gradient(circle_at_15%_15%,rgba(224,122,95,0.18),transparent_42%),radial-gradient(circle_at_85%_85%,rgba(129,178,154,0.16),transparent_44%),linear-gradient(180deg,#1a1a20_0%,#202027_50%,#17171c_100%)]">
       <motion.div
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -111,11 +111,11 @@ function LoginForm() {
         </div>
         <p className="text-[11px] font-black tracking-[0.2em] text-gold mb-2 text-center">ALMA ERP</p>
         <h1 className="text-xl font-bold text-cream text-center mb-1">Sign in</h1>
-        <p className="text-[11px] text-slate-500 text-center mb-8">Secure multi-business workspace</p>
+        <p className="text-[11px] text-muted text-center mb-8">Secure multi-business workspace</p>
 
         <form onSubmit={onSubmit} className="space-y-4" data-login-form>
           <label className="block space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500">Phone or Email</span>
+            <span className="text-[10px] uppercase tracking-wider text-muted">Phone or Email</span>
             <Input
               type="text"
               inputMode="email"
@@ -127,7 +127,7 @@ function LoginForm() {
             />
           </label>
           <label className="block space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500">Password</span>
+            <span className="text-[10px] uppercase tracking-wider text-muted">Password</span>
             <Input
               type="password"
               autoComplete="current-password"
@@ -141,7 +141,7 @@ function LoginForm() {
           </Button>
         </form>
 
-        <div className="mt-6 flex flex-col gap-2 text-center text-[11px] text-slate-500">
+        <div className="mt-6 flex flex-col gap-2 text-center text-[11px] text-muted">
           <Link href="/forgot-password" className="text-gold-lt hover:underline">Forgot password?</Link>
           <p className="text-[10px] leading-snug opacity-80">Use your assigned Alma ERP account.</p>
         </div>

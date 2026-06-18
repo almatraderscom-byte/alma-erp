@@ -163,7 +163,7 @@ export function MonitorAgentsPanel({
 
   if (loading && !data) {
     return (
-      <div className="flex items-center justify-center gap-2 py-10 text-sm text-[#94a3b8]">
+      <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted">
         <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
         Loading agents…
       </div>
@@ -185,26 +185,26 @@ export function MonitorAgentsPanel({
   return (
     <div className="space-y-3">
       {/* ── Model Control Dial ── */}
-      <div className="overflow-hidden rounded-2xl border border-[#E07A5F]/20 bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-3">
+      <div className="overflow-hidden rounded-2xl border border-[#E07A5F]/20 bg-card/80 shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <span className="text-base">🎛️</span>
-          <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-[#64748b]">Model Control</h3>
+          <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-muted">Model Control</h3>
           <span className="ml-auto rounded-full bg-[#E07A5F]/10 px-2 py-0.5 text-[9px] font-bold text-[#E07A5F]">
             আপনি নিয়ন্ত্রণ করেন
           </span>
         </div>
 
         <div className="space-y-4 p-4">
-          <p className="text-[11px] leading-relaxed text-[#64748b]">
+          <p className="text-[11px] leading-relaxed text-muted">
             হেড এজেন্ট ৯০% কাজ Sonnet দিয়ে করে। শুধু high-risk / বড় টাকার সিদ্ধান্তে দামি{' '}
-            <strong className="text-[#1a1a2e]/80">Opus</strong> ব্যবহার হয় — নিচের ডায়াল দিয়ে আপনি ঠিক করেন কতটা।
+            <strong className="text-cream/80">Opus</strong> ব্যবহার হয় — নিচের ডায়াল দিয়ে আপনি ঠিক করেন কতটা।
           </p>
 
           {/* Opus master toggle */}
-          <div className="flex items-center justify-between rounded-xl border border-black/[0.06] bg-[#FAF9F6] px-3.5 py-3">
+          <div className="flex items-center justify-between rounded-xl border border-border-subtle bg-transparent px-3.5 py-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-bold text-[#1a1a2e]/85">Opus এজেন্ট (Claude Opus 4.8)</p>
-              <p className="mt-0.5 text-[10px] text-[#94a3b8]">
+              <p className="text-[13px] font-bold text-cream/85">Opus এজেন্ট (Claude Opus 4.8)</p>
+              <p className="mt-0.5 text-[10px] text-muted">
                 বন্ধ থাকলে সব কাজ Sonnet-এ হবে — সবচেয়ে কম খরচ
               </p>
             </div>
@@ -220,7 +220,7 @@ export function MonitorAgentsPanel({
             >
               <span
                 className={cn(
-                  'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform',
+                  'inline-block h-5 w-5 transform rounded-full bg-card/80 shadow transition-transform',
                   draft.opusEnabled ? 'translate-x-[22px]' : 'translate-x-0.5',
                 )}
               />
@@ -232,8 +232,8 @@ export function MonitorAgentsPanel({
             {/* Premium model selector — owner picks cost vs power */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-[12px] font-semibold text-[#1a1a2e]/75">কোন প্রিমিয়াম মডেল</label>
-                <span className="text-[10px] text-[#94a3b8]">দাম: in/out · $ প্রতি 1M টোকেন</span>
+                <label className="text-[12px] font-semibold text-cream/75">কোন প্রিমিয়াম মডেল</label>
+                <span className="text-[10px] text-muted">দাম: in/out · $ প্রতি 1M টোকেন</span>
               </div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {data.criticalModelOptions.map((m) => {
@@ -247,21 +247,21 @@ export function MonitorAgentsPanel({
                         'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition-all',
                         active
                           ? 'border-[#E07A5F]/40 bg-[#E07A5F]/[0.08]'
-                          : 'border-black/[0.08] bg-white hover:bg-black/[0.03]',
+                          : 'border-border bg-card/80 hover:bg-white/[0.03]',
                       )}
                     >
-                      <span className={cn('text-[12px] font-bold', active ? 'text-[#E07A5F]' : 'text-[#1a1a2e]/80')}>
+                      <span className={cn('text-[12px] font-bold', active ? 'text-[#E07A5F]' : 'text-cream/80')}>
                         {active ? '● ' : '○ '}
                         {m.label}
                       </span>
-                      <span className="ml-2 shrink-0 text-[10px] font-semibold tabular-nums text-[#94a3b8]">
+                      <span className="ml-2 shrink-0 text-[10px] font-semibold tabular-nums text-muted">
                         ${m.inPerM}/${m.outPerM}
                       </span>
                     </button>
                   )
                 })}
               </div>
-              <p className="mt-1 text-[10px] text-[#94a3b8]">
+              <p className="mt-1 text-[10px] text-muted">
                 হেড: {data.headModel.label} (${data.headModel.inPerM}/${data.headModel.outPerM}) — সস্তা, ৯০% কাজ এতেই
               </p>
             </div>
@@ -269,30 +269,30 @@ export function MonitorAgentsPanel({
             {/* Daily cap stepper */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-[12px] font-semibold text-[#1a1a2e]/75">দৈনিক Opus সীমা</label>
-                <span className="text-[11px] text-[#94a3b8]">আজ ব্যবহার: {data.opusUsedToday}</span>
+                <label className="text-[12px] font-semibold text-cream/75">দৈনিক Opus সীমা</label>
+                <span className="text-[11px] text-muted">আজ ব্যবহার: {data.opusUsedToday}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setDraft({ ...draft, opusDailyCap: Math.max(0, draft.opusDailyCap - 1) })}
-                  className="h-9 w-9 shrink-0 rounded-lg border border-black/[0.08] bg-white text-lg font-bold text-[#64748b] transition-colors hover:bg-black/[0.03]"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/80 text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
                 >
                   −
                 </button>
-                <div className="flex h-9 flex-1 items-center justify-center rounded-lg border border-black/[0.08] bg-[#FAF9F6] text-[15px] font-black tabular-nums text-[#1a1a2e]/85">
-                  {draft.opusDailyCap} <span className="ml-1 text-[10px] font-medium text-[#94a3b8]">কল/দিন</span>
+                <div className="flex h-9 flex-1 items-center justify-center rounded-lg border border-border bg-transparent text-[15px] font-black tabular-nums text-cream/85">
+                  {draft.opusDailyCap} <span className="ml-1 text-[10px] font-medium text-muted">কল/দিন</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setDraft({ ...draft, opusDailyCap: Math.min(100, draft.opusDailyCap + 1) })}
-                  className="h-9 w-9 shrink-0 rounded-lg border border-black/[0.08] bg-white text-lg font-bold text-[#64748b] transition-colors hover:bg-black/[0.03]"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-border bg-card/80 text-lg font-bold text-muted transition-colors hover:bg-white/[0.03]"
                 >
                   +
                 </button>
               </div>
               {/* usage bar */}
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06]">
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
                 <div
                   className="h-full rounded-full bg-[#E07A5F] transition-all"
                   style={{ width: `${capPct}%` }}
@@ -303,7 +303,7 @@ export function MonitorAgentsPanel({
             {/* Confidence threshold slider */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <label className="text-[12px] font-semibold text-[#1a1a2e]/75">কখন Opus ডাকবে (confidence)</label>
+                <label className="text-[12px] font-semibold text-cream/75">কখন Opus ডাকবে (confidence)</label>
                 <span className="text-[11px] font-bold tabular-nums text-[#E07A5F]">
                   {Math.round(draft.opusConfidenceThreshold * 100)}%
                 </span>
@@ -318,14 +318,14 @@ export function MonitorAgentsPanel({
                 className="w-full accent-[#E07A5F]"
                 style={{ accentColor: ACCENT }}
               />
-              <p className="mt-1 text-[10px] text-[#94a3b8]">
+              <p className="mt-1 text-[10px] text-muted">
                 Sonnet-এর আত্মবিশ্বাস এর নিচে নামলে তবেই Opus হাত দেয়
               </p>
             </div>
 
             {/* Critical taka */}
             <div>
-              <label className="mb-1.5 block text-[12px] font-semibold text-[#1a1a2e]/75">
+              <label className="mb-1.5 block text-[12px] font-semibold text-cream/75">
                 বড় টাকার সিদ্ধান্ত — সীমা
               </label>
               <div className="flex flex-wrap gap-1.5">
@@ -338,14 +338,14 @@ export function MonitorAgentsPanel({
                       'rounded-lg border px-3 py-1.5 text-[11px] font-bold tabular-nums transition-all',
                       draft.opusCriticalTaka === amt
                         ? 'border-[#E07A5F]/40 bg-[#E07A5F]/[0.10] text-[#E07A5F]'
-                        : 'border-black/[0.08] bg-white text-[#64748b] hover:bg-black/[0.03]',
+                        : 'border-border bg-card/80 text-muted hover:bg-white/[0.03]',
                     )}
                   >
                     ৳{amt.toLocaleString('en-US')}
                   </button>
                 ))}
               </div>
-              <p className="mt-1 text-[10px] text-[#94a3b8]">এর সমান বা বেশি টাকার সিদ্ধান্তে সবসময় Opus</p>
+              <p className="mt-1 text-[10px] text-muted">এর সমান বা বেশি টাকার সিদ্ধান্তে সবসময় Opus</p>
             </div>
           </div>
 
@@ -359,7 +359,7 @@ export function MonitorAgentsPanel({
                 'flex-1 rounded-xl px-4 py-2.5 text-[13px] font-bold transition-all',
                 dirty && !saving
                   ? 'bg-[#E07A5F] text-white shadow-sm hover:bg-[#cf6a50]'
-                  : 'bg-black/[0.06] text-[#94a3b8]',
+                  : 'bg-white/[0.06] text-muted',
               )}
             >
               {saving ? 'সেভ হচ্ছে…' : dirty ? '💾 সেভ করুন' : '✓ সেভ করা আছে'}
@@ -368,7 +368,7 @@ export function MonitorAgentsPanel({
               <button
                 type="button"
                 onClick={() => setDraft(data.config)}
-                className="rounded-xl border border-black/[0.08] bg-white px-3 py-2.5 text-[12px] font-semibold text-[#94a3b8] hover:bg-black/[0.03]"
+                className="rounded-xl border border-border bg-card/80 px-3 py-2.5 text-[12px] font-semibold text-muted hover:bg-white/[0.03]"
               >
                 বাতিল
               </button>
@@ -378,16 +378,16 @@ export function MonitorAgentsPanel({
       </div>
 
       {/* ── What each agent did today (CCTV) ── */}
-      <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-3">
+      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/80 shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <span className="text-base">🎥</span>
-          <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-[#64748b]">আজ কে কী করেছে</h3>
-          <span className="ml-auto text-[10px] text-[#94a3b8]">{data.todayDhakaDate}</span>
+          <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-muted">আজ কে কী করেছে</h3>
+          <span className="ml-auto text-[10px] text-muted">{data.todayDhakaDate}</span>
         </div>
 
         <div className="p-3">
           {data.agentsToday.length === 0 ? (
-            <p className="py-6 text-center text-[11px] text-[#94a3b8]">আজ এখনও কোনো এজেন্ট কাজ শুরু করেনি</p>
+            <p className="py-6 text-center text-[11px] text-muted">আজ এখনও কোনো এজেন্ট কাজ শুরু করেনি</p>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {data.agentsToday.map((a) => {
@@ -399,28 +399,28 @@ export function MonitorAgentsPanel({
                     animate={{ opacity: 1, y: 0 }}
                     className={cn(
                       'rounded-xl border p-3',
-                      isHead ? 'border-[#E07A5F]/25 bg-[#E07A5F]/[0.04]' : 'border-black/[0.06] bg-[#FAF9F6]',
+                      isHead ? 'border-[#E07A5F]/25 bg-[#E07A5F]/[0.04]' : 'border-border-subtle bg-transparent',
                     )}
                   >
                     <div className="flex items-start gap-2.5">
                       <span className="text-lg leading-none">{a.emoji}</span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <p className="truncate text-[12px] font-bold text-[#1a1a2e]/85">{a.label}</p>
+                          <p className="truncate text-[12px] font-bold text-cream/85">{a.label}</p>
                           {isHead && (
                             <span className="rounded bg-[#E07A5F]/12 px-1.5 py-0.5 text-[8px] font-bold uppercase text-[#E07A5F]">
                               Head
                             </span>
                           )}
                         </div>
-                        <p className="mt-0.5 text-[10px] leading-snug text-[#94a3b8]">{a.role}</p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-muted">{a.role}</p>
                       </div>
                     </div>
-                    <div className="mt-2.5 flex items-center justify-between border-t border-black/[0.05] pt-2">
-                      <span className="text-[11px] font-semibold tabular-nums text-[#64748b]">
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border-subtle pt-2">
+                      <span className="text-[11px] font-semibold tabular-nums text-muted">
                         {a.calls} কল
                       </span>
-                      <span className="text-[11px] font-bold tabular-nums text-[#1a1a2e]/70">{fmtUsd(a.costUsd)}</span>
+                      <span className="text-[11px] font-bold tabular-nums text-cream/70">{fmtUsd(a.costUsd)}</span>
                     </div>
 
                     {/* Head agent: show which Claude variants + Opus usage */}
@@ -431,7 +431,7 @@ export function MonitorAgentsPanel({
                             {data.modelsToday.map((m) => (
                               <span
                                 key={m.modelId}
-                                className="rounded-md border border-black/[0.06] bg-white px-1.5 py-0.5 text-[9px] font-medium text-[#64748b]"
+                                className="rounded-md border border-border-subtle bg-card/80 px-1.5 py-0.5 text-[9px] font-medium text-muted"
                               >
                                 {m.label} · {m.conversations}
                               </span>
@@ -439,18 +439,18 @@ export function MonitorAgentsPanel({
                           </div>
                         )}
                         {(data.headTokensToday?.inputTokens > 0 || data.headTokensToday?.outputTokens > 0) && (
-                          <p className="text-[10px] text-[#94a3b8]">
+                          <p className="text-[10px] text-muted">
                             টোকেন: {(data.headTokensToday.inputTokens / 1000).toFixed(1)}k in ·{' '}
                             {(data.headTokensToday.outputTokens / 1000).toFixed(1)}k out
-                            <span className="text-zinc-400"> — বড় system prompt + ERP tools = input বেশি</span>
+                            <span className="text-muted"> — বড় system prompt + ERP tools = input বেশি</span>
                           </p>
                         )}
-                        <div className="flex items-center gap-1.5 text-[10px] text-[#94a3b8]">
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted">
                           <span>⚡ Opus আজ:</span>
                           <span className="font-bold text-[#E07A5F]">
                             {data.opusUsedToday}/{data.config.opusDailyCap}
                           </span>
-                          {!data.config.opusEnabled && <span className="text-zinc-400">(বন্ধ)</span>}
+                          {!data.config.opusEnabled && <span className="text-muted">(বন্ধ)</span>}
                         </div>
                       </div>
                     )}
@@ -473,24 +473,24 @@ export function MonitorAgentsPanel({
                 {data.specialistsToday.map((s) => (
                   <div
                     key={`${s.modelId}-${s.role}`}
-                    className="rounded-lg border border-sky-200/50 bg-white px-2.5 py-2"
+                    className="rounded-lg border border-sky-200/50 bg-card/80 px-2.5 py-2"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex flex-col gap-0.5">
-                        <span className="text-[11px] font-bold text-[#1a1a2e]/85">
+                        <span className="text-[11px] font-bold text-cream/85">
                           {s.modelLabel}
                         </span>
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-[#64748b]">
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-muted">
                           <span>{s.icon ?? SPECIALIST_ICON[s.role] ?? '🤝'}</span>
                           {s.label}
                         </span>
                       </span>
-                      <span className="shrink-0 text-[10px] tabular-nums text-[#64748b]">
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted">
                         {s.calls} কল · {fmtUsd(s.costUsd)}
                       </span>
                     </div>
                     {(s.inputTokens > 0 || s.outputTokens > 0) && (
-                      <p className="mt-1 text-[9px] text-[#94a3b8]">
+                      <p className="mt-1 text-[9px] text-muted">
                         {(s.inputTokens / 1000).toFixed(1)}k in · {(s.outputTokens / 1000).toFixed(1)}k out
                       </p>
                     )}
@@ -504,17 +504,17 @@ export function MonitorAgentsPanel({
                   {data.specialistDelegationsToday.map((d, i) => (
                     <div
                       key={`${d.modelId}-${d.at}-${i}`}
-                      className="rounded-lg border border-sky-100 bg-white/80 px-2.5 py-2"
+                      className="rounded-lg border border-sky-100 bg-card/80 px-2.5 py-2"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex flex-col gap-0.5">
-                          <span className="text-[10px] font-bold text-[#1a1a2e]/85">{d.modelLabel}</span>
-                          <span className="text-[9px] text-[#94a3b8]">{d.icon} {d.roleLabel}</span>
+                          <span className="text-[10px] font-bold text-cream/85">{d.modelLabel}</span>
+                          <span className="text-[9px] text-muted">{d.icon} {d.roleLabel}</span>
                         </span>
-                        <span className="text-[9px] tabular-nums text-[#94a3b8]">{fmtUsd(d.costUsd)}</span>
+                        <span className="text-[9px] tabular-nums text-muted">{fmtUsd(d.costUsd)}</span>
                       </div>
                       {d.taskSnippet ? (
-                        <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-[#64748b]">{d.taskSnippet}</p>
+                        <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-muted">{d.taskSnippet}</p>
                       ) : null}
                     </div>
                   ))}

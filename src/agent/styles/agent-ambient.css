@@ -1,7 +1,8 @@
 /* ALMA Agent — Gradient Modern Warm Theme */
 
 .agent-shell {
-  background: #FAF9F6;
+  /* Transparent so the app-wide aurora (z-index:-1) glows through the agent UI. */
+  background: transparent;
 }
 
 /* iOS WebView smooth scrolling. translateZ/will-change removed — they caused
@@ -64,9 +65,9 @@ body.kb-open .agent-composer-wrap {
 }
 
 .glass-panel {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: rgba(32, 32, 39, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 @supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
@@ -74,14 +75,14 @@ body.kb-open .agent-composer-wrap {
     .glass-panel {
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      background: rgba(255, 255, 255, 0.8);
+      background: rgba(32, 32, 39, 0.55);
     }
   }
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(32, 32, 39, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 @supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
@@ -89,7 +90,7 @@ body.kb-open .agent-composer-wrap {
     .glass-card {
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      background: rgba(255, 255, 255, 0.7);
+      background: rgba(32, 32, 39, 0.5);
     }
   }
 }
@@ -107,7 +108,7 @@ body.kb-open .agent-composer-wrap {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
 }
@@ -161,14 +162,45 @@ body.kb-open .agent-composer-wrap {
   to { --neon-angle: 360deg; }
 }
 
+/* "ALMA AI" wordmark — multi-color gradient flowing inside the letters
+ * (white → blue → purple → magenta), lovable.dev "Meet Lovable" style. */
+.alma-ai-wordmark {
+  background-image: linear-gradient(
+    100deg,
+    #f8fafc 0%,
+    #f8fafc 14%,
+    #7cc4f5 30%,
+    #8b7cf6 46%,
+    #d36ad8 60%,
+    #f06595 72%,
+    #f8fafc 88%,
+    #f8fafc 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  letter-spacing: 0.02em;
+  animation: alma-ai-flow 6s linear infinite;
+}
+
+@keyframes alma-ai-flow {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -50% 50%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-shell {
-    background: #FAF9F6;
+    background: transparent;
   }
   .skeleton {
     animation: none;
   }
   .agent-neon-input::before {
+    animation: none;
+  }
+  .alma-ai-wordmark {
     animation: none;
   }
 }

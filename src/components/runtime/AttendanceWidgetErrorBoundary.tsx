@@ -109,11 +109,11 @@ export class AttendanceWidgetErrorBoundary extends Component<Props, State> {
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">
           Attendance unavailable
         </p>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-muted">
           This part of My Desk could not load. Account details and the rest of the app still work.
         </p>
         {this.state.message && (
-          <p className="rounded-lg border border-border bg-black/[0.03] px-3 py-2 text-[10px] font-mono text-zinc-500 break-all">
+          <p className="rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-[10px] font-mono text-muted break-all">
             {this.state.message.slice(0, 200)}
           </p>
         )}

@@ -86,7 +86,7 @@ export default function TradingTargetControlPage() {
   if (role !== 'SUPER_ADMIN' && role !== 'ADMIN') {
     return (
       <TradingPageShell title="Target Control" subtitle="Restricted">
-        <Card className="rounded-2xl p-6 text-sm text-slate-500">You do not have access to trading volume targets.</Card>
+        <Card className="rounded-2xl p-6 text-sm text-muted">You do not have access to trading volume targets.</Card>
       </TradingPageShell>
     )
   }
@@ -172,10 +172,10 @@ export default function TradingTargetControlPage() {
       {tab === 'settings' && (
         <motion.div variants={fadeUp}>
         <Card className="space-y-4 rounded-2xl p-5">
-          <p className="text-sm font-bold text-slate-800">Auto-penalty configuration</p>
+          <p className="text-sm font-bold text-cream">Auto-penalty configuration</p>
           {canManage ? (
             <>
-              <label className="flex items-center gap-2 text-sm text-slate-600">
+              <label className="flex items-center gap-2 text-sm text-muted-hi">
                 <input
                   type="checkbox"
                   checked={settings.autoPenaltyEnabled}
@@ -193,7 +193,7 @@ export default function TradingTargetControlPage() {
               <Button variant="gold" onClick={() => void saveSettings()}>Save settings</Button>
             </>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted">
               Auto-penalty: {settings.autoPenaltyEnabled ? 'On' : 'Off'} · Default ৳{settings.defaultPenaltyBdt}
             </p>
           )}
@@ -203,7 +203,7 @@ export default function TradingTargetControlPage() {
 
       {tab === 'analytics' && (
         <motion.div variants={fadeUp}>
-        <Card className="rounded-2xl p-5 text-sm text-slate-500">
+        <Card className="rounded-2xl p-5 text-sm text-muted">
           {canManage
             ? 'Use Accounts and Penalty queue for enforcement. Month KPIs are shown above.'
             : 'Summary KPIs above reflect the selected month. Contact Super Admin for penalty actions.'}
@@ -223,9 +223,9 @@ export default function TradingTargetControlPage() {
               <Card className="rounded-2xl p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="font-bold text-slate-800">{row.accountTitle}</p>
-                    <p className="text-xs text-slate-500">{row.assignedUserName || 'Unassigned'} · {row.targetDate.slice(0, 10)}</p>
-                    <p className="mt-2 text-sm text-slate-600">
+                    <p className="font-bold text-cream">{row.accountTitle}</p>
+                    <p className="text-xs text-muted">{row.assignedUserName || 'Unassigned'} · {row.targetDate.slice(0, 10)}</p>
+                    <p className="mt-2 text-sm text-muted-hi">
                       Target {row.targetUsdt} USDT · Actual {row.actualUsdt} USDT
                       {row.shortfallUsdt > 0 ? ` · Short ${row.shortfallUsdt}` : ''}
                     </p>
@@ -276,8 +276,8 @@ export default function TradingTargetControlPage() {
       )}
 
       {createOpen && canManage && (
-        <Card className="fixed inset-x-3 bottom-20 z-50 mx-auto max-w-lg rounded-2xl border-gold/20 bg-white p-4 shadow-2xl sm:bottom-auto sm:top-24">
-          <p className="mb-3 text-sm font-bold text-slate-800">Create daily target</p>
+        <Card className="fixed inset-x-3 bottom-20 z-50 mx-auto max-w-lg rounded-2xl border-gold/20 bg-card/85 p-4 shadow-2xl sm:bottom-auto sm:top-24">
+          <p className="mb-3 text-sm font-bold text-cream">Create daily target</p>
           <form className="space-y-3" onSubmit={e => void createTarget(e)}>
             <Select
               value={createForm.trading_account_id}

@@ -85,7 +85,7 @@ export default function DigitalDashboardPage() {
                   <span className="font-mono text-[11px] text-gold font-bold">{inv.id}</span>
                   <span className="flex-1 text-xs text-cream truncate">{inv.client_name}</span>
                   <PaymentStatusBadge status={inv.payment_status} />
-                  <span className="text-xs text-zinc-500">Due <Money amount={inv.due_amount ?? 0} /></span>
+                  <span className="text-xs text-muted">Due <Money amount={inv.due_amount ?? 0} /></span>
                   <span className="text-xs font-bold text-cream"><Money amount={inv.amount} /></span>
                 </div>
               ))

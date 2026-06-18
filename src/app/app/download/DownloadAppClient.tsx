@@ -29,7 +29,7 @@ export function DownloadAppClient({ apkUrl }: Props) {
           </div>
           <p className="text-[11px] font-black tracking-[0.2em] text-gold">ALMA ERP</p>
           <h1 className="mt-2 text-xl font-bold">Android App ডাউনলোড</h1>
-          <p className="mt-2 text-sm text-zinc-400">
+          <p className="mt-2 text-sm text-muted">
             Play Store ছাড়া — শুধু Alma staff-দের জন্য। ERP server একই, কোনো data change নেই।
           </p>
         </div>
@@ -40,12 +40,12 @@ export function DownloadAppClient({ apkUrl }: Props) {
               Alma ERP APK ডাউনলোড করুন
             </Button>
           </a>
-          <p className="text-center text-[11px] text-zinc-500 break-all">{apkUrl}</p>
+          <p className="text-center text-[11px] text-muted break-all">{apkUrl}</p>
         </Card>
 
         <Card className="p-5">
           <h2 className="text-sm font-semibold text-gold-lt">ইনস্টল করার নিয়ম</h2>
-          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-zinc-300">
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-muted">
             {STEPS.map((step) => (
               <li key={step}>{step}</li>
             ))}
@@ -54,17 +54,17 @@ export function DownloadAppClient({ apkUrl }: Props) {
 
         <Card className="p-5">
           <h2 className="text-sm font-semibold text-gold-lt">Samsung ফোন (S24/S25 ইত্যাদি)</h2>
-          <p className="mt-2 text-xs text-zinc-400">
+          <p className="mt-2 text-xs text-muted">
             Push notification পেতে নিচের সেটিংস অবশ্যই করুন — One UI battery optimization push বন্ধ করে দেয়।
           </p>
-          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-zinc-300">
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-muted">
             {SAMSUNG_PUSH_STEPS.map((step) => (
               <li key={step}>{step}</li>
             ))}
           </ol>
         </Card>
 
-        <p className="text-center text-xs text-zinc-500">
+        <p className="text-center text-xs text-muted">
           সমস্যা হলে browser/PWA uninstall করে শুধু এই app ব্যবহার করুন।
         </p>
       </div>

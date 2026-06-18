@@ -282,7 +282,7 @@ export default function EmployeePortalPage() {
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       {!systemOwner && empId && (
         <>
           <OperationalTaskHero
@@ -357,7 +357,7 @@ export default function EmployeePortalPage() {
           </AttendanceWidgetErrorBoundary>
         )}
 
-        <Card className="p-5 space-y-3 border-gold-dim/25 bg-white/60">
+        <Card className="p-5 space-y-3 border-gold-dim/25 bg-card/78">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Account details</p>
           {loadingMe ? <Skeleton className="h-28 w-full" /> : !me ? (
             <div>
@@ -369,14 +369,14 @@ export default function EmployeePortalPage() {
           ) : (
             <>
             <dl className="grid gap-2 text-[11px]">
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">Name</dt><dd className="text-slate-800 font-medium">{me.name}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">Email</dt><dd className="font-mono text-slate-500 truncate max-w-[55%]" title={me.email}>{me.email}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">Role</dt><dd className="text-gold-lt">{role.replace(/_/g, ' ')}</dd></div>
-              {me.profile?.roleTitle && <div className="flex justify-between gap-3"><dt className="text-slate-500">Profile role</dt><dd className="text-slate-500">{me.profile.roleTitle}</dd></div>}
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">Business scope</dt><dd className="text-slate-500 text-right">{me.businessAccess.replace(/,/g, ', ')}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">HR employee ID</dt><dd className="font-mono text-slate-500">{systemOwner ? 'System owner - not required' : me.employeeIdGas || '— link in Users'}</dd></div>
-              {me.profile?.shift && <div className="flex justify-between gap-3"><dt className="text-slate-500">Shift</dt><dd className="text-slate-500">{me.profile.shift}</dd></div>}
-              <div className="flex justify-between gap-3"><dt className="text-slate-500">Salary hint</dt><dd className="font-mono text-gold">
+              <div className="flex justify-between gap-3"><dt className="text-muted">Name</dt><dd className="text-cream font-medium">{me.name}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted">Email</dt><dd className="font-mono text-muted truncate max-w-[55%]" title={me.email}>{me.email}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted">Role</dt><dd className="text-gold-lt">{role.replace(/_/g, ' ')}</dd></div>
+              {me.profile?.roleTitle && <div className="flex justify-between gap-3"><dt className="text-muted">Profile role</dt><dd className="text-muted">{me.profile.roleTitle}</dd></div>}
+              <div className="flex justify-between gap-3"><dt className="text-muted">Business scope</dt><dd className="text-muted text-right">{me.businessAccess.replace(/,/g, ', ')}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted">HR employee ID</dt><dd className="font-mono text-muted">{systemOwner ? 'System owner - not required' : me.employeeIdGas || '— link in Users'}</dd></div>
+              {me.profile?.shift && <div className="flex justify-between gap-3"><dt className="text-muted">Shift</dt><dd className="text-muted">{me.profile.shift}</dd></div>}
+              <div className="flex justify-between gap-3"><dt className="text-muted">Salary hint</dt><dd className="font-mono text-gold">
                 {me.salaryHint != null ? `৳ ${Number(me.salaryHint).toLocaleString('en-BD')}` : '—'}
               </dd></div>
             </dl>
@@ -385,10 +385,10 @@ export default function EmployeePortalPage() {
         </Card>
 
         {!systemOwner && (
-          <Card className="p-5 border-gold-dim/20 bg-white/60 flex flex-wrap items-center justify-between gap-3">
+          <Card className="p-5 border-gold-dim/20 bg-card/78 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Payout identity</p>
-              <p className="mt-1 text-[11px] text-slate-500">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
+              <p className="mt-1 text-[11px] text-muted">bKash, Nagad, Rocket, or bank — used when wallet requests are approved.</p>
             </div>
             <Link href="/portal/payment-accounts">
               <Button size="sm" variant="gold">Payment accounts</Button>
@@ -437,19 +437,19 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && <Card className="p-5 md:col-span-2">
-          <p className="text-sm font-bold text-slate-800 mb-3">Wallet transaction history</p>
+          <p className="text-sm font-bold text-cream mb-3">Wallet transaction history</p>
           {!empId ? (
-            <p className="text-[11px] text-slate-500">Link your HR employee ID (Users settings) to activate the payroll wallet.</p>
+            <p className="text-[11px] text-muted">Link your HR employee ID (Users settings) to activate the payroll wallet.</p>
           ) : walletLoading ? (
             <Skeleton className="h-36 w-full" />
           ) : !(wallet?.entries ?? []).length ? (
-            <p className="text-[11px] text-slate-500">No wallet entries yet. HR can run monthly salary accruals from Payroll.</p>
+            <p className="text-[11px] text-muted">No wallet entries yet. HR can run monthly salary accruals from Payroll.</p>
           ) : (
             <div className="divide-y divide-border max-h-56 overflow-y-auto text-[11px]">
               {(wallet!.entries ?? []).slice().reverse().slice(0, 60).map(tx => (
                 <div key={String(tx.id ?? `${tx.date}-${tx.type}`)} className="py-2 grid grid-cols-[82px_1fr_auto_auto] gap-2 items-center">
-                  <span className="text-slate-500 font-mono">{String(tx.date).slice(0, 10)}</span>
-                  <span className="text-slate-800">{tx.type.replace(/_/g, ' ')}</span>
+                  <span className="text-muted font-mono">{String(tx.date).slice(0, 10)}</span>
+                  <span className="text-cream">{tx.type.replace(/_/g, ' ')}</span>
                   <span className={tx.signedAmount >= 0 ? 'font-mono text-green-400' : 'font-mono text-red-400'}>
                     {tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}
                   </span>
@@ -460,8 +460,8 @@ export default function EmployeePortalPage() {
           )}
         </Card>}
 
-        {!systemOwner && <Card className="p-5 md:col-span-2 bg-slate-50 border-border">
-          <p className="text-sm font-bold text-slate-800 mb-2">Pending requests</p>
+        {!systemOwner && <Card className="p-5 md:col-span-2 bg-white/[0.04] border-border">
+          <p className="text-sm font-bold text-cream mb-2">Pending requests</p>
           <RequestList requests={wallet?.requests ?? []} />
         </Card>}
       </div>
@@ -481,8 +481,8 @@ function SystemOwnerCard({ businessName }: { businessName: string }) {
   return (
     <Card className="p-5 md:col-span-2 border-gold-dim/30 bg-gradient-to-br from-gold/10 via-card to-white/80">
       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">System owner mode</p>
-      <h2 className="mt-2 text-xl font-black text-slate-800">Owner control active</h2>
-      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
+      <h2 className="mt-2 text-xl font-black text-cream">Owner control active</h2>
+      <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">
         You are operating {businessName} as a system owner. Employee attendance, personal wallet requests, payroll linkage,
         and staff profile requirements are intentionally skipped for this account.
       </p>
@@ -592,8 +592,8 @@ function AttendanceCard({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Today attendance</p>
-          <h2 className="mt-2 text-xl font-black text-slate-800">{today ? (today.checkOutAt ? 'Workday completed' : 'Work is running') : 'Ready to start work'}</h2>
-          <p className="mt-1 text-xs text-slate-500">Office time: 9:00 AM - 9:00 PM. Late penalties sync to your wallet automatically.</p>
+          <h2 className="mt-2 text-xl font-black text-cream">{today ? (today.checkOutAt ? 'Workday completed' : 'Work is running') : 'Ready to start work'}</h2>
+          <p className="mt-1 text-xs text-muted">Office time: 9:00 AM - 9:00 PM. Late penalties sync to your wallet automatically.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 min-w-[220px]">
           <Button
@@ -787,7 +787,7 @@ function stableSessionId() {
 function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: EmployeeWalletResponse | null }) {
   const s = wallet?.summary
   return (
-    <Card className="p-5 border-gold-dim/25 bg-white/60">
+    <Card className="p-5 border-gold-dim/25 bg-card/78">
       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold mb-4">Employee wallet</p>
       {loading ? <Skeleton className="h-40 w-full" /> : !s ? (
         <Empty icon="◇" title="Wallet not active" desc="Link your HR employee ID to view salary balance." />
@@ -802,17 +802,17 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
           <WalletStat label="Penalties" value={money(s.totalPenalties)} tone="text-red-400" />
           <WalletStat label="Meal deductions" value={money(s.totalMealDeductions)} tone="text-red-400" />
           <WalletStat label="Advances" value={money(s.totalAdvances)} tone="text-amber-600" />
-          <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-slate-600" />
+          <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-muted-hi" />
         </div>
       )}
     </Card>
   )
 }
 
-function WalletStat({ label, value, tone = 'text-slate-800' }: { label: string; value: string; tone?: string }) {
+function WalletStat({ label, value, tone = 'text-cream' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
-      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-3">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">{label}</p>
       <p className={`mt-1 font-mono text-sm font-bold ${tone}`}>{value}</p>
     </div>
   )
@@ -877,11 +877,11 @@ function MealAllowanceCard({
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Meal Allowance</p>
           {canRequest ? (
-            <p className="mt-2 text-[11px] text-slate-500">No kitchen today? Request your meal allowance.</p>
+            <p className="mt-2 text-[11px] text-muted">No kitchen today? Request your meal allowance.</p>
           ) : pending?.status === 'APPROVED' ? (
-            <p className="mt-2 text-[11px] text-slate-500">Meal allowance approved for today</p>
+            <p className="mt-2 text-[11px] text-muted">Meal allowance approved for today</p>
           ) : (
-            <p className="mt-2 text-[11px] text-slate-500">Request pending approval</p>
+            <p className="mt-2 text-[11px] text-muted">Request pending approval</p>
           )}
         </div>
         <span className="rounded-full border border-gold-dim/40 bg-gold/10 px-3 py-1 text-[11px] font-bold text-gold-lt">
@@ -896,14 +896,14 @@ function MealAllowanceCard({
       {canRequest ? (
         <form onSubmit={submit} className="space-y-3 text-[11px]">
           <label className="block space-y-1">
-            <span className="text-slate-500">Reason</span>
+            <span className="text-muted">Reason</span>
             <textarea
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={2}
               placeholder="e.g. No food arranged today"
               disabled={!empLinked || busy}
-              className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm resize-none disabled:opacity-40"
+              className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm resize-none disabled:opacity-40"
             />
           </label>
           <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>
@@ -911,7 +911,7 @@ function MealAllowanceCard({
           </Button>
         </form>
       ) : eligibility.reason ? (
-        <p className="text-[11px] text-slate-500">{eligibility.reason}</p>
+        <p className="text-[11px] text-muted">{eligibility.reason}</p>
       ) : null}
       {!empLinked && canRequest && (
         <p className="text-[11px] text-amber-600">Ask an admin to link your HR employee ID before requesting meal allowance.</p>
@@ -969,19 +969,19 @@ function WalletRequestCard({
               key={t}
               type="button"
               onClick={() => setType(t)}
-              className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${type === t ? 'border-gold-dim/50 bg-gold/15 text-gold-lt' : 'border-black/[0.08] bg-white text-slate-500 hover:text-slate-800'}`}
+              className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${type === t ? 'border-gold-dim/50 bg-gold/15 text-gold-lt' : 'border-white/[0.08] bg-card/85 text-muted hover:text-cream'}`}
             >
               {t === 'WITHDRAWAL' ? 'Request withdrawal' : 'Request advance'}
             </button>
           ))}
         </div>
         <label className="block space-y-1">
-          <span className="text-slate-500">Amount (৳)</span>
+          <span className="text-muted">Amount (৳)</span>
           <Input value={amount} onChange={e => setAmount(e.target.value)} type="number" min={1} step="1" className="font-mono" disabled={!empLinked} />
         </label>
         <label className="block space-y-1">
-          <span className="text-slate-500">Reason</span>
-          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} disabled={!empLinked} className="w-full rounded-xl bg-white border border-black/[0.08] px-3 py-2 text-slate-800 text-sm resize-none disabled:opacity-40" />
+          <span className="text-muted">Reason</span>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} disabled={!empLinked} className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm resize-none disabled:opacity-40" />
         </label>
         <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>{busy ? 'Sending…' : 'Submit request'}</Button>
       </form>
@@ -991,13 +991,13 @@ function WalletRequestCard({
 }
 
 function RequestList({ requests }: { requests: WalletRequestDto[] }) {
-  if (!requests?.length) return <p className="text-[11px] text-slate-400">No wallet requests yet.</p>
+  if (!requests?.length) return <p className="text-[11px] text-muted">No wallet requests yet.</p>
   return (
     <ul className="space-y-1.5 max-h-44 overflow-y-auto text-[11px]">
       {requests.slice(0, 20).map(r => (
-        <li key={r.id} className="flex justify-between gap-2 border-b border-black/[0.04] pb-1.5">
-          <span className="text-slate-500 font-mono">{r.createdAt.slice(0, 10)}</span>
-          <span className="text-slate-800 flex-1">{r.type.replace(/_/g, ' ')} · {money(r.requestedAmount)}</span>
+        <li key={r.id} className="flex justify-between gap-2 border-b border-white/[0.04] pb-1.5">
+          <span className="text-muted font-mono">{r.createdAt.slice(0, 10)}</span>
+          <span className="text-cream flex-1">{r.type.replace(/_/g, ' ')} · {money(r.requestedAmount)}</span>
           <span className={r.status === 'PENDING' ? 'text-amber-400' : r.status.includes('APPROVED') ? 'text-green-400' : 'text-red-400'}>{r.status.replace(/_/g, ' ')}</span>
         </li>
       ))}

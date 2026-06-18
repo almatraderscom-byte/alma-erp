@@ -59,7 +59,7 @@ export default function DigitalClientsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {(['name', 'company', 'phone', 'email', 'country', 'lead_source', 'tags'] as const).map(k => (
               <label key={k} className="block">
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">{k}</span>
+                <span className="text-[10px] text-muted uppercase tracking-wider">{k}</span>
                 <input
                   className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
                   value={form[k]}
@@ -68,7 +68,7 @@ export default function DigitalClientsPage() {
               </label>
             ))}
             <label className="block md:col-span-2">
-              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Service type</span>
+              <span className="text-[10px] text-muted uppercase tracking-wider">Service type</span>
               <select
                 className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
                 value={form.service_type}
@@ -79,7 +79,7 @@ export default function DigitalClientsPage() {
             </label>
           </div>
           <label className="block">
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Notes</span>
+            <span className="text-[10px] text-muted uppercase tracking-wider">Notes</span>
             <textarea
               className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream min-h-[72px]"
               value={form.notes}
@@ -100,16 +100,16 @@ export default function DigitalClientsPage() {
         ) : (
           <div className="overflow-x-auto min-w-0 max-w-full divide-y divide-border">
             {clients.map(c => (
-              <Link key={c.id} href={`/digital/clients/${c.id}`} className="block px-5 py-4 hover:bg-black/[0.02]">
+              <Link key={c.id} href={`/digital/clients/${c.id}`} className="block px-5 py-4 hover:bg-white/[0.02]">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-bold text-cream">{c.name}</p>
-                    <p className="text-[11px] text-zinc-500">{c.company || '—'} · {c.service_type}</p>
-                    <p className="text-[11px] text-zinc-600 font-mono mt-1">{c.phone} · {c.email}</p>
+                    <p className="text-[11px] text-muted">{c.company || '—'} · {c.service_type}</p>
+                    <p className="text-[11px] text-muted-hi font-mono mt-1">{c.phone} · {c.email}</p>
                   </div>
                   <span className="font-mono text-[10px] text-gold">{c.id}</span>
                 </div>
-                {c.notes && <p className="text-[11px] text-zinc-500 mt-2 line-clamp-2">{c.notes}</p>}
+                {c.notes && <p className="text-[11px] text-muted mt-2 line-clamp-2">{c.notes}</p>}
               </Link>
             ))}
           </div>

@@ -18,7 +18,7 @@ type Props = {
 export function OperationalTaskSpotlightStrip({ tasks, loading, onOpenSpotlight }: Props) {
   if (loading) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-black/[0.03] p-4 animate-pulse h-24" />
+      <div className="rounded-2xl border border-border bg-white/[0.03] p-4 animate-pulse h-24" />
     )
   }
   if (!tasks.length) return null
@@ -27,14 +27,14 @@ export function OperationalTaskSpotlightStrip({ tasks, loading, onOpenSpotlight 
     <div className="rounded-2xl border border-gold-dim/25 bg-gradient-to-br from-gold/10 via-card to-black/[0.04] p-4 shadow-[inset_0_1px_0_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Active operations</p>
-        <span className="text-[10px] text-zinc-500">{tasks.length} open</span>
+        <span className="text-[10px] text-muted">{tasks.length} open</span>
       </div>
       <ul className="mt-3 space-y-2">
         {tasks.slice(0, 4).map(a => (
           <li key={a.id}>
             <button
               type="button"
-              className="flex w-full items-start gap-3 rounded-xl border border-slate-200 bg-black/[0.03] px-3 py-2.5 text-left transition hover:border-gold/30 hover:bg-black/[0.06]"
+              className="flex w-full items-start gap-3 rounded-xl border border-border bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-gold/30 hover:bg-white/[0.06]"
               onClick={() => onOpenSpotlight(a)}
             >
               <span
@@ -42,7 +42,7 @@ export function OperationalTaskSpotlightStrip({ tasks, loading, onOpenSpotlight 
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-bold text-cream">{a.task.title}</span>
-                <span className="text-[10px] text-zinc-500 uppercase">{a.status.replace(/_/g, ' ')}</span>
+                <span className="text-[10px] text-muted uppercase">{a.status.replace(/_/g, ' ')}</span>
               </span>
               <span className="shrink-0 text-[10px] font-bold text-gold">View →</span>
             </button>

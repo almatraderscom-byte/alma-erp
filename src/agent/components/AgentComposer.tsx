@@ -134,11 +134,11 @@ export default function AgentComposer({
             <div key={i} className="relative shrink-0">
               {f.file.type.startsWith('image/') ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={f.previewUrl} alt="" className="h-14 w-14 rounded-xl border border-black/[0.06] object-cover" />
+                <img src={f.previewUrl} alt="" className="h-14 w-14 rounded-xl border border-border-subtle object-cover" />
               ) : (
-                <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-black/[0.06] bg-gray-50 text-[10px] text-gray-500">PDF</div>
+                <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">PDF</div>
               )}
-              <button type="button" onClick={() => removeFile(i)} className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-gray-200 text-[8px]">×</button>
+              <button type="button" onClick={() => removeFile(i)} className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white/15 text-cream text-[8px]">×</button>
             </div>
           ))}
         </div>
@@ -171,7 +171,7 @@ export default function AgentComposer({
           disabled={disabled || streaming}
           placeholder="বার্তা লিখুন…"
           rows={1}
-          className="max-h-[120px] min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-base leading-relaxed text-[#1a1a2e] placeholder-gray-400 focus:outline-none disabled:opacity-40"
+          className="max-h-[120px] min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-base leading-relaxed text-cream placeholder-gray-400 focus:outline-none disabled:opacity-40"
         />
 
         {/* Row 2 — controls */}
@@ -181,7 +181,7 @@ export default function AgentComposer({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled || streaming}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] hover:text-gray-700 disabled:opacity-30"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream disabled:opacity-30"
             aria-label="যোগ করুন"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -210,7 +210,7 @@ export default function AgentComposer({
                 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-30',
                 recording
                   ? 'bg-[#E07A5F] text-white'
-                  : 'text-gray-500 hover:bg-[#E07A5F]/10 hover:text-[#E07A5F]',
+                  : 'text-muted hover:bg-[#E07A5F]/10 hover:text-[#E07A5F]',
               )}
               aria-label={recording ? 'ভয়েস থামান' : 'ভয়েসে লিখুন'}
             >
@@ -227,7 +227,7 @@ export default function AgentComposer({
               type="button"
               onClick={onVoiceStart}
               disabled={disabled}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30"
               aria-label="ভয়েস টু ভয়েস"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" opacity="0"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
@@ -236,7 +236,7 @@ export default function AgentComposer({
 
           {/* Right: coral circular send (or stop while streaming) */}
           {streaming ? (
-            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500" aria-label="থামান">
+            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted" aria-label="থামান">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
           ) : (
@@ -246,7 +246,7 @@ export default function AgentComposer({
               disabled={!canSend}
               className={cn(
                 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all',
-                canSend ? 'bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)] active:scale-95' : 'bg-gray-100 text-gray-300',
+                canSend ? 'bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)] active:scale-95' : 'bg-white/[0.06] text-muted',
               )}
               aria-label="পাঠান"
             >
@@ -311,12 +311,12 @@ function RecordingBar({
         type="button"
         onClick={onCancel}
         aria-label="বাতিল"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-all hover:bg-black/[0.05] active:scale-95"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] active:scale-95"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
       <VoiceWaveform level={level} />
-      <span className="shrink-0 text-[12px] tabular-nums text-[#94a3b8]">{mmss(secs)}</span>
+      <span className="shrink-0 text-[12px] tabular-nums text-muted">{mmss(secs)}</span>
       <button
         type="button"
         onClick={onConfirm}

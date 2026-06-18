@@ -84,7 +84,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
     <ApprovalCountProvider>
       <NotificationShellProvider>
         <SentryUserBridge />
-        <div className="flex h-[100dvh] w-full min-w-0 overflow-hidden">
+        <div className="relative z-10 flex h-[100dvh] w-full min-w-0 overflow-hidden">
           {!isAgent && <Sidebar />}
           <main
             ref={mainScrollRef}
@@ -291,9 +291,9 @@ function AuthGate({ children, initialSession }: { children: ReactNode; initialSe
     if (loadingTimedOut) {
       const showForceRelogin = retryCount >= 3
       return (
-        <div data-auth-gate className="fixed inset-0 z-[240] flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-[#FAF9F6] px-6 text-center">
-          <p className="text-sm font-semibold text-[#1a1a2e]">সেশন যাচাই হচ্ছে না</p>
-          <p className="max-w-sm text-[11px] text-slate-500">
+        <div data-auth-gate className="fixed inset-0 z-[240] flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-bg-1 px-6 text-center">
+          <p className="text-sm font-semibold text-cream">সেশন যাচাই হচ্ছে না</p>
+          <p className="max-w-sm text-[11px] text-muted">
             ইন্টারনেট চেক করুন, তারপর আবার চেষ্টা করুন। বারবার সমস্যা হলে পুনরায় লগইন করুন।
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">

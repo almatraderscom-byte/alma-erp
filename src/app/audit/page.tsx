@@ -59,8 +59,8 @@ export default function AuditLogPage() {
             ) : (
               <div className="overflow-x-auto min-w-0 max-w-full table-scroll max-h-[min(70vh,560px)]">
                 <table className="w-full min-w-[960px] text-left text-[10px]">
-                  <thead className="sticky top-0 bg-white border-b border-border z-[1]">
-                    <tr className="text-slate-400 uppercase tracking-wider">
+                  <thead className="sticky top-0 bg-card/85 border-b border-border z-[1]">
+                    <tr className="text-muted uppercase tracking-wider">
                       <th className="py-2 px-3">Time</th>
                       <th className="py-2 px-3">Action</th>
                       <th className="py-2 px-3">Actor</th>
@@ -72,16 +72,16 @@ export default function AuditLogPage() {
                   </thead>
                   <tbody>
                     {rows.map((r, i) => (
-                      <tr key={`${r.timestamp}-${r.route}-${i}`} className="border-b border-black/[0.04] hover:bg-slate-50/50 transition-colors">
-                        <td className="py-2 px-3 font-mono text-slate-400 whitespace-nowrap">{r.timestamp}</td>
+                      <tr key={`${r.timestamp}-${r.route}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.04]/50 transition-colors">
+                        <td className="py-2 px-3 font-mono text-muted whitespace-nowrap">{r.timestamp}</td>
                         <td className="py-2 px-3 font-mono text-gold">{r.route}</td>
-                        <td className="py-2 px-3 text-slate-800">{r.actor}</td>
-                        <td className="py-2 px-3 text-slate-500">{r.actor_role}</td>
-                        <td className="py-2 px-3 text-slate-500">{r.business_id}</td>
+                        <td className="py-2 px-3 text-cream">{r.actor}</td>
+                        <td className="py-2 px-3 text-muted">{r.actor_role}</td>
+                        <td className="py-2 px-3 text-muted">{r.business_id}</td>
                         <td className="py-2 px-3">
                           <span className={r.status_flag === 'FAIL' ? 'text-red-500' : 'text-emerald-600'}>{r.status_flag}</span>
                         </td>
-                        <td className="py-2 px-3 text-slate-400 max-w-[280px] truncate" title={r.summary}>{r.summary}</td>
+                        <td className="py-2 px-3 text-muted max-w-[280px] truncate" title={r.summary}>{r.summary}</td>
                       </tr>
                     ))}
                   </tbody>

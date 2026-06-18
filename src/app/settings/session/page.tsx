@@ -158,22 +158,22 @@ export default function SessionSettingsPage() {
         )}
 
         <motion.div variants={fadeUp}>
-          <Card className="p-5 border-gold-dim/25 bg-[#FAF9F6] space-y-3">
+          <Card className="p-5 border-gold-dim/25 bg-transparent space-y-3">
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Build / backend</p>
             {healthLoading ? (
               <Skeleton className="h-24 w-full" />
             ) : health ? (
               <dl className="grid grid-cols-1 gap-2 text-[11px]">
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Frontend git</dt><dd className="font-mono text-slate-800 truncate max-w-[55%]" title={health.frontend?.git_commit || ''}>{health.frontend?.git_commit || '—'}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">GAS stamp</dt><dd className="font-mono text-gold-lt">{gasStamp}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Clasp @NN</dt><dd className="font-mono text-slate-600">{claspVer}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Deployment ID</dt><dd className="font-mono text-slate-800 truncate max-w-[55%]" title={health.api?.gas_deployment_id || ''}>{health.api?.gas_deployment_id || '—'}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">API URL host</dt><dd className="font-mono text-slate-400 truncate max-w-[55%]" title={health.api?.next_public_api_url || ''}>{apiHost(health.api?.next_public_api_url)}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Environment</dt><dd className="text-slate-600">{health.environment}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Checked</dt><dd className="font-mono text-slate-500">{health.timestamp}</dd></div>
-                <div className="flex justify-between gap-3 pt-2 border-t border-black/[0.06]"><dt className="text-slate-500">Business</dt><dd className="text-slate-800 font-semibold">{business.name}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Role</dt><dd className="text-slate-800 font-semibold">{role.replace(/_/g, ' ')}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-slate-500">Account</dt><dd className="font-mono text-slate-400 truncate max-w-[60%]" title={session?.user?.email || ''}>{session?.user?.email || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Frontend git</dt><dd className="font-mono text-cream truncate max-w-[55%]" title={health.frontend?.git_commit || ''}>{health.frontend?.git_commit || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">GAS stamp</dt><dd className="font-mono text-gold-lt">{gasStamp}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Clasp @NN</dt><dd className="font-mono text-muted-hi">{claspVer}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Deployment ID</dt><dd className="font-mono text-cream truncate max-w-[55%]" title={health.api?.gas_deployment_id || ''}>{health.api?.gas_deployment_id || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">API URL host</dt><dd className="font-mono text-muted truncate max-w-[55%]" title={health.api?.next_public_api_url || ''}>{apiHost(health.api?.next_public_api_url)}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Environment</dt><dd className="text-muted-hi">{health.environment}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Checked</dt><dd className="font-mono text-muted">{health.timestamp}</dd></div>
+                <div className="flex justify-between gap-3 pt-2 border-t border-white/[0.06]"><dt className="text-muted">Business</dt><dd className="text-cream font-semibold">{business.name}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Role</dt><dd className="text-cream font-semibold">{role.replace(/_/g, ' ')}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted">Account</dt><dd className="font-mono text-muted truncate max-w-[60%]" title={session?.user?.email || ''}>{session?.user?.email || '—'}</dd></div>
               </dl>
             ) : (
               <p className="text-xs text-red-400">Could not load /api/health</p>
@@ -189,21 +189,21 @@ export default function SessionSettingsPage() {
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Display name & contact</p>
             <form onSubmit={saveProfile} className="space-y-3">
               <label className="block space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Display name</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Display name</span>
                 <input
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50"
                   placeholder="Full name"
                   maxLength={120}
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Phone</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Phone</span>
                 <input
                   value={phone}
                   onChange={e => setPhone(e.target.value)}
-                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50"
                   placeholder="+880 …"
                 />
               </label>
@@ -219,30 +219,30 @@ export default function SessionSettingsPage() {
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">Password</p>
             <form onSubmit={changePassword} className="space-y-3">
               <label className="block space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Current</span>
                 <input
                   type="password"
                   autoComplete="current-password"
                   value={pwCur}
                   onChange={e => setPwCur(e.target.value)}
-                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50"
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">New (8+ chars)</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted">New (8+ chars)</span>
                 <input
                   type="password"
                   autoComplete="new-password"
                   value={pwNew}
                   onChange={e => setPwNew(e.target.value)}
-                  className="w-full bg-white border border-black/[0.08] rounded-xl px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-gold/50"
+                  className="w-full bg-card/85 border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50"
                 />
               </label>
               <Button variant="secondary" className="w-full justify-center" type="submit" disabled={savingPw}>
                 {savingPw ? 'Updating…' : 'Change password'}
               </Button>
             </form>
-            <p className="text-[11px] text-slate-600">
+            <p className="text-[11px] text-muted-hi">
               Forgot your password? Use the recovery flow from the login screen — it emails a reset link when outbound mail is configured.
             </p>
           </Card>

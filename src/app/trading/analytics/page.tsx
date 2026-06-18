@@ -110,14 +110,14 @@ export default function TradingAnalyticsPage() {
       <motion.div variants={fadeUp}>
       <Card className="rounded-2xl p-4">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4 xl:grid-cols-8">
-          <input type="date" value={filters.startDate} onChange={e => setFilters(f => ({ ...f, startDate: e.target.value }))} className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" />
-          <input type="date" value={filters.endDate} onChange={e => setFilters(f => ({ ...f, endDate: e.target.value }))} className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" />
+          <input type="date" value={filters.startDate} onChange={e => setFilters(f => ({ ...f, startDate: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" />
+          <input type="date" value={filters.endDate} onChange={e => setFilters(f => ({ ...f, endDate: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" />
           <Select value={filters.staffId} onChange={v => setFilters(f => ({ ...f, staffId: v }))} options={[{ label: 'All staff', value: '' }, ...(staffData?.staff ?? []).map(s => ({ label: s.name, value: s.id }))]} />
           <Select value={filters.accountId} onChange={v => setFilters(f => ({ ...f, accountId: v }))} options={[{ label: 'All accounts', value: '' }, ...(accountsData?.accounts ?? []).map(a => ({ label: a.accountTitle, value: a.id }))]} />
           <Select value={filters.status} onChange={v => setFilters(f => ({ ...f, status: v }))} options={[{ label: 'All status', value: 'ALL' }, { label: 'Active', value: 'ACTIVE' }, { label: 'Paused', value: 'PAUSED' }, { label: 'Completed', value: 'COMPLETED' }, { label: 'Closed', value: 'CLOSED' }]} />
           <Select value={filters.profitability} onChange={v => setFilters(f => ({ ...f, profitability: v }))} options={[{ label: 'All P/L', value: 'ALL' }, { label: 'Profitable', value: 'PROFIT' }, { label: 'Loss', value: 'LOSS' }]} />
-          <input value={filters.minRoi} onChange={e => setFilters(f => ({ ...f, minRoi: e.target.value }))} placeholder="Min ROI" className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" />
-          <input value={filters.maxRoi} onChange={e => setFilters(f => ({ ...f, maxRoi: e.target.value }))} placeholder="Max ROI" className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" />
+          <input value={filters.minRoi} onChange={e => setFilters(f => ({ ...f, minRoi: e.target.value }))} placeholder="Min ROI" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" />
+          <input value={filters.maxRoi} onChange={e => setFilters(f => ({ ...f, maxRoi: e.target.value }))} placeholder="Max ROI" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" />
         </div>
       </Card>
       </motion.div>
@@ -142,8 +142,8 @@ export default function TradingAnalyticsPage() {
           <p className="mb-3 text-sm font-bold text-red-600">Analytics Alerts</p>
           <div className="grid gap-2 md:grid-cols-2">
             {data.alerts.map(alert => (
-              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-200 bg-white p-3">
-                <p className="text-xs font-bold text-slate-800">{alert.type} · {alert.accountTitle}</p>
+              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-200 bg-card/85 p-3">
+                <p className="text-xs font-bold text-cream">{alert.type} · {alert.accountTitle}</p>
                 <p className="mt-1 text-[11px] text-red-500">{alert.message}</p>
               </div>
             ))}
@@ -167,21 +167,21 @@ export default function TradingAnalyticsPage() {
 
       <motion.div variants={fadeUp}>
       <Card className="overflow-hidden rounded-2xl">
-        <div className="flex flex-col gap-3 border-b border-black/[0.06] p-4 md:flex-row md:items-center md:justify-between">
-          <p className="text-sm font-bold text-slate-800">Staff Performance Analytics</p>
+        <div className="flex flex-col gap-3 border-b border-white/[0.06] p-4 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm font-bold text-cream">Staff Performance Analytics</p>
           <div className="w-full md:w-80"><SearchInput value={search} onChange={setSearch} placeholder="Search report rows..." /></div>
         </div>
         {loading ? <div className="p-4"><Skeleton className="h-40" /></div> : !data?.staff.length ? <Empty icon="◇" title="No staff analytics" /> : (
-          <div className="divide-y divide-black/[0.06]">
+          <div className="divide-y divide-white/[0.06]">
             {data.staff.map((staff, idx) => (
-              <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-slate-50 md:grid-cols-[0.3fr_1.2fr_1fr_1fr_1fr_1fr_1fr_1fr]">
+              <div key={staff.userId} className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-white/[0.04] md:grid-cols-[0.3fr_1.2fr_1fr_1fr_1fr_1fr_1fr_1fr]">
                 <span className="font-bold text-gold">#{idx + 1}</span>
-                <span className="font-bold text-slate-800">{staff.name}</span>
-                <span className="text-slate-500">{staff.activeAccounts}/{staff.assignedAccounts} accounts</span>
-                <span className="text-slate-500">{staff.totalTradedUsdt.toLocaleString('en-BD')} USDT</span>
+                <span className="font-bold text-cream">{staff.name}</span>
+                <span className="text-muted">{staff.activeAccounts}/{staff.assignedAccounts} accounts</span>
+                <span className="text-muted">{staff.totalTradedUsdt.toLocaleString('en-BD')} USDT</span>
                 <span className="text-green-400">৳{staff.totalProfitGenerated.toLocaleString('en-BD')}</span>
                 <span className="text-red-400">৳{staff.totalLossGenerated.toLocaleString('en-BD')}</span>
-                <span className="text-slate-500">{staff.feeEfficiency.toFixed(1)}% fee eff.</span>
+                <span className="text-muted">{staff.feeEfficiency.toFixed(1)}% fee eff.</span>
                 <span className={signedClass(staff.roiContribution)}>{staff.roiContribution.toFixed(2)}% ROI</span>
               </div>
             ))}
@@ -192,21 +192,21 @@ export default function TradingAnalyticsPage() {
 
       <motion.div variants={fadeUp} className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_0.7fr]">
         <Card className="overflow-hidden rounded-2xl">
-          <div className="border-b border-black/[0.06] px-4 py-3"><p className="text-sm font-bold text-slate-800">Merchant Account Intelligence</p></div>
+          <div className="border-b border-white/[0.06] px-4 py-3"><p className="text-sm font-bold text-cream">Merchant Account Intelligence</p></div>
           {!searchedRows.length ? <Empty icon="◇" title="No account rows" /> : (
-            <div className="divide-y divide-black/[0.06]">
+            <div className="divide-y divide-white/[0.06]">
               {searchedRows.slice(0, 20).map(row => <AccountIntelRow key={row.id} row={row} />)}
             </div>
           )}
         </Card>
         <Card className="rounded-2xl p-4">
-          <p className="mb-4 text-sm font-bold text-slate-800">Expense Intelligence</p>
+          <p className="mb-4 text-sm font-bold text-cream">Expense Intelligence</p>
           {!data?.expenseCategories.length ? <Empty icon="◇" title="No expenses" /> : (
             <div className="space-y-3">
               {data.expenseCategories.slice(0, 8).map(cat => (
                 <div key={cat.type}>
-                  <div className="mb-1 flex justify-between text-xs"><span className="font-bold text-slate-800">{cat.type}</span><span className="text-red-500">৳{cat.amount.toLocaleString('en-BD')}</span></div>
-                  <div className="h-2 rounded-full bg-slate-100"><div className="h-full rounded-full bg-red-400" style={{ width: `${Math.max(4, (cat.amount / maxExpenseCategory) * 100)}%` }} /></div>
+                  <div className="mb-1 flex justify-between text-xs"><span className="font-bold text-cream">{cat.type}</span><span className="text-red-500">৳{cat.amount.toLocaleString('en-BD')}</span></div>
+                  <div className="h-2 rounded-full bg-white/[0.06]"><div className="h-full rounded-full bg-red-400" style={{ width: `${Math.max(4, (cat.amount / maxExpenseCategory) * 100)}%` }} /></div>
                 </div>
               ))}
             </div>
@@ -220,16 +220,16 @@ export default function TradingAnalyticsPage() {
 
 function AccountIntelRow({ row }: { row: TradingAnalyticsAccount }) {
   return (
-    <div className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-slate-50 md:grid-cols-[1.3fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr]">
+    <div className="grid gap-2 px-4 py-3 text-xs transition-colors hover:bg-white/[0.04] md:grid-cols-[1.3fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr]">
       <div className="min-w-0">
-        <p className="truncate font-bold text-slate-800">{row.accountTitle}</p>
-        <p className="mt-0.5 text-[10px] text-slate-400">{row.assignedUserName}</p>
+        <p className="truncate font-bold text-cream">{row.accountTitle}</p>
+        <p className="mt-0.5 text-[10px] text-muted">{row.assignedUserName}</p>
       </div>
       <span className={`rounded-full border px-2 py-1 text-center text-[10px] font-bold ${statusClass(row.status)}`}>{row.status}</span>
       <span className={`font-bold ${signedClass(row.netProfit)}`}>৳{row.netProfit.toLocaleString('en-BD')}</span>
-      <span className="text-slate-600">{row.roi.toFixed(2)}% ROI</span>
-      <span className="text-slate-600">{row.averageSpread.toFixed(4)} spread</span>
-      <span className="text-slate-600">{row.feeRatio.toFixed(1)}% fees</span>
+      <span className="text-muted-hi">{row.roi.toFixed(2)}% ROI</span>
+      <span className="text-muted-hi">{row.averageSpread.toFixed(4)} spread</span>
+      <span className="text-muted-hi">{row.feeRatio.toFixed(1)}% fees</span>
       <span className={row.health === 'HEALTHY' ? 'text-green-400' : row.health === 'HIGH_RISK' ? 'text-red-400' : 'text-amber-500'}>{row.health.replace('_', ' ')}</span>
     </div>
   )

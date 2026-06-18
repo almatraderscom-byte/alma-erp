@@ -53,8 +53,8 @@ export function ConnectionStatus() {
   if (status === 'checking') {
     return (
       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-        <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-pulse" />
-        <span className="text-[10px] text-zinc-500 font-semibold">Connecting…</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-white/[0.04]0 animate-pulse" />
+        <span className="text-[10px] text-muted font-semibold">Connecting…</span>
       </div>
     )
   }

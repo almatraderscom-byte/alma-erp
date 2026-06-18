@@ -138,21 +138,21 @@ function OfficeTaskBlockCard({
         className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left"
       >
         <span className="shrink-0 text-sm">{completed ? '✅' : running ? '🔄' : '⏳'}</span>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[#1a1a2e]">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
           কাজ #{block.taskNumber} — {block.label}
-          <span className="font-normal text-[#64748b]"> · {duration}</span>
+          <span className="font-normal text-muted"> · {duration}</span>
         </span>
         <svg
           width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           strokeLinecap="round" strokeLinejoin="round"
-          className={`shrink-0 text-[#94a3b8] transition-transform duration-[250ms] ${open ? 'rotate-180' : ''}`}
+          className={`shrink-0 text-muted transition-transform duration-[250ms] ${open ? 'rotate-180' : ''}`}
           aria-hidden
         >
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
       <CollapsibleGrid open={open}>
-        <div className="space-y-3 border-t border-black/[0.05] px-3 py-3">
+        <div className="space-y-3 border-t border-border-subtle px-3 py-3">
           {block.messages.map((msg) => (
             <div key={msg.id}>{renderMessage(msg)}</div>
           ))}
@@ -217,11 +217,11 @@ export function OfficeShiftThreadRenderer({
 
   const renderAssistant = (msg: OfficeShiftMessage) => (
     <div>
-      <div className="text-[15px] leading-[1.7] text-[#1a1a2e] break-words [overflow-wrap:anywhere]">
+      <div className="text-[15px] leading-[1.7] text-cream break-words [overflow-wrap:anywhere]">
         <AgentMarkdown content={msg.text} />
       </div>
       {msg.costUsd != null && msg.costUsd >= 0 && DUTY_DONE.test(msg.text) && (
-        <p className="mt-1.5 text-[11px] tabular-nums text-[#94a3b8]">
+        <p className="mt-1.5 text-[11px] tabular-nums text-muted">
           {formatDutyCostLineBangla(msg.costUsd)}
         </p>
       )}

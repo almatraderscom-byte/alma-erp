@@ -103,7 +103,7 @@ export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
             <button
               type="button"
               onClick={() => setDismissed(prev => new Set([...prev, alert.id]))}
-              className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-[#94a3b8] transition-colors hover:bg-black/[0.04] hover:text-[#64748b]"
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-muted transition-colors hover:bg-white/[0.04] hover:text-muted"
             >
               ✕
             </button>

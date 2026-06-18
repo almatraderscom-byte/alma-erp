@@ -44,10 +44,10 @@ export function MyTradingAccounts({
 
   return (
     <Card className="overflow-hidden rounded-2xl">
-      <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
         <div>
-          <p className="text-sm font-bold text-slate-800">My accounts</p>
-          <p className="text-[11px] text-slate-500">Daily ops · screenshot status per account</p>
+          <p className="text-sm font-bold text-cream">My accounts</p>
+          <p className="text-[11px] text-muted">Daily ops · screenshot status per account</p>
         </div>
         <Link href="/trading/accounts" className="text-[11px] font-bold text-gold">
           View all
@@ -61,7 +61,7 @@ export function MyTradingAccounts({
       ) : !accounts.length ? (
         <Empty icon="◇" title="No active accounts assigned" />
       ) : (
-        <div className="divide-y divide-black/[0.06]">
+        <div className="divide-y divide-white/[0.06]">
           {accounts.slice(0, 12).map(account => {
             const perf = perfById.get(account.id)
             const needsScreenshot = perf?.screenshotCompliance === 'DUE' || perf?.screenshotCompliance === 'OVERDUE'
@@ -70,9 +70,9 @@ export function MyTradingAccounts({
                 <Link href={`/trading/accounts/${account.id}`} className="block min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-800">{account.accountTitle}</p>
+                      <p className="truncate text-sm font-bold text-cream">{account.accountTitle}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <p className="text-[10px] text-slate-500">{account.binanceUid || 'No UID'}</p>
+                        <p className="text-[10px] text-muted">{account.binanceUid || 'No UID'}</p>
                         {complianceBadge(perf?.screenshotCompliance, perf?.screenshotToday)}
                       </div>
                     </div>
@@ -111,8 +111,8 @@ function MiniAction({ label, onClick, emphasis }: { label: string; onClick: () =
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-bold uppercase tracking-wide active:bg-slate-100 ${
-        emphasis ? 'trading-upload-emphasis border-gold/25 bg-gold/8 text-gold' : 'border-black/[0.06] bg-white text-slate-500'
+      className={`min-h-[40px] touch-manipulation rounded-xl border px-2 py-2 text-[10px] font-bold uppercase tracking-wide active:bg-white/[0.06] ${
+        emphasis ? 'trading-upload-emphasis border-gold/25 bg-gold/8 text-gold' : 'border-white/[0.06] bg-card/85 text-muted'
       }`}
     >
       {label}

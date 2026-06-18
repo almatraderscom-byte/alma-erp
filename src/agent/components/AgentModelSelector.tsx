@@ -92,8 +92,8 @@ export default function AgentModelSelector({
         disabled={disabled || loading}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'flex items-center gap-1.5 rounded-full border border-black/[0.08] px-3 py-1.5 text-[13px] font-medium transition-all',
-          open ? 'bg-black/[0.05] text-gray-700' : 'text-gray-500 hover:bg-black/[0.04] hover:text-gray-700',
+          'flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[13px] font-medium transition-all',
+          open ? 'bg-white/[0.05] text-cream' : 'text-muted hover:bg-white/[0.04] hover:text-cream',
           (disabled || loading) && 'opacity-50',
         )}
       >
@@ -102,13 +102,13 @@ export default function AgentModelSelector({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-56 overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
-          <div className="border-b border-black/[0.04] px-3 py-2 text-[10px] text-gray-400">
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
+          <div className="border-b border-border-subtle px-3 py-2 text-[10px] text-muted">
             Sonnet = default ও সবচেয়ে নির্ভরযোগ্য
           </div>
           {Object.entries(grouped).map(([provider, items]) => (
             <div key={provider}>
-              <div className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              <div className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
                 {PROVIDER_LABELS[provider] ?? provider}
               </div>
               {items.map((m) => (
@@ -117,8 +117,8 @@ export default function AgentModelSelector({
                   type="button"
                   onClick={() => void pick(m.id)}
                   className={cn(
-                    'flex w-full items-center justify-between px-3 py-2 text-left text-[12px] transition-colors hover:bg-black/[0.03]',
-                    m.id === modelId ? 'text-[#E07A5F] font-medium' : 'text-gray-600',
+                    'flex w-full items-center justify-between px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.03]',
+                    m.id === modelId ? 'text-[#E07A5F] font-medium' : 'text-muted-hi',
                   )}
                 >
                   <span>{m.label}</span>

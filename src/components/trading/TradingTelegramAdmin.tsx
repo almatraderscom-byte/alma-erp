@@ -643,7 +643,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
             key={item.id}
             type="button"
             onClick={() => setTab(item.id)}
-            className={`rounded-xl px-3 py-2 text-xs font-bold transition-colors ${tab === item.id ? 'bg-gold/10 text-gold' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+            className={`rounded-xl px-3 py-2 text-xs font-bold transition-colors ${tab === item.id ? 'bg-gold/10 text-gold' : 'bg-white/[0.04] text-muted hover:bg-white/[0.06]'}`}
           >
             {item.label}
             {item.badge ? ` (${item.badge})` : ''}
@@ -663,7 +663,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
           <Card className="rounded-2xl border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
             {isStaffView ? (
               <>
-                <strong className="text-slate-800">Your drafts only.</strong> Confirm when ready — balances and P/L update
+                <strong className="text-cream">Your drafts only.</strong> Confirm when ready — balances and P/L update
                 only after you press Confirm. No super-admin approval needed for normal trades.
               </>
             ) : (
@@ -698,17 +698,17 @@ function TelegramAdminInner(props: Record<string, unknown>) {
           ) : isStaffView && draftDayGroups.length ? (
             draftDayGroups.map(dayGroup => (
               <Card key={`${dayGroup.key.ymd}:${dayGroup.key.tradingAccountId}`} className="rounded-2xl p-4">
-                <div className="mb-3 border-b border-black/[0.06] pb-2">
-                  <p className="text-sm font-bold text-slate-800">{dayGroup.key.ymd}</p>
-                  <p className="text-xs text-slate-500">
+                <div className="mb-3 border-b border-white/[0.06] pb-2">
+                  <p className="text-sm font-bold text-cream">{dayGroup.key.ymd}</p>
+                  <p className="text-xs text-muted">
                     Account: {dayGroup.key.accountTitle || dayGroup.key.accountAlias || '—'}
                     {dayGroup.key.accountAlias && dayGroup.key.accountTitle ? ` (${dayGroup.key.accountAlias})` : ''}
                   </p>
-                  <p className="text-[10px] text-slate-400">{dayGroup.drafts.length} draft(s)</p>
+                  <p className="text-[10px] text-muted">{dayGroup.drafts.length} draft(s)</p>
                 </div>
                 <div className="space-y-3">
                   {dayGroup.drafts.map(d => (
-                    <div key={d.id} className="rounded-xl border border-black/[0.06] bg-white p-3">
+                    <div key={d.id} className="rounded-xl border border-white/[0.06] bg-card/85 p-3">
                       <DraftRow
                         d={d}
                         isStaffView={isStaffView}
@@ -746,7 +746,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
           ) : (
             draftGroups.map(group => (
               <Card key={`${group.key.userId}:${group.key.tradingAccountId}:${group.key.telegramUserId}`} className="rounded-2xl p-4">
-                <div className="mb-3 flex items-center gap-3 border-b border-black/[0.06] pb-2">
+                <div className="mb-3 flex items-center gap-3 border-b border-white/[0.06] pb-2">
                   <EmployeeAvatar
                     userId={group.key.userId}
                     name={group.key.userName}
@@ -754,19 +754,19 @@ function TelegramAdminInner(props: Record<string, unknown>) {
                     size="md"
                   />
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-800">{group.key.userName}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm font-bold text-cream">{group.key.userName}</p>
+                    <p className="text-xs text-muted">
                       Telegram @{group.key.telegramUsername || group.key.telegramUserId}
                       {' · '}
                       Account: {group.key.accountTitle || group.key.accountAlias || '—'}
                       {group.key.accountAlias && group.key.accountTitle ? ` (${group.key.accountAlias})` : ''}
                     </p>
-                    <p className="text-[10px] text-slate-400">{group.drafts.length} pending draft(s)</p>
+                    <p className="text-[10px] text-muted">{group.drafts.length} pending draft(s)</p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   {group.drafts.map(d => (
-                    <div key={d.id} className="rounded-xl border border-black/[0.06] bg-white p-3">
+                    <div key={d.id} className="rounded-xl border border-white/[0.06] bg-card/85 p-3">
                       <DraftRow
                         d={d}
                         isStaffView={isStaffView}
@@ -792,11 +792,11 @@ function TelegramAdminInner(props: Record<string, unknown>) {
 
       {!loading && tab === 'setup' && (
         <Card className="space-y-3 rounded-2xl p-4 text-sm">
-          <p className="font-bold text-slate-800">Production webhook</p>
-          <p className="text-xs text-slate-500">
+          <p className="font-bold text-cream">Production webhook</p>
+          <p className="text-xs text-muted">
             Set <code className="text-gold">TELEGRAM_BOT_TOKEN</code> and <code className="text-gold">TELEGRAM_WEBHOOK_SECRET</code> in Vercel env (never commit tokens).
           </p>
-          <pre className="max-h-40 overflow-auto rounded-xl bg-slate-50 p-3 text-[10px] text-slate-500">
+          <pre className="max-h-40 overflow-auto rounded-xl bg-white/[0.04] p-3 text-[10px] text-muted">
             {JSON.stringify(setupInfo, null, 2)}
           </pre>
           <Button variant="gold" disabled={busy} onClick={() => void registerWebhook()}>
@@ -894,7 +894,7 @@ function DraftFiltersBar({
       <select
         value={draftStatus}
         onChange={e => setDraftStatus(e.target.value as TradingTelegramDraftStatus | 'ALL')}
-        className="rounded-lg border border-black/[0.06] bg-white px-2 py-1 text-xs text-slate-800"
+        className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-xs text-cream"
       >
         <option value="PENDING">Pending</option>
         <option value="LOCKED">Locked</option>
@@ -906,7 +906,7 @@ function DraftFiltersBar({
         <select
           value={filterUserId}
           onChange={e => setFilterUserId(e.target.value)}
-          className="rounded-lg border border-black/[0.06] bg-white px-2 py-1 text-xs text-slate-800"
+          className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-xs text-cream"
         >
           <option value="">All ERP users</option>
           {erpUsers.map(([id, name]) => (
@@ -917,7 +917,7 @@ function DraftFiltersBar({
       <select
         value={filterAccountId}
         onChange={e => setFilterAccountId(e.target.value)}
-        className="rounded-lg border border-black/[0.06] bg-white px-2 py-1 text-xs text-slate-800"
+        className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-xs text-cream"
       >
         <option value="">All accounts</option>
         {aliases.map(a => (
@@ -926,7 +926,7 @@ function DraftFiltersBar({
           </option>
         ))}
       </select>
-      <label className="flex items-center gap-1 text-xs text-slate-500">
+      <label className="flex items-center gap-1 text-xs text-muted">
         <input type="checkbox" checked={duplicateOnly} onChange={e => setDuplicateOnly(e.target.checked)} />
         Duplicates only
       </label>
@@ -999,19 +999,19 @@ function DraftRow({
           size="sm"
         />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-slate-800">
+          <p className="text-sm font-bold text-cream">
             {d.tradeNumber != null ? `#${d.tradeNumber} · ` : ''}
             {d.tradeType} · {d.usdtAmount} USDT @ {d.bdtRate} · fee {d.feeUsdt}
             {isLocked && <span className="ml-2 text-orange-500">LOCKED</span>}
           </p>
           {d.lockedReason && <p className="text-[10px] text-orange-500">{d.lockedReason}</p>}
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-muted">
             ERP: {d.user?.name || '—'} · Telegram: @{d.telegramUsername || d.telegramUserId}
           </p>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted">
             Account: {d.accountTitle || d.accountAlias || '—'}
           </p>
-          <p className="mt-2 rounded-lg border border-black/[0.06] bg-slate-50 p-2 font-mono text-[11px] text-slate-600">{d.rawMessage}</p>
+          <p className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.04] p-2 font-mono text-[11px] text-muted-hi">{d.rawMessage}</p>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -1070,18 +1070,18 @@ function ChatsTabBody({
   return (
     <div className="space-y-4">
       <Card className="rounded-2xl p-4">
-        <p className="mb-2 text-xs text-slate-500">Add bot to group, send any message — if unregistered, bot replies with chat ID.</p>
+        <p className="mb-2 text-xs text-muted">Add bot to group, send any message — if unregistered, bot replies with chat ID.</p>
         <form onSubmit={e => void saveChat(e)} className="grid gap-2 md:grid-cols-3">
-          <input placeholder="Chat ID (-100…)" value={newChat.chatId} onChange={e => setNewChat({ ...newChat, chatId: e.target.value })} className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" required />
-          <input placeholder="Title" value={newChat.title} onChange={e => setNewChat({ ...newChat, title: e.target.value })} className="rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-sm text-slate-800" />
+          <input placeholder="Chat ID (-100…)" value={newChat.chatId} onChange={e => setNewChat({ ...newChat, chatId: e.target.value })} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" required />
+          <input placeholder="Title" value={newChat.title} onChange={e => setNewChat({ ...newChat, title: e.target.value })} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-sm text-cream" />
           <Button type="submit" variant="gold">Approve group</Button>
         </form>
       </Card>
-      <div className="divide-y divide-black/[0.06] rounded-2xl border border-black/[0.06]">
+      <div className="divide-y divide-white/[0.06] rounded-2xl border border-white/[0.06]">
         {chats.map(c => (
           <div key={c.id} className="flex justify-between gap-3 px-4 py-3 text-xs">
-            <span className="font-mono text-slate-800">{c.chatId}</span>
-            <span className="text-slate-500">{c.title || '—'}</span>
+            <span className="font-mono text-cream">{c.chatId}</span>
+            <span className="text-muted">{c.title || '—'}</span>
           </div>
         ))}
       </div>
@@ -1104,19 +1104,19 @@ function EditModal({
 }) {
   return (
     <MobileModalPortal open zIndex={PLATFORM_Z.pageModal} onBackdropClick={onClose}>
-      <Card className="mobile-modal-shell w-full max-w-md rounded-2xl border-gold/20 bg-white shadow-2xl sm:rounded-2xl">
+      <Card className="mobile-modal-shell w-full max-w-md rounded-2xl border-gold/20 bg-card/85 shadow-2xl sm:rounded-2xl">
         <div className="mobile-modal-header p-4 pb-3">
-          <p className="text-sm font-bold text-slate-800">Edit draft</p>
+          <p className="text-sm font-bold text-cream">Edit draft</p>
         </div>
         <div className="mobile-modal-body space-y-3 px-4 pb-4">
-          <select value={editForm.tradeType} onChange={e => setEditForm({ ...editForm, tradeType: e.target.value as 'BUY' | 'SELL' })} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800">
+          <select value={editForm.tradeType} onChange={e => setEditForm({ ...editForm, tradeType: e.target.value as 'BUY' | 'SELL' })} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream">
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>
           </select>
-          <input placeholder="USDT" value={editForm.usdtAmount} onChange={e => setEditForm({ ...editForm, usdtAmount: e.target.value })} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
-          <input placeholder="Rate" value={editForm.bdtRate} onChange={e => setEditForm({ ...editForm, bdtRate: e.target.value })} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
-          <input placeholder="Fee USDT" value={editForm.feeUsdt} onChange={e => setEditForm({ ...editForm, feeUsdt: e.target.value })} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
-          <input placeholder="Trading account ID" value={editForm.tradingAccountId} onChange={e => setEditForm({ ...editForm, tradingAccountId: e.target.value })} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-slate-800" />
+          <input placeholder="USDT" value={editForm.usdtAmount} onChange={e => setEditForm({ ...editForm, usdtAmount: e.target.value })} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
+          <input placeholder="Rate" value={editForm.bdtRate} onChange={e => setEditForm({ ...editForm, bdtRate: e.target.value })} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
+          <input placeholder="Fee USDT" value={editForm.feeUsdt} onChange={e => setEditForm({ ...editForm, feeUsdt: e.target.value })} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
+          <input placeholder="Trading account ID" value={editForm.tradingAccountId} onChange={e => setEditForm({ ...editForm, tradingAccountId: e.target.value })} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" />
         </div>
         <div className="mobile-modal-footer px-4 pt-3">
           <EditModalActions busy={busy} onClose={onClose} onSave={onSave} />

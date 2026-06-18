@@ -49,7 +49,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pt-3 pb-1 md:px-6 safe-x">
-      <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-white/90 shadow-sm backdrop-blur-sm">
+      <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/82 shadow-sm backdrop-blur-sm">
         <button
           type="button"
           onClick={() => togglePanelExpanded?.()}
@@ -71,9 +71,9 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
             <rect x="3" y="4" width="18" height="18" rx="2" />
             <path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" />
           </svg>
-          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#1a1a2e]">
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-cream">
             {dateLabel}
-            <span className="font-normal text-[#94a3b8]">
+            <span className="font-normal text-muted">
               {' '}· {stats.total} Tasks · {stats.active} active
               {stats.bossActive > 0 || filterOwnerTasksToday(todos).length > 0
                 ? ` · Boss ${stats.bossActive}`
@@ -93,7 +93,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className={`shrink-0 text-[#94a3b8] transition-transform duration-[250ms] ease-out ${panelExpanded ? 'rotate-180' : ''}`}
+            className={`shrink-0 text-muted transition-transform duration-[250ms] ease-out ${panelExpanded ? 'rotate-180' : ''}`}
             aria-hidden
           >
             <path d="M6 9l6 6 6-6" />
@@ -103,7 +103,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
         <CollapsibleGrid open={panelExpanded}>
           <div
             ref={panelScrollRef}
-            className="relative border-t border-black/[0.05] max-h-[min(70dvh,520px)] overflow-y-auto overscroll-y-contain"
+            className="relative border-t border-border-subtle max-h-[min(70dvh,520px)] overflow-y-auto overscroll-y-contain"
           >
             <AgentTodoPanel embedded />
             <ScrollAffordances

@@ -134,7 +134,7 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
           <button
             type="button"
             onClick={handleClose}
-            className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.06] text-gray-500 backdrop-blur-sm transition-colors hover:bg-black/[0.1]"
+            className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-muted backdrop-blur-sm transition-colors hover:bg-white/[0.1]"
             aria-label="বন্ধ করুন"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -170,9 +170,9 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
               animate={{ opacity: 1 }}
               initial={{ opacity: 0 }}
             >
-              <p className="text-[15px] font-semibold text-[#1a1a2e]/80">{STATUS[state]}</p>
+              <p className="text-[15px] font-semibold text-cream/80">{STATUS[state]}</p>
               {transcript && (
-                <p className="max-w-[280px] text-center text-[12px] leading-relaxed text-[#64748b]">
+                <p className="max-w-[280px] text-center text-[12px] leading-relaxed text-muted">
                   &ldquo;{transcript}&rdquo;
                 </p>
               )}
@@ -182,12 +182,12 @@ export default function VoiceSession({ open, onClose, onSendMessage }: VoiceSess
           {/* Bottom hint */}
           <div className="absolute bottom-[max(32px,env(safe-area-inset-bottom))] flex flex-col items-center gap-2">
             {state === 'speaking' && (
-              <p className="text-[11px] text-[#64748b]/70">ট্যাপ করে থামান ও কথা বলুন</p>
+              <p className="text-[11px] text-muted/70">ট্যাপ করে থামান ও কথা বলুন</p>
             )}
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full border border-black/[0.08] bg-white/80 px-5 py-2 text-[13px] font-medium text-[#64748b] shadow-sm backdrop-blur-sm transition-colors hover:bg-white"
+              className="rounded-full border border-border bg-card/80 px-5 py-2 text-[13px] font-medium text-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-card/80"
             >
               চ্যাটে ফিরুন
             </button>
@@ -216,7 +216,7 @@ function MicWaveIcon() {
       {[0, 1, 2, 3, 4].map(i => (
         <motion.div
           key={i}
-          className="w-[3px] rounded-full bg-white"
+          className="w-[3px] rounded-full bg-card/80"
           style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.15))' }}
           animate={{ height: [8, 20 + Math.random() * 12, 8] }}
           transition={{ duration: 0.6 + i * 0.1, repeat: Infinity, ease: 'easeInOut', delay: i * 0.08 }}

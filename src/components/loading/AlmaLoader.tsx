@@ -60,7 +60,7 @@ export function AlmaLoader({ size = 'md', label = 'Loading secure workspace', cl
 
       {label && (
         <motion.p
-          className="mt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500"
+          className="mt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted"
           initial={reduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.45, delay: 0.4 }}

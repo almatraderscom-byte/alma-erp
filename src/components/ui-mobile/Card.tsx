@@ -25,7 +25,7 @@ export function Card({
     <Tag
       className={cn(
         'min-w-0 rounded-2xl border bg-card shadow-card',
-        accent ? 'border-gold/30' : 'border-black/[0.06]',
+        accent ? 'border-gold/30' : 'border-border-subtle',
         pads[padding],
         className,
       )}
@@ -41,7 +41,7 @@ export function CardHeader({ title, subtitle, action }: { title: ReactNode; subt
     <div className="mb-3 flex items-start justify-between gap-3">
       <div className="min-w-0">
         <h3 className="truncate text-[15px] font-bold text-cream">{title}</h3>
-        {subtitle != null && <p className="mt-0.5 truncate text-[12px] text-slate-500">{subtitle}</p>}
+        {subtitle != null && <p className="mt-0.5 truncate text-[12px] text-muted">{subtitle}</p>}
       </div>
       {action != null && <div className="shrink-0">{action}</div>}
     </div>

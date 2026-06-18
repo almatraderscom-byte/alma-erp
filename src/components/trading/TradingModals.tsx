@@ -32,11 +32,11 @@ export function ModalFrame({
   if (!open) return null
   return (
     <MobileModalPortal open zIndex={10000} onBackdropClick={onClose} aria-label={title}>
-      <Card className="mobile-modal-shell relative w-full rounded-b-none border-gold/20 bg-white shadow-2xl sm:max-w-xl sm:rounded-2xl">
-        <div className="mobile-modal-header flex items-start justify-between gap-3 border-b border-black/[0.06] p-4 pb-3 sm:p-5 sm:pb-3">
+      <Card className="mobile-modal-shell relative w-full rounded-b-none border-gold/20 bg-card/85 shadow-2xl sm:max-w-xl sm:rounded-2xl">
+        <div className="mobile-modal-header flex items-start justify-between gap-3 border-b border-white/[0.06] p-4 pb-3 sm:p-5 sm:pb-3">
           <div>
-            <p className="text-sm font-bold text-slate-800">{title}</p>
-            {desc && <p className="mt-1 text-[11px] text-slate-500">{desc}</p>}
+            <p className="text-sm font-bold text-cream">{title}</p>
+            {desc && <p className="mt-1 text-[11px] text-muted">{desc}</p>}
           </div>
           <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
         </div>
@@ -158,7 +158,7 @@ export function TradingAccountModal({
           {canManageTargets ? (
             <Input inputMode="decimal" type="number" min="0" step="0.01" value={form.merchantTarget ?? ''} onChange={e => setForm(f => ({ ...f, merchantTarget: e.target.value ? Number(e.target.value) : null }))} placeholder="Merchant Goal / Monthly Target" />
           ) : account?.merchantTarget != null ? (
-            <p className="rounded-xl border border-black/[0.06] bg-slate-50 px-4 py-3 text-sm text-slate-500">Monthly target: {n(account.merchantTarget)} BDT (Super Admin only)</p>
+            <p className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-4 py-3 text-sm text-muted">Monthly target: {n(account.merchantTarget)} BDT (Super Admin only)</p>
           ) : null}
           <Select value={form.status || 'ACTIVE'} onChange={v => setForm(f => ({ ...f, status: v as never }))} options={[
             { label: 'Active', value: 'ACTIVE' },
@@ -171,14 +171,14 @@ export function TradingAccountModal({
           { label: 'Unassigned', value: '' },
           ...staff.map(s => ({ label: `${s.name}${s.role ? ` · ${s.role}` : ''}`, value: s.id })),
         ]} className="w-full" />
-        <div className="rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Partnership / 50-50 Loss Share</p>
-          <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-slate-800">
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-3">
+          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Partnership / 50-50 Loss Share</p>
+          <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-cream">
             <input
               type="checkbox"
               checked={Boolean(form.partnershipEnabled)}
               onChange={e => setForm(f => ({ ...f, partnershipEnabled: e.target.checked }))}
-              className="rounded border-black/[0.06] bg-white"
+              className="rounded border-white/[0.06] bg-card/85"
             />
             Enable partnership settlement
           </label>
@@ -200,10 +200,10 @@ export function TradingAccountModal({
             </>
           )}
         </div>
-        <div className="rounded-2xl border border-black/[0.06] bg-slate-50 p-3">
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Optional Staff Commission</p>
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] p-3">
+          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Optional Staff Commission</p>
           {form.partnershipEnabled && (
-            <p className="mb-3 text-[11px] text-slate-500">Commission disabled while partnership is active.</p>
+            <p className="mb-3 text-[11px] text-muted">Commission disabled while partnership is active.</p>
           )}
           <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${form.partnershipEnabled ? 'pointer-events-none opacity-50' : ''}`}>
             <Select value={form.commissionType || 'NONE'} onChange={v => setForm(f => ({ ...f, commissionType: v as never }))} options={[
@@ -216,8 +216,8 @@ export function TradingAccountModal({
             <Input inputMode="decimal" type="number" min="0" step="0.01" value={form.completionBonus ?? 0} onChange={e => setForm(f => ({ ...f, completionBonus: Number(e.target.value) }))} placeholder="Merchant completion bonus BDT" />
           </div>
         </div>
-        <textarea value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold/30" placeholder="Notes" />
-        <p className="text-[11px] text-slate-500">Wallet formula: Initial Capital + Net Profit - Expenses - Withdrawals. Account expenses also feed global finance and management reports.</p>
+        <textarea value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder="Notes" />
+        <p className="text-[11px] text-muted">Wallet formula: Initial Capital + Net Profit - Expenses - Withdrawals. Account expenses also feed global finance and management reports.</p>
       </form>
     </ModalFrame>
   )
@@ -358,24 +358,24 @@ export function TradeEntryModal({
       {!account && accounts && accounts.length > 1 && (
         <Select value={selectedAccountId} onChange={setSelectedAccountId} options={accounts.map(a => ({ label: a.accountTitle, value: a.id }))} className="mb-4 w-full" />
       )}
-      <div className="mb-4 rounded-2xl border border-black/[0.06] bg-slate-50 p-2">
-        <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Trade Type</p>
+      <div className="mb-4 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-2">
+        <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-wider text-muted">Trade Type</p>
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => setEntryMode('BKASH')}
-            className={`rounded-xl px-3 py-3 text-left transition-colors ${entryMode === 'BKASH' ? 'border border-gold/25 bg-gold/8 text-gold' : 'border border-black/[0.06] bg-white text-slate-500 hover:text-slate-800'}`}
+            className={`rounded-xl px-3 py-3 text-left transition-colors ${entryMode === 'BKASH' ? 'border border-gold/25 bg-gold/8 text-gold' : 'border border-white/[0.06] bg-card/85 text-muted hover:text-cream'}`}
           >
             <span className="block text-sm font-bold">BKASH</span>
-            <span className="mt-1 block text-[10px] text-slate-400">Fast daily profit/loss summary</span>
+            <span className="mt-1 block text-[10px] text-muted">Fast daily profit/loss summary</span>
           </button>
           <button
             type="button"
             onClick={() => setEntryMode('BANK')}
-            className={`rounded-xl px-3 py-3 text-left transition-colors ${entryMode === 'BANK' ? 'border border-gold/25 bg-gold/8 text-gold' : 'border border-black/[0.06] bg-white text-slate-500 hover:text-slate-800'}`}
+            className={`rounded-xl px-3 py-3 text-left transition-colors ${entryMode === 'BANK' ? 'border border-gold/25 bg-gold/8 text-gold' : 'border border-white/[0.06] bg-card/85 text-muted hover:text-cream'}`}
           >
             <span className="block text-sm font-bold">BANK / P2P</span>
-            <span className="mt-1 block text-[10px] text-slate-400">USDT, rates, fees, P/L engine</span>
+            <span className="mt-1 block text-[10px] text-muted">USDT, rates, fees, P/L engine</span>
           </button>
         </div>
       </div>
@@ -383,8 +383,8 @@ export function TradeEntryModal({
       {entryMode === 'BKASH' ? (
       <form ref={bkashFormRef} id="trade-entry-bkash-form" onSubmit={e => void submitBkash(e)} className="space-y-3">
         <div className="rounded-2xl border border-gold/15 bg-gold/5 p-3">
-          <p className="text-xs font-bold text-slate-800">Bkash Quick Daily Result</p>
-          <p className="mt-1 text-[11px] text-slate-500">Use this for 200-300+ tiny merchant actions. No USDT, rate, or fee fields are required.</p>
+          <p className="text-xs font-bold text-cream">Bkash Quick Daily Result</p>
+          <p className="mt-1 text-[11px] text-muted">Use this for 200-300+ tiny merchant actions. No USDT, rate, or fee fields are required.</p>
         </div>
         <Input type="date" value={bkashForm.summaryDate} onChange={e => setBkashForm(f => ({ ...f, summaryDate: e.target.value }))} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -392,10 +392,10 @@ export function TradeEntryModal({
           <Input inputMode="decimal" type="number" min="0" step="0.01" value={bkashForm.totalLossBdt} onChange={e => setBkashForm(f => ({ ...f, totalLossBdt: e.target.value }))} placeholder="Total daily loss (BDT)" className="text-lg font-bold tabular-nums" />
         </div>
         <div className={`rounded-2xl border p-4 ${bkashNet >= 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Net result = profit - loss</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted">Net result = profit - loss</p>
           <p className={`mt-1 text-3xl font-bold tabular-nums ${signedClass(bkashNet)}`}>{bkashNet >= 0 ? '+' : '-'}৳{Math.abs(bkashNet).toLocaleString('en-BD')}</p>
         </div>
-        <textarea value={bkashForm.notes} onChange={e => setBkashForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold/30" placeholder="Optional notes" />
+        <textarea value={bkashForm.notes} onChange={e => setBkashForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder="Optional notes" />
       </form>
       ) : (
       <form ref={bankFormRef} id="trade-entry-bank-form" noValidate onSubmit={e => void submit(e)} className="space-y-3">
@@ -409,16 +409,16 @@ export function TradeEntryModal({
           <Input inputMode="decimal" type="number" min="0" step="any" value={form.feeUsdt} onChange={e => setForm(f => ({ ...f, feeUsdt: e.target.value }))} placeholder="Binance Fee (USDT)" className="text-lg font-bold tabular-nums" />
         </div>
         <div className="grid grid-cols-2 gap-2 text-center text-[11px] sm:grid-cols-4">
-          <div className="rounded-xl border border-black/[0.06] bg-slate-50 p-2"><p className="text-slate-400">{form.tradeType === 'BUY' ? 'Total BDT' : 'Sell BDT'}</p><p className="font-bold text-slate-800">৳{calc.totalBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-black/[0.06] bg-slate-50 p-2"><p className="text-slate-400">Fee BDT</p><p className="font-bold text-amber-500">৳{calc.feeBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-black/[0.06] bg-slate-50 p-2"><p className="text-slate-400">{form.tradeType === 'BUY' ? 'Net Buy Cost' : 'Net Receive'}</p><p className="font-bold text-gold">৳{calc.netBdt.toLocaleString('en-BD')}</p></div>
-          <div className="rounded-xl border border-black/[0.06] bg-slate-50 p-2"><p className="text-slate-400">Avg Cost</p><p className="font-bold text-slate-600">৳{calc.avgCostRate.toLocaleString('en-BD', { maximumFractionDigits: 4 })}</p></div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2"><p className="text-muted">{form.tradeType === 'BUY' ? 'Total BDT' : 'Sell BDT'}</p><p className="font-bold text-cream">৳{calc.totalBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2"><p className="text-muted">Fee BDT</p><p className="font-bold text-amber-500">৳{calc.feeBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2"><p className="text-muted">{form.tradeType === 'BUY' ? 'Net Buy Cost' : 'Net Receive'}</p><p className="font-bold text-gold">৳{calc.netBdt.toLocaleString('en-BD')}</p></div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-2"><p className="text-muted">Avg Cost</p><p className="font-bold text-muted-hi">৳{calc.avgCostRate.toLocaleString('en-BD', { maximumFractionDigits: 4 })}</p></div>
         </div>
         <div className={`rounded-2xl border p-4 ${calc.net >= 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{form.tradeType === 'BUY' ? 'Net cost' : 'Live profit / loss'}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted">{form.tradeType === 'BUY' ? 'Net cost' : 'Live profit / loss'}</p>
           <p className={`mt-1 text-3xl font-bold tabular-nums ${form.tradeType === 'BUY' ? 'text-gold' : signedClass(calc.net)}`}>{form.tradeType === 'BUY' ? '' : calc.net >= 0 ? '+' : '-'}৳{Math.abs(form.tradeType === 'BUY' ? calc.netBdt : calc.net).toLocaleString('en-BD')}</p>
         </div>
-        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold/30" placeholder="Notes" />
+        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder="Notes" />
         {(submitError || mutationError) && <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600">{submitError || mutationError}</p>}
       </form>
       )}
@@ -476,10 +476,10 @@ export function ExpenseEntryModal({ open, account, accounts, onClose, onCreated 
         {partnershipOn && (
           <Select value={form.paidBy} onChange={v => setForm(f => ({ ...f, paidBy: v as 'OWNER' | 'STAFF' }))} options={[{ label: 'আমি (Owner)', value: 'OWNER' }, { label: 'Staff', value: 'STAFF' }]} className="w-full" />
         )}
-        <input type="file" accept="image/*,application/pdf" onChange={e => void onFile(e.target.files?.[0])} className="w-full rounded-xl border border-black/[0.06] bg-white px-3 py-2 text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-gold/8 file:px-3 file:py-1.5 file:text-gold" />
-        {uploading && <p className="text-[11px] text-slate-500">Uploading attachment...</p>}
+        <input type="file" accept="image/*,application/pdf" onChange={e => void onFile(e.target.files?.[0])} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-gold/8 file:px-3 file:py-1.5 file:text-gold" />
+        {uploading && <p className="text-[11px] text-muted">Uploading attachment...</p>}
         {form.attachmentUrl && <p className="text-[11px] text-green-500">Attachment ready</p>}
-        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold/30" placeholder="Notes" />
+        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder="Notes" />
       </form>
     </ModalFrame>
   )
@@ -518,7 +518,7 @@ export function CapitalEntryModal({ open, account, onClose, onCreated }: { open:
           { label: 'Adjustment', value: 'ADJUSTMENT' },
         ]} className="w-full" />
         <Input inputMode="decimal" type="number" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="Amount" />
-        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-gold/30" placeholder="Notes" />
+        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder="Notes" />
       </form>
     </ModalFrame>
   )

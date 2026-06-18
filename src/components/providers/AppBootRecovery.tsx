@@ -102,9 +102,9 @@ export function AppBootRecovery() {
   if (!showFallback) return null
 
   return (
-    <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-center gap-4 bg-[#FAF9F6] px-6 text-center">
-      <p className="text-sm font-semibold text-[#1a1a2e]">অ্যাপ লোড হচ্ছে না</p>
-      <p className="max-w-sm text-xs text-slate-500">
+    <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-center gap-4 bg-transparent px-6 text-center">
+      <p className="text-sm font-semibold text-cream">অ্যাপ লোড হচ্ছে না</p>
+      <p className="max-w-sm text-xs text-muted">
         ক্যাশ পরিষ্কার করে আবার চেষ্টা করুন। বারবার সমস্যা হলে browser বন্ধ করে আবার খুলুন।
       </p>
       <button

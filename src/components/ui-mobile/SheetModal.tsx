@@ -42,7 +42,7 @@ export function SheetModal({
       >
         {/* Grab handle (phone only) */}
         <div className="mobile-modal-header flex flex-col items-center pt-2 sm:pt-0">
-          <span className="h-1 w-10 rounded-full bg-black/[0.12] sm:hidden" aria-hidden />
+          <span className="h-1 w-10 rounded-full bg-border-strong sm:hidden" aria-hidden />
           {title != null && (
             <div className="flex w-full items-center justify-between px-5 py-3">
               <h2 className="text-[16px] font-bold text-cream">{title}</h2>
@@ -50,7 +50,7 @@ export function SheetModal({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="-mr-2 flex h-9 w-9 items-center justify-center rounded-full text-slate-400 active:scale-95 active:bg-black/[0.05]"
+                className="-mr-2 flex h-9 w-9 items-center justify-center rounded-full text-muted active:scale-95 active:bg-white/[0.05]"
               >
                 ✕
               </button>

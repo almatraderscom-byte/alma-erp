@@ -53,7 +53,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
                 'shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all duration-200',
                 active
                   ? 'bg-gold/15 border-gold-dim/60 text-gold-lt shadow-sm shadow-gold/10'
-                  : 'border-border text-zinc-500 hover:text-zinc-300 hover:border-zinc-600',
+                  : 'border-border text-muted hover:text-muted hover:border-zinc-600',
               )}
             >
               {p.label}
@@ -73,7 +73,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
                 onChange={e => setCustomRange(e.target.value, customEnd || e.target.value)}
                 className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-[11px] text-cream font-mono focus:outline-none focus:border-gold-dim/50"
               />
-              <span className="text-zinc-600 text-xs">→</span>
+              <span className="text-muted-hi text-xs">→</span>
               <input
                 type="date"
                 value={customEnd}
@@ -82,7 +82,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
               />
             </div>
           )}
-          <span className="text-[10px] text-zinc-500 font-mono ml-auto">{label}</span>
+          <span className="text-[10px] text-muted font-mono ml-auto">{label}</span>
         </div>
       )}
 
@@ -90,7 +90,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
       {!mdUp && (
         <>
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-zinc-500 font-mono">{label}</span>
+            <span className="text-[10px] text-muted font-mono">{label}</span>
             {preset === 'custom' && (
               <button
                 type="button"
@@ -115,7 +115,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
                 </div>
                 <div className="mobile-modal-body space-y-3 px-5 pb-4">
                   <label className="block">
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">From</span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted mb-1 block">From</span>
                     <input
                       type="date"
                       value={draftStart}
@@ -124,7 +124,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">To</span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted mb-1 block">To</span>
                     <input
                       type="date"
                       value={draftEnd}
@@ -138,7 +138,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
                     <button
                       type="button"
                       onClick={() => setSheetOpen(false)}
-                      className="flex-1 py-3 rounded-xl border border-border text-sm text-zinc-400 font-semibold"
+                      className="flex-1 py-3 rounded-xl border border-border text-sm text-muted font-semibold"
                     >
                       Cancel
                     </button>

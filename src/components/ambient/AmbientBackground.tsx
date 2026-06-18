@@ -1,14 +1,16 @@
 /**
- * Full-viewport ambient light layer (CSS-only animation in globals.css).
- * Mounted once in root layout; pointer-events none; z-index 0 behind app chrome.
- * Warm coral/teal tinted — very subtle on the light background.
+ * Full-viewport ambient aurora (lovable.dev-style vivid flowing gradient).
+ * Mesh + drifting color blobs are defined in globals.css; mounted behind app
+ * chrome (z-index 0, pointer-events none). GPU-only, reduced-motion-aware.
  */
 export function AmbientBackground() {
   return (
     <div className="ambient-bg-root" aria-hidden="true">
-      <div className="ambient-blob ambient-blob-1" style={{ opacity: 0.04, background: '#E07A5F' }} />
-      <div className="ambient-blob ambient-blob-2" style={{ opacity: 0.03, background: '#81B29A' }} />
-      <div className="ambient-blob ambient-blob-3" style={{ opacity: 0.035, background: '#D4A84B' }} />
+      <div className="ambient-blob ambient-blob-1" />
+      <div className="ambient-blob ambient-blob-2" />
+      <div className="ambient-blob ambient-blob-3" />
+      <div className="ambient-blob ambient-blob-4" />
+      <div className="ambient-blob ambient-blob-5" />
     </div>
   )
 }

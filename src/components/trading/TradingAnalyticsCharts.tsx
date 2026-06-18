@@ -26,7 +26,7 @@ export function MiniTrendChart({
     <Card className="p-4">
       <p className="mb-3 text-sm font-bold text-cream">{title}</p>
       {values.length === 0 ? (
-        <p className="py-10 text-center text-xs text-zinc-600">No trend data</p>
+        <p className="py-10 text-center text-xs text-muted-hi">No trend data</p>
       ) : (
         <svg viewBox="0 0 100 100" className="h-36 w-full overflow-visible">
           <line x1="0" x2="100" y1="90" y2="90" stroke="rgba(0,0,0,.06)" strokeWidth="1" />
@@ -61,7 +61,7 @@ export function RankingBars({
   return (
     <Card className="p-4">
       <p className="mb-4 text-sm font-bold text-cream">{title}</p>
-      {!rows.length ? <p className="py-8 text-center text-xs text-zinc-600">No data</p> : (
+      {!rows.length ? <p className="py-8 text-center text-xs text-muted-hi">No data</p> : (
         <div className="space-y-3">
           {rows.slice(0, 8).map((row, idx) => {
             const value = Number(row[valueKey] || 0)

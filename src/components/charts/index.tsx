@@ -9,8 +9,8 @@ const TICK = { fill: T.muted, fontSize: 10, fontFamily: CHART_FONT_FAMILY }
 function Tip({ active, payload, label }: Record<string, unknown>) {
   if (!active || !(payload as unknown[])?.length) return null
   return (
-    <div className="bg-white border border-black/[0.08] rounded-xl p-3 text-xs shadow-elevated currency">
-      <p className="text-slate-500 mb-2 font-mono">{label as string}</p>
+    <div className="bg-card/85 border border-white/[0.08] rounded-xl p-3 text-xs shadow-elevated currency">
+      <p className="text-muted mb-2 font-mono">{label as string}</p>
       {(payload as Array<{name:string;value:number;color:string}>).map((p, i) => (
         <p key={i} style={{ color: p.color }} className="font-bold">
           {p.name}: {typeof p.value === 'number' && p.value > 999 ? <BdtText value={formatBDT(p.value)} /> : p.value}

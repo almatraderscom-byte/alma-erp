@@ -252,22 +252,22 @@ export default function InvoicePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader title="Invoices" subtitle={`${invoices.length} issued · ${pendingOrders.length} pending`} />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="p-4 md:p-6 pb-24 md:pb-6 space-y-5">
         <motion.div variants={fadeUp} className="grid grid-cols-3 gap-3">
-          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
-            <p className="text-2xl font-bold text-slate-800">{deliveredOrders.length}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Delivered orders</p>
+          <Card className="rounded-2xl border border-white/[0.06] p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold text-cream">{deliveredOrders.length}</p>
+            <p className="text-[10px] text-muted mt-1">Delivered orders</p>
           </Card>
-          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
+          <Card className="rounded-2xl border border-white/[0.06] p-4 text-center shadow-sm">
             <p className="text-2xl font-bold text-emerald-600">{registry?.totals.count ?? 0}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Invoiced</p>
+            <p className="text-[10px] text-muted mt-1">Invoiced</p>
           </Card>
-          <Card className="rounded-2xl border border-black/[0.06] p-4 text-center shadow-sm">
+          <Card className="rounded-2xl border border-white/[0.06] p-4 text-center shadow-sm">
             <p className="text-2xl font-bold text-amber-600">{pendingOrders.length}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Pending</p>
+            <p className="text-[10px] text-muted mt-1">Pending</p>
           </Card>
         </motion.div>
 
@@ -291,19 +291,19 @@ export default function InvoicePage() {
                   key={o.id}
                   type="button"
                   onClick={() => openPreview(o)}
-                  className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-amber-200/60 hover:border-amber-300 transition-colors cursor-pointer bg-white shadow-sm"
+                  className="w-full text-left p-4 flex items-center gap-3 rounded-2xl border border-amber-200/60 hover:border-amber-300 transition-colors cursor-pointer bg-card/85 shadow-sm"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="font-mono text-[11px] text-[#E07A5F] font-bold">{o.id}</span>
                       <StatusBadge status={o.status} />
                     </div>
-                    <p className="text-sm font-semibold text-slate-800">{o.customer}</p>
-                    <p className="text-[11px] text-slate-500">{o.product}</p>
+                    <p className="text-sm font-semibold text-cream">{o.customer}</p>
+                    <p className="text-[11px] text-muted">{o.product}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-slate-800"><Money amount={o.sell_price} /></p>
-                    <p className="text-[10px] text-slate-500">{o.date}</p>
+                    <p className="font-bold text-cream"><Money amount={o.sell_price} /></p>
+                    <p className="text-[10px] text-muted">{o.date}</p>
                   </div>
                   <Button variant="gold" size="xs">Preview PDF</Button>
                 </button>
@@ -321,20 +321,20 @@ export default function InvoicePage() {
               {invoices.map(inv => {
                 const order = invoiceOrders.find(o => o.id === inv.orderId)
                 return (
-                  <Card key={inv.id} className="rounded-2xl border border-black/[0.06] p-4 shadow-sm hover:shadow-md transition-shadow">
+                  <Card key={inv.id} className="rounded-2xl border border-white/[0.06] p-4 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex flex-col md:flex-row md:items-center gap-3">
                       <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv), inv) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="font-mono text-[11px] text-emerald-600 font-bold">{inv.invoiceNumber}</span>
                           <span className="font-mono text-[10px] text-[#E07A5F]">Order {inv.orderId}</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : inv.paymentStatus === 'PARTIAL' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{inv.paymentStatus}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : inv.paymentStatus === 'PARTIAL' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-border bg-white/[0.04] text-muted-hi'}`}>{inv.paymentStatus}</span>
                         </div>
-                        <p className="text-sm font-semibold text-slate-800">{inv.customerName}</p>
-                        <p className="text-[11px] text-slate-500">
+                        <p className="text-sm font-semibold text-cream">{inv.customerName}</p>
+                        <p className="text-[11px] text-muted">
                           ৳ {Number(inv.amount || 0).toLocaleString('en-BD')} · {inv.generatedByName || 'System'} · {String(inv.createdAt).slice(0, 16).replace('T', ' ')}
                         </p>
                         {!!inv.events?.length && (
-                          <p className="mt-1 text-[10px] text-slate-400">
+                          <p className="mt-1 text-[10px] text-muted">
                             Last: {inv.events[0].type.replace(/_/g, ' ')} · {String(inv.events[0].createdAt).slice(0, 10)}
                           </p>
                         )}

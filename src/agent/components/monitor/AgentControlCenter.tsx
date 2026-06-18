@@ -52,27 +52,27 @@ export default function AgentControlCenter() {
         {/* Header */}
         <div className="flex items-center gap-2 px-4 pt-4">
           <span className="text-[15px]">🎛️</span>
-          <h2 className="text-[15px] font-bold text-[#1a1a2e]">কন্ট্রোল সেন্টার</h2>
-          <span className="ml-auto rounded-full border border-black/[0.06] bg-black/[0.02] px-2 py-0.5 text-[10px] text-[#94a3b8]">
+          <h2 className="text-[15px] font-bold text-cream">কন্ট্রোল সেন্টার</h2>
+          <span className="ml-auto rounded-full border border-border-subtle bg-white/[0.02] px-2 py-0.5 text-[10px] text-muted">
             মালিক নিয়ন্ত্রণ
           </span>
         </div>
-        <p className="px-4 pb-3 pt-1 text-[12px] leading-relaxed text-[#64748b]">
+        <p className="px-4 pb-3 pt-1 text-[12px] leading-relaxed text-muted">
           এখান থেকে পুরো Agent নিয়ন্ত্রণ করুন — থামানো, অটোনমি, এবং কোন কাজ চালু/বন্ধ থাকবে।
         </p>
 
         {/* Master Pause */}
         <div
           className={`flex items-center justify-between gap-3 border-t px-4 py-3.5 transition-colors ${
-            paused ? 'border-red-200 bg-red-50/60' : 'border-black/[0.06]'
+            paused ? 'border-red-200 bg-red-50/60' : 'border-border-subtle'
           }`}
         >
           <div className="min-w-0">
-            <p className="flex items-center gap-1.5 text-[14px] font-semibold text-[#1a1a2e]">
+            <p className="flex items-center gap-1.5 text-[14px] font-semibold text-cream">
               <span>{paused ? '🛑' : '🟢'}</span>
               {paused ? 'Agent বন্ধ আছে' : 'Agent চালু আছে'}
             </p>
-            <p className="mt-0.5 text-[12px] leading-snug text-[#64748b]">
+            <p className="mt-0.5 text-[12px] leading-snug text-muted">
               {paused
                 ? 'এখন কোনো উত্তর বা কাজ করবে না (ওয়েব + টেলিগ্রাম)। চালু করতে সুইচ চাপুন।'
                 : 'সব কিছু বন্ধ করতে চাইলে এই সুইচ দিয়ে সাথে সাথে থামান।'}
@@ -87,12 +87,12 @@ export default function AgentControlCenter() {
         </div>
 
         {/* Autonomy */}
-        <div className="border-t border-black/[0.06] px-4 py-3.5">
-          <p className="text-[14px] font-semibold text-[#1a1a2e]">অটোনমি — নিজে কতটা কাজ করবে</p>
-          <p className="mt-0.5 mb-2.5 text-[12px] leading-snug text-[#64748b]">
+        <div className="border-t border-border-subtle px-4 py-3.5">
+          <p className="text-[14px] font-semibold text-cream">অটোনমি — নিজে কতটা কাজ করবে</p>
+          <p className="mt-0.5 mb-2.5 text-[12px] leading-snug text-muted">
             টাকা খরচ ও পাবলিক পোস্ট সবসময় আগে অনুমতি নেবে — যেকোনো মোডেই।
           </p>
-          <div className="flex gap-1 rounded-full border border-black/[0.08] bg-black/[0.02] p-1">
+          <div className="flex gap-1 rounded-full border border-border bg-white/[0.02] p-1">
             {AUTONOMY_OPTIONS.map((opt) => {
               const active = autonomy === opt.value
               return (
@@ -102,7 +102,7 @@ export default function AgentControlCenter() {
                   disabled={loading || saving}
                   onClick={() => void patch({ autonomy: opt.value }, `অটোনমি: ${opt.label}`)}
                   className={`flex-1 rounded-full px-2 py-1.5 text-[12px] font-semibold transition-all disabled:opacity-50 ${
-                    active ? 'bg-[#E07A5F] text-white shadow-sm' : 'text-[#64748b] hover:bg-black/[0.04]'
+                    active ? 'bg-[#E07A5F] text-white shadow-sm' : 'text-muted hover:bg-white/[0.04]'
                   }`}
                 >
                   {opt.label}
@@ -113,9 +113,9 @@ export default function AgentControlCenter() {
         </div>
 
         {/* Capability switches */}
-        <div className="border-t border-black/[0.06] px-4 pb-4 pt-3.5">
-          <p className="mb-1 text-[14px] font-semibold text-[#1a1a2e]">ফিচার চালু/বন্ধ</p>
-          <p className="mb-2.5 text-[12px] leading-snug text-[#64748b]">
+        <div className="border-t border-border-subtle px-4 pb-4 pt-3.5">
+          <p className="mb-1 text-[14px] font-semibold text-cream">ফিচার চালু/বন্ধ</p>
+          <p className="mb-2.5 text-[12px] leading-snug text-muted">
             বন্ধ করলে Agent ঐ কাজ করবে না — চাইলে আপনাকে চালু করতে বলবে (টোকেন নষ্ট করবে না)।
           </p>
           <CapabilityRow
@@ -158,10 +158,10 @@ function CapabilityRow({
   return (
     <div className="flex items-center justify-between gap-3 py-2">
       <div className="min-w-0">
-        <p className="flex items-center gap-1.5 text-[13px] font-medium text-[#1a1a2e]">
+        <p className="flex items-center gap-1.5 text-[13px] font-medium text-cream">
           <span>{icon}</span>{label}
         </p>
-        <p className="mt-0.5 truncate text-[11px] text-[#94a3b8]">{hint}</p>
+        <p className="mt-0.5 truncate text-[11px] text-muted">{hint}</p>
       </div>
       <Toggle on={on} disabled={disabled} onChange={onChange} label={label} />
     </div>
@@ -185,13 +185,13 @@ function Toggle({
       disabled={disabled}
       onClick={() => onChange(!on)}
       className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-        on ? 'bg-[#81B29A]' : 'bg-black/15'
+        on ? 'bg-[#81B29A]' : 'bg-white/15'
       }`}
     >
       <motion.span
         layout
         transition={{ type: 'spring', stiffness: 500, damping: 34 }}
-        className={`inline-block h-6 w-6 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.2)] ${
+        className={`inline-block h-6 w-6 rounded-full bg-card/80 shadow-[0_1px_3px_rgba(0,0,0,0.2)] ${
           on ? 'ml-[22px]' : 'ml-0.5'
         }`}
       />

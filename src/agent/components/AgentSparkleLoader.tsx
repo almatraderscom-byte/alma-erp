@@ -83,7 +83,7 @@ export default function AgentSparkleLoader({
 
       {label && (
         <motion.p
-          className="text-center text-xs font-medium text-zinc-400"
+          className="text-center text-xs font-medium text-muted"
           animate={{ opacity: [0.45, 0.9, 0.45] }}
           transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
         >

@@ -125,19 +125,19 @@ export function MonitorKPIStrip({ data, brainStats }: {
           key={kpi.label}
           variants={fadeUp}
           className={cn(
-            'group relative overflow-hidden rounded-2xl border border-black/[0.06] bg-white px-3.5 py-3 shadow-sm',
-            'transition-all duration-300 hover:border-black/[0.12] hover:shadow-md',
+            'group relative overflow-hidden rounded-2xl border border-border-subtle bg-card/80 px-3.5 py-3 shadow-sm',
+            'transition-all duration-300 hover:border-white/[0.12] hover:shadow-md',
             kpi.pulse && 'animate-[pulse-status_2s_ease-in-out_infinite]',
           )}
         >
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#E07A5F]/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
             <div className="flex items-center justify-between gap-1">
-              <p className="min-w-0 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-[#94a3b8]">{kpi.label}</p>
+              <p className="min-w-0 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-muted">{kpi.label}</p>
               {kpi.trend && (
                 <span className={cn(
                   'text-[10px]',
-                  kpi.trend === 'up' ? 'text-emerald-500' : kpi.trend === 'down' ? 'text-red-500' : 'text-[#94a3b8]',
+                  kpi.trend === 'up' ? 'text-emerald-500' : kpi.trend === 'down' ? 'text-red-500' : 'text-muted',
                 )}>
                   {kpi.trend === 'up' ? '↑' : kpi.trend === 'down' ? '↓' : '→'}
                 </span>
@@ -146,7 +146,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
             <p className={cn('mt-1 text-xl font-black tabular-nums tracking-tight sm:text-2xl', kpi.color)}>
               {kpi.displayValue ?? <AnimatedNumber value={kpi.value} />}
             </p>
-            <p className="mt-0.5 text-[10px] text-[#94a3b8]">{kpi.sub}</p>
+            <p className="mt-0.5 text-[10px] text-muted">{kpi.sub}</p>
           </div>
         </motion.div>
       ))}

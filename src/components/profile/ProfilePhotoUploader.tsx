@@ -232,14 +232,14 @@ export function ProfilePhotoUploader({
             <Button
               variant="ghost"
               size="xs"
-              className="w-full justify-center min-h-[40px] touch-manipulation text-zinc-400"
+              className="w-full justify-center min-h-[40px] touch-manipulation text-muted"
               disabled={busy}
               onClick={() => void removePhoto()}
             >
               Remove photo
             </Button>
           )}
-          <p className="text-center text-[10px] leading-relaxed text-zinc-500">
+          <p className="text-center text-[10px] leading-relaxed text-muted">
             Square crop · auto-compressed · JPG, PNG, WEBP, HEIC · max 8 MB
           </p>
           {progress > 0 && (

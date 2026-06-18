@@ -20,13 +20,16 @@ function hex(r: number, g: number, b: number): [number, number, number] {
   return [r, g, b]
 }
 
+// Aura palette: terracotta #E07A5F (0.88,0.48,0.37) + sage #81B29A (0.51,0.70,0.60),
+// warm cream highlights. States stay inside this family so the orb reads as part
+// of the app's aurora rather than a foreign element.
 const GL_PALETTES: Record<VoiceState, GLPalette> = {
-  idle: { a: hex(0.97, 0.80, 0.72), b: hex(0.82, 0.32, 0.42), glow: hex(0.95, 0.55, 0.38), speed: 0.5 },
-  listening: { a: hex(1.0, 0.86, 0.55), b: hex(0.91, 0.31, 0.21), glow: hex(1.0, 0.5, 0.22), speed: 1.45 },
-  transcribing: { a: hex(0.66, 0.86, 0.80), b: hex(0.45, 0.46, 0.82), glow: hex(0.5, 0.78, 0.72), speed: 0.95 },
-  thinking: { a: hex(0.66, 0.86, 0.80), b: hex(0.45, 0.46, 0.82), glow: hex(0.5, 0.78, 0.72), speed: 0.95 },
-  speaking: { a: hex(0.80, 0.90, 1.0), b: hex(0.30, 0.40, 0.92), glow: hex(0.42, 0.58, 1.0), speed: 1.55 },
-  error: { a: hex(0.97, 0.78, 0.70), b: hex(0.85, 0.30, 0.30), glow: hex(0.95, 0.5, 0.4), speed: 0.5 },
+  idle: { a: hex(0.98, 0.85, 0.74), b: hex(0.84, 0.38, 0.28), glow: hex(0.88, 0.48, 0.37), speed: 0.5 },
+  listening: { a: hex(1.0, 0.88, 0.62), b: hex(0.90, 0.42, 0.24), glow: hex(0.95, 0.52, 0.28), speed: 1.45 },
+  transcribing: { a: hex(0.80, 0.92, 0.84), b: hex(0.40, 0.62, 0.54), glow: hex(0.51, 0.70, 0.60), speed: 0.95 },
+  thinking: { a: hex(0.80, 0.92, 0.84), b: hex(0.40, 0.62, 0.54), glow: hex(0.51, 0.70, 0.60), speed: 0.95 },
+  speaking: { a: hex(0.84, 0.94, 0.88), b: hex(0.30, 0.58, 0.60), glow: hex(0.40, 0.72, 0.68), speed: 1.55 },
+  error: { a: hex(0.97, 0.80, 0.72), b: hex(0.85, 0.32, 0.28), glow: hex(0.90, 0.46, 0.34), speed: 0.5 },
 }
 
 const VERT = `
@@ -197,10 +200,10 @@ type CssPalette = { c1: string; c2: string; c3: string; c4: string; glow: string
 
 const CSS_PALETTES: Record<VoiceState, CssPalette> = {
   idle: { c1: '#F8EAE2', c2: '#EBC0AC', c3: '#DA8A6E', c4: '#b85540', glow: 'rgba(224,122,95,0.34)', spin: '22s', drift: '7s' },
-  listening: { c1: '#FFE2CE', c2: '#F7B36B', c3: '#E9663F', c4: '#C73B2E', glow: 'rgba(231,102,63,0.55)', spin: '9s', drift: '2.6s' },
-  transcribing: { c1: '#E6EFEA', c2: '#A6D2C4', c3: '#6FA9D6', c4: '#7C76C9', glow: 'rgba(129,178,154,0.45)', spin: '15s', drift: '4.2s' },
-  thinking: { c1: '#E6EFEA', c2: '#A6D2C4', c3: '#6FA9D6', c4: '#7C76C9', glow: 'rgba(129,178,154,0.45)', spin: '15s', drift: '4.2s' },
-  speaking: { c1: '#D9ECFF', c2: '#86B8F4', c3: '#5571E6', c4: '#7C3AED', glow: 'rgba(99,102,241,0.5)', spin: '7s', drift: '2.0s' },
+  listening: { c1: '#FFE2CE', c2: '#F4A865', c3: '#E07A5F', c4: '#C2502F', glow: 'rgba(224,122,95,0.55)', spin: '9s', drift: '2.6s' },
+  transcribing: { c1: '#E9F2EC', c2: '#A8D2C2', c3: '#81B29A', c4: '#4E8A72', glow: 'rgba(129,178,154,0.48)', spin: '15s', drift: '4.2s' },
+  thinking: { c1: '#E9F2EC', c2: '#A8D2C2', c3: '#81B29A', c4: '#4E8A72', glow: 'rgba(129,178,154,0.48)', spin: '15s', drift: '4.2s' },
+  speaking: { c1: '#E4F3EC', c2: '#8FD0BE', c3: '#52A98C', c4: '#2E7E6C', glow: 'rgba(102,190,170,0.5)', spin: '7s', drift: '2.0s' },
   error: { c1: '#F8EAE2', c2: '#EBC0AC', c3: '#DA8A6E', c4: '#b85540', glow: 'rgba(224,122,95,0.34)', spin: '22s', drift: '7s' },
 }
 

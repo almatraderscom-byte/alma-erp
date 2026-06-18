@@ -20,7 +20,7 @@ type UserAccountMenuProps = {
 
 function RoleBadge({ role }: { role: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-[#E07A5F]/25 bg-[#E07A5F]/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-[#E07A5F]">
+    <span className="inline-flex items-center rounded-full border border-gold/25 bg-gold/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-gold">
       {role.replace(/_/g, ' ')}
     </span>
   )
@@ -105,22 +105,22 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
       exit={{ opacity: 0, y: mobile ? 8 : 10, scale: 0.98 }}
       transition={{ duration: 0.16, ease: 'easeOut' }}
       className={cn(
-        'absolute z-[140] w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white/98 shadow-xl shadow-black/10 backdrop-blur-xl',
+        'absolute z-[140] w-72 overflow-hidden rounded-2xl border border-border-subtle bg-card/98 shadow-xl shadow-black/10',
         mobile ? 'bottom-full right-2 mb-3' : 'bottom-full left-0 mb-3',
       )}
     >
-      <div className="border-b border-slate-200 bg-gradient-to-br from-[#E07A5F]/[0.06] to-transparent p-4">
+      <div className="border-b border-border-subtle bg-gradient-to-br from-gold/[0.06] to-transparent p-4">
         <div className="flex items-start gap-3">
           <EmployeeAvatar userId={userId} name={displayName} email={email} imageUrl={profileImageUrl} size="md" showStatus className="rounded-2xl" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-[#1a1a2e]">{displayName}</p>
+            <p className="truncate text-sm font-bold text-cream">{displayName}</p>
             <div className="mt-1"><RoleBadge role={role} /></div>
-            <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{email}</p>
+            <p className="mt-2 truncate font-mono text-[10px] text-muted">{email}</p>
           </div>
         </div>
-        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-400">Current business</p>
-          <p className="mt-0.5 truncate text-[11px] font-semibold text-[#1a1a2e]">{business.name}</p>
+        <div className="mt-3 rounded-xl border border-border-subtle bg-bg-2 px-3 py-2">
+          <p className="text-[9px] font-black uppercase tracking-[0.16em] text-muted">Current business</p>
+          <p className="mt-0.5 truncate text-[11px] font-semibold text-cream">{business.name}</p>
         </div>
       </div>
 
@@ -133,13 +133,13 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
           type="button"
           role="menuitem"
           onClick={() => setBusinessOpen(value => !value)}
-          className="group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-slate-50 focus:outline-none focus:ring-1 focus:ring-[#E07A5F]/30"
+          className="group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-2 focus:outline-none focus:ring-1 focus:ring-gold/30"
         >
           <span>
-            <span className="block text-[12px] font-semibold text-[#1a1a2e]">Switch business</span>
-            <span className="block text-[10px] text-slate-400">{businessChoices.length} available</span>
+            <span className="block text-[12px] font-semibold text-cream">Switch business</span>
+            <span className="block text-[10px] text-muted">{businessChoices.length} available</span>
           </span>
-          <span className={cn('text-xs text-slate-400 transition-transform group-hover:text-[#E07A5F]', businessOpen && 'rotate-180')}>⌄</span>
+          <span className={cn('text-xs text-muted transition-transform group-hover:text-gold', businessOpen && 'rotate-180')}>⌄</span>
         </button>
 
         <AnimatePresence initial={false}>
@@ -163,13 +163,13 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
                       setOpen(false)
                     }}
                     className={cn(
-                      'mt-1 flex w-full items-center gap-2 rounded-xl border px-2 py-2 text-left transition-colors focus:outline-none focus:ring-1 focus:ring-[#E07A5F]/30',
+                      'mt-1 flex w-full items-center gap-2 rounded-xl border px-2 py-2 text-left transition-colors focus:outline-none focus:ring-1 focus:ring-gold/30',
                       active
-                        ? 'border-[#E07A5F]/30 bg-[#E07A5F]/10 text-[#E07A5F]'
-                        : 'border-transparent text-slate-600 hover:bg-slate-50 hover:text-[#1a1a2e]',
+                        ? 'border-gold/30 bg-gold/10 text-gold'
+                        : 'border-transparent text-muted-hi hover:bg-bg-2 hover:text-cream',
                     )}
                   >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-[10px] font-black text-[#E07A5F]">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-border-subtle bg-card text-[10px] font-black text-gold">
                       {item.brandInitial}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[11px] font-semibold">{item.name}</span>
@@ -185,23 +185,23 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
           type="button"
           role="menuitem"
           onClick={() => setNotificationsOpen(value => !value)}
-          className="group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-slate-50 focus:outline-none focus:ring-1 focus:ring-[#E07A5F]/30"
+          className="group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-2 focus:outline-none focus:ring-1 focus:ring-gold/30"
         >
           <span>
-            <span className="block text-[12px] font-semibold text-[#1a1a2e]">Notifications</span>
-            <span className="block text-[10px] text-slate-400">{unread} unread payroll/system alerts</span>
+            <span className="block text-[12px] font-semibold text-cream">Notifications</span>
+            <span className="block text-[10px] text-muted">{unread} unread payroll/system alerts</span>
           </span>
-          {unread > 0 && <span className="rounded-full bg-[#E07A5F]/15 px-2 py-0.5 text-[10px] font-bold text-[#E07A5F]">{unread}</span>}
+          {unread > 0 && <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-bold text-gold">{unread}</span>}
         </button>
         <AnimatePresence initial={false}>
           {notificationsOpen && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden px-1 pb-1">
               {!notifications.length ? (
-                <p className="px-3 py-2 text-[10px] text-slate-400">No notifications yet.</p>
+                <p className="px-3 py-2 text-[10px] text-muted">No notifications yet.</p>
               ) : notifications.slice(0, 5).map(n => (
-                <div key={n.id} className="mt-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-[11px] font-semibold text-[#1a1a2e]">{n.title}</p>
-                  <p className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">{n.message}</p>
+                <div key={n.id} className="mt-1 rounded-xl border border-border-subtle bg-bg-2 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-cream">{n.title}</p>
+                  <p className="mt-0.5 line-clamp-2 text-[10px] text-muted">{n.message}</p>
                 </div>
               ))}
             </motion.div>
@@ -230,15 +230,15 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
         />
       </div>
 
-      <div className="border-t border-slate-200 p-2">
+      <div className="border-t border-border-subtle p-2">
         <button
           type="button"
           role="menuitem"
           onClick={() => void logout()}
-          className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-1 focus:ring-red-300"
+          className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold text-danger transition-colors hover:bg-danger/10 focus:outline-none focus:ring-1 focus:ring-danger/40"
         >
           <span>Logout</span>
-          <span className="text-[10px] text-red-400">Clear session</span>
+          <span className="text-[10px] text-danger/70">Clear session</span>
         </button>
       </div>
     </motion.div>
@@ -259,7 +259,7 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
           }
         }}
         className={cn(
-          'group flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white p-2 text-left transition-all duration-200 hover:border-[#E07A5F]/30 hover:bg-[#E07A5F]/[0.04] focus:outline-none focus:ring-1 focus:ring-[#E07A5F]/30',
+          'group flex w-full items-center gap-3 rounded-2xl border border-border-subtle bg-card p-2 text-left transition-all duration-200 hover:border-gold/30 hover:bg-gold/[0.04] focus:outline-none focus:ring-1 focus:ring-gold/30',
           collapsed && !mobile && 'justify-center px-2',
           mobile && 'justify-center border-transparent bg-transparent p-0 hover:bg-transparent',
         )}
@@ -267,14 +267,14 @@ export function UserAccountMenu({ collapsed = false, mobile = false }: UserAccou
         <EmployeeAvatar userId={userId} name={displayName} email={email} imageUrl={profileImageUrl} size="md" showStatus className="rounded-2xl" />
         {!collapsed && !mobile && (
           <span className="min-w-0 flex-1 overflow-hidden">
-            <span className="block truncate text-[12px] font-bold text-[#1a1a2e]">{displayName}</span>
+            <span className="block truncate text-[12px] font-bold text-cream">{displayName}</span>
             <span className="mt-0.5 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-              <span className="truncate text-[10px] font-medium text-slate-500">{role.replace(/_/g, ' ')}</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+              <span className="truncate text-[10px] font-medium text-muted">{role.replace(/_/g, ' ')}</span>
             </span>
           </span>
         )}
-        {!collapsed && !mobile && <span className="text-xs text-slate-400 transition-colors group-hover:text-[#E07A5F]">⌄</span>}
+        {!collapsed && !mobile && <span className="text-xs text-muted transition-colors group-hover:text-gold">⌄</span>}
       </button>
 
       <AnimatePresence>{open && menu}</AnimatePresence>
@@ -303,10 +303,10 @@ function MenuLink({
       href={href}
       role="menuitem"
       onClick={onSelect}
-      className="block rounded-xl px-3 py-2.5 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-1 focus:ring-[#E07A5F]/30"
+      className="block rounded-xl px-3 py-2.5 transition-colors hover:bg-bg-2 focus:outline-none focus:ring-1 focus:ring-gold/30"
     >
-      <span className="block text-[12px] font-semibold text-[#1a1a2e]">{label}</span>
-      <span className="block text-[10px] text-slate-400">{detail}</span>
+      <span className="block text-[12px] font-semibold text-cream">{label}</span>
+      <span className="block text-[10px] text-muted">{detail}</span>
     </Link>
   )
 }
@@ -325,10 +325,10 @@ function MenuButton({
       type="button"
       role="menuitem"
       disabled={disabled}
-      className="block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+      className="block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-2 disabled:cursor-not-allowed disabled:opacity-45"
     >
-      <span className="block text-[12px] font-semibold text-[#1a1a2e]">{label}</span>
-      <span className="block text-[10px] text-slate-400">{detail}</span>
+      <span className="block text-[12px] font-semibold text-cream">{label}</span>
+      <span className="block text-[10px] text-muted">{detail}</span>
     </button>
   )
 }

@@ -90,7 +90,7 @@ export default function CrmPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="CRM"
         subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}
@@ -120,14 +120,14 @@ export default function CrmPage() {
         {/* Segment tabs */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
           <button onClick={() => setSegment('')}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!segment ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500'}`}>
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!segment ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted'}`}>
             All {customers.length}
           </button>
           {SEGMENTS.map(s => {
             const cnt = (data?.customers ?? []).filter(c => c.segment === s).length
             return (
               <button key={s} onClick={() => setSegment(segment === s ? '' : s)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${segment === s ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-zinc-500 hover:text-zinc-300'}`}>
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${segment === s ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
                 {s} <span className="opacity-60">{cnt}</span>
               </button>
             )
@@ -147,7 +147,7 @@ export default function CrmPage() {
             <thead>
               <tr className="border-b border-border">
                 {['Customer','District','Orders','Revenue','CLV Score','Risk','Segment','Last Order','Actions'].map(h => (
-                  <th key={h} className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-zinc-500 whitespace-nowrap">{h}</th>
+                  <th key={h} className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-muted whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -160,20 +160,20 @@ export default function CrmPage() {
                   ))
                 : customers.map(c => (
                     <tr key={c.id} onClick={() => setSelected(c.id === selected?.id ? null : c)}
-                      className={`border-b border-border/50 cursor-pointer transition-colors ${c.id === selected?.id ? 'bg-gold/5' : 'hover:bg-black/[0.02]'}`}>
+                      className={`border-b border-border/50 cursor-pointer transition-colors ${c.id === selected?.id ? 'bg-gold/5' : 'hover:bg-white/[0.02]'}`}>
                       <td className="px-3 py-3.5">
                         <div className="flex items-center gap-2.5">
                           <Avatar name={c.name} vip={c.segment === 'VIP'} />
                           <div>
                             <p className="font-semibold text-cream">{c.name}</p>
-                            <p className="text-[10px] text-zinc-600 font-mono">{c.phone}</p>
+                            <p className="text-[10px] text-muted-hi font-mono">{c.phone}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-3.5 text-zinc-500">{c.district}</td>
+                      <td className="px-3 py-3.5 text-muted">{c.district}</td>
                       <td className="px-3 py-3.5 text-center">
                         <p className="font-bold text-cream">{c.total_orders}</p>
-                        <p className="text-[10px] text-zinc-600">D:{c.delivered} R:{c.returned}</p>
+                        <p className="text-[10px] text-muted-hi">D:{c.delivered} R:{c.returned}</p>
                       </td>
                       <td className="px-3 py-3.5 font-bold text-cream tabular-nums"><Money amount={c.total_spent} /></td>
                       <td className="px-3 py-3.5 w-28"><ClvBar score={c.clv_score} /></td>
@@ -189,7 +189,7 @@ export default function CrmPage() {
                                   ? 'text-red-400 border-red-400/30 bg-red-400/10'
                                   : ins.computedRisk === 'MEDIUM'
                                     ? 'text-amber-400 border-amber-400/30 bg-amber-400/10'
-                                    : 'text-zinc-400 border-border bg-card'
+                                    : 'text-muted border-border bg-card'
                               }`}>
                                 {ins.returnRatePct}% returns
                               </span>
@@ -198,7 +198,7 @@ export default function CrmPage() {
                         </div>
                       </td>
                       <td className="px-3 py-3.5"><SegmentBadge segment={c.segment} /></td>
-                      <td className="px-3 py-3.5 text-zinc-500">{c.last_order || '—'}</td>
+                      <td className="px-3 py-3.5 text-muted">{c.last_order || '—'}</td>
                       <td className="px-3 py-3.5">
                         <div className="flex gap-1.5">
                           <a href={c.whatsapp} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
@@ -206,7 +206,7 @@ export default function CrmPage() {
                             WA
                           </a>
                           <button onClick={e => { e.stopPropagation(); setSelected(c) }}
-                            className="px-2 py-1 rounded-lg bg-card border border-border text-zinc-500 text-[10px] font-bold hover:text-zinc-300 transition-colors">
+                            className="px-2 py-1 rounded-lg bg-card border border-border text-muted text-[10px] font-bold hover:text-muted transition-colors">
                             View
                           </button>
                         </div>
@@ -229,14 +229,14 @@ export default function CrmPage() {
                   <Avatar name={c.name} vip={c.segment === 'VIP'} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-cream">{c.name}</p>
-                    <p className="text-[11px] text-zinc-500">{c.district} · {c.phone}</p>
+                    <p className="text-[11px] text-muted">{c.district} · {c.phone}</p>
                   </div>
                   <SegmentBadge segment={c.segment} />
                 </div>
                 <div className="grid grid-cols-3 gap-2 mb-2 text-center">
-                  <div><p className="text-sm font-bold text-cream">{c.total_orders}</p><p className="text-[10px] text-zinc-600">Orders</p></div>
-                  <div><p className="text-sm font-bold text-gold"><Money amount={c.total_spent} /></p><p className="text-[10px] text-zinc-600">Spent</p></div>
-                  <div><p className="text-sm font-bold text-cream">{c.clv_score}</p><p className="text-[10px] text-zinc-600">CLV</p></div>
+                  <div><p className="text-sm font-bold text-cream">{c.total_orders}</p><p className="text-[10px] text-muted-hi">Orders</p></div>
+                  <div><p className="text-sm font-bold text-gold"><Money amount={c.total_spent} /></p><p className="text-[10px] text-muted-hi">Spent</p></div>
+                  <div><p className="text-sm font-bold text-cream">{c.clv_score}</p><p className="text-[10px] text-muted-hi">CLV</p></div>
                 </div>
                 <ClvBar score={c.clv_score} />
               </Card>
@@ -258,9 +258,9 @@ export default function CrmPage() {
                 <Avatar name={selected.name} size="md" vip={selected.segment === 'VIP'} />
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-cream">{selected.name}</p>
-                  <p className="text-[11px] text-zinc-500">{selected.id} · {selected.district}</p>
+                  <p className="text-[11px] text-muted">{selected.id} · {selected.district}</p>
                 </div>
-                <button onClick={() => setSelected(null)} className="text-zinc-500 hover:text-cream transition-colors text-lg">×</button>
+                <button onClick={() => setSelected(null)} className="text-muted hover:text-cream transition-colors text-lg">×</button>
               </div>
               <div className="p-5 space-y-5">
                 <div className="flex gap-2 flex-wrap">
@@ -284,16 +284,16 @@ export default function CrmPage() {
                   {selected.wa_optin === 'Yes' && <span className="text-[10px] bg-green-400/10 text-green-400 border border-green-400/20 px-2 py-1 rounded-full font-bold">WA Opt-in</span>}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold"><Money amount={selected.total_spent} /></p><p className="text-[10px] text-zinc-500">Lifetime Spend</p></div>
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-green-400"><Money amount={selected.total_profit} /></p><p className="text-[10px] text-zinc-500">Lifetime Profit</p></div>
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-cream">{selected.delivered}/{selected.total_orders}</p><p className="text-[10px] text-zinc-500">Delivered</p></div>
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold">{selected.loyalty_pts} pts</p><p className="text-[10px] text-zinc-500">Loyalty</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold"><Money amount={selected.total_spent} /></p><p className="text-[10px] text-muted">Lifetime Spend</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-green-400"><Money amount={selected.total_profit} /></p><p className="text-[10px] text-muted">Lifetime Profit</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-cream">{selected.delivered}/{selected.total_orders}</p><p className="text-[10px] text-muted">Delivered</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold">{selected.loyalty_pts} pts</p><p className="text-[10px] text-muted">Loyalty</p></div>
                 </div>
                 <GoldDivider />
                 <div>
-                  <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Risk Intelligence</p>
+                  <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-3">Risk Intelligence</p>
                   <div className="bg-card rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between text-xs mb-1"><span className="text-zinc-500">Risk Score</span><span className={`font-bold ${selected.risk_score > 60 ? 'text-red-400' : selected.risk_score > 30 ? 'text-amber-400' : 'text-green-400'}`}>{selected.risk_score}/100</span></div>
+                    <div className="flex items-center justify-between text-xs mb-1"><span className="text-muted">Risk Score</span><span className={`font-bold ${selected.risk_score > 60 ? 'text-red-400' : selected.risk_score > 30 ? 'text-amber-400' : 'text-green-400'}`}>{selected.risk_score}/100</span></div>
                     <Progress value={selected.risk_score} color={selected.risk_score > 60 ? 'bg-red-400' : selected.risk_score > 30 ? 'bg-amber-400' : 'bg-green-400'} />
                     <StatRow label="COD Fail Rate" value={pct(selected.cod_fail_pct * 100)} valueClass={selected.cod_fail_pct > 0.5 ? 'text-red-400' : 'text-green-400'} />
                     <StatRow
@@ -319,13 +319,13 @@ export default function CrmPage() {
                   if (!ins.recentOrders.length) return null
                   return (
                     <div>
-                      <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Recent Orders</p>
+                      <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-3">Recent Orders</p>
                       <div className="bg-card rounded-xl p-4 space-y-2">
                         {ins.recentOrders.map(o => (
                           <div key={o.id} className="flex items-center justify-between gap-2 text-xs border-b border-border/40 pb-2 last:border-0 last:pb-0">
                             <div className="min-w-0">
                               <p className="font-mono text-[10px] text-gold">{o.id}</p>
-                              <p className="text-zinc-500">{o.date}</p>
+                              <p className="text-muted">{o.date}</p>
                             </div>
                             <div className="text-right shrink-0">
                               <StatusBadge status={o.status as OrderStatus} />
@@ -340,7 +340,7 @@ export default function CrmPage() {
                   )
                 })()}
                 <div>
-                  <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-zinc-500 mb-3">Profile</p>
+                  <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-3">Profile</p>
                   <div className="bg-card rounded-xl p-4">
                     <StatRow label="Phone"    value={selected.phone} />
                     <StatRow label="Address"  value={selected.address} />

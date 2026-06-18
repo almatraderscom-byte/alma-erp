@@ -233,7 +233,7 @@ function TelegramOpsSettingsPageInner() {
   const queueStats = Object.fromEntries((dashboard?.queue?.stats7d || []).map(s => [s.status, s.count]))
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="Telegram Ops"
         subtitle="Production health · owner routing · async delivery queue"
@@ -261,7 +261,7 @@ function TelegramOpsSettingsPageInner() {
           />
           <p className="mt-2 text-[11px] text-amber-700 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
             Showing config for:{' '}
-            <span className="font-semibold text-slate-800">
+            <span className="font-semibold text-cream">
               {BUSINESS_LIST.find(b => b.id === businessId)?.name ?? businessId}
             </span>
             {businessId !== headerBusinessId ? ' · switch header business to align default' : ''}
@@ -273,7 +273,7 @@ function TelegramOpsSettingsPageInner() {
         ) : (
           <>
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4 shadow-sm">
+              <Card className="rounded-2xl border border-white/[0.06] grid gap-3 p-5 md:grid-cols-2 lg:grid-cols-4 shadow-sm">
                 <HealthStat
                   label="Bot (outbound)"
                   value={
@@ -349,12 +349,12 @@ function TelegramOpsSettingsPageInner() {
 
             {routing && (
               <motion.div variants={fadeUp}>
-                <Card className="rounded-2xl border border-black/[0.06] p-5 text-[11px] text-slate-600 shadow-sm">
-                  <p className="font-bold text-slate-800">Owner routing diagnostics</p>
+                <Card className="rounded-2xl border border-white/[0.06] p-5 text-[11px] text-muted-hi shadow-sm">
+                  <p className="font-bold text-cream">Owner routing diagnostics</p>
                   <p className="mt-2">
                     Active source: <span className="font-semibold text-[#E07A5F]">{routingLabel(routing.source)}</span>
                     {' · '}
-                    Delivering to: <span className="font-mono text-slate-700">{routing.chatIds.join(', ') || '—'}</span>
+                    Delivering to: <span className="font-mono text-cream">{routing.chatIds.join(', ') || '—'}</span>
                   </p>
                   <p className="mt-1">
                     DB IDs: {routing.dbIds.join(', ') || '—'} · Env fallback IDs: {routing.envIds.join(', ') || '—'}
@@ -364,10 +364,10 @@ function TelegramOpsSettingsPageInner() {
                       Invalid tokens ignored: DB [{routing.invalidDbTokens?.join(', ')}] Env [{routing.invalidEnvTokens?.join(', ')}]
                     </p>
                   ) : null}
-                  <p className="mt-2 text-slate-500">
+                  <p className="mt-2 text-muted">
                     Priority: database chat IDs first. If empty or invalid, <code className="text-[#E07A5F]">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
                   </p>
-                  <p className="mt-2 text-slate-500">
+                  <p className="mt-2 text-muted">
                     Delivery: <span className="text-[#E07A5F]">enqueue → cron/worker</span> (ERP never waits on Telegram API).
                     High priority: approvals, penalties, wallet. Low priority: screenshots, summaries (45s delay).
                   </p>
@@ -377,8 +377,8 @@ function TelegramOpsSettingsPageInner() {
 
             <div className="grid gap-5 lg:grid-cols-2">
               <motion.div variants={fadeUp}>
-                <Card className="rounded-2xl border border-black/[0.06] space-y-4 p-5 shadow-sm">
-                  <h3 className="text-sm font-bold text-slate-800">Recipients & master switch</h3>
+                <Card className="rounded-2xl border border-white/[0.06] space-y-4 p-5 shadow-sm">
+                  <h3 className="text-sm font-bold text-cream">Recipients & master switch</h3>
                   <div className="flex gap-2">
                     <Button variant={setting.enabled ? 'gold' : 'secondary'} onClick={() => void save({ enabled: true })} disabled={saving}>
                       Enabled
@@ -387,7 +387,7 @@ function TelegramOpsSettingsPageInner() {
                       Disabled
                     </Button>
                   </div>
-                  <p className="text-[11px] text-slate-500">Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS</p>
+                  <p className="text-[11px] text-muted">Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS</p>
                   <Input
                     value={ownerChatIds}
                     onChange={e => setOwnerChatIds(e.target.value)}
@@ -397,8 +397,8 @@ function TelegramOpsSettingsPageInner() {
                     Save chat IDs
                   </Button>
 
-                  <h3 className="pt-2 text-sm font-bold text-slate-800">Schedule (BD)</h3>
-                  <p className="text-[11px] text-slate-500">
+                  <h3 className="pt-2 text-sm font-bold text-cream">Schedule (BD)</h3>
+                  <p className="text-[11px] text-muted">
                     Office {minutesToTimeLabel(setting.officeStartMinutes)} · grace +{setting.gracePeriodMinutes}m ·
                     no-checkout {minutesToTimeLabel(setting.checkoutCutoffMinutes)}
                   </p>
@@ -411,7 +411,7 @@ function TelegramOpsSettingsPageInner() {
                         ['earlyLeaveMinutes', 'Early leave under (min)'],
                       ] as const
                     ).map(([key, label]) => (
-                      <label key={key} className="block text-[11px] text-slate-500">
+                      <label key={key} className="block text-[11px] text-muted">
                         {label}
                         <Input
                           type="number"
@@ -436,12 +436,12 @@ function TelegramOpsSettingsPageInner() {
               </motion.div>
 
               <motion.div variants={fadeUp}>
-                <Card className="rounded-2xl border border-black/[0.06] space-y-3 p-5 shadow-sm">
-                  <h3 className="text-sm font-bold text-slate-800">Alert toggles</h3>
+                <Card className="rounded-2xl border border-white/[0.06] space-y-3 p-5 shadow-sm">
+                  <h3 className="text-sm font-bold text-cream">Alert toggles</h3>
                   {ALERT_TOGGLES.map(t => (
                     <label
                       key={t.key}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.06] px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                      className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] px-4 py-2.5 text-sm text-cream hover:bg-white/[0.04] transition-colors cursor-pointer"
                     >
                       {t.label}
                       <input
@@ -453,7 +453,7 @@ function TelegramOpsSettingsPageInner() {
                     </label>
                   ))}
 
-                  <h3 className="pt-3 text-sm font-bold text-slate-800">Queue (7 days)</h3>
+                  <h3 className="pt-3 text-sm font-bold text-cream">Queue (7 days)</h3>
                   <div className="flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-emerald-700 font-medium">SENT: {queueStats.SENT ?? 0}</span>
                     <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-amber-700 font-medium">QUEUED: {queueStats.QUEUED ?? 0}</span>
@@ -469,11 +469,11 @@ function TelegramOpsSettingsPageInner() {
                     </div>
                   )}
 
-                  <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-slate-600">
+                  <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-muted-hi">
                     {data.recentQueue.map(row => (
-                      <li key={row.id} className="rounded-xl border border-black/[0.06] bg-white p-3">
+                      <li key={row.id} className="rounded-xl border border-white/[0.06] bg-card/85 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="flex items-center gap-2 text-slate-700">
+                          <span className="flex items-center gap-2 text-cream">
                             <EmployeeAvatar
                               userId={row.userId}
                               name={row.employeeName || row.eventType}
@@ -488,8 +488,8 @@ function TelegramOpsSettingsPageInner() {
                             </Button>
                           )}
                         </div>
-                        <div className="mt-1 text-slate-500">Chat {row.chatId} · attempts {row.attempts}</div>
-                        <div className="text-slate-400">{new Date(row.createdAt).toLocaleString()}</div>
+                        <div className="mt-1 text-muted">Chat {row.chatId} · attempts {row.attempts}</div>
+                        <div className="text-muted">{new Date(row.createdAt).toLocaleString()}</div>
                         {row.errorMessage ? (
                           <p className="mt-1 break-words text-red-600">{row.errorMessage}</p>
                         ) : null}
@@ -519,10 +519,10 @@ function HealthStat({
 }) {
   const color = tone === 'ok' ? 'text-emerald-600' : tone === 'warn' ? 'text-amber-600' : 'text-red-600'
   return (
-    <div className="rounded-xl border border-black/[0.06] bg-white p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
+    <div className="rounded-xl border border-white/[0.06] bg-card/85 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">{label}</p>
       <p className={`mt-1 text-sm font-bold ${color}`}>{value}</p>
-      {hint ? <p className="mt-1 truncate text-[10px] text-slate-400" title={hint}>{hint}</p> : null}
+      {hint ? <p className="mt-1 truncate text-[10px] text-muted" title={hint}>{hint}</p> : null}
     </div>
   )
 }

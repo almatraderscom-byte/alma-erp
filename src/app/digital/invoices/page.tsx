@@ -149,7 +149,7 @@ export default function DigitalInvoicesPage() {
                   <span className="font-mono text-[11px] text-gold font-bold w-24">{inv.id}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-cream">{inv.client_name}</p>
-                    <p className="text-[10px] text-zinc-500">{inv.invoice_type} · Due {inv.due_date || '—'}</p>
+                    <p className="text-[10px] text-muted">{inv.invoice_type} · Due {inv.due_date || '—'}</p>
                   </div>
                   <PaymentStatusBadge status={inv.payment_status} />
                   <span className="text-sm font-bold text-cream"><Money amount={inv.amount} /></span>

@@ -32,7 +32,7 @@ const STATUS_STYLE: Record<string, string> = {
   APPROVED: 'text-green-300 border-green-500/30 bg-green-500/10',
   FULLY_APPROVED: 'text-green-300 border-green-500/30 bg-green-500/10',
   REJECTED: 'text-red-300 border-red-500/30 bg-red-500/10',
-  CANCELLED: 'text-zinc-400 border-border bg-black/[0.03]',
+  CANCELLED: 'text-muted border-border bg-white/[0.03]',
 }
 
 export function PenaltyAppealStatus({
@@ -55,7 +55,7 @@ export function PenaltyAppealStatus({
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-red-300">Late penalty</p>
           <p className="mt-1 text-lg font-bold text-cream">{money(penaltyAmount)}</p>
-          <p className="text-[11px] text-zinc-500">Late by {lateMinutes} minutes · deducted from wallet</p>
+          <p className="text-[11px] text-muted">Late by {lateMinutes} minutes · deducted from wallet</p>
         </div>
         {canRequest && (
           <Button variant="gold" size="sm" className="min-h-[44px] touch-manipulation shrink-0" onClick={onRequestReview}>
@@ -81,7 +81,7 @@ export function PenaltyAppealStatus({
           {active.status === 'REJECTED' && (
             <p className="mt-1 opacity-90">Request rejected — full penalty remains.</p>
           )}
-          {active.adminNote && <p className="mt-1 text-zinc-400">Admin: {active.adminNote}</p>}
+          {active.adminNote && <p className="mt-1 text-muted">Admin: {active.adminNote}</p>}
           {active.status === 'PENDING' && onCancelPending && (
             <Button
               size="xs"

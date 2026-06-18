@@ -80,7 +80,7 @@ export default function DigitalProjectsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-bold text-cream">{p.project_name || p.title}</p>
-                    <p className="text-[11px] text-zinc-500">{p.client_name} · {p.service_type}</p>
+                    <p className="text-[11px] text-muted">{p.client_name} · {p.service_type}</p>
                     {p.client_id && (
                       <Link href={`/digital/clients/${p.client_id}`} className="text-[10px] text-gold hover:underline">
                         View client →
@@ -90,7 +90,7 @@ export default function DigitalProjectsPage() {
                   <PaymentStatusBadge status={p.payment_status} />
                 </div>
                 <PaymentProgressBar percentage={p.payment_percentage} status={p.payment_status} />
-                <div className="flex gap-4 text-[10px] text-zinc-500">
+                <div className="flex gap-4 text-[10px] text-muted">
                   <span>Value <Money amount={p.total_amount} /></span>
                   <span className="text-emerald-400">Paid <Money amount={p.total_paid} /></span>
                   <span className="text-amber-400">Due <Money amount={p.due_amount} /></span>

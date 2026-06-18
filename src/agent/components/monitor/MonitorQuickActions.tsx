@@ -39,10 +39,10 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
 
   return (
     <motion.div variants={fadeIn} initial="hidden" animate="show">
-      <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm">
-        <div className="flex items-center gap-2 rounded-t-2xl border-b border-black/[0.06] px-4 py-2.5">
+      <div className="rounded-2xl border border-border-subtle bg-card/80 shadow-sm">
+        <div className="flex items-center gap-2 rounded-t-2xl border-b border-border-subtle px-4 py-2.5">
           <span className="text-sm">⚡</span>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]">Quick Actions</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Quick Actions</h3>
         </div>
         <div className="p-3">
           <div className="flex flex-wrap gap-2">
@@ -53,7 +53,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
               className={cn(
                 'inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-[11px] font-bold transition-all',
                 deploying
-                  ? 'border-black/[0.06] text-[#94a3b8] cursor-wait'
+                  ? 'border-border-subtle text-muted cursor-wait'
                   : 'border-[#81B29A]/30 bg-[#81B29A]/[0.08] text-[#81B29A] hover:bg-[#81B29A]/15 hover:shadow-sm',
               )}
             >
@@ -82,13 +82,13 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
                 )}
               </button>
               {retriggerOpen && (
-                <div className="absolute top-full left-0 z-30 mt-1 w-64 rounded-xl border border-black/[0.08] bg-white p-2 shadow-xl">
+                <div className="absolute top-full left-0 z-30 mt-1 w-64 rounded-xl border border-border bg-card/80 p-2 shadow-xl">
                   <input
                     type="text"
                     placeholder="Search duty…"
                     value={retriggerSearch}
                     onChange={e => setRetriggerSearch(e.target.value)}
-                    className="mb-2 w-full rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-2.5 py-2 text-[13px] text-[#1a1a2e] outline-none placeholder:text-[#94a3b8]"
+                    className="mb-2 w-full rounded-lg border border-border-subtle bg-transparent px-2.5 py-2 text-[13px] text-cream outline-none placeholder:text-muted"
                   />
                   <div className="max-h-48 overflow-y-auto space-y-0.5">
                     {filteredDuties.map(key => (
@@ -97,7 +97,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
                         type="button"
                         disabled={retriggering}
                         onClick={() => { onRetrigger(key); setRetriggerOpen(false); setRetriggerSearch('') }}
-                        className="w-full rounded-lg px-2.5 py-1.5 text-left text-[10px] text-[#64748b] transition-all hover:bg-[#FAF9F6] hover:text-[#1a1a2e]"
+                        className="w-full rounded-lg px-2.5 py-1.5 text-left text-[10px] text-muted transition-all hover:bg-white/[0.04] hover:text-cream"
                       >
                         {key.replace(/_/g, ' ')}
                       </button>
@@ -125,7 +125,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
           </div>
 
           {lastDeploy && (
-            <p className="mt-2 text-[9px] text-[#94a3b8]">Last deploy: {fmtTime(lastDeploy)}</p>
+            <p className="mt-2 text-[9px] text-muted">Last deploy: {fmtTime(lastDeploy)}</p>
           )}
         </div>
       </div>

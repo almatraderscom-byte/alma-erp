@@ -15,8 +15,8 @@ export function AlertsActionButton({ className }: { className?: string }) {
       onClick={openPanel}
       data-platform-alerts="true"
       className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200',
-        'bg-white px-3 py-2 text-xs font-bold text-[#1a1a2e]',
+        'inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-border',
+        'bg-card/85 px-3 py-2 text-xs font-bold text-cream',
         'shadow-sm transition-colors hover:border-[#E07A5F]/30 hover:bg-[#E07A5F]/[0.05]',
         'max-w-full',
         className,

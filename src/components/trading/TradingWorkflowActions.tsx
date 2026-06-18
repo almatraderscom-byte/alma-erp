@@ -15,7 +15,7 @@ const ACTIONS: Array<{
   { id: 'trade', label: 'Add Trade', short: 'Trade', icon: '＋', tone: 'border-gold/25 bg-gold/8 text-gold' },
   { id: 'screenshot', label: 'Upload Screenshot', short: 'Screenshot', icon: '▣', tone: 'border-blue-200 bg-blue-50 text-blue-600' },
   { id: 'summary', label: 'Daily Summary', short: 'Summary', icon: '◫', tone: 'border-green-200 bg-green-50 text-green-600' },
-  { id: 'accounts', label: 'Accounts', short: 'Accounts', icon: '◧', tone: 'border-black/[0.06] bg-white text-slate-700' },
+  { id: 'accounts', label: 'Accounts', short: 'Accounts', icon: '◧', tone: 'border-white/[0.06] bg-card/85 text-cream' },
 ]
 
 export function TradingQuickActions({
@@ -34,7 +34,7 @@ export function TradingQuickActions({
           <>
             <span className="text-xl leading-none" aria-hidden>{action.icon}</span>
             <span className="mt-2 block text-sm font-bold leading-tight">{action.label}</span>
-            <span className="mt-0.5 hidden text-[10px] font-medium text-slate-400 sm:block">One tap · daily ops</span>
+            <span className="mt-0.5 hidden text-[10px] font-medium text-muted sm:block">One tap · daily ops</span>
           </>
         )
         const cls = cn(
@@ -68,7 +68,7 @@ export function TradingStickyBar({
   highlightScreenshot?: boolean
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[51] border-t border-black/[0.06] bg-[#FAF9F6]/95 px-2 py-2 backdrop-blur-md md:hidden md:bottom-0 md:pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[51] border-t border-white/[0.06] bg-transparent px-2 py-2 backdrop-blur-md md:hidden md:bottom-0 md:pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
         {ACTIONS.map(action => {
           if (action.id === 'accounts') {
@@ -76,7 +76,7 @@ export function TradingStickyBar({
               <Link
                 key={action.id}
                 href="/trading/accounts"
-                className="flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold text-slate-500 active:bg-slate-100"
+                className="flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold text-muted active:bg-white/[0.06]"
               >
                 <span className="text-base">{action.icon}</span>
                 {action.short}
@@ -89,8 +89,8 @@ export function TradingStickyBar({
               type="button"
               onClick={() => onAction(action.id)}
               className={cn(
-                'flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold active:bg-slate-100',
-                action.id === 'trade' ? 'text-gold' : action.id === 'screenshot' && highlightScreenshot ? 'text-gold trading-upload-emphasis' : 'text-slate-500',
+                'flex min-h-[52px] flex-col items-center justify-center rounded-xl text-[10px] font-bold active:bg-white/[0.06]',
+                action.id === 'trade' ? 'text-gold' : action.id === 'screenshot' && highlightScreenshot ? 'text-gold trading-upload-emphasis' : 'text-muted',
               )}
             >
               <span className="text-base">{action.icon}</span>

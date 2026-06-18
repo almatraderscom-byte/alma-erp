@@ -254,7 +254,7 @@ export default function BusinessArchiveControlPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6]">
+    <div className="min-h-screen bg-transparent">
       <PageHeader
         title="Business Archive Control"
         subtitle="Soft archive only — data stays in the database. Hide from active workspace; restore anytime."
@@ -293,7 +293,7 @@ export default function BusinessArchiveControlPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
+          <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">Step 1 · Business</p>
             <Select
               value={business.id}
@@ -311,15 +311,15 @@ export default function BusinessArchiveControlPage() {
         ) : (
           <>
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
+              <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-3 shadow-sm">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
                   Active vs archived stats
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {stats.map(s => (
-                    <div key={s.moduleKey} className="rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-[11px]">
-                      <p className="font-bold text-slate-800">{s.label}</p>
-                      <p className="mt-1 text-slate-500">
+                    <div key={s.moduleKey} className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-[11px]">
+                      <p className="font-bold text-cream">{s.label}</p>
+                      <p className="mt-1 text-muted">
                         Active <span className="font-semibold text-emerald-600">{s.activeCount}</span> · Archived{' '}
                         <span className="font-semibold text-amber-600">{s.archivedCount}</span>
                       </p>
@@ -330,7 +330,7 @@ export default function BusinessArchiveControlPage() {
             </motion.div>
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-4 shadow-sm">
+              <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
                   Step 2–3 · Select modules
                 </p>
@@ -343,10 +343,10 @@ export default function BusinessArchiveControlPage() {
                         key={m.key}
                         className={`flex gap-3 rounded-xl border px-4 py-3 text-xs transition ${
                           unavailable
-                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70'
+                            ? 'cursor-not-allowed border-border bg-white/[0.04] opacity-70'
                             : selected.includes(m.key)
                               ? 'cursor-pointer border-[#E07A5F]/40 bg-[#E07A5F]/5'
-                              : 'cursor-pointer border-black/[0.06] bg-white hover:border-slate-300 hover:bg-slate-50'
+                              : 'cursor-pointer border-white/[0.06] bg-card/85 hover:border-border hover:bg-white/[0.04]'
                         }`}
                       >
                         <input
@@ -357,9 +357,9 @@ export default function BusinessArchiveControlPage() {
                           className="mt-0.5 accent-[#E07A5F]"
                         />
                         <span>
-                          <span className="font-bold text-slate-800">{m.label}</span>
-                          <span className="mt-0.5 block text-slate-500">{m.description}</span>
-                          <span className="text-[10px] text-slate-400">{m.storage}</span>
+                          <span className="font-bold text-cream">{m.label}</span>
+                          <span className="mt-0.5 block text-muted">{m.description}</span>
+                          <span className="text-[10px] text-muted">{m.storage}</span>
                           {stat?.warning && (
                             <span className="mt-1 block text-[10px] text-amber-600">{stat.warning}</span>
                           )}
@@ -385,9 +385,9 @@ export default function BusinessArchiveControlPage() {
                   <ul className="space-y-2 text-[11px]">
                     {preview.map(p => (
                       <li key={p.moduleKey} className="flex justify-between gap-4 border-b border-amber-200/50 py-2">
-                        <span className="text-slate-800">
+                        <span className="text-cream">
                           {p.label}{' '}
-                          <span className="text-slate-400">({p.storage})</span>
+                          <span className="text-muted">({p.storage})</span>
                         </span>
                         <span className="font-mono font-bold text-amber-700">{p.count}</span>
                       </li>
@@ -420,23 +420,23 @@ export default function BusinessArchiveControlPage() {
             )}
 
             <motion.div variants={fadeUp}>
-              <Card className="rounded-2xl border border-black/[0.06] p-5 space-y-3 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-800">Archive history</h3>
+              <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-3 shadow-sm">
+                <h3 className="text-sm font-bold text-cream">Archive history</h3>
                 {!batches.length ? (
-                  <p className="text-xs text-slate-500">No archive batches yet.</p>
+                  <p className="text-xs text-muted">No archive batches yet.</p>
                 ) : (
                   <ul className="space-y-2">
                     {batches.map(b => (
                       <li
                         key={b.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-[11px]"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-[11px]"
                       >
                         <span>
-                          <span className="font-bold text-slate-800">{b.name}</span>
-                          <span className="mt-0.5 block text-slate-500">
+                          <span className="font-bold text-cream">{b.name}</span>
+                          <span className="mt-0.5 block text-muted">
                             {b.moduleKeys.join(', ')} · {b.recordCount} records · {b.status}
                           </span>
-                          <span className="text-slate-400">{new Date(b.createdAt).toLocaleString()}</span>
+                          <span className="text-muted">{new Date(b.createdAt).toLocaleString()}</span>
                         </span>
                         {b.status === 'COMPLETED' && (
                           <Button
