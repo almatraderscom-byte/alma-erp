@@ -483,7 +483,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               ) : (
                 /* Assistant message — full-width, dark text on light bg */
                 <div className="min-w-0">
-                  {msg.thinking && (
+                  {msg.thinking && msg.streaming && (
                     <ThoughtBlock
                       thinking={msg.thinking}
                       thinkingMs={msg.thinkingMs}

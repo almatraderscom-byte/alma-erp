@@ -208,18 +208,8 @@ async function* runAlternateProviderTurn(
   let memoryNudgeSent = false
   let finalText = ''
 
-  let approvalReminderPrefix = ''
-  if (!personalMode && lastUserText) {
-    try {
-      const { buildPendingApprovalReminderPrefix } = await import('@/agent/lib/pending-approval-reminder')
-      approvalReminderPrefix = await buildPendingApprovalReminderPrefix()
-      if (approvalReminderPrefix) {
-        yield { type: 'text_delta', delta: approvalReminderPrefix }
-      }
-    } catch (err) {
-      console.warn('[run-owner-turn] pending approval reminder failed:', err instanceof Error ? err.message : err)
-    }
-  }
+  // Pending-approval reminder prefix removed at owner request (cluttered replies).
+  const approvalReminderPrefix = ''
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {

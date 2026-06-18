@@ -437,18 +437,10 @@ export async function* runAgentTurn(
   let memoryNudgeSent = false
   let verifyRetries = 0
 
-  let approvalReminderPrefix = ''
-  if (!personalMode && lastUserText) {
-    try {
-      const { buildPendingApprovalReminderPrefix } = await import('@/agent/lib/pending-approval-reminder')
-      approvalReminderPrefix = await buildPendingApprovalReminderPrefix()
-      if (approvalReminderPrefix) {
-        yield { type: 'text_delta', delta: approvalReminderPrefix }
-      }
-    } catch (err) {
-      console.warn('[core] pending approval reminder failed:', err instanceof Error ? err.message : err)
-    }
-  }
+  // Pending-approval reminder used to be prepended to every reply — removed at
+  // owner request (it cluttered each answer with tomorrow's-task / approval
+  // lines). Pending items remain visible in the Control Center / confirm cards.
+  const approvalReminderPrefix = ''
 
   if (intakeAutoReply) {
     const replyText = approvalReminderPrefix + intakeAutoReply

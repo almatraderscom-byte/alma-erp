@@ -565,7 +565,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   ...m,
                   id: evt.messageId as string,
                   streaming: false,
-                  askCard: undefined,
                   tokensIn: evt.tokensIn as number,
                   tokensOut: evt.tokensOut as number,
                   costUsd: evt.costUsd as number,
