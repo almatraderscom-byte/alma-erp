@@ -3,10 +3,10 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
-import type { AgentControls } from '@/agent/lib/agent-controls'
+import type { AgentControls, AutonomyMode } from '@/agent/lib/agent-controls'
 
 /** Owner Control Center — the master switches for the whole agent.
- *  Phase 1 ships the master Pause (fully wired). More switches land next. */
+ *  Pause + autonomy + capability on/off, each wired to real agent behavior. */
 export default function AgentControlCenter() {
   const [controls, setControls] = useState<AgentControls | null>(null)
   const [loading, setLoading] = useState(true)
@@ -20,23 +20,22 @@ export default function AgentControlCenter() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function setPaused(paused: boolean) {
-    if (saving) return
+  async function patch(partial: Partial<AgentControls>, okMsg?: string) {
+    if (saving || !controls) return
     setSaving(true)
     const prev = controls
-    setControls((c) => (c ? { ...c, paused } : c)) // optimistic
+    setControls({ ...controls, ...partial, capabilities: { ...controls.capabilities, ...(partial.capabilities ?? {}) } })
     try {
       const res = await fetch('/api/assistant/controls', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paused }),
+        body: JSON.stringify(partial),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const next = (await res.json()) as AgentControls
-      setControls(next)
-      toast.success(paused ? 'Agent pause করা হয়েছে 🛑' : 'Agent আবার চালু ✅')
+      setControls((await res.json()) as AgentControls)
+      if (okMsg) toast.success(okMsg)
     } catch (err) {
-      setControls(prev) // rollback
+      setControls(prev)
       toast.error(`পরিবর্তন ব্যর্থ: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(false)
@@ -44,6 +43,8 @@ export default function AgentControlCenter() {
   }
 
   const paused = controls?.paused === true
+  const autonomy = controls?.autonomy ?? 'ask'
+  const caps = controls?.capabilities
 
   return (
     <div className="safe-x mx-auto w-full max-w-5xl px-4 pt-4 md:px-6">
@@ -57,7 +58,7 @@ export default function AgentControlCenter() {
           </span>
         </div>
         <p className="px-4 pb-3 pt-1 text-[12px] leading-relaxed text-[#64748b]">
-          এখান থেকে পুরো Agent নিয়ন্ত্রণ করুন। আরও সুইচ (অটোনমি, খরচ, পোস্টিং, ভয়েস) শীঘ্রই যোগ হবে।
+          এখান থেকে পুরো Agent নিয়ন্ত্রণ করুন — থামানো, অটোনমি, এবং কোন কাজ চালু/বন্ধ থাকবে।
         </p>
 
         {/* Master Pause */}
@@ -80,8 +81,57 @@ export default function AgentControlCenter() {
           <Toggle
             on={!paused}
             disabled={loading || saving}
-            onChange={(on) => void setPaused(!on)}
+            onChange={(on) => void patch({ paused: !on }, on ? 'Agent আবার চালু ✅' : 'Agent pause করা হয়েছে 🛑')}
             label={paused ? 'Agent চালু করুন' : 'Agent বন্ধ করুন'}
+          />
+        </div>
+
+        {/* Autonomy */}
+        <div className="border-t border-black/[0.06] px-4 py-3.5">
+          <p className="text-[14px] font-semibold text-[#1a1a2e]">অটোনমি — নিজে কতটা কাজ করবে</p>
+          <p className="mt-0.5 mb-2.5 text-[12px] leading-snug text-[#64748b]">
+            টাকা খরচ ও পাবলিক পোস্ট সবসময় আগে অনুমতি নেবে — যেকোনো মোডেই।
+          </p>
+          <div className="flex gap-1 rounded-full border border-black/[0.08] bg-black/[0.02] p-1">
+            {AUTONOMY_OPTIONS.map((opt) => {
+              const active = autonomy === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={loading || saving}
+                  onClick={() => void patch({ autonomy: opt.value }, `অটোনমি: ${opt.label}`)}
+                  className={`flex-1 rounded-full px-2 py-1.5 text-[12px] font-semibold transition-all disabled:opacity-50 ${
+                    active ? 'bg-[#E07A5F] text-white shadow-sm' : 'text-[#64748b] hover:bg-black/[0.04]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Capability switches */}
+        <div className="border-t border-black/[0.06] px-4 pb-4 pt-3.5">
+          <p className="mb-1 text-[14px] font-semibold text-[#1a1a2e]">ফিচার চালু/বন্ধ</p>
+          <p className="mb-2.5 text-[12px] leading-snug text-[#64748b]">
+            বন্ধ করলে Agent ঐ কাজ করবে না — চাইলে আপনাকে চালু করতে বলবে (টোকেন নষ্ট করবে না)।
+          </p>
+          <CapabilityRow
+            icon="🔎" label="ওয়েব রিসার্চ" hint="Oxylabs পেইড রিসার্চ"
+            on={caps?.webResearch !== false} disabled={loading || saving}
+            onChange={(on) => void patch({ capabilities: { webResearch: on } as AgentControls['capabilities'] }, on ? 'ওয়েব রিসার্চ চালু' : 'ওয়েব রিসার্চ বন্ধ')}
+          />
+          <CapabilityRow
+            icon="📣" label="সোশ্যাল/ফেসবুক পোস্ট ও অ্যাড" hint="পোস্ট ও ক্যাম্পেইন"
+            on={caps?.socialPosting !== false} disabled={loading || saving}
+            onChange={(on) => void patch({ capabilities: { socialPosting: on } as AgentControls['capabilities'] }, on ? 'সোশ্যাল পোস্ট চালু' : 'সোশ্যাল পোস্ট বন্ধ')}
+          />
+          <CapabilityRow
+            icon="🎨" label="ছবি ও ভিডিও জেনারেশন" hint="Nano Banana / VEO"
+            on={caps?.imageVideoGen !== false} disabled={loading || saving}
+            onChange={(on) => void patch({ capabilities: { imageVideoGen: on } as AgentControls['capabilities'] }, on ? 'ছবি/ভিডিও চালু' : 'ছবি/ভিডিও বন্ধ')}
           />
         </div>
       </div>
@@ -89,11 +139,37 @@ export default function AgentControlCenter() {
   )
 }
 
+const AUTONOMY_OPTIONS: Array<{ value: AutonomyMode; label: string }> = [
+  { value: 'ask', label: 'আগে জিজ্ঞেস' },
+  { value: 'notify', label: 'করে জানাও' },
+  { value: 'auto', label: 'স্বয়ংক্রিয়' },
+]
+
+function CapabilityRow({
+  icon, label, hint, on, disabled, onChange,
+}: {
+  icon: string
+  label: string
+  hint: string
+  on: boolean
+  disabled?: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="min-w-0">
+        <p className="flex items-center gap-1.5 text-[13px] font-medium text-[#1a1a2e]">
+          <span>{icon}</span>{label}
+        </p>
+        <p className="mt-0.5 truncate text-[11px] text-[#94a3b8]">{hint}</p>
+      </div>
+      <Toggle on={on} disabled={disabled} onChange={onChange} label={label} />
+    </div>
+  )
+}
+
 function Toggle({
-  on,
-  disabled,
-  onChange,
-  label,
+  on, disabled, onChange, label,
 }: {
   on: boolean
   disabled?: boolean

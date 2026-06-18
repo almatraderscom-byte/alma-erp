@@ -14,6 +14,7 @@ import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-tim
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
+import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -496,6 +497,13 @@ export async function* runAgentTurn(
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   const systemBlocks = [...stableSystem, ...volatileSystem]
 
+  // Owner Control Center: drop OFF-capability tools and tell the agent (in the
+  // prompt) to ask the owner to enable instead of improvising. Fail-open.
+  const agentControls = await getAgentControls()
+  const gatedTools = filterToolDefsByControls(selectedTools, agentControls)
+  const controlsNote = controlsPromptNote(agentControls)
+  if (controlsNote) systemBlocks.push({ type: 'text', text: controlsNote })
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -508,7 +516,7 @@ export async function* runAgentTurn(
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
           system: systemBlocks,
-          tools: selectedTools,
+          tools: gatedTools,
           messages: apiMessages,
         },
         { signal: signal ?? undefined },

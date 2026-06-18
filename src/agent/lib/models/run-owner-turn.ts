@@ -17,6 +17,7 @@ import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-tim
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsForTurnAsync } from '@/agent/tools/select-tools'
+import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -185,8 +186,15 @@ async function* runAlternateProviderTurn(
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
-  const systemText = systemBlocksToText([...stable, ...volatile])
-  const selectedTools = await selectToolsForTurnAsync(lastUserText, { personalMode, businessId })
+  // Owner Control Center: gate OFF-capability tools + add the "ask owner to
+  // enable, don't improvise" note and autonomy preference. Fail-open.
+  const agentControls = await getAgentControls()
+  const controlsNote = controlsPromptNote(agentControls)
+  const systemText = systemBlocksToText([...stable, ...volatile]) + (controlsNote ? `\n\n${controlsNote}` : '')
+  const selectedTools = filterToolDefsByControls(
+    await selectToolsForTurnAsync(lastUserText, { personalMode, businessId }),
+    agentControls,
+  )
   const neutralTools = anthropicToolsToNeutral(selectedTools)
   const adapter = adapterFor(model.provider)
 
