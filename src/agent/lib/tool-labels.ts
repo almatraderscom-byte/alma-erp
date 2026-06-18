@@ -30,6 +30,57 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
 }
 
+/**
+ * For tools not in the explicit map, derive a readable label from the tool name
+ * itself (e.g. `get_warehouse_stock` → "warehouse stock দেখছি") so the owner
+ * sees WHAT is being checked — never a bare generic "চেক করছি".
+ */
+function humanizeToolName(name: string): string {
+  const cleaned = name
+    .replace(/^(get|fetch|list|load|read|check|scan|search|find|analyze|analyse|review|prepare|propose|generate|create|update|build|run)_/i, '')
+    .replace(/_/g, ' ')
+    .trim()
+  if (!cleaned) return 'চেক করছি'
+  return `${cleaned} দেখছি`
+}
+
 export function toolDisplay(name: string) {
-  return TOOL_LABELS[name] ?? { label: 'চেক করছি', icon: '🔧', color: '#71717a' }
+  const mapped = TOOL_LABELS[name]
+  if (mapped) return mapped
+  return { label: humanizeToolName(name), icon: '🔧', color: '#71717a' }
+}
+
+function truncate(s: string, max = 28): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s
+}
+
+/**
+ * A short, safe "target" pulled from a tool's input so chips read like Claude —
+ * e.g. searching "winter jackets", order #1234. Returns null when there's
+ * nothing meaningful/short to show. Never dumps the full input.
+ */
+export function toolDetail(name: string, input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const obj = input as Record<string, unknown>
+  const preferred = [
+    'query', 'q', 'search', 'keyword', 'name', 'title', 'productName', 'product',
+    'orderId', 'orderNumber', 'invoiceId', 'sku', 'phone', 'customer', 'customerName',
+    'category', 'segment', 'month', 'date', 'period', 'status', 'role', 'task', 'id',
+  ]
+  const fmt = (k: string, v: string | number) => {
+    const s = String(v).trim()
+    if (!s) return null
+    if (/order|invoice/i.test(k) || k === 'id') return `#${truncate(s, 16)}`
+    return truncate(s)
+  }
+  for (const k of preferred) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim()) return fmt(k, v)
+    if (typeof v === 'number') return fmt(k, v)
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && v.trim()) return fmt(k, v)
+    if (typeof v === 'number') return fmt(k, v)
+  }
+  return null
 }

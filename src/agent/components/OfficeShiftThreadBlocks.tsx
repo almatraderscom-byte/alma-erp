@@ -186,11 +186,9 @@ export function OfficeShiftThreadRenderer({
 
   return (
     <div className="space-y-4">
-      {preamble.map((msg) => (
-        <div key={msg.id}>
-          {msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)}
-        </div>
-      ))}
+      {/* Duty task cards (collapses) pinned ABOVE the conversation, so the
+          owner's chat stays at the bottom (newest) instead of being pushed
+          down by completed-work cards. */}
       {blocks.map((block) => (
         <OfficeTaskBlockCard
           key={block.id}
@@ -200,6 +198,11 @@ export function OfficeShiftThreadRenderer({
             msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)
           }
         />
+      ))}
+      {preamble.map((msg) => (
+        <div key={msg.id}>
+          {msg.role === 'user' ? renderUserMessage(msg) : renderAssistant(msg)}
+        </div>
       ))}
     </div>
   )

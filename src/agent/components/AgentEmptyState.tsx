@@ -77,7 +77,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
               type="button"
               variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
               onClick={() => onSuggestion(s.text)}
-              className="flex items-start gap-2 rounded-2xl border border-black/[0.06] bg-white/80 px-3 py-2.5 text-left text-[12px] font-medium text-[#1a1a2e]/80 shadow-sm transition-all hover:border-[#E07A5F]/25 hover:bg-white active:scale-[0.98]"
+              className="alma-frost flex items-start gap-2.5 rounded-[18px] px-4 py-3 text-left text-[13px] font-medium text-[#1a1a2e]/85 transition-all hover:border-[#E07A5F]/30 hover:text-[#1a1a2e] active:scale-[0.98]"
             >
               <span className="text-base leading-none">{s.icon}</span>
               <span className="leading-snug">{s.text}</span>
