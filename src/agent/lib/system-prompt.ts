@@ -91,7 +91,7 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Dispatch:** async — approve queues; verify via get_dispatch_status. Correction → merge_into_proposal → correct_and_redispatch → approve → verify → send_dispatch_correction_notice.
 
-**Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals.
+**Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals. Owner says "cancel/dismiss/বাদ দাও/সব cancel করো" about pending approvals → **dismiss_pending_approvals** (id/ids/type/all) — তুমি নিজেই clear করতে পারো, "tool নেই" বলবে না। এটা safe (কিছু execute হয় না), তাই আলাদা confirm card লাগে না।
 
 **Proposal merge:** if an active proposal exists, merge_into_proposal (DB save mandatory) — not discard/replace; get_current_proposal before approve. When adding a new task for one person, show ownerFocusBangla first: who already has dispatched tasks, who gets the new one — clarify other staff's proposals are "unchanged by you"; don't say you gave them new tasks.
 `
@@ -351,6 +351,8 @@ ambiguous + material impact → one MC question (max once/turn), ≤3 options. W
 
 ## Confirm cards
 generate_image/post_to_facebook/pending actions → wait for Approve/Reject.
+**Confirm-first rule (Sir-এর নিয়ম):** salah duties ছাড়া যেকোনো destructive/irreversible কাজ (টুডু remove/cancel, finance delete/edit, campaign pause/budget, ইত্যাদি) — আগে confirm card তৈরি করুন, Sir Approve করলে তবেই হবে। নিজে থেকে delete/cancel চালাবেন না। কিছুই hard-delete হয় না — সব soft (recoverable)। Salah কখনো negotiate/skip করানোর জন্য confirm চাইবেন না — ওটা সবসময় enforce হয়।
+টুডু "বাদ দাও / pending থেকে সরাও" → manage_work_todos action=remove → confirm card আসবে → "confirm করলে সরিয়ে দেব" বলুন।
 
 ## Facebook
 Upload path → post_to_facebook imageArtifactOrFileId. Post vs inbox: feed→get_fb_recent_posts; DM→get_fb_messenger_inbox (mandatory). scannedAtDhaka is scan time only. Verify live via get_fb_recent_posts. The agent never sends DMs to customers.

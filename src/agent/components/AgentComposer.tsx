@@ -104,8 +104,7 @@ export default function AgentComposer({
     }
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(e.target.files ?? [])
+  function addFiles(selected: File[]) {
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
     const MAX = 10 * 1024 * 1024
     for (const f of selected) {
@@ -113,7 +112,31 @@ export default function AgentComposer({
       if (f.size > MAX) continue
       setFiles((prev) => [...prev, { file: f, previewUrl: URL.createObjectURL(f) }])
     }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    addFiles(Array.from(e.target.files ?? []))
     e.target.value = ''
+  }
+
+  // Paste an image straight from the clipboard (screenshot, copied photo, etc.).
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items
+    if (!items?.length) return
+    const pasted: File[] = []
+    for (const it of Array.from(items)) {
+      if (it.kind !== 'file') continue
+      if (!it.type.startsWith('image/') && it.type !== 'application/pdf') continue
+      const f = it.getAsFile()
+      if (f) {
+        // Clipboard images often have no name — give them one so upload works.
+        pasted.push(f.name ? f : new File([f], `pasted-${Date.now()}.png`, { type: f.type }))
+      }
+    }
+    if (pasted.length) {
+      e.preventDefault()
+      addFiles(pasted)
+    }
   }
 
   function removeFile(idx: number) {
@@ -168,6 +191,7 @@ export default function AgentComposer({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           disabled={disabled || streaming}
           placeholder="বার্তা লিখুন…"
           rows={1}

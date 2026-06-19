@@ -1040,5 +1040,29 @@ export async function POST(
     })
   }
 
+  if (action.type === 'todo_cancel') {
+    const { todoId, title } = payload as { todoId: string; title?: string }
+    const existing = await db.agentTodo.findUnique({ where: { id: String(todoId) } })
+    if (!existing) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'todo_not_found' } },
+      })
+      return Response.json({ success: true, message: 'টুডু আগেই নেই — কিছু করার দরকার ছিল না।' })
+    }
+    // Soft-cancel — never hard-delete (recoverable).
+    await db.agentTodo.update({ where: { id: String(todoId) }, data: { status: 'cancelled' } })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { todoId, cancelled: true } },
+    })
+    await appendConversationNote(
+      db,
+      action,
+      `🗑️ "${title ?? existing.title}" তালিকা থেকে সরানো হয়েছে (soft — রেকর্ডে আছে, ফেরানো যাবে)।`,
+    )
+    return Response.json({ success: true, todoId, cancelled: true, message: 'টুডু তালিকা থেকে সরানো হয়েছে।' })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }

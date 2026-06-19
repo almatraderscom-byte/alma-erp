@@ -176,17 +176,38 @@ describe('manage_work_todos', () => {
     expect(result.error).toContain('title')
   })
 
-  it('complete: owner task gets deleted', async () => {
+  it('complete: owner task is soft-completed (update, not delete)', async () => {
     const handler = await loadHandler('manage_work_todos')
     mockPrisma.agentTodo.findUnique.mockResolvedValue({
       id: 't1', title: 'owner task', source: 'owner',
     })
-    mockPrisma.agentTodo.delete.mockResolvedValue({})
+    mockPrisma.agentTodo.update.mockResolvedValue({
+      id: 't1', title: 'owner task', status: 'completed',
+    })
 
     const result = await handler({ action: 'complete', id: 't1' })
     expect(result.success).toBe(true)
     expect((result.data as Record<string, unknown>).removed).toBe(true)
-    expect(mockPrisma.agentTodo.delete).toHaveBeenCalledWith({ where: { id: 't1' } })
+    expect(mockPrisma.agentTodo.delete).not.toHaveBeenCalled()
+    const updateData = mockPrisma.agentTodo.update.mock.calls[0][0].data
+    expect(updateData.status).toBe('completed')
+  })
+
+  it('remove: creates a confirm card (todo_cancel pending action), no hard delete', async () => {
+    const handler = await loadHandler('manage_work_todos')
+    mockPrisma.agentTodo.findUnique.mockResolvedValue({
+      id: 't9', title: 'stale task', source: 'owner', status: 'pending',
+    })
+    mockPrisma.agentPendingAction.create.mockResolvedValue({ id: 'pa-todo-1' })
+
+    const result = await handler({ action: 'remove', id: 't9' })
+    expect(result.success).toBe(true)
+    expect((result.data as Record<string, unknown>).pendingActionId).toBe('pa-todo-1')
+    expect((result.data as Record<string, unknown>).actionType).toBe('todo_cancel')
+    expect(mockPrisma.agentTodo.delete).not.toHaveBeenCalled()
+    const createData = mockPrisma.agentPendingAction.create.mock.calls[0][0].data
+    expect(createData.type).toBe('todo_cancel')
+    expect(createData.payload.todoId).toBe('t9')
   })
 
   it('complete: agent/day_shift task gets status update not delete', async () => {
