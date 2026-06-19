@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { Viewport } from 'next'
 import { AgentBottomNav } from '@/agent/components/AgentBottomNav'
 import { AgentKeyboardManager } from '@/agent/components/AgentKeyboardManager'
+import { AgentOverflowProbe } from '@/agent/components/AgentOverflowProbe'
 import { AgentTodoProvider } from '@/agent/components/AgentTodoContext'
 import '@/agent/styles/agent-ambient.css'
 
@@ -36,6 +37,7 @@ export default function AgentLayout({ children }: { children: ReactNode }) {
   return (
     <AgentTodoProvider>
       <AgentKeyboardManager />
+      <AgentOverflowProbe />
       <div className="agent-shell relative min-h-[100dvh] text-cream">
         {/* Transparent shell: the root aurora (z-index:-1) glows through. */}
 
