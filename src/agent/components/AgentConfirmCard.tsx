@@ -15,7 +15,15 @@ export interface PendingAction {
   isBatch?: boolean
 }
 
-type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing'
+type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled'
+
+// Server guard responses that are NOT real failures — the card was already
+// handled, timed out, or is gone. Show a calm note, not a red error toast.
+const TERMINAL_NOTES: Record<string, string> = {
+  already_resolved: 'এই কার্ডটি আগেই প্রসেস হয়ে গেছে ✓',
+  expired: 'সময় শেষ — কার্ডটি আর সক্রিয় নেই (৩০ মিনিটের সীমা)।',
+  not_found: 'কার্ডটি আর পাওয়া যাচ্ছে না — সম্ভবত আগেই প্রসেস হয়েছে।',
+}
 
 interface AgentConfirmCardProps {
   action: PendingAction
@@ -40,6 +48,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   const [editField, setEditField] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [editFields, setEditFields] = useState<string[]>([])
+  const [terminalNote, setTerminalNote] = useState('')
 
   useEffect(() => {
     if (!action.isFinance) return
@@ -57,7 +66,16 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       const res = await fetch(`/api/assistant/actions/${action.id}/${decision}`, { method: 'POST' })
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
-        throw new Error(err.error ?? `HTTP ${res.status}`)
+        const code = err.error ?? ''
+        // Already-handled / expired / gone → not a crash. Settle quietly so the
+        // owner isn't shown a scary error for a card that's simply done.
+        if (TERMINAL_NOTES[code]) {
+          setTerminalNote(TERMINAL_NOTES[code])
+          setPhase('settled')
+          onResolved(decision === 'approve' ? 'approved' : 'rejected')
+          return
+        }
+        throw new Error(code || `HTTP ${res.status}`)
       }
       setPhase(decision === 'approve' ? 'approved' : 'rejected')
       toast.success(decision === 'approve' ? 'অনুমোদিত ✓' : 'বাতিল করা হয়েছে')
@@ -147,6 +165,16 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         <p className={`mt-2 text-sm font-semibold ${isDelegation ? 'text-amber-600' : 'text-red-500'}`}>
           {isDelegation ? 'ঠিক আছে — Sonnet নিজে উত্তর দিচ্ছে, নিচে আসবে' : 'বাতিল করা হয়েছে'}
         </p>
+      </motion.div>
+    )
+  }
+
+  if (phase === 'settled') {
+    return (
+      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm shadow-card">
+        <span className="text-3xl">ℹ️</span>
+        <p className="mt-2 text-sm font-medium text-slate-600">{terminalNote}</p>
       </motion.div>
     )
   }

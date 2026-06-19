@@ -46,6 +46,9 @@ import {
 export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
+  // Emitted once at turn start so the UI can show a per-model loading identity
+  // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
+  | { type: 'model_info'; modelId: string; label: string; variant: 'claude' | 'qwen' | 'deepseek' | 'default'; tier: string }
   | { type: 'tool_start'; id: string; name: string; input?: unknown }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }

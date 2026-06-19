@@ -481,6 +481,15 @@ async function loadLastUserTextForTriage(conversationId: string): Promise<string
   }
 }
 
+/** Map a registry model to the loading-animation identity shown in the UI. */
+function modelVariant(model: ReturnType<typeof getModel>): 'claude' | 'qwen' | 'deepseek' | 'default' {
+  if (model.provider === 'anthropic') return 'claude'
+  const id = `${model.id} ${model.apiModel}`.toLowerCase()
+  if (id.includes('deepseek')) return 'deepseek'
+  if (id.includes('qwen')) return 'qwen'
+  return 'default'
+}
+
 export async function* runOwnerTurn(
   conversationId: string,
   options: RunOwnerTurnOptions = {},
@@ -500,6 +509,16 @@ export async function* runOwnerTurn(
     conversationId,
   })
   const model = getModel(decision.modelId)
+
+  // Tell the UI which model is answering so it can show the matching loading
+  // animation + label ("🧠 Sonnet ভাবছে" / "⚡ DeepSeek উত্তর দিচ্ছে").
+  yield {
+    type: 'model_info',
+    modelId: model.id,
+    label: model.label,
+    variant: modelVariant(model),
+    tier: decision.tier,
+  }
 
   if (model.provider === 'anthropic') {
     yield* runAgentTurn(conversationId, {

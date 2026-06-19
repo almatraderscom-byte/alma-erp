@@ -13,8 +13,9 @@ import { logCost } from '@/agent/lib/cost-events'
 
 export const runtime = 'nodejs'
 // A rejected delegation makes the Sonnet head answer the task itself (one
-// completion), so allow headroom beyond the default serverless cap.
-export const maxDuration = 60
+// completion). On a cold start + Anthropic latency this can exceed 60s and
+// return a Vercel 504 ("HTTP error" toast), so match the approve route's cap.
+export const maxDuration = 120
 
 /**
  * Owner chose "Sonnet বলুক" on a delegation card → run the head model directly
