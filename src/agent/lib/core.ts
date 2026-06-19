@@ -217,7 +217,7 @@ function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
     const last = blocks[blocks.length - 1]
     blocks[blocks.length - 1] = {
       ...last,
-      cache_control: { type: 'ephemeral' },
+      cache_control: { type: 'ephemeral', ttl: '1h' },
     } as Anthropic.Messages.ContentBlockParam
     return [
       ...messages.slice(0, i),

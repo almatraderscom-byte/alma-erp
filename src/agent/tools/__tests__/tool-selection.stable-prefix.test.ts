@@ -42,8 +42,8 @@ describe('owner-chat tool prefix is stable across messages', () => {
 
   it('last tool carries the cache_control breakpoint', async () => {
     const { tools } = await selectToolsAndGroupsForTurnAsync('hi', OWNER)
-    const last = tools[tools.length - 1] as { cache_control?: { type: string } }
-    expect(last.cache_control).toEqual({ type: 'ephemeral' })
+    const last = tools[tools.length - 1] as { cache_control?: { type: string; ttl?: string } }
+    expect(last.cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
   })
 
   it('personal mode keeps its narrow stable set', async () => {
