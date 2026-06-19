@@ -51,6 +51,8 @@ export interface ChatMessage {
   cacheRead?: number
   costUsd?: number
   streaming?: boolean
+  /** True when the honesty guard caught a false completion claim and the agent rewrote its answer. */
+  selfCorrected?: boolean
 }
 
 interface AgentThreadProps {
@@ -509,10 +511,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   )}
 
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-1.5">
-                      {dedupeToolActivity(msg.toolActivity).map((t) => (
-                        <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} input={t.input} />
-                      ))}
+                    <div className="mb-3">
+                      <div className="mb-1 text-[10px] font-medium text-muted">
+                        🔧 {msg.toolActivity.length} tool ব্যবহার
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {dedupeToolActivity(msg.toolActivity).map((t) => (
+                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} input={t.input} />
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -579,6 +586,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       )}
                       {artifactSaved.has(msg.id) && (
                         <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
+                      )}
+                      {msg.selfCorrected && (
+                        <span
+                          className="px-2 text-[10px] text-amber-600/80"
+                          title="এজেন্ট নিজের একটা ভুল দাবি ধরে উত্তরটা যাচাই করে ঠিক করে নিয়েছে — মিথ্যা 'করে দিলাম' আটকানো হয়েছে"
+                        >
+                          🔁 নিজে যাচাই করে ঠিক করেছে
+                        </span>
                       )}
                       {msg.tokensIn != null && (() => {
                         const tin = msg.tokensIn ?? 0

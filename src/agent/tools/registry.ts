@@ -180,6 +180,12 @@ const search_memory: AgentTool = {
     const businessId = input.businessId === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
 
     if (!query.trim()) return { success: false, error: 'query is empty' }
+    // Validate scope against the allow-list: the model can emit arbitrary strings
+    // (Anthropic does not enforce input_schema enums server-side), so an unchecked
+    // scope must never reach a SQL clause.
+    if (scope && !MEMORY_SCOPES.includes(scope)) {
+      return { success: false, error: `invalid scope: ${String(scope)}` }
+    }
 
     /**
      * Business filter: Trading context should NOT see Lifestyle-tagged memories
@@ -201,12 +207,12 @@ const search_memory: AgentTool = {
         const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date }> =
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (prisma as any).$queryRawUnsafe(
-            `SELECT id, scope, key, content, pinned, created_at
+            `SELECT id, scope, key, content, pinned, "createdAt" AS created_at
              FROM agent_memory
              WHERE content ILIKE $1
                ${scope ? `AND scope = $2` : ''}
                ${businessFilterClause}
-             ORDER BY created_at DESC
+             ORDER BY "createdAt" DESC
              LIMIT ${limit}`,
             ...(scope ? [`%${query}%`, scope] : [`%${query}%`]),
           )
@@ -217,18 +223,18 @@ const search_memory: AgentTool = {
       }
 
       const vec = vectorLiteral(embedResult.data)
-      const scopeClause = scope ? `AND scope = '${scope}'` : ''
+      // scope is parameterized ($3) — never interpolated — to prevent SQL injection.
+      const scopeClause = scope ? `AND scope = $3` : ''
       const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date; score: number }> =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (prisma as any).$queryRawUnsafe(
-          `SELECT id, scope, key, content, pinned, created_at,
+          `SELECT id, scope, key, content, pinned, "createdAt" AS created_at,
                   1 - (embedding <=> $1::vector) AS score
            FROM agent_memory
            WHERE embedding IS NOT NULL ${scopeClause} ${businessFilterClause}
            ORDER BY embedding <=> $1::vector
            LIMIT $2`,
-          vec,
-          limit,
+          ...(scope ? [vec, limit, scope] : [vec, limit]),
         )
 
       const results = rows

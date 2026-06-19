@@ -6,20 +6,17 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL } from '@/agent/config'
-import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-// Compact aggressively so history never balloons: the dominant per-message cost
-// is the whole conversation history being re-written to the prompt cache on every
-// cold turn, so keeping history short is the real lever. $2 ≈ a short burst of
-// messages — after that the chat folds into a summary and the next turns stay lean.
-export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '2')
-
-// Minimum messages before a *daily* (day-boundary) compaction fires, so a tiny
-// 1–2 line chat from yesterday isn't summarized pointlessly.
-const DAILY_COMPACT_MIN_MESSAGES = 4
+// Memory-safe compaction: a far-off SAFETY VALVE only. Folding a chat into a
+// 5–8 line summary throws everything else away, so we do it as rarely as
+// possible. There is deliberately NO day-boundary fold — that "fresh every
+// morning" wipe erased the owner's memory every day. Full conversation history
+// is preserved until a single chat crosses this cost threshold, matching the
+// long-standing behaviour where the agent remembered everything within a chat.
+export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '25')
 
 export async function getConversationCostUsd(conversationId: string): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
@@ -92,15 +89,10 @@ export async function compactConversationIfNeeded(
   })
   if (!conv || conv.compactedToId || conv.archived) return null
 
-  // Daily rhythm: if this conversation was started on an earlier Dhaka day, fold
-  // it into a summary so each new day begins lean (the "manager starts fresh every
-  // morning" model) — even if it hasn't hit the cost threshold yet.
-  const crossesDay = conv.createdAt
-    ? todayYmdDhaka(new Date(conv.createdAt)) !== todayYmdDhaka()
-    : false
-
+  // Cost-only safety valve — never a day-boundary fold. Full history is kept
+  // until a conversation gets genuinely expensive, so the agent keeps remembering.
   const costUsd = await getConversationCostUsd(conversationId)
-  if (costUsd < thresholdUsd && !crossesDay) return null
+  if (costUsd < thresholdUsd) return null
 
   const messages = await db.agentMessage.findMany({
     where: { conversationId },
@@ -108,9 +100,6 @@ export async function compactConversationIfNeeded(
     select: { role: true, content: true },
     take: 100,
   })
-
-  // Don't burn a summarization call on a trivial day-old chat below the cost bar.
-  if (costUsd < thresholdUsd && crossesDay && messages.length < DAILY_COMPACT_MIN_MESSAGES) return null
 
   let summary = ''
   try {

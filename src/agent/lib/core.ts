@@ -13,7 +13,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
@@ -243,7 +243,10 @@ async function loadPinnedMemories(
       await (prisma as any).agentMemory.findMany({
         where: personalMode
           ? { pinned: true, scope: 'personal' }
-          : { pinned: true, scope: { not: 'personal' } },
+          // Business mode: include pinned PERSONAL owner-identity facts too (wife's
+          // name, hafez, standing preferences) — pinning means "always know this",
+          // so these must cross over into business chat, not just personal mode.
+          : { pinned: true },
         orderBy: { createdAt: 'desc' },
         take: 60,
         select: { id: true, content: true, scope: true, metadata: true },
@@ -252,6 +255,9 @@ async function loadPinnedMemories(
     const filtered = personalMode
       ? rows
       : rows.filter((r) => {
+          // Pinned personal memories are cross-cutting owner identity — always
+          // available, regardless of which business the chat is scoped to.
+          if (r.scope === 'personal') return true
           const tag = (r.metadata && typeof r.metadata === 'object'
             ? (r.metadata as Record<string, unknown>).businessId
             : undefined) as string | undefined
@@ -511,6 +517,14 @@ export async function* runAgentTurn(
   const controlsNote = controlsPromptNote(agentControls)
   if (controlsNote) systemBlocks.push({ type: 'text', text: controlsNote })
 
+  // Tool Search (opt-in via AGENT_TOOL_SEARCH): defer the specialised long-tail
+  // tool schemas so they aren't shipped every turn — the model pulls them on
+  // demand. Owner business chat only; personal/trading keep their narrow sets.
+  const toolsForModel: Anthropic.Messages.ToolUnion[] =
+    TOOL_SEARCH_ENABLED && !personalMode && businessId !== 'ALMA_TRADING'
+      ? applyToolSearchDeferral(gatedTools)
+      : gatedTools
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -523,7 +537,7 @@ export async function* runAgentTurn(
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
           system: systemBlocks,
-          tools: gatedTools,
+          tools: toolsForModel,
           messages: apiMessages,
         },
         { signal: signal ?? undefined },

@@ -120,6 +120,32 @@ describe('detectLedgerViolations (Layer 2 — general)', () => {
     )
     expect(v).toHaveLength(0)
   })
+
+  // Regression: benign read/analysis verbs must NOT trigger a verification
+  // rewrite — that re-ran the whole turn for nothing and wasted tokens.
+  it('benign "চেক করেছি" read reply with read tool → no violation', () => {
+    const v = detectLedgerViolations(
+      'চেক করেছি স্যার — এখন ৩টা pending order আছে, কোনোটাই এখনো confirm হয়নি।',
+      [{ toolName: 'get_orders', success: true }],
+    )
+    expect(v).toHaveLength(0)
+  })
+
+  it('benign "যাচাই করেছি" analysis reply → no violation', () => {
+    const v = detectLedgerViolations(
+      'হিসাব যাচাই করেছি — গত ৭ দিনের গড় বিক্রি প্রায় ৮০ টাকা/দিন।',
+      [{ toolName: 'get_sales_summary', success: true }],
+    )
+    expect(v).toHaveLength(0)
+  })
+
+  it('passive "পুরোনো হয়ে গেছে" state report → no violation', () => {
+    const v = detectLedgerViolations(
+      'অর্ডারটা প্রায় ৬ দিন পুরোনো হয়ে গেছে, এখনো confirm হয়নি।',
+      [{ toolName: 'get_orders', success: true }],
+    )
+    expect(v).toHaveLength(0)
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════

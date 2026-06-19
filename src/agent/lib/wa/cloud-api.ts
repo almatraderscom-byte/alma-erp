@@ -2,6 +2,7 @@
  * WhatsApp Cloud API helpers (send + webhook signature verify).
  * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
  */
+import { createHmac, timingSafeEqual } from 'crypto'
 
 const GRAPH = 'https://graph.facebook.com/v21.0'
 
@@ -15,6 +16,27 @@ export function waVerifyToken(): string {
 
 export function waAppSecret(): string {
   return process.env.META_APP_SECRET ?? ''
+}
+
+/**
+ * Verify the X-Hub-Signature-256 HMAC on an inbound WhatsApp webhook POST.
+ * Fails closed: returns false if META_APP_SECRET is unset or the header is
+ * missing/malformed. `rawBody` MUST be the exact bytes Meta sent (read before
+ * JSON parsing) or the HMAC will not match.
+ */
+export function verifyWaSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = waAppSecret()
+  if (!secret || !signatureHeader?.startsWith('sha256=')) return false
+  const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+  const provided = signatureHeader.slice(7)
+  try {
+    const a = Buffer.from(expected, 'hex')
+    const b = Buffer.from(provided, 'hex')
+    if (a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
 }
 
 /** Constant-time-ish compare for verify token (webhook GET). */
