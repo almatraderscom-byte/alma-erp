@@ -113,6 +113,43 @@ export async function POST(
 
   // ── Execute by type ────────────────────────────────────────────────────────
 
+  // Delegation approval (test mode): owner approved the transfer → run the worker
+  // now and post its summary back into the conversation.
+  if (action.type === 'delegation') {
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    const role = String(payload.role ?? '')
+    const task = String(payload.task ?? '')
+    const businessId = (payload.businessId as string) ?? (action.businessId as string) ?? 'ALMA_LIFESTYLE'
+    const conversationId = resolveConversationId(action) ?? undefined
+    try {
+      const { runSubAgent } = await import('@/agent/lib/models/subagent')
+      const result = await runSubAgent({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        role: role as any,
+        task,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        businessId: businessId as any,
+        conversationId,
+      })
+      const note = result.success
+        ? `🤝 ${result.roleLabel} (${result.modelLabel}) সম্পন্ন করেছে:\n\n${result.summary}`
+        : `⚠️ ${role} worker কাজটি করতে পারেনি: ${result.error ?? 'unknown'}`
+      await appendConversationNote(db, action, note)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { summary: result.summary, model: result.modelId, success: result.success } },
+      })
+      return Response.json({ success: true, summary: result.summary, model: result.modelId })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await appendConversationNote(db, action, `⚠️ Worker চালাতে সমস্যা: ${msg}`)
+      return Response.json({ error: 'delegation_failed', message: msg }, { status: 500 })
+    }
+  }
+
   if (action.type === 'fb_post') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

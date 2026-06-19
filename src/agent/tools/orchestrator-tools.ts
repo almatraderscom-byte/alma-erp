@@ -2,7 +2,8 @@
  * Orchestrator tools — delegation + explicit planning for multi-step tasks.
  */
 import type { AgentTool } from './registry'
-import { SPECIALIST_ROLE_KEYS, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import { prisma } from '@/lib/prisma'
+import { SPECIALIST_ROLE_KEYS, SPECIALIST_ROLES, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import {
   createPlan,
@@ -46,6 +47,38 @@ const delegate_to_specialist: AgentTool = {
     const businessId = (input.businessId as AgentBusinessId | undefined) ?? 'ALMA_LIFESTYLE'
     const conversationId = typeof input.conversationId === 'string' ? input.conversationId : undefined
     const modelId = typeof input.modelId === 'string' ? input.modelId : undefined
+
+    // Approval gate (test mode, DELEGATION_APPROVAL=true): do NOT run the worker —
+    // ask the owner first. The worker starts only after the owner approves the
+    // confirm card (handled in /api/assistant/actions/[id]/approve, type 'delegation').
+    if (process.env.DELEGATION_APPROVAL === 'true') {
+      let modelLabel = 'worker'
+      try {
+        const { resolveSubagentModel } = await import('@/agent/lib/models/tier-router')
+        modelLabel = (await resolveSubagentModel(role)).model.label
+      } catch { /* fall back to generic label */ }
+      const roleLabel = SPECIALIST_ROLES[role]?.label ?? role
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: conversationId ?? null,
+          businessId,
+          type: 'delegation',
+          payload: { role, task, businessId, conversationId, modelId },
+          summary: `${roleLabel} (${modelLabel}) কে এই কাজ দিয়ে করাব?\n\n${task}`,
+        },
+      })
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id,
+          summary: `${roleLabel} (${modelLabel}) কে transfer করব?`,
+          actionType: 'delegation',
+          awaitingApproval: true,
+        },
+      }
+    }
 
     const { runSubAgent } = await import('@/agent/lib/models/subagent')
     const result = await runSubAgent({ role, task, businessId, conversationId, modelId })

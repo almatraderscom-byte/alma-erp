@@ -183,6 +183,16 @@ const ROUTER_HEAD_GROUPS: ToolGroupName[] = [
   'base', 'erp', 'staff', 'finance', 'cs', 'website', 'diag', 'vision', 'cost',
 ]
 
+// Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
+// to transfer to a specialist by removing the marketing read-tools that leak into
+// the kept erp/staff groups, so the head can't quietly do it itself.
+const DELEGATION_APPROVAL_TEST = process.env.DELEGATION_APPROVAL === 'true'
+const DELEGATION_FORCE_DENYLIST = new Set<string>([
+  'get_marketing_intel',
+  'get_marketing_history',
+  'get_fb_recent_posts',
+])
+
 /**
  * Async tool selection. For owner business chat (ALMA Lifestyle) we return a
  * STABLE comprehensive set so the prompt-cache prefix is identical every turn
@@ -198,8 +208,14 @@ export async function selectToolsAndGroupsForTurnAsync(
   // enabled) carries the lean head profile and delegates heavy domains to workers.
   if (!opts.personalMode && opts.businessId !== 'ALMA_TRADING') {
     const groups = SLIM_ROUTER_ENABLED ? ROUTER_HEAD_GROUPS : OWNER_STABLE_GROUPS
-    const tools = assembleSelectedTools(groups)
-    return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups }
+    let assembled = assembleSelectedTools(groups)
+    // Delegation test mode: strip the marketing read-tools that leak into kept
+    // groups so the head CANNOT do marketing itself → it must transfer to a
+    // specialist (which the owner then approves). Reversible; flag-gated.
+    if (DELEGATION_APPROVAL_TEST) {
+      assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
+    }
+    return { tools: applyToolCacheControl(toolsToDefinitions(assembled)), groups }
   }
 
   const { groups, confident } = selectToolGroupsSync(text, opts)
