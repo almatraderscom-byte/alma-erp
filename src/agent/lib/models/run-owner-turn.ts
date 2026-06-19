@@ -34,6 +34,8 @@ import {
   MAX_VERIFY_RETRIES,
 } from '@/agent/lib/claim-verifier'
 import { getModel } from '@/agent/lib/models/registry'
+import { resolveHeadModelId } from '@/agent/lib/models/head-router'
+import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import {
@@ -215,6 +217,8 @@ async function* runAlternateProviderTurn(
   let verifyRetries = 0
   let memoryNudgeSent = false
   let finalText = ''
+  let delegationAwaiting = false
+  let delegationRoleLabel = ''
 
   let approvalReminderPrefix = ''
   if (!personalMode && lastUserText) {
@@ -340,6 +344,14 @@ async function* runAlternateProviderTurn(
 
         if (result.success && result.data != null && typeof result.data === 'object') {
           const d = result.data as Record<string, unknown>
+          // Delegation WAIT-gate: when a specialist hand-off is pending owner
+          // approval, the head must STOP this turn (do not also write the answer
+          // — that doubles cost). The confirm card decides Worker vs Sonnet.
+          if (d.awaitingApproval === true && d.actionType === 'delegation') {
+            delegationAwaiting = true
+            const role = typeof call.input.role === 'string' ? call.input.role : ''
+            delegationRoleLabel = role ? specialistLabel(role) : 'specialist'
+          }
           if (typeof d.pendingActionId === 'string') {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const row = await (prisma as any).agentPendingAction.findUnique({
@@ -373,6 +385,17 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // Delegation pending approval → end the head's turn now. The owner picks
+      // Worker (cheap) or Sonnet (direct) on the card; we must not generate the
+      // answer here or the cost doubles. Mirrors the native-path gate in core.ts.
+      if (delegationAwaiting) {
+        const waitNote = `🤝 কাজটা ${delegationRoleLabel}-কে দিচ্ছি। উপরের কার্ডে বেছে নিন — **Worker করুক** (সস্তা মডেল, কম খরচ) নাকি **Sonnet বলুক** (আমি নিজেই এখনই উত্তর দেব)। সিদ্ধান্ত পেলেই এগোব।`
+        const sep = finalText ? '\n\n' : ''
+        finalText += sep + waitNote
+        yield { type: 'text_delta', delta: sep + waitNote }
+        break
+      }
     }
 
     const costUsd = calcModelTurnCostUsd(model, {
@@ -435,11 +458,48 @@ async function* runAlternateProviderTurn(
   }
 }
 
+/** Last owner (user) message text for this conversation — needed to triage the head. */
+async function loadLastUserTextForTriage(conversationId: string): Promise<string> {
+  try {
+    const row = await prisma.agentMessage.findFirst({
+      where: { conversationId, role: 'user' },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true },
+    })
+    if (!row) return ''
+    const c = row.content as unknown
+    if (typeof c === 'string') return c.trim()
+    if (Array.isArray(c)) {
+      return c
+        .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text?: unknown }).text ?? '') : ''))
+        .join(' ')
+        .trim()
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
 export async function* runOwnerTurn(
   conversationId: string,
   options: RunOwnerTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
-  const model = getModel(options.modelId)
+  // Cheap triage head: decide per-turn whether a routine message can be handled
+  // by a cheap model (DeepSeek) instead of Sonnet. Fails safe to Sonnet.
+  const personalMode = options.personalMode ?? false
+  const businessId: AgentBusinessId = personalMode
+    ? 'ALMA_LIFESTYLE'
+    : normalizeBusinessId(options.businessId)
+  const lastUserText = await loadLastUserTextForTriage(conversationId)
+  const decision = await resolveHeadModelId({
+    requestedModelId: options.modelId,
+    lastUserText,
+    personalMode,
+    businessId,
+    conversationId,
+  })
+  const model = getModel(decision.modelId)
 
   if (model.provider === 'anthropic') {
     yield* runAgentTurn(conversationId, {
