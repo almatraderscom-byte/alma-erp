@@ -208,6 +208,47 @@ export async function selectToolsAndGroupsForTurnAsync(
 }
 
 /**
+ * Tool Search (deferred tool loading) — opt-in via AGENT_TOOL_SEARCH=true.
+ *
+ * Like Claude Code: instead of shipping all ~160 owner tool schemas every turn
+ * (~30-50k tokens), keep the everyday set fully loaded and mark the specialised
+ * long tail (content/growth/website/diag/vision/cost) `defer_loading`. The model
+ * uses the regex tool-search tool to pull a deferred schema only when it actually
+ * needs it; loaded schemas are appended after the cached prefix, so the prompt
+ * cache is preserved. Default OFF — production behaviour is unchanged until the
+ * owner flips the flag in a preview to test.
+ */
+export const TOOL_SEARCH_ENABLED = process.env.AGENT_TOOL_SEARCH === 'true'
+
+// Everyday groups whose tools stay fully loaded; everything else defers.
+const TOOL_SEARCH_CORE_GROUPS: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
+
+export function applyToolSearchDeferral(
+  tools: Anthropic.Messages.Tool[],
+): Anthropic.Messages.ToolUnion[] {
+  const coreNames = new Set(
+    TOOL_SEARCH_CORE_GROUPS.flatMap((g) => (TOOL_GROUPS[g] ?? []).map((t) => t.name)),
+  )
+  const prepared: Anthropic.Messages.ToolUnion[] = tools.map((t) => {
+    // Drop any existing cache breakpoint; a single one is re-added at the very end.
+    const { cache_control: _omit, ...rest } = t as Anthropic.Messages.Tool & { cache_control?: unknown }
+    const def = { ...rest } as Anthropic.Messages.Tool
+    if (!coreNames.has(t.name)) def.defer_loading = true
+    return def
+  })
+  prepared.push({
+    type: 'tool_search_tool_regex_20251119',
+    name: 'tool_search_tool_regex',
+  } as Anthropic.Messages.ToolSearchToolRegex20251119)
+  const lastIdx = prepared.length - 1
+  prepared[lastIdx] = {
+    ...prepared[lastIdx],
+    cache_control: { type: 'ephemeral' },
+  } as Anthropic.Messages.ToolUnion
+  return prepared
+}
+
+/**
  * Async hybrid tool selection: keyword fast-path when confident,
  * semantic embedding fallback when ambiguous. Returns tools only (back-compat).
  */
