@@ -159,6 +159,19 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     }
   }
 
+  // Off-day gate: on Fridays / configured holidays the office is closed, so no
+  // staff-facing job (dispatch, reminders, presence, monitoring) may fire.
+  const { STAFF_OFFICE_JOBS, isOfficeOffToday, notifyOwnerOfficeOffOnce } = await import('../staff/off-day.mjs')
+  if (STAFF_OFFICE_JOBS.has(jobName)) {
+    const { off, reason } = await isOfficeOffToday(supabase)
+    if (off) {
+      console.log(`[schedulers] skipped — office closed (${reason}): ${jobName}`)
+      await notifyOwnerOfficeOffOnce(supabase, bot, reason)
+      await logDuty(supabase, jobName, 'skipped', `office closed — ${reason}`)
+      return { dutyStatus: 'skipped', dutyDetail: `অফিস বন্ধ — ${reason}` }
+    }
+  }
+
   switch (jobName) {
     case 'salah-init': {
       const { initializeDailySalahRecords } = await lazy.salahScheduler()
