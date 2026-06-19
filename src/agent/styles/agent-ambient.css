@@ -37,6 +37,25 @@ html.agent-route body {
   overscroll-behavior: none;
 }
 
+/* PERMANENT iOS FIX (part 2) — kill the sideways pan / auto-zoom-out.
+ *
+ * Symptom this kills: touching the chat and dragging let the WHOLE page slide
+ * left/right (it should be locked), and when a wide block like the delegation
+ * card appeared the page zoomed out to fit. Cause: a bare `overflow-y-auto`
+ * makes the CROSS axis compute to `auto` too (CSS overflow spec), so every
+ * vertical scroll area was also horizontally scrollable — one slightly-too-wide
+ * child then panned the page sideways, and the wider-than-screen page triggered
+ * WKWebView shrink-to-fit zoom. Forcing x clipped on every agent scroll area
+ * (and the main height box) locks the screen horizontally and stops the zoom.
+ * Scoped to .agent-route so the ERP is untouched. Targets the Tailwind class,
+ * so it also covers any scroll area added later. Intentional horizontal strips
+ * use `.overflow-x-auto` (a different class) and are not affected. */
+html.agent-route .agent-main-height,
+html.agent-route .overflow-y-auto {
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
 /* Calmer aura on agent routes (owner request: "aura ektu halka koro jate chat
  * clear dekha jay"). The aurora is shared app-wide and vivid; on /agent/* we just
  * dim it so message text keeps strong contrast. Scoped to .agent-route, so the ERP
@@ -51,6 +70,13 @@ html.agent-route .ambient-bg-root {
 /* Layout: account for fixed bottom nav on mobile + iOS safe area */
 .agent-main-height {
   height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px));
+}
+
+/* Creative Studio hides the agent bottom nav and renders its own chrome, so it
+ * gets the full viewport (no 3.5rem nav reserve, no bottom safe-area reserve —
+ * Studio's own header/nav handle the insets). Class toggled by CreativeStudio. */
+html.cs-fullscreen .agent-main-height {
+  height: 100dvh;
 }
 
 /* When the keyboard is open the bottom nav is hidden, so reclaim its space and

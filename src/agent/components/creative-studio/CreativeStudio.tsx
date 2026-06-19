@@ -41,8 +41,18 @@ export default function CreativeStudio() {
     void fetchStudioConfig().then(setConfig).catch(() => {})
   }, [])
 
+  // The agent bottom-nav is hidden on this route (AgentBottomNav returns null),
+  // so reclaim the 3.5rem the layout reserves for it: make .agent-main-height
+  // fill the whole viewport here. Studio renders its own header (safe-top) and
+  // its own bottom nav (safe-bottom), so it owns the full screen.
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.add('cs-fullscreen')
+    return () => root.classList.remove('cs-fullscreen')
+  }, [])
+
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full overflow-hidden bg-transparent text-cream">
+    <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent text-cream">
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
       {/* Desktop sidebar */}
       <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/82 py-4 md:flex">
@@ -61,7 +71,10 @@ export default function CreativeStudio() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 py-2.5 backdrop-blur-md sm:px-4">
+        <header
+          className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 pb-2.5 backdrop-blur-md sm:px-4"
+          style={{ paddingTop: 'max(0.625rem, env(safe-area-inset-top))' }}
+        >
           <div>
             <p className="text-sm font-bold text-cream">Creative Studio</p>
             <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
