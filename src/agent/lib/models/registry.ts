@@ -155,6 +155,35 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 0.4,
     thinking: 'none',
   },
+  // ── Project A cost-optimization workers (non-critical tiers only) ──────────
+  // Slugs + pricing verified by owner against openrouter.ai. NOTE: supportsCaching
+  // is metadata only — the adapter path does not implement prompt caching, so the
+  // flag has no runtime effect today; kept accurate for when caching is wired.
+  // Critical tiers (finance/staff/orders) never resolve to these.
+  {
+    id: 'or-qwen3-max',
+    label: 'Qwen 3.7 Max (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'qwen/qwen3.7-max',
+    supportsTools: true,
+    supportsCaching: true,
+    contextWindow: 1_000_000,
+    inPerM: 1.25,
+    outPerM: 3.75,
+    thinking: 'none',
+  },
+  {
+    id: 'or-deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'deepseek/deepseek-v4-flash',
+    supportsTools: true,
+    supportsCaching: true,
+    contextWindow: 1_000_000,
+    inPerM: 0.09,
+    outPerM: 0.18,
+    thinking: 'none',
+  },
 ]
 
 export function getModel(id?: string | null): ModelEntry {

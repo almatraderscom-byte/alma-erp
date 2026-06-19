@@ -1,8 +1,8 @@
 /**
  * Task-tier model routing — Claude locked for critical paths; OpenRouter for tuktak.
  */
-import { getModel, DEFAULT_MODEL_ID, type ModelEntry, isAnthropicModel } from '@/agent/lib/models/registry'
-import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import { getModel, DEFAULT_MODEL_ID, type ModelEntry, isAnthropicModel, isKnownModelId } from '@/agent/lib/models/registry'
+import { SPECIALIST_ROLES, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import {
   getModelRoutingConfig,
   type ModelRoutingConfig,
@@ -50,7 +50,17 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
 }> {
   const config = await getModelRoutingConfig()
   const tier = roleToTaskTier(role)
-  const modelId = resolveModelIdForTier(tier, config)
+  let modelId = resolveModelIdForTier(tier, config)
+  // Honor a role's preferred worker model on NON-critical tiers (e.g. cs/marketer
+  // → Qwen) — but ONLY while the router-worker experiment is on, so merging to
+  // production with the flags off leaves the current tier-default routing
+  // unchanged. Critical tiers always ignore it (Claude, enforced just below).
+  const routerExperimentOn =
+    process.env.ENABLE_SLIM_ROUTER !== 'false' || process.env.DELEGATION_APPROVAL !== 'false'
+  if (tier !== 'critical' && routerExperimentOn) {
+    const pref = SPECIALIST_ROLES[role]?.preferredModelId
+    if (pref && isKnownModelId(pref)) modelId = pref
+  }
   assertCriticalTierUsesClaude(modelId, tier)
   return { tier, model: getModel(modelId) }
 }

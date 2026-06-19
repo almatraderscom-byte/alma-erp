@@ -11,7 +11,7 @@ import AgentEmptyState from './AgentEmptyState'
 import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
-import { AgentThinkingIndicator } from './AgentThinkingIndicator'
+import { AgentThinkingIndicator, ModelSpinner, type ModelVariant } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
 
@@ -167,6 +167,19 @@ const ROLE_ICON: Record<string, string> = {
   marketer: '📣',
   content: '✍️',
   ops: '🗂️',
+  cs: '💬',
+}
+
+// Per-role loading identity. Critical roles run on Claude (rotating star); the
+// cheap non-critical workers (cs/marketer/content/researcher) run on Qwen (orb
+// glow). The 'deepseek' variant exists for when a role is routed to DeepSeek.
+const ROLE_VARIANT: Record<string, ModelVariant> = {
+  analyst: 'claude',
+  ops: 'claude',
+  cs: 'qwen',
+  marketer: 'qwen',
+  content: 'qwen',
+  researcher: 'qwen',
 }
 
 /**
@@ -199,7 +212,7 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
         </span>
         <span className="mt-0.5 shrink-0">
           {!d.done ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+            <ModelSpinner variant={ROLE_VARIANT[d.role] ?? 'default'} size={14} />
           ) : d.success !== false ? (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
           ) : (
@@ -506,6 +519,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentThinkingIndicator
                       label={streamStatus}
                       mode={streamMode ?? 'writing'}
+                      variant="claude"
                       className="mb-3"
                     />
                   )}

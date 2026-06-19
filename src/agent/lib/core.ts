@@ -13,7 +13,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
@@ -520,8 +520,10 @@ export async function* runAgentTurn(
   // Tool Search (opt-in via AGENT_TOOL_SEARCH): defer the specialised long-tail
   // tool schemas so they aren't shipped every turn — the model pulls them on
   // demand. Owner business chat only; personal/trading keep their narrow sets.
+  // Skipped when the Slim Head Router is on — the head is already lean, so the two
+  // would just stack; the slim profile (select-tools) takes precedence.
   const toolsForModel: Anthropic.Messages.ToolUnion[] =
-    TOOL_SEARCH_ENABLED && !personalMode && businessId !== 'ALMA_TRADING'
+    TOOL_SEARCH_ENABLED && !SLIM_ROUTER_ENABLED && !personalMode && businessId !== 'ALMA_TRADING'
       ? applyToolSearchDeferral(gatedTools)
       : gatedTools
 
