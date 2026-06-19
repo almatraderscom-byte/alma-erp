@@ -3,6 +3,7 @@ import { lunchButtonRow } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
 import { leaveRequestButton } from './leave.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
+import { getCheckedInMap } from './attendance.mjs'
 
 const DONE_STATUSES = new Set(['done', 'done_unverified', 'verified'])
 
@@ -21,7 +22,7 @@ export async function runStaffPresence({ supabase, bot }) {
 
   const { data: tasks } = await supabase
     .from('staff_tasks')
-    .select('id, status, title, type, staff_id, agent_staff(id, name, telegramChatId)')
+    .select('id, status, title, type, staff_id, agent_staff(id, name, telegramChatId, user_id)')
     .eq('proposed_for', today)
     .in('status', ['sent', 'done', 'done_unverified', 'verified'])
 
@@ -37,7 +38,14 @@ export async function runStaffPresence({ supabase, bot }) {
     if (DONE_STATUSES.has(t.status)) byStaff[s.id].done++
   }
 
+  // Only nudge staff who have actually checked in — no follow-up before attendance.
+  const checkedIn = await getCheckedInMap(
+    supabase,
+    Object.values(byStaff).map(({ staff }) => staff),
+  )
+
   for (const { staff, total, done } of Object.values(byStaff)) {
+    if (!checkedIn.has(staff.id)) continue
     if (await isStaffOnLeaveSb(supabase, staff.id, today)) continue
 
     const pct = total ? Math.round((done / total) * 100) : 0

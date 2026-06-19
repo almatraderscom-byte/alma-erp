@@ -6,6 +6,7 @@ import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { pickMoraleMessage, shouldUseAdaptiveMorale } from './morale-messages.mjs'
 import { isWithinOfficeHours } from './office-hours.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
+import { getCheckedInMap } from './attendance.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -87,8 +88,11 @@ export async function runStaffMorale({ supabase, bot }) {
 
   const { data: staff } = await supabase
     .from('agent_staff')
-    .select('id, name, telegramChatId')
+    .select('id, name, telegramChatId, user_id')
     .eq('active', true)
+
+  // Only message staff who have checked in — no morale ping before attendance.
+  const checkedIn = await getCheckedInMap(supabase, staff ?? [])
 
   let sent = 0
   let skipped = 0
@@ -96,6 +100,10 @@ export async function runStaffMorale({ supabase, bot }) {
 
   for (const s of staff ?? []) {
     if (!s.telegramChatId) {
+      skipped++
+      continue
+    }
+    if (!checkedIn.has(s.id)) {
       skipped++
       continue
     }
