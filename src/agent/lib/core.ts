@@ -46,6 +46,9 @@ import {
 export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
+  // Emitted once at turn start so the UI can show a per-model loading identity
+  // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
+  | { type: 'model_info'; modelId: string; label: string; variant: 'claude' | 'qwen' | 'deepseek' | 'default'; tier: string }
   | { type: 'tool_start'; id: string; name: string; input?: unknown }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
@@ -740,6 +743,8 @@ export async function* runAgentTurn(
 
       // Emit events and build toolResultContent in ORIGINAL order
       const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
+      let delegationAwaiting = false
+      let delegationRoleLabel = ''
       for (const tb of toolUseBlocks) {
         const exec = resultMap.get(tb.id)!
         const { result, durationMs } = exec
@@ -763,6 +768,13 @@ export async function* runAgentTurn(
         if (isDelegate) {
           const d = (result.data ?? {}) as Record<string, unknown>
           const role = String((tb.input as Record<string, unknown>).role ?? '')
+          // Approval-gated delegation: the worker has NOT run yet — a confirm card
+          // was created. The head must STOP here and wait for the owner's decision,
+          // not generate its own answer (which would double the cost).
+          if (result.success && d.awaitingApproval === true) {
+            delegationAwaiting = true
+            delegationRoleLabel = specialistLabel(role)
+          }
           yield {
             type: 'subagent_end',
             id: tb.id,
@@ -825,6 +837,20 @@ export async function* runAgentTurn(
       }
 
       messages = [...messages, { role: 'user', content: toolResultContent }]
+
+      // Head→specialist WAIT gate: a delegation confirm card is pending. Do not
+      // loop back into the model for another (substantive) turn — that is exactly
+      // the "Sonnet answers anyway, cost doubles" bug. Emit a short transient note
+      // and end the turn; the owner's Approve/Reject drives what happens next.
+      if (delegationAwaiting) {
+        const waitNote =
+          `🤝 কাজটা ${delegationRoleLabel}-কে দিচ্ছি। উপরের কার্ডে বেছে নিন — ` +
+          `**Worker করুক** (সস্তা মডেল, কম খরচ) নাকি **Sonnet বলুক** (আমি নিজেই এখনই উত্তর দেব)। ` +
+          `সিদ্ধান্ত পেলেই এগোব।`
+        yield { type: 'text_delta', delta: waitNote }
+        assistantTurns.push([{ type: 'text', text: waitNote }])
+        break
+      }
     }
 
     // Persist assistant message.

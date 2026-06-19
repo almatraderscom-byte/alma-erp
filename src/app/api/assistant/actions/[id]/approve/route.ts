@@ -12,7 +12,10 @@ import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+// Delegation approval runs the worker sub-agent synchronously (an OpenRouter
+// agentic loop of up to 4 iterations), which can take 30-60s. The old 30s cap
+// caused Vercel 504s → the owner saw an "HTTP error" toast after approving.
+export const maxDuration = 120
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''

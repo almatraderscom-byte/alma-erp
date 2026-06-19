@@ -65,6 +65,7 @@ interface AgentThreadProps {
   onStartVoiceSession?: () => void
   streamStatus?: string | null
   streamMode?: 'fetching' | 'writing' | 'settled'
+  streamVariant?: ModelVariant
   compacting?: boolean
 }
 
@@ -375,7 +376,7 @@ function ToolActivityChip({ name, done, success, input }: { name: string; done: 
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, streamVariant, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -519,7 +520,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentThinkingIndicator
                       label={streamStatus}
                       mode={streamMode ?? 'writing'}
-                      variant="claude"
+                      variant={streamVariant ?? 'claude'}
                       className="mb-3"
                     />
                   )}
@@ -567,7 +568,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentConfirmCard
                       action={msg.pendingAction}
                       onResolved={(status) => {
-                        if (status === 'approved') onActionApproved?.()
+                        // Approve always posts a result note. For a delegation,
+                        // Reject ALSO posts one (Sonnet's own answer), so poll then too.
+                        if (status === 'approved' || msg.pendingAction?.actionType === 'delegation') {
+                          onActionApproved?.()
+                        }
                       }}
                     />
                   )}

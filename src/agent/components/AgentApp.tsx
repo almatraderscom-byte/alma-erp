@@ -125,6 +125,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [streaming, setStreaming] = useState(false)
   const [streamStatus, setStreamStatus] = useState<string | null>(null)
   const [streamMode, setStreamMode] = useState<'fetching' | 'writing' | 'settled'>('writing')
+  // Which model is answering the live turn → drives the loading animation identity.
+  const [streamVariant, setStreamVariant] = useState<'claude' | 'qwen' | 'deepseek' | 'default'>('claude')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
@@ -287,6 +289,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     abortRef.current = new AbortController()
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
+    setStreamVariant('claude') // reset until model_info arrives (fail-safe = head)
 
     let convIdForUpload = activeConvId
     if (!convIdForUpload && pendingFiles.length > 0) {
@@ -411,6 +414,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setActiveConvId(finalConvId)
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
+        } else if (evt.type === 'model_info') {
+          const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
+          setStreamVariant(variant)
+          const label = typeof evt.label === 'string' ? evt.label : ''
+          // Cheap models don't stream a thinking trace, so seed a model-specific
+          // status line — that (plus the animation) is how the owner tells who is working.
+          setStreamStatus(variant === 'claude' ? `🧠 ${label || 'Sonnet'} ভাবছে…` : `⚡ ${label || 'Worker'} উত্তর দিচ্ছে…`)
         } else if (evt.type === 'thinking_delta') {
           setStreamMode('fetching')
           setStreamStatus('🤔 ভাবছি…')
@@ -940,6 +950,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onStartVoiceSession={() => setVoiceOpen(true)}
             streamStatus={streamStatus}
             streamMode={streamMode}
+            streamVariant={streamVariant}
             compacting={compacting}
           />
           )}
