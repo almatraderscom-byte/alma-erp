@@ -25,8 +25,12 @@
 
 ## Agent Architecture (locked decisions — do not re-litigate)
 
-- Model: claude-sonnet-4-6 always, direct Anthropic API. No Haiku routing. Adaptive extended thinking. Prompt caching from Phase 1. Full conversation history (no truncation).
-- Self-verification loop: call tool → verify result → then reply. Never claim success without verification.
+- **Head model:** `claude-sonnet-4-6` (default), direct Anthropic API, adaptive extended thinking, prompt caching, full conversation history (compaction is a far-off cost safety valve only — `conversation-compact.ts`). Keep the head on Claude — native caching is the main cost lever; never put the head on a non-caching provider.
+- **Router-worker (multi-model):** the head delegates discrete sub-tasks to specialist sub-agents via the tier router (`src/agent/lib/models/`: `registry.ts`, `tier-router.ts`, `routing-config.ts`, `subagent.ts`, `specialist-roles.ts`, `adapters/`). CRITICAL tier (ERP / finance / staff / CS / orders / salah / scheduler) is **hard-guarded to Claude only** (`assertCriticalTierUsesClaude`); HEAVY / LIGHT tiers may run on cheaper models (OpenRouter / Gemini; Qwen / DeepSeek optional) for non-critical execution. OpenRouter failures fall back to native Gemini → Claude.
+- **Worker context:** workers are stateless and task-scoped — they receive a self-contained brief and return a summary. The head keeps all conversation + memory state and is the **only** writer of memory and owner-facing actions.
+- **Opus 4.8 escalation:** rare high-risk / big-money decisions only, daily-capped, owner-tunable (`opus-gate.ts` + `routing-config.ts`).
+- **Model allocation is owner-tunable via `agent_kv_settings` (no redeploy);** `models/registry.ts` is the single source of truth. Customer-facing output stays on Claude until cheap-model Bangla quality is validated (`bangla-output-gate.ts`).
+- Self-verification loop: call tool → verify result → then reply. Never claim success without verification (`claim-verifier.ts`).
 - Voice: Whisper API (transcription), Google TTS bn-IN-Chirp3-HD-Charon (male Bangla). Images: Nano Banana Pro / 2 via direct Google API. Facebook: direct Meta Graph API (no Composio).
 - Push: Telegram primary, ntfy critical alerts, Twilio calls (8kHz mono WAV) for rare escalation only.
 - Memory/RAG: Supabase pgvector (Phase 3). Long agentic tasks (>30s) go to VPS worker queue (Redis), never Vercel functions.
