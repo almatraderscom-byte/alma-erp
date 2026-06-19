@@ -243,7 +243,10 @@ async function loadPinnedMemories(
       await (prisma as any).agentMemory.findMany({
         where: personalMode
           ? { pinned: true, scope: 'personal' }
-          : { pinned: true, scope: { not: 'personal' } },
+          // Business mode: include pinned PERSONAL owner-identity facts too (wife's
+          // name, hafez, standing preferences) — pinning means "always know this",
+          // so these must cross over into business chat, not just personal mode.
+          : { pinned: true },
         orderBy: { createdAt: 'desc' },
         take: 60,
         select: { id: true, content: true, scope: true, metadata: true },
@@ -252,6 +255,9 @@ async function loadPinnedMemories(
     const filtered = personalMode
       ? rows
       : rows.filter((r) => {
+          // Pinned personal memories are cross-cutting owner identity — always
+          // available, regardless of which business the chat is scoped to.
+          if (r.scope === 'personal') return true
           const tag = (r.metadata && typeof r.metadata === 'object'
             ? (r.metadata as Record<string, unknown>).businessId
             : undefined) as string | undefined
