@@ -165,6 +165,24 @@ const OWNER_STABLE_GROUPS: ToolGroupName[] = [
   'cost',
 ]
 
+// ── Slim Head Router (Project A, Step 2) — opt-in via ENABLE_SLIM_ROUTER ──────
+// When ON, the owner-chat HEAD carries a leaner tool set and DELEGATES the heavy
+// non-critical domains to specialist sub-agents (cheap workers), instead of
+// shipping all 14 groups' schemas in the cached prefix every turn — the main cost
+// driver. Default OFF; set ENABLE_SLIM_ROUTER=true (e.g. in a preview) to test.
+// Critical execution still runs on Claude via the sub-agent tier guard.
+export const SLIM_ROUTER_ENABLED = process.env.ENABLE_SLIM_ROUTER === 'true'
+
+// The head profile. This first (safe) cut drops only `content` + `growth` — the two
+// largest groups, both fully covered by delegatable workers (content→content,
+// growth→marketer/researcher) so NO capability is lost, it's routed not removed,
+// and there's no clash with staff/salah per-turn prompt nudges. `base` keeps
+// delegate_to_specialist + memory/ask/salah/reminders. Tune toward fewer groups
+// (drop erp/finance/staff/cs) once delegation prompting + the cs worker are wired.
+const ROUTER_HEAD_GROUPS: ToolGroupName[] = [
+  'base', 'erp', 'staff', 'finance', 'cs', 'website', 'diag', 'vision', 'cost',
+]
+
 /**
  * Async tool selection. For owner business chat (ALMA Lifestyle) we return a
  * STABLE comprehensive set so the prompt-cache prefix is identical every turn
@@ -176,10 +194,12 @@ export async function selectToolsAndGroupsForTurnAsync(
   text: string,
   opts: { personalMode: boolean; businessId: AgentBusinessId },
 ): Promise<{ tools: Anthropic.Messages.Tool[]; groups: ToolGroupName[] }> {
-  // Owner business chat → fixed prefix for cache reuse.
+  // Owner business chat → fixed prefix for cache reuse. Slim Head Router (when
+  // enabled) carries the lean head profile and delegates heavy domains to workers.
   if (!opts.personalMode && opts.businessId !== 'ALMA_TRADING') {
-    const tools = assembleSelectedTools(OWNER_STABLE_GROUPS)
-    return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups: OWNER_STABLE_GROUPS }
+    const groups = SLIM_ROUTER_ENABLED ? ROUTER_HEAD_GROUPS : OWNER_STABLE_GROUPS
+    const tools = assembleSelectedTools(groups)
+    return { tools: applyToolCacheControl(toolsToDefinitions(tools)), groups }
   }
 
   const { groups, confident } = selectToolGroupsSync(text, opts)

@@ -156,31 +156,32 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'none',
   },
   // ── Project A cost-optimization workers (non-critical tiers only) ──────────
-  // ⚠️ VERIFY on openrouter.ai before enabling: the apiModel slug, contextWindow,
-  // and inPerM/outPerM below are best-effort estimates — they could not be
-  // live-validated. Critical tiers (finance/staff/orders) never use these.
+  // Slugs + pricing verified by owner against openrouter.ai. NOTE: supportsCaching
+  // is metadata only — the adapter path does not implement prompt caching, so the
+  // flag has no runtime effect today; kept accurate for when caching is wired.
+  // Critical tiers (finance/staff/orders) never resolve to these.
   {
     id: 'or-qwen3-max',
-    label: 'Qwen3 Max (OpenRouter)',
+    label: 'Qwen 3.7 Max (OpenRouter)',
     provider: 'openrouter',
-    apiModel: 'qwen/qwen3-max', // ⚠️ verify exact slug (owner asked for "Qwen 3.7 Max")
+    apiModel: 'qwen/qwen3.7-max',
     supportsTools: true,
-    supportsCaching: false,
-    contextWindow: 256_000, // ⚠️ verify
-    inPerM: 1.2, // ⚠️ verify live pricing
-    outPerM: 6, // ⚠️ verify live pricing
+    supportsCaching: true,
+    contextWindow: 1_000_000,
+    inPerM: 1.25,
+    outPerM: 3.75,
     thinking: 'none',
   },
   {
-    id: 'or-deepseek-v4',
-    label: 'DeepSeek V4 (OpenRouter)',
+    id: 'or-deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash (OpenRouter)',
     provider: 'openrouter',
-    apiModel: 'deepseek/deepseek-v4', // ⚠️ verify exact slug (DeepSeek V3.x/V4 naming on OpenRouter)
+    apiModel: 'deepseek/deepseek-v4-flash',
     supportsTools: true,
-    supportsCaching: false,
-    contextWindow: 164_000, // ⚠️ verify
-    inPerM: 0.3, // ⚠️ verify live pricing
-    outPerM: 1.2, // ⚠️ verify live pricing
+    supportsCaching: true,
+    contextWindow: 1_000_000,
+    inPerM: 0.09,
+    outPerM: 0.18,
     thinking: 'none',
   },
 ]
