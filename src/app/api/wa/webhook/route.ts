@@ -5,7 +5,7 @@
  */
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { verifyWaSubscribeToken, waConfigured } from '@/agent/lib/wa/cloud-api'
+import { verifyWaSignature, verifyWaSubscribeToken, waConfigured } from '@/agent/lib/wa/cloud-api'
 import { ingestWaInboundMessage, markWaHandledInApp } from '@/agent/lib/wa/wa-ingest'
 import { waPageId } from '@/agent/lib/wa/constants'
 
@@ -64,9 +64,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: true, skipped: 'wa_not_configured' })
   }
 
+  // Verify Meta's HMAC over the raw body before trusting any payload.
+  // Read raw bytes first — req.json() would discard them and break the HMAC.
+  const rawBody = await req.text()
+  if (!verifyWaSignature(rawBody, req.headers.get('x-hub-signature-256'))) {
+    return Response.json({ error: 'invalid_signature' }, { status: 401 })
+  }
+
   let body: WaWebhookBody
   try {
-    body = await req.json()
+    body = JSON.parse(rawBody) as WaWebhookBody
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
