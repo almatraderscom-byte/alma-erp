@@ -131,7 +131,22 @@ export async function loadSalahAccountabilityContext(
 
     const todaySummary = summarizeWaqts(todayYmd, todayRecords, now)
     const yesterdaySummary = summarizeWaqts(yesterdayYmd, yesterdayRecords, now)
-    const accountable = pickAccountableWaqts(todaySummary, yesterdaySummary)
+    // Suppress accountability for any waqt the owner has actively snoozed
+    // ("পরে পড়বো" button / request_salah_delay → salah_overrides.delay_until in
+    // the future). Without this the agent kept nagging about a waqt the owner
+    // already deferred — the chat went jumbled/contradictory (owner report).
+    const activeDelays = await db.agentSalahOverride.findMany({
+      where: { delayUntil: { gt: now } },
+      select: { waqt: true, date: true },
+    }) as Array<{ waqt: string | null; date: Date | null }>
+    const delayedKeys = new Set(
+      activeDelays
+        .filter((o) => o.waqt && o.date)
+        .map((o) => `${todayYmdDhaka(new Date(o.date!))}:${o.waqt}`),
+    )
+    const isDelayed = (s: WaqtSummary) => delayedKeys.has(`${s.date}:${s.waqt}`)
+
+    const accountable = pickAccountableWaqts(todaySummary, yesterdaySummary).filter((s) => !isDelayed(s))
     const statusInquiry = Boolean(userMessage && isSalahStatusInquiry(userMessage))
 
     if (accountable.length === 0 && !statusInquiry) return undefined

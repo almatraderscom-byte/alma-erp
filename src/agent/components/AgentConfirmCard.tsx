@@ -141,6 +141,53 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         ? (isDelegation ? 'Sonnet নিজে উত্তর দিচ্ছে…' : 'বাতিল করা হচ্ছে…')
         : 'প্রক্রিয়া হচ্ছে…'
 
+  // iPhone fix (issue #3): the big amber delegation card kept clipping/zooming on
+  // the width-locked WKWebView. Owner asked for a small Claude-style chip instead.
+  // Compact variant: narrow, no min-width buttons, single short line — structurally
+  // cannot overflow. Covers every phase so the big card never renders for delegation.
+  if (isDelegation) {
+    if (phase === 'loading') {
+      return (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="mt-3 flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-xs text-amber-700 shadow-card">
+          <AgentSparkleLoader label={loadingLabel} size="sm" />
+        </motion.div>
+      )
+    }
+    if (phase === 'approved' || phase === 'rejected' || phase === 'settled') {
+      const note = phase === 'approved'
+        ? '🤝 Worker কাজটি করছে — উত্তর নিচে আসবে'
+        : phase === 'rejected'
+          ? '🧠 Sonnet নিজে উত্তর দিচ্ছে — নিচে আসবে'
+          : terminalNote
+      return (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-600 shadow-card">
+          {note}
+        </motion.div>
+      )
+    }
+    return (
+      <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 w-full max-w-full overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/50 px-3 py-2.5 text-xs shadow-card">
+        <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-amber-700">
+          <span>🤝</span><span>কে করবে?</span>
+        </div>
+        <p className="mb-2.5 break-words [overflow-wrap:anywhere] leading-relaxed text-cream">{summary}</p>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => resolve('approve')}
+            className="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100">
+            Worker
+          </button>
+          <button type="button" onClick={() => resolve('reject')}
+            className="min-w-0 flex-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-colors hover:bg-indigo-100">
+            Sonnet
+          </button>
+        </div>
+      </motion.div>
+    )
+  }
+
   if (phase === 'loading') {
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}

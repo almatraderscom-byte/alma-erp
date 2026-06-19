@@ -1323,6 +1323,7 @@ export function createTelegramBot() {
         waqt,
         action === 'salah_done' ? status : undefined,
         dateYmd,
+        createSupabase(),
       )
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
