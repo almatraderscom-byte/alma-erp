@@ -125,7 +125,11 @@ const manage_work_todos: AgentTool = {
         if (!before) return { success: false, error: 'todo not found' }
 
         if (before.source === 'owner') {
-          await prisma.agentTodo.delete({ where: { id } })
+          // Soft-complete: mark completed (recoverable), never hard-delete.
+          await prisma.agentTodo.update({
+            where: { id },
+            data: { status: 'completed', completedAt: new Date(), ...(result ? { description: result } : {}) },
+          })
           const completionLine = result
             ? `✅ ${before.title}\n\n📋 ${result}`
             : `✅ ${before.title}`
@@ -173,14 +177,38 @@ const manage_work_todos: AgentTool = {
 
         const existing = await prisma.agentTodo.findUnique({ where: { id } })
         if (!existing) return { success: false, error: 'todo not found' }
+        if (existing.status === 'cancelled') {
+          return {
+            success: true,
+            data: { id, title: existing.title, message: `"${existing.title}" আগেই তালিকা থেকে সরানো হয়েছে।` },
+          }
+        }
 
-        await prisma.agentTodo.delete({ where: { id } })
+        // Confirm-first (Sir's rule: confirm before any destructive action except salah).
+        // Soft-cancel happens only after the owner approves the card; nothing is hard-deleted.
+        const summary =
+          `🗑️ টুডু তালিকা থেকে সরানো হবে\n\n"${existing.title}"\n\n` +
+          `(সরালে তালিকা থেকে চলে যাবে, তবে রেকর্ড থেকে যাবে — চাইলে ফেরানো যাবে।)`
+        const conversationId = input.conversationId ? String(input.conversationId) : null
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pending = await (prisma as any).agentPendingAction.create({
+          data: {
+            conversationId,
+            type: 'todo_cancel',
+            payload: { todoId: id, title: existing.title, businessId, conversationId },
+            summary,
+            costEstimate: 0,
+            status: 'pending',
+          },
+        })
         return {
           success: true,
           data: {
-            id,
-            title: existing.title,
-            message: `"${existing.title}" তালিকা থেকে সরানো হয়েছে।`,
+            pendingActionId: pending.id as string,
+            summary,
+            costEstimate: 0,
+            actionType: 'todo_cancel',
+            message: `"${existing.title}" সরানোর জন্য Sir-এর অনুমোদন দরকার — confirm করলে তালিকা থেকে সরে যাবে।`,
           },
         }
       }
@@ -248,12 +276,13 @@ export const WORK_TODO_PROMPT = `
 
 ### Sir chat-এ কিছু বললে:
 - "X করো" → manage_work_todos action=add, **source=owner** — তালিকায় agent কাজের **নিচে** যুক্ত হবে
-- কাজ শেষ → action=complete + ফলাফল → owner todo **অটো তালিকা থেকে সরে যাবে**
-- "বাদ দাও" / cancel → action=remove
+- কাজ শেষ → action=complete + ফলাফল → owner todo তালিকা থেকে সরে যাবে (completed হিসেবে রেকর্ডে থাকে)
+- "বাদ দাও" / cancel / "pending থেকে সরাও" → action=remove → একটা **confirm card** আসবে; Sir Approve করলেই সরবে
 
 ### নিয়ম:
 - একই লিস্ট — office tasks সবসময় owner tasks-এর উপরে sort হয়
 - day_shift todos নিজে duplicate করবেন না
-- Office task complete করলে completed হিসেবে থাকে; owner task complete = delete
+- **কোনো টুডু কখনো hard-delete হয় না** — remove = soft cancel (status=cancelled), complete = soft (status=completed)। তাই ভুল হলে ফেরানো যায়
+- **remove সবসময় confirm card দিয়ে হয়** (Sir-এর নিয়ম: salah ছাড়া যেকোনো destructive কাজে আগে confirm)। কার্ড তৈরি হলে Sir-কে বলুন "confirm করলে সরিয়ে দেব"
 - description-এ ফলাফল লিখুন
 `
