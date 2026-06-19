@@ -52,8 +52,12 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
   const tier = roleToTaskTier(role)
   let modelId = resolveModelIdForTier(tier, config)
   // Honor a role's preferred worker model on NON-critical tiers (e.g. cs/marketer
-  // → Qwen). Critical tiers ignore it and stay on Claude (enforced just below).
-  if (tier !== 'critical') {
+  // → Qwen) — but ONLY while the router-worker experiment is on, so merging to
+  // production with the flags off leaves the current tier-default routing
+  // unchanged. Critical tiers always ignore it (Claude, enforced just below).
+  const routerExperimentOn =
+    process.env.ENABLE_SLIM_ROUTER === 'true' || process.env.DELEGATION_APPROVAL === 'true'
+  if (tier !== 'critical' && routerExperimentOn) {
     const pref = SPECIALIST_ROLES[role]?.preferredModelId
     if (pref && isKnownModelId(pref)) modelId = pref
   }
