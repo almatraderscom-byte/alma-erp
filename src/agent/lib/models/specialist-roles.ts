@@ -12,7 +12,7 @@
  */
 import type { ToolGroupName } from '@/agent/tools/tool-groups'
 
-export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops'
+export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops' | 'cs'
 
 export interface SpecialistRoleDef {
   /** Bangla label shown to the owner on the delegation card + CCTV view. */
@@ -25,6 +25,14 @@ export interface SpecialistRoleDef {
   toolGroups: ToolGroupName[]
   /** Role brief prepended to the sub-agent's system prompt. */
   instruction: string
+  /**
+   * Preferred worker model (registry id) for this non-critical role — e.g. a cheap
+   * OpenRouter model. STAGED CONFIG ONLY: not yet consumed by the router. The
+   * tier-router currently still resolves the model by task tier; wiring this field
+   * in is the later routing step (Project A, Step 2). Critical roles (analyst/ops)
+   * ignore this entirely and stay on Claude via assertCriticalTierUsesClaude.
+   */
+  preferredModelId?: string
 }
 
 export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
@@ -51,6 +59,8 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'growth', 'content'],
     instruction:
       'You are a digital marketing strategist (Facebook/ads focus). Use the ads/marketing tools to assess performance and plan, then return a concise Bangla action plan with specific next steps.',
+    // Non-critical → cheap worker (staged; see preferredModelId note above).
+    preferredModelId: 'or-qwen3-max',
   },
   content: {
     label: 'কনটেন্ট',
@@ -67,6 +77,18 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'staff'],
     instruction:
       'You are an operations specialist for staff/task coordination. Use the staff tools to check presence, tasks and dispatch state, then return a concise Bangla status with any issues that need the owner.',
+  },
+  cs: {
+    label: 'কাস্টমার সার্ভিস',
+    labelEn: 'Customer Service',
+    icon: '💬',
+    toolGroups: ['base', 'cs'],
+    instruction:
+      'You are a customer-service specialist for ALMA Lifestyle. Use the CS tools to read the customer, order and product context, then return a concise, empathetic Bangla/Banglish reply or status. Never invent stock or price — verify with tools first.',
+    // Non-critical → cheap worker (staged; see preferredModelId note above).
+    // NOTE: not yet delegatable — the head can't route to `cs` until the
+    // orchestrator + tier-router are wired in the later routing step.
+    preferredModelId: 'or-qwen3-max',
   },
 }
 

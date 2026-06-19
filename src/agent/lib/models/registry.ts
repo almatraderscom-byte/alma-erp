@@ -155,6 +155,34 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 0.4,
     thinking: 'none',
   },
+  // ── Project A cost-optimization workers (non-critical tiers only) ──────────
+  // ⚠️ VERIFY on openrouter.ai before enabling: the apiModel slug, contextWindow,
+  // and inPerM/outPerM below are best-effort estimates — they could not be
+  // live-validated. Critical tiers (finance/staff/orders) never use these.
+  {
+    id: 'or-qwen3-max',
+    label: 'Qwen3 Max (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'qwen/qwen3-max', // ⚠️ verify exact slug (owner asked for "Qwen 3.7 Max")
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 256_000, // ⚠️ verify
+    inPerM: 1.2, // ⚠️ verify live pricing
+    outPerM: 6, // ⚠️ verify live pricing
+    thinking: 'none',
+  },
+  {
+    id: 'or-deepseek-v4',
+    label: 'DeepSeek V4 (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'deepseek/deepseek-v4', // ⚠️ verify exact slug (DeepSeek V3.x/V4 naming on OpenRouter)
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 164_000, // ⚠️ verify
+    inPerM: 0.3, // ⚠️ verify live pricing
+    outPerM: 1.2, // ⚠️ verify live pricing
+    thinking: 'none',
+  },
 ]
 
 export function getModel(id?: string | null): ModelEntry {
