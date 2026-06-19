@@ -109,9 +109,13 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     }
   }
 
+  const isDelegation = meta.actionType === 'delegation'
+
   const loadingLabel =
-    loadingDecision === 'approve' ? 'অনুমোদন প্রক্রিয়া হচ্ছে…'
-      : loadingDecision === 'reject' ? 'বাতিল করা হচ্ছে…'
+    loadingDecision === 'approve'
+      ? (isDelegation ? 'Worker কাজ শুরু করছে…' : 'অনুমোদন প্রক্রিয়া হচ্ছে…')
+      : loadingDecision === 'reject'
+        ? (isDelegation ? 'Sonnet নিজে উত্তর দিচ্ছে…' : 'বাতিল করা হচ্ছে…')
         : 'প্রক্রিয়া হচ্ছে…'
 
   if (phase === 'loading') {
@@ -127,8 +131,10 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     return (
       <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="mt-3 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm shadow-card">
-        <span className="text-3xl">✅</span>
-        <p className="mt-2 text-sm font-semibold text-emerald-600">অনুমোদিত হয়েছে</p>
+        <span className="text-3xl">{isDelegation ? '🤝' : '✅'}</span>
+        <p className="mt-2 text-sm font-semibold text-emerald-600">
+          {isDelegation ? 'Worker কাজটি করছে — উত্তর নিচে আসবে' : 'অনুমোদিত হয়েছে'}
+        </p>
       </motion.div>
     )
   }
@@ -136,21 +142,29 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   if (phase === 'rejected') {
     return (
       <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border border-red-200 bg-red-50 px-4 py-5 text-center text-sm shadow-card">
-        <span className="text-3xl">❌</span>
-        <p className="mt-2 text-sm font-semibold text-red-500">বাতিল করা হয়েছে</p>
+        className={`mt-3 rounded-[18px] border px-4 py-5 text-center text-sm shadow-card ${isDelegation ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
+        <span className="text-3xl">{isDelegation ? '🧠' : '❌'}</span>
+        <p className={`mt-2 text-sm font-semibold ${isDelegation ? 'text-amber-600' : 'text-red-500'}`}>
+          {isDelegation ? 'ঠিক আছে — Sonnet নিজে উত্তর দিচ্ছে, নিচে আসবে' : 'বাতিল করা হয়েছে'}
+        </p>
       </motion.div>
     )
   }
 
   return (
-    <motion.div layout className="mt-3 rounded-[18px] border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-card"
+    <motion.div layout className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-card"
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
       <div className="mb-1 flex items-center gap-2 font-semibold text-amber-700">
-        <span>⚠️</span>
-        <span>অনুমোদন প্রয়োজন</span>
+        <span>{isDelegation ? '🤝' : '⚠️'}</span>
+        <span>{isDelegation ? 'কে কাজটি করবে?' : 'অনুমোদন প্রয়োজন'}</span>
       </div>
-      <pre className="mb-3 whitespace-pre-wrap font-sans text-xs leading-relaxed text-cream">{summary}</pre>
+      <pre className="mb-3 max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-xs leading-relaxed text-cream">{summary}</pre>
+
+      {isDelegation && (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+          <strong>Worker করুক</strong> → সস্তা মডেল কাজটি করবে (কম খরচ)। <strong>Sonnet বলুক</strong> → আমি নিজে এখনই উত্তর দেব (বেশি খরচ)। আপনি বেছে নিন।
+        </p>
+      )}
 
       {meta.actionType === 'oxylabs_spend' && meta.costEstimate != null && (
         <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -195,20 +209,20 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => resolve('approve')}
-          className="flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-medium text-emerald-600 transition-all hover:bg-emerald-100 hover:shadow-sm">
-          {meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
+          className="min-w-[120px] flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-600 transition-all hover:bg-emerald-100 hover:shadow-sm">
+          {isDelegation ? '✅ Worker করুক' : meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
         </button>
         {meta.isFinance && (
           <button type="button" onClick={() => setPhase('editing')}
-            className="flex-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-600 transition-all hover:bg-amber-100 hover:shadow-sm">
+            className="min-w-[120px] flex-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-600 transition-all hover:bg-amber-100 hover:shadow-sm">
             ✏️ সংশোধন
           </button>
         )}
         <button type="button" onClick={() => resolve('reject')}
-          className="flex-1 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-medium text-red-500 transition-all hover:bg-red-100 hover:shadow-sm">
-          ✗ Reject
+          className={`min-w-[120px] flex-1 rounded-lg border px-3 py-2.5 text-xs font-medium transition-all hover:shadow-sm ${isDelegation ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100'}`}>
+          {isDelegation ? '🧠 Sonnet বলুক' : '✗ Reject'}
         </button>
       </div>
     </motion.div>

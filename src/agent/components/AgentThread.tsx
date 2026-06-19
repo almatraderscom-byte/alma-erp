@@ -567,7 +567,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentConfirmCard
                       action={msg.pendingAction}
                       onResolved={(status) => {
-                        if (status === 'approved') onActionApproved?.()
+                        // Approve always posts a result note. For a delegation,
+                        // Reject ALSO posts one (Sonnet's own answer), so poll then too.
+                        if (status === 'approved' || msg.pendingAction?.actionType === 'delegation') {
+                          onActionApproved?.()
+                        }
                       }}
                     />
                   )}

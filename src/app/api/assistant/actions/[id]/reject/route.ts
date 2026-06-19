@@ -1,13 +1,45 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
+import Anthropic from '@anthropic-ai/sdk'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { recordRejection } from '@/agent/lib/trust-engine'
+import { getModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
+import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { logCost } from '@/agent/lib/cost-events'
 
 export const runtime = 'nodejs'
+// A rejected delegation makes the Sonnet head answer the task itself (one
+// completion), so allow headroom beyond the default serverless cap.
+export const maxDuration = 60
+
+/**
+ * Owner chose "Sonnet বলুক" on a delegation card → run the head model directly
+ * on the original task and return its Bangla answer (no tools, single turn).
+ */
+async function runHeadDirectAnswer(task: string): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+  const model = getModel(DEFAULT_MODEL_ID)
+  const system =
+    'তুমি ALMA-র হেড অ্যাসিস্ট্যান্ট (Sonnet)। মালিক worker-কে কাজটা না দিয়ে চেয়েছেন তুমি নিজে উত্তর দাও। ' +
+    'নিচের কাজটির জন্য সরাসরি, ব্যবহারিক, তথ্যবহুল বাংলা উত্তর দাও — মালিককে "Boss" বলে সম্বোধন করো। ' +
+    'অপ্রয়োজনীয় ভূমিকা নয়, ইসলামিক গাইডরেল মেনে চলো।'
+  const resp = await client.messages.create({
+    model: model.apiModel,
+    max_tokens: 2048,
+    system,
+    messages: [{ role: 'user', content: task }],
+  })
+  const text = resp.content
+    .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim()
+  return { text, inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens }
+}
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -68,11 +100,62 @@ export async function POST(
     (action.type as string).startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'
   const trustBiz = (action.businessId as string) ?? 'ALMA_LIFESTYLE'
-  void recordRejection(trustDomain, action.type as string, trustBiz).catch((err) => {
-    console.warn('[reject] recordRejection failed:', err instanceof Error ? err.message : err)
-  })
+  // A rejected delegation is NOT a rejection of the work — the owner just chose
+  // Sonnet over the worker. Don't pollute the trust engine with it.
+  if (action.type !== 'delegation') {
+    void recordRejection(trustDomain, action.type as string, trustBiz).catch((err) => {
+      console.warn('[reject] recordRejection failed:', err instanceof Error ? err.message : err)
+    })
+  }
 
   const payload = action.payload as Record<string, unknown>
+
+  // Delegation rejected → the owner wants Sonnet to answer the task itself.
+  if (action.type === 'delegation') {
+    const task = String(payload.task ?? '').trim()
+    const rawConvId = action.conversationId ?? payload.conversationId
+    const conversationId = typeof rawConvId === 'string' && rawConvId.trim() ? rawConvId.trim() : null
+    let answer = ''
+    let tokensIn = 0
+    let tokensOut = 0
+    try {
+      const r = await runHeadDirectAnswer(task)
+      answer = r.text
+      tokensIn = r.inputTokens
+      tokensOut = r.outputTokens
+    } catch (err) {
+      console.warn('[reject] head direct answer failed:', err instanceof Error ? err.message : err)
+      answer = `উত্তর তৈরিতে সমস্যা হলো: ${err instanceof Error ? err.message : String(err)}`
+    }
+    const note = answer || '(কোনো উত্তর তৈরি হয়নি)'
+    const costUsd = calcModelTurnCostUsd(getModel(DEFAULT_MODEL_ID), { inputTokens: tokensIn, outputTokens: tokensOut })
+    if (conversationId) {
+      await db.agentMessage.create({
+        data: {
+          conversationId,
+          role: 'assistant',
+          content: [{ type: 'text', text: note }],
+          tokensIn,
+          tokensOut,
+          costUsd,
+          usage: { input_tokens: tokensIn, output_tokens: tokensOut, model: getModel(DEFAULT_MODEL_ID).id, delegation_reject_answer: true },
+        },
+      })
+      await prisma.agentConversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: new Date() },
+      })
+      void logCost({
+        provider: 'anthropic',
+        kind: 'chat',
+        units: { input_tokens: tokensIn, output_tokens: tokensOut, model: getModel(DEFAULT_MODEL_ID).id, via: 'delegation_reject_head_answer' },
+        costUsd,
+        conversationId,
+        dedupKey: `delegreject:${actionId}`,
+      }).catch(() => {})
+    }
+    return Response.json({ success: true, status: 'rejected', answered: true })
+  }
 
   if (action.type === 'content_gate1' || action.type === 'ad_creative_gate') {
     try {
