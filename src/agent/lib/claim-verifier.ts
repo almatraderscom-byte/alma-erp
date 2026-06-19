@@ -146,8 +146,15 @@ function classifyTool(name: string): ToolActionCategory {
 }
 
 // ── Completion lexicon (Banglish/Bangla past-tense done-words) ──────────────
-
-const COMPLETION_CLAIMS = /(?:করেছি|করে\s*দিয়েছি|করে\s*দিলাম|করে\s*ফেলেছি|পাঠিয়েছি|পাঠিয়ে\s*দিয়েছি|সেভ\s*করেছি|save\s*করেছি|mark\s*করেছি|post\s*করেছি|update\s*করেছি|delete\s*করেছি|set\s*করেছি|send\s*করেছি|log\s*করেছি|create\s*করেছি|dispatch\s*করেছি|approve\s*করেছি|publish\s*করেছি|done\s*হয়েছে|হয়ে\s*গেছে|সম্পন্ন\s*হয়েছে|completed|successfully|hoye\s*g[ae]che|kore\s*diyechi|kore\s*felesi|pathiyechi|save\s*korechi|set\s*korechi)/i
+//
+// Deliberately does NOT include the bare generic "করেছি" or the passive
+// "হয়ে গেছে": those match benign read/analysis replies ("চেক করেছি",
+// "যাচাই করেছি", "৬ দিন পুরোনো হয়ে গেছে") that aren't agent-action claims at
+// all, which forced needless verification rewrites (re-running the whole turn =
+// wasted tokens). Real action claims use a specific verb ("save করেছি",
+// "পাঠিয়ে দিয়েছি", "করে দিলাম") — those stay — and the critical actions
+// (salah/memory/reminder/dispatch/fb) are also caught by the Layer 1 rules.
+const COMPLETION_CLAIMS = /(?:করে\s*দিয়েছি|করে\s*দিলাম|করে\s*ফেলেছি|পাঠিয়েছি|পাঠিয়ে\s*দিয়েছি|সেভ\s*করেছি|save\s*করেছি|mark\s*করেছি|post\s*করেছি|update\s*করেছি|delete\s*করেছি|set\s*করেছি|send\s*করেছি|log\s*করেছি|create\s*করেছি|dispatch\s*করেছি|approve\s*করেছি|publish\s*করেছি|done\s*হয়েছে|সম্পন্ন\s*হয়েছে|completed|successfully|kore\s*diyechi|kore\s*felesi|pathiyechi|save\s*korechi|set\s*korechi)/i
 
 const CATEGORY_CLAIM_KEYWORDS: Record<ToolActionCategory, RegExp | null> = {
   mark: /mark|মার্ক|রেকর্ড/i,
