@@ -53,42 +53,61 @@ export async function POST(req: NextRequest) {
 
   const action = String(body.action ?? 'add')
 
-  if (action === 'remove') {
-    const id = String(body.id ?? '').trim().toLowerCase()
-    const ok = await removeBrandModel(id)
-    if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
-    return Response.json({ ok: true })
-  }
+  // Wrap all DB work so a real failure returns its actual message as JSON. Without
+  // this an exception (e.g. the agent_brand_models table not yet migrated on
+  // production) fell through to Next's default 500 HTML page, and the Model
+  // Library UI could only show a useless generic "save_failed".
+  try {
+    if (action === 'remove') {
+      const id = String(body.id ?? '').trim().toLowerCase()
+      const ok = await removeBrandModel(id)
+      if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
+      return Response.json({ ok: true })
+    }
 
-  if (action === 'set_default') {
-    const id = String(body.id ?? '').trim().toLowerCase()
-    const ok = await setDefaultBrandModel(id)
-    if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
-    return Response.json({ ok: true })
-  }
+    if (action === 'set_default') {
+      const id = String(body.id ?? '').trim().toLowerCase()
+      const ok = await setDefaultBrandModel(id)
+      if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
+      return Response.json({ ok: true })
+    }
 
-  const id = String(body.id ?? body.name ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-  const name = String(body.name ?? '').trim()
-  const imagePath = String(body.imagePath ?? '').trim()
-  const role = body.role as ModelRole | undefined
-  if (!id || !name || !imagePath) {
-    return Response.json({ error: 'id_name_imagePath_required' }, { status: 400 })
-  }
-  if (!role || !VALID_ROLES.has(role)) {
-    return Response.json({ error: 'invalid_role' }, { status: 400 })
-  }
+    const id = String(body.id ?? body.name ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+    const name = String(body.name ?? '').trim()
+    const imagePath = String(body.imagePath ?? '').trim()
+    const role = body.role as ModelRole | undefined
+    if (!id || !name || !imagePath) {
+      return Response.json({ error: 'id_name_imagePath_required' }, { status: 400 })
+    }
+    if (!role || !VALID_ROLES.has(role)) {
+      return Response.json({ error: 'invalid_role' }, { status: 400 })
+    }
 
-  const saved = await addBrandModel({
-    id,
-    name,
-    imagePath,
-    isDefault: false,
-    notes: body.notes ? String(body.notes) : undefined,
-    role,
-  })
+    const saved = await addBrandModel({
+      id,
+      name,
+      imagePath,
+      isDefault: false,
+      notes: body.notes ? String(body.notes) : undefined,
+      role,
+    })
 
-  return Response.json({ model: saved }, { status: 201 })
+    return Response.json({ model: saved }, { status: 201 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[assistant/brand-models] save failed', err)
+    const missingTable = /relation .* does not exist/i.test(message)
+      || /agent_brand_models|agent_kv_settings/i.test(message)
+      || /P2021|P2010/.test(message)
+    if (missingTable) {
+      return Response.json({
+        error: 'db_not_migrated',
+        message: 'Model Library table production-এ নেই — prisma migrate deploy চালান।',
+      }, { status: 503 })
+    }
+    return Response.json({ error: 'save_failed', message }, { status: 500 })
+  }
 }

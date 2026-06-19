@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import AgentSparkleLoader from './AgentSparkleLoader'
@@ -127,6 +127,11 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     }
   }
 
+  // iPhone fix: NO framer `layout` prop on these cards. `layout` re-measures the
+  // element on every surrounding change (streaming text growing above it, the
+  // auto-scroll) and animates the delta with a transform — on the width-locked
+  // WKWebView that read as the whole card briefly zooming/scaling and its right
+  // edge (the "Sonnet বলুক" button) getting clipped. Plain enter animation only.
   const isDelegation = meta.actionType === 'delegation'
 
   const loadingLabel =
@@ -138,7 +143,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'loading') {
     return (
-      <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="mt-3 flex min-h-[140px] items-center justify-center rounded-[18px] border border-amber-200 bg-amber-50/50 p-6 shadow-card">
         <AgentSparkleLoader label={loadingLabel} size="lg" />
       </motion.div>
@@ -147,7 +152,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'approved') {
     return (
-      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+      <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="mt-3 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm shadow-card">
         <span className="text-3xl">{isDelegation ? '🤝' : '✅'}</span>
         <p className="mt-2 text-sm font-semibold text-emerald-600">
@@ -159,7 +164,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'rejected') {
     return (
-      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+      <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className={`mt-3 rounded-[18px] border px-4 py-5 text-center text-sm shadow-card ${isDelegation ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
         <span className="text-3xl">{isDelegation ? '🧠' : '❌'}</span>
         <p className={`mt-2 text-sm font-semibold ${isDelegation ? 'text-amber-600' : 'text-red-500'}`}>
@@ -171,7 +176,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
   if (phase === 'settled') {
     return (
-      <motion.div layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+      <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm shadow-card">
         <span className="text-3xl">ℹ️</span>
         <p className="mt-2 text-sm font-medium text-slate-600">{terminalNote}</p>
@@ -180,7 +185,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   }
 
   return (
-    <motion.div layout className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-card"
+    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border border-amber-200 bg-amber-50/50 p-4 text-sm shadow-card"
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
       <div className="mb-1 flex items-center gap-2 font-semibold text-amber-700">
         <span>{isDelegation ? '🤝' : '⚠️'}</span>
@@ -239,17 +244,17 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
 
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => resolve('approve')}
-          className="min-w-[120px] flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-600 transition-all hover:bg-emerald-100 hover:shadow-sm">
+          className="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-600 transition-all hover:bg-emerald-100 hover:shadow-sm">
           {isDelegation ? '✅ Worker করুক' : meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
         </button>
         {meta.isFinance && (
           <button type="button" onClick={() => setPhase('editing')}
-            className="min-w-[120px] flex-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-600 transition-all hover:bg-amber-100 hover:shadow-sm">
+            className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-600 transition-all hover:bg-amber-100 hover:shadow-sm">
             ✏️ সংশোধন
           </button>
         )}
         <button type="button" onClick={() => resolve('reject')}
-          className={`min-w-[120px] flex-1 rounded-lg border px-3 py-2.5 text-xs font-medium transition-all hover:shadow-sm ${isDelegation ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100'}`}>
+          className={`min-w-0 flex-1 rounded-lg border px-3 py-2.5 text-xs font-medium transition-all hover:shadow-sm ${isDelegation ? 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100'}`}>
           {isDelegation ? '🧠 Sonnet বলুক' : '✗ Reject'}
         </button>
       </div>

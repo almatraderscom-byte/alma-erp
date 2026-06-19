@@ -271,13 +271,21 @@ export async function POST(req: NextRequest) {
     isInternalCall
     && (body.source === 'telegram' || req.headers.get('x-agent-source') === 'telegram')
 
+  // iPhone fix (backgrounded turn must still finish): do NOT tie the turn to
+  // req.signal. On the native app, sending a message then backgrounding the app
+  // (home screen) drops the WebView's fetch connection, which aborts req.signal —
+  // the model call threw AbortError and run-owner-turn returned WITHOUT saving the
+  // assistant reply, so the answer was lost. With no signal the turn always runs
+  // to completion server-side and persists the reply; the client just re-syncs the
+  // conversation when it returns to the foreground. maxDuration (300s) still bounds
+  // a runaway turn, so dropping the abort is safe for this single-owner app.
   const turnOptions = {
     projectSystemInstructions,
     personalMode,
     telegramFastPath,
     businessId,
     modelId: isInternalCall ? DEFAULT_MODEL_ID : conversationModelId,
-    signal: req.signal,
+    signal: undefined,
   }
 
   async function* runTurn() {
