@@ -40,6 +40,6 @@ describe('applyToolSearchDeferral', () => {
     const out = applyToolSearchDeferral(tools)
     const withCacheControl = out.filter((t) => named(t).cache_control)
     expect(withCacheControl.length).toBe(1)
-    expect(named(out[out.length - 1]).cache_control).toEqual({ type: 'ephemeral' })
+    expect(named(out[out.length - 1]).cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
   })
 })

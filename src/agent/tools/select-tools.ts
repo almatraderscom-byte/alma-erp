@@ -105,7 +105,7 @@ export function applyToolCacheControl(tools: Anthropic.Messages.Tool[]): Anthrop
   if (tools.length === 0) return tools
   return tools.map((t, i) =>
     i === tools.length - 1
-      ? ({ ...t, cache_control: { type: 'ephemeral' } } as Anthropic.Messages.Tool)
+      ? ({ ...t, cache_control: { type: 'ephemeral', ttl: '1h' } } as Anthropic.Messages.Tool)
       : t,
   )
 }
@@ -250,7 +250,7 @@ export function applyToolSearchDeferral(
   const lastIdx = prepared.length - 1
   prepared[lastIdx] = {
     ...prepared[lastIdx],
-    cache_control: { type: 'ephemeral' },
+    cache_control: { type: 'ephemeral', ttl: '1h' },
   } as Anthropic.Messages.ToolUnion
   return prepared
 }
