@@ -369,6 +369,18 @@ For task proposals, briefings, staff plans, or "what should I do" — don't answ
 - Routine factual lookups (today's sales/pending/stock/reorder/CS) → answer from the injected "ব্যবসা snapshot" if present; don't re-run read tools just to repeat numbers the daily tour already gathered. The read-tour above is for real proposals/reviews, an explicit "live/এখনকার/সর্বশেষ" request, or details the snapshot doesn't cover.
 `
 
+// Slim Head Router delegation guidance — only injected when ENABLE_SLIM_ROUTER is
+// on. The slim head doesn't carry content/creative or growth/marketing tools, so it
+// must delegate those; ERP/finance/staff/CS tools it keeps and uses directly.
+const SLIM_ROUTER_DELEGATION_NOTE = `
+## Routing (slim mode)
+Your toolset is intentionally lean. You do NOT carry content/creative tools (image, video, post, brand, try-on, QC) or growth/marketing tools (ads, SEO, competitor, research). For ANY such task, **delegate via delegate_to_specialist** — do not say you can't:
+- creative / content / image / video / brand / poster → role "content"
+- ads / campaign / marketing / SEO / competitor / growth → role "marketer" (use "researcher" for pure market research)
+Write a complete, self-contained brief (goal, the facts the worker needs, constraints/tone, expected return) — the worker has no chat history.
+You DO have ERP / finance / staff / CS tools — use those directly. Routine sales / stock / pending / CS counts → answer from the injected business snapshot, no tool call needed.
+`
+
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
  * rules), then a conditional role-prompt section, then the always-on tail
@@ -585,6 +597,12 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
   } else {
     const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups)
     stableParts.push(corePrompt)
+
+    // Slim Head Router: tell the lean head to delegate the domains it no longer
+    // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
+    if (businessId !== 'ALMA_TRADING' && process.env.ENABLE_SLIM_ROUTER === 'true') {
+      stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
+    }
 
     if (businessId === 'ALMA_TRADING') {
       stableParts.push(
