@@ -63,6 +63,7 @@ const FINANCE_SUITE: NavItem[] = [
 
 /** Super Admin only — filtered in filterNavByRole; requires AGENT_ENABLED=true on server. */
 export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✨', label: 'ALMA Agent' }
+export const OFFICE_NAV_ITEM: NavItem = { href: '/portal/office', icon: '🏢', label: 'Office' }
 
 const SETTINGS_NAV: NavItem[] = [
   { href: '/operations/task-spotlight', icon: '🎯', label: 'Task Spotlight' },
@@ -81,6 +82,7 @@ const ALMA_NAV: NavItem[] = [
   { href: '/', icon: '🏠', label: 'Dashboard' },
   { href: '/approvals', icon: '✅', label: 'Approvals' },
   { href: '/portal', icon: '🪪', label: 'My desk' },
+  OFFICE_NAV_ITEM,
   { href: '/orders', icon: '📦', label: 'Orders' },
   { href: '/crm', icon: '👥', label: 'CRM' },
   { href: '/inventory', icon: '📊', label: 'Inventory' },
@@ -95,6 +97,7 @@ const CDIT_NAV: NavItem[] = [
   { href: '/digital', icon: '🏠', label: 'Dashboard' },
   { href: '/approvals', icon: '✅', label: 'Approvals' },
   { href: '/portal', icon: '🪪', label: 'My desk' },
+  OFFICE_NAV_ITEM,
   { href: '/digital/clients', icon: '👥', label: 'Clients' },
   { href: '/digital/projects', icon: '📂', label: 'Projects' },
   { href: '/digital/invoices', icon: '🧾', label: 'Invoices' },
@@ -118,6 +121,7 @@ export function getNavForBusiness(businessId: BusinessId): NavItem[] {
     { href: '/trading/analytics', icon: '📈', label: 'Analytics' },
     { href: '/trading/analytics?view=reports', icon: '📊', label: 'Reports' },
     { href: '/portal', icon: '🪪', label: 'My desk' },
+    OFFICE_NAV_ITEM,
     AGENT_NAV_ITEM,
     ...SETTINGS_NAV,
   ]
