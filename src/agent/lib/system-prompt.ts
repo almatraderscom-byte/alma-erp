@@ -91,7 +91,7 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Dispatch:** async — approve queues; verify via get_dispatch_status. Correction → merge_into_proposal → correct_and_redispatch → approve → verify → send_dispatch_correction_notice.
 
-**Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals.
+**Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals. Owner says "cancel/dismiss/বাদ দাও/সব cancel করো" about pending approvals → **dismiss_pending_approvals** (id/ids/type/all) — তুমি নিজেই clear করতে পারো, "tool নেই" বলবে না। এটা safe (কিছু execute হয় না), তাই আলাদা confirm card লাগে না।
 
 **Proposal merge:** if an active proposal exists, merge_into_proposal (DB save mandatory) — not discard/replace; get_current_proposal before approve. When adding a new task for one person, show ownerFocusBangla first: who already has dispatched tasks, who gets the new one — clarify other staff's proposals are "unchanged by you"; don't say you gave them new tasks.
 `

@@ -849,6 +849,84 @@ const get_pending_approvals: AgentTool = {
   },
 }
 
+const dismiss_pending_approvals: AgentTool = {
+  name: 'dismiss_pending_approvals',
+  description:
+    'Cancel/dismiss approvals waiting on the owner — use when the owner says "cancel koro", "dismiss koro", ' +
+    '"বাদ দাও", "এগুলো সরাও", or "সব cancel করো" about pending approvals (the cards from get_pending_approvals). ' +
+    'This is the SAFE direction — it just clears requests, nothing new is executed, so no extra confirm card is needed. ' +
+    'Scope it: pass id for one, ids for several, type to clear one kind (e.g. "staff_morale"), or all=true to clear every pending approval. ' +
+    'Call get_pending_approvals first if you do not already have the ids. Nothing is hard-deleted — rows are marked rejected.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      id: { type: 'string', description: 'Single pending-approval id to dismiss' },
+      ids: { type: 'array', items: { type: 'string' }, description: 'Several pending-approval ids to dismiss' },
+      type: { type: 'string', description: 'Dismiss all pending approvals of this type (e.g. staff_morale, dispatch_staff_tasks)' },
+      all: { type: 'boolean', description: 'true = dismiss every currently-pending approval' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const ids = [
+        ...(input.id ? [String(input.id)] : []),
+        ...(Array.isArray(input.ids) ? input.ids.map((x) => String(x)) : []),
+      ].filter(Boolean)
+      const type = input.type ? String(input.type) : null
+      const all = input.all === true
+
+      if (!ids.length && !type && !all) {
+        return {
+          success: false,
+          error: 'কোনটা dismiss করব নির্দিষ্ট করুন — id/ids দিন, অথবা type, অথবা all=true (সব pending)।',
+        }
+      }
+
+      const where: Record<string, unknown> = { status: 'pending' }
+      if (ids.length) where.id = { in: ids }
+      else if (type) where.type = type
+      // all=true → only the status:'pending' filter applies
+
+      const rows = await prisma.agentPendingAction.findMany({
+        where,
+        select: { id: true, type: true, summary: true, businessId: true },
+      })
+
+      if (!rows.length) {
+        return { success: true, data: { dismissed: 0, message: 'এই মুহূর্তে dismiss করার মতো কোনো pending approval নেই।' } }
+      }
+
+      await prisma.agentPendingAction.updateMany({
+        where: { id: { in: rows.map((r) => r.id) }, status: 'pending' },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+
+      // Best-effort cleanup: trust signal + unblock any duty waiting on these.
+      for (const r of rows) {
+        const trustBiz = (r.businessId as string) ?? 'ALMA_LIFESTYLE'
+        const trustDomain = String(r.type).startsWith('staff_') || r.type === 'dispatch_staff_tasks' ? 'staff' : 'general'
+        void import('@/agent/lib/trust-engine')
+          .then((m) => m.recordRejection(trustDomain, String(r.type), trustBiz))
+          .catch(() => {})
+        void import('@/agent/lib/duty-approval-block')
+          .then((m) => m.resolveDutyBlocksForLinkedAction(r.id))
+          .catch(() => {})
+      }
+
+      return {
+        success: true,
+        data: {
+          dismissed: rows.length,
+          items: rows.map((r) => ({ id: r.id, type: r.type, summary: r.summary.replace(/\n/g, ' ').slice(0, 120) })),
+          message: `✅ ${rows.length}টি pending approval dismiss করা হয়েছে (rejected — কিছু execute হয়নি)।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 const get_strategic_review: AgentTool = {
   name: 'get_strategic_review',
   description:
@@ -943,4 +1021,5 @@ export const ERP_TOOLS: AgentTool[] = [
   get_strategic_review,
   get_marketing_intel,
   get_pending_approvals,
+  dismiss_pending_approvals,
 ]
