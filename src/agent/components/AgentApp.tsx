@@ -550,11 +550,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'verification_retry') {
+          // The honesty guard caught a completion claim that wasn't backed by a
+          // real tool call this turn, so the draft is being rewritten. Make this
+          // understandable instead of a confusing blank-then-reappear.
           setStreamMode('fetching')
-          setStreamStatus('🔁 verify করছি…')
+          setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
-              ? { ...m, text: '', toolActivity: [] }
+              ? { ...m, text: '', toolActivity: [], selfCorrected: true }
               : m
           ))
         } else if (evt.type === 'done') {
