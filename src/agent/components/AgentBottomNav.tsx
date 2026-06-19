@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 const NAV_ITEMS = [
   { href: '/', label: 'ERP', icon: ErpIcon, matchExact: true },
   { href: '/agent', label: 'Chat', icon: ChatIcon, matchExact: true },
+  { href: '/agent/creative-studio', label: 'Studio', icon: StudioIcon },
   { href: '/agent/staff-monitor', label: 'Monitor', icon: MonitorIcon },
   { href: '/agent/costs', label: 'Costs', icon: CostsIcon },
 ]
@@ -39,7 +40,7 @@ export function AgentBottomNav() {
               key={item.href}
               href={item.href}
               className={cn(
-                'relative flex flex-col items-center gap-0.5 px-4 py-1.5 transition-all',
+                'relative flex flex-col items-center gap-0.5 px-2.5 py-1.5 transition-all',
                 isActive ? 'text-[#E07A5F]' : 'text-muted',
               )}
             >
@@ -64,6 +65,15 @@ function ChatIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  )
+}
+
+function StudioIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 3l1.2 2.8L9 7 6.2 8.2 5 11 3.8 8.2 1 7l2.8-1.2z" />
+      <path d="M17 11l1.5 3.5L22 16l-3.5 1.5L17 21l-1.5-3.5L12 16l3.5-1.5z" />
     </svg>
   )
 }
