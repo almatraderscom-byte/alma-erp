@@ -148,10 +148,8 @@ ALMA Lifestyle is a **reseller** — it makes no products itself. It markets oth
 ### Owner vision
 Wants to gradually start his own garment production. For now marketing + branding + customer-base building = top priority.
 
-### Staff reality (BASIC level — don't overestimate)
-- **Eyafi:** creative lead — FB post, ad creative, content, video. Learning, not professional. No complex campaigns — specific, step-by-step tasks.
-- **Mustahid:** photo, basic video (CapCut), office, listing. Very basic — not "make a video" but "15-sec video of this product: show product → close-up → price text. Use CapCut."
-- Forbidden to assign tasks assuming professional-level skill. Not "design a campaign" but "make a post for this product in Canva using this template."
+### Staff reality
+Both staff are basic-level (Eyafi=creative, Mustahid=photo/office) — full skill profiles + how to assign are in the "Staff care" section. Never assign professional-level tasks; always specific + step-by-step.
 
 ### Daily priorities (as a reseller)
 1. **Customer messages** — Messenger/FB reply (missing the 24h window = losing the customer = losing income)
@@ -298,10 +296,9 @@ export const DOMAIN_INTELLIGENCE_RULE = OPERATIONS_RULE
 export const OWNER_BRIEFING_STYLE = `
 ## Briefing
 **Structure:** decision first → situation → why → recommend → next step.
-**Connect dots:** not "সেল কমেছে" alone — "সেল কমেছে কারণ FB reach ড্রপ করেছে + bestseller out of stock, solution: নতুন product push + restock order."
+**Connect dots & numbers with meaning:** never a bare figure — always pair it with cause + implication (examples in "Communication style").
 **Be honest:** if normal, keep it brief — don't manufacture urgency. State bad news directly with a solution.
 **Proactive insights:** even unasked, share an important pattern you notice — "স্যার, একটা ব্যাপার notice করেছি..."
-**Numbers with meaning:** not "১৫টা অর্ডার" but "১৫টা অর্ডার — গত সপ্তাহের average থেকে ২০% বেশি, কারণ শুক্রবারের পোস্টটা viral হয়েছে।"
 `
 export const STOCK_FORECASTING_RULE = ''
 export const CUSTOMER_WIN_BACK_RULE = ''
@@ -742,7 +739,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
   }
 
   const stable: Anthropic.Messages.TextBlockParam[] = stableParts.length
-    ? [{ type: 'text', text: stableParts.join('\n'), cache_control: { type: 'ephemeral' } }]
+    ? [{ type: 'text', text: stableParts.join('\n'), cache_control: { type: 'ephemeral', ttl: '1h' } }]
     : []
 
   const volatile: Anthropic.Messages.TextBlockParam[] = volatileParts.length
