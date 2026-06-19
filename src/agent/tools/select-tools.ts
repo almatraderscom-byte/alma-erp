@@ -218,7 +218,14 @@ export async function selectToolsAndGroupsForTurnAsync(
  * cache is preserved. Default OFF — production behaviour is unchanged until the
  * owner flips the flag in a preview to test.
  */
-export const TOOL_SEARCH_ENABLED = process.env.AGENT_TOOL_SEARCH === 'true'
+export const TOOL_SEARCH_ENABLED = (() => {
+  const flag = process.env.AGENT_TOOL_SEARCH
+  if (flag === 'true') return true // force ON anywhere
+  if (flag === 'false') return false // force OFF anywhere (instant kill switch)
+  // Default: ON automatically in Vercel PREVIEW so all three fixes can be tested
+  // together with zero extra setup; OFF in production until the owner approves.
+  return process.env.VERCEL_ENV === 'preview'
+})()
 
 // Everyday groups whose tools stay fully loaded; everything else defers.
 const TOOL_SEARCH_CORE_GROUPS: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
