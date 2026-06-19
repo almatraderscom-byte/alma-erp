@@ -45,16 +45,29 @@ if (!existsSync(googleServices)) {
   process.exit(1)
 }
 
-const apkName = isRelease ? 'app-release-unsigned.apk' : 'app-debug.apk'
-const built = path.join(androidDir, 'app/build/outputs/apk', isRelease ? 'release' : 'debug', apkName)
+// Resolve the actual gradle output. With a keystore configured, the release
+// build is SIGNED and emitted as `app-release.apk`; without one it stays
+// `app-release-unsigned.apk`. Try the signed name first so a signed build is
+// picked up (the old hard-coded `-unsigned` name failed signed builds).
+const apkCandidates = isRelease
+  ? ['app-release.apk', 'app-release-unsigned.apk']
+  : ['app-debug.apk']
+const apkDir = path.join(androidDir, 'app/build/outputs/apk', isRelease ? 'release' : 'debug')
+const built = apkCandidates.map((n) => path.join(apkDir, n)).find((p) => existsSync(p))
 const outDir = path.join(ROOT, 'mobile/dist')
 mkdirSync(outDir, { recursive: true })
 const outName = isRelease ? 'alma-erp-release.apk' : 'alma-erp-debug.apk'
 const outPath = path.join(outDir, outName)
 
-if (!existsSync(built)) {
-  console.error('APK not found:', built)
+if (!built) {
+  console.error('APK not found in', apkDir, '— looked for:', apkCandidates.join(', '))
   process.exit(1)
+}
+if (isRelease && path.basename(built) === 'app-release-unsigned.apk') {
+  console.warn(
+    '\n⚠️  Built UNSIGNED release APK (no ALMA_ANDROID_KEYSTORE_PATH set) — ' +
+      'it will NOT install on a normal device. Set the keystore env vars to sign.',
+  )
 }
 copyFileSync(built, outPath)
 const publicApk = path.join(ROOT, 'public/releases/alma-erp.apk')
