@@ -207,12 +207,12 @@ const search_memory: AgentTool = {
         const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date }> =
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (prisma as any).$queryRawUnsafe(
-            `SELECT id, scope, key, content, pinned, created_at
+            `SELECT id, scope, key, content, pinned, "createdAt" AS created_at
              FROM agent_memory
              WHERE content ILIKE $1
                ${scope ? `AND scope = $2` : ''}
                ${businessFilterClause}
-             ORDER BY created_at DESC
+             ORDER BY "createdAt" DESC
              LIMIT ${limit}`,
             ...(scope ? [`%${query}%`, scope] : [`%${query}%`]),
           )
@@ -228,7 +228,7 @@ const search_memory: AgentTool = {
       const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date; score: number }> =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (prisma as any).$queryRawUnsafe(
-          `SELECT id, scope, key, content, pinned, created_at,
+          `SELECT id, scope, key, content, pinned, "createdAt" AS created_at,
                   1 - (embedding <=> $1::vector) AS score
            FROM agent_memory
            WHERE embedding IS NOT NULL ${scopeClause} ${businessFilterClause}
