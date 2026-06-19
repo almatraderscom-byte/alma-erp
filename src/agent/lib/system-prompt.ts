@@ -600,7 +600,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
-    if (businessId !== 'ALMA_TRADING' && process.env.ENABLE_SLIM_ROUTER === 'true') {
+    if (businessId !== 'ALMA_TRADING' && process.env.ENABLE_SLIM_ROUTER !== 'false') {
       stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
     }
 

@@ -56,7 +56,7 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
   // production with the flags off leaves the current tier-default routing
   // unchanged. Critical tiers always ignore it (Claude, enforced just below).
   const routerExperimentOn =
-    process.env.ENABLE_SLIM_ROUTER === 'true' || process.env.DELEGATION_APPROVAL === 'true'
+    process.env.ENABLE_SLIM_ROUTER !== 'false' || process.env.DELEGATION_APPROVAL !== 'false'
   if (tier !== 'critical' && routerExperimentOn) {
     const pref = SPECIALIST_ROLES[role]?.preferredModelId
     if (pref && isKnownModelId(pref)) modelId = pref

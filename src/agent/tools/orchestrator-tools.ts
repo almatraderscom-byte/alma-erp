@@ -51,7 +51,7 @@ const delegate_to_specialist: AgentTool = {
     // Approval gate (test mode, DELEGATION_APPROVAL=true): do NOT run the worker —
     // ask the owner first. The worker starts only after the owner approves the
     // confirm card (handled in /api/assistant/actions/[id]/approve, type 'delegation').
-    if (process.env.DELEGATION_APPROVAL === 'true') {
+    if (process.env.DELEGATION_APPROVAL !== 'false') {
       let modelLabel = 'worker'
       try {
         const { resolveSubagentModel } = await import('@/agent/lib/models/tier-router')

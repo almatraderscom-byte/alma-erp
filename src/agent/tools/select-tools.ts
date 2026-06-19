@@ -169,9 +169,10 @@ const OWNER_STABLE_GROUPS: ToolGroupName[] = [
 // When ON, the owner-chat HEAD carries a leaner tool set and DELEGATES the heavy
 // non-critical domains to specialist sub-agents (cheap workers), instead of
 // shipping all 14 groups' schemas in the cached prefix every turn — the main cost
-// driver. Default OFF; set ENABLE_SLIM_ROUTER=true (e.g. in a preview) to test.
+// driver. Default ON (owner runs it live, protected by the delegation approval
+// gate); set ENABLE_SLIM_ROUTER=false to disable.
 // Critical execution still runs on Claude via the sub-agent tier guard.
-export const SLIM_ROUTER_ENABLED = process.env.ENABLE_SLIM_ROUTER === 'true'
+export const SLIM_ROUTER_ENABLED = process.env.ENABLE_SLIM_ROUTER !== 'false'
 
 // The head profile. This first (safe) cut drops only `content` + `growth` — the two
 // largest groups, both fully covered by delegatable workers (content→content,
@@ -186,7 +187,7 @@ const ROUTER_HEAD_GROUPS: ToolGroupName[] = [
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
 // to transfer to a specialist by removing the marketing read-tools that leak into
 // the kept erp/staff groups, so the head can't quietly do it itself.
-const DELEGATION_APPROVAL_TEST = process.env.DELEGATION_APPROVAL === 'true'
+const DELEGATION_APPROVAL_TEST = process.env.DELEGATION_APPROVAL !== 'false'
 const DELEGATION_FORCE_DENYLIST = new Set<string>([
   'get_marketing_intel',
   'get_marketing_history',
