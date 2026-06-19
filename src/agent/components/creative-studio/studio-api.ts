@@ -104,6 +104,6 @@ export async function saveModel(body: {
     body: JSON.stringify({ action: 'add', ...body }),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'save_failed')
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'save_failed')
   return data
 }

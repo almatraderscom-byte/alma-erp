@@ -159,6 +159,49 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    *  plus a start timestamp so we can show "Thought for Ns" once the reply begins. */
   const thinkingBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean; startedAt: number } | null>(null)
 
+  // iPhone fix (backgrounded turn): mirror streaming + active conversation into
+  // refs so the visibility listener (registered once) always reads current values.
+  const streamingRef = useRef(streaming)
+  useEffect(() => { streamingRef.current = streaming }, [streaming])
+  const activeConvIdRef = useRef(activeConvId)
+  useEffect(() => { activeConvIdRef.current = activeConvId }, [activeConvId])
+
+  /**
+   * Pull the authoritative server state for a conversation and replace local
+   * messages with it. Used when the stream is lost — the native app was
+   * backgrounded (iOS suspends the WebView and drops the fetch) or the owner hit
+   * stop. The server turn now always runs to completion and saves the reply, so
+   * if the latest row is still the owner's question we poll briefly until the
+   * assistant reply lands. Bails out the moment a new stream starts.
+   */
+  const resyncActiveConversation = useCallback(async (convId: string | null) => {
+    if (!convId) return
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (streamingRef.current) return
+      try {
+        const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
+        if (res.ok) {
+          const rows: MessageRow[] = await res.json()
+          if (streamingRef.current) return
+          setMessages(mapMessageRows(rows))
+          const last = rows[rows.length - 1]
+          if (!last || last.role !== 'user') return
+        }
+      } catch { /* offline / transient — retry */ }
+      await new Promise((r) => setTimeout(r, 2500))
+    }
+  }, [])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (streamingRef.current) return
+      void resyncActiveConversation(activeConvIdRef.current)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [resyncActiveConversation])
+
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
   useEffect(() => {
@@ -677,9 +720,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
       }
       if ((err as Error).name === 'AbortError') {
+        // The stream was cut — either iOS suspended the backgrounded WebView, or
+        // the owner hit stop. The server turn keeps running and saves the full
+        // reply, so re-sync from the server instead of stranding a partial draft.
         setMessages((prev) => prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, streaming: false, text: m.text || '(বাতিল করা হয়েছে)' } : m
+          m.id === assistantMsgId ? { ...m, streaming: false } : m
         ))
+        void resyncActiveConversation(finalConvId)
       } else {
         const msg = err instanceof Error ? err.message : String(err)
         setMessages((prev) => prev.map((m) =>
@@ -701,7 +748,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         setCompacting(false)
       }
     }
-  }, [streaming, activeConvId])
+  }, [streaming, activeConvId, resyncActiveConversation])
 
   const handleVoiceMessage = useCallback(async (text: string): Promise<string | null> => {
     const body: Record<string, unknown> = { message: text }
