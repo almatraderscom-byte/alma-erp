@@ -16,6 +16,38 @@
   --kb-inset: 0px;
 }
 
+/* PERMANENT iOS FIX — lock the document scroller on agent routes.
+ *
+ * Symptom this kills: after a few messages on the iPhone app the screen drifted —
+ * auto-zoom feel, header text clipped, whole UI panned off-screen. Cause: <html>/
+ * <body> were never scroll-locked, so focusing the bottom composer let WKWebView
+ * run scrollIntoView on the DOCUMENT (not the inner chat container) and, combined
+ * with the native keyboard resize, the body kept a residual scroll/zoom offset that
+ * never reset. position:fixed + overflow:hidden on the document make it physically
+ * un-scrollable, so only `.agent-chat-root` can scroll. Same pattern the app already
+ * uses for modals (html.ios-modal-open). Scoped to .agent-route so ERP is untouched.
+ * The `agent-route` class is added/removed on <html> by AgentKeyboardManager. */
+html.agent-route,
+html.agent-route body {
+  height: 100%;
+  width: 100%;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Calmer aura on agent routes (owner request: "aura ektu halka koro jate chat
+ * clear dekha jay"). The aurora is shared app-wide and vivid; on /agent/* we just
+ * dim it so message text keeps strong contrast. Scoped to .agent-route, so the ERP
+ * dashboards keep the full vivid wash. */
+html.agent-route .ambient-canvas {
+  opacity: 0.4;
+}
+html.agent-route .ambient-bg-root {
+  opacity: 0.6;
+}
+
 /* Layout: account for fixed bottom nav on mobile + iOS safe area */
 .agent-main-height {
   height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px));
@@ -160,6 +192,46 @@ body.kb-open .agent-composer-wrap {
 
 @keyframes agent-neon-spin {
   to { --neon-angle: 360deg; }
+}
+
+/* Today's-Tasks pill — soft, slow neon halo so the persistent dock catches the
+ * eye without shouting. Same conic-border technique as the composer, but slower
+ * (7s) and lower opacity. The host wrapper must NOT clip overflow (the inner pill
+ * keeps overflow-hidden for the collapsible body). */
+.agent-todo-pill {
+  position: relative;
+  isolation: isolate;
+}
+.agent-todo-pill::before {
+  content: '';
+  position: absolute;
+  inset: -1.25px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.25px;
+  background: conic-gradient(
+    from var(--neon-angle, 0deg),
+    rgba(224, 122, 95, 0.0) 0%,
+    rgba(224, 122, 95, 0.55) 16%,
+    rgba(245, 200, 120, 0.7) 28%,
+    rgba(120, 200, 245, 0.55) 42%,
+    rgba(224, 122, 95, 0.0) 58%,
+    rgba(224, 122, 95, 0.0) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  filter: drop-shadow(0 0 4px rgba(224, 122, 95, 0.28));
+  opacity: 0.7;
+  animation: agent-neon-spin 7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-todo-pill::before { animation: none; }
 }
 
 /* "ALMA AI" wordmark — multi-color gradient flowing inside the letters

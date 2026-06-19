@@ -14,7 +14,8 @@ import {
 
 /**
  * Today's Tasks dock — summary header + collapsible body (F-v2).
- * In-flow only (no position:fixed). Intro animates open→closed once per session.
+ * Sticky to the top of the chat/office scroll container so it stays visible (small)
+ * no matter how long the conversation grows. Carries a soft animated neon halo.
  */
 export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
   const ctx = useAgentTodosOptional()
@@ -48,7 +49,8 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
   })
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 pt-3 pb-1 md:px-6 safe-x">
+    <div className="agent-todo-sticky sticky top-0 z-20 mx-auto w-full max-w-2xl px-4 pt-2 pb-1 md:px-6 safe-x backdrop-blur-sm">
+      <div className="agent-todo-pill rounded-2xl">
       <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card/82 shadow-sm backdrop-blur-sm">
         <button
           type="button"
@@ -114,6 +116,7 @@ export function AgentTodoDock({ containerRef: _containerRef }: { containerRef: R
             />
           </div>
         </CollapsibleGrid>
+      </div>
       </div>
     </div>
   )
