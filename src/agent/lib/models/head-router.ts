@@ -20,6 +20,7 @@ import OpenAI from 'openai'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
+import { prisma } from '@/lib/prisma'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing'
@@ -100,6 +101,53 @@ const ROUTINE_RE = new RegExp(
  */
 const HEAVY_DENY_RE =
   /(delete|remove|মুছে|বাদ\s*দাও|ডিলিট|payroll|salary|বেতন|বোনাস|bonus|ছাঁটাই|বরখাস্ত|terminate|fire\s|loan|ধার|ঋণ|investment|বিনিয়োগ|refund|ফেরত)/i
+
+/**
+ * Short follow-up / continuation messages (Rule 1 — thread stickiness). When a
+ * conversation is ALREADY being handled by a cheap/marketing head (Qwen/DeepSeek),
+ * a keyword-less follow-up like "??", "image koi?", "tarpor", "ok koro" must NOT
+ * be re-triaged UP to Sonnet — that per-message jump is the single biggest cost
+ * leak (a content thread bounced to Sonnet, then Sonnet ALSO spawned a paid
+ * sub-agent → double spend). Such follow-ups inherit the thread's current cheap
+ * head. Money/destructive keywords (HEAVY_DENY_RE) still force Sonnet first, so
+ * safety is unchanged.
+ */
+const CONTINUATION_RE = new RegExp(
+  '^\\s*(' +
+    '\\?+|' +
+    '(ok|okay|accha|achha|আচ্ছা|hmm+|hm|ji|জি|hae|হ্যাঁ|ha|হ্যা)\\b|' +
+    '(tarpor|tarpore|তারপর|then|next|porer|পরের|erpor|এরপর)\\b|' +
+    '(koi|কই|kothay|কোথায়)\\b|' +
+    '(ki\\s*(holo|hoilo|hlo|obostha|khobor|hocche|hoise|hoyeche|update|ho))\\b|' +
+    '(image|chobi|ছবি|post|পোস্ট)\\s*(ta\\s*)?(koi|kothay|কই|হলো|holo|hoise|hoyeche)' +
+  ')',
+  'i',
+)
+
+/** Below this length a keyword-less message is treated as a continuation/follow-up. */
+const CONTINUATION_MAX_LEN = 44
+
+/**
+ * The head model the conversation last ran on (Rule 1). Read from the most recent
+ * assistant message's saved usage.model. Returns null on no history / error so the
+ * caller falls back to normal triage. Never throws.
+ */
+async function loadStickyHeadModelId(conversationId?: string): Promise<string | null> {
+  if (!conversationId) return null
+  try {
+    const row = await prisma.agentMessage.findFirst({
+      where: { conversationId, role: 'assistant' },
+      orderBy: { createdAt: 'desc' },
+      select: { usage: true },
+    })
+    const usage = row?.usage as Record<string, unknown> | null | undefined
+    const m = usage && typeof usage === 'object' ? usage.model : null
+    return typeof m === 'string' && m ? m : null
+  } catch (err) {
+    console.warn('[head-router] sticky head lookup failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
 
 const TRIAGE_SYSTEM =
   'You are a routing classifier for a Bangla small-business assistant (small retail/office; owner is non-technical). ' +
@@ -247,6 +295,22 @@ export async function resolveHeadModelId(opts: {
   if (ROUTINE_RE.test(text)) {
     const cheap = cheapHeadDecision('routine_kw')
     if (cheap) return cheap
+  }
+
+  // Rule 1 — thread stickiness: a short / continuation follow-up stays on the
+  // thread's current cheap (DeepSeek) or marketing (Qwen) head instead of being
+  // triaged UP to Sonnet. Only inherits NON-Sonnet heads (a heavy/Sonnet thread is
+  // left to re-triage normally). HEAVY_DENY_RE already forced Sonnet above, so this
+  // can never keep a money/destructive turn cheap.
+  if (text.length <= CONTINUATION_MAX_LEN || CONTINUATION_RE.test(text)) {
+    const sticky = await loadStickyHeadModelId(opts.conversationId)
+    if (sticky && isKnownModelId(sticky)) {
+      const m = getModel(sticky)
+      if (m.provider !== 'anthropic' && m.supportsTools) {
+        const tier: HeadTier = sticky === marketingHeadModelId() ? 'marketing' : 'light'
+        return { modelId: sticky, tier, via: 'sticky_followup' }
+      }
+    }
   }
 
   // Triage net: the classifier also catches marketing intent the regex missed

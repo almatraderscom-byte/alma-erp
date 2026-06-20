@@ -33,7 +33,7 @@ import {
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
 } from '@/agent/lib/claim-verifier'
-import { getModel } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
@@ -440,6 +440,30 @@ async function* runAlternateProviderTurn(
     yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd }
   } catch (err) {
     if (signal?.aborted) return
+    // Rule 3 — head fallback: if a non-cheap head (e.g. Qwen) crashes BEFORE
+    // producing any answer text, retry once on the cheap head (DeepSeek) instead of
+    // surfacing an error — a surfaced error makes the owner's NEXT message triage UP
+    // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
+    // was streamed yet, and not already on the cheap head (prevents recursion loop).
+    const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
+    if (!finalText.trim() && model.id !== cheapId && isKnownModelId(cheapId)) {
+      const cheap = getModel(cheapId)
+      if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
+        console.warn(
+          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${cheapId}:`,
+          err instanceof Error ? err.message : err,
+        )
+        yield {
+          type: 'model_info',
+          modelId: cheap.id,
+          label: cheap.label,
+          variant: modelVariant(cheap),
+          tier: 'light',
+        }
+        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light')
+        return
+      }
+    }
     await captureAgentError(err, 'agent.provider.error', { conversationId })
     const msg = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Model error (${model.label}): ${msg}` }

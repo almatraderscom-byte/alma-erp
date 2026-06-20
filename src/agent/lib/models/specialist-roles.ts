@@ -43,6 +43,9 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'growth'],
     instruction:
       'You are a market & competitor research specialist. Gather real signals using the available research/competitor/SEO tools, then return a concise, sourced Bangla summary of findings and one clear recommendation.',
+    // Owner rule: Qwen orchestrates as head, DeepSeek does the sub-agent work
+    // (cheapest tool-capable worker). Non-critical → safe to run on DeepSeek.
+    preferredModelId: 'or-deepseek-v4-flash',
   },
   analyst: {
     label: 'বিশ্লেষক',
@@ -69,8 +72,10 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
       'with the staff tools. Anything that spends money, publishes publicly, or dispatches a staff task will surface ' +
       'its own owner-approval card — so propose freely, the owner confirms the final spend/post/dispatch. Return a ' +
       'concise Bangla summary of what you did and what is awaiting the owner\'s approval.',
-    // Non-critical → cheap worker (staged; see preferredModelId note above).
-    preferredModelId: 'or-qwen3-max',
+    // Owner rule: sub-agent work goes to DeepSeek (cheapest worker), Qwen stays the
+    // orchestrating head. The marketer sub-agent is only invoked when a non-marketing
+    // head delegates marketing, so DeepSeek keeps that hop cheap.
+    preferredModelId: 'or-deepseek-v4-flash',
   },
   content: {
     label: 'কনটেন্ট',
@@ -79,6 +84,8 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'content'],
     instruction:
       'You are a brand content & creative specialist. Draft on-brand, halal-compliant copy/ideas using the content tools. Return a concise Bangla draft or set of options.',
+    // Owner rule: DeepSeek does the sub-agent content drafting (cheap), not Qwen.
+    preferredModelId: 'or-deepseek-v4-flash',
   },
   ops: {
     label: 'অপারেশনস',
@@ -95,10 +102,10 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'cs'],
     instruction:
       'You are a customer-service specialist for ALMA Lifestyle. Use the CS tools to read the customer, order and product context, then return a concise, empathetic Bangla/Banglish reply or status. Never invent stock or price — verify with tools first.',
-    // Non-critical → cheap worker (staged; see preferredModelId note above).
+    // Owner rule: DeepSeek is the cheap sub-agent worker.
     // NOTE: not yet delegatable — the head can't route to `cs` until the
     // orchestrator + tier-router are wired in the later routing step.
-    preferredModelId: 'or-qwen3-max',
+    preferredModelId: 'or-deepseek-v4-flash',
   },
 }
 
