@@ -432,8 +432,10 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
       orderBy: { dueAt: 'asc' },
       take: 30,
     }),
-    db.agentOwnerTodo.findMany({
-      where: { status: 'open' },
+    // Owner todos now come from the SAME `agent_todos` store the owner sees in
+    // the chat dock — one source of truth, so dock ↔ Monitor stay in sync.
+    db.agentTodo.findMany({
+      where: { businessId: 'ALMA_LIFESTYLE', source: 'owner', status: { in: ['pending', 'in_progress', 'running'] } },
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),
@@ -474,14 +476,14 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
   }))
 
   const activeTodos = (todoRows as Array<{
-    id: string; title: string; detail: string | null; status: string
-    priority: string; dueHint: string | null; createdAt: Date
+    id: string; title: string; description: string | null; status: string
+    priority: string; createdAt: Date
   }>).map(t => ({
     id: t.id,
     title: t.title,
-    detail: t.detail,
+    detail: t.description,
     priority: t.priority,
-    dueHint: t.dueHint,
+    dueHint: null,
     createdAt: t.createdAt.toISOString(),
   }))
 

@@ -145,6 +145,18 @@ export function AgentTodoProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Live sync: any part of the app (a resolved confirm card, the end of an agent
+  // chat turn that may have created/completed/cancelled a todo) can fire
+  // `alma:todos-changed` on window to pull a fresh list immediately instead of
+  // waiting for the 30s poll. This is what makes cancelled/completed todos vanish
+  // right away rather than lingering. (Issues #2/#3.)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onChanged = () => void refresh()
+    window.addEventListener('alma:todos-changed', onChanged)
+    return () => window.removeEventListener('alma:todos-changed', onChanged)
+  }, [refresh])
+
   useEffect(() => {
     void refresh()
 
@@ -305,4 +317,12 @@ export function useAgentTodos(): TodoContextValue {
 
 export function useAgentTodosOptional(): TodoContextValue | null {
   return useContext(TodoContext)
+}
+
+/** Fire from anywhere (chat turn end, resolved confirm card) to make the todo
+ *  dock refresh immediately instead of waiting for the next poll. */
+export function notifyTodosChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('alma:todos-changed'))
+  }
 }

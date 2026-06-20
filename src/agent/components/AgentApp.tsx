@@ -7,6 +7,7 @@ import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
+import { notifyTodosChanged } from './AgentTodoContext'
 const VoiceSession = dynamic(() => import('./voice/VoiceSession'), { ssr: false })
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
@@ -738,6 +739,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       setStreamStatus(null)
       abortRef.current = null
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
+      // The turn may have created/completed/cancelled a todo via tools — refresh
+      // the dock now so the list stays in sync without the 30s poll lag.
+      notifyTodosChanged()
 
       if (compactAfterStream) {
         void runCompaction(compactAfterStream)

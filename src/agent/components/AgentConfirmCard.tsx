@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import AgentSparkleLoader from './AgentSparkleLoader'
+import AgentWorkingDots from './AgentWorkingDots'
+import { notifyTodosChanged } from './AgentTodoContext'
 
 export interface PendingAction {
   id: string
@@ -73,6 +75,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
           setTerminalNote(TERMINAL_NOTES[code])
           setPhase('settled')
           onResolved(decision === 'approve' ? 'approved' : 'rejected')
+          notifyTodosChanged()
           return
         }
         throw new Error(code || `HTTP ${res.status}`)
@@ -80,6 +83,9 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       setPhase(decision === 'approve' ? 'approved' : 'rejected')
       toast.success(decision === 'approve' ? 'অনুমোদিত ✓' : 'বাতিল করা হয়েছে')
       onResolved(decision === 'approve' ? 'approved' : 'rejected')
+      // A resolved card may have cancelled/created a todo (e.g. todo_cancel) —
+      // refresh the dock immediately so it doesn't linger until the next poll.
+      notifyTodosChanged()
     } catch (err) {
       toast.error(`সমস্যা: ${err instanceof Error ? err.message : String(err)}`)
       setPhase('idle')
@@ -149,21 +155,32 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     if (phase === 'loading') {
       return (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="mt-3 flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-xs text-amber-700 shadow-card">
-          <AgentSparkleLoader label={loadingLabel} size="sm" />
+          className="mt-3 flex items-center gap-2.5 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-2.5 shadow-card backdrop-blur-sm">
+          <AgentWorkingDots />
+          <span className="text-xs font-medium text-cream/90">{loadingLabel}</span>
         </motion.div>
       )
     }
     if (phase === 'approved' || phase === 'rejected' || phase === 'settled') {
-      const note = phase === 'approved'
-        ? '🤝 Worker কাজটি করছে — উত্তর নিচে আসবে'
-        : phase === 'rejected'
-          ? '🧠 Sonnet নিজে উত্তর দিচ্ছে — নিচে আসবে'
+      const isApproved = phase === 'approved'
+      const isRejected = phase === 'rejected'
+      const ongoing = isApproved || isRejected // work is now happening → live dots
+      const note = isApproved
+        ? 'Worker কাজটি করছে — উত্তর নিচে আসবে'
+        : isRejected
+          ? 'Sonnet নিজে উত্তর দিচ্ছে — নিচে আসবে'
           : terminalNote
+      const tone = isApproved
+        ? 'border-[#81B29A]/30 bg-[#81B29A]/[0.08]'
+        : isRejected
+          ? 'border-[#E07A5F]/30 bg-[#E07A5F]/[0.08]'
+          : 'border-border-subtle bg-card/70'
       return (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-600 shadow-card">
-          {note}
+          className={`mt-3 flex items-center gap-2.5 rounded-2xl border px-3.5 py-2.5 shadow-card ${tone}`}>
+          <span className="shrink-0 text-base leading-none">{isApproved ? '🤝' : isRejected ? '🧠' : 'ℹ️'}</span>
+          <span className="min-w-0 flex-1 text-xs font-medium text-cream/90">{note}</span>
+          {ongoing && <AgentWorkingDots className="shrink-0" />}
         </motion.div>
       )
     }
