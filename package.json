@@ -42,6 +42,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.104.1",
     "@capacitor/geolocation": "^7.1.8",
+    "@capacitor/haptics": "^7.0.5",
     "@capacitor/ios": "^7.6.6",
     "@capacitor/keyboard": "^7.0.6",
     "@google/generative-ai": "^0.24.1",

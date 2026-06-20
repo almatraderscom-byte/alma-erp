@@ -14,6 +14,7 @@ import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
+import { agentReplyHaptic } from '@/agent/lib/haptics'
 
 /** Compact token formatter: 36100 → "36.1k", 681 → "681". */
 function fmtTok(n: number): string {
@@ -392,6 +393,18 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     [messages],
   )
   const streamingMessage = messages.find((m) => m.streaming)
+
+  // Light haptic when the agent finishes a reply (Claude-app style on phone).
+  // Fires on the streaming→done transition for a finalized assistant message.
+  const wasStreamingRef = useRef(false)
+  useEffect(() => {
+    const isStreaming = Boolean(streamingMessage)
+    if (wasStreamingRef.current && !isStreaming) {
+      const last = messages[messages.length - 1]
+      if (last?.role === 'assistant' && last.text) agentReplyHaptic()
+    }
+    wasStreamingRef.current = isStreaming
+  }, [streamingMessage, messages])
 
   // When user manually scrolls up during streaming, stop force-tailing them.
   const stickToBottomRef = useRef(true)
