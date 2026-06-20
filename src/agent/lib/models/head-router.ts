@@ -17,7 +17,7 @@
  * CHEAP_HEAD_TRIAGE_MODEL_ID without a code change.
  */
 import OpenAI from 'openai'
-import { DEFAULT_MODEL_ID, getModel, isKnownModelId } from '@/agent/lib/models/registry'
+import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -63,6 +63,33 @@ const MARKETING_RE = new RegExp(
     // (e.g. "post banao", "post kore dao", "post ready koro", "post likhe dao").
     '\\bpost\\b[^\\n]{0,20}\\b(banao|banaw|bana|baniye|banai|dao|dibe|den|lekho|likhe|likho|ready|redi|kore|koro|lagbe|lage|chai)\\b',
     '\\b(banao|banaw|bana|baniye|lekho|likhe|likho)\\b[^\\n]{0,12}\\bpost\\b',
+  ].join('|'),
+  'i',
+)
+
+/**
+ * Routine status lookups the owner asks many times a day — today's sales, who is
+ * present in the office, stock / order / pending counts. These are pure ERP reads,
+ * low-stakes, and the single highest-frequency traffic. FAST PATH: an obvious routine
+ * phrase (regex) routes straight to the cheap head (DeepSeek) and SKIPS the triage
+ * call entirely — guaranteed routing + one less paid classifier hop. Money keywords
+ * (HEAVY_DENY_RE) are checked first and still force Sonnet, and every mutating tool
+ * keeps its own approval card, so a cheap read can never move money. Owner-tunable
+ * via ENABLE_CHEAP_HEAD / CHEAP_HEAD_MODEL_ID.
+ */
+const ROUTINE_RE = new RegExp(
+  [
+    // today's sales / revenue
+    '(aj|ajk|ajke|আজ|আজকে)[^\\n]{0,20}(sell|sale|sales|bikri|বিক্রি|বিক্রয়|সেল|revenue|আয়|koto\\s*holo|koto\\s*hoyeche)',
+    '(koto|কত)[^\\n]{0,12}(sell|sale|bikri|বিক্রি|সেল)',
+    // who is present / attendance / in office
+    '(ke|কে|kara|কারা)[^\\n]{0,20}(office|অফিস|ase|আছে|present|উপস্থিত|hajir|হাজির|check\\s*in|checkin|checked\\s*in)',
+    'attendance|হাজিরা|উপস্থিতি|ke\\s*ke\\s*ase',
+    // stock / inventory counts
+    'stock|স্টক|মজুদ|inventory|koto\\s*pcs|koto\\s*piece',
+    // order / pending counts
+    '(koto|কত|how\\s*many)[^\\n]{0,12}(order|অর্ডার|pending|পেন্ডিং|delivery|ডেলিভারি)',
+    '(order|অর্ডার|pending|পেন্ডিং)[^\\n]{0,12}(koto|কত|count|সংখ্যা)',
   ].join('|'),
   'i',
 )
@@ -162,6 +189,21 @@ function marketingHeadDecision(via: string): HeadDecision | null {
 }
 
 /**
+ * The cheap-head (DeepSeek) decision, shared by the routine-query fast-path and the
+ * triage "light" branch. Returns null (→ caller falls back to Sonnet) if the cheap
+ * head is unknown, Anthropic, or tool-incapable — the same fail-safe as before.
+ */
+function cheapHeadDecision(via: string): HeadDecision | null {
+  const cheapId = cheapHeadModelId()
+  if (!isKnownModelId(cheapId)) return null
+  const cheap = getModel(cheapId)
+  // The cheap head must be a non-Anthropic, tool-capable model (runs via the
+  // adapter path). If misconfigured, fail safe to Sonnet.
+  if (cheap.provider === 'anthropic' || !cheap.supportsTools) return null
+  return { modelId: cheapId, tier: 'light', via }
+}
+
+/**
  * Pick the head model for this owner turn. Defaults to Sonnet; only downgrades to
  * the cheap head when triage is confident the turn is routine and safe.
  */
@@ -174,9 +216,13 @@ export async function resolveHeadModelId(opts: {
 }): Promise<HeadDecision> {
   const heavy = (via: string): HeadDecision => ({ modelId: DEFAULT_MODEL_ID, tier: 'heavy', via })
 
-  // Owner explicitly picked a non-default model for this conversation → honour it.
-  const requested = opts.requestedModelId
-  if (requested && requested !== DEFAULT_MODEL_ID && isKnownModelId(requested)) {
+  // Owner's model choice for this conversation:
+  //  - a concrete known model id (INCLUDING Sonnet) → run THAT exact model, no triage.
+  //    This is what makes "select a model → that real model answers" actually work.
+  //  - 'auto' / null / empty → fall through to the triage router below (current cost
+  //    behaviour: routine→DeepSeek, marketing→Qwen, sensitive→Sonnet).
+  const requested = opts.requestedModelId?.trim()
+  if (requested && requested !== AUTO_MODEL_ID && isKnownModelId(requested)) {
     return { modelId: requested, tier: 'explicit', via: 'explicit' }
   }
 
@@ -196,6 +242,13 @@ export async function resolveHeadModelId(opts: {
     if (mk) return mk
   }
 
+  // Routine status lookups (today's sales, who is in the office, stock/order counts)
+  // → cheap head DIRECTLY, no triage call. High-frequency + low-stakes.
+  if (ROUTINE_RE.test(text)) {
+    const cheap = cheapHeadDecision('routine_kw')
+    if (cheap) return cheap
+  }
+
   // Triage net: the classifier also catches marketing intent the regex missed
   // (any phrasing/language) → Qwen; routine → cheap head; everything else → Sonnet.
   const tier = await triageTier(text, opts.conversationId)
@@ -206,12 +259,6 @@ export async function resolveHeadModelId(opts: {
   }
   if (tier !== 'light') return heavy('triage')
 
-  const cheapId = cheapHeadModelId()
-  if (!isKnownModelId(cheapId)) return heavy('cheap_unknown')
-  const cheap = getModel(cheapId)
-  // The cheap head must be a non-Anthropic, tool-capable model (runs via the
-  // adapter path). If misconfigured, fail safe to Sonnet.
-  if (cheap.provider === 'anthropic' || !cheap.supportsTools) return heavy('cheap_invalid')
-
-  return { modelId: cheapId, tier: 'light', via: 'triage' }
+  const cheap = cheapHeadDecision('triage')
+  return cheap ?? heavy('cheap_invalid')
 }

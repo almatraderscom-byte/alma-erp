@@ -21,6 +21,24 @@ export interface ModelEntry {
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 
+/**
+ * Sentinel stored on a conversation when the owner wants the per-turn router to
+ * choose the head model (the "Auto" pill in the model selector). It is NOT a real
+ * model — `isKnownModelId('auto')` stays false on purpose so it can never be sent to
+ * a provider; only the head-router understands it (→ triage routing).
+ */
+export const AUTO_MODEL_ID = 'auto'
+
+/** True for the "Auto" sentinel (owner let the router pick the head model). */
+export function isAutoModelId(id?: string | null): boolean {
+  return id === AUTO_MODEL_ID
+}
+
+/** Accepted as a conversation modelId: any real model, or the Auto sentinel. */
+export function isSelectableModelId(id: string): boolean {
+  return id === AUTO_MODEL_ID || isKnownModelId(id)
+}
+
 export const MODEL_REGISTRY: ModelEntry[] = [
   {
     id: 'claude-sonnet-4-6',

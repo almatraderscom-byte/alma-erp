@@ -4,11 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
+const AUTO_MODEL_ID = 'auto'
 
 type ModelOption = {
   id: string
   label: string
-  provider: 'anthropic' | 'google' | 'openai'
+  provider: 'anthropic' | 'google' | 'openai' | 'openrouter'
   default?: boolean
 }
 
@@ -16,6 +17,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   google: 'Google',
   openai: 'OpenAI',
+  openrouter: 'OpenRouter',
 }
 
 interface AgentModelSelectorProps {
@@ -56,8 +58,9 @@ export default function AgentModelSelector({
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [])
 
+  const isAuto = modelId === AUTO_MODEL_ID
   const active = models.find((m) => m.id === modelId)
-  const label = active?.label ?? 'Claude Sonnet 4.6'
+  const label = isAuto ? 'Auto' : (active?.label ?? 'Claude Sonnet 4.6')
 
   async function pick(nextId: string) {
     setOpen(false)
@@ -104,8 +107,24 @@ export default function AgentModelSelector({
       {open && (
         <div className="absolute bottom-full left-0 z-50 mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card/80 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
           <div className="border-b border-border-subtle px-3 py-2 text-[10px] text-muted">
-            Sonnet = default ও সবচেয়ে নির্ভরযোগ্য
+            Auto = সিস্টেম নিজে বেছে নেবে · নাহলে যেটা select করবেন সেই model-ই চলবে
           </div>
+          <button
+            type="button"
+            onClick={() => void pick(AUTO_MODEL_ID)}
+            className={cn(
+              'flex w-full items-center justify-between px-3 py-2.5 text-left text-[12px] transition-colors hover:bg-white/[0.03]',
+              isAuto ? 'text-[#E07A5F] font-medium' : 'text-muted-hi',
+            )}
+          >
+            <span className="flex flex-col">
+              <span>⚡ Auto (সিস্টেম বেছে নেবে)</span>
+              <span className="text-[10px] text-muted">রুটিন → সস্তা · sensitive → Sonnet</span>
+            </span>
+            {isAuto && (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+            )}
+          </button>
           {Object.entries(grouped).map(([provider, items]) => (
             <div key={provider}>
               <div className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
