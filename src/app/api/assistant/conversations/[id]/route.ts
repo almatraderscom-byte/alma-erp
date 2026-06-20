@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { isKnownModelId } from '@/agent/lib/models/registry'
+import { isSelectableModelId } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(
@@ -26,7 +26,8 @@ export async function PATCH(
 
   if (typeof body.modelId === 'string') {
     const id = body.modelId.trim()
-    if (!isKnownModelId(id)) {
+    // Accept any real model id OR the 'auto' sentinel (owner lets the router pick).
+    if (!isSelectableModelId(id)) {
       return Response.json({ error: 'invalid_model' }, { status: 400 })
     }
     data.modelId = id

@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
+import { AUTO_MODEL_ID } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
 
 function verifyInternalToken(provided: string): boolean {
@@ -108,7 +109,8 @@ export async function POST(req: NextRequest) {
     data: {
       title: title ?? null,
       projectId: projectId ?? null,
-      modelId: 'claude-sonnet-4-6',
+      // New web conversations default to Auto (router picks); owner can pin a model.
+      modelId: AUTO_MODEL_ID,
       source: 'web',
     },
     select: { id: true, title: true, projectId: true, modelId: true, createdAt: true, updatedAt: true },

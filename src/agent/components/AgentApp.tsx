@@ -134,7 +134,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [personalProjectId, setPersonalProjectId] = useState<string | null>(null)
   const [activePersonalMode, setActivePersonalMode] = useState(false)
   const [activeConvProjectId, setActiveConvProjectId] = useState<string | null>(null)
-  const [activeModelId, setActiveModelId] = useState('claude-sonnet-4-6')
+  // 'auto' = let the per-turn router pick the head model (current cost-optimized
+  // routing); a concrete id pins that exact model for the conversation.
+  const [activeModelId, setActiveModelId] = useState('auto')
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -273,7 +275,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   async function loadConversation(conv: Conversation) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
-    setActiveModelId(conv.modelId ?? 'claude-sonnet-4-6')
+    setActiveModelId(conv.modelId ?? 'auto')
     setActivePersonalMode(
       !!personalProjectId && conv.projectId === personalProjectId,
     )
@@ -401,7 +403,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     try {
       const body: Record<string, unknown> = { message: text }
       if (finalConvId) body.conversationId = finalConvId
-      else if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
+      else {
+        if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
+        // New conversation: persist the owner's model choice ('auto' or a pinned model).
+        body.modelId = activeModelId
+      }
       if (fileRefs.length > 0) body.files = fileRefs
 
       const res = await fetch('/api/assistant/chat', {
@@ -752,11 +758,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         setCompacting(false)
       }
     }
-  }, [streaming, activeConvId, resyncActiveConversation])
+  }, [streaming, activeConvId, activeModelId, resyncActiveConversation])
 
   const handleVoiceMessage = useCallback(async (text: string): Promise<string | null> => {
     const body: Record<string, unknown> = { message: text }
     if (activeConvId) body.conversationId = activeConvId
+    else body.modelId = activeModelId // new conv: persist the owner's model choice
     const res = await fetch('/api/assistant/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -788,7 +795,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       if (done) break
     }
     return reply || null
-  }, [activeConvId])
+  }, [activeConvId, activeModelId])
 
   function stopGeneration() {
     abortRef.current?.abort()

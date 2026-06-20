@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
-import { DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
+import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId } from '@/agent/lib/models/registry'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
@@ -35,6 +35,8 @@ interface ChatBody {
   projectId?: string
   personalMode?: boolean
   source?: string
+  /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
+  modelId?: string
 }
 
 function isAgentDbError(err: unknown): boolean {
@@ -72,6 +74,14 @@ export async function POST(req: NextRequest) {
   if (isInternalCall && typeof (body as { modelId?: string }).modelId === 'string') {
     assertModelOverrideNotAllowed((body as { modelId?: string }).modelId)
   }
+
+  // Owner's head-model choice for a NEW web conversation. 'auto' (or unset) → the
+  // per-turn router keeps choosing (routine→DeepSeek, marketing→Qwen, sensitive→Sonnet);
+  // a concrete model id → that exact model answers. Telegram/internal never overrides.
+  const ownerSelectedModelId =
+    !isInternalCall && typeof body.modelId === 'string' && isSelectableModelId(body.modelId.trim())
+      ? body.modelId.trim()
+      : null
 
   if (!isInternalCall) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
@@ -204,11 +214,13 @@ export async function POST(req: NextRequest) {
           ? null
           : await inheritConversationBusinessId(requestedProjectId)
         if (inherited) businessId = inherited
+        // New web conversation persists the owner's pick (or 'auto'); Telegram stays Sonnet.
+        conversationModelId = isInternalCall ? DEFAULT_MODEL_ID : (ownerSelectedModelId ?? AUTO_MODEL_ID)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const conv: { id: string } = await (prisma as any).agentConversation.create({
           data: {
             title,
-            modelId: DEFAULT_MODEL_ID,
+            modelId: conversationModelId,
             source,
             projectId: personalMode ? requestedProjectId : (requestedProjectId ?? null),
             businessId: personalMode ? null : businessId,
@@ -262,7 +274,9 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 
-  if (!isInternalCall) {
+  if (!isInternalCall && conversationModelId !== AUTO_MODEL_ID) {
+    // 'auto' resolves to a concrete model only inside the turn (head-router), so its
+    // provider key is checked there; for a pinned model we can validate up-front.
     const providerKeyMissing = requireModelProviderKey(conversationModelId)
     if (providerKeyMissing) return providerKeyMissing
   }
