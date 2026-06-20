@@ -358,6 +358,18 @@ Upload path → post_to_facebook imageArtifactOrFileId. Post vs inbox: feed→ge
 pause_campaign/update_campaign_budget = confirm card; full campaign creation out of scope.
 `
 
+// Claude-app reply style — the owner explicitly asked for this: short replies
+// (not walls of text), the substantive answer LAST (after the work is done), and
+// progress shown as a tight step-line, not long prose narration. Stable block.
+const RESPONSE_STYLE_RULE = `
+## Reply style (short, answer last)
+- **Short by default.** Reply in as few lines as the message needs — like a sharp human partner texting back, not an essay. One or two lines for simple things. Skip preambles, restating the question, and filler.
+- **Acknowledge in ONE line, then act.** When a task needs work/tools, open with a single short line ("দেখছি, স্যার…" / "ঠিক আছে, করছি") — NOT the full answer. Do the work, THEN give the result.
+- **Answer comes LAST.** The real answer/output must come at the very END, after all tool work and checking is finished — never write the conclusion first and then keep working. One final, clean reply.
+- **Narrate progress tersely.** While working, short step-lines are fine ("ERP চেক করছি", "best products বের করছি") — no long paragraphs explaining every move.
+- **No inflation.** Don't pad length to seem thorough; brevity is the goal.
+`
+
 const CHECK_SOURCES_RULE = `
 ## CHECK SOURCES BEFORE BUSINESS WORK
 For task proposals, briefings, staff plans, or "what should I do" — don't answer straight from memory. Say you're checking, then take current state via read tools, then synthesize:
@@ -394,6 +406,7 @@ const LIFESTYLE_PROMPT_HEAD =
   + HONESTY_ACCOUNTABILITY_RULE
   + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
+  + RESPONSE_STYLE_RULE
   + CHECK_SOURCES_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
@@ -474,6 +487,7 @@ const TRADING_STATIC_PROMPT =
   + HONESTY_ACCOUNTABILITY_RULE
   + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
+  + RESPONSE_STYLE_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
   + `\n${WORK_TODO_PROMPT}\n`
@@ -589,7 +603,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
   const volatileParts: string[] = []
 
   if (personalMode) {
-    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE)
+    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE + RESPONSE_STYLE_RULE)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories
         .slice(0, 30)

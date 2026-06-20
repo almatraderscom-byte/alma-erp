@@ -1,34 +1,35 @@
 /**
- * Marketing-head one-pass guard.
+ * Marketing-head tool-set guard.
  *
- * Root cause this locks down: the Qwen marketing head was given the SAME tool set
- * as every other head — which (in DELEGATION_APPROVAL test mode) strips the
- * marketing read-tools AND keeps `delegate_to_specialist`. So Qwen-as-head could
- * not do marketing itself and was forced to delegate to a `marketer` sub-agent
- * (also Qwen) — a second full agent loop, the "Qwen calls the agent again" bug.
+ * History: the Qwen marketing head used to ALSO drop `delegate_to_specialist`, on
+ * the theory that delegating marketing would spawn a SECOND Qwen agent loop (the
+ * "Qwen calls the agent again" double-spend). That reason is now VOID: the worker
+ * a head delegates to is DeepSeek (the cheap worker), never Qwen. So the marketing
+ * head now KEEPS `delegate_to_specialist`. This is what lets the HARD tool-round
+ * budget (HEAD_TOOL_BUDGET) force the expensive Qwen head to hand the rest of a
+ * long job to the cheap DeepSeek worker instead of spree-calling tools itself.
  *
- * The fix: when headTier === 'marketing', keep the marketing read-tools and drop
- * `delegate_to_specialist`, so Qwen answers marketing DIRECTLY in one pass. Every
- * other head keeps the previous behavior unchanged.
+ * It still KEEPS its marketing read-tools (so it can read the page / history
+ * directly for short tasks). Every other head keeps its prior behavior unchanged.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
 
-describe('selectToolsAndGroupsForTurnAsync — marketing head answers directly', () => {
+describe('selectToolsAndGroupsForTurnAsync — marketing head tool set', () => {
   beforeAll(() => {
     // Exercise the default test-mode behavior deterministically.
     delete process.env.DELEGATION_APPROVAL
     delete process.env.ENABLE_SLIM_ROUTER
   })
 
-  it('marketing head: KEEPS marketing read-tools and DROPS delegate_to_specialist (no double hop)', async () => {
+  it('marketing head: KEEPS marketing read-tools AND keeps delegate_to_specialist (hands long jobs to the cheap DeepSeek worker)', async () => {
     const { tools } = await selectToolsAndGroupsForTurnAsync('ekta fb post banao', {
       personalMode: false,
       businessId: 'ALMA_LIFESTYLE',
       headTier: 'marketing',
     })
     const names = tools.map((t) => t.name)
-    expect(names).not.toContain('delegate_to_specialist')
+    expect(names).toContain('delegate_to_specialist')
     expect(names).toContain('get_fb_recent_posts')
     expect(names).toContain('get_marketing_intel')
     expect(names).toContain('get_marketing_history')

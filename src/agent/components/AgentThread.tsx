@@ -667,15 +667,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {msg.streaming && streamStatus && msg.id === messages[messages.length - 1]?.id && (
-                    <AgentThinkingIndicator
-                      label={streamStatus}
-                      mode={streamMode ?? 'writing'}
-                      variant={streamVariant ?? 'claude'}
-                      className="mb-3"
-                    />
-                  )}
-
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
                     <div className="mb-3">
                       <div className="mb-1 text-[10px] font-medium text-muted">
@@ -719,6 +710,20 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         </CollapsibleMessage>
                       )}
                     </div>
+                  )}
+
+                  {/* Persistent working indicator — sits at the BOTTOM of the
+                      live message and trails the streaming content, so it never
+                      vanishes mid-turn (like Claude's). Gated only on `streaming`
+                      (NOT on streamStatus) so a momentary empty label can't make
+                      it flicker out; it disappears only when the turn is `done`. */}
+                  {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
+                    <AgentThinkingIndicator
+                      label={streamStatus ?? 'কাজ করছি…'}
+                      mode={streamMode === 'settled' ? 'writing' : (streamMode ?? 'writing')}
+                      variant={streamVariant ?? 'claude'}
+                      className="mt-3"
+                    />
                   )}
 
                   {msg.pendingAction && (
@@ -825,6 +830,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         containerRef={containerRef}
         topThreshold={400}
         bottomThreshold={isOfficeShift ? 80 : 120}
+        centerBottom={!isOfficeShift}
         bottomOffsetClass={
           isOfficeShift
             ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-8'

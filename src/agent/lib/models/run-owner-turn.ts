@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
@@ -57,6 +57,15 @@ function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'openai' || provider === 'openrouter') return 'openai'
   return 'anthropic'
 }
+
+// One-time message injected when the expensive (Qwen marketing) head exhausts
+// its tool-round budget. It must now answer with what it has, or hand the rest
+// to a cheap DeepSeek worker via delegate_to_specialist — no more own tool calls.
+const HEAD_TOOL_BUDGET_NUDGE =
+  'টুল ব্যবহারের বাজেট শেষ। এখন আর নিজে নতুন টুল কল কোরো না। ' +
+  'হাতে যা তথ্য আছে তা দিয়ে সংক্ষেপে চূড়ান্ত উত্তর দাও, ' +
+  'অথবা বাকি কাজটা delegate_to_specialist দিয়ে একজন সস্তা worker-কে দিয়ে দাও। ' +
+  'খরচ কমানোই উদ্দেশ্য — অযথা নিজে অনেক টুল চালিও না।'
 
 async function loadPinnedMemories(
   personalMode: boolean,
@@ -221,6 +230,17 @@ async function* runAlternateProviderTurn(
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
+  // ── HARD tool-round budget (Option A) ──────────────────────────────────────
+  // Only the EXPENSIVE Qwen marketing head is capped here — the cheap DeepSeek
+  // light head is the worker itself, so it stays uncapped. After HEAD_TOOL_BUDGET
+  // tool ROUNDS the marketing head may no longer call read/write tools; the only
+  // tool left is delegate_to_specialist → cheap DeepSeek worker. Code-enforced.
+  const isExpensiveHead = headTier === 'marketing'
+  const delegateOnlyTools = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
+  const headCanDelegate = isExpensiveHead && delegateOnlyTools.length > 0
+  let headToolRounds = 0
+  let budgetNudgeSent = false
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -229,11 +249,20 @@ async function* runAlternateProviderTurn(
       const toolNames = new Map<string, string>()
       let iterationText = ''
 
+      // Over budget → restrict to delegate-only so the expensive head physically
+      // cannot spree more tools; it must answer now or hand off to the worker.
+      const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
+      const iterationTools = overBudget ? delegateOnlyTools : neutralTools
+      if (overBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [...messages, { role: 'user', content: HEAD_TOOL_BUDGET_NUDGE }]
+      }
+
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
         messages,
-        tools: neutralTools,
+        tools: iterationTools,
         thinking: model.thinking,
         signal,
       })) {
@@ -290,6 +319,9 @@ async function* runAlternateProviderTurn(
         }
         break
       }
+
+      // This turn requested tools → count it against the head's tool-round budget.
+      headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
