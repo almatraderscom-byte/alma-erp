@@ -34,7 +34,7 @@ import {
   MAX_VERIFY_RETRIES,
 } from '@/agent/lib/claim-verifier'
 import { getModel } from '@/agent/lib/models/registry'
-import { resolveHeadModelId } from '@/agent/lib/models/head-router'
+import { resolveHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
@@ -122,6 +122,7 @@ async function* runAlternateProviderTurn(
   conversationId: string,
   modelId: string,
   options: RunOwnerTurnOptions,
+  headTier?: HeadTier,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
@@ -167,7 +168,7 @@ async function* runAlternateProviderTurn(
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
-    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
 
@@ -515,5 +516,5 @@ export async function* runOwnerTurn(
     return
   }
 
-  yield* runAlternateProviderTurn(conversationId, model.id, options)
+  yield* runAlternateProviderTurn(conversationId, model.id, options, decision.tier)
 }
