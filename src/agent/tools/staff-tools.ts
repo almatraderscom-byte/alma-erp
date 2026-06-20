@@ -1623,6 +1623,177 @@ const list_staff_leave: AgentTool = {
   },
 }
 
+// ── explain_staff_task_bangla ─────────────────────────────────────────────────
+// C2: staff task EXPLAINING — a NEW capability. The agent generates a clear,
+// personalized Bangla "how to do this" breakdown using the SAME Gemini model the
+// agent already uses for staff verification (gemini-2.5-flash, good Bangla, cheap
+// — keeps this off Claude). Owner-approval gated: the explanation only reaches the
+// staff member's office view (অফিস) AFTER the owner approves the draft. Dispatch /
+// sending stays on the existing gated paths — this tool never sends anything.
+
+const STAFF_TASK_EXPLAIN_TOOL_HINT: Record<string, string> = {
+  video_reel: 'CapCut',
+  ad_creative: 'Canva',
+  product_content: 'Canva / FB',
+  product_photo: 'ফোন ক্যামেরা',
+  listing_update: 'Website admin',
+  order_followup: 'ERP + ফোন/মেসেঞ্জার',
+  page_management: 'FB Page admin',
+  customer_reply: 'Messenger',
+  stock_check: 'ERP inventory',
+}
+
+async function buildStaffTaskExplanation(opts: {
+  staffName: string
+  title: string
+  type: string
+  detail: string | null
+  productRef: string | null
+  extraContext?: string
+  conversationId?: string | null
+}): Promise<string> {
+  const { geminiGenerateText } = await import('@/agent/lib/gemini-text')
+  const toolHint = STAFF_TASK_EXPLAIN_TOOL_HINT[opts.type] ?? 'ERP'
+  const prompt = [
+    'তুমি ALMA টিমের একজন সহকারী ম্যানেজার। নিচের কাজটি একজন স্টাফকে খুব সহজ বাংলায় বুঝিয়ে দাও —',
+    'যেন কম শিক্ষিত স্টাফও পড়ে নিজে নিজে করতে পারে।',
+    '',
+    `স্টাফের নাম: ${opts.staffName}`,
+    `কাজ: ${opts.title}`,
+    `ধরন: ${opts.type}`,
+    opts.productRef ? `প্রোডাক্ট: ${opts.productRef}` : '',
+    opts.detail ? `আগের নোট: ${opts.detail}` : '',
+    opts.extraContext ? `বাড়তি নির্দেশ: ${opts.extraContext}` : '',
+    '',
+    'নিয়ম:',
+    `- ৩–৪ লাইনের বেশি নয়। প্রতিটি লাইন ছোট ও পরিষ্কার ধাপ।`,
+    `- কোন অ্যাপ/টুল দিয়ে করবে স্পষ্ট বলো (এই কাজে: ${toolHint})।`,
+    '- জটিল শব্দ নয়, ইংরেজি কম। শেষে proof/Done-এর কথা মনে করিয়ে দাও।',
+    '- কোনো হারাম পণ্য/ছবির ইঙ্গিত নয়। শুধু কাজের ধাপ লেখো, ভূমিকা বা অভিবাদন নয়।',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const text = await geminiGenerateText({
+    prompt,
+    costLabel: 'staff_task_explain',
+    maxTokens: 400,
+    temperature: 0.4,
+    conversationId: opts.conversationId,
+  })
+  // Keep it to at most 4 non-empty lines so the office view (buildStaffFriendlyDetail)
+  // renders it verbatim instead of falling back to a template.
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join('\n')
+}
+
+const explain_staff_task_bangla: AgentTool = {
+  name: 'explain_staff_task_bangla',
+  description:
+    'Generate a clear, personalized Bangla "how to do it" explanation for ONE staff task, ' +
+    'so the staff member understands the steps. Uses Gemini (cheap, good Bangla) — NOT Claude. ' +
+    'Creates a PENDING approval card — does NOT change anything until the owner approves. ' +
+    'On approval the explanation appears in that staff member\'s অফিস (office) task view. ' +
+    'Use when the owner says "এই কাজটা বুঝিয়ে দে / staff ke explain kore de" or when a task is unclear. ' +
+    'This tool NEVER sends a Telegram message — dispatch stays on the existing gated flow.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      taskId: { type: 'string', description: 'The staff task id to explain' },
+      extraContext: {
+        type: 'string',
+        description: 'Optional extra instruction from the owner about how this task should be done',
+      },
+    },
+    required: ['taskId'],
+  },
+  handler: async (input) => {
+    try {
+      const taskId = String(input.taskId ?? '').trim()
+      if (!taskId) return { success: false, error: 'taskId is required' }
+
+      const businessId = bizFrom(input)
+      const task = await db.agentStaffTask.findUnique({
+        where: { id: taskId },
+        select: {
+          id: true,
+          title: true,
+          detail: true,
+          type: true,
+          productRef: true,
+          status: true,
+          businessId: true,
+          staff: { select: { id: true, name: true } },
+        },
+      })
+      if (!task) return { success: false, error: 'এই taskId-এ কোনো staff task পাওয়া যায়নি।' }
+      if (task.businessId && task.businessId !== businessId) {
+        return {
+          success: false,
+          error: `Task is for ${task.businessId}, not ${businessId}. Cross-business action blocked.`,
+        }
+      }
+
+      const explanation = await buildStaffTaskExplanation({
+        staffName: task.staff?.name ?? 'স্টাফ',
+        title: task.title,
+        type: task.type,
+        detail: task.detail,
+        productRef: task.productRef,
+        extraContext: input.extraContext ? String(input.extraContext) : undefined,
+        conversationId: input.conversationId ? String(input.conversationId) : null,
+      })
+
+      const summary =
+        `🧠 স্টাফকে কাজ বুঝিয়ে দেওয়া — অনুমোদন প্রয়োজন\n\n` +
+        `স্টাফ: ${task.staff?.name ?? 'স্টাফ'}\n` +
+        `কাজ: ${task.title}\n\n` +
+        `--- ব্যাখ্যা (Gemini) ---\n${explanation}\n---\n\n` +
+        `(Approve করলে এই ব্যাখ্যা ${task.staff?.name ?? 'স্টাফ'}-এর অফিস ভিউতে দেখাবে — Telegram-এ আলাদা কিছু পাঠানো হবে না।)`
+
+      const pending = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'staff_task_explanation',
+          businessId,
+          payload: {
+            taskId: task.id,
+            staffId: task.staff?.id ?? null,
+            staffName: task.staff?.name ?? null,
+            title: task.title,
+            explanation,
+            businessId,
+            conversationId: input.conversationId ? String(input.conversationId) : null,
+          },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+        select: { id: true },
+      })
+
+      return {
+        success: true,
+        data: {
+          status: 'pending_approval',
+          pendingActionId: pending.id,
+          actionType: 'staff_task_explanation',
+          summary,
+          explanation,
+          message:
+            'ব্যাখ্যা তৈরি হয়েছে — মালিক Approve করলে স্টাফের অফিস ভিউতে দেখাবে। আগে "হয়েছে" বলবেন না।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -1644,4 +1815,5 @@ export const STAFF_TOOLS: AgentTool[] = [
   update_staff_task_status,
   get_marketing_history,
   update_staff_task_profile,
+  explain_staff_task_bangla,
 ]
