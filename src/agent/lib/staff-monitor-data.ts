@@ -361,6 +361,36 @@ async function getProductivityAlerts(): Promise<ProductivityAlert[]> {
   return alerts
 }
 
+/**
+ * Set of staffIds who have actually checked in on the given Dhaka date.
+ * attendance_records.employee_id == agent_staff.user_id; checkInAt is the real
+ * check-in timestamp, so we gate on it falling inside that day's Dhaka bounds.
+ * Staff with no linked user_id (or no attendance row) are treated as NOT checked
+ * in — the monitor then won't count them as active before they actually arrive.
+ */
+async function getCheckedInStaffIds(staffIds: string[], ymd: string): Promise<Set<string>> {
+  if (!staffIds.length) return new Set()
+  const staffRows = await prisma.agentStaff.findMany({
+    where: { id: { in: staffIds } },
+    select: { id: true, userId: true },
+  })
+  const userIdByStaff = new Map(staffRows.map((r) => [r.id, r.userId]))
+  const userIds = staffRows.map((r) => r.userId).filter((u): u is string => Boolean(u))
+  if (!userIds.length) return new Set()
+  const { start, end } = dhakaDayBounds(ymd)
+  const attendance = await prisma.attendanceRecord.findMany({
+    where: { employeeId: { in: userIds }, checkInAt: { gte: start, lte: end } },
+    select: { employeeId: true },
+  })
+  const checkedInUserIds = new Set(attendance.map((a) => a.employeeId))
+  const result = new Set<string>()
+  for (const sid of staffIds) {
+    const uid = userIdByStaff.get(sid)
+    if (uid && checkedInUserIds.has(uid)) result.add(sid)
+  }
+  return result
+}
+
 export async function getStaffMonitorData(opts: { historyDays?: number } = {}): Promise<StaffMonitorData> {
   const historyDays = Math.min(Math.max(opts.historyDays ?? 7, 1), 14)
   const today = todayYmdDhaka()
@@ -537,9 +567,11 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     }
   }
 
+  const checkedInStaffIds = await getCheckedInStaffIds([...staffMap.keys()], today)
   const staffSummaries = [...staffMap.values()].map((s) => ({
     ...s,
     completionPct: s.tasksTotal ? Math.round((s.tasksDone / s.tasksTotal) * 100) : 0,
+    checkedIn: checkedInStaffIds.has(s.staffId),
   }))
 
   const mismatches: StaffMonitorData['mismatches'] = []
@@ -699,9 +731,11 @@ export async function getStaffMonitorForDate(date: string): Promise<StaffMonitor
     const activityAt = (row.sentAt ?? row.createdAt).toISOString()
     if (!s.lastActivityAt || activityAt > s.lastActivityAt) s.lastActivityAt = activityAt
   }
+  const checkedInStaffIds = await getCheckedInStaffIds([...staffMap.keys()], date)
   const staffSummaries = [...staffMap.values()].map((s) => ({
     ...s,
     completionPct: s.tasksTotal ? Math.round((s.tasksDone / s.tasksTotal) * 100) : 0,
+    checkedIn: checkedInStaffIds.has(s.staffId),
   }))
 
   const agentDuties: AgentDutyRow[] = (dutyRows as Array<{

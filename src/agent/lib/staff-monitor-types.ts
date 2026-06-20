@@ -196,6 +196,10 @@ export type StaffSummary = {
   completionPct: number
   started: boolean
   lastActivityAt: string | null
+  /** True only once the staff has actually checked in today (attendance_records).
+   *  Before check-in the monitor must not count/show them as active — task time
+   *  starts at check-in, not at dispatch. */
+  checkedIn?: boolean
 }
 
 export type AgentDutyRow = {
