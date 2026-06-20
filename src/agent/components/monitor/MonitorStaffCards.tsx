@@ -8,6 +8,9 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
 const slideUp = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
 
 function statusInfo(s: StaffSummary): { dot: string; glow: string; border: string; label: string } {
+  // A staff is only "active" once they have actually checked in today (attendance).
+  // Before check-in we show them as awaiting — task time starts at check-in, not at dispatch.
+  if (s.checkedIn === false) return { dot: 'bg-zinc-300', glow: '', border: 'border-border-subtle', label: 'Awaiting' }
   if (s.failed > 0) return { dot: 'bg-red-500', glow: 'shadow-[0_0_10px_rgba(239,68,68,0.5)]', border: 'border-red-500/30', label: 'Issues' }
   if (s.completionPct >= 100) return { dot: 'bg-emerald-500', glow: 'shadow-[0_0_10px_rgba(16,185,129,0.5)]', border: 'border-emerald-500/25', label: 'Complete' }
   if (s.started && s.completionPct >= 50) return { dot: 'bg-amber-500', glow: 'shadow-[0_0_10px_rgba(245,158,11,0.5)]', border: 'border-amber-500/20', label: 'Working' }
@@ -67,13 +70,17 @@ function StaffInitial({ name }: { name: string }) {
 export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSummary[] }) {
   if (!staffSummaries?.length) return null
 
+  // Only staff who have checked in count as active. (checkedIn may be undefined in
+  // older payloads — treat undefined as active to avoid hiding legacy data.)
+  const activeCount = staffSummaries.filter(s => s.checkedIn !== false).length
+
   return (
     <motion.div variants={stagger} initial="hidden" animate="show">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm">👥</span>
         <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Staff Overview</h3>
         <span className="rounded-md bg-[#E07A5F]/10 px-1.5 py-0.5 text-[9px] font-bold text-[#E07A5F]">
-          {staffSummaries.length} active
+          {activeCount} active
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
