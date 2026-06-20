@@ -16,7 +16,9 @@ import {
 // Roles that run directly without an owner "transfer to worker?" card. Marketing
 // + content are owner-approved to flow straight to Qwen; their internal money/
 // posting steps still hit their own action-level approval gates.
-const AUTO_RUN_ROLES = new Set<SpecialistRole>(['marketer', 'content'])
+// Exported so the core turn-loop can short-circuit the head's SECOND turn after one
+// of these runs (the worker's output is the answer — no need to re-wrap it on Sonnet).
+export const AUTO_RUN_ROLES = new Set<SpecialistRole>(['marketer', 'content'])
 
 const delegate_to_specialist: AgentTool = {
   name: 'delegate_to_specialist',

@@ -16,6 +16,7 @@ import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
@@ -28,7 +29,7 @@ import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
 import { applyOwnerTeaching, buildTeachingTurnPromptBlock } from '@/agent/lib/learning/apply-teaching'
 import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhausted } from '@/agent/lib/anthropic-errors'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { specialistLabel } from '@/agent/lib/models/specialist-roles'
+import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
@@ -732,6 +733,9 @@ export async function* runAgentTurn(
       const toolResultContent: Anthropic.Messages.ToolResultBlockParam[] = []
       let delegationAwaiting = false
       let delegationRoleLabel = ''
+      // Summaries from auto-run (marketer/content) delegations that actually ran.
+      // Used to skip the head's second turn when the worker output IS the answer.
+      const autoRanDelegationSummaries: string[] = []
       for (const tb of toolUseBlocks) {
         const exec = resultMap.get(tb.id)!
         const { result, durationMs } = exec
@@ -761,6 +765,13 @@ export async function* runAgentTurn(
           if (result.success && d.awaitingApproval === true) {
             delegationAwaiting = true
             delegationRoleLabel = specialistLabel(role)
+          } else if (
+            result.success
+            && AUTO_RUN_ROLES.has(role as SpecialistRole)
+            && typeof d.summary === 'string'
+            && d.summary.trim()
+          ) {
+            autoRanDelegationSummaries.push(d.summary.trim())
           }
           yield {
             type: 'subagent_end',
@@ -836,6 +847,22 @@ export async function* runAgentTurn(
           `সিদ্ধান্ত পেলেই এগোব।`
         yield { type: 'text_delta', delta: waitNote }
         assistantTurns.push([{ type: 'text', text: waitNote }])
+        break
+      }
+
+      // Auto-run specialist short-circuit: if EVERY tool call this turn was a
+      // successful direct-run marketer/content delegation, the worker's Bangla
+      // output IS the answer. Emit it and end the turn — do NOT loop back for a
+      // second full-cost Sonnet turn just to re-wrap what Qwen already produced.
+      // (Same rationale as the approval-gate break above: avoids doubling cost.)
+      if (
+        !delegationAwaiting
+        && autoRanDelegationSummaries.length > 0
+        && autoRanDelegationSummaries.length === toolUseBlocks.length
+      ) {
+        const combined = autoRanDelegationSummaries.join('\n\n')
+        yield { type: 'text_delta', delta: combined }
+        assistantTurns.push([{ type: 'text', text: combined }])
         break
       }
     }
