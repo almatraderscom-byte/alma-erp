@@ -50,7 +50,7 @@ export function TodoStatusIcon({
   ) : rejected ? (
     <span className="text-[8px] font-bold text-red-700 leading-none">✕</span>
   ) : cancelled ? (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round">
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#dc2626" strokeWidth="2.4" strokeLinecap="round">
       <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
     </svg>
   ) : running ? (
@@ -72,7 +72,7 @@ export function TodoStatusIcon({
         : rejected
           ? 'border-red-300 bg-red-50'
           : cancelled
-            ? 'border-border bg-white/[0.08]'
+            ? 'border-red-300 bg-red-50'
             : running
               ? 'border-amber-400 bg-amber-50'
               : 'border-border bg-slate-50'
@@ -133,7 +133,7 @@ function TodoRow({
       : rejected
         ? 'bg-red-50/30 border-red-200/50 opacity-80'
         : cancelled
-          ? 'bg-slate-50/80 border-border/60 opacity-70'
+          ? 'bg-red-50/40 border-red-200/60 opacity-90'
           : 'bg-card/80 border-border-subtle hover:shadow-sm'
 
   const handleRowClick = () => {
@@ -171,7 +171,7 @@ function TodoRow({
             compact ? 'text-xs truncate' : 'text-sm'
           } ${
             completed ? 'text-muted line-through decoration-slate-300/80' : 'text-cream'
-          } ${cancelled || rejected ? 'line-through decoration-slate-300/70 text-muted' : ''}`}>
+          } ${cancelled ? 'line-through decoration-red-400/70 text-red-900/60' : ''} ${rejected ? 'line-through decoration-slate-300/70 text-muted' : ''}`}>
             {todo.title}
           </p>
           {approvalPending && (
@@ -182,6 +182,11 @@ function TodoRow({
           {rejected && (
             <span className="shrink-0 text-[9px] font-semibold text-red-800 bg-red-100 border border-red-200/80 px-1.5 py-0.5 rounded-full">
               Reject by Boss
+            </span>
+          )}
+          {cancelled && (
+            <span className="shrink-0 text-[9px] font-semibold text-red-800 bg-red-100 border border-red-200/80 px-1.5 py-0.5 rounded-full">
+              🤖 এজেন্ট সরিয়েছে
             </span>
           )}
           {running && readOnly && (

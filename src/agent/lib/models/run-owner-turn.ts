@@ -220,19 +220,6 @@ async function* runAlternateProviderTurn(
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
-  let approvalReminderPrefix = ''
-  if (!personalMode && lastUserText) {
-    try {
-      const { buildPendingApprovalReminderPrefix } = await import('@/agent/lib/pending-approval-reminder')
-      approvalReminderPrefix = await buildPendingApprovalReminderPrefix()
-      if (approvalReminderPrefix) {
-        yield { type: 'text_delta', delta: approvalReminderPrefix }
-      }
-    } catch (err) {
-      console.warn('[run-owner-turn] pending approval reminder failed:', err instanceof Error ? err.message : err)
-    }
-  }
-
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -409,7 +396,7 @@ async function* runAlternateProviderTurn(
       data: {
         conversationId,
         role: 'assistant',
-        content: [{ type: 'text', text: approvalReminderPrefix + finalText }],
+        content: [{ type: 'text', text: finalText }],
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
