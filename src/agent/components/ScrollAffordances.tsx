@@ -186,7 +186,10 @@ export function ScrollAffordances({
                 transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
                 onClick={scrollToBottom}
                 aria-label="নিচে যান"
-                className="alma-frost pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full text-muted shadow-lg shadow-black/20 ring-1 ring-white/10 transition-colors hover:text-[#E07A5F] active:scale-90"
+                // Transparent glass (owner asked for transparent): see-through
+                // tint + blur instead of the opaque frost, with a faint ring so
+                // it stays findable over both light and dark message bubbles.
+                className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-muted ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 hover:text-[#E07A5F] active:scale-90"
               >
                 {downArrow}
               </motion.button>

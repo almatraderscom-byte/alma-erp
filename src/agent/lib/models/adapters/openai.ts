@@ -16,10 +16,12 @@ function toOpenAiMessages(
   // reuse it across turns instead of re-billing it every message. cache_control is
   // an OpenRouter/Anthropic extension not in the OpenAI SDK types (hence the cast);
   // providers that don't support it ignore it safely.
+  // ttl '1h' keeps the DeepSeek/Qwen prefix cached for at least an hour (default
+  // is ~5 min) so back-to-back owner turns reuse it — cheaper for slow chats.
   const systemMsg: ChatCompletionMessageParam = cachePrefix
     ? ({
         role: 'system',
-        content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
       } as unknown as ChatCompletionMessageParam)
     : { role: 'system', content: system }
   const out: ChatCompletionMessageParam[] = [systemMsg]

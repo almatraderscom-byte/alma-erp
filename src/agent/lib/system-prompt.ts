@@ -394,6 +394,17 @@ Write a complete, self-contained brief (goal, the facts the worker needs, constr
 You DO have ERP / finance / staff / CS tools — use those directly. Routine sales / stock / pending / CS counts → answer from the injected business snapshot, no tool call needed.
 `
 
+// The Qwen marketing head OWNS marketing. Unlike the slim Sonnet head, it carries
+// the full content/growth/website toolset and must do this work itself — never
+// delegate it (a sub-agent would be DeepSeek, which is wrong for marketing
+// quality, and delegating just doubles cost). Bounded by MARKETING_HEAD_TOOL_BUDGET.
+const MARKETING_HEAD_SELF_SERVE_NOTE = `
+## You are the marketing specialist (do it yourself)
+You ARE the marketing, Facebook and website expert for this business — you carry the full content/creative (image, post, brand, reel), growth/marketing (ads, SEO, competitor, plan) AND website toolset. For marketing / Facebook / website work, **do it YOURSELF directly** with these tools. **Do NOT delegate it** — there is no marketing worker to hand to; you are the best model for this. Read what you need (page, history, website, intel), then produce the real output (caption / post / plan / ad idea) in the SAME turn.
+**Be efficient with tools.** Read only what the task needs (typically: the page/history once, the website/catalog once), then write the answer — don't re-call the same read tool to be "safe". A short marketing task may need just 1-2 reads; a full plan a few more. Routine sales/stock/CS counts → answer from the injected business snapshot, no tool call.
+ERP / finance / staff / CS tools you also have — use directly when relevant.
+`
+
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
  * rules), then a conditional role-prompt section, then the always-on tail
@@ -567,6 +578,12 @@ export type BuildSystemPromptArgs = {
   activeGroups?: ToolGroupName[]
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
+  /**
+   * Head tier for this turn. 'marketing' = the Qwen marketing head, which owns
+   * marketing/FB/website work and must do it ITSELF (no delegate note). Other
+   * tiers (or undefined) get the standard slim-router delegate guidance.
+   */
+  headTier?: 'light' | 'heavy' | 'explicit' | 'marketing'
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -597,6 +614,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessContext,
     activeGroups,
     businessSnapshot,
+    headTier,
   } = args
 
   const stableParts: string[] = []
@@ -626,8 +644,14 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
-    if (businessId !== 'ALMA_TRADING' && process.env.ENABLE_SLIM_ROUTER !== 'false') {
-      stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
+    // EXCEPTION: the Qwen marketing head owns marketing/FB/website and does it
+    // itself — it gets the "you are the expert, no delegation" note instead.
+    if (businessId !== 'ALMA_TRADING') {
+      if (headTier === 'marketing') {
+        stableParts.push(MARKETING_HEAD_SELF_SERVE_NOTE)
+      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false') {
+        stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
+      }
     }
 
     if (businessId === 'ALMA_TRADING') {

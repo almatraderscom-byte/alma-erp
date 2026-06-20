@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
@@ -58,14 +58,14 @@ function providerToCostProvider(provider: string): CostProvider {
   return 'anthropic'
 }
 
-// One-time message injected when the expensive (Qwen marketing) head exhausts
-// its tool-round budget. It must now answer with what it has, or hand the rest
-// to a cheap DeepSeek worker via delegate_to_specialist — no more own tool calls.
-const HEAD_TOOL_BUDGET_NUDGE =
-  'টুল ব্যবহারের বাজেট শেষ। এখন আর নিজে নতুন টুল কল কোরো না। ' +
-  'হাতে যা তথ্য আছে তা দিয়ে সংক্ষেপে চূড়ান্ত উত্তর দাও, ' +
-  'অথবা বাকি কাজটা delegate_to_specialist দিয়ে একজন সস্তা worker-কে দিয়ে দাও। ' +
-  'খরচ কমানোই উদ্দেশ্য — অযথা নিজে অনেক টুল চালিও না।'
+// One-time message injected when the Qwen MARKETING head exhausts its (larger)
+// tool-round budget. Marketing is Qwen's own specialty — it must NOT hand the job
+// to a cheap DeepSeek worker. So it is told to wrap up and answer now with what it
+// already gathered. No delegation: marketing quality stays on Qwen.
+const MARKETING_HEAD_WRAPUP_NUDGE =
+  'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
+  'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
+  'মার্কেটিং তোমার নিজের বিশেষত্ব — এটা অন্য কাউকে দিয়ো না।'
 
 async function loadPinnedMemories(
   personalMode: boolean,
@@ -203,6 +203,7 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
     businessSnapshot,
+    headTier,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
@@ -230,14 +231,13 @@ async function* runAlternateProviderTurn(
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
-  // ── HARD tool-round budget (Option A) ──────────────────────────────────────
+  // ── HARD tool-round budget (Qwen marketing head) ───────────────────────────
   // Only the EXPENSIVE Qwen marketing head is capped here — the cheap DeepSeek
-  // light head is the worker itself, so it stays uncapped. After HEAD_TOOL_BUDGET
-  // tool ROUNDS the marketing head may no longer call read/write tools; the only
-  // tool left is delegate_to_specialist → cheap DeepSeek worker. Code-enforced.
-  const isExpensiveHead = headTier === 'marketing'
-  const delegateOnlyTools = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
-  const headCanDelegate = isExpensiveHead && delegateOnlyTools.length > 0
+  // light head is the worker itself, so it stays uncapped. Marketing is Qwen's
+  // OWN specialty (FB + website), so it gets a LARGER budget and does NOT hand
+  // off to DeepSeek. After MARKETING_HEAD_TOOL_BUDGET tool ROUNDS it may no longer
+  // call any tools (iterationTools = []) — it must wrap up and answer itself.
+  const isMarketingHead = headTier === 'marketing'
   let headToolRounds = 0
   let budgetNudgeSent = false
 
@@ -249,13 +249,14 @@ async function* runAlternateProviderTurn(
       const toolNames = new Map<string, string>()
       let iterationText = ''
 
-      // Over budget → restrict to delegate-only so the expensive head physically
-      // cannot spree more tools; it must answer now or hand off to the worker.
-      const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
-      const iterationTools = overBudget ? delegateOnlyTools : neutralTools
+      // Over budget → strip ALL tools so the marketing head physically cannot
+      // spree more; it must finish the marketing job itself and answer now.
+      // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
+      const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
+      const iterationTools = overBudget ? [] : neutralTools
       if (overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
-        messages = [...messages, { role: 'user', content: HEAD_TOOL_BUDGET_NUDGE }]
+        messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
       }
 
       for await (const ev of adapter.streamTurn({

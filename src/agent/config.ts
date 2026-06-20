@@ -35,6 +35,16 @@ export const MAX_TOOL_ITERATIONS = 8
  */
 export const HEAD_TOOL_BUDGET = Number(process.env.HEAD_TOOL_BUDGET) || 2
 
+/**
+ * The Qwen MARKETING head is the owner's marketing/Facebook/website specialist —
+ * it is meant to do that work itself, in-line, NOT hand it to a cheaper worker
+ * (DeepSeek is wrong for marketing quality). So it gets a larger, separate budget:
+ * after this many tool ROUNDS it is forced to wrap up and answer (no DeepSeek
+ * hand-off), which still stops a runaway spree without crippling a real multi-step
+ * marketing job (read page → read history → check website → draft → verify).
+ */
+export const MARKETING_HEAD_TOOL_BUDGET = Number(process.env.MARKETING_HEAD_TOOL_BUDGET) || 5
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).
