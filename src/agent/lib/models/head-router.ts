@@ -47,8 +47,25 @@ const marketingHeadModelId = (): string => process.env.MARKETING_HEAD_MODEL_ID?.
  * the message text decides; money keywords (handled by HEAVY_DENY_RE above) still win and
  * force Sonnet, and every money/posting/ad-spend tool inside keeps its own approval card.
  */
-const MARKETING_RE =
-  /(marketing|মার্কেটিং|caption|ক্যাপশন|ফেসবুক\s*পোস্ট|fb\s*post|facebook\s*post|social\s*post|পোস্ট\s*(লিখ|বানা|দাও|তৈরি|রেডি)|post\s*(লিখ|বানা|write|create|draft)|বিজ্ঞাপন|\bads?\b|বুস্ট|boost|campaign|ক্যাম্পেইন|promotion|প্রমোশন|প্রচার|creative|ক্রিয়েটিভ|copywrit|কপি\s*(লিখ|বানা))/i
+const MARKETING_RE = new RegExp(
+  [
+    'marketing|মার্কেটিং',
+    'caption|ক্যাপশন|ক্যাপশান',
+    'বিজ্ঞাপন|\\bads?\\b|\\bboost|বুস্ট',
+    'campaign|ক্যাম্পেইন|promotion|প্রমোশন|প্রচার',
+    'creative|ক্রিয়েটিভ|copywrit|কপি\\s*(লিখ|বানা)',
+    // Bangla "post" is high-precision in this assistant; plus FB/social near "post"
+    'ফেসবুক\\s*পোস্ট|পোস্ট',
+    '(facebook|fb|social|insta|ফেসবুক)\\b[^\\n]{0,15}\\bpost',
+    '\\bpost\\b[^\\n]{0,15}(facebook|fb|social|insta|ফেসবুক)',
+    // "post" + a make/give/write/ready verb (Banglish + English) — catches the
+    // natural phrasings that the old adjacency-only regex silently missed
+    // (e.g. "post banao", "post kore dao", "post ready koro", "post likhe dao").
+    '\\bpost\\b[^\\n]{0,20}\\b(banao|banaw|bana|baniye|banai|dao|dibe|den|lekho|likhe|likho|ready|redi|kore|koro|lagbe|lage|chai)\\b',
+    '\\b(banao|banaw|bana|baniye|lekho|likhe|likho)\\b[^\\n]{0,12}\\bpost\\b',
+  ].join('|'),
+  'i',
+)
 
 /**
  * Irreversible / high-stakes signals that must ALWAYS get Sonnet — we don't even
@@ -59,14 +76,18 @@ const HEAVY_DENY_RE =
 
 const TRIAGE_SYSTEM =
   'You are a routing classifier for a Bangla small-business assistant (small retail/office; owner is non-technical). ' +
+  'Messages are often in Banglish (Bangla written in English letters). ' +
   "Decide who answers the owner's latest message:\n" +
   '- "light": routine, low-stakes, mostly read/lookup or casual — greetings, thanks, acknowledgements, ' +
   'status questions (today\'s sales, who is present, stock/order/pending counts), simple info lookups, ' +
   'simple customer-service info, restating, simple reminders. A cheaper model handles these fine.\n' +
+  '- "marketing": anything about social-media marketing or content — writing a Facebook/Instagram post or ' +
+  'caption, ad copy, a campaign/promotion idea, product creative, "post banao/likhe dao", boost ideas. ' +
+  'A dedicated marketing model handles these.\n' +
   '- "heavy": needs judgment or is sensitive — money decisions, finance write/edit/delete, payroll/salary/staff ' +
-  'discipline, multi-step tasks, planning or strategy, marketing/ads substance, or anything ambiguous, unclear, ' +
+  'discipline, multi-step tasks, planning or strategy, or anything ambiguous, unclear, ' +
   'or where a wrong answer costs money or trust.\n' +
-  'When unsure, choose "heavy". Answer with EXACTLY one word: light or heavy.'
+  'When unsure between light and heavy, choose "heavy". Answer with EXACTLY one word: light, marketing, or heavy.'
 
 function openRouterClient(): OpenAI | null {
   const key = process.env.OPENROUTER_API_KEY?.trim()
@@ -117,12 +138,27 @@ async function triageTier(text: string, conversationId?: string): Promise<HeadTi
       }).catch(() => {})
     }
     const out = (resp.choices[0]?.message?.content ?? '').toLowerCase()
+    if (out.includes('marketing')) return 'marketing'
     if (out.includes('light')) return 'light'
     return 'heavy'
   } catch (err) {
     console.warn('[head-router] triage failed → heavy:', err instanceof Error ? err.message : err)
     return 'heavy'
   }
+}
+
+/**
+ * The Qwen marketing-head decision, shared by the regex fast-path and the triage
+ * net. Returns null (→ caller falls back) if the marketing head is disabled,
+ * unknown, keyless, or misconfigured. Validated the same way as the cheap head.
+ */
+function marketingHeadDecision(via: string): HeadDecision | null {
+  if (!marketingHeadEnabled()) return null
+  const qId = marketingHeadModelId()
+  if (!isKnownModelId(qId) || !process.env.OPENROUTER_API_KEY?.trim()) return null
+  const q = getModel(qId)
+  if (q.provider === 'anthropic' || !q.supportsTools) return null
+  return { modelId: qId, tier: 'marketing', via }
 }
 
 /**
@@ -152,20 +188,22 @@ export async function resolveHeadModelId(opts: {
   if (!text) return heavy('empty')
   if (HEAVY_DENY_RE.test(text)) return heavy('deny_kw')
 
-  // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop).
-  // Same direct-responder pattern as the cheap head, but for marketing turns. Falls
-  // through to normal triage if the Qwen head is disabled/misconfigured/keyless.
-  if (marketingHeadEnabled() && MARKETING_RE.test(text)) {
-    const qId = marketingHeadModelId()
-    if (isKnownModelId(qId) && process.env.OPENROUTER_API_KEY?.trim()) {
-      const q = getModel(qId)
-      if (q.provider !== 'anthropic' && q.supportsTools) {
-        return { modelId: qId, tier: 'marketing', via: 'marketing' }
-      }
-    }
+  // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop),
+  // the same direct-responder pattern as the cheap head. FAST PATH: an obvious
+  // marketing phrase (regex) skips the triage call entirely.
+  if (MARKETING_RE.test(text)) {
+    const mk = marketingHeadDecision('marketing_kw')
+    if (mk) return mk
   }
 
+  // Triage net: the classifier also catches marketing intent the regex missed
+  // (any phrasing/language) → Qwen; routine → cheap head; everything else → Sonnet.
   const tier = await triageTier(text, opts.conversationId)
+  if (tier === 'marketing') {
+    const mk = marketingHeadDecision('marketing_triage')
+    if (mk) return mk
+    return heavy('marketing_unavailable')
+  }
   if (tier !== 'light') return heavy('triage')
 
   const cheapId = cheapHeadModelId()
