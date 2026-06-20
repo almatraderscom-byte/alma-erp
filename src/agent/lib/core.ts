@@ -451,21 +451,8 @@ export async function* runAgentTurn(
   let memoryNudgeSent = false
   let verifyRetries = 0
 
-  let approvalReminderPrefix = ''
-  if (!personalMode && lastUserText) {
-    try {
-      const { buildPendingApprovalReminderPrefix } = await import('@/agent/lib/pending-approval-reminder')
-      approvalReminderPrefix = await buildPendingApprovalReminderPrefix()
-      if (approvalReminderPrefix) {
-        yield { type: 'text_delta', delta: approvalReminderPrefix }
-      }
-    } catch (err) {
-      console.warn('[core] pending approval reminder failed:', err instanceof Error ? err.message : err)
-    }
-  }
-
   if (intakeAutoReply) {
-    const replyText = approvalReminderPrefix + intakeAutoReply
+    const replyText = intakeAutoReply
     yield { type: 'text_delta', delta: intakeAutoReply }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
@@ -854,11 +841,6 @@ export async function* runAgentTurn(
     }
 
     // Persist assistant message.
-    // NOTE: the pending-approval reminder prefix is shown live (yielded as a
-    // text_delta above) but intentionally NOT persisted into the stored message.
-    // It is a transient, per-turn nudge regenerated each turn from current DB
-    // state; baking it into history made every past assistant message carry a
-    // stale reminder that was re-sent to the model every turn (token bloat).
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     const joinedText = textContent.map((b) => b.text).join('\n')
     const storedContent = joinedText
