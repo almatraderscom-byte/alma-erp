@@ -4,6 +4,35 @@ import type { AgentTool } from './registry'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+// Owner todos live in the SAME `agent_todos` store the owner sees in the chat
+// dock and the Monitor — one source of truth. (Previously these tools wrote to a
+// separate `agent_owner_todos` table, so owner tasks showed in the Monitor but
+// NOT the dock, and vice-versa.) Status vocabulary maps onto agentTodo statuses:
+//   open  → pending (visible/active)   done → completed   dropped → cancelled
+const OPEN_STATUSES = ['pending', 'in_progress', 'running']
+const BUSINESS_ID = 'ALMA_LIFESTYLE'
+
+function mapStatusFilter(status: string): Record<string, unknown> {
+  if (status === 'all') return {}
+  if (status === 'done') return { status: 'completed' }
+  if (status === 'dropped') return { status: 'cancelled' }
+  // open
+  return { status: { in: OPEN_STATUSES } }
+}
+
+function uiStatus(dbStatus: string): 'open' | 'done' | 'dropped' {
+  if (dbStatus === 'completed') return 'done'
+  if (dbStatus === 'cancelled' || dbStatus === 'failed') return 'dropped'
+  return 'open'
+}
+
+function buildDescription(detail?: unknown, dueHint?: unknown): string | null {
+  const d = detail ? String(detail).trim() : ''
+  const hint = dueHint ? String(dueHint).trim() : ''
+  const parts = [d, hint ? `🕒 ${hint}` : ''].filter(Boolean)
+  return parts.length ? parts.join('\n') : null
+}
+
 const add_owner_todo: AgentTool = {
   name: 'add_owner_todo',
   description:
@@ -26,13 +55,14 @@ const add_owner_todo: AgentTool = {
     const title = String(input.title ?? '').trim()
     if (!title) return { success: false, error: 'title is required' }
     try {
-      const todo = await db.agentOwnerTodo.create({
+      const todo = await db.agentTodo.create({
         data: {
           title,
-          detail: input.detail ? String(input.detail) : null,
+          description: buildDescription(input.detail, input.dueHint),
           priority: ['low', 'normal', 'high'].includes(String(input.priority)) ? String(input.priority) : 'normal',
-          dueHint: input.dueHint ? String(input.dueHint) : null,
-          sourceConversationId: input.conversationId ? String(input.conversationId) : null,
+          source: 'owner',
+          status: 'pending',
+          businessId: BUSINESS_ID,
         },
       })
       return { success: true, data: { id: todo.id, title: todo.title, message: 'টুডু যুক্ত হয়েছে।' } }
@@ -55,9 +85,8 @@ const list_owner_todos: AgentTool = {
   handler: async (input) => {
     const status = String(input.status ?? 'open')
     try {
-      const where = status === 'all' ? {} : { status }
-      const todos = await db.agentOwnerTodo.findMany({
-        where,
+      const todos = await db.agentTodo.findMany({
+        where: { businessId: BUSINESS_ID, source: 'owner', ...mapStatusFilter(status) },
         orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
         take: 50,
       })
@@ -69,18 +98,16 @@ const list_owner_todos: AgentTool = {
             (t: {
               id: string
               title: string
-              detail: string | null
+              description: string | null
               priority: string
               status: string
-              dueHint: string | null
               createdAt: Date
             }) => ({
               id: t.id,
               title: t.title,
-              detail: t.detail,
+              detail: t.description,
               priority: t.priority,
-              status: t.status,
-              dueHint: t.dueHint,
+              status: uiStatus(t.status),
               ageDays: Math.floor((Date.now() - new Date(t.createdAt).getTime()) / 86400000),
             }),
           ),
@@ -110,8 +137,13 @@ const update_owner_todo: AgentTool = {
     try {
       let id = input.id ? String(input.id) : null
       if (!id && input.titleMatch) {
-        const match = await db.agentOwnerTodo.findFirst({
-          where: { status: 'open', title: { contains: String(input.titleMatch), mode: 'insensitive' } },
+        const match = await db.agentTodo.findFirst({
+          where: {
+            businessId: BUSINESS_ID,
+            source: 'owner',
+            status: { in: OPEN_STATUSES },
+            title: { contains: String(input.titleMatch), mode: 'insensitive' },
+          },
           orderBy: { createdAt: 'desc' },
         })
         if (!match) return { success: false, error: `"${input.titleMatch}" নামে কোনো open টুডু পাওয়া যায়নি।` }
@@ -121,17 +153,19 @@ const update_owner_todo: AgentTool = {
 
       const data: Record<string, unknown> = {}
       if (input.status) {
-        data.status = String(input.status)
-        if (input.status === 'done') data.completedAt = new Date()
+        const s = String(input.status)
+        if (s === 'done') { data.status = 'completed'; data.completedAt = new Date() }
+        else if (s === 'dropped') { data.status = 'cancelled' }
+        else { data.status = 'pending'; data.completedAt = null }
       }
       if (input.priority) data.priority = String(input.priority)
-      if (input.detail != null) data.detail = String(input.detail)
+      if (input.detail != null) data.description = String(input.detail)
       if (!Object.keys(data).length) return { success: false, error: 'কিছু পরিবর্তন দিন (status/priority/detail)।' }
 
-      const updated = await db.agentOwnerTodo.update({ where: { id }, data })
+      const updated = await db.agentTodo.update({ where: { id }, data })
       return {
         success: true,
-        data: { id: updated.id, title: updated.title, status: updated.status, message: 'টুডু আপডেট হয়েছে।' },
+        data: { id: updated.id, title: updated.title, status: uiStatus(updated.status), message: 'টুডু আপডেট হয়েছে।' },
       }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -166,4 +200,5 @@ owner-এর নিজের কাজ (staff task নয়, timed reminder ন
 - owner "X করতে হবে" বললে এবং কোনো নির্দিষ্ট সময় না দিলে → add_owner_todo।
 - কাজ হয়ে গেলে ("oita done", "hoye geche") → update_owner_todo status=done।
 - সকালের এক জায়গায় সব overview চাইলে → get_daily_digest।
+- এই todo গুলো owner চ্যাটের todo তালিকা ও Monitor — দুই জায়গাতেই একই (এক source)।
 `

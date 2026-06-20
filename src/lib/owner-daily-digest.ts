@@ -45,12 +45,15 @@ export async function buildOwnerDailyDigest(): Promise<DailyDigest> {
   let openTodos: DailyDigest['openTodos'] = []
   let lingeringTodos: DailyDigest['lingeringTodos'] = []
   try {
-    const todos = await db.agentOwnerTodo.findMany({
-      where: { status: 'open' },
+    // Owner todos come from the unified `agent_todos` store (source=owner) — the
+    // same list shown in the chat dock and the Monitor.
+    const todos = await db.agentTodo.findMany({
+      where: { businessId: 'ALMA_LIFESTYLE', source: 'owner', status: { in: ['pending', 'in_progress', 'running'] } },
       orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
       take: 50,
     })
     const now = Date.now()
+    const NUDGE_AFTER_DAYS = 3
     openTodos = todos.map((t: { title: string; priority: string; createdAt: Date }) => ({
       title: t.title,
       priority: t.priority,
@@ -58,8 +61,8 @@ export async function buildOwnerDailyDigest(): Promise<DailyDigest> {
     }))
     lingeringTodos = todos
       .filter(
-        (t: { createdAt: Date; nudgeAfterDays: number }) =>
-          (now - new Date(t.createdAt).getTime()) / 86400000 >= (t.nudgeAfterDays ?? 3),
+        (t: { createdAt: Date }) =>
+          (now - new Date(t.createdAt).getTime()) / 86400000 >= NUDGE_AFTER_DAYS,
       )
       .map((t: { title: string; createdAt: Date }) => ({
         title: t.title,
