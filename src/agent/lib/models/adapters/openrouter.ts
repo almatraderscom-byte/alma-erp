@@ -12,5 +12,8 @@ export function createOpenRouterAdapter(): OpenAiAdapter {
       'HTTP-Referer': referer,
       'X-Title': 'ALMA ERP Agent',
     },
+    // Cache the stable system-prompt prefix across turns (Qwen/DeepSeek/Claude via
+    // OpenRouter). Big cost lever when a model runs as the direct head.
+    cachePrefix: true,
   })
 }

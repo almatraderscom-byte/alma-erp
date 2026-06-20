@@ -5,8 +5,24 @@ import type {
 } from 'openai/resources/chat/completions'
 import type { NeutralMsg, NeutralTool, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 
-function toOpenAiMessages(system: string, messages: NeutralMsg[]): ChatCompletionMessageParam[] {
-  const out: ChatCompletionMessageParam[] = [{ role: 'system', content: system }]
+function toOpenAiMessages(
+  system: string,
+  messages: NeutralMsg[],
+  cachePrefix = false,
+): ChatCompletionMessageParam[] {
+  // Prompt caching (OpenRouter): the system prompt is the big, stable prefix
+  // (business context, memories, instructions). Mark it with a cache_control
+  // breakpoint so caching-capable models (DeepSeek, Qwen, Claude via OpenRouter)
+  // reuse it across turns instead of re-billing it every message. cache_control is
+  // an OpenRouter/Anthropic extension not in the OpenAI SDK types (hence the cast);
+  // providers that don't support it ignore it safely.
+  const systemMsg: ChatCompletionMessageParam = cachePrefix
+    ? ({
+        role: 'system',
+        content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      } as unknown as ChatCompletionMessageParam)
+    : { role: 'system', content: system }
+  const out: ChatCompletionMessageParam[] = [systemMsg]
 
   for (const msg of messages) {
     if ('content' in msg && typeof msg.content === 'string') {
@@ -52,13 +68,20 @@ function toOpenAiTools(tools: NeutralTool[]): ChatCompletionTool[] {
 
 export class OpenAiAdapter implements ProviderAdapter {
   private client: OpenAI
+  private cachePrefix: boolean
 
-  constructor(apiKey: string, opts?: { baseURL?: string; defaultHeaders?: Record<string, string> }) {
+  constructor(
+    apiKey: string,
+    opts?: { baseURL?: string; defaultHeaders?: Record<string, string>; cachePrefix?: boolean },
+  ) {
     this.client = new OpenAI({
       apiKey,
       baseURL: opts?.baseURL,
       defaultHeaders: opts?.defaultHeaders,
     })
+    // Enable system-prompt caching breakpoints (OpenRouter). Owner can disable via
+    // ENABLE_OPENROUTER_CACHE=false if a provider ever rejects the extension field.
+    this.cachePrefix = (opts?.cachePrefix ?? false) && process.env.ENABLE_OPENROUTER_CACHE !== 'false'
   }
 
   async *streamTurn(args: {
@@ -71,7 +94,7 @@ export class OpenAiAdapter implements ProviderAdapter {
   }): AsyncGenerator<TurnEvent> {
     const stream = await this.client.chat.completions.create({
       model: args.apiModel,
-      messages: toOpenAiMessages(args.system, args.messages),
+      messages: toOpenAiMessages(args.system, args.messages, this.cachePrefix),
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true,
       stream_options: { include_usage: true },
@@ -119,10 +142,16 @@ export class OpenAiAdapter implements ProviderAdapter {
       }
 
       if (chunk.usage) {
+        // OpenRouter/OpenAI report cache hits under prompt_tokens_details.cached_tokens.
+        // Surface it as cacheRead so the turn loop can record cache effectiveness.
+        const cachedTokens =
+          (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } })
+            .prompt_tokens_details?.cached_tokens ?? 0
         yield {
           type: 'usage',
           inputTokens: chunk.usage.prompt_tokens ?? 0,
           outputTokens: chunk.usage.completion_tokens ?? 0,
+          cacheRead: cachedTokens,
         }
       }
     }

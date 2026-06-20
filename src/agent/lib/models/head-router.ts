@@ -22,7 +22,7 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
-export type HeadTier = 'light' | 'heavy' | 'explicit'
+export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing'
 
 export interface HeadDecision {
   modelId: string
@@ -34,6 +34,21 @@ export interface HeadDecision {
 const cheapHeadEnabled = (): boolean => process.env.ENABLE_CHEAP_HEAD !== 'false'
 const cheapHeadModelId = (): string => process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
 const triageModelId = (): string => process.env.CHEAP_HEAD_TRIAGE_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
+
+// Marketing head: when the owner's message is marketing/content work, Qwen answers
+// DIRECTLY as the head (runs the full agent loop) — exactly like DeepSeek does for
+// "light" turns. No Sonnet→sub-agent hop, so no double token cost. Owner-tunable.
+const marketingHeadEnabled = (): boolean => process.env.ENABLE_MARKETING_HEAD !== 'false'
+const marketingHeadModelId = (): string => process.env.MARKETING_HEAD_MODEL_ID?.trim() || 'or-qwen3-max'
+
+/**
+ * Marketing / content-writing intent (Bangla + Banglish + English). Caption, FB/social
+ * post, ad copy, campaign, promotion, creative drafting. Kept narrow on PURPOSE — only
+ * the message text decides; money keywords (handled by HEAVY_DENY_RE above) still win and
+ * force Sonnet, and every money/posting/ad-spend tool inside keeps its own approval card.
+ */
+const MARKETING_RE =
+  /(marketing|মার্কেটিং|caption|ক্যাপশন|ফেসবুক\s*পোস্ট|fb\s*post|facebook\s*post|social\s*post|পোস্ট\s*(লিখ|বানা|দাও|তৈরি|রেডি)|post\s*(লিখ|বানা|write|create|draft)|বিজ্ঞাপন|\bads?\b|বুস্ট|boost|campaign|ক্যাম্পেইন|promotion|প্রমোশন|প্রচার|creative|ক্রিয়েটিভ|copywrit|কপি\s*(লিখ|বানা))/i
 
 /**
  * Irreversible / high-stakes signals that must ALWAYS get Sonnet — we don't even
@@ -136,6 +151,19 @@ export async function resolveHeadModelId(opts: {
   const text = (opts.lastUserText ?? '').trim()
   if (!text) return heavy('empty')
   if (HEAVY_DENY_RE.test(text)) return heavy('deny_kw')
+
+  // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop).
+  // Same direct-responder pattern as the cheap head, but for marketing turns. Falls
+  // through to normal triage if the Qwen head is disabled/misconfigured/keyless.
+  if (marketingHeadEnabled() && MARKETING_RE.test(text)) {
+    const qId = marketingHeadModelId()
+    if (isKnownModelId(qId) && process.env.OPENROUTER_API_KEY?.trim()) {
+      const q = getModel(qId)
+      if (q.provider !== 'anthropic' && q.supportsTools) {
+        return { modelId: qId, tier: 'marketing', via: 'marketing' }
+      }
+    }
+  }
 
   const tier = await triageTier(text, opts.conversationId)
   if (tier !== 'light') return heavy('triage')
