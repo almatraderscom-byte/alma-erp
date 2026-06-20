@@ -871,7 +871,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
       {/* Main area — safe-top reserves the iOS status-bar strip so neither the
           green "অফিস লাইভ" banner nor the header renders under the clock/battery. */}
-      <div className="safe-top flex min-h-0 flex-1 flex-col">
+      {/* min-w-0 is REQUIRED: this is a flex-1 child of the flex-row chat root.
+          Without it the flex item keeps min-width:auto (its content width,
+          max-w-2xl = 672px) and refuses to shrink to a narrow phone (≈440px),
+          so it overflows and WKWebView widens the layout viewport → the whole
+          page shifts/cuts on iPhone. (Diagnosed on-device via the overflow probe:
+          <div.safe-top.flex.min-h-0.flex-1> w=672 vw=440.) */}
+      <div className="safe-top flex min-h-0 min-w-0 flex-1 flex-col">
         {dayShift?.conversationId && dayShift.active && activeConvId !== dayShift.conversationId && (
           <button
             type="button"
