@@ -66,6 +66,10 @@ REDIS_URL=redis://127.0.0.1:6379
 APP_URL=https://alma-erp-six.vercel.app
 AGENT_INTERNAL_TOKEN=<generate with: openssl rand -hex 32>
 GEMINI_API_KEY=
+# FASHN AI — Pro fashion try-on / product-to-model image generation (Creative Studio).
+# REQUIRED for best-realism image jobs: the worker drains image_gen jobs and calls FASHN
+# directly, so the SAME key set in Vercel must also live here. Get key: https://fashn.ai/products/api
+FASHN_API_KEY=
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=
 
