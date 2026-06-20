@@ -70,7 +70,11 @@ export async function GET(req: NextRequest) {
     const createdToday = t.createdAt >= start && t.createdAt <= end
     const activeAdhoc = !t.dutyKey && t.status !== 'completed' && t.status !== 'cancelled'
     const recentUnfinished = OPEN_STATUSES.has(t.status) && t.createdAt >= carryoverStart
-    return dueToday || createdToday || activeAdhoc || recentUnfinished
+    // Keep a just-cancelled row visible for the rest of today so the owner sees
+    // the red-cross + agent-name removal trail (then it drops off tomorrow).
+    const recentlyCancelled =
+      (t.status === 'cancelled' || t.status === 'failed') && t.updatedAt >= start && t.updatedAt <= end
+    return dueToday || createdToday || activeAdhoc || recentUnfinished || recentlyCancelled
   })
 
   const serialized = sortTodosForDisplay(visibleTodos).map((t) => ({

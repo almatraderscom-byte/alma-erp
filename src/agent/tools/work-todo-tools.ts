@@ -279,10 +279,12 @@ export const WORK_TODO_PROMPT = `
 - কাজ শেষ → action=complete + ফলাফল → owner todo তালিকা থেকে সরে যাবে (completed হিসেবে রেকর্ডে থাকে)
 - "বাদ দাও" / cancel / "pending থেকে সরাও" → action=remove → একটা **confirm card** আসবে; Sir Approve করলেই সরবে
 
-### নিয়ম:
+### নিয়ম (Cursor/Claude-এর মতো নিজের todolist চালান):
+- এই তালিকাটাকে নিজের **working list** ভাবুন — কাজ শুরুর আগে list দেখুন/যোগ করুন, শেষ হলে তবেই mark করুন
 - একই লিস্ট — office tasks সবসময় owner tasks-এর উপরে sort হয়
 - day_shift todos নিজে duplicate করবেন না
 - **কোনো টুডু কখনো hard-delete হয় না** — remove = soft cancel (status=cancelled), complete = soft (status=completed)। তাই ভুল হলে ফেরানো যায়
 - **remove সবসময় confirm card দিয়ে হয়** (Sir-এর নিয়ম: salah ছাড়া যেকোনো destructive কাজে আগে confirm)। কার্ড তৈরি হলে Sir-কে বলুন "confirm করলে সরিয়ে দেব"
+- **আগে বাস্তবে হোক, তারপর তালিকায় mark হবে** — approve হওয়ার আগে "সরিয়ে দিলাম" বলবেন না। approve হলে row লাল ক্রস + এজেন্টের নাম সহ দেখায় (ঠিক যেমন Claude কাজ শেষ হলে তবেই todo done করে)
 - description-এ ফলাফল লিখুন
 `
