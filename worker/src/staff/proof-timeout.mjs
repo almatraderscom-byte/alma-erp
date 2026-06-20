@@ -90,10 +90,11 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
 
   if (!tasks?.length) return { nudged: 0, escalated: 0 }
 
-  // Attendance gate: a staff member is only chased AFTER they have checked in
-  // today (gives attendance) — so a task assigned at 3 AM isn't tracked until
-  // they actually arrive. Linked staff (with user_id) are gated; unlinked staff
-  // keep the previous behavior so nudges never silently stop for them.
+  // Attendance gate: a task's clock starts ONLY after the assigned staff member
+  // has checked in (given attendance) today — never from when the task was
+  // dispatched. Every staff member has an ERP account and must check in to start
+  // work, so this gate applies to ALL staff: no check-in today → the task is not
+  // tracked or chased yet. (Matches productivity-monitor's anchoring.)
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
   const userIds = [...new Set(tasks.map((t) => t.agent_staff?.user_id).filter(Boolean))]
   const checkInByUser = new Map()
@@ -120,15 +121,14 @@ export async function runProofTimeoutCheck({ supabase, bot }) {
       continue
     }
 
-    // Start the chase clock at the staff's attendance check-in (when they're
-    // linked + checked in), never before they arrive. No check-in yet → skip.
+    // Start the chase clock at the staff's attendance check-in — never before
+    // they arrive. No check-in today → skip entirely (the task isn't counted
+    // until the staff member is actually on the clock). Then anchor on whichever
+    // is later: check-in or task creation.
     const userId = task.agent_staff?.user_id
-    let effectiveAnchor = anchorTime(task)
-    if (userId) {
-      const checkIn = checkInByUser.get(userId)
-      if (!checkIn) continue
-      effectiveAnchor = Math.max(effectiveAnchor, checkIn)
-    }
+    const checkIn = userId ? checkInByUser.get(userId) : undefined
+    if (!checkIn) continue
+    const effectiveAnchor = Math.max(anchorTime(task), checkIn)
 
     const elapsed = now - effectiveAnchor
     const nudgeCount = getTaskNudgeCount(proofData)
