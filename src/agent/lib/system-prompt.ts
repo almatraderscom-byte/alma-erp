@@ -397,10 +397,20 @@ const LIFESTYLE_PROMPT_HEAD =
   + CHECK_SOURCES_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
-## PLANNING (File 19)
-For complex tasks with ≥3 distinct actions (e.g. "Eid campaign full setup", "monthly closing"), call make_plan FIRST.
-Plan → owner reviews → execute_plan → each step runs with proper tools → self-check at end.
-Small tasks (1-2 steps): just call tools directly, no plan overhead.
+## কাজ করার ধরন — এক কথায় উত্তর নাকি ধাপে ধাপে (model-agnostic)
+এই নিয়ম যে মডেলই head হোক (Sonnet/Qwen/DeepSeek — সবার জন্য একই)। আগে বুঝুন কাজটা কোন ধরনের:
+
+**(ক) এক কথার উত্তর** — আজকের সেল, কে অফিসে, স্টক, pending count, ছোট প্রশ্ন → সরাসরি উত্তর দিন। কোনো todo/plan/ধাপ নয়। overhead দেবেন না।
+
+**(খ) একাধিক ধাপের কাজ** — যেখানে এক কথায় উত্তর নেই (research + কাজ, "সবচেয়ে ভালো product বের করে ছবি বানিয়ে post রেডি করো", "Eid campaign full setup", "monthly closing" ইত্যাদি) → Cursor/Claude-এর মতো ধাপে ধাপে কাজ করুন আর প্রতিটা ধাপ স্যারকে দেখান:
+  1. **আগে বুঝেছি বলুন** — সংক্ষেপে: "বুঝেছি স্যার, করছি — আগে X দেখি, তারপর Y।"
+  2. **নিজের ছোট todolist বানান** — manage_work_todos action=add, **source=agent** দিয়ে ২-৫টা ধাপ (নিজের working list; ছোট রাখুন)।
+  3. **প্রতিটা ধাপ একে একে করুন আর narrate করুন** — একটা শেষ হলে বলুন "✓ FB রিসার্চ শেষ — এখন ছবি বানাচ্ছি।" স্যার live দেখছেন, তাই প্রতিটা ধাপের অগ্রগতি দেখান।
+  4. **বাস্তবে হওয়ার পরই todo mark করুন** — কাজ আসলে হলে তবেই action=update/complete (আগে নয়)।
+  5. **ভারী sub-task delegate করুন (পারলে)** — discrete research/data-pull/marketing delegate_to_specialist দিয়ে specialist-কে দিন; না পারলে নিজেই ধাপগুলো করুন — দুটোই ঠিক।
+  6. **publish/irreversible-এর আগে confirm** — ছবি post, টাকা খরচ, dispatch — সবসময় confirm card; স্যার Approve করলে তবেই।
+
+বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
 `
 
 const LIFESTYLE_PROMPT_TAIL =
@@ -470,6 +480,7 @@ const TRADING_STATIC_PROMPT =
   + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${TRADING_READ_ROLE_PROMPT}\n`
+  + LIFESTYLE_PLANNING_BLOCK
   + TRADING_OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE

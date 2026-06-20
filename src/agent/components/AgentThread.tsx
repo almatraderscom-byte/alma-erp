@@ -28,7 +28,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
-  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; input?: unknown }>
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
     id: string
@@ -37,6 +37,7 @@ export interface ChatMessage {
     task: string
     done: boolean
     success?: boolean
+    stopped?: boolean
     summary?: string
     toolsUsed?: string[]
   }>
@@ -213,8 +214,10 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
           )}
         </span>
         <span className="mt-0.5 shrink-0">
-          {!d.done ? (
+          {!d.done && !d.stopped ? (
             <ModelSpinner variant={ROLE_VARIANT[d.role] ?? 'default'} size={14} />
+          ) : d.stopped ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-muted opacity-60"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
           ) : d.success !== false ? (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
           ) : (
@@ -347,29 +350,37 @@ function dedupeToolActivity(
   const byName = new Map<string, NonNullable<ChatMessage['toolActivity']>[number]>()
   for (const t of items) {
     const prev = byName.get(t.name)
-    byName.set(t.name, prev ? { ...t, done: t.done || prev.done } : t)
+    byName.set(t.name, prev ? { ...t, done: t.done || prev.done, stopped: t.stopped || prev.stopped } : t)
   }
   return [...byName.values()]
 }
 
-function ToolActivityChip({ name, done, success, input }: { name: string; done: boolean; success?: boolean; input?: unknown }) {
+function ToolActivityChip({ name, done, success, stopped, input }: { name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown }) {
   const d = toolDisplay(name)
   const detail = toolDetail(name, input)
+  // When the owner hits Stop mid-flight, the chip is frozen (done=true, stopped=true)
+  // so the spinner halts — "stop hole animation taw stop e thake".
+  const spinning = !done && !stopped
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
-      done
-        ? success !== false
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border-red-200 bg-red-50 text-red-600'
-        : 'border-border bg-white/[0.02] text-muted'
+      stopped
+        ? 'border-border bg-white/[0.02] text-muted opacity-60'
+        : done
+          ? success !== false
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : 'border-red-200 bg-red-50 text-red-600'
+          : 'border-border bg-white/[0.02] text-muted'
     }`}>
-      {!done && (
+      {spinning && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
       )}
-      {done && success !== false && (
+      {stopped && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+      )}
+      {!stopped && done && success !== false && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
       )}
-      {done && success === false && (
+      {!stopped && done && success === false && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       )}
       <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
@@ -545,7 +556,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {dedupeToolActivity(msg.toolActivity).map((t) => (
-                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} input={t.input} />
+                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} stopped={t.stopped} input={t.input} />
                         ))}
                       </div>
                     </div>
