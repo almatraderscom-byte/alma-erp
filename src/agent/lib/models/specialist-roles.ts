@@ -56,9 +56,19 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     label: 'মার্কেটার',
     labelEn: 'Marketer',
     icon: '📣',
-    toolGroups: ['base', 'growth', 'content'],
+    // base + growth (ads/marketing/SEO) + content (FB posts/creatives) + staff so
+    // it can PREPARE office-staff tasks (e.g. a product-shoot for a campaign).
+    // Posting, ad-spend and staff dispatch all stay behind their own owner-approval
+    // gates — the marketer drafts/proposes, the owner confirms the spend/dispatch.
+    toolGroups: ['base', 'growth', 'content', 'staff'],
     instruction:
-      'You are a digital marketing strategist (Facebook/ads focus). Use the ads/marketing tools to assess performance and plan, then return a concise Bangla action plan with specific next steps.',
+      'You are ALMA Lifestyle\'s digital marketing lead (Facebook/ads focus) — and you OWN marketing end to end, ' +
+      'not just planning. Use the marketing/ads/SEO tools to assess performance and plan; create and (where a tool ' +
+      'allows) publish on-brand, halal-compliant Facebook posts; set up / run Facebook ad campaigns; and when a ' +
+      'campaign needs office-staff work (e.g. a product photoshoot or packaging push), PREPARE that as a staff task ' +
+      'with the staff tools. Anything that spends money, publishes publicly, or dispatches a staff task will surface ' +
+      'its own owner-approval card — so propose freely, the owner confirms the final spend/post/dispatch. Return a ' +
+      'concise Bangla summary of what you did and what is awaiting the owner\'s approval.',
     // Non-critical → cheap worker (staged; see preferredModelId note above).
     preferredModelId: 'or-qwen3-max',
   },

@@ -13,12 +13,20 @@ import {
   formatPlanForDisplay,
 } from '@/agent/lib/planner'
 
+// Roles that run directly without an owner "transfer to worker?" card. Marketing
+// + content are owner-approved to flow straight to Qwen; their internal money/
+// posting steps still hit their own action-level approval gates.
+const AUTO_RUN_ROLES = new Set<SpecialistRole>(['marketer', 'content'])
+
 const delegate_to_specialist: AgentTool = {
   name: 'delegate_to_specialist',
   description:
     'Delegate ONE focused sub-task to a specialist sub-agent that runs with a narrowed, role-appropriate tool set. ' +
     'Use this to break a larger job into pieces — e.g. send data-pulling to "analyst", market/competitor research to "researcher", ' +
-    'Facebook/ads planning to "marketer", copy/creative drafting to "content", staff/operations checks to "ops". ' +
+    'ALL marketing to "marketer" (it owns marketing end-to-end: Facebook posts, ad campaigns, AND preparing any office-staff ' +
+    'task a campaign needs), copy/creative drafting to "content", staff/operations checks to "ops". ' +
+    'NOTE: "marketer" and "content" run DIRECTLY with no "transfer to worker?" card — just delegate marketing and it happens; ' +
+    'their money/posting/dispatch steps still surface their own approval cards. ' +
     'The sub-agent gathers real data with its tools and returns a concise Bangla summary you can build on. ' +
     'Prefer delegating discrete sub-tasks of multi-step work so each runs focused; keep simple single-step answers yourself.',
   input_schema: {
@@ -51,7 +59,13 @@ const delegate_to_specialist: AgentTool = {
     // Approval gate (test mode, DELEGATION_APPROVAL=true): do NOT run the worker —
     // ask the owner first. The worker starts only after the owner approves the
     // confirm card (handled in /api/assistant/actions/[id]/approve, type 'delegation').
-    if (process.env.DELEGATION_APPROVAL !== 'false') {
+    //
+    // EXCEPTION — marketing/content run DIRECTLY (no "transfer to worker?" card).
+    // The owner wants Qwen to handle marketing seamlessly, not as a visible
+    // sub-agent hop. Safety is unchanged: the money/posting steps inside (publish
+    // a post, spend on ads, dispatch a staff task) keep their OWN action-level
+    // approval gates — only the redundant delegation card is removed.
+    if (process.env.DELEGATION_APPROVAL !== 'false' && !AUTO_RUN_ROLES.has(role)) {
       let modelLabel = 'worker'
       try {
         const { resolveSubagentModel } = await import('@/agent/lib/models/tier-router')
