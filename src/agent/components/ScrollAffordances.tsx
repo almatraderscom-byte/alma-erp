@@ -70,8 +70,27 @@ export function ScrollAffordances({
 
     compute()
     target.addEventListener('scroll', onScroll, { passive: true })
+
+    // The scroll position is not the only thing that changes the distance-to-
+    // bottom: when a big reply streams in (or a long message arrives) the content
+    // grows WITHOUT a scroll event, so the scroll-to-bottom button would never
+    // appear. Observe content size + DOM mutations and recompute then too. This
+    // is what fixes "sms boro hole nicher dike jawa button nai".
+    let ro: ResizeObserver | null = null
+    let mo: MutationObserver | null = null
+    if (!isWindow) {
+      const el = target as HTMLElement
+      ro = new ResizeObserver(onScroll)
+      ro.observe(el)
+      if (el.firstElementChild) ro.observe(el.firstElementChild)
+      mo = new MutationObserver(onScroll)
+      mo.observe(el, { childList: true, subtree: true, characterData: true })
+    }
+
     return () => {
       target.removeEventListener('scroll', onScroll)
+      ro?.disconnect()
+      mo?.disconnect()
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     }
   }, [containerRef, topThreshold, bottomThreshold])
