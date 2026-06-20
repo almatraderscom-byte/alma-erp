@@ -1104,5 +1104,47 @@ export async function POST(
     return Response.json({ success: true, todoId, cancelled: true, message: 'টুডু তালিকা থেকে সরানো হয়েছে।' })
   }
 
+  if (action.type === 'staff_task_explanation') {
+    const { taskId, staffName, explanation } = payload as {
+      taskId: string; staffName?: string; explanation: string
+    }
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const existing = await db.agentStaffTask.findUnique({ where: { id: String(taskId) } })
+    if (!existing) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'task_not_found' } },
+      })
+      return Response.json({ success: true, message: 'টাস্কটি আর নেই — কিছু করার দরকার ছিল না।' })
+    }
+    // The explanation lives in the task's `detail` — which is exactly what the
+    // staff member sees in অফিস (portal/office). No Telegram send here.
+    await db.agentStaffTask.update({
+      where: { id: String(taskId) },
+      data: { detail: String(explanation) },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { taskId, explained: true } },
+    })
+    await appendConversationNote(
+      db,
+      action,
+      `🧠 "${existing.title}" — ${staffName ?? 'স্টাফ'}-কে কাজটি বুঝিয়ে দেওয়া হয়েছে। এখন তার অফিস ভিউতে দেখাবে।`,
+    )
+    return Response.json({
+      success: true,
+      taskId,
+      explained: true,
+      message: 'Explanation saved — it now shows in the staff member’s office view.',
+    })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }

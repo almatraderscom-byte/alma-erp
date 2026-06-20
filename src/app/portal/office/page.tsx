@@ -147,7 +147,12 @@ function TaskCard({
         <h3 className="text-base font-medium leading-snug text-white">{task.title}</h3>
         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${meta.tone}`}>{meta.label}</span>
       </div>
-      {detail && <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-300">{detail}</p>}
+      {detail && (
+        <div className="mt-2">
+          <p className="mb-1 text-xs font-medium text-slate-400">🧠 কাজটি যেভাবে করবেন</p>
+          <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">{detail}</p>
+        </div>
+      )}
     </article>
   )
 }
