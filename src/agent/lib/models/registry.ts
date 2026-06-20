@@ -156,9 +156,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'none',
   },
   // ── Project A cost-optimization workers (non-critical tiers only) ──────────
-  // Slugs + pricing verified by owner against openrouter.ai. NOTE: supportsCaching
-  // is metadata only — the adapter path does not implement prompt caching, so the
-  // flag has no runtime effect today; kept accurate for when caching is wired.
+  // Slugs + pricing verified by owner against openrouter.ai. supportsCaching now has
+  // runtime effect: the OpenRouter adapter sends a cache_control breakpoint on the
+  // system-prompt prefix, so these models reuse it across turns (cheaper context).
   // Critical tiers (finance/staff/orders) never resolve to these.
   {
     id: 'or-qwen3-max',
