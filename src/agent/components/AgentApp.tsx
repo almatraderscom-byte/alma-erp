@@ -124,8 +124,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
-  const [streamStatus, setStreamStatus] = useState<string | null>(null)
-  const [streamMode, setStreamMode] = useState<'fetching' | 'writing' | 'settled'>('writing')
+  // streamStatus is still computed (telemetry / future use) but the live
+  // indicator now shows the Claude-style rotating verb + model name instead.
+  const [, setStreamStatus] = useState<string | null>(null)
+  const [streamMode, setStreamMode] = useState<'thinking' | 'searching' | 'writing' | 'settled'>('thinking')
   // Which model is answering the live turn → drives the loading animation identity.
   const [streamVariant, setStreamVariant] = useState<'claude' | 'qwen' | 'deepseek' | 'default'>('claude')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
@@ -361,6 +363,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     abortRef.current = new AbortController()
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
+    setStreamMode('thinking') // start in the thinking state until tools/text arrive
     setStreamVariant('claude') // reset until model_info arrives (fail-safe = head)
 
     let convIdForUpload = activeConvId
@@ -508,7 +511,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // status line — that (plus the animation) is how the owner tells who is working.
           setStreamStatus(variant === 'claude' ? `🧠 ${label || 'Sonnet'} ভাবছে…` : `⚡ ${label || 'Worker'} উত্তর দিচ্ছে…`)
         } else if (evt.type === 'thinking_delta') {
-          setStreamMode('fetching')
+          setStreamMode('thinking')
           setStreamStatus('🤔 ভাবছি…')
           if (!thinkingBufferRef.current || thinkingBufferRef.current.msgId !== assistantMsgId) {
             thinkingBufferRef.current = { msgId: assistantMsgId, pending: '', flushScheduled: false, startedAt: Date.now() }
@@ -545,7 +548,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } else if (evt.type === 'tool_start') {
           toolInFlight = true
           const d = toolDisplay(String(evt.name))
-          setStreamMode('fetching')
+          setStreamMode('searching')
           setStreamStatus(`${d.icon} ${d.label}`)
           // Upsert by id: tool_start fires twice (once at stream start, once with
           // the parsed input) — merge so the chip gains its real target, no dupes.
@@ -575,7 +578,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'subagent_start') {
-          setStreamMode('fetching')
+          setStreamMode('searching')
           setStreamStatus(`🤝 ${evt.roleLabel as string} কাজ করছে…`)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
@@ -649,7 +652,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // The honesty guard caught a completion claim that wasn't backed by a
           // real tool call this turn, so the draft is being rewritten. Make this
           // understandable instead of a confusing blank-then-reappear.
-          setStreamMode('fetching')
+          setStreamMode('searching')
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
@@ -1148,7 +1151,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
             onStartVoiceSession={() => setVoiceOpen(true)}
-            streamStatus={streamStatus}
             streamMode={streamMode}
             streamVariant={streamVariant}
             compacting={compacting}

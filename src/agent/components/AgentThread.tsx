@@ -12,9 +12,8 @@ import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { isFailedStatus, isInProgressStatus } from './todo-panel-utils'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
-import { AgentThinkingIndicator, ModelSpinner, type ModelVariant } from './AgentThinkingIndicator'
+import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
-import { ScrollAffordances } from './ScrollAffordances'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 
 /** Compact token formatter: 36100 → "36.1k", 681 → "681". */
@@ -66,8 +65,7 @@ interface AgentThreadProps {
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
   onStartVoiceSession?: () => void
-  streamStatus?: string | null
-  streamMode?: 'fetching' | 'writing' | 'settled'
+  streamMode?: ThinkingMode
   streamVariant?: ModelVariant
   compacting?: boolean
 }
@@ -515,7 +513,7 @@ function ToolActivityChip({ name, done, success, stopped, input }: { name: strin
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, streamVariant, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -546,6 +544,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
   // When user manually scrolls up during streaming, stop force-tailing them.
   const stickToBottomRef = useRef(true)
+  // Show a floating "jump to latest" button once the user scrolls up a bit.
+  const [showScrollDown, setShowScrollDown] = useState(false)
 
   const checkScrollPosition = useCallback(() => {
     const container = containerRef.current
@@ -553,6 +553,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     const { scrollTop, scrollHeight, clientHeight } = container
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
     stickToBottomRef.current = distanceFromBottom < 60
+    // Reveal the button only when there's meaningfully more below the fold.
+    setShowScrollDown(distanceFromBottom > 160)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    stickToBottomRef.current = true
+    setShowScrollDown(false)
   }, [])
 
   useEffect(() => {
@@ -576,7 +584,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     if (last.streaming && stickToBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
     }
-  }, [messages])
+    // Content grew without a scroll event — refresh the button visibility.
+    checkScrollPosition()
+  }, [messages, checkScrollPosition])
 
   function saveArtifact(msg: ChatMessage) {
     const detected = detectArtifact(msg.text)
@@ -594,6 +604,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   }
 
   return (
+    // Non-scrolling positioned wrapper. The scroll-down button is an `absolute`
+    // child of THIS (not a `fixed` or `sticky` child of the scroller): on the
+    // iPhone app the agent route locks <body> to `position:fixed; overflow:hidden`
+    // for the keyboard fix, and WKWebView then refuses to paint position:fixed
+    // children — which is why the old button was invisible on-device. `absolute`
+    // anchors to this relative wrapper instead of the viewport, so it's immune.
+    <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
@@ -650,7 +667,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     )}
                     {msg.text && (
-                      <div className="rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-cream whitespace-pre-wrap break-words select-text">
+                      <div className="rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
                         <CollapsibleMessage collapsedMaxPx={260}>{msg.text}</CollapsibleMessage>
                       </div>
                     )}
@@ -719,8 +736,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       it flicker out; it disappears only when the turn is `done`. */}
                   {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
-                      label={streamStatus ?? 'কাজ করছি…'}
-                      mode={streamMode === 'settled' ? 'writing' : (streamMode ?? 'writing')}
+                      mode={streamMode ?? 'thinking'}
                       variant={streamVariant ?? 'claude'}
                       className="mt-3"
                     />
@@ -755,6 +771,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {!msg.streaming && msg.text && (
                     <div className="mt-2 flex items-center gap-0.5">
+                      {/* Persistent ALMA byline — stays under every finished reply
+                          (the owner wants the ALMA name to REMAIN after the turn,
+                          like the model name in the Claude app, not vanish with the
+                          working spinner). */}
+                      <span className="mr-1.5 inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide text-[#E07A5F]/80">
+                        <span aria-hidden style={{ fontVariantEmoji: 'text' as const }}>✦</span>
+                        ALMA
+                      </span>
                       <CopyButton text={msg.text} />
                       <TtsButton text={msg.text} messageId={msg.id} />
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
@@ -825,18 +849,34 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
         <div ref={bottomRef} />
       </div>
+    </div>
 
-      <ScrollAffordances
-        containerRef={containerRef}
-        topThreshold={400}
-        bottomThreshold={isOfficeShift ? 80 : 120}
-        centerBottom={!isOfficeShift}
-        bottomOffsetClass={
-          isOfficeShift
-            ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-8'
-            : undefined
-        }
-      />
+      {/* Scroll-to-bottom, Claude-style. `absolute` inside the relative wrapper
+          (see top of return) — NOT fixed/sticky — so it paints reliably inside
+          the iPhone app's fixed-body agent route and floats just above the
+          composer, centered like the Claude app. */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 -translate-x-1/2">
+        <AnimatePresence>
+          {showScrollDown && (
+            <motion.button
+              key="scroll-down"
+              type="button"
+              initial={{ opacity: 0, scale: 0.6, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.6, y: 6 }}
+              transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
+              onClick={scrollToBottom}
+              aria-label="নিচে যান"
+              className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-muted ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 hover:text-[#E07A5F] active:scale-90"
+            >
+              <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14M19 12l-7 7-7-7" />
+              </svg>
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+
     </div>
   )
 }

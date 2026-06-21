@@ -18,10 +18,10 @@ function isNativePlatform(): boolean {
   return Boolean(cap?.isNativePlatform?.())
 }
 
-function webVibrate(): void {
+function webVibrate(ms = 14): void {
   if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
   try {
-    navigator.vibrate(14) // soft, brief tap — barely-there, not a buzz
+    navigator.vibrate(ms) // soft, brief tap — barely-there, not a buzz
   } catch {
     /* vibration blocked/unsupported — ignore */
   }
@@ -35,4 +35,20 @@ export function agentReplyHaptic(): void {
     return
   }
   webVibrate()
+}
+
+/**
+ * A single light "tick" used by the loading spinner, fired repeatedly in sync
+ * with the animation rhythm. Same native-first routing as agentReplyHaptic:
+ * the iPhone Taptic Engine fires on the native app (even though iOS Safari /
+ * WKWebView ignores navigator.vibrate); web/Android fall back to vibrate.
+ *
+ * @param webMs vibration length (ms) for the Web Vibration fallback only.
+ */
+export function agentTickHaptic(webMs = 12): void {
+  if (isNativePlatform()) {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => webVibrate(webMs))
+    return
+  }
+  webVibrate(webMs)
 }

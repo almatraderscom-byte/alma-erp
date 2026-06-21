@@ -26,6 +26,12 @@ interface ScrollAffordancesProps {
    * button stays in the right gutter. Defaults to true.
    */
   centerBottom?: boolean
+  /**
+   * Render the scroll-to-bottom button. Set false when the caller provides its
+   * own (e.g. the agent thread uses a sticky button, since position:fixed is
+   * unreliable inside the iPhone app's fixed <body>). Defaults to true.
+   */
+  bottom?: boolean
 }
 
 /**
@@ -41,6 +47,7 @@ export function ScrollAffordances({
   bottomThreshold = 240,
   bottomOffsetClass = 'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-6',
   centerBottom = true,
+  bottom = true,
 }: ScrollAffordancesProps) {
   const [showTop, setShowTop] = useState(false)
   const [showBottom, setShowBottom] = useState(false)
@@ -115,7 +122,7 @@ export function ScrollAffordances({
     else window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })
   }
 
-  if (!showTop && !showBottom) return null
+  if (!showTop && !(showBottom && bottom)) return null
 
   // Down-arrow glyph reused by both placements.
   const downArrow = (
@@ -150,7 +157,7 @@ export function ScrollAffordances({
             </motion.button>
           )}
           {/* When NOT centered, the bottom button shares this gutter (legacy). */}
-          {!centerBottom && showBottom && (
+          {bottom && !centerBottom && showBottom && (
             <motion.button
               key="bottom-gutter"
               type="button"
@@ -170,7 +177,7 @@ export function ScrollAffordances({
 
       {/* Scroll-to-BOTTOM, Claude-style: prominent circular button CENTERED just
           above the composer so it's always findable. */}
-      {centerBottom && (
+      {bottom && centerBottom && (
         <div
           className={`pointer-events-none fixed left-1/2 z-40 -translate-x-1/2 ${bottomOffsetClass}`}
           aria-hidden={!showBottom}
