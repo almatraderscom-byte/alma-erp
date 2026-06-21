@@ -34,6 +34,12 @@ export function calcModelTurnCostUsd(
     const cacheWrite = ((usage.cacheWrite ?? 0) / 1_000_000) * model.inPerM * ANTHROPIC_CACHE_WRITE_MULT
     const cacheRead = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM * ANTHROPIC_CACHE_READ_MULT
     cache = cacheWrite + cacheRead
+  } else {
+    // OpenRouter/OpenAI bill cached reads inside prompt_tokens at the full input
+    // rate. The adapter now surfaces inputTokens as uncached-only (to stop the UI
+    // double-count), so re-add the cached tokens here at the input rate to keep
+    // the billed cost unchanged.
+    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM
   }
 
   return roundUsd(input + output + cache)

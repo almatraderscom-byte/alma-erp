@@ -64,4 +64,21 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     })
     expect(cost).toBeCloseTo(0.27, 6) // 0.09 + 0.18
   })
+
+  it('OpenRouter cached reads are re-added at the input rate (cost unchanged vs all-in prompt_tokens)', () => {
+    const model = getModel('or-deepseek-v4-flash')
+    // Adapter now splits prompt_tokens into uncached input + cacheRead. Pricing the
+    // two separately must equal pricing the combined total at the input rate, so the
+    // display fix doesn't move the billed number.
+    const split = calcModelTurnCostUsd(model, {
+      inputTokens: 0.4 * ONE_M,
+      outputTokens: ONE_M,
+      cacheRead: 0.6 * ONE_M,
+    })
+    const combined = calcModelTurnCostUsd(model, {
+      inputTokens: ONE_M, // old behaviour: cached folded into input
+      outputTokens: ONE_M,
+    })
+    expect(split).toBeCloseTo(combined, 6)
+  })
 })

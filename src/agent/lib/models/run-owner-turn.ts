@@ -448,6 +448,8 @@ async function* runAlternateProviderTurn(
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
+      cacheRead: totalCacheReadTokens,
+      cacheWrite: totalCacheCreationTokens,
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

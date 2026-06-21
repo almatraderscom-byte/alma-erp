@@ -36,6 +36,14 @@ import type { AgentTool } from './registry'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/** Mirrors the staff_tasks_type_check DB constraint — any insert outside this set
+ * aborts on the check. Used to clamp LLM-supplied task types. */
+const ALLOWED_STAFF_TASK_TYPES = new Set<string>([
+  'ad_creative', 'product_content', 'product_photo', 'video_reel', 'listing_update',
+  'order_followup', 'page_management', 'customer_reply', 'content_support',
+  'office_task', 'stock_check', 'misc', 'strategist_directive',
+])
+
 // ── Business context helpers ────────────────────────────────────────────────
 
 type BusinessId = 'ALMA_LIFESTYLE' | 'ALMA_TRADING'
@@ -504,7 +512,7 @@ const merge_into_proposal: AgentTool = {
           properties: {
             title: { type: 'string' },
             detail: { type: 'string' },
-            type: { type: 'string', description: 'e.g. learning, research, video_reel, misc, custom' },
+            type: { type: 'string', description: 'One of: ad_creative, product_content, product_photo, video_reel, listing_update, order_followup, page_management, customer_reply, content_support, office_task, stock_check, strategist_directive, misc (default misc)' },
           },
           required: ['title'],
         },
@@ -556,10 +564,13 @@ const merge_into_proposal: AgentTool = {
             businessId,
             title: t.title,
             detail: t.detail ?? null,
-            type: t.type ?? 'misc',
+            // type/source must satisfy the staff_tasks_type_check / _source_check DB
+            // constraints. An LLM-supplied type outside the allowed set (e.g. the old
+            // "learning"/"custom" hint) would abort the insert, so clamp to 'misc'.
+            type: ALLOWED_STAFF_TASK_TYPES.has(t.type ?? '') ? t.type : 'misc',
             status: 'proposed',
             proposedFor: new Date(date),
-            source: 'owner_manual',
+            source: 'owner',
           })),
         })
       }

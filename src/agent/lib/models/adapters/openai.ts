@@ -146,12 +146,17 @@ export class OpenAiAdapter implements ProviderAdapter {
       if (chunk.usage) {
         // OpenRouter/OpenAI report cache hits under prompt_tokens_details.cached_tokens.
         // Surface it as cacheRead so the turn loop can record cache effectiveness.
+        // NB: OpenRouter's prompt_tokens INCLUDES the cached subset, whereas
+        // Anthropic's input_tokens EXCLUDES cached. Subtract here so both providers
+        // report uncached-only input and the UI total (in+out+cacheRead) doesn't
+        // double-count the cached tokens.
         const cachedTokens =
           (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } })
             .prompt_tokens_details?.cached_tokens ?? 0
+        const promptTokens = chunk.usage.prompt_tokens ?? 0
         yield {
           type: 'usage',
-          inputTokens: chunk.usage.prompt_tokens ?? 0,
+          inputTokens: Math.max(0, promptTokens - cachedTokens),
           outputTokens: chunk.usage.completion_tokens ?? 0,
           cacheRead: cachedTokens,
         }
