@@ -605,6 +605,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   }
 
   return (
+    // Non-scrolling positioned wrapper. The scroll-down button is an `absolute`
+    // child of THIS (not a `fixed` or `sticky` child of the scroller): on the
+    // iPhone app the agent route locks <body> to `position:fixed; overflow:hidden`
+    // for the keyboard fix, and WKWebView then refuses to paint position:fixed
+    // children — which is why the old button was invisible on-device. `absolute`
+    // anchors to this relative wrapper instead of the viewport, so it's immune.
+    <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
@@ -765,6 +772,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {!msg.streaming && msg.text && (
                     <div className="mt-2 flex items-center gap-0.5">
+                      {/* Persistent ALMA byline — stays under every finished reply
+                          (the owner wants the ALMA name to REMAIN after the turn,
+                          like the model name in the Claude app, not vanish with the
+                          working spinner). */}
+                      <span className="mr-1.5 inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide text-[#E07A5F]/80">
+                        <span aria-hidden style={{ fontVariantEmoji: 'text' as const }}>✦</span>
+                        ALMA
+                      </span>
                       <CopyButton text={msg.text} />
                       <TtsButton text={msg.text} messageId={msg.id} />
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
@@ -835,26 +850,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
         <div ref={bottomRef} />
       </div>
+    </div>
 
-      {/* Scroll-to-bottom, Claude-style. Rendered STICKY *inside* the scroll
-          container (not position:fixed) on purpose: on the iPhone app the agent
-          route locks <body> to `position:fixed; overflow:hidden` for the keyboard
-          fix, and WKWebView then fails to show position:fixed children reliably —
-          which is why the old fixed button was invisible on-device. Sticky is
-          immune to that. The h-0 wrapper keeps it from adding scroll height. */}
-      <div className="pointer-events-none sticky bottom-0 z-30 flex h-0 justify-center">
+      {/* Scroll-to-bottom, Claude-style. `absolute` inside the relative wrapper
+          (see top of return) — NOT fixed/sticky — so it paints reliably inside
+          the iPhone app's fixed-body agent route and floats just above the
+          composer, centered like the Claude app. */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 -translate-x-1/2">
         <AnimatePresence>
           {showScrollDown && (
             <motion.button
               key="scroll-down"
               type="button"
-              initial={{ opacity: 0, scale: 0.6, y: -6 }}
+              initial={{ opacity: 0, scale: 0.6, y: 6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.6, y: -6 }}
+              exit={{ opacity: 0, scale: 0.6, y: 6 }}
               transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
               onClick={scrollToBottom}
               aria-label="নিচে যান"
-              className="pointer-events-auto -translate-y-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-muted ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 hover:text-[#E07A5F] active:scale-90"
+              className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-muted ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 hover:text-[#E07A5F] active:scale-90"
             >
               <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 5v14M19 12l-7 7-7-7" />
@@ -864,7 +878,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         </AnimatePresence>
       </div>
 
-      {/* Scroll-to-TOP only — the bottom button is handled by the sticky button
+      {/* Scroll-to-TOP only — the bottom button is handled by the absolute button
           above (fixed-positioned children are unreliable on the iPhone app). */}
       <ScrollAffordances
         containerRef={containerRef}

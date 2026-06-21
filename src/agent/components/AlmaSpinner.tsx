@@ -49,20 +49,21 @@ const MODES: Record<AlmaSpinnerMode, ModeConfig> = {
   thinking: {
     frame: 210, verbEvery: 2000, hapGap: 820, hapDur: 16, hapFreq: 330,
     anim: 'alma-breathe 1.7s ease-in-out infinite',
-    verbs: ['Pondering', 'Musing', 'Noodling', 'Mulling', 'Wondering', 'Reflecting',
-            'Contemplating', 'Untangling', 'Considering', 'Reasoning', 'Connecting dots'],
+    // Bangla verbs (owner-facing) — the Claude-app "Pondering…" feel, in Bangla.
+    verbs: ['ভাবছি', 'চিন্তা করছি', 'বুঝছি', 'মনে করছি', 'বিবেচনা করছি',
+            'বিশ্লেষণ করছি', 'মিলিয়ে দেখছি', 'হিসাব করছি', 'খেয়াল করছি'],
   },
   writing: {
     frame: 130, verbEvery: 1500, hapGap: 210, hapDur: 7, hapFreq: 460,
     anim: 'alma-breathe 1.05s ease-in-out infinite',
-    verbs: ['Writing', 'Composing', 'Drafting', 'Wording', 'Phrasing', 'Shaping',
-            'Polishing', 'Articulating', 'Putting it together', 'Streaming'],
+    verbs: ['লিখছি', 'সাজাচ্ছি', 'তৈরি করছি', 'গুছিয়ে লিখছি', 'উত্তর লিখছি',
+            'বাক্য সাজাচ্ছি', 'শেষ করছি'],
   },
   searching: {
     frame: 300, verbEvery: 1400, hapGap: 360, hapDur: 9, hapFreq: 540,
     anim: 'alma-rot 1.25s linear infinite',
-    verbs: ['Searching', 'Browsing', 'Reading', 'Fetching', 'Scanning', 'Skimming',
-            'Cross-referencing', 'Digging', 'Gathering', 'Looking it up', 'Sourcing'],
+    verbs: ['খুঁজছি', 'দেখছি', 'পড়ছি', 'তথ্য আনছি', 'যাচাই করছি',
+            'খুঁজে দেখছি', 'মিলিয়ে দেখছি', 'সংগ্রহ করছি'],
   },
 }
 
@@ -92,6 +93,41 @@ function getAudioCtx(): AudioContext | null {
   }
   if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {})
   return _audioCtx
+}
+
+/* The audio tick lives inside a setInterval (not a user gesture), but browsers —
+ * iOS Safari/WKWebView especially — only let an AudioContext START from a real
+ * user gesture. So we install one-shot gesture listeners that create + resume the
+ * context (and prime it with a silent buffer) the first time the owner taps/types
+ * anywhere. After that the interval ticks are allowed to make sound. Without this
+ * the context stays 'suspended' forever and playTick() silently returns. */
+let _audioUnlockInstalled = false
+function installAudioUnlock() {
+  if (_audioUnlockInstalled || typeof window === 'undefined') return
+  _audioUnlockInstalled = true
+  const unlock = () => {
+    const ctx = getAudioCtx()
+    if (!ctx) return
+    ctx.resume().catch(() => {})
+    try {
+      // Prime with a 1-frame silent buffer so iOS marks the context "running".
+      const buf = ctx.createBuffer(1, 1, 22050)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      src.start(0)
+    } catch {
+      /* ignore */
+    }
+    if (ctx.state === 'running') {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('touchstart', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }
+  window.addEventListener('pointerdown', unlock, { passive: true })
+  window.addEventListener('touchstart', unlock, { passive: true })
+  window.addEventListener('keydown', unlock)
 }
 
 function playTick(freq: number, volume = 0.035) {
@@ -137,6 +173,10 @@ export function AlmaSpinner({
   const fi = useRef(0)
 
   useEffect(() => { injectKeyframes() }, [])
+
+  // Arm the audio unlock as early as possible so the very first owner gesture
+  // (sending a message, tapping anywhere) lets later interval ticks play sound.
+  useEffect(() => { if (sound) installAudioUnlock() }, [sound])
 
   // glyph frames
   useEffect(() => {
