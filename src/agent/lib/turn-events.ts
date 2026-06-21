@@ -76,7 +76,10 @@ export async function subscribeTurnEvents(
   turnId: string,
   onEvent: (evt: TurnEvent) => void,
 ): Promise<{ close: () => Promise<void> } | null> {
-  const url = process.env.REDIS_URL
+  // Must match the Redis the worker PUBLISHES to (LONG_TASK_REDIS_URL on the
+  // worker), so the live tail sees the worker's events. Same precedence as the
+  // enqueue side: LONG_TASK_REDIS_URL first, then REDIS_URL.
+  const url = process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL
   if (!url) return null
   try {
     const { default: Redis } = await import('ioredis')
