@@ -3,6 +3,8 @@
  * Development mode or delivery fails. Only ingests RECENT UNANSWERED customer messages
  * (latest message in thread must be from customer, within max age).
  */
+import { resilientFetch } from '../fetch-retry.mjs'
+
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle', envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
   { id: '827260860637393', name: 'Alma Online Shop', envKey: 'FB_PAGE_TOKEN_ONLINESHOP' },
@@ -16,7 +18,9 @@ const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function fbGet(path, token) {
   const url = `https://graph.facebook.com/v21.0/${path}&access_token=${encodeURIComponent(token)}`
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+  // 30s + one retry — a 15s no-retry ceiling on these nested conversation queries was
+  // timing out and spamming the worker error log.
+  const res = await resilientFetch(url, { timeoutMs: 30_000, retries: 1 })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`FB API ${res.status}: ${err.slice(0, 200)}`)

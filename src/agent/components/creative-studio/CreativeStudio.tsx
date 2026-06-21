@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Toaster, toast } from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import { saveImageToDevice } from '@/lib/capacitor-native'
 import {
   STUDIO_MODES,
   FAMILY_PRESETS,
@@ -34,6 +35,15 @@ import {
   type BrandStatus,
   type FinishMode,
 } from '@/agent/components/creative-studio/studio-api'
+
+/** Native-safe download — a plain <a download> just opens a browser URL inside the
+ * iOS app shell. saveImageToDevice fetches a blob → share sheet / blob anchor. */
+async function handleDownload(url: string | undefined | null, filename?: string) {
+  if (!url) return
+  const result = await saveImageToDevice(url, filename)
+  if (result === 'downloaded') toast.success('ডাউনলোড হয়েছে, স্যার')
+  else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
+}
 
 type MainView = 'studio' | 'gallery' | 'models' | 'finishing'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
@@ -1024,24 +1034,23 @@ function GalleryView() {
                     {showFinish ? 'বন্ধ করুন' : 'ফিনিশিং (logo + code + hook)'}
                   </button>
                 )}
-                <a
-                  href={(showBranded && selected.brandedUrl) || selected.previewUrl}
-                  download
+                <button
+                  type="button"
+                  onClick={() => handleDownload((showBranded && selected.brandedUrl) || selected.previewUrl, `alma-${selected.id}.jpg`)}
                   className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
                 >
                   ডাউনলোড
-                </a>
+                </button>
               </div>
             )}
             {selected.type === 'video_gen' || selected.storagePath?.endsWith('.mp4') ? (
-              <a
-                href={selected.previewUrl}
-                download
-                onClick={(e) => e.stopPropagation()}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleDownload(selected.previewUrl, `alma-${selected.id}.mp4`) }}
                 className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
               >
                 ডাউনলোড
-              </a>
+              </button>
             ) : null}
 
             {/* Finishing panel — per-image code + hook, applied with the real brand frame */}
@@ -1449,13 +1458,13 @@ function FinishingView() {
 
       {resultUrl && (
         <div className="mt-3 flex gap-2">
-          <a
-            href={resultUrl}
-            download
+          <button
+            type="button"
+            onClick={() => handleDownload(resultUrl, `alma-finished-${Date.now()}.jpg`)}
             className="flex-1 rounded-xl bg-[#E07A5F] py-2.5 text-center text-sm font-bold text-white"
           >
             ডাউনলোড
-          </a>
+          </button>
           <button
             type="button"
             onClick={() => { setResultUrl(null) }}

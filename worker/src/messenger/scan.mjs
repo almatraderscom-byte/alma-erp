@@ -13,6 +13,7 @@ import { notify } from '../notify/index.mjs'
 import { recordReplyStats } from './reply-stats.mjs'
 import { buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { resilientFetch } from '../fetch-retry.mjs'
 
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle',   envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
@@ -65,7 +66,10 @@ async function isCsHandledConversation(fbConversationId) {
 
 async function fbGet(pageId, path, token) {
   const url = `https://graph.facebook.com/v21.0/${pageId}${path}&access_token=${token}`
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+  // Graph queries here are heavy (conversations + nested messages); a hard 15s ceiling
+  // with no retry was timing out and spamming the worker error log. Use resilientFetch
+  // (30s + one retry on transient/abort).
+  const res = await resilientFetch(url, { timeoutMs: 30_000, retries: 1 })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`FB API ${res.status}: ${err.slice(0, 200)}`)
