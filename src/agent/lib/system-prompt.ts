@@ -584,6 +584,12 @@ export type BuildSystemPromptArgs = {
    * tiers (or undefined) get the standard slim-router delegate guidance.
    */
   headTier?: 'light' | 'heavy' | 'explicit' | 'marketing'
+  /**
+   * B3 tail-compaction running summary of the oldest folded-out turns. Rides the
+   * STABLE/cached block (byte-stable between folds) so it costs one cache-write
+   * per fold, not one per turn.
+   */
+  tailSummary?: string
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -615,13 +621,18 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     activeGroups,
     businessSnapshot,
     headTier,
+    tailSummary,
   } = args
 
   const stableParts: string[] = []
   const volatileParts: string[] = []
+  const tailSummaryBlock = tailSummary && tailSummary.trim()
+    ? `\n## পুরোনো কথোপকথনের চলমান সারাংশ (folded — verbatim window-এর বাইরে)\n${tailSummary.trim()}`
+    : null
 
   if (personalMode) {
     stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE + RESPONSE_STYLE_RULE)
+    if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories
         .slice(0, 30)
@@ -641,6 +652,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
   } else {
     const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups)
     stableParts.push(corePrompt)
+    if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
