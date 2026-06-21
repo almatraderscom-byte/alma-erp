@@ -52,6 +52,11 @@ for (const key of required) {
 }
 
 const REDIS_URL      = process.env.REDIS_URL
+// A2 long-agent-task spans two machines: the Vercel route enqueues, this VPS worker
+// consumes. They must share a Redis both can reach (cloud Upstash). Every OTHER queue
+// stays on the worker's local REDIS_URL — moving those live queues to a free-tier
+// cloud Redis would add latency and risk its command quota. Falls back to REDIS_URL.
+const LONG_TASK_REDIS_URL = process.env.LONG_TASK_REDIS_URL || REDIS_URL
 const GEMINI_KEY     = process.env.GEMINI_API_KEY
 const SUPABASE_URL   = process.env.SUPABASE_URL
 const SUPABASE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -62,6 +67,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 const genai    = new GoogleGenAI({ apiKey: GEMINI_KEY })
 
 const connection = { url: REDIS_URL }
+const longTaskConnection = { url: LONG_TASK_REDIS_URL }
 
 // ── Queues ─────────────────────────────────────────────────────────────────
 
@@ -76,7 +82,7 @@ const videoGenQueue = new Queue('video-gen', {
 })
 
 const longTaskQueue = new Queue('long-agent-task', {
-  connection,
+  connection: longTaskConnection,
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
 })
 
@@ -485,7 +491,7 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // Redis + the agent_turn_events log so the client can tail/replay it.
   if (job.data?.turnId) {
     const { runStreamedTurn } = await import('./turn/run-streamed-turn.mjs')
-    await runStreamedTurn({ supabase, job, redisUrl: REDIS_URL, telegramBot })
+    await runStreamedTurn({ supabase, job, redisUrl: LONG_TASK_REDIS_URL, telegramBot })
     return
   }
 
@@ -524,7 +530,7 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
     console.error(`[worker] long-agent-task ${pendingActionId} failed:`, err.message)
     await callJobResult(pendingActionId, 'failed', undefined, err.message)
   }
-}, { connection, concurrency: 1, lockDuration: 6 * 60 * 1000 })
+}, { connection: longTaskConnection, concurrency: 1, lockDuration: 6 * 60 * 1000 })
 
 longTaskWorker.on('completed', (job) => {
   if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
