@@ -177,12 +177,22 @@ async function renderModelOverlay(imagePath: string, opts: {
   const photoBuf = await agentStorageDownload(imagePath)
   const { width, height } = MODEL_CANVAS
 
-  const base = await sharp(photoBuf)
-    .resize(width, height, { fit: 'cover', position: 'centre' })
+  // Preserve aspect ratio — NEVER crop the product. `fit: 'cover'` was cutting heads/
+  // feet off portrait shots and zooming in (perceived "quality drop"). Instead fit the
+  // whole image inside the canvas and letterbox the remainder with brand cream so the
+  // full garment is always visible.
+  const fitted = await sharp(photoBuf)
+    .resize(width, height, { fit: 'inside', withoutEnlargement: false })
     .toBuffer()
+  const fittedMeta = await sharp(fitted).metadata()
+  const fittedW = fittedMeta.width ?? width
+  const fittedH = fittedMeta.height ?? height
+  const photoLeft = Math.round((width - fittedW) / 2)
+  const photoTop = Math.round((height - fittedH) / 2)
 
   const { topBand, codeBadge, footerBand } = buildModelOverlaySvg(width, height, opts)
   const composites: Array<{ input: Buffer; top: number; left: number }> = [
+    { input: fitted, top: photoTop, left: photoLeft },
     { input: topBand, top: 0, left: 0 },
     { input: codeBadge, top: height - 48 - (footerBand ? 56 : 0), left: 0 },
   ]
@@ -191,9 +201,11 @@ async function renderModelOverlay(imagePath: string, opts: {
   }
   await compositeLogo(composites, true, 140, 20, 20)
 
-  return sharp(base)
+  return sharp({
+    create: { width, height, channels: 3, background: BRAND.colors.cream },
+  })
     .composite(composites)
-    .jpeg({ quality: 92 })
+    .jpeg({ quality: 95 })
     .toBuffer()
 }
 

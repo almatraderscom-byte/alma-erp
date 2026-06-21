@@ -1,7 +1,24 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: { serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'] },
+  experimental: {
+    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'],
+    // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
+    // serverless function filesystem by default. The brand/Bangla TTFs are read from
+    // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
+    // disk — it ignores embedded @font-face data URIs). Without tracing them into the
+    // Lambda, every server-side SVG text render (Creative Studio finishing, ad
+    // creatives, brand frames) comes out BLANK on Vercel. Force-include the fonts for
+    // every route that renders branded images.
+    outputFileTracingIncludes: {
+      '/api/assistant/creative-studio/finish': ['./public/fonts/**'],
+      '/api/assistant/creative-studio/branding': ['./public/fonts/**'],
+      '/api/assistant/creative-studio/run': ['./public/fonts/**'],
+      '/api/assistant/brand-models': ['./public/fonts/**'],
+      '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
+      '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
+    },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '**.supabase.co' },

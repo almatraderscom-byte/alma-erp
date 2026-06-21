@@ -538,7 +538,12 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
   const taskPrompt = payload?.prompt || payload?.task || payload?.message
   if (!taskPrompt) {
     console.warn(`[worker] long-agent-task ${job.id} — no prompt in payload`)
-    await callJobResult(pendingActionId, 'failed', undefined, 'no_prompt_in_payload')
+    // Only report back when there is a pendingActionId to report against — otherwise
+    // the job-result route rejects the call with HTTP 400 ("pendingActionId and status
+    // required"), which is what was spamming the worker error log.
+    if (pendingActionId) {
+      await callJobResult(pendingActionId, 'failed', undefined, 'no_prompt_in_payload')
+    }
     return
   }
   console.log(`[worker] long-agent-task ${pendingActionId} starting: ${String(taskPrompt).slice(0, 80)}...`)
