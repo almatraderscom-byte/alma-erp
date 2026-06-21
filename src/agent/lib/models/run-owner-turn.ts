@@ -207,11 +207,27 @@ async function* runAlternateProviderTurn(
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
+  // Volatile per-turn context goes INTO the current owner user turn, not the
+  // system text — same rationale as the native Claude path (core.ts): a stable
+  // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)
+  // can actually reuse, and it keeps web/Telegram prefixes identical for a
+  // conversation. The injection is transient (only the assistant reply is
+  // persisted), so replayed history stays clean.
+  const volatileText = systemBlocksToText(volatile)
+  if (volatileText) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'user' && 'content' in m && typeof m.content === 'string') {
+        messages[i] = { role: 'user', content: `[Per-turn context]\n${volatileText}\n\n${m.content}` }
+        break
+      }
+    }
+  }
   // Owner Control Center: gate OFF-capability tools + add the "ask owner to
   // enable, don't improvise" note and autonomy preference. Fail-open.
   const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
-  const systemText = systemBlocksToText([...stable, ...volatile]) + (controlsNote ? `\n\n${controlsNote}` : '')
+  const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
     toolSelection.tools,
     agentControls,
