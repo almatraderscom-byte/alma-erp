@@ -65,9 +65,20 @@ export function buildTurnJobData(
   }
 }
 
-/** True only when a VPS worker queue is reachable (REDIS_URL configured). */
+/**
+ * The Redis the A2 long-agent-task queue lives on. This MUST be the same cloud
+ * Redis the VPS worker drains (it isolates long-task onto LONG_TASK_REDIS_URL),
+ * so we read that var FIRST and fall back to REDIS_URL. Using the same precedence
+ * on both sides means one env var name (LONG_TASK_REDIS_URL) configures A2
+ * end-to-end — no silent mismatch where Vercel and the worker watch different Redis.
+ */
+function longTaskRedisUrl(): string | undefined {
+  return process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL || undefined
+}
+
+/** True only when a VPS worker queue is reachable (cloud Redis configured). */
 export function isTurnHandoffConfigured(): boolean {
-  return Boolean(process.env.REDIS_URL)
+  return Boolean(longTaskRedisUrl())
 }
 
 /**
@@ -76,7 +87,7 @@ export function isTurnHandoffConfigured(): boolean {
  * Returns the job id, or null if no queue is configured / the add failed.
  */
 export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> {
-  const url = process.env.REDIS_URL
+  const url = longTaskRedisUrl()
   if (!url) return null
   try {
     const { Queue } = await import('bullmq')
