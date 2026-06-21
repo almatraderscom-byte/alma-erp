@@ -609,6 +609,33 @@ export function createTelegramBot() {
     }
   })
 
+  // Master pause: when the owner flips the Control Center switch off, the agent
+  // must go silent on Telegram too (not just web). Block every update; tell the
+  // owner once (throttled) so a tap isn't met with eerie silence; ignore staff
+  // quietly. FAIL-OPEN — a settings read error must never block real messages.
+  let lastPauseNoticeAt = 0
+  bot.use(async (ctx, next) => {
+    let paused = false
+    try {
+      const { isAgentPaused } = await import('../agent-pause.mjs')
+      paused = await isAgentPaused(createSupabase())
+    } catch {
+      paused = false
+    }
+    if (!paused) return next()
+    const chatId = ctx.chat?.id
+    if (chatId && isOwner(chatId)) {
+      const now = Date.now()
+      if (now - lastPauseNoticeAt > 60_000) {
+        lastPauseNoticeAt = now
+        await ctx
+          .reply('⏸️ Agent এখন pause করা আছে স্যার। Monitor পেজ থেকে আবার চালু করলে কাজ শুরু করব।')
+          .catch(() => {})
+      }
+    }
+    // Do not call next() — no command/handler runs while paused.
+  })
+
   // Access guard: owner full access; linked staff = tasks + location only (not AI agent).
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id

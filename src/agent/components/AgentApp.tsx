@@ -824,12 +824,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         }
       }
-      if ((err as Error).name === 'AbortError') {
-        // The stream was cut — either iOS suspended the backgrounded WebView, or
-        // the owner hit stop. The server turn keeps running and saves the full
-        // reply, so re-sync from the server instead of stranding a partial draft.
-        // Freeze any in-flight tool chips (mark stopped) so their spinner halts —
-        // "stop hole animation taw stop e thake".
+      // A stream cut AFTER the turn started is NOT a failure: the server turn is
+      // decoupled from this connection and runs to completion, saving the full
+      // reply. This happens on a plain AbortError (iOS suspended the backgrounded
+      // WebView / the owner hit stop) AND on a raw network drop (e.g. iOS "Load
+      // failed", which is a TypeError, not an AbortError) — the latter used to
+      // strand a scary "⚠️ failed" even though the answer was safely saved and a
+      // refresh would show it. Recover both the same way: freeze in-flight chips
+      // and re-sync from the durable turn status. Only a genuine pre-turn error
+      // (no turn ever started — bad key, 401, enqueue failed) is surfaced.
+      const streamCutAfterStart = (err as Error).name === 'AbortError' || Boolean(activeTurnIdRef.current)
+      if (streamCutAfterStart) {
+        // "stop hole animation taw stop e thake" — halt spinners.
         setMessages((prev) => prev.map((m) =>
           m.id === assistantMsgId
             ? {
