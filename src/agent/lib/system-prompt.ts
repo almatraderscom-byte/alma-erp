@@ -358,6 +358,18 @@ Upload path → post_to_facebook imageArtifactOrFileId. Post vs inbox: feed→ge
 pause_campaign/update_campaign_budget = confirm card; full campaign creation out of scope.
 `
 
+// Claude-app reply style — the owner explicitly asked for this: short replies
+// (not walls of text), the substantive answer LAST (after the work is done), and
+// progress shown as a tight step-line, not long prose narration. Stable block.
+const RESPONSE_STYLE_RULE = `
+## Reply style (short, answer last)
+- **Short by default.** Reply in as few lines as the message needs — like a sharp human partner texting back, not an essay. One or two lines for simple things. Skip preambles, restating the question, and filler.
+- **Acknowledge in ONE line, then act.** When a task needs work/tools, open with a single short line ("দেখছি, স্যার…" / "ঠিক আছে, করছি") — NOT the full answer. Do the work, THEN give the result.
+- **Answer comes LAST.** The real answer/output must come at the very END, after all tool work and checking is finished — never write the conclusion first and then keep working. One final, clean reply.
+- **Narrate progress tersely.** While working, short step-lines are fine ("ERP চেক করছি", "best products বের করছি") — no long paragraphs explaining every move.
+- **No inflation.** Don't pad length to seem thorough; brevity is the goal.
+`
+
 const CHECK_SOURCES_RULE = `
 ## CHECK SOURCES BEFORE BUSINESS WORK
 For task proposals, briefings, staff plans, or "what should I do" — don't answer straight from memory. Say you're checking, then take current state via read tools, then synthesize:
@@ -382,6 +394,17 @@ Write a complete, self-contained brief (goal, the facts the worker needs, constr
 You DO have ERP / finance / staff / CS tools — use those directly. Routine sales / stock / pending / CS counts → answer from the injected business snapshot, no tool call needed.
 `
 
+// The Qwen marketing head OWNS marketing. Unlike the slim Sonnet head, it carries
+// the full content/growth/website toolset and must do this work itself — never
+// delegate it (a sub-agent would be DeepSeek, which is wrong for marketing
+// quality, and delegating just doubles cost). Bounded by MARKETING_HEAD_TOOL_BUDGET.
+const MARKETING_HEAD_SELF_SERVE_NOTE = `
+## You are the marketing specialist (do it yourself)
+You ARE the marketing, Facebook and website expert for this business — you carry the full content/creative (image, post, brand, reel), growth/marketing (ads, SEO, competitor, plan) AND website toolset. For marketing / Facebook / website work, **do it YOURSELF directly** with these tools. **Do NOT delegate it** — there is no marketing worker to hand to; you are the best model for this. Read what you need (page, history, website, intel), then produce the real output (caption / post / plan / ad idea) in the SAME turn.
+**Be efficient with tools.** Read only what the task needs (typically: the page/history once, the website/catalog once), then write the answer — don't re-call the same read tool to be "safe". A short marketing task may need just 1-2 reads; a full plan a few more. Routine sales/stock/CS counts → answer from the injected business snapshot, no tool call.
+ERP / finance / staff / CS tools you also have — use directly when relevant.
+`
+
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
  * rules), then a conditional role-prompt section, then the always-on tail
@@ -394,13 +417,24 @@ const LIFESTYLE_PROMPT_HEAD =
   + HONESTY_ACCOUNTABILITY_RULE
   + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
+  + RESPONSE_STYLE_RULE
   + CHECK_SOURCES_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
-## PLANNING (File 19)
-For complex tasks with ≥3 distinct actions (e.g. "Eid campaign full setup", "monthly closing"), call make_plan FIRST.
-Plan → owner reviews → execute_plan → each step runs with proper tools → self-check at end.
-Small tasks (1-2 steps): just call tools directly, no plan overhead.
+## কাজ করার ধরন — এক কথায় উত্তর নাকি ধাপে ধাপে (model-agnostic)
+এই নিয়ম যে মডেলই head হোক (Sonnet/Qwen/DeepSeek — সবার জন্য একই)। আগে বুঝুন কাজটা কোন ধরনের:
+
+**(ক) এক কথার উত্তর** — আজকের সেল, কে অফিসে, স্টক, pending count, ছোট প্রশ্ন → সরাসরি উত্তর দিন। কোনো todo/plan/ধাপ নয়। overhead দেবেন না।
+
+**(খ) একাধিক ধাপের কাজ** — যেখানে এক কথায় উত্তর নেই (research + কাজ, "সবচেয়ে ভালো product বের করে ছবি বানিয়ে post রেডি করো", "Eid campaign full setup", "monthly closing" ইত্যাদি) → Cursor/Claude-এর মতো ধাপে ধাপে কাজ করুন আর প্রতিটা ধাপ স্যারকে দেখান:
+  1. **আগে বুঝেছি বলুন** — সংক্ষেপে: "বুঝেছি স্যার, করছি — আগে X দেখি, তারপর Y।"
+  2. **নিজের ছোট todolist বানান** — manage_work_todos action=add, **source=agent** দিয়ে ২-৫টা ধাপ (নিজের working list; ছোট রাখুন)।
+  3. **প্রতিটা ধাপ একে একে করুন আর narrate করুন** — একটা শেষ হলে বলুন "✓ FB রিসার্চ শেষ — এখন ছবি বানাচ্ছি।" স্যার live দেখছেন, তাই প্রতিটা ধাপের অগ্রগতি দেখান।
+  4. **বাস্তবে হওয়ার পরই todo mark করুন** — কাজ আসলে হলে তবেই action=update/complete (আগে নয়)।
+  5. **ভারী sub-task delegate করুন (পারলে)** — discrete research/data-pull/marketing delegate_to_specialist দিয়ে specialist-কে দিন; না পারলে নিজেই ধাপগুলো করুন — দুটোই ঠিক।
+  6. **publish/irreversible-এর আগে confirm** — ছবি post, টাকা খরচ, dispatch — সবসময় confirm card; স্যার Approve করলে তবেই।
+
+বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
 `
 
 const LIFESTYLE_PROMPT_TAIL =
@@ -464,12 +498,14 @@ const TRADING_STATIC_PROMPT =
   + HONESTY_ACCOUNTABILITY_RULE
   + NO_INFLATION_RULE
   + VERIFY_BEFORE_REPLY_RULE
+  + RESPONSE_STYLE_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
   + `\n${WORK_TODO_PROMPT}\n`
   + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${TRADING_READ_ROLE_PROMPT}\n`
+  + LIFESTYLE_PLANNING_BLOCK
   + TRADING_OPERATIONS_RULE
   + STAFF_AND_APPROVALS_RULE
   + STAFF_CARE_RULE
@@ -542,6 +578,12 @@ export type BuildSystemPromptArgs = {
   activeGroups?: ToolGroupName[]
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
+  /**
+   * Head tier for this turn. 'marketing' = the Qwen marketing head, which owns
+   * marketing/FB/website work and must do it ITSELF (no delegate note). Other
+   * tiers (or undefined) get the standard slim-router delegate guidance.
+   */
+  headTier?: 'light' | 'heavy' | 'explicit' | 'marketing'
 }
 
 function textBlock(text: string): Anthropic.Messages.TextBlockParam {
@@ -572,13 +614,14 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessContext,
     activeGroups,
     businessSnapshot,
+    headTier,
   } = args
 
   const stableParts: string[] = []
   const volatileParts: string[] = []
 
   if (personalMode) {
-    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE)
+    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE + RESPONSE_STYLE_RULE)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories
         .slice(0, 30)
@@ -601,8 +644,14 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
-    if (businessId !== 'ALMA_TRADING' && process.env.ENABLE_SLIM_ROUTER !== 'false') {
-      stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
+    // EXCEPTION: the Qwen marketing head owns marketing/FB/website and does it
+    // itself — it gets the "you are the expert, no delegation" note instead.
+    if (businessId !== 'ALMA_TRADING') {
+      if (headTier === 'marketing') {
+        stableParts.push(MARKETING_HEAD_SELF_SERVE_NOTE)
+      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false') {
+        stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
+      }
     }
 
     if (businessId === 'ALMA_TRADING') {

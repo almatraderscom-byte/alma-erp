@@ -209,22 +209,30 @@ export async function selectToolsAndGroupsForTurnAsync(
   // Owner business chat → fixed prefix for cache reuse. Slim Head Router (when
   // enabled) carries the lean head profile and delegates heavy domains to workers.
   if (!opts.personalMode && opts.businessId !== 'ALMA_TRADING') {
+    const isMarketingHead = opts.headTier === 'marketing'
+
+    // The Qwen MARKETING head is the owner's marketing + Facebook + website
+    // specialist and must do that work ITSELF (DeepSeek is wrong for marketing
+    // quality). So it gets the FULL owner toolset — including the content/growth
+    // (FB posting, creatives, ads, SEO) and website groups the slim head drops —
+    // and it loses delegate_to_specialist so it cannot hand marketing to a cheap
+    // worker. Its larger MARKETING_HEAD_TOOL_BUDGET (see config) keeps the spree
+    // bounded. Other heads keep the lean slim profile + delegation.
+    if (isMarketingHead) {
+      const mkGroups = OWNER_STABLE_GROUPS
+      const mkAssembled = assembleSelectedTools(mkGroups).filter(
+        (t) => t.name !== 'delegate_to_specialist',
+      )
+      return { tools: applyToolCacheControl(toolsToDefinitions(mkAssembled)), groups: mkGroups }
+    }
+
     const groups = SLIM_ROUTER_ENABLED ? ROUTER_HEAD_GROUPS : OWNER_STABLE_GROUPS
     let assembled = assembleSelectedTools(groups)
-    // The Qwen marketing head answers marketing DIRECTLY, in ONE pass: it KEEPS
-    // its marketing read-tools (so it can read the page / history itself) AND
-    // loses delegate_to_specialist (so it can't re-delegate marketing to a Qwen
-    // sub-agent — that double agent-call is the bug this prevents). Every other
-    // head keeps the delegation-test behavior unchanged.
-    const isMarketingHead = opts.headTier === 'marketing'
-    if (DELEGATION_APPROVAL_TEST && !isMarketingHead) {
+    if (DELEGATION_APPROVAL_TEST) {
       // Delegation test mode: strip the marketing read-tools that leak into kept
       // groups so the head CANNOT do marketing itself → it must transfer to a
       // specialist (which the owner then approves). Reversible; flag-gated.
       assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
-    }
-    if (isMarketingHead) {
-      assembled = assembled.filter((t) => t.name !== 'delegate_to_specialist')
     }
     return { tools: applyToolCacheControl(toolsToDefinitions(assembled)), groups }
   }

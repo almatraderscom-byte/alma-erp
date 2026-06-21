@@ -730,8 +730,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         // The stream was cut — either iOS suspended the backgrounded WebView, or
         // the owner hit stop. The server turn keeps running and saves the full
         // reply, so re-sync from the server instead of stranding a partial draft.
+        // Freeze any in-flight tool chips (mark stopped) so their spinner halts —
+        // "stop hole animation taw stop e thake".
         setMessages((prev) => prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, streaming: false } : m
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                streaming: false,
+                toolActivity: (m.toolActivity ?? []).map((t) =>
+                  t.done ? t : { ...t, done: true, stopped: true },
+                ),
+                delegations: (m.delegations ?? []).map((d) =>
+                  d.done ? d : { ...d, done: true, stopped: true },
+                ),
+              }
+            : m
         ))
         void resyncActiveConversation(finalConvId)
       } else {

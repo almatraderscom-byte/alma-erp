@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, MAX_TOOL_ITERATIONS } from '@/agent/config'
+import { AGENT_MODEL, MAX_TOOL_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -90,6 +90,15 @@ export const MUTATING_TOOLS = new Set([
   'make_ad_creatives', 'make_product_reel',
   'make_plan', 'execute_plan',
 ])
+
+// One-time message injected when the expensive head exhausts its tool-round
+// budget. It must now either answer with what it already has, or hand the rest
+// to a cheap specialist worker — it can no longer call read/write tools itself.
+const HEAD_TOOL_BUDGET_NUDGE =
+  'টুল ব্যবহারের বাজেট শেষ। এখন আর নিজে নতুন টুল কল কোরো না। ' +
+  'হাতে যা তথ্য আছে তা দিয়ে সংক্ষেপে চূড়ান্ত উত্তর দাও, ' +
+  'অথবা বাকি কাজটা delegate_to_specialist দিয়ে একজন সস্তা worker-কে দিয়ে দাও। ' +
+  'খরচ কমানোই উদ্দেশ্য — অযথা নিজে অনেক টুল চালিও না।'
 
 // ── Anthropic client ────────────────────────────────────────────────────────
 
@@ -518,9 +527,36 @@ export async function* runAgentTurn(
       ? applyToolSearchDeferral(gatedTools)
       : gatedTools
 
+  // ── HARD tool-round budget (Option A) ────────────────────────────────────
+  // This is the Sonnet head — always an EXPENSIVE Claude head. After
+  // HEAD_TOOL_BUDGET tool ROUNDS it may NO LONGER spree read/write tools on its
+  // own (costly) dime. The only tool left is delegate_to_specialist, which hands
+  // the remaining work to a cheap DeepSeek worker. Enforced in CODE, not by a
+  // prompt the model can ignore. If the head has no delegate tool (narrow modes),
+  // the cap is inert and the normal MAX_TOOL_ITERATIONS guard still applies.
+  const delegateOnlyTools = toolsForModel.filter(
+    (t): t is Anthropic.Messages.Tool => 'name' in t && t.name === 'delegate_to_specialist',
+  )
+  const headCanDelegate = delegateOnlyTools.length > 0
+  let headToolRounds = 0
+  let budgetNudgeSent = false
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
+
+      // Once over budget, restrict this turn's tools to delegate-only so the
+      // expensive head physically cannot call another read/write tool — it must
+      // either answer now or hand off to the cheap worker.
+      const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
+      const iterationTools = overBudget ? delegateOnlyTools : toolsForModel
+      if (overBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [
+          ...messages,
+          { role: 'user', content: [{ type: 'text', text: HEAD_TOOL_BUDGET_NUDGE }] },
+        ]
+      }
 
       const apiMessages = applyCacheControl(messages)
 
@@ -530,7 +566,7 @@ export async function* runAgentTurn(
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
           system: systemBlocks,
-          tools: toolsForModel,
+          tools: iterationTools,
           messages: apiMessages,
         },
         { signal: signal ?? undefined },
@@ -669,6 +705,11 @@ export async function* runAgentTurn(
 
         break
       }
+
+      // This turn requested tools → it counts against the head's tool-round
+      // budget. (Counts ROUNDS, i.e. model re-invocations, not parallel calls —
+      // re-invoking the expensive model with the growing transcript is the cost.)
+      headToolRounds++
 
       messages = [
         ...messages,

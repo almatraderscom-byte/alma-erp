@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
@@ -33,7 +33,7 @@ import {
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
 } from '@/agent/lib/claim-verifier'
-import { getModel } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
@@ -57,6 +57,15 @@ function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'openai' || provider === 'openrouter') return 'openai'
   return 'anthropic'
 }
+
+// One-time message injected when the Qwen MARKETING head exhausts its (larger)
+// tool-round budget. Marketing is Qwen's own specialty — it must NOT hand the job
+// to a cheap DeepSeek worker. So it is told to wrap up and answer now with what it
+// already gathered. No delegation: marketing quality stays on Qwen.
+const MARKETING_HEAD_WRAPUP_NUDGE =
+  'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
+  'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
+  'মার্কেটিং তোমার নিজের বিশেষত্ব — এটা অন্য কাউকে দিয়ো না।'
 
 async function loadPinnedMemories(
   personalMode: boolean,
@@ -194,6 +203,7 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
     businessSnapshot,
+    headTier,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
@@ -221,6 +231,16 @@ async function* runAlternateProviderTurn(
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
+  // ── HARD tool-round budget (Qwen marketing head) ───────────────────────────
+  // Only the EXPENSIVE Qwen marketing head is capped here — the cheap DeepSeek
+  // light head is the worker itself, so it stays uncapped. Marketing is Qwen's
+  // OWN specialty (FB + website), so it gets a LARGER budget and does NOT hand
+  // off to DeepSeek. After MARKETING_HEAD_TOOL_BUDGET tool ROUNDS it may no longer
+  // call any tools (iterationTools = []) — it must wrap up and answer itself.
+  const isMarketingHead = headTier === 'marketing'
+  let headToolRounds = 0
+  let budgetNudgeSent = false
+
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
@@ -229,11 +249,21 @@ async function* runAlternateProviderTurn(
       const toolNames = new Map<string, string>()
       let iterationText = ''
 
+      // Over budget → strip ALL tools so the marketing head physically cannot
+      // spree more; it must finish the marketing job itself and answer now.
+      // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
+      const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
+      const iterationTools = overBudget ? [] : neutralTools
+      if (overBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
+      }
+
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
         messages,
-        tools: neutralTools,
+        tools: iterationTools,
         thinking: model.thinking,
         signal,
       })) {
@@ -290,6 +320,9 @@ async function* runAlternateProviderTurn(
         }
         break
       }
+
+      // This turn requested tools → count it against the head's tool-round budget.
+      headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
@@ -440,6 +473,30 @@ async function* runAlternateProviderTurn(
     yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd }
   } catch (err) {
     if (signal?.aborted) return
+    // Rule 3 — head fallback: if a non-cheap head (e.g. Qwen) crashes BEFORE
+    // producing any answer text, retry once on the cheap head (DeepSeek) instead of
+    // surfacing an error — a surfaced error makes the owner's NEXT message triage UP
+    // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
+    // was streamed yet, and not already on the cheap head (prevents recursion loop).
+    const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
+    if (!finalText.trim() && model.id !== cheapId && isKnownModelId(cheapId)) {
+      const cheap = getModel(cheapId)
+      if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
+        console.warn(
+          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${cheapId}:`,
+          err instanceof Error ? err.message : err,
+        )
+        yield {
+          type: 'model_info',
+          modelId: cheap.id,
+          label: cheap.label,
+          variant: modelVariant(cheap),
+          tier: 'light',
+        }
+        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light')
+        return
+      }
+    }
     await captureAgentError(err, 'agent.provider.error', { conversationId })
     const msg = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Model error (${model.label}): ${msg}` }

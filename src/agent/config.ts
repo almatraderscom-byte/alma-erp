@@ -20,6 +20,31 @@ export const AGENT_MODEL = 'claude-sonnet-4-6'
 
 export const MAX_TOOL_ITERATIONS = 8
 
+/**
+ * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing
+ * head). After this many tool ROUNDS (model re-invocations that requested tools)
+ * the head is forced to stop spree-calling tools and may ONLY hand the rest of
+ * the work to a cheap DeepSeek sub-agent (delegate_to_specialist). This is the
+ * code-level guarantee — not a prompt suggestion — that an expensive head cannot
+ * grind many tools on its own dime. The cheap DeepSeek light head is NOT capped
+ * (it is already the cheapest worker, so letting it finish in-line is correct).
+ *
+ * Rounds, not individual calls: each model turn may request several tools in
+ * parallel; what actually costs money is re-invoking the expensive model again
+ * with the growing transcript, so we budget those re-invocations.
+ */
+export const HEAD_TOOL_BUDGET = Number(process.env.HEAD_TOOL_BUDGET) || 2
+
+/**
+ * The Qwen MARKETING head is the owner's marketing/Facebook/website specialist —
+ * it is meant to do that work itself, in-line, NOT hand it to a cheaper worker
+ * (DeepSeek is wrong for marketing quality). So it gets a larger, separate budget:
+ * after this many tool ROUNDS it is forced to wrap up and answer (no DeepSeek
+ * hand-off), which still stops a runaway spree without crippling a real multi-step
+ * marketing job (read page → read history → check website → draft → verify).
+ */
+export const MARKETING_HEAD_TOOL_BUDGET = Number(process.env.MARKETING_HEAD_TOOL_BUDGET) || 5
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).
