@@ -546,6 +546,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
   // When user manually scrolls up during streaming, stop force-tailing them.
   const stickToBottomRef = useRef(true)
+  // Show a floating "jump to latest" button once the user scrolls up a bit.
+  const [showScrollDown, setShowScrollDown] = useState(false)
 
   const checkScrollPosition = useCallback(() => {
     const container = containerRef.current
@@ -553,6 +555,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     const { scrollTop, scrollHeight, clientHeight } = container
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
     stickToBottomRef.current = distanceFromBottom < 60
+    // Reveal the button only when there's meaningfully more below the fold.
+    setShowScrollDown(distanceFromBottom > 160)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    stickToBottomRef.current = true
+    setShowScrollDown(false)
   }, [])
 
   useEffect(() => {
@@ -576,7 +586,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     if (last.streaming && stickToBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
     }
-  }, [messages])
+    // Content grew without a scroll event — refresh the button visibility.
+    checkScrollPosition()
+  }, [messages, checkScrollPosition])
 
   function saveArtifact(msg: ChatMessage) {
     const detected = detectArtifact(msg.text)
@@ -826,16 +838,40 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         <div ref={bottomRef} />
       </div>
 
+      {/* Scroll-to-bottom, Claude-style. Rendered STICKY *inside* the scroll
+          container (not position:fixed) on purpose: on the iPhone app the agent
+          route locks <body> to `position:fixed; overflow:hidden` for the keyboard
+          fix, and WKWebView then fails to show position:fixed children reliably —
+          which is why the old fixed button was invisible on-device. Sticky is
+          immune to that. The h-0 wrapper keeps it from adding scroll height. */}
+      <div className="pointer-events-none sticky bottom-0 z-30 flex h-0 justify-center">
+        <AnimatePresence>
+          {showScrollDown && (
+            <motion.button
+              key="scroll-down"
+              type="button"
+              initial={{ opacity: 0, scale: 0.6, y: -6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.6, y: -6 }}
+              transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.7 }}
+              onClick={scrollToBottom}
+              aria-label="নিচে যান"
+              className="pointer-events-auto -translate-y-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-muted ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 hover:text-[#E07A5F] active:scale-90"
+            >
+              <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14M19 12l-7 7-7-7" />
+              </svg>
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Scroll-to-TOP only — the bottom button is handled by the sticky button
+          above (fixed-positioned children are unreliable on the iPhone app). */}
       <ScrollAffordances
         containerRef={containerRef}
         topThreshold={400}
-        bottomThreshold={isOfficeShift ? 80 : 120}
-        centerBottom={!isOfficeShift}
-        bottomOffsetClass={
-          isOfficeShift
-            ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-8'
-            : undefined
-        }
+        bottom={false}
       />
     </div>
   )
