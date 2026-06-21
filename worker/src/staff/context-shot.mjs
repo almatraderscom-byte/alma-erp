@@ -2,8 +2,52 @@
  * Builds a simple PNG "data card" from internal ERP rows — zero LLM.
  * Best-effort: returns null on any failure (never blocks dispatch).
  */
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+import { tmpdir } from 'os'
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { ensureTaskProofsBucket } from './task-proof-storage.mjs'
+
+/**
+ * Register the repo's bundled Bangla TTFs with fontconfig BEFORE any sharp/librsvg
+ * text render. The VPS has NO Bangla system font, so customer/product names (Bangla)
+ * would otherwise render as tofu (□□□). The fonts already ship on disk under the repo
+ * `public/fonts/**` — we just point fontconfig at them and give it a writable cache.
+ * Idempotent + best-effort: runs once per process, never throws.
+ */
+let fontsReady = false
+function ensureBanglaFonts() {
+  if (fontsReady) return
+  fontsReady = true
+  try {
+    const here = dirname(fileURLToPath(import.meta.url)) // worker/src/staff
+    const candidates = [
+      join(here, '../../../public/fonts'),        // repo-root/public/fonts (deployed layout)
+      join(here, '../../../public/fonts/brand'),
+      join(process.cwd(), 'public/fonts'),
+      join(process.cwd(), '../public/fonts'),
+    ]
+    const dirs = [...new Set(candidates)].filter((d) => existsSync(d))
+    if (!dirs.length) return
+    const cacheDir = join(tmpdir(), 'alma-worker-fontconfig')
+    mkdirSync(cacheDir, { recursive: true })
+    const confPath = join(tmpdir(), 'alma-worker-fonts.conf')
+    const conf =
+      `<?xml version="1.0"?>\n<fontconfig>\n`
+      + dirs.map((d) => `  <dir>${d}</dir>`).join('\n')
+      + `\n  <cachedir>${cacheDir}</cachedir>\n</fontconfig>\n`
+    writeFileSync(confPath, conf)
+    process.env.FONTCONFIG_FILE = confPath
+    process.env.FONTCONFIG_PATH = tmpdir()
+    if (!process.env.XDG_CACHE_HOME) process.env.XDG_CACHE_HOME = tmpdir()
+  } catch (err) {
+    console.warn('[context-shot] font setup failed:', err?.message ?? err)
+  }
+}
+
+/** Font stack with an explicit Bangla family so pango resolves Bangla glyphs. */
+const FONT_STACK = "'Noto Sans Bengali', 'Hind Siliguri', sans-serif"
 
 const CONTEXT_SHOT_TYPES = new Set([
   'order_followup',
@@ -39,7 +83,7 @@ function renderDataCardSvg({ title, subtitle, columns, rows }) {
   let headerCells = ''
   let x = pad
   for (let i = 0; i < columns.length; i++) {
-    headerCells += `<text x="${x + 6}" y="${pad + 48 + 22}" font-family="sans-serif" font-size="12" font-weight="600" fill="#334155">${escapeXml(columns[i].label)}</text>`
+    headerCells += `<text x="${x + 6}" y="${pad + 48 + 22}" font-family="${FONT_STACK}" font-size="12" font-weight="600" fill="#334155">${escapeXml(columns[i].label)}</text>`
     x += colW[i]
   }
 
@@ -50,7 +94,7 @@ function renderDataCardSvg({ title, subtitle, columns, rows }) {
     x = pad
     for (let i = 0; i < columns.length; i++) {
       const key = columns[i].key
-      body += `<text x="${x + 6}" y="${y + 18}" font-family="sans-serif" font-size="11" fill="#1e293b">${escapeXml(truncate(row[key], columns[i].max ?? 28))}</text>`
+      body += `<text x="${x + 6}" y="${y + 18}" font-family="${FONT_STACK}" font-size="11" fill="#1e293b">${escapeXml(truncate(row[key], columns[i].max ?? 28))}</text>`
       x += colW[i]
     }
     y += rowH
@@ -67,8 +111,8 @@ function renderDataCardSvg({ title, subtitle, columns, rows }) {
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#ffffff"/>
   <rect x="${pad}" y="${pad}" width="${tableW}" height="40" rx="8" fill="#0f766e"/>
-  <text x="${pad + 10}" y="${pad + 26}" font-family="sans-serif" font-size="15" font-weight="700" fill="#ffffff">${escapeXml(title)}</text>
-  ${subtitle ? `<text x="${pad + 10}" y="${pad + 48 + 12}" font-family="sans-serif" font-size="11" fill="#64748b">${escapeXml(subtitle)}</text>` : ''}
+  <text x="${pad + 10}" y="${pad + 26}" font-family="${FONT_STACK}" font-size="15" font-weight="700" fill="#ffffff">${escapeXml(title)}</text>
+  ${subtitle ? `<text x="${pad + 10}" y="${pad + 48 + 12}" font-family="${FONT_STACK}" font-size="11" fill="#64748b">${escapeXml(subtitle)}</text>` : ''}
   <rect x="${pad}" y="${pad + 48}" width="${tableW}" height="${headerH}" fill="#ecfdf5"/>
   ${headerCells}
   <line x1="${pad}" y1="${pad + 48 + headerH}" x2="${pad + tableW}" y2="${pad + 48 + headerH}" stroke="#cbd5e1" stroke-width="1"/>
@@ -81,6 +125,7 @@ function renderDataCardSvg({ title, subtitle, columns, rows }) {
 
 async function svgToPng(svg) {
   try {
+    ensureBanglaFonts()
     const sharp = (await import('sharp')).default
     return sharp(Buffer.from(svg)).png().toBuffer()
   } catch (err) {

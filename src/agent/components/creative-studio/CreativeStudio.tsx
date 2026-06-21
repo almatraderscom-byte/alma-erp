@@ -1310,7 +1310,6 @@ function ModelsView() {
  */
 function FinishingView() {
   const [status, setStatus] = useState<BrandStatus | null>(null)
-  const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [savingLogo, setSavingLogo] = useState(false)
   const logoRef = useRef<HTMLInputElement>(null)
@@ -1326,16 +1325,15 @@ function FinishingView() {
     void fetchBrandStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
 
-  const onSaveLogo = async () => {
-    if (!logoFile) return
+  // Auto-save the moment a logo is picked — no separate "save" tap to forget (that
+  // two-step flow was why a picked logo could silently never persist). The file is
+  // passed in directly (not read from state) to avoid a stale-state race.
+  const saveLogoFile = async (file: File) => {
     setSavingLogo(true)
     try {
-      const s = await saveBrandLogo(logoFile)
+      const s = await saveBrandLogo(file)
       setStatus(s)
-      setLogoFile(null)
-      if (logoPreview) URL.revokeObjectURL(logoPreview)
-      setLogoPreview(null)
-      toast.success('লোগো সেভ হয়েছে স্যার — পরের ফিনিশিং-এ এটাই বসবে।')
+      toast.success('লোগো সেভ হয়েছে স্যার ✅ — পরের ফিনিশিং-এ এটাই বসবে।')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'লোগো সেভ ব্যর্থ')
     } finally {
@@ -1387,9 +1385,9 @@ function FinishingView() {
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (!f) return
-            setLogoFile(f)
             if (logoPreview) URL.revokeObjectURL(logoPreview)
             setLogoPreview(URL.createObjectURL(f))
+            void saveLogoFile(f) // auto-save immediately — no separate button to miss
           }}
         />
         {logoPreview || status?.logoUrl ? (
@@ -1404,17 +1402,13 @@ function FinishingView() {
           <p className="py-8 text-center text-sm text-muted">লোগো আপলোড করুন</p>
         )}
       </div>
-      {logoFile && (
-        <button
-          type="button"
-          disabled={savingLogo}
-          onClick={() => void onSaveLogo()}
-          className="mb-6 w-full rounded-xl bg-[#E07A5F] py-2.5 text-sm font-bold text-white disabled:opacity-50"
-        >
-          {savingLogo ? 'সেভ হচ্ছে…' : 'নতুন লোগো সেভ করুন'}
-        </button>
+      {savingLogo ? (
+        <p className="mb-6 text-center text-[12px] font-semibold text-[#E07A5F]">লোগো সেভ হচ্ছে…</p>
+      ) : status?.hasLogo ? (
+        <p className="mb-6 text-center text-[11px] text-muted">✅ লোগো সেভ আছে — বদলাতে চাইলে নতুন একটা সিলেক্ট করুন।</p>
+      ) : (
+        <div className="mb-6" />
       )}
-      {!logoFile && <div className="mb-6" />}
 
       {/* ── Finish an uploaded image ─────────────────────────────────────────── */}
       <h3 className="mb-1.5 text-[12px] font-bold text-cream">ছবি আপলোড করে ফিনিশিং</h3>
