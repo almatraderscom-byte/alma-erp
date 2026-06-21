@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, type CSSProperties } from 'react'
+import { agentTickHaptic } from '@/agent/lib/haptics'
 
 /* ============================================================================
  *  AlmaSpinner — owner-supplied loading animation (built in the Claude app).
@@ -18,8 +19,9 @@ import { useState, useEffect, useRef, type CSSProperties } from 'react'
  *      <AlmaSpinner mode="thinking" sound />      // adds the synced audio tick
  *
  *  Notes:
- *   • haptics use navigator.vibrate → works on Android web. iOS Safari ignores it.
- *     For a React Native app, swap the vibrate() call for expo-haptics instead.
+ *   • haptics route through agentTickHaptic() → native @capacitor/haptics on the
+ *     iPhone/Android app (real Taptic Engine, works even though iOS WebKit
+ *     ignores navigator.vibrate), with a navigator.vibrate fallback on web.
  *   • sound uses the Web Audio API; browsers only allow it after a user gesture
  *     (sending a message counts), so it stays silent until the user interacts.
  *   • color should be a 6-digit hex (used for the glow).
@@ -154,20 +156,18 @@ export function AlmaSpinner({
     return () => clearInterval(id)
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // haptics + sound — both fired together so they stay in sync to the mode rhythm
+  // haptics + sound — both fired together so they stay in sync to the mode
+  // rhythm. Haptics go through agentTickHaptic(): native Taptic Engine on the
+  // iPhone/Android app, navigator.vibrate fallback on web.
   useEffect(() => {
     if (!haptics && !sound) return
-    const canVibrate = haptics && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
     const pulse = () => {
-      if (canVibrate) navigator.vibrate(cfg.hapDur)
+      if (haptics) agentTickHaptic(cfg.hapDur)
       if (sound) playTick(cfg.hapFreq)
     }
     pulse()
     const id = setInterval(pulse, cfg.hapGap)
-    return () => {
-      clearInterval(id)
-      if (canVibrate) navigator.vibrate(0)
-    }
+    return () => clearInterval(id)
   }, [mode, haptics, sound]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
