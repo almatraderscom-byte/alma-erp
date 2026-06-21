@@ -21,6 +21,7 @@ import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
@@ -164,9 +165,10 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
+    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
@@ -185,6 +187,7 @@ async function* runAlternateProviderTurn(
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
     relevantMemories,
+    recalledTurns,
     salahContext: salahContext ?? undefined,
     prayerTimeOnlyTurn: personalMode
       ? false
@@ -453,6 +456,7 @@ async function* runAlternateProviderTurn(
         usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
       },
     })
+    embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

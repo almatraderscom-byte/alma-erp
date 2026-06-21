@@ -9,6 +9,7 @@ import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId } from '@/agent/lib/models/registry'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
+import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
@@ -252,13 +253,16 @@ export async function POST(req: NextRequest) {
       { type: 'text', text: message },
     ]
 
-    await prisma.agentMessage.create({
+    const savedUserMsg = await prisma.agentMessage.create({
       data: {
         conversationId,
         role: 'user',
         content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
       },
     })
+    // B2: embed the owner turn for later semantic recall (best-effort; the SSE
+    // turn keeps the lambda alive long enough for this to finish).
+    embedMessageInBackground(savedUserMsg.id, userContent)
     await touchConversationActivity(conversationId)
   } catch (err) {
     console.error('[assistant/chat] persistence failed', err)

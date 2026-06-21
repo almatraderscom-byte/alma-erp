@@ -21,6 +21,7 @@ import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
@@ -477,9 +478,10 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
+    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
@@ -533,6 +535,7 @@ export async function* runAgentTurn(
         usage: { input_tokens: 0, output_tokens: 0, model: chatModel.id, intake_auto: true },
       },
     })
+    embedMessageInBackground(savedMsg.id, [{ type: 'text', text: replyText }])
     await touchConversationActivity(conversationId)
     yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
     return
@@ -542,6 +545,7 @@ export async function* runAgentTurn(
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
     relevantMemories,
+    recalledTurns,
     salahContext: salahContext ?? undefined,
     prayerTimeOnlyTurn: personalMode
       ? false
@@ -999,6 +1003,8 @@ export async function* runAgentTurn(
         usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens },
       },
     })
+
+    embedMessageInBackground(savedMsg.id, storedContent)
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({
