@@ -5,6 +5,7 @@ import {
   BRAND_FONT,
   THEME_ACCENT,
   buildBrandFontFaces,
+  ensureBrandFonts,
   getLogoPath,
   type BrandTheme,
 } from '@/lib/content-engine/brand-identity'
@@ -211,6 +212,10 @@ export async function applyBrandFrame(
     footer?: boolean
   },
 ): Promise<string> {
+  // Register bundled fonts with fontconfig BEFORE any librsvg text render — without
+  // this, text is blank on Vercel/Lambda (no system fonts) and tofu on bare Linux.
+  ensureBrandFonts()
+
   const accentRow = themeAccent(opts.theme)
   const accent = accentRow.accent
   const code = opts.productCode ?? 'ALMA'
