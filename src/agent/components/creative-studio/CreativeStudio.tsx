@@ -26,11 +26,14 @@ import {
   runStudioJob,
   saveModel,
   uploadStudioFile,
+  fetchBranding,
+  saveBranding,
   type GalleryItem,
   type StudioConfig,
+  type BrandingConfig,
 } from '@/agent/components/creative-studio/studio-api'
 
-type MainView = 'studio' | 'gallery' | 'models'
+type MainView = 'studio' | 'gallery' | 'models' | 'branding'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
 
 export default function CreativeStudio() {
@@ -67,6 +70,9 @@ export default function CreativeStudio() {
         </NavIcon>
         <NavIcon label="Models" active={view === 'models'} onClick={() => setView('models')}>
           <UserSvg />
+        </NavIcon>
+        <NavIcon label="Branding" active={view === 'branding'} onClick={() => setView('branding')}>
+          <BrandingSvg />
         </NavIcon>
       </aside>
 
@@ -116,6 +122,11 @@ export default function CreativeStudio() {
                 <ModelsView />
               </motion.div>
             )}
+            {view === 'branding' && (
+              <motion.div key="branding" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <BrandingView />
+              </motion.div>
+            )}
           </AnimatePresence>
         </main>
 
@@ -129,6 +140,7 @@ export default function CreativeStudio() {
               ['studio', 'Studio', StudioSvg],
               ['gallery', 'Gallery', GallerySvg],
               ['models', 'Models', UserSvg],
+              ['branding', 'Branding', BrandingSvg],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -790,6 +802,12 @@ function GalleryView() {
   const [loading, setLoading] = useState(true)
   // Full-screen lightbox (complaint: clicking an image opened nothing).
   const [selected, setSelected] = useState<GalleryItem | null>(null)
+  // When a branded variant exists, show it by default in the viewer.
+  const [showBranded, setShowBranded] = useState(true)
+  const openItem = useCallback((item: GalleryItem) => {
+    setShowBranded(true)
+    setSelected(item)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -859,7 +877,7 @@ function GalleryView() {
                 layout
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
-                onClick={() => item.previewUrl && setSelected(item)}
+                onClick={() => item.previewUrl && openItem(item)}
                 className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 text-left shadow-sm transition-transform active:scale-[0.98]"
               >
                 <div className="relative aspect-[4/5] bg-bg-1">
@@ -869,7 +887,7 @@ function GalleryView() {
                       <video src={item.previewUrl} className="h-full w-full object-cover" playsInline muted />
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <img src={item.thumbUrl ?? item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
                     )
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center gap-2 p-2 text-center">
@@ -895,6 +913,11 @@ function GalleryView() {
                   >
                     {item.provider}
                   </span>
+                  {item.brandedUrl && (
+                    <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                      Branded
+                    </span>
+                  )}
                   {isVideo && item.previewUrl && (
                     <span className="absolute inset-0 flex items-center justify-center">
                       <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white">▶</span>
@@ -934,16 +957,41 @@ function GalleryView() {
               <video src={selected.previewUrl} className="max-h-full max-w-full rounded-lg" controls autoPlay playsInline />
             ) : (
               <motion.img
+                key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
                 initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
-                src={selected.previewUrl}
+                src={(showBranded && selected.brandedUrl) || selected.previewUrl}
                 alt=""
                 onClick={(e) => e.stopPropagation()}
                 className="max-h-full max-w-full rounded-lg object-contain"
               />
             )}
+
+            {/* Original ↔ Branded toggle (only when a branded variant exists) */}
+            {selected.brandedUrl && !(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen') && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(4rem+env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/20"
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowBranded(true)}
+                  className={cn('px-4 py-1.5 text-[12px] font-semibold', showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                >
+                  Logo সহ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBranded(false)}
+                  className={cn('px-4 py-1.5 text-[12px] font-semibold', !showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                >
+                  আসল
+                </button>
+              </div>
+            )}
+
             <a
-              href={selected.previewUrl}
+              href={(showBranded && selected.brandedUrl) || selected.previewUrl}
               download
               onClick={(e) => e.stopPropagation()}
               className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
@@ -1075,6 +1123,163 @@ function ModelsView() {
   )
 }
 
+function BrandingView() {
+  const [config, setConfig] = useState<BrandingConfig | null>(null)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const logoRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    void fetchBranding()
+      .then((c) => {
+        setConfig(c)
+        setLogoUrl(c.logoUrl ?? null)
+      })
+      .catch(() => setConfig(null))
+  }, [])
+
+  const set = <K extends keyof BrandingConfig>(k: K, v: BrandingConfig[K]) =>
+    setConfig((c) => (c ? { ...c, [k]: v } : c))
+
+  const onSave = async () => {
+    if (!config) return
+    setSaving(true)
+    try {
+      const saved = await saveBranding(config, logoFile)
+      setConfig(saved)
+      setLogoUrl(saved.logoUrl ?? null)
+      setLogoFile(null)
+      if (logoPreview) URL.revokeObjectURL(logoPreview)
+      setLogoPreview(null)
+      toast.success('Branding সেভ হয়েছে স্যার — পরের ছবিগুলোতে বসবে।')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!config) {
+    return <div className="mx-auto max-w-lg px-3 py-6 text-sm text-muted">Loading…</div>
+  }
+
+  return (
+    <div className="mx-auto max-w-lg px-3 py-4 pb-10">
+      <h2 className="mb-1 text-sm font-bold">Branding (Logo + Code + Hook)</h2>
+      <p className="mb-4 text-[11px] leading-snug text-muted">
+        লোগো আপলোড করুন — যেকোনো সাইজ চলবে, সিস্টেম নিজে রিসাইজ করে নেবে। প্রস্তাবিত: PNG (transparent background), লম্বা দিকে ৫০০–৬০০px। প্রতিটা ছবির একটা আলাদা &quot;branded&quot; কপি বানানো হবে — আসল ছবি অক্ষত থাকবে।
+      </p>
+
+      {/* Enable toggle */}
+      <label className="mb-3 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+        <span className="text-sm font-semibold">Branding চালু</span>
+        <input type="checkbox" checked={config.enabled} onChange={(e) => set('enabled', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
+      </label>
+
+      {/* Logo upload */}
+      <div
+        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
+        onClick={() => logoRef.current?.click()}
+      >
+        <input
+          ref={logoRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (!f) return
+            setLogoFile(f)
+            if (logoPreview) URL.revokeObjectURL(logoPreview)
+            setLogoPreview(URL.createObjectURL(f))
+          }}
+        />
+        {logoPreview || logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoPreview ?? logoUrl ?? ''} alt="Logo" className="mx-auto max-h-36 object-contain p-3" style={{ background: 'repeating-conic-gradient(#0000000d 0% 25%, transparent 0% 50%) 50% / 16px 16px' }} />
+        ) : (
+          <p className="py-10 text-center text-sm text-muted">লোগো আপলোড করুন</p>
+        )}
+      </div>
+
+      {/* Placement + size */}
+      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-[11px] text-muted">
+          লোগোর অবস্থান
+          <select
+            value={config.placement}
+            onChange={(e) => set('placement', e.target.value as BrandingConfig['placement'])}
+            className="rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
+          >
+            <option value="bottom-right">নিচে ডানে</option>
+            <option value="bottom-left">নিচে বামে</option>
+            <option value="bottom-center">নিচে মাঝে</option>
+            <option value="top-right">উপরে ডানে</option>
+            <option value="top-left">উপরে বামে</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[11px] text-muted">
+          লোগোর সাইজ ({config.logoWidthPct}% প্রস্থ)
+          <input
+            type="range"
+            min={5}
+            max={40}
+            value={config.logoWidthPct}
+            onChange={(e) => set('logoWidthPct', Number(e.target.value))}
+            className="mt-3 accent-[#E07A5F]"
+          />
+        </label>
+      </div>
+
+      {/* Code */}
+      <label className="mb-2 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+        <span className="text-sm font-semibold">Product code দেখাও</span>
+        <input type="checkbox" checked={config.showCode} onChange={(e) => set('showCode', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
+      </label>
+      {config.showCode && (
+        <input
+          value={config.codePrefix}
+          onChange={(e) => set('codePrefix', e.target.value)}
+          placeholder="Code prefix (e.g. Code: )"
+          className="mb-3 w-full rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
+        />
+      )}
+
+      {/* Hook */}
+      <label className="mb-2 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+        <span className="text-sm font-semibold">Hook লেখা দেখাও</span>
+        <input type="checkbox" checked={config.showHook} onChange={(e) => set('showHook', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
+      </label>
+      {config.showHook && (
+        <input
+          value={config.defaultHook}
+          onChange={(e) => set('defaultHook', e.target.value)}
+          placeholder="ডিফল্ট hook (যেমন: ঈদ স্পেশাল অফার)"
+          maxLength={80}
+          className="mb-3 w-full rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
+        />
+      )}
+
+      {/* Text color */}
+      <label className="mb-5 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+        <span className="text-sm font-semibold">লেখার রং</span>
+        <input type="color" value={config.textColor} onChange={(e) => set('textColor', e.target.value)} className="h-8 w-12 rounded" />
+      </label>
+
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => void onSave()}
+        className="w-full rounded-xl bg-[#E07A5F] py-3 text-sm font-bold text-white disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Branding সেভ করুন'}
+      </button>
+    </div>
+  )
+}
+
 function ChatSvg({ className }: { className?: string }) {
   return (
     <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -1105,6 +1310,14 @@ function UserSvg({ className }: { className?: string }) {
     <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
       <circle cx="12" cy="8" r="4" />
       <path d="M4 20c0-4 4-6 8-6s8 2 8 6" />
+    </svg>
+  )
+}
+function BrandingSvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0L3 13V3h10z" />
+      <circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" />
     </svg>
   )
 }

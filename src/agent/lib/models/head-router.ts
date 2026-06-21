@@ -132,7 +132,7 @@ const CONTINUATION_MAX_LEN = 44
  * assistant message's saved usage.model. Returns null on no history / error so the
  * caller falls back to normal triage. Never throws.
  */
-async function loadStickyHeadModelId(conversationId?: string): Promise<string | null> {
+export async function loadStickyHeadModelId(conversationId?: string): Promise<string | null> {
   if (!conversationId) return null
   try {
     const row = await prisma.agentMessage.findFirst({

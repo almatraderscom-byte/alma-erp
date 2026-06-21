@@ -53,6 +53,18 @@ export type AgentEvent =
   // Emitted once at turn start so the UI can show a per-model loading identity
   // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
   | { type: 'model_info'; modelId: string; label: string; variant: 'claude' | 'qwen' | 'deepseek' | 'default'; tier: string }
+  // Owner-gated model UPGRADE: the thread was on a cheap head but this turn needs a
+  // premium model (Sonnet/Opus). The turn pauses here and the UI shows an approval
+  // card; on "yes" the client resumes the same turn on the premium model.
+  | {
+      type: 'model_switch_required'
+      conversationId: string
+      toModelId: string
+      toLabel: string
+      fromModelId: string
+      fromLabel: string
+      fallbackModelId: string
+    }
   | { type: 'tool_start'; id: string; name: string; input?: unknown }
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }

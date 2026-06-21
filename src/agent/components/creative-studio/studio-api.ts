@@ -18,8 +18,45 @@ export type GalleryItem = {
   provider: string
   familyPreset: string | null
   previewUrl: string | null
+  /** small webp for the grid tile (falls back to previewUrl) */
+  thumbUrl?: string | null
+  /** branded variant (logo + code + hook), when produced */
+  brandedUrl?: string | null
   storagePath: string | null
   error: string | null
+}
+
+export type BrandingConfig = {
+  enabled: boolean
+  logoUrl?: string | null
+  logoPath?: string | null
+  placement: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'bottom-center'
+  logoWidthPct: number
+  marginPct: number
+  showCode: boolean
+  showHook: boolean
+  defaultHook: string
+  codePrefix: string
+  textColor: string
+}
+
+export async function fetchBranding(): Promise<BrandingConfig> {
+  const res = await fetch('/api/assistant/creative-studio/branding')
+  if (!res.ok) throw new Error('branding_failed')
+  return res.json()
+}
+
+export async function saveBranding(
+  config: Partial<BrandingConfig>,
+  logo?: File | null,
+): Promise<BrandingConfig> {
+  const fd = new FormData()
+  fd.append('config', JSON.stringify(config))
+  if (logo) fd.append('logo', logo)
+  const res = await fetch('/api/assistant/creative-studio/branding', { method: 'POST', body: fd })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'branding_save_failed')
+  return data as BrandingConfig
 }
 
 export type RunPayload = {
