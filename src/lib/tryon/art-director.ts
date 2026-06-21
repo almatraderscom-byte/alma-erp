@@ -66,7 +66,7 @@ export const GARMENT_SPECS: Record<GarmentType, GarmentSpec> = {
   panjabi: {
     label: "Men's Panjabi",
     anatomy:
-      'Full-length panjabi reaching mid-thigh to knee. Reproduce EXACTLY: collar type (band/Chinese/mandarin or hooded as shown), full-button placket with the same button count, material and color, sleeve length to wrist, cuff style, side slits, and hemline length as in the product photo.',
+      'Full-length traditional Bangladeshi men\'s panjabi — the hemline must fall BELOW THE KNEE (roughly mid-calf to lower-thigh, the standard length a Bangladeshi man wears), never a short kurta length. Match the exact length shown in the product photo and keep it long on this model\'s frame. Reproduce EXACTLY: collar type (band/Chinese/mandarin or hooded as shown), full-button placket with the same button count, material and color, sleeve length to wrist, cuff style, side slits, and hemline length as in the product photo.',
     fidelity:
       "Embroidery zones (collar, placket, chest, cuff, hem) must replicate the product's stitch pattern, density, motif and placement precisely — do not move, add, simplify, or restyle any embroidery. Keep thread color and sheen (zari/karchupi/computer embroidery) identical.",
   },
@@ -307,6 +307,25 @@ export async function getOrClassifyGarment(
   return attrs
 }
 
+/**
+ * Garment types that are a panjabi/kurta top WITHOUT a bottom defined in the
+ * product. For these, the model must be dressed in a plain white pajama bottom —
+ * how a Bangladeshi man actually wears a panjabi. We deliberately EXCLUDE
+ * pajama_panjabi_set (its bottom is part of the product) and family_matching_set
+ * (handled per-role). This is the owner's standing rule: "panjabi-r sathe white
+ * pajama must thakbe."
+ */
+const PANJABI_TOPS_NEEDING_WHITE_PAJAMA = new Set<GarmentType>([
+  'panjabi',
+  'short_panjabi',
+  'kurta',
+  'koti_set',
+  'kids_panjabi',
+])
+
+const WHITE_PAJAMA_DIRECTIVE =
+  'BOTTOM: pair the panjabi with a plain WHITE loose pajama (traditional Bangladeshi pyjama trousers) — clean solid white, no print, natural fabric drape, correct length ending at the ankles. The model must NOT be bare-legged, in jeans, in trousers, or in churidar; always a simple white pajama unless the product photo itself clearly includes a different bottom.'
+
 export function buildArtDirectorPrompt(opts: {
   garmentType?: GarmentType
   attrs?: GarmentAttrs
@@ -319,6 +338,11 @@ export function buildArtDirectorPrompt(opts: {
   const garmentType = opts.garmentType ?? opts.attrs?.garmentType ?? 'unknown'
   const spec = GARMENT_SPECS[garmentType]
   const a = opts.attrs
+  // Only add the white-pajama bottom when the product itself doesn't already
+  // define a bottom (attrs.hasContrastBottom) — otherwise we'd override the
+  // product's real bottom.
+  const needsWhitePajama =
+    PANJABI_TOPS_NEEDING_WHITE_PAJAMA.has(garmentType) && !(a?.hasContrastBottom === true)
   const attrLine = a
     ? `Detected garment: ${a.garmentType}; colors: ${a.dominantColors?.join(', ') || 'n/a'}; fabric: ${a.fabricGuess || 'n/a'}; embroidery at: ${a.embroideryZones?.join(', ') || 'none'}.${a.notes ? ` Preserve this detail exactly: ${a.notes}.` : ''}`
     : ''
@@ -329,6 +353,7 @@ export function buildArtDirectorPrompt(opts: {
     'Dress the MODEL from Image 1 in the EXACT garment from Image 2.',
     `GARMENT TYPE — ${spec.label}. ${spec.anatomy}`,
     `GARMENT FIDELITY (99% rule) — ${spec.fidelity}`,
+    needsWhitePajama ? WHITE_PAJAMA_DIRECTIVE : '',
     attrLine,
     "MODEL IDENTITY — Preserve the model's face, facial hair, age, skin tone and body type from Image 1 with no beautification or reshaping. Fit the garment naturally to THIS body: correct shoulder seams, sleeve and hem length on this frame, realistic fabric drape, embroidery undistorted across folds.",
     BD_REALISM_BASE,

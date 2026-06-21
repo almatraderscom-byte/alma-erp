@@ -782,9 +782,14 @@ function UploadTile({
   )
 }
 
+const isPendingStatus = (s: string) => s === 'approved' || s === 'pending' || s === 'processing'
+const isFailedStatus = (s: string) => s === 'failed' || s === 'error' || s === 'rejected'
+
 function GalleryView() {
   const [items, setItems] = useState<GalleryItem[]>([])
   const [loading, setLoading] = useState(true)
+  // Full-screen lightbox (complaint: clicking an image opened nothing).
+  const [selected, setSelected] = useState<GalleryItem | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -795,11 +800,22 @@ function GalleryView() {
     }
   }, [])
 
+  // How many renders are still in flight — drives the "generating" banner and
+  // whether we keep polling at all (poll fast while pending, stop when done so
+  // we're not re-signing every URL forever).
+  const pendingCount = items.filter((i) => isPendingStatus(i.status)).length
+
   useEffect(() => {
     void load()
-    const t = window.setInterval(() => void load(), 8000)
-    return () => window.clearInterval(t)
   }, [load])
+
+  // Poll ONLY while something is rendering. 4s while pending (snappier than the
+  // old fixed 8s), then stop — finished images don't need constant re-fetching.
+  useEffect(() => {
+    if (pendingCount === 0) return
+    const t = window.setInterval(() => void load(), 4000)
+    return () => window.clearInterval(t)
+  }, [pendingCount, load])
 
   return (
     <div className="px-3 py-3 pb-20 md:pb-4">
@@ -809,53 +825,134 @@ function GalleryView() {
           Refresh
         </button>
       </div>
+
+      {/* "Generation started / in progress" banner — fixes "kono bujhar way nai".
+          Shows a live count of renders still cooking so the owner KNOWS work is
+          happening after he hits Run. */}
+      {pendingCount > 0 && (
+        <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.07] px-3 py-2.5">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+          <span className="text-[12px] font-semibold text-[#E07A5F]">
+            {pendingCount}টি ছবি তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
+          </span>
+        </div>
+      )}
+
       {loading && items.length === 0 ? (
-        <p className="text-sm text-muted">Loading…</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="aspect-[4/5] animate-pulse rounded-xl bg-white/[0.05]" />
+          ))}
+        </div>
       ) : items.length === 0 ? (
         <p className="text-sm text-muted">No generations yet — Studio থেকে Run করুন।</p>
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-          {items.map((item) => (
-            <motion.div
-              key={item.id}
-              layout
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 shadow-sm"
-            >
-              <div className="relative aspect-[4/5] bg-bg-1">
-                {item.previewUrl ? (
-                  item.storagePath?.endsWith('.mp4') || item.type === 'video_gen' ? (
-                    // eslint-disable-next-line jsx-a11y/media-has-caption
-                    <video src={item.previewUrl} className="h-full w-full object-cover" controls playsInline />
+          {items.map((item) => {
+            const isVideo = item.storagePath?.endsWith('.mp4') || item.type === 'video_gen'
+            const pending = isPendingStatus(item.status)
+            const failed = isFailedStatus(item.status)
+            return (
+              <motion.button
+                key={item.id}
+                type="button"
+                layout
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                onClick={() => item.previewUrl && setSelected(item)}
+                className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 text-left shadow-sm transition-transform active:scale-[0.98]"
+              >
+                <div className="relative aspect-[4/5] bg-bg-1">
+                  {item.previewUrl ? (
+                    isVideo ? (
+                      // eslint-disable-next-line jsx-a11y/media-has-caption
+                      <video src={item.previewUrl} className="h-full w-full object-cover" playsInline muted />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                    )
                   ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
-                  )
-                ) : (
-                  <div className="flex h-full items-center justify-center p-2 text-center text-[10px] text-muted">
-                    {item.status === 'approved' || item.status === 'pending'
-                      ? 'Rendering…'
-                      : item.status}
-                  </div>
-                )}
-                <span
-                  className={cn(
-                    'absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase',
-                    item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
+                    <div className="flex h-full flex-col items-center justify-center gap-2 p-2 text-center">
+                      {pending ? (
+                        <>
+                          <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+                          <span className="text-[10px] font-medium text-muted">তৈরি হচ্ছে…</span>
+                        </>
+                      ) : failed ? (
+                        <span className="text-[10px] font-medium text-red-400">
+                          ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted">{item.status}</span>
+                      )}
+                    </div>
                   )}
-                >
-                  {item.provider}
-                </span>
-              </div>
-              <div className="p-2">
-                <p className="truncate text-[10px] font-semibold">{item.mode}</p>
-                <p className="text-[9px] text-muted">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
-              </div>
-            </motion.div>
-          ))}
+                  <span
+                    className={cn(
+                      'absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                      item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
+                    )}
+                  >
+                    {item.provider}
+                  </span>
+                  {isVideo && item.previewUrl && (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white">▶</span>
+                    </span>
+                  )}
+                </div>
+                <div className="p-2">
+                  <p className="truncate text-[10px] font-semibold">{item.mode}</p>
+                  <p className="text-[9px] text-muted">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
+                </div>
+              </motion.button>
+            )
+          })}
         </div>
       )}
+
+      {/* Full-screen viewer */}
+      <AnimatePresence>
+        {selected?.previewUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelected(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
+          >
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              aria-label="বন্ধ করুন"
+              className="absolute right-4 top-[calc(1rem+env(safe-area-inset-top))] flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white ring-1 ring-white/20"
+            >
+              ✕
+            </button>
+            {selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video src={selected.previewUrl} className="max-h-full max-w-full rounded-lg" controls autoPlay playsInline />
+            ) : (
+              <motion.img
+                initial={{ scale: 0.9 }}
+                animate={{ scale: 1 }}
+                src={selected.previewUrl}
+                alt=""
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-full max-w-full rounded-lg object-contain"
+              />
+            )}
+            <a
+              href={selected.previewUrl}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+            >
+              ডাউনলোড
+            </a>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
