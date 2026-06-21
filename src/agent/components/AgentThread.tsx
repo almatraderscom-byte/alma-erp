@@ -14,7 +14,6 @@ import { isFailedStatus, isInProgressStatus } from './todo-panel-utils'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
-import { ScrollAffordances } from './ScrollAffordances'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 
 /** Compact token formatter: 36100 → "36.1k", 681 → "681". */
@@ -668,7 +667,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     )}
                     {msg.text && (
-                      <div className="rounded-2xl rounded-br-sm bg-[#E07A5F]/10 px-4 py-3 text-[15px] leading-relaxed text-cream whitespace-pre-wrap break-words select-text">
+                      <div className="rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
                         <CollapsibleMessage collapsedMaxPx={260}>{msg.text}</CollapsibleMessage>
                       </div>
                     )}
@@ -878,13 +877,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
         </AnimatePresence>
       </div>
 
-      {/* Scroll-to-TOP only — the bottom button is handled by the absolute button
-          above (fixed-positioned children are unreliable on the iPhone app). */}
-      <ScrollAffordances
-        containerRef={containerRef}
-        topThreshold={400}
-        bottom={false}
-      />
     </div>
   )
 }

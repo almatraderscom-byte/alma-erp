@@ -49,6 +49,24 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
             const codeText = String(children).replace(/\n$/, '')
             if (isBlock) {
               const lang = cls?.replace('language-', '') ?? ''
+              // Copyable DELIVERABLE block (caption / post / ready-to-send text).
+              // The agent wraps "copy this and use it" text in ```copy (or
+              // ```caption / ```post) so the owner gets a one-tap copy WITHOUT the
+              // ugly monospace code look — normal font, soft brand card, big copy
+              // button. This is what fixes "caption gulo copy format e dao".
+              if (['copy', 'caption', 'post', 'text', 'message'].includes(lang.toLowerCase())) {
+                return (
+                  <div className="relative my-3 overflow-hidden rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.06]">
+                    <div className="flex items-center justify-between border-b border-[#E07A5F]/15 px-4 py-1.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-[#E07A5F]/80">কপি করুন</span>
+                    </div>
+                    <CopyButton text={codeText} />
+                    <div className="whitespace-pre-wrap px-4 py-3 text-[14px] leading-relaxed text-cream select-text">
+                      {codeText}
+                    </div>
+                  </div>
+                )
+              }
               return (
                 <div className="relative my-3 overflow-hidden rounded-xl border border-border-subtle bg-bg-1">
                   {lang && (
