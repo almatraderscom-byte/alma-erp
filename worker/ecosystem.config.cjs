@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'agent-worker',
+      name: 'alma-agent-worker',
       script: 'src/index.mjs',
       cwd: __dirname,
       interpreter: 'node',
