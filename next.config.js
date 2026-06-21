@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: { serverComponentsExternalPackages: ['@react-pdf/renderer'] },
+  experimental: { serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'] },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '**.supabase.co' },

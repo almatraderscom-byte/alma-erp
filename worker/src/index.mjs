@@ -480,6 +480,15 @@ const videoGenWorker = new Worker(
 )
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
+  // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
+  // Runs the turn via the chat route in stream mode and republishes events to
+  // Redis + the agent_turn_events log so the client can tail/replay it.
+  if (job.data?.turnId) {
+    const { runStreamedTurn } = await import('./turn/run-streamed-turn.mjs')
+    await runStreamedTurn({ supabase, job, redisUrl: REDIS_URL, telegramBot })
+    return
+  }
+
   const { pendingActionId, payload } = job.data
   const taskPrompt = payload?.prompt || payload?.task || payload?.message
   if (!taskPrompt) {

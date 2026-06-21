@@ -76,6 +76,44 @@ export async function isTurnCancelRequested(turnId: string | null | undefined): 
   }
 }
 
+/**
+ * Authorization bridge for the A2 VPS-handoff path: the worker runs an owner web
+ * turn by calling the chat route with the internal token, which normally may only
+ * touch `telegram` conversations. It proves the turn was legitimately enqueued by
+ * passing the turnId the enqueue route created — this confirms that row exists,
+ * is still running, and belongs to the claimed conversation.
+ */
+export async function isRunningTurnForConversation(
+  turnId: string | null | undefined,
+  conversationId: string,
+): Promise<boolean> {
+  if (!turnId) return false
+  try {
+    const row = await db().agentTurn.findUnique({
+      where: { id: turnId },
+      select: { conversationId: true, status: true },
+    })
+    return row?.conversationId === conversationId && row?.status === 'running'
+  } catch (err) {
+    console.warn('[turn-status] isRunningTurnForConversation failed:', err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
+/** Current status of a specific turn (by id). Null if missing/unreadable. */
+export async function getTurnStatus(turnId: string): Promise<TurnStatus | null> {
+  try {
+    const row = await db().agentTurn.findUnique({
+      where: { id: turnId },
+      select: { status: true },
+    })
+    return (row?.status as TurnStatus) ?? null
+  } catch (err) {
+    console.warn('[turn-status] getTurnStatus failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** Latest turn for a conversation — drives the client's re-open polling. */
 export async function getLatestTurn(
   conversationId: string,

@@ -426,6 +426,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     let compactAfterStream: string | null = null
     let serverCompacted = false
 
+    // A2 — VPS handoff: if the direct chat stream produces no event within ~15s
+    // (function never responded), switch to running the turn on the worker queue
+    // and tail it via /api/assistant/turn/:id/stream. Only possible for an
+    // existing conversation (the enqueue route needs a conversationId).
+    const LONG_TURN_SWITCH_MS = 15_000
+    let goLong = false
+    let gotAnyEvent = false
+    let firstByteTimer: ReturnType<typeof setTimeout> | undefined
+
     try {
       const body: Record<string, unknown> = { message: text }
       if (finalConvId) body.conversationId = finalConvId
@@ -436,23 +445,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
       if (fileRefs.length > 0) body.files = fileRefs
 
-      const res = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: abortRef.current.signal,
-      })
-
-      if (!res.ok || !res.body) {
-        let errMsg = `HTTP ${res.status}`
-        if (res.status === 401) errMsg = 'অননুমোদিত'
-        else errMsg = await readAssistantError(res, errMsg)
-        throw new Error(errMsg)
+      // Arm the going-long guard: aborts a hung request so we can re-run on the
+      // worker. Disarmed as soon as the first SSE event arrives (direct path OK).
+      if (finalConvId) {
+        firstByteTimer = setTimeout(() => {
+          if (!gotAnyEvent) {
+            goLong = true
+            abortRef.current?.abort()
+          }
+        }, LONG_TURN_SWITCH_MS)
       }
 
-      const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let buf = ''
       let gotStreamDone = false
       let toolInFlight = false
 
@@ -485,6 +489,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
 
       const applySseEvent = (evt: Record<string, unknown>) => {
+        if (!gotAnyEvent) {
+          gotAnyEvent = true
+          if (firstByteTimer) clearTimeout(firstByteTimer)
+        }
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
           setActiveConvId(finalConvId)
@@ -703,19 +711,81 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
       }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (value) buf += decoder.decode(value, { stream: true })
+      const consumeSseReader = async (rdr: ReadableStreamDefaultReader<Uint8Array>) => {
+        let lbuf = ''
+        while (true) {
+          const { done, value } = await rdr.read()
+          if (value) lbuf += decoder.decode(value, { stream: true })
 
-        const { remaining, events } = parseSseChunks(buf)
-        buf = remaining
-        for (const evt of events) applySseEvent(evt)
+          const { remaining, events } = parseSseChunks(lbuf)
+          lbuf = remaining
+          for (const evt of events) applySseEvent(evt)
 
-        if (done) {
-          buf += decoder.decode()
-          const trailing = parseTrailingSseEvent(buf)
-          if (trailing) applySseEvent(trailing)
-          break
+          if (done) {
+            lbuf += decoder.decode()
+            const trailing = parseTrailingSseEvent(lbuf)
+            if (trailing) applySseEvent(trailing)
+            break
+          }
+        }
+      }
+
+      // A2 fallback: re-run the turn on the VPS worker and tail its event stream.
+      // Used when the direct chat function never produced an event within 15s.
+      const runWorkerFallback = async () => {
+        if (!finalConvId) return false
+        setStreamStatus('দীর্ঘ কাজ — সার্ভারে চালানো হচ্ছে…')
+        // The direct turn keeps running server-side (it's decoupled from the
+        // client connection); cancel it if we know its id so it can't also persist
+        // a reply. When no event arrived its turn_id is unknown, but in that case
+        // the direct function never started the turn, so there's nothing to clobber.
+        const directTurnId = activeTurnIdRef.current
+        if (directTurnId) {
+          await fetch(`/api/assistant/turn/${directTurnId}/cancel`, { method: 'POST' }).catch(() => {})
+        }
+        const enqRes = await fetch('/api/assistant/turn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: finalConvId,
+            message: text,
+            files: fileRefs.length > 0 ? fileRefs : undefined,
+          }),
+        })
+        if (!enqRes.ok) return false
+        const { turnId: workerTurnId } = await enqRes.json() as { turnId: string | null }
+        if (!workerTurnId) return false
+        activeTurnIdRef.current = workerTurnId
+        const streamCtrl = new AbortController()
+        abortRef.current = streamCtrl
+        const sres = await fetch(`/api/assistant/turn/${workerTurnId}/stream`, { signal: streamCtrl.signal })
+        if (!sres.ok || !sres.body) return false
+        await consumeSseReader(sres.body.getReader())
+        return true
+      }
+
+      try {
+        const res = await fetch('/api/assistant/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: abortRef.current.signal,
+        })
+
+        if (!res.ok || !res.body) {
+          let errMsg = `HTTP ${res.status}`
+          if (res.status === 401) errMsg = 'অননুমোদিত'
+          else errMsg = await readAssistantError(res, errMsg)
+          throw new Error(errMsg)
+        }
+
+        await consumeSseReader(res.body.getReader())
+      } catch (innerErr) {
+        // First-byte timeout tripped the guard → run it on the worker instead.
+        if ((innerErr as Error).name === 'AbortError' && goLong) {
+          await runWorkerFallback()
+        } else {
+          throw innerErr
         }
       }
       // Final flush in case stream ended without 'done' event
@@ -782,6 +852,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         ))
       }
     } finally {
+      if (firstByteTimer) clearTimeout(firstByteTimer)
       setStreaming(false)
       setStreamStatus(null)
       abortRef.current = null

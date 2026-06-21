@@ -1786,6 +1786,25 @@ model AgentTurn {
   @@map("agent_turns")
 }
 
+/// Append-only event log for a worker-executed (VPS) turn (Component A2). A turn
+/// that runs on the VPS worker — for genuinely long jobs that can't fit Vercel's
+/// 300s cap — publishes each SSE event both to a Redis pub/sub channel
+/// (`turn:<id>:events`, for live tailing) and as a row here (for replay). When the
+/// client (re)connects to the stream endpoint it first replays these rows in `seq`
+/// order, then tails Redis for anything newer — so reconnects never lose events.
+model AgentTurnEvent {
+  id        String   @id @default(uuid())
+  turnId    String   @map("turn_id")
+  seq       Int
+  type      String
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([turnId, seq])
+  @@index([turnId, seq])
+  @@map("agent_turn_events")
+}
+
 /// Rich output produced by the agent (code, markdown, HTML, images).
 model AgentArtifact {
   id             String            @id @default(uuid())

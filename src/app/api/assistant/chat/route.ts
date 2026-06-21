@@ -12,7 +12,7 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
+import { createTurn, finalizeTurnIfRunning, isRunningTurnForConversation } from '@/agent/lib/turn-status'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
@@ -39,6 +39,10 @@ interface ChatBody {
   source?: string
   /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
   modelId?: string
+  /** A2: set by the VPS worker when running an enqueued turn — the turn row the
+   * enqueue route already created. Reused instead of creating a second one, and
+   * (for a web conversation) it authorizes the internal call. */
+  turnId?: string
 }
 
 function isAgentDbError(err: unknown): boolean {
@@ -173,7 +177,15 @@ export async function POST(req: NextRequest) {
       })
       if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
       if (isInternalCall && conv.source !== 'telegram') {
-        return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
+        // A2: the VPS worker runs owner web turns via the long-agent-task queue.
+        // It's allowed onto a non-telegram conversation only when it presents the
+        // turnId the enqueue route created (proves the owner authorized this turn).
+        const workerTurnOk =
+          typeof body.turnId === 'string'
+          && (await isRunningTurnForConversation(body.turnId, conversationId))
+        if (!workerTurnOk) {
+          return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
+        }
       }
       conversationModelId = conv.modelId ?? DEFAULT_MODEL_ID
       personalMode = isPersonalProject(conv.project) || personalMode
@@ -304,7 +316,12 @@ export async function POST(req: NextRequest) {
 
   // Durable turn row: lets the client re-sync after backgrounding and gives the
   // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
-  const turnId = await createTurn(conversationId!)
+  // A2: a worker-run turn reuses the row the enqueue route already created, so the
+  // same turnId flows through the worker's event log and the client's stream.
+  const turnId =
+    isInternalCall && typeof body.turnId === 'string' && body.turnId
+      ? body.turnId
+      : await createTurn(conversationId!)
 
   const turnOptions = {
     projectSystemInstructions,
