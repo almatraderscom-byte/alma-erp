@@ -1733,6 +1733,13 @@ model AgentConversation {
   totalCostUsd   Float           @default(0) @map("total_cost_usd")
   contextSummary String?         @map("context_summary")
   compactedToId  String?         @map("compacted_to_id")
+  // B3 tail compaction: the oldest turns are folded into `tailSummary` (which
+  // rides the STABLE/cached system block) while recent turns stay verbatim.
+  // `tailCompactedCount` is the watermark — how many of the oldest messages the
+  // summary already represents — so folding happens in stable batches (one
+  // cache-write per fold, byte-stable in between).
+  tailSummary        String?     @map("tail_summary")
+  tailCompactedCount Int         @default(0) @map("tail_compacted_count")
   /// Business scope inherited from project. null = personal / cross-business.
   /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
   businessId     String?         @map("business_id")

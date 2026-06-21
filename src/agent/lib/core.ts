@@ -36,6 +36,7 @@ import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
+import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import {
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
@@ -412,6 +413,19 @@ export async function* runAgentTurn(
 
   let messages: ApiMessage[] = await loadHistory(conversationId)
 
+  // B3 tail compaction (primary cost lever): fold the oldest turns into a running
+  // summary that rides the STABLE/cached system block, dropping them from the live
+  // window. Row order from loadHistory is 1:1 with DB createdAt asc, so dropOldest
+  // lines up with messages.slice(). Fail-open returns dropOldest 0.
+  let tailSummary: string | undefined
+  try {
+    const tail = await applyTailCompaction(conversationId)
+    if (tail.dropOldest > 0) messages = messages.slice(tail.dropOldest)
+    if (tail.tailSummary) tailSummary = tail.tailSummary
+  } catch (err) {
+    console.warn('[core] tail compaction failed:', err instanceof Error ? err.message : String(err))
+  }
+
   // If this conversation was seeded from a compaction, prepend the context summary
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -569,6 +583,7 @@ export async function* runAgentTurn(
     businessContext,
     activeGroups,
     businessSnapshot,
+    tailSummary,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
   // Volatile per-turn context is NOT shipped in the system block — that would

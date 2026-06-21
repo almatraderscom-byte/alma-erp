@@ -1,0 +1,193 @@
+/**
+ * B3 — tail compaction (primary, cheap replacement for the $25 cost valve).
+ *
+ * A long conversation keeps the most recent turns verbatim and folds everything
+ * older into a single running summary. The summary rides the STABLE/cached system
+ * block, so it is written to the prompt cache ONCE per fold and stays byte-stable
+ * between folds (hysteresis: trigger > keep). Old turns remain recallable via B2
+ * (`retrieveRelevantOldTurns`), so folding loses precision, not the facts.
+ *
+ * Scope: applied on the native Claude head path (core.ts) — the cache-cost lever
+ * B3 targets. The alternate cheap-model path (run-owner-turn.ts) ships full
+ * history as before; it has no native cache-write cost and runs less often.
+ */
+import Anthropic from '@anthropic-ai/sdk'
+import { prisma } from '@/lib/prisma'
+import { AGENT_MODEL } from '@/agent/config'
+import { estimateTokens } from '@/agent/lib/pricing'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
+
+export type TailCompactConfig = {
+  /** Fold when the unfolded tail exceeds this many turns (1 turn ≈ 2 messages). */
+  triggerTurns: number
+  /** …or when the unfolded tail is estimated to exceed this many tokens. */
+  triggerTokens: number
+  /** After a fold, keep this many recent turns verbatim (must be < triggerTurns). */
+  keepTurns: number
+}
+
+export const TAIL_COMPACT_DEFAULTS: TailCompactConfig = {
+  triggerTurns: 30,
+  triggerTokens: 80_000,
+  keepTurns: 20,
+}
+
+const KEYS = {
+  triggerTurns: 'agent.compact.tail.triggerTurns',
+  triggerTokens: 'agent.compact.tail.triggerTokens',
+  keepTurns: 'agent.compact.tail.keepTurns',
+} as const
+
+export async function getTailCompactConfig(): Promise<TailCompactConfig> {
+  try {
+    const rows = await prisma.agentKvSetting.findMany({ where: { key: { in: Object.values(KEYS) } } })
+    const map = new Map(rows.map((r) => [r.key, r.value]))
+    const num = (k: string, fallback: number) => {
+      const raw = map.get(k)
+      if (raw == null) return fallback
+      const v = parseInt(raw, 10)
+      return Number.isFinite(v) && v > 0 ? v : fallback
+    }
+    const triggerTurns = num(KEYS.triggerTurns, TAIL_COMPACT_DEFAULTS.triggerTurns)
+    const triggerTokens = num(KEYS.triggerTokens, TAIL_COMPACT_DEFAULTS.triggerTokens)
+    let keepTurns = num(KEYS.keepTurns, TAIL_COMPACT_DEFAULTS.keepTurns)
+    // Guard the hysteresis invariant: keep must stay below the trigger, else we
+    // would re-fold every turn and re-write the cache each time.
+    if (keepTurns >= triggerTurns) keepTurns = Math.max(1, triggerTurns - 1)
+    return { triggerTurns, triggerTokens, keepTurns }
+  } catch {
+    return { ...TAIL_COMPACT_DEFAULTS }
+  }
+}
+
+function extractText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((b): b is { type: string; text?: string } => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'text')
+    .map((b) => b.text ?? '')
+    .join('\n')
+    .trim()
+}
+
+export function estimateMessagesTokens(rows: Array<{ role: string; content: unknown }>): number {
+  let total = 0
+  for (const r of rows) total += estimateTokens(extractText(r.content))
+  return total
+}
+
+/**
+ * Pure decision core (no DB / no LLM) — exported for testing. Given the message
+ * count, the unfolded-tail token estimate, the current watermark, and config,
+ * decides whether to fold and to what new watermark.
+ */
+export function decideTailFold(args: {
+  total: number
+  compactedCount: number
+  unfoldedTokens: number
+  cfg: TailCompactConfig
+}): { shouldFold: boolean; foldUpTo: number } {
+  const { total, compactedCount, unfoldedTokens, cfg } = args
+  const keepMsgs = cfg.keepTurns * 2
+  const triggerMsgs = cfg.triggerTurns * 2
+  const unfolded = total - compactedCount
+
+  const overCount = unfolded > triggerMsgs
+  const overTokens = unfoldedTokens > cfg.triggerTokens
+  const foldUpTo = total - keepMsgs
+
+  // Only fold if a trigger fired AND there is genuinely older material to fold
+  // beyond the keep window (foldUpTo must advance past the current watermark).
+  const shouldFold = (overCount || overTokens) && foldUpTo > compactedCount
+  return { shouldFold, foldUpTo: Math.max(compactedCount, foldUpTo) }
+}
+
+async function summarizeTail(
+  previousSummary: string | null,
+  rows: Array<{ role: string; content: unknown }>,
+): Promise<string> {
+  const transcript = rows
+    .map((m) => `${m.role === 'user' ? 'Owner' : 'Agent'}: ${extractText(m.content)}`)
+    .filter((line) => line.length > 8)
+    .join('\n')
+    .slice(0, 16000)
+  if (!transcript.trim() && !previousSummary) return ''
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+  const res = await client.messages.create({
+    model: AGENT_MODEL || 'claude-sonnet-4-6',
+    max_tokens: 500,
+    system:
+      'You maintain a rolling memory summary of an owner↔agent conversation so the agent keeps continuity after old turns scroll out of the live window. ' +
+      'Merge the PRIOR SUMMARY with the NEW older turns into ONE updated summary. Keep: the owner\'s goals/topics, decisions made, important facts/numbers, and open action items. ' +
+      'Drop chit-chat. Output a tight Bangla summary (max ~10 bullets). Do not invent anything.',
+    messages: [{
+      role: 'user',
+      content:
+        `PRIOR SUMMARY (may be empty):\n${previousSummary || '(none)'}\n\n` +
+        `NEW OLDER TURNS to fold in:\n${transcript}`,
+    }],
+  })
+  const block = res.content.find((b) => b.type === 'text')
+  return block && block.type === 'text' ? block.text.trim() : ''
+}
+
+export type TailCompactResult = {
+  /** Summary to inject into the STABLE system block (null = nothing folded yet). */
+  tailSummary: string | null
+  /** How many of the oldest loaded messages to drop (already folded). */
+  dropOldest: number
+}
+
+/**
+ * Reads the conversation's messages, folds the oldest batch into the running
+ * summary when a trigger fires, persists the new watermark, and returns what the
+ * caller should ship: drop `dropOldest` oldest messages and inject `tailSummary`.
+ *
+ * Row order here (createdAt asc) matches core.ts loadHistory 1:1, so `dropOldest`
+ * lines up with `messages.slice(dropOldest)`. Fail-open: on any error returns the
+ * existing watermark (or 0) so a glitch never drops live context.
+ */
+export async function applyTailCompaction(conversationId: string): Promise<TailCompactResult> {
+  try {
+    const cfg = await getTailCompactConfig()
+    const conv = await db.agentConversation.findUnique({
+      where: { id: conversationId },
+      select: { tailSummary: true, tailCompactedCount: true },
+    })
+    let tailSummary: string | null = conv?.tailSummary ?? null
+    let compactedCount: number = Math.max(0, conv?.tailCompactedCount ?? 0)
+
+    const rows: Array<{ role: string; content: unknown }> = await db.agentMessage.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, content: true },
+    })
+    const total = rows.length
+    // A stale watermark (history shrank / was reset) must never exceed total.
+    if (compactedCount > total) compactedCount = total
+
+    const unfoldedTokens = estimateMessagesTokens(rows.slice(compactedCount))
+    const { shouldFold, foldUpTo } = decideTailFold({ total, compactedCount, unfoldedTokens, cfg })
+
+    if (shouldFold) {
+      const toFold = rows.slice(compactedCount, foldUpTo)
+      const newSummary = await summarizeTail(tailSummary, toFold)
+      if (newSummary) {
+        tailSummary = newSummary
+        compactedCount = foldUpTo
+        await db.agentConversation.update({
+          where: { id: conversationId },
+          data: { tailSummary, tailCompactedCount: compactedCount },
+        })
+      }
+    }
+
+    return { tailSummary, dropOldest: compactedCount }
+  } catch (err) {
+    console.warn('[tail-compact] applyTailCompaction failed:', err instanceof Error ? err.message : err)
+    return { tailSummary: null, dropOldest: 0 }
+  }
+}
