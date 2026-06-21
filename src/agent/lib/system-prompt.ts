@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
+import type { RecalledTurn } from '@/agent/lib/message-recall'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
@@ -558,6 +559,8 @@ export type BuildSystemPromptArgs = {
   projectInstructions?: string | null
   pinnedMemories?: PinnedMemory[]
   relevantMemories?: RelevantMemory[]
+  /** B2: semantically recalled OLD turns of this conversation (aged out of the verbatim window). */
+  recalledTurns?: RecalledTurn[]
   salahContext?: SalahContext
   prayerTimeOnlyTurn?: boolean
   staffTaskPlanningTurn?: boolean
@@ -590,12 +593,32 @@ function textBlock(text: string): Anthropic.Messages.TextBlockParam {
   return { type: 'text', text }
 }
 
+/**
+ * B2: renders semantically-recalled OLD turns (aged out of the verbatim window)
+ * as a compact volatile block. Content is truncated so recall stays cheap.
+ */
+function renderRecalledTurns(turns: RecalledTurn[] | undefined): string | null {
+  if (!turns || turns.length === 0) return null
+  const lines = turns
+    .map((t) => {
+      const who = t.role === 'assistant' ? 'তুমি' : 'Owner'
+      const snippet = t.content.length > 300 ? `${t.content.slice(0, 300)}…` : t.content
+      return `[${who}, score=${t.score}] ${snippet}`
+    })
+    .join('\n')
+  return (
+    `\n## প্রাসঙ্গিক পুরোনো কথোপকথন (recall — verbatim window-এর বাইরে)\n${lines}\n` +
+    'এগুলো পুরোনো; নিশ্চিত না হলে আবার যাচাই করো।'
+  )
+}
+
 /** Stable prefix (cached) vs volatile per-turn tail (uncached). */
 export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemPromptSplit {
   const {
     projectInstructions,
     pinnedMemories,
     relevantMemories,
+    recalledTurns,
     salahContext,
     prayerTimeOnlyTurn = false,
     staffTaskPlanningTurn = false,
@@ -635,6 +658,8 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         .join('\n')
       volatileParts.push(`\n## প্রাসঙ্গিক ব্যক্তিগত স্মৃতি\n${relevant}`)
     }
+    const recallBlockPersonal = renderRecalledTurns(recalledTurns)
+    if (recallBlockPersonal) volatileParts.push(recallBlockPersonal)
     if (projectInstructions?.trim()) {
       volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
     }
@@ -780,6 +805,9 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         .join('\n')
       volatileParts.push(`\n## প্রাসঙ্গিক স্মৃতি\n${relevant}`)
     }
+
+    const recallBlock = renderRecalledTurns(recalledTurns)
+    if (recallBlock) volatileParts.push(recallBlock)
 
     if (outcomeLearnings && outcomeLearnings.length > 0) {
       const lines = outcomeLearnings.map((l) => `• ${l.content}`)

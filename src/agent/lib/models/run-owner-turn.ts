@@ -21,6 +21,7 @@ import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
@@ -165,9 +166,10 @@ async function* runAlternateProviderTurn(
     await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
   }
 
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
+    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
@@ -186,6 +188,7 @@ async function* runAlternateProviderTurn(
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
     relevantMemories,
+    recalledTurns,
     salahContext: salahContext ?? undefined,
     prayerTimeOnlyTurn: personalMode
       ? false
@@ -208,11 +211,27 @@ async function* runAlternateProviderTurn(
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
+  // Volatile per-turn context goes INTO the current owner user turn, not the
+  // system text — same rationale as the native Claude path (core.ts): a stable
+  // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)
+  // can actually reuse, and it keeps web/Telegram prefixes identical for a
+  // conversation. The injection is transient (only the assistant reply is
+  // persisted), so replayed history stays clean.
+  const volatileText = systemBlocksToText(volatile)
+  if (volatileText) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'user' && 'content' in m && typeof m.content === 'string') {
+        messages[i] = { role: 'user', content: `[Per-turn context]\n${volatileText}\n\n${m.content}` }
+        break
+      }
+    }
+  }
   // Owner Control Center: gate OFF-capability tools + add the "ask owner to
   // enable, don't improvise" note and autonomy preference. Fail-open.
   const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
-  const systemText = systemBlocksToText([...stable, ...volatile]) + (controlsNote ? `\n\n${controlsNote}` : '')
+  const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
     toolSelection.tools,
     agentControls,
@@ -444,6 +463,7 @@ async function* runAlternateProviderTurn(
         usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
       },
     })
+    embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

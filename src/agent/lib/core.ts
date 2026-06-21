@@ -21,6 +21,7 @@ import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
+import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
@@ -216,30 +217,86 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
   return result
 }
 
-/** Marks the last user turn with cache_control for prompt caching. */
-function applyCacheControl(messages: ApiMessage[]): ApiMessage[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role !== 'user') continue
-    const msg = messages[i]
-    const rawContent = msg.content
-    const blocks: Anthropic.Messages.ContentBlockParam[] = Array.isArray(rawContent)
-      ? [...rawContent]
-      : typeof rawContent === 'string'
-        ? [{ type: 'text', text: rawContent }]
-        : []
-    if (blocks.length === 0) break
-    const last = blocks[blocks.length - 1]
-    blocks[blocks.length - 1] = {
-      ...last,
-      cache_control: { type: 'ephemeral', ttl: '1h' },
-    } as Anthropic.Messages.ContentBlockParam
+function blocksOf(msg: ApiMessage): Anthropic.Messages.ContentBlockParam[] {
+  const raw = msg.content
+  return Array.isArray(raw)
+    ? [...raw]
+    : typeof raw === 'string'
+      ? [{ type: 'text', text: raw }]
+      : []
+}
+
+/** Returns a copy of `msg` with cache_control on its last content block. */
+function withCacheControlOnLastBlock(msg: ApiMessage): ApiMessage {
+  const blocks = blocksOf(msg)
+  if (blocks.length === 0) return msg
+  blocks[blocks.length - 1] = {
+    ...blocks[blocks.length - 1],
+    cache_control: { type: 'ephemeral', ttl: '1h' },
+  } as Anthropic.Messages.ContentBlockParam
+  return { role: msg.role, content: blocks }
+}
+
+/**
+ * Builds the per-iteration API message array with prompt-cache breakpoints.
+ *
+ * The volatile per-turn context (salah hints, business snapshot, relevant
+ * memories, conflict signals, "this turn" nudges, etc.) is injected into the
+ * CURRENT owner user turn rather than the system block. That keeps the system
+ * block and ALL prior history byte-stable across turns, so the conversation
+ * history finally cache-hits instead of being re-billed at full input price
+ * every turn. Breakpoints (≤4, the API max — system stable block is the 4th):
+ *   - last prior assistant message  → caches the conversation-history prefix
+ *     (byte-stable across turns; this is the cross-turn win)
+ *   - current owner user turn (last block) → caches system+history+this request
+ *     across the within-turn tool-iteration loop
+ *   - latest message when mid tool-loop → caches the growing tool exchange so
+ *     repeated tool rounds don't re-bill prior rounds (preserves prior behaviour)
+ *
+ * `messages` itself is never mutated — volatile lives only in this transient
+ * copy and is never persisted, so replayed history stays clean.
+ */
+export function buildTurnApiMessages(
+  messages: ApiMessage[],
+  ownerTurnIndex: number,
+  volatileText: string,
+): ApiMessage[] {
+  if (ownerTurnIndex < 0 || ownerTurnIndex >= messages.length) {
+    // No identifiable owner turn — fall back to marking the last message.
+    if (messages.length === 0) return messages
     return [
-      ...messages.slice(0, i),
-      { role: 'user' as const, content: blocks },
-      ...messages.slice(i + 1),
+      ...messages.slice(0, messages.length - 1),
+      withCacheControlOnLastBlock(messages[messages.length - 1]),
     ]
   }
-  return messages
+
+  let priorAssistantIdx = -1
+  for (let i = ownerTurnIndex - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') { priorAssistantIdx = i; break }
+  }
+  const lastIdx = messages.length - 1
+
+  return messages.map((msg, i) => {
+    if (i === ownerTurnIndex) {
+      const base = blocksOf(msg)
+      const blocks = volatileText
+        ? [
+            { type: 'text', text: `[Per-turn context]\n${volatileText}` } as Anthropic.Messages.ContentBlockParam,
+            ...base,
+          ]
+        : base
+      if (blocks.length === 0) return msg
+      blocks[blocks.length - 1] = {
+        ...blocks[blocks.length - 1],
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      } as Anthropic.Messages.ContentBlockParam
+      return { role: 'user' as const, content: blocks }
+    }
+    if (i === priorAssistantIdx || (i === lastIdx && i > ownerTurnIndex)) {
+      return withCacheControlOnLastBlock(msg)
+    }
+    return msg
+  })
 }
 
 // ── Memory helpers ─────────────────────────────────────────────────────────
@@ -424,9 +481,10 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
+    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
     personalMode || telegramFastPath
       ? Promise.resolve([])
@@ -480,6 +538,7 @@ export async function* runAgentTurn(
         usage: { input_tokens: 0, output_tokens: 0, model: chatModel.id, intake_auto: true },
       },
     })
+    embedMessageInBackground(savedMsg.id, [{ type: 'text', text: replyText }])
     await touchConversationActivity(conversationId)
     yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
     return
@@ -489,6 +548,7 @@ export async function* runAgentTurn(
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
     relevantMemories,
+    recalledTurns,
     salahContext: salahContext ?? undefined,
     prayerTimeOnlyTurn: personalMode
       ? false
@@ -511,7 +571,20 @@ export async function* runAgentTurn(
     businessSnapshot,
   }
   const { stable: stableSystem, volatile: volatileSystem } = buildSystemPromptBlocks(promptArgs)
-  const systemBlocks = [...stableSystem, ...volatileSystem]
+  // Volatile per-turn context is NOT shipped in the system block — that would
+  // change the cached prefix every turn and bust the conversation-history cache.
+  // It is injected into the current owner user turn instead (see
+  // buildTurnApiMessages), keeping the system block byte-stable across turns.
+  const systemBlocks = [...stableSystem]
+  const volatileText = volatileSystem.map((b) => b.text).join('\n')
+
+  // The current owner turn is the last user message at this point (history +
+  // optional compaction summary; tool-loop reminders/nudges are appended AFTER
+  // this index, so it stays valid for the whole turn).
+  let ownerTurnIndex = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') { ownerTurnIndex = i; break }
+  }
 
   // Owner Control Center: drop OFF-capability tools and tell the agent (in the
   // prompt) to ask the owner to enable instead of improvising. Fail-open.
@@ -568,7 +641,7 @@ export async function* runAgentTurn(
         ]
       }
 
-      const apiMessages = applyCacheControl(messages)
+      const apiMessages = buildTurnApiMessages(messages, ownerTurnIndex, volatileText)
 
       const stream = client.messages.stream(
         {
@@ -944,6 +1017,8 @@ export async function* runAgentTurn(
         usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens },
       },
     })
+
+    embedMessageInBackground(savedMsg.id, storedContent)
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

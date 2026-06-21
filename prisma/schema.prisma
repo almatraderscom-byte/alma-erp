@@ -1759,6 +1759,11 @@ model AgentMessage {
   tokensOut      Int?
   costUsd        Decimal?          @db.Decimal(10, 6)
   usage          Json?
+  // B2: per-message embedding for semantic recall of OLD turns that have aged
+  // out of the verbatim history window. Populated best-effort/async after the
+  // row is written; `summary` is reserved for a future condensed form (B3).
+  embedding      Unsupported("vector(1536)")?
+  summary        String?           @db.Text
   createdAt      DateTime          @default(now())
   artifacts      AgentArtifact[]
   toolCalls      AgentToolCall[]
