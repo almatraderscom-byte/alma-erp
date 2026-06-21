@@ -36,7 +36,7 @@ import {
   MAX_VERIFY_RETRIES,
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
-import { resolveHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
@@ -52,6 +52,39 @@ import type { CostProvider } from '@/agent/lib/pricing'
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
   modelId?: string | null
+  /**
+   * Owner already approved upgrading this turn to a premium model (Sonnet/Opus).
+   * Set by the model-switch resume call — skips the approval gate.
+   */
+  approveModelSwitch?: boolean
+}
+
+/**
+ * Owner-tunable kill switch for the model-upgrade approval gate. Default ON (the
+ * owner asked for it). `cs`-style kv setting so it can be flipped without a deploy.
+ */
+async function modelSwitchGateEnabled(): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'model_switch_gate' } })
+    const v = (row?.value ?? '').trim().toLowerCase()
+    return v !== 'off' && v !== 'false' && v !== '0'
+  } catch {
+    return true
+  }
+}
+
+/** Per-conversation "always allow upgrades" — set when the owner taps "ask no more". */
+async function conversationAutoApprovesUpgrade(conversationId: string): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({
+      where: { key: `model_switch_ok:${conversationId}` },
+    })
+    return Boolean(row?.value)
+  } catch {
+    return false
+  }
 }
 
 function providerToCostProvider(provider: string): CostProvider {
@@ -583,6 +616,34 @@ export async function* runOwnerTurn(
     conversationId,
   })
   const model = getModel(decision.modelId)
+
+  // ── Model-upgrade approval gate ───────────────────────────────────────────
+  // The owner asked to APPROVE before a thread jumps UP to a premium model
+  // (Sonnet/Opus). Only fires on an AUTO upgrade: the thread was previously on a
+  // cheap head (DeepSeek/Qwen) and the router now wants a premium Anthropic model.
+  // Explicit owner picks ('explicit'), first-turns (no prior head), and turns that
+  // were already cheap are untouched. The owner can turn it off (model_switch_gate
+  // = off) or silence it per-conversation ("ask no more").
+  const isPremiumUpgradeCandidate =
+    model.provider === 'anthropic' && decision.via !== 'explicit' && !options.approveModelSwitch
+  if (isPremiumUpgradeCandidate && (await modelSwitchGateEnabled())) {
+    const stickyId = await loadStickyHeadModelId(conversationId)
+    const prev = stickyId && isKnownModelId(stickyId) ? getModel(stickyId) : null
+    const wasCheapHead = Boolean(prev && prev.provider !== 'anthropic')
+    if (wasCheapHead && prev && !(await conversationAutoApprovesUpgrade(conversationId))) {
+      yield {
+        type: 'model_switch_required',
+        conversationId,
+        toModelId: model.id,
+        toLabel: model.label,
+        fromModelId: prev.id,
+        fromLabel: prev.label,
+        // If the owner declines, answer on the thread's current cheap head instead.
+        fallbackModelId: prev.id,
+      }
+      return
+    }
+  }
 
   // Tell the UI which model is answering so it can show the matching loading
   // animation + label ("🧠 Sonnet ভাবছে" / "⚡ DeepSeek উত্তর দিচ্ছে").

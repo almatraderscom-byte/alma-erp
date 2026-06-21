@@ -89,6 +89,38 @@ export async function agentStorageSignedUrl(objectPath: string, expiresIn = 3600
   return `${url}/storage/v1${signedPath}`
 }
 
+/**
+ * Sign many objects in ONE request (Supabase batch sign endpoint). Returns a
+ * map of objectPath → signed URL; paths that fail to sign are simply absent.
+ * Used by the gallery so we don't fire one round-trip per image.
+ */
+export async function agentStorageSignedUrls(
+  objectPaths: string[],
+  expiresIn = 3600,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  const paths = Array.from(new Set(objectPaths.filter(Boolean)))
+  if (paths.length === 0) return out
+  const { url, serviceKey } = getStorageBase()
+  const res = await fetch(`${url}/storage/v1/object/sign/${AGENT_BUCKET}`, {
+    method: 'POST',
+    headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn, paths }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    throw new Error(`Agent batch signed URL failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
+  const rows = (await res.json()) as Array<{ path?: string; signedURL?: string; signedUrl?: string; error?: string | null }>
+  for (const row of rows) {
+    const signed = row.signedURL || row.signedUrl
+    if (row.path && signed && !row.error) {
+      out[row.path] = `${url}/storage/v1${signed}`
+    }
+  }
+  return out
+}
+
 /** Copy an agent-files object to a stable path (upsert). */
 export async function agentStorageCopy(
   sourcePath: string,

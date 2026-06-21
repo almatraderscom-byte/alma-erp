@@ -358,7 +358,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   }
   const pendingProjectIdRef = useRef<string | null>(null)
 
-  const handleSend = useCallback(async (text: string, pendingFiles: PendingFile[]) => {
+  const handleSend = useCallback(async (
+    text: string,
+    pendingFiles: PendingFile[],
+    resumeOpts?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string },
+  ) => {
     if (streaming) return
     abortRef.current = new AbortController()
     setStreaming(true)
@@ -407,17 +411,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     }
 
-    const userMsgId = nextId('user')
-    const userMsg: ChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      text,
-      files: pendingFiles.map((pf) => ({ previewUrl: pf.previewUrl, mediaType: pf.file.type })),
+    if (resumeOpts) {
+      // Model-upgrade resume: no new user message — clear the approval card off the
+      // paused reply and stream a fresh answer beneath it.
+      setMessages((prev) => prev.map((m) => (m.modelSwitch ? { ...m, modelSwitch: undefined } : m)))
+    } else {
+      const userMsgId = nextId('user')
+      const userMsg: ChatMessage = {
+        id: userMsgId,
+        role: 'user',
+        text,
+        files: pendingFiles.map((pf) => ({ previewUrl: pf.previewUrl, mediaType: pf.file.type })),
+      }
+      setMessages((prev) => [
+        ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),
+        userMsg,
+      ])
     }
-    setMessages((prev) => [
-      ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),
-      userMsg,
-    ])
 
     const assistantMsgId = nextId('streaming')
     setMessages((prev) => [
@@ -439,18 +449,27 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     let firstByteTimer: ReturnType<typeof setTimeout> | undefined
 
     try {
-      const body: Record<string, unknown> = { message: text }
-      if (finalConvId) body.conversationId = finalConvId
-      else {
-        if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
-        // New conversation: persist the owner's model choice ('auto' or a pinned model).
-        body.modelId = activeModelId
+      const body: Record<string, unknown> = {}
+      if (resumeOpts) {
+        // Resume the paused turn — no new message; rerun on the premium model
+        // (approve) or the cheap fallback (decline).
+        body.conversationId = finalConvId
+        body.resume = resumeOpts
+      } else {
+        body.message = text
+        if (finalConvId) body.conversationId = finalConvId
+        else {
+          if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
+          // New conversation: persist the owner's model choice ('auto' or a pinned model).
+          body.modelId = activeModelId
+        }
+        if (fileRefs.length > 0) body.files = fileRefs
       }
-      if (fileRefs.length > 0) body.files = fileRefs
 
       // Arm the going-long guard: aborts a hung request so we can re-run on the
       // worker. Disarmed as soon as the first SSE event arrives (direct path OK).
-      if (finalConvId) {
+      // Resume turns are short (just model selection) — skip the worker fallback.
+      if (finalConvId && !resumeOpts) {
         firstByteTimer = setTimeout(() => {
           if (!gotAnyEvent) {
             goLong = true
@@ -680,6 +699,25 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   cacheCreation: evt.cacheCreation as number,
                   cacheRead: evt.cacheRead as number,
                   costUsd: evt.costUsd as number,
+                }
+              : m
+          ))
+        } else if (evt.type === 'model_switch_required') {
+          // The turn paused for owner approval before upgrading to a premium model.
+          // Attach the approval card to this reply; mark the stream done so the
+          // post-stream resync doesn't wipe the (unsaved) streaming bubble.
+          gotStreamDone = true
+          setStreamStatus(null)
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  streaming: false,
+                  modelSwitch: {
+                    toLabel: (evt.toLabel as string) ?? 'Sonnet',
+                    fromLabel: (evt.fromLabel as string) ?? 'Worker',
+                    fallbackModelId: (evt.fallbackModelId as string) ?? '',
+                  },
                 }
               : m
           ))
@@ -1150,6 +1188,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onArtifactOpen={() => setArtifactsOpen(true)}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
+            onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
             onStartVoiceSession={() => setVoiceOpen(true)}
             streamMode={streamMode}
             streamVariant={streamVariant}

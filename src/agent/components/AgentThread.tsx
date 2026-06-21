@@ -47,6 +47,17 @@ export interface ChatMessage {
   thinkingMs?: number
   pendingAction?: PendingAction
   askCard?: AskCard
+  /**
+   * Set when the head router wants to upgrade this thread to a premium model
+   * (Sonnet/Opus) and the owner asked to approve such jumps. The turn paused; the
+   * owner picks "চালাও" (rerun on the premium model) or "না, সস্তায়" (rerun on the
+   * cheap fallback). Optional "এই চ্যাটে আর জিজ্ঞেস কোরো না" remembers approval.
+   */
+  modelSwitch?: {
+    toLabel: string
+    fromLabel: string
+    fallbackModelId: string
+  }
   tokensIn?: number
   tokensOut?: number
   cacheCreation?: number
@@ -64,6 +75,8 @@ interface AgentThreadProps {
   onArtifactOpen: () => void
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
+  /** Owner answered a model-upgrade approval card → rerun the paused turn. */
+  onModelSwitchResolve?: (opts: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }) => void
   onStartVoiceSession?: () => void
   streamMode?: ThinkingMode
   streamVariant?: ModelVariant
@@ -513,7 +526,72 @@ function ToolActivityChip({ name, done, success, stopped, input }: { name: strin
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
+/**
+ * Model-upgrade approval card. The router wants a stronger (paid) model for this
+ * question; the owner approves or keeps the cheap one. Bangla, "Sir" tone.
+ */
+function AgentModelSwitchCard({
+  card,
+  onResolve,
+}: {
+  card: { toLabel: string; fromLabel: string; fallbackModelId: string }
+  onResolve: (opts: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }) => void
+}) {
+  const [remember, setRemember] = useState(false)
+  const [resolved, setResolved] = useState<null | 'yes' | 'no'>(null)
+
+  return (
+    <div className="mt-3 rounded-xl border border-[#E07A5F]/30 bg-[#E07A5F]/[0.06] p-3">
+      <div className="flex items-start gap-2">
+        <span aria-hidden className="text-base leading-none">🧠</span>
+        <div className="text-[13px] leading-snug text-muted-hi">
+          এই প্রশ্নটার জন্য শক্তিশালী মডেল <b>{card.toLabel}</b> দরকার (এখন চলছে{' '}
+          <b>{card.fromLabel}</b>)। এটা একটু বেশি খরচ — চালাবো, স্যার?
+        </div>
+      </div>
+
+      {resolved ? (
+        <div className="mt-2 text-[12px] text-muted">
+          {resolved === 'yes' ? `✅ ${card.toLabel}-এ চালানো হচ্ছে…` : `⚡ ${card.fromLabel}-এ রাখা হলো।`}
+        </div>
+      ) : (
+        <>
+          <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-[12px] text-muted">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="h-3.5 w-3.5 accent-[#E07A5F]"
+            />
+            এই চ্যাটে আর জিজ্ঞেস কোরো না
+          </label>
+          <div className="mt-2.5 flex gap-2">
+            <button
+              onClick={() => {
+                setResolved('yes')
+                onResolve({ approve: true, rememberChoice: remember })
+              }}
+              className="rounded-lg bg-[#E07A5F] px-3 py-1.5 text-[12px] font-semibold text-white transition-all hover:bg-[#d36a4f]"
+            >
+              হ্যাঁ, চালাও
+            </button>
+            <button
+              onClick={() => {
+                setResolved('no')
+                onResolve({ approve: false, fallbackModelId: card.fallbackModelId })
+              }}
+              className="rounded-lg border border-white/10 px-3 py-1.5 text-[12px] font-medium text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi"
+            >
+              না, সস্তাতেই থাক
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -766,6 +844,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         }).catch(() => {})
                         onQuickSend(opt)
                       }}
+                    />
+                  )}
+
+                  {msg.modelSwitch && onModelSwitchResolve && (
+                    <AgentModelSwitchCard
+                      card={msg.modelSwitch}
+                      onResolve={onModelSwitchResolve}
                     />
                   )}
 

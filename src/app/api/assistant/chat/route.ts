@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
-import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId } from '@/agent/lib/models/registry'
+import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
@@ -44,6 +44,12 @@ interface ChatBody {
    * enqueue route already created. Reused instead of creating a second one, and
    * (for a web conversation) it authorizes the internal call. */
   turnId?: string
+  /**
+   * Model-upgrade approval resume: the previous turn paused on a
+   * `model_switch_required` card. This re-runs the SAME turn (no new user message)
+   * either on the premium model (approve) or on the cheap fallback (decline).
+   */
+  resume?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }
 }
 
 function isAgentDbError(err: unknown): boolean {
@@ -99,8 +105,15 @@ export async function POST(req: NextRequest) {
     if (keyMissing) return keyMissing
   }
 
+  // Model-upgrade approval resume (owner-only; needs an existing conversation).
+  // No new user message is stored — it re-runs the turn already in the thread.
+  const resume =
+    !isInternalCall && body.resume && typeof body.conversationId === 'string'
+      ? body.resume
+      : null
+
   const message = typeof body.message === 'string' ? body.message.trim() : ''
-  if (!message) return Response.json({ error: 'message_required' }, { status: 400 })
+  if (!message && !resume) return Response.json({ error: 'message_required' }, { status: 400 })
 
   // Master pause — owner stopped the agent from the Control Center. Applies to
   // web + Telegram. Fail-open inside isAgentPaused() so a storage glitch can't
@@ -253,30 +266,34 @@ export async function POST(req: NextRequest) {
       projectSystemInstructions = null
     }
 
-    type StoredBlock = { type: string; [k: string]: unknown }
-    const userContent: StoredBlock[] = [
-      ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
-      ...(files.length > 0
-        ? [{
-            type: 'text',
-            text: files
-              .map((f) => `[Uploaded file path for tools: ${f.path}]`)
-              .join('\n'),
-          }]
-        : []),
-      { type: 'text', text: message },
-    ]
+    // Resume (model-upgrade approval) re-runs the SAME turn already in the thread —
+    // the owner's question is already stored, so we DON'T persist another user message.
+    if (!resume) {
+      type StoredBlock = { type: string; [k: string]: unknown }
+      const userContent: StoredBlock[] = [
+        ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
+        ...(files.length > 0
+          ? [{
+              type: 'text',
+              text: files
+                .map((f) => `[Uploaded file path for tools: ${f.path}]`)
+                .join('\n'),
+            }]
+          : []),
+        { type: 'text', text: message },
+      ]
 
-    const savedUserMsg = await prisma.agentMessage.create({
-      data: {
-        conversationId,
-        role: 'user',
-        content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
-      },
-    })
-    // B2: embed the owner turn for later semantic recall (best-effort; the SSE
-    // turn keeps the lambda alive long enough for this to finish).
-    embedMessageInBackground(savedUserMsg.id, userContent)
+      const savedUserMsg = await prisma.agentMessage.create({
+        data: {
+          conversationId,
+          role: 'user',
+          content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
+        },
+      })
+      // B2: embed the owner turn for later semantic recall (best-effort; the SSE
+      // turn keeps the lambda alive long enough for this to finish).
+      embedMessageInBackground(savedUserMsg.id, userContent)
+    }
     await touchConversationActivity(conversationId)
   } catch (err) {
     console.error('[assistant/chat] persistence failed', err)
@@ -327,14 +344,40 @@ export async function POST(req: NextRequest) {
       ? body.turnId
       : await createTurn(conversationId!)
 
+  // Model-upgrade approval resume: re-run the same turn either on the premium model
+  // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
+  // the cheap fallback (decline → run on the model the thread was already using).
+  let resumeModelId: string | null = null
+  if (resume && !resume.approve) {
+    const fb = typeof resume.fallbackModelId === 'string' ? resume.fallbackModelId.trim() : ''
+    if (fb && isKnownModelId(fb)) resumeModelId = fb
+  }
+  if (resume?.approve && resume.rememberChoice && conversationId) {
+    // "Don't ask again in this chat" — remember the auto-upgrade is pre-approved.
+    try {
+      const key = `model_switch_ok:${conversationId}`
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).agentKvSetting.upsert({
+        where: { key },
+        create: { key, value: '1' },
+        update: { value: '1' },
+      })
+    } catch (err) {
+      console.warn('[chat] remember model-switch choice failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   const turnOptions = {
     projectSystemInstructions,
     personalMode,
     telegramFastPath,
     businessId,
-    modelId: isInternalCall ? DEFAULT_MODEL_ID : conversationModelId,
+    modelId: isInternalCall
+      ? DEFAULT_MODEL_ID
+      : (resumeModelId ?? conversationModelId),
     signal: turnAbort.signal,
     turnId,
+    approveModelSwitch: resume?.approve === true,
   }
 
   async function* runTurn() {

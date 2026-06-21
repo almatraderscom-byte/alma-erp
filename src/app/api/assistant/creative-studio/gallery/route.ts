@@ -3,7 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { agentStorageSignedUrls } from '@/agent/lib/storage'
 
 export const runtime = 'nodejs'
 
@@ -37,45 +37,73 @@ export async function GET(req: NextRequest) {
 
   const slice = filtered.slice(skip, skip + limit)
 
-  const items = await Promise.all(
-    slice.map(async (row: {
-      id: string
-      type: string
-      status: string
-      summary: string | null
-      createdAt: Date
-      payload: Record<string, unknown>
-      result: Record<string, unknown> | null
-    }) => {
-      const payload = row.payload ?? {}
-      const result = (row.result ?? {}) as Record<string, unknown>
-      const storagePath =
-        (result.storagePath as string | undefined)
-        ?? (result.videoPath as string | undefined)
-        ?? null
-      let previewUrl: string | null = null
-      if (storagePath) {
-        try {
-          previewUrl = await agentStorageSignedUrl(storagePath, 3600)
-        } catch {
-          previewUrl = null
-        }
-      }
-      return {
-        id: row.id,
-        type: row.type,
-        status: row.status,
-        summary: row.summary,
-        createdAt: row.createdAt.toISOString(),
-        mode: payload.studioMode ?? payload.tryOnVariant ?? 'try_on',
-        provider: payload.provider ?? 'gemini',
-        familyPreset: payload.familyPreset ?? null,
-        previewUrl,
-        storagePath,
-        error: result.error ?? null,
-      }
-    }),
-  )
+  type Row = {
+    id: string
+    type: string
+    status: string
+    summary: string | null
+    createdAt: Date
+    payload: Record<string, unknown>
+    result: Record<string, unknown> | null
+  }
+
+  type Meta = {
+    row: Row
+    result: Record<string, unknown>
+    storagePath: string | null
+    brandedPath: string | null
+    thumbPath: string | null
+  }
+
+  // Collect every object path across the page, then sign them all in ONE batch
+  // request (was one signed-URL round-trip per image → slow gallery).
+  const pathsToSign = new Set<string>()
+  const meta: Meta[] = slice.map((row: Row): Meta => {
+    const result = (row.result ?? {}) as Record<string, unknown>
+    const storagePath =
+      (result.storagePath as string | undefined)
+      ?? (result.videoPath as string | undefined)
+      ?? null
+    const brandedPath = (result.brandedPath as string | undefined) ?? null
+    // Prefer the (small) thumbnail for the grid; branded thumb if it exists.
+    const thumbPath =
+      (result.brandedThumbPath as string | undefined)
+      ?? (result.thumbPath as string | undefined)
+      ?? null
+    if (storagePath) pathsToSign.add(storagePath)
+    if (brandedPath) pathsToSign.add(brandedPath)
+    if (thumbPath) pathsToSign.add(thumbPath)
+    return { row, result, storagePath, brandedPath, thumbPath }
+  })
+
+  let signed: Record<string, string> = {}
+  try {
+    signed = await agentStorageSignedUrls(Array.from(pathsToSign), 3600)
+  } catch {
+    signed = {}
+  }
+
+  const items = meta.map(({ row, result, storagePath, brandedPath, thumbPath }) => {
+    const payload = row.payload ?? {}
+    const previewUrl = storagePath ? signed[storagePath] ?? null : null
+    return {
+      id: row.id,
+      type: row.type,
+      status: row.status,
+      summary: row.summary,
+      createdAt: row.createdAt.toISOString(),
+      mode: payload.studioMode ?? payload.tryOnVariant ?? 'try_on',
+      provider: payload.provider ?? 'gemini',
+      familyPreset: payload.familyPreset ?? null,
+      previewUrl,
+      // small image for the grid tile — falls back to the full preview
+      thumbUrl: (thumbPath && signed[thumbPath]) || previewUrl,
+      // branded (logo + code + hook) variant, when the worker produced one
+      brandedUrl: brandedPath ? signed[brandedPath] ?? null : null,
+      storagePath,
+      error: result.error ?? null,
+    }
+  })
 
   return Response.json({
     items,

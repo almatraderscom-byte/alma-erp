@@ -239,6 +239,31 @@ async function pollPendingJobs() {
 
 // ── Image generation handler ───────────────────────────────────────────────
 
+// Default Gemini image models — owner can override per-tier via the
+// `cs_image_models` kv setting ({"standard":"...","pro":"..."}) without a redeploy.
+const DEFAULT_IMAGE_MODELS = {
+  standard: 'gemini-3.1-flash-image',
+  pro: 'gemini-3-pro-image',
+}
+
+async function fetchImageModels() {
+  try {
+    const { data } = await supabase
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', 'cs_image_models')
+      .maybeSingle()
+    if (!data?.value) return DEFAULT_IMAGE_MODELS
+    const cfg = JSON.parse(data.value)
+    return {
+      standard: typeof cfg.standard === 'string' && cfg.standard.trim() ? cfg.standard.trim() : DEFAULT_IMAGE_MODELS.standard,
+      pro: typeof cfg.pro === 'string' && cfg.pro.trim() ? cfg.pro.trim() : DEFAULT_IMAGE_MODELS.pro,
+    }
+  } catch {
+    return DEFAULT_IMAGE_MODELS
+  }
+}
+
 async function generateImageToStorage({
   pendingActionId,
   prompt,
@@ -248,10 +273,10 @@ async function generateImageToStorage({
   aspectRatio,
   imageSize,
   suffix = '',
+  models,
 }) {
-  const modelName = quality === 'standard'
-    ? 'gemini-3.1-flash-image'
-    : 'gemini-3-pro-image'
+  const resolvedModels = models ?? DEFAULT_IMAGE_MODELS
+  const modelName = quality === 'standard' ? resolvedModels.standard : resolvedModels.pro
 
   const resolvedAspectRatio = aspectRatio ?? '4:5'
   const resolvedImageSize = imageSize ?? '2K'
@@ -332,12 +357,19 @@ async function processImageGen(job) {
       const { processFashnImageGen } = await import('./fashn/process.mjs')
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFashnImageGen({ supabase, pendingActionId, payload, logCost })
+      const { postProcessImage } = await import('./cs/branding.mjs')
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        productCode: payload.contentPipeline?.productCode ?? payload.productCode ?? null,
+        hook: payload.hook ?? payload.contentPipeline?.hook ?? null,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'fashn',
         creativeStudio: true,
         studioMode: payload.studioMode,
+        qc: result.qc ?? undefined,
+        ...finishing,
       })
       console.log(`[worker] fashn ${pendingActionId} — done → ${result.storagePath}`)
     } catch (err) {
@@ -360,6 +392,7 @@ async function processImageGen(job) {
 
   const { fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
   const qcLevel = await fetchQcLevel(supabase)
+  const imageModels = await fetchImageModels()
 
   const genOpts = {
     pendingActionId,
@@ -368,6 +401,7 @@ async function processImageGen(job) {
     secondReferenceImageId,
     aspectRatio,
     imageSize,
+    models: imageModels,
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
@@ -425,10 +459,17 @@ async function processImageGen(job) {
     console.log(`[worker] image-gen ${pendingActionId} — QC`, JSON.stringify(qcResult.qc))
   }
 
+  const { postProcessImage } = await import('./cs/branding.mjs')
+  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath, {
+    productCode: contentPipeline?.productCode ?? payload.productCode ?? null,
+    hook: payload.hook ?? contentPipeline?.hook ?? null,
+  })
+
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
     conversationId,
     qc: qcResult.qc,
+    ...finishing,
   })
 
   console.log(`[worker] image-gen ${pendingActionId} — done → ${qcResult.storagePath}${qcResult.qc?.flagged ? ` (${qcResult.qc.flagged})` : ''}`)
