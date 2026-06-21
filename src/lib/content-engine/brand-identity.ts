@@ -141,9 +141,17 @@ export function ensureBrandFonts(): void {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-/** Resolve logo path from saved BrandAsset or static default. */
+/** Resolve logo path from saved BrandAsset or static default. Never throws — a DB
+ * hiccup (or a not-yet-migrated table) falls back to the static default path so the
+ * caller can still proceed (e.g. the logo upload route writes to the default path). */
 export async function getLogoPath(transparent = false): Promise<string> {
-  const kind = transparent ? 'logo_transparent' : 'logo'
-  const row = await db.brandAsset.findUnique({ where: { kind } })
-  return row?.path ?? (transparent ? BRAND.logoTransparentPath : BRAND.logoPath)
+  const fallback = transparent ? BRAND.logoTransparentPath : BRAND.logoPath
+  try {
+    const kind = transparent ? 'logo_transparent' : 'logo'
+    const row = await db.brandAsset.findUnique({ where: { kind } })
+    return row?.path ?? fallback
+  } catch (err) {
+    console.warn('[brand] getLogoPath failed, using default:', err instanceof Error ? err.message : err)
+    return fallback
+  }
 }
