@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import { prisma } from '@/lib/prisma'
 
 /** Owner-confirmed founding year — printed on every post. */
@@ -91,6 +92,51 @@ export const BRAND_FONT = {
   body: 'AlmaBody, Hind Siliguri, sans-serif',
   display: 'AlmaDisplay, Playfair Display, serif',
 } as const
+
+/**
+ * Make the bundled brand fonts discoverable by **fontconfig** before any sharp/
+ * librsvg text render.
+ *
+ * Why this is required: sharp's librsvg IGNORES embedded `@font-face` data URIs —
+ * it only renders text with fonts that fontconfig can find on disk. On a dev Mac
+ * the OS happens to ship Bangla fonts (so text "just works" locally), but on
+ * Vercel/Lambda there are NO system fonts at all → every glyph renders blank, and
+ * on a bare Linux box Bangla becomes tofu boxes. We point fontconfig at our
+ * bundled `public/fonts/**` (the .ttf are traced into the serverless function) and
+ * give it a writable cache dir under /tmp (Lambda's only writable path). Because
+ * BRAND_FONT already lists the real family names ("Noto Serif Bengali" …) as
+ * fallbacks, registering the dir is enough — no SVG changes needed.
+ *
+ * Idempotent + best-effort: runs once per process, never throws.
+ */
+let fontConfigReady = false
+export function ensureBrandFonts(): void {
+  if (fontConfigReady) return
+  fontConfigReady = true
+  try {
+    const dirs = [
+      join(process.cwd(), 'public/fonts/brand'),
+      join(process.cwd(), 'public/fonts'),
+    ].filter((d) => existsSync(d))
+    if (!dirs.length) return
+    const cacheDir = join(tmpdir(), 'alma-fontconfig')
+    mkdirSync(cacheDir, { recursive: true })
+    const confPath = join(tmpdir(), 'alma-fonts.conf')
+    // No DOCTYPE on purpose — Lambda has no fonts.dtd and fontconfig parses fine
+    // without it (a missing DTD otherwise spams stderr / can fail).
+    const conf =
+      `<?xml version="1.0"?>\n<fontconfig>\n`
+      + dirs.map((d) => `  <dir>${d}</dir>`).join('\n')
+      + `\n  <cachedir>${cacheDir}</cachedir>\n</fontconfig>\n`
+    writeFileSync(confPath, conf)
+    // librsvg/pango read these env vars when fontconfig first initialises.
+    process.env.FONTCONFIG_FILE = confPath
+    process.env.FONTCONFIG_PATH = tmpdir()
+    if (!process.env.XDG_CACHE_HOME) process.env.XDG_CACHE_HOME = tmpdir()
+  } catch (err) {
+    console.warn('[brand-fonts] fontconfig setup failed:', err instanceof Error ? err.message : err)
+  }
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
