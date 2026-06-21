@@ -64,7 +64,7 @@ export async function saveBrandLogo(logo: File, transparent = true): Promise<Bra
   fd.append('transparent', transparent ? '1' : '0')
   const res = await fetch('/api/assistant/creative-studio/branding', { method: 'POST', body: fd })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'logo_save_failed')
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'logo_save_failed')
   return data as BrandStatus
 }
 
@@ -76,7 +76,7 @@ export async function finishImage(opts: FinishOptions): Promise<{ framedPath: st
     body: JSON.stringify(opts),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? data.message ?? 'finish_failed')
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'finish_failed')
   return data as { framedPath: string; framedUrl: string }
 }
 
