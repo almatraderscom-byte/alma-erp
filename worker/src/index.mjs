@@ -358,10 +358,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFashnImageGen({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
-        productCode: payload.contentPipeline?.productCode ?? payload.productCode ?? null,
-        hook: payload.hook ?? payload.contentPipeline?.hook ?? null,
-      })
+      // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
+      // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -460,10 +459,9 @@ async function processImageGen(job) {
   }
 
   const { postProcessImage } = await import('./cs/branding.mjs')
-  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath, {
-    productCode: contentPipeline?.productCode ?? payload.productCode ?? null,
-    hook: payload.hook ?? contentPipeline?.hook ?? null,
-  })
+  // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
+  // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
+  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath)
 
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,

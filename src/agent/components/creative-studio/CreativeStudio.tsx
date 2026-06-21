@@ -26,14 +26,16 @@ import {
   runStudioJob,
   saveModel,
   uploadStudioFile,
-  fetchBranding,
-  saveBranding,
+  fetchBrandStatus,
+  saveBrandLogo,
+  finishImage,
   type GalleryItem,
   type StudioConfig,
-  type BrandingConfig,
+  type BrandStatus,
+  type FinishMode,
 } from '@/agent/components/creative-studio/studio-api'
 
-type MainView = 'studio' | 'gallery' | 'models' | 'branding'
+type MainView = 'studio' | 'gallery' | 'models' | 'finishing'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
 
 export default function CreativeStudio() {
@@ -71,7 +73,7 @@ export default function CreativeStudio() {
         <NavIcon label="Models" active={view === 'models'} onClick={() => setView('models')}>
           <UserSvg />
         </NavIcon>
-        <NavIcon label="Branding" active={view === 'branding'} onClick={() => setView('branding')}>
+        <NavIcon label="Finishing" active={view === 'finishing'} onClick={() => setView('finishing')}>
           <BrandingSvg />
         </NavIcon>
       </aside>
@@ -122,9 +124,9 @@ export default function CreativeStudio() {
                 <ModelsView />
               </motion.div>
             )}
-            {view === 'branding' && (
-              <motion.div key="branding" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <BrandingView />
+            {view === 'finishing' && (
+              <motion.div key="finishing" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <FinishingView />
               </motion.div>
             )}
           </AnimatePresence>
@@ -140,7 +142,7 @@ export default function CreativeStudio() {
               ['studio', 'Studio', StudioSvg],
               ['gallery', 'Gallery', GallerySvg],
               ['models', 'Models', UserSvg],
-              ['branding', 'Branding', BrandingSvg],
+              ['finishing', 'Finishing', BrandingSvg],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -804,9 +806,26 @@ function GalleryView() {
   const [selected, setSelected] = useState<GalleryItem | null>(null)
   // When a branded variant exists, show it by default in the viewer.
   const [showBranded, setShowBranded] = useState(true)
+  // Per-image finishing panel (logo + code + hook) inside the lightbox.
+  const [showFinish, setShowFinish] = useState(false)
+  const [themes, setThemes] = useState<string[]>(['default'])
   const openItem = useCallback((item: GalleryItem) => {
-    setShowBranded(true)
+    setShowBranded(Boolean(item.brandedUrl))
+    setShowFinish(false)
     setSelected(item)
+  }, [])
+
+  useEffect(() => {
+    void fetchBrandStatus().then((s) => setThemes(s.themes?.length ? s.themes : ['default'])).catch(() => {})
+  }, [])
+
+  // After finishing: attach the framed copy to the selected item + the grid so the
+  // "Logo সহ" toggle appears and survives a reload.
+  const applyFinished = useCallback((itemId: string, framedUrl: string) => {
+    setSelected((s) => (s && s.id === itemId ? { ...s, brandedUrl: framedUrl } : s))
+    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, brandedUrl: framedUrl } : it)))
+    setShowBranded(true)
+    setShowFinish(false)
   }, [])
 
   const load = useCallback(async () => {
@@ -990,17 +1009,177 @@ function GalleryView() {
               </div>
             )}
 
-            <a
-              href={(showBranded && selected.brandedUrl) || selected.previewUrl}
-              download
-              onClick={(e) => e.stopPropagation()}
-              className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
-            >
-              ডাউনলোড
-            </a>
+            {/* Action bar: Finishing (logo + code + hook) + Download */}
+            {!(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen') && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 items-center gap-2"
+              >
+                {selected.storagePath && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFinish((v) => !v)}
+                    className="rounded-full bg-[#E07A5F] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
+                  >
+                    {showFinish ? 'বন্ধ করুন' : 'ফিনিশিং (logo + code + hook)'}
+                  </button>
+                )}
+                <a
+                  href={(showBranded && selected.brandedUrl) || selected.previewUrl}
+                  download
+                  className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                >
+                  ডাউনলোড
+                </a>
+              </div>
+            )}
+            {selected.type === 'video_gen' || selected.storagePath?.endsWith('.mp4') ? (
+              <a
+                href={selected.previewUrl}
+                download
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+              >
+                ডাউনলোড
+              </a>
+            ) : null}
+
+            {/* Finishing panel — per-image code + hook, applied with the real brand frame */}
+            {showFinish && selected.storagePath && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 w-[min(92vw,420px)] -translate-x-1/2"
+              >
+                <FinishPanel
+                  storagePath={selected.storagePath}
+                  pendingActionId={selected.id}
+                  themes={themes}
+                  onDone={(framedUrl) => applyFinished(selected.id, framedUrl)}
+                />
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * Per-image finishing form. The owner types THIS image's product code + hook (not a
+ * global default — images differ), picks a festival theme + layout, and we stamp the
+ * real brand frame (logo + brand colours + brand fonts via applyBrandFrame).
+ */
+function FinishPanel({
+  storagePath,
+  pendingActionId,
+  themes,
+  onDone,
+  dark = true,
+}: {
+  storagePath: string
+  pendingActionId?: string
+  themes: string[]
+  onDone: (framedUrl: string, framedPath: string) => void
+  dark?: boolean
+}) {
+  const [hook, setHook] = useState('')
+  const [code, setCode] = useState('')
+  const [mode, setMode] = useState<FinishMode>('model_overlay')
+  const [theme, setTheme] = useState('default')
+  const [footer, setFooter] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const themeLabel: Record<string, string> = {
+    default: 'সাধারণ',
+    eid: 'ঈদ',
+    puja: 'পূজা',
+    boishakh: 'বৈশাখ',
+    winter: 'শীত',
+  }
+
+  const run = async () => {
+    if (!hook.trim()) {
+      toast.error('একটা hook লেখা লাগবে স্যার')
+      return
+    }
+    setBusy(true)
+    try {
+      const { framedUrl, framedPath } = await finishImage({
+        storagePath,
+        pendingActionId,
+        hook: hook.trim(),
+        productCode: code.trim() || undefined,
+        mode,
+        theme,
+        footer,
+      })
+      toast.success('ফিনিশিং হয়ে গেছে স্যার ✅')
+      onDone(framedUrl, framedPath)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'ফিনিশিং ব্যর্থ')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const field = dark
+    ? 'rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[13px] text-white placeholder:text-white/40'
+    : 'rounded-lg border border-border px-3 py-2 text-[13px] text-cream'
+  const wrap = dark
+    ? 'rounded-2xl border border-white/15 bg-black/70 p-3 backdrop-blur-md'
+    : 'rounded-2xl border border-border-subtle bg-card/80 p-3'
+  const labelCls = dark ? 'text-[11px] text-white/70' : 'text-[11px] text-muted'
+
+  return (
+    <div className={wrap}>
+      <div className="grid gap-2">
+        <input
+          value={hook}
+          onChange={(e) => setHook(e.target.value)}
+          placeholder="Hook (যেমন: ঈদ স্পেশাল অফার)"
+          maxLength={64}
+          className={cn('w-full', field)}
+        />
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Product code (যেমন: ALM-1023) — ঐচ্ছিক"
+          maxLength={24}
+          className={cn('w-full', field)}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <label className={cn('flex flex-col gap-1', labelCls)}>
+            লেআউট
+            <select value={mode} onChange={(e) => setMode(e.target.value as FinishMode)} className={field}>
+              <option value="model_overlay">ছবির উপর (overlay)</option>
+              <option value="product_card">প্রোডাক্ট কার্ড</option>
+            </select>
+          </label>
+          <label className={cn('flex flex-col gap-1', labelCls)}>
+            থিম
+            <select value={theme} onChange={(e) => setTheme(e.target.value)} className={field}>
+              {themes.map((t) => (
+                <option key={t} value={t}>{themeLabel[t] ?? t}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {mode === 'model_overlay' && (
+          <label className={cn('flex items-center justify-between', labelCls)}>
+            <span>নিচে ফুটার (পেজ নাম + অর্ডার লাইন)</span>
+            <input type="checkbox" checked={footer} onChange={(e) => setFooter(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+          </label>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void run()}
+          className="mt-0.5 w-full rounded-lg bg-[#E07A5F] py-2.5 text-[13px] font-bold text-white disabled:opacity-50"
+        >
+          {busy ? 'হচ্ছে…' : 'Finishing করুন'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -1123,64 +1302,75 @@ function ModelsView() {
   )
 }
 
-function BrandingView() {
-  const [config, setConfig] = useState<BrandingConfig | null>(null)
-  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+/**
+ * Finishing view: manage the brand LOGO (the only global brand setting the owner
+ * touches — colours + fonts come from the brand identity) and finish an UPLOADED
+ * image with its own code + hook. Generated images are finished from the Gallery
+ * lightbox. Both use the same per-image FinishPanel → applyBrandFrame.
+ */
+function FinishingView() {
+  const [status, setStatus] = useState<BrandStatus | null>(null)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [savingLogo, setSavingLogo] = useState(false)
   const logoRef = useRef<HTMLInputElement>(null)
 
+  // Upload-and-finish (an image that isn't in the gallery).
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null)
+  const [uploadPath, setUploadPath] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const imgRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
-    void fetchBranding()
-      .then((c) => {
-        setConfig(c)
-        setLogoUrl(c.logoUrl ?? null)
-      })
-      .catch(() => setConfig(null))
+    void fetchBrandStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
 
-  const set = <K extends keyof BrandingConfig>(k: K, v: BrandingConfig[K]) =>
-    setConfig((c) => (c ? { ...c, [k]: v } : c))
-
-  const onSave = async () => {
-    if (!config) return
-    setSaving(true)
+  const onSaveLogo = async () => {
+    if (!logoFile) return
+    setSavingLogo(true)
     try {
-      const saved = await saveBranding(config, logoFile)
-      setConfig(saved)
-      setLogoUrl(saved.logoUrl ?? null)
+      const s = await saveBrandLogo(logoFile)
+      setStatus(s)
       setLogoFile(null)
       if (logoPreview) URL.revokeObjectURL(logoPreview)
       setLogoPreview(null)
-      toast.success('Branding সেভ হয়েছে স্যার — পরের ছবিগুলোতে বসবে।')
+      toast.success('লোগো সেভ হয়েছে স্যার — পরের ফিনিশিং-এ এটাই বসবে।')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed')
+      toast.error(e instanceof Error ? e.message : 'লোগো সেভ ব্যর্থ')
     } finally {
-      setSaving(false)
+      setSavingLogo(false)
     }
   }
 
-  if (!config) {
-    return <div className="mx-auto max-w-lg px-3 py-6 text-sm text-muted">Loading…</div>
+  const onPickImage = (f: File) => {
+    setResultUrl(null)
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview)
+    setUploadPreview(URL.createObjectURL(f))
+    setUploadPath(null)
+    setUploading(true)
+    void uploadStudioFile(f, 'finishing')
+      .then(setUploadPath)
+      .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
+      .finally(() => setUploading(false))
   }
 
+  const themes = status?.themes?.length ? status.themes : ['default']
+
   return (
-    <div className="mx-auto max-w-lg px-3 py-4 pb-10">
-      <h2 className="mb-1 text-sm font-bold">Branding (Logo + Code + Hook)</h2>
+    <div className="mx-auto max-w-lg px-3 py-4 pb-12">
+      <h2 className="mb-1 text-sm font-bold">Finishing (logo + code + hook)</h2>
       <p className="mb-4 text-[11px] leading-snug text-muted">
-        লোগো আপলোড করুন — যেকোনো সাইজ চলবে, সিস্টেম নিজে রিসাইজ করে নেবে। প্রস্তাবিত: PNG (transparent background), লম্বা দিকে ৫০০–৬০০px। প্রতিটা ছবির একটা আলাদা &quot;branded&quot; কপি বানানো হবে — আসল ছবি অক্ষত থাকবে।
+        লোগো, রং আর ফন্ট আপনার ব্র্যান্ড সেটিং থেকেই আসে। কোড আর hook প্রতিটা ছবির জন্য আলাদা করে এখানে লিখবেন — Gallery-র যেকোনো ছবিতে &quot;ফিনিশিং&quot; চাপলেও একই অপশন আসবে। আসল ছবি অক্ষত থাকে, আলাদা একটা ব্র্যান্ডেড কপি তৈরি হয়।
       </p>
 
-      {/* Enable toggle */}
-      <label className="mb-3 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-        <span className="text-sm font-semibold">Branding চালু</span>
-        <input type="checkbox" checked={config.enabled} onChange={(e) => set('enabled', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
-      </label>
-
-      {/* Logo upload */}
+      {/* ── Brand logo (changeable) ──────────────────────────────────────────── */}
+      <h3 className="mb-1.5 text-[12px] font-bold text-cream">ব্র্যান্ড লোগো</h3>
+      <p className="mb-2 text-[11px] leading-snug text-muted">
+        যেকোনো সাইজ চলবে — সিস্টেম নিজে রিসাইজ করে নেবে। সবচেয়ে ভালো: PNG (transparent background)। লোগো বদলাতে চাইলে নতুনটা আপলোড করে সেভ করুন।
+      </p>
       <div
-        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
+        className="mb-2 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
         onClick={() => logoRef.current?.click()}
       >
         <input
@@ -1196,86 +1386,85 @@ function BrandingView() {
             setLogoPreview(URL.createObjectURL(f))
           }}
         />
-        {logoPreview || logoUrl ? (
+        {logoPreview || status?.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoPreview ?? logoUrl ?? ''} alt="Logo" className="mx-auto max-h-36 object-contain p-3" style={{ background: 'repeating-conic-gradient(#0000000d 0% 25%, transparent 0% 50%) 50% / 16px 16px' }} />
+          <img
+            src={logoPreview ?? status?.logoUrl ?? ''}
+            alt="Logo"
+            className="mx-auto max-h-32 object-contain p-3"
+            style={{ background: 'repeating-conic-gradient(#0000000d 0% 25%, transparent 0% 50%) 50% / 16px 16px' }}
+          />
         ) : (
-          <p className="py-10 text-center text-sm text-muted">লোগো আপলোড করুন</p>
+          <p className="py-8 text-center text-sm text-muted">লোগো আপলোড করুন</p>
+        )}
+      </div>
+      {logoFile && (
+        <button
+          type="button"
+          disabled={savingLogo}
+          onClick={() => void onSaveLogo()}
+          className="mb-6 w-full rounded-xl bg-[#E07A5F] py-2.5 text-sm font-bold text-white disabled:opacity-50"
+        >
+          {savingLogo ? 'সেভ হচ্ছে…' : 'নতুন লোগো সেভ করুন'}
+        </button>
+      )}
+      {!logoFile && <div className="mb-6" />}
+
+      {/* ── Finish an uploaded image ─────────────────────────────────────────── */}
+      <h3 className="mb-1.5 text-[12px] font-bold text-cream">ছবি আপলোড করে ফিনিশিং</h3>
+      <p className="mb-2 text-[11px] leading-snug text-muted">
+        নিজের একটা ছবি আপলোড করুন, তারপর সেই ছবির কোড আর hook লিখে ফিনিশিং করুন।
+      </p>
+      <div
+        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
+        onClick={() => imgRef.current?.click()}
+      >
+        <input
+          ref={imgRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) onPickImage(f)
+          }}
+        />
+        {uploadPreview ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={resultUrl ?? uploadPreview} alt="" className="mx-auto max-h-72 object-contain p-2" />
+        ) : (
+          <p className="py-10 text-center text-sm text-muted">ছবি আপলোড করুন</p>
         )}
       </div>
 
-      {/* Placement + size */}
-      <div className="mb-3 grid gap-2 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-[11px] text-muted">
-          লোগোর অবস্থান
-          <select
-            value={config.placement}
-            onChange={(e) => set('placement', e.target.value as BrandingConfig['placement'])}
-            className="rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
+      {uploadPath && !resultUrl && (
+        <FinishPanel
+          storagePath={uploadPath}
+          themes={themes}
+          dark={false}
+          onDone={(framedUrl) => setResultUrl(framedUrl)}
+        />
+      )}
+      {uploading && <p className="text-center text-[11px] text-muted">আপলোড হচ্ছে…</p>}
+
+      {resultUrl && (
+        <div className="mt-3 flex gap-2">
+          <a
+            href={resultUrl}
+            download
+            className="flex-1 rounded-xl bg-[#E07A5F] py-2.5 text-center text-sm font-bold text-white"
           >
-            <option value="bottom-right">নিচে ডানে</option>
-            <option value="bottom-left">নিচে বামে</option>
-            <option value="bottom-center">নিচে মাঝে</option>
-            <option value="top-right">উপরে ডানে</option>
-            <option value="top-left">উপরে বামে</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-[11px] text-muted">
-          লোগোর সাইজ ({config.logoWidthPct}% প্রস্থ)
-          <input
-            type="range"
-            min={5}
-            max={40}
-            value={config.logoWidthPct}
-            onChange={(e) => set('logoWidthPct', Number(e.target.value))}
-            className="mt-3 accent-[#E07A5F]"
-          />
-        </label>
-      </div>
-
-      {/* Code */}
-      <label className="mb-2 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-        <span className="text-sm font-semibold">Product code দেখাও</span>
-        <input type="checkbox" checked={config.showCode} onChange={(e) => set('showCode', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
-      </label>
-      {config.showCode && (
-        <input
-          value={config.codePrefix}
-          onChange={(e) => set('codePrefix', e.target.value)}
-          placeholder="Code prefix (e.g. Code: )"
-          className="mb-3 w-full rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
-        />
+            ডাউনলোড
+          </a>
+          <button
+            type="button"
+            onClick={() => { setResultUrl(null) }}
+            className="rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-muted"
+          >
+            আবার ফিনিশিং
+          </button>
+        </div>
       )}
-
-      {/* Hook */}
-      <label className="mb-2 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-        <span className="text-sm font-semibold">Hook লেখা দেখাও</span>
-        <input type="checkbox" checked={config.showHook} onChange={(e) => set('showHook', e.target.checked)} className="h-5 w-5 accent-[#E07A5F]" />
-      </label>
-      {config.showHook && (
-        <input
-          value={config.defaultHook}
-          onChange={(e) => set('defaultHook', e.target.value)}
-          placeholder="ডিফল্ট hook (যেমন: ঈদ স্পেশাল অফার)"
-          maxLength={80}
-          className="mb-3 w-full rounded-xl border border-border px-3 py-2.5 text-sm text-cream"
-        />
-      )}
-
-      {/* Text color */}
-      <label className="mb-5 flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-        <span className="text-sm font-semibold">লেখার রং</span>
-        <input type="color" value={config.textColor} onChange={(e) => set('textColor', e.target.value)} className="h-8 w-12 rounded" />
-      </label>
-
-      <button
-        type="button"
-        disabled={saving}
-        onClick={() => void onSave()}
-        className="w-full rounded-xl bg-[#E07A5F] py-3 text-sm font-bold text-white disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Branding সেভ করুন'}
-      </button>
     </div>
   )
 }
