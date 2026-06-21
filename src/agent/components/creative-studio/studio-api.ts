@@ -26,37 +26,58 @@ export type GalleryItem = {
   error: string | null
 }
 
-export type BrandingConfig = {
-  enabled: boolean
-  logoUrl?: string | null
-  logoPath?: string | null
-  placement: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'bottom-center'
-  logoWidthPct: number
-  marginPct: number
-  showCode: boolean
-  showHook: boolean
-  defaultHook: string
-  codePrefix: string
-  textColor: string
+/** The brand identity is the single source of truth — logo + colours + fonts live
+ * in BRAND / BrandAsset and are applied by applyBrandFrame. The owner only manages
+ * the logo here; code + hook are entered PER IMAGE at finishing time. */
+export type BrandStatus = {
+  hasLogo: boolean
+  logoUrl: string | null
+  themes: string[]
+  brandName: string
 }
 
-export async function fetchBranding(): Promise<BrandingConfig> {
+export type FinishMode = 'model_overlay' | 'product_card'
+
+export type FinishOptions = {
+  storagePath: string
+  hook: string
+  productCode?: string
+  productName?: string
+  price?: string
+  mode?: FinishMode
+  theme?: string
+  footer?: boolean
+  /** when finishing a gallery item, persist the framed copy back onto it */
+  pendingActionId?: string
+}
+
+export async function fetchBrandStatus(): Promise<BrandStatus> {
   const res = await fetch('/api/assistant/creative-studio/branding')
-  if (!res.ok) throw new Error('branding_failed')
+  if (!res.ok) throw new Error('brand_status_failed')
   return res.json()
 }
 
-export async function saveBranding(
-  config: Partial<BrandingConfig>,
-  logo?: File | null,
-): Promise<BrandingConfig> {
+/** Upload / replace the ALMA logo (auto-resized server-side). Stored in BrandAsset. */
+export async function saveBrandLogo(logo: File, transparent = true): Promise<BrandStatus> {
   const fd = new FormData()
-  fd.append('config', JSON.stringify(config))
-  if (logo) fd.append('logo', logo)
+  fd.append('logo', logo)
+  fd.append('transparent', transparent ? '1' : '0')
   const res = await fetch('/api/assistant/creative-studio/branding', { method: 'POST', body: fd })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'branding_save_failed')
-  return data as BrandingConfig
+  if (!res.ok) throw new Error(data.error ?? 'logo_save_failed')
+  return data as BrandStatus
+}
+
+/** Apply the deterministic brand frame (logo + this image's code + hook). */
+export async function finishImage(opts: FinishOptions): Promise<{ framedPath: string; framedUrl: string }> {
+  const res = await fetch('/api/assistant/creative-studio/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? data.message ?? 'finish_failed')
+  return data as { framedPath: string; framedUrl: string }
 }
 
 export type RunPayload = {
