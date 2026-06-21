@@ -148,6 +148,18 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
   const { supabase, bot } = context
   let dutyResult = null
 
+  // Master pause: the owner's Control Center switch must stop EVERY proactive job
+  // (the source of the "agent is off but Telegram keeps messaging" bug). One gate
+  // here covers all schedulers. FAIL-OPEN inside isAgentPaused — a storage glitch
+  // never silences a healthy agent.
+  {
+    const { isAgentPaused } = await import('../agent-pause.mjs')
+    if (await isAgentPaused(supabase)) {
+      console.log(`[schedulers] skipped — agent paused (master switch): ${jobName}`)
+      return { dutyStatus: 'skipped', dutyDetail: 'agent paused' }
+    }
+  }
+
   if (isTrackedDuty(jobName)) {
     const { isDutyEnabled } = await import('./duty-enabled.mjs')
     const { JOB_TO_DUTY } = await import('./duties.mjs')
