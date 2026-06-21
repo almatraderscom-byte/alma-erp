@@ -5,6 +5,7 @@ import {
   BRAND_FONT,
   THEME_ACCENT,
   buildBrandFontFaces,
+  ensureBrandFonts,
   type BrandTheme,
 } from '@/lib/content-engine/brand-identity'
 import { escapeXml, compositeLogo } from '@/lib/content-engine/brand-frame'
@@ -175,6 +176,11 @@ function bandOffset(h: number): number {
 }
 
 export async function renderAdCreative(baseImagePath: string, spec: AdCreativeSpec): Promise<Buffer> {
+  // Register bundled fonts with fontconfig BEFORE any librsvg text render — without
+  // this, Bangla ad text is blank on Vercel/Lambda (no system fonts) and tofu on bare
+  // Linux. Also prevents fontconfig from initialising without our font dirs in a warm
+  // Lambda (which would then break the finish route's text too).
+  ensureBrandFonts()
   const sharp = (await import('sharp')).default
   const { w, h } = aspectDimensions(spec.aspect)
   const photoBuf = await agentStorageDownload(baseImagePath)

@@ -1364,6 +1364,12 @@ function FinishingView() {
         লোগো, রং আর ফন্ট আপনার ব্র্যান্ড সেটিং থেকেই আসে। কোড আর hook প্রতিটা ছবির জন্য আলাদা করে এখানে লিখবেন — Gallery-র যেকোনো ছবিতে &quot;ফিনিশিং&quot; চাপলেও একই অপশন আসবে। আসল ছবি অক্ষত থাকে, আলাদা একটা ব্র্যান্ডেড কপি তৈরি হয়।
       </p>
 
+      {status && !status.hasLogo && (
+        <div className="mb-4 rounded-xl border border-[#C89B3C]/40 bg-[#C89B3C]/10 px-3 py-2.5 text-[11px] leading-snug text-[#C89B3C]">
+          ⚠️ এখনো কোনো লোগো আপলোড করা হয়নি, স্যার। লোগো ছাড়া ফিনিশিং করলে ছবিতে শুধু লেখা আর রং বসবে, লোগো বসবে না। নিচে একবার আপনার লোগো আপলোড করে নিন — এরপর প্রতিটা ফিনিশিং-এ এটাই বসবে।
+        </div>
+      )}
+
       {/* ── Brand logo (changeable) ──────────────────────────────────────────── */}
       <h3 className="mb-1.5 text-[12px] font-bold text-cream">ব্র্যান্ড লোগো</h3>
       <p className="mb-2 text-[11px] leading-snug text-muted">
