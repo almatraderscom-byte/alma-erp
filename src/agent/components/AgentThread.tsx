@@ -12,7 +12,7 @@ import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { isFailedStatus, isInProgressStatus } from './todo-panel-utils'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
-import { AgentThinkingIndicator, ModelSpinner, type ModelVariant } from './AgentThinkingIndicator'
+import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { ScrollAffordances } from './ScrollAffordances'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
@@ -66,8 +66,7 @@ interface AgentThreadProps {
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
   onStartVoiceSession?: () => void
-  streamStatus?: string | null
-  streamMode?: 'fetching' | 'writing' | 'settled'
+  streamMode?: ThinkingMode
   streamVariant?: ModelVariant
   compacting?: boolean
 }
@@ -515,7 +514,7 @@ function ToolActivityChip({ name, done, success, stopped, input }: { name: strin
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamStatus, streamMode, streamVariant, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -731,8 +730,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       it flicker out; it disappears only when the turn is `done`. */}
                   {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
                     <AgentThinkingIndicator
-                      label={streamStatus ?? 'কাজ করছি…'}
-                      mode={streamMode === 'settled' ? 'writing' : (streamMode ?? 'writing')}
+                      mode={streamMode ?? 'thinking'}
                       variant={streamVariant ?? 'claude'}
                       className="mt-3"
                     />

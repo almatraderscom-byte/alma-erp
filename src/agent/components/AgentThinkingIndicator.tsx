@@ -12,6 +12,21 @@ import { AlmaSpinner, type AlmaSpinnerMode } from './AlmaSpinner'
 export type ModelVariant = 'claude' | 'qwen' | 'deepseek' | 'default'
 
 /**
+ * The three Claude-app-style working states the owner asked for, plus a terminal
+ * 'settled' that hides the indicator. Drives both the AlmaSpinner animation and
+ * its rotating verb (Thinking → Searching → Writing).
+ */
+export type ThinkingMode = 'thinking' | 'searching' | 'writing' | 'settled'
+
+/** Human-facing model/brand name shown beside the spinner. */
+const VARIANT_NAME: Record<ModelVariant, string> = {
+  claude: 'Claude',
+  qwen: 'Qwen',
+  deepseek: 'DeepSeek',
+  default: 'ALMA',
+}
+
+/**
  * Spinner shown next to each sub-agent / role. The role NAME is rendered by the
  * caller (e.g. `d.roleLabel` in AgentThread), so this is the glyph only:
  * no verb text, and no haptics/sound (several can render at once — buzzing/
@@ -30,32 +45,34 @@ export function ModelSpinner({
 }
 
 interface AgentThinkingIndicatorProps {
-  label?: string
-  mode?: 'fetching' | 'writing' | 'settled'
+  mode?: ThinkingMode
   variant?: ModelVariant
   className?: string
 }
 
 export function AgentThinkingIndicator({
-  label = 'চিন্তা করছি',
-  mode = 'writing',
+  mode = 'thinking',
   variant = 'default',
   className,
 }: AgentThinkingIndicatorProps) {
   if (mode === 'settled') return null
-  void variant
 
-  // Map the agent's mode onto the AlmaSpinner rhythm.
-  const spinnerMode: AlmaSpinnerMode = mode === 'fetching' ? 'searching' : 'writing'
+  // The three states map 1:1 onto the AlmaSpinner's own modes + rotating verbs
+  // (thinking → "Pondering…", searching → "Searching…", writing → "Writing…"),
+  // exactly the Claude-app feel the owner asked for.
+  const spinnerMode: AlmaSpinnerMode = mode
+  const name = VARIANT_NAME[variant] ?? 'ALMA'
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
-      {/* The one shared animation, with haptic + sound synced. This is the
-          single primary "agent is working" indicator, so it owns the feedback;
-          the Bangla status label below keeps naming what's happening, as before. */}
-      <AlmaSpinner mode={spinnerMode} size={20} showVerb={false} haptics sound />
-      {/* Claude-style shimmering status text. */}
-      <span className="alma-thinking-shimmer text-[13px] font-medium">{label}</span>
+      {/* The owner's animation with its Claude-style rotating verb (showVerb),
+          haptic + sound synced. This is the single primary "agent is working"
+          indicator, so it owns the feedback. */}
+      <AlmaSpinner mode={spinnerMode} size={18} showVerb haptics sound />
+      {/* Brand + model name so the owner always sees WHO is working. */}
+      <span className="alma-thinking-shimmer text-[12px] font-medium text-muted">
+        {variant === 'default' ? 'ALMA' : `ALMA · ${name}`}
+      </span>
     </div>
   )
 }
