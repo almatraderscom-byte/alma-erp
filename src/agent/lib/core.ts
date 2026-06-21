@@ -31,6 +31,7 @@ import { banglaAnthropicError, extractAnthropicRequestId, isAnthropicQuotaExhaus
 import { captureAgentError } from '@/agent/lib/sentry'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
@@ -327,6 +328,8 @@ export interface RunAgentTurnOptions {
   businessId?: AgentBusinessId | null
   /** Registry model id — owner /agent only; default claude-sonnet-4-6 when absent. */
   modelId?: string | null
+  /** AgentTurn row id — polled each iteration for an owner-requested server-side cancel. */
+  turnId?: string | null
 }
 
 // ── Main agent turn ────────────────────────────────────────────────────────
@@ -336,7 +339,7 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, signal, telegramFastPath = false } = options
+  const { projectSystemInstructions, signal, turnId, telegramFastPath = false } = options
   let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
@@ -540,10 +543,17 @@ export async function* runAgentTurn(
   const headCanDelegate = delegateOnlyTools.length > 0
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let canceled = false
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
+      // Owner hit Stop — a cross-instance cancel flag flipped in the DB. The
+      // running turn lives in a different serverless instance than the cancel
+      // POST, so we poll the flag here each round rather than via an in-memory
+      // signal. Stop persisting/answering and exit silently; the cancel endpoint
+      // already set the terminal status.
+      if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
       // Once over budget, restrict this turn's tools to delegate-only so the
       // expensive head physically cannot call another read/write tool — it must
@@ -907,6 +917,10 @@ export async function* runAgentTurn(
         break
       }
     }
+
+    // Owner canceled mid-turn: do not persist a partial assistant reply or emit
+    // 'done'. The cancel endpoint already marked the turn canceled.
+    if (canceled) return
 
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')

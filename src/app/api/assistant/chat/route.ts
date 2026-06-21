@@ -12,6 +12,8 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
+import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
+import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
@@ -289,17 +291,29 @@ export async function POST(req: NextRequest) {
   // req.signal. On the native app, sending a message then backgrounding the app
   // (home screen) drops the WebView's fetch connection, which aborts req.signal —
   // the model call threw AbortError and run-owner-turn returned WITHOUT saving the
-  // assistant reply, so the answer was lost. With no signal the turn always runs
-  // to completion server-side and persists the reply; the client just re-syncs the
-  // conversation when it returns to the foreground. maxDuration (300s) still bounds
-  // a runaway turn, so dropping the abort is safe for this single-owner app.
+  // assistant reply, so the answer was lost. The turn runs against a server-side
+  // controller instead and always persists the reply; the client just re-syncs the
+  // conversation when it returns to the foreground (it polls the AgentTurn status).
+  //
+  // The server controller has a 280s hard cap — under Vercel maxDuration (300s) so
+  // the function returns cleanly instead of being killed mid-write. This covers the
+  // ~95% case (turns <= ~280s) surviving a background/close without new infra.
+  const TURN_HARD_CAP_MS = 280_000
+  const turnAbort = new AbortController()
+  const turnCapTimer = setTimeout(() => turnAbort.abort(), TURN_HARD_CAP_MS)
+
+  // Durable turn row: lets the client re-sync after backgrounding and gives the
+  // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
+  const turnId = await createTurn(conversationId!)
+
   const turnOptions = {
     projectSystemInstructions,
     personalMode,
     telegramFastPath,
     businessId,
     modelId: isInternalCall ? DEFAULT_MODEL_ID : conversationModelId,
-    signal: undefined,
+    signal: turnAbort.signal,
+    turnId,
   }
 
   async function* runTurn() {
@@ -378,7 +392,10 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err)
+    } finally {
+      clearTimeout(turnCapTimer)
     }
+    await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done')
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     const turnMs = Date.now() - turnStarted
     if (telegramFastPath && turnMs > 30_000) {
@@ -395,6 +412,17 @@ export async function POST(req: NextRequest) {
       compactSuggested: Boolean(newConversationId),
     })
   }
+
+  // Client-connection tracking for the background-turn case: when the iPhone app
+  // is backgrounded the WebView's fetch is dropped, so req.signal aborts and/or the
+  // stream is canceled. We DON'T abort the turn (it runs to completion server-side),
+  // but we remember the client left so we can ping the owner on Telegram when a slow
+  // turn finishes unseen.
+  let clientConnected = true
+  const markDisconnected = () => { clientConnected = false }
+  req.signal.addEventListener('abort', markDisconnected)
+  const turnStartedAt = Date.now()
+  let doneTurnMs = -1
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -414,10 +442,15 @@ export async function POST(req: NextRequest) {
 
       enqueue({ type: 'conversation_id', id: conversationId })
       enqueue({ type: 'personal_mode', active: personalMode })
+      // Give the client the durable turn id so its Stop button can issue a real
+      // server-side cancel, and so it can poll this turn's status after re-open.
+      if (turnId) enqueue({ type: 'turn_id', id: turnId })
       try {
         for await (const event of runTurn()) {
           enqueue(event)
           if (event.type === 'done') {
+            doneTurnMs = Date.now() - turnStartedAt
+            await finalizeTurnIfRunning(turnId, 'done')
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {
@@ -431,7 +464,10 @@ export async function POST(req: NextRequest) {
             }
             break
           }
-          if (event.type === 'error') break
+          if (event.type === 'error') {
+            await finalizeTurnIfRunning(turnId, 'error')
+            break
+          }
         }
 
         if (conversationId) {
@@ -458,8 +494,24 @@ export async function POST(req: NextRequest) {
       } finally {
         streamClosed = true
         clearInterval(keepAlive)
+        clearTimeout(turnCapTimer)
+        req.signal.removeEventListener('abort', markDisconnected)
+        // Safety net: if the turn ended without done/error (hard-cap timeout or a
+        // crash), leave it marked error rather than stuck 'running'. No-op if the
+        // turn already reached a terminal status (done / canceled by Stop).
+        await finalizeTurnIfRunning(turnId, 'error')
+        // Owner backgrounded the app and a SLOW turn still finished unseen → ping
+        // Telegram so the answer isn't missed. Both conditions required (>30s AND
+        // disconnected) so quick foreground turns never spam.
+        if (doneTurnMs > 30_000 && !clientConnected) {
+          void sendOwnerText('✅ আপনার আগের প্রশ্নের উত্তরটা তৈরি হয়ে গেছে স্যার — অ্যাপ খুললেই দেখতে পাবেন।').catch(() => {})
+        }
         controller.close()
       }
+    },
+    cancel() {
+      // Consumer (the app) disconnected mid-stream — e.g. iPhone backgrounded.
+      clientConnected = false
     },
   })
 

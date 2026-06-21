@@ -28,6 +28,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
+import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import {
   detectClaimViolations,
   buildVerificationReminder,
@@ -134,7 +135,7 @@ async function* runAlternateProviderTurn(
   headTier?: HeadTier,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
-  const { projectSystemInstructions, personalMode = false, signal, telegramFastPath = false } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false } = options
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -240,10 +241,13 @@ async function* runAlternateProviderTurn(
   const isMarketingHead = headTier === 'marketing'
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let canceled = false
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       if (signal?.aborted) break
+      // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
+      if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
       const calls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
       const toolNames = new Map<string, string>()
@@ -418,6 +422,9 @@ async function* runAlternateProviderTurn(
         break
       }
     }
+
+    // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
+    if (canceled) return
 
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: totalInputTokens,

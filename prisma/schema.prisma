@@ -1767,6 +1767,25 @@ model AgentMessage {
   @@map("agent_messages")
 }
 
+/// One server-side turn execution. Created when a turn starts and updated to a
+/// terminal status when it finishes. This is what lets a turn survive the iPhone
+/// app being backgrounded/closed: the turn keeps running server-side and the
+/// client re-syncs by polling this row's status on re-open. `cancelRequested` is
+/// the cross-instance Stop signal — a cancel POST hits a different serverless
+/// instance than the running turn, so an in-memory AbortController can't reach it;
+/// the running loop polls this flag each iteration instead.
+model AgentTurn {
+  id              String    @id @default(uuid())
+  conversationId  String    @map("conversation_id")
+  status          String    @default("running") // running | done | error | canceled
+  cancelRequested Boolean   @default(false) @map("cancel_requested")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+
+  @@index([conversationId, startedAt(sort: Desc)])
+  @@map("agent_turns")
+}
+
 /// Rich output produced by the agent (code, markdown, HTML, images).
 model AgentArtifact {
   id             String            @id @default(uuid())

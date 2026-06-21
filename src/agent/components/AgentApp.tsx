@@ -147,6 +147,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [voiceOpen, setVoiceOpen] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
+  // Durable server-side turn id (from the chat stream) — used by the Stop button to
+  // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.
+  const activeTurnIdRef = useRef<string | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const dayShiftPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -179,19 +182,42 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    */
   const resyncActiveConversation = useCallback(async (convId: string | null) => {
     if (!convId) return
-    for (let attempt = 0; attempt < 6; attempt++) {
-      if (streamingRef.current) return
+
+    const fetchMessages = async (): Promise<MessageRow[] | null> => {
       try {
         const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
         if (res.ok) {
           const rows: MessageRow[] = await res.json()
-          if (streamingRef.current) return
-          setMessages(mapMessageRows(rows))
-          const last = rows[rows.length - 1]
-          if (!last || last.role !== 'user') return
+          if (!streamingRef.current) setMessages(mapMessageRows(rows))
+          return rows
         }
-      } catch { /* offline / transient — retry */ }
-      await new Promise((r) => setTimeout(r, 2500))
+      } catch { /* offline / transient */ }
+      return null
+    }
+
+    // Sync whatever is already persisted first.
+    const rows = await fetchMessages()
+    if (streamingRef.current) return
+    const last = rows?.[rows.length - 1]
+    if (last && last.role !== 'user') return // assistant reply already landed
+
+    // The last persisted row is still the owner's message — a turn may be running
+    // server-side (the app was backgrounded mid-turn). Poll the durable turn status
+    // until it leaves 'running', then render the reply. Budget covers the 280s
+    // server hard-cap plus slack (100 × 3s = 300s).
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (streamingRef.current) return
+      await new Promise((r) => setTimeout(r, 3000))
+      if (streamingRef.current) return
+      let status = 'idle'
+      try {
+        const sres = await fetch(`/api/assistant/conversations/${convId}/turn-status`)
+        if (sres.ok) status = ((await sres.json()) as { status?: string }).status ?? 'idle'
+      } catch { /* transient — keep polling */ }
+      if (status === 'running') continue
+      // Terminal (done / error / canceled / idle) → pull the final reply and stop.
+      await fetchMessages()
+      return
     }
   }, [])
 
@@ -462,6 +488,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
           setActiveConvId(finalConvId)
+        } else if (evt.type === 'turn_id') {
+          activeTurnIdRef.current = evt.id as string
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'model_info') {
@@ -757,6 +785,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       setStreaming(false)
       setStreamStatus(null)
       abortRef.current = null
+      activeTurnIdRef.current = null
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
       // The turn may have created/completed/cancelled a todo via tools — refresh
       // the dock now so the list stays in sync without the 30s poll lag.
@@ -810,7 +839,24 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     return reply || null
   }, [activeConvId, activeModelId])
 
-  function stopGeneration() {
+  async function stopGeneration() {
+    const turnId = activeTurnIdRef.current
+    // No durable turn id yet (turn hasn't registered) → fall back to the old
+    // client-only abort; the server turn will still finish + persist in the bg.
+    if (!turnId) {
+      abortRef.current?.abort()
+      return
+    }
+    // The turn keeps running server-side after the app backgrounds, so "stop" must
+    // actually cancel it on the server (it wastes tokens otherwise). Confirm first —
+    // the owner may prefer to let it finish in the background instead.
+    const ok = typeof window === 'undefined'
+      ? true
+      : window.confirm('server-side কাজ থামাবেন? টোকেন wasted হবে। (চাইলে ব্যাকগ্রাউন্ডে শেষ হতে দিন)')
+    if (!ok) return
+    try {
+      await fetch(`/api/assistant/turn/${turnId}/cancel`, { method: 'POST' })
+    } catch { /* best-effort — the local abort below still stops the UI */ }
     abortRef.current?.abort()
   }
 
