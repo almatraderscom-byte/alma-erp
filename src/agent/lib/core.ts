@@ -478,7 +478,20 @@ export async function* runAgentTurn(
   let intakeContextBlock: string | undefined
   let intakeAutoReply: string | undefined
 
+  // Point 3 (Part A) — owner office on/off toggle. Highest priority owner-initiated
+  // signal: declaring "no office today" suspends duties + asks the reason; replies while
+  // the off-question is pending are captured here (short-circuits the LLM turn).
   if (!personalMode && lastUserText) {
+    try {
+      const { processOfficeToggleReply } = await import('@/agent/lib/office-toggle')
+      const toggle = await processOfficeToggleReply(lastUserText, conversationId)
+      if (toggle?.autoReply) intakeAutoReply = toggle.autoReply
+    } catch (err) {
+      console.warn('[core] office toggle reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  if (!personalMode && lastUserText && !intakeAutoReply) {
     try {
       const { processOwnerIntakeReply } = await import('@/agent/lib/owner-task-intake')
       const intake = await processOwnerIntakeReply(lastUserText, conversationId)
@@ -487,6 +500,31 @@ export async function* runAgentTurn(
       if (intake?.forcePersonalMode) personalMode = true
     } catch (err) {
       console.warn('[core] owner intake reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  // Point 2 — capture owner's reply to the yesterday-accounting question (reason for
+  // missed office work). Saved to memory inside; contextBlock makes the head give a
+  // suggestion. Only fires while accounting is pending and intake didn't already handle.
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+    try {
+      const { processOwnerAccountingReply } = await import('@/agent/lib/yesterday-accounting')
+      const acc = await processOwnerAccountingReply(lastUserText, conversationId)
+      if (acc?.contextBlock) intakeContextBlock = acc.contextBlock
+    } catch (err) {
+      console.warn('[core] yesterday accounting reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  // Point 3 (Part B) — capture owner's reply to the carried-todo follow-up question.
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+    try {
+      const { processOwnerFollowupReply } = await import('@/agent/lib/followup-carryover')
+      const fu = await processOwnerFollowupReply(lastUserText, conversationId)
+      if (fu?.autoReply) intakeAutoReply = fu.autoReply
+      if (fu?.contextBlock) intakeContextBlock = fu.contextBlock
+    } catch (err) {
+      console.warn('[core] followup reply failed:', err instanceof Error ? err.message : err)
     }
   }
 

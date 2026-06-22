@@ -11,8 +11,13 @@ import {
 
 export type { TaskTier }
 
-/** CS / finance / scheduler / salah / staff / orders — never cheap. */
-export const CRITICAL_SPECIALIST_ROLES = new Set<SpecialistRole>(['analyst', 'ops'])
+/**
+ * Finance / data analysis — never cheap, stays on Claude.
+ * NOTE: `ops` (staff dispatch + coordination) was intentionally moved OUT of critical per
+ * owner decision — staff handling is a small job and now runs on DeepSeek (see ops.preferredModelId
+ * in specialist-roles.ts). Finance (`analyst`) remains Claude-guarded.
+ */
+export const CRITICAL_SPECIALIST_ROLES = new Set<SpecialistRole>(['analyst'])
 
 export function roleToTaskTier(role: SpecialistRole): TaskTier {
   if (CRITICAL_SPECIALIST_ROLES.has(role)) return 'critical'

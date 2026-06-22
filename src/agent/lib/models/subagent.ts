@@ -2,9 +2,9 @@
  * Sub-agent runner for the head→specialist orchestrator (Part D, Phase 2 + Phase H tiers).
  *
  * Claude (head) delegates via `delegate_to_specialist`. Tier routing:
- * - CRITICAL (analyst/ops): Claude only — finance, staff, orders
+ * - CRITICAL (analyst): Claude only — finance / data analysis
  * - HEAVY (researcher/marketer/content): OpenRouter mid-tier
- * - LIGHT: OpenRouter cheap tier for tuktak
+ * - LIGHT (ops + tuktak): OpenRouter cheap tier — ops → DeepSeek (staff dispatch/coordination)
  *
  * OpenRouter failures fall back to Claude; critical paths never use cheap models.
  */
