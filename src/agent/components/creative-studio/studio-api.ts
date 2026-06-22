@@ -105,9 +105,46 @@ export async function fetchStudioConfig(): Promise<StudioConfig> {
   return res.json()
 }
 
+/**
+ * iPhone photos are usually HEIC and often >10 MB — the upload route rejects
+ * anything over its limit. Convert + downscale in the browser before upload:
+ * iOS WKWebView decodes HEIC natively, so drawing to a canvas and exporting
+ * JPEG fixes both the format and the size in one step (server still transcodes
+ * as a backstop). PDFs / non-images pass through untouched; on any failure we
+ * send the original and let the server handle it.
+ */
+async function prepareImageForUpload(file: File): Promise<File> {
+  const looksImage =
+    file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name)
+  if (!looksImage || typeof document === 'undefined') return file
+  try {
+    const bitmap = await createImageBitmap(file)
+    const MAX = 2048
+    const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height))
+    const width = Math.max(1, Math.round(bitmap.width * scale))
+    const height = Math.max(1, Math.round(bitmap.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, width, height)
+    bitmap.close?.()
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9),
+    )
+    if (!blob) return file
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'image'
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' })
+  } catch {
+    return file
+  }
+}
+
 export async function uploadStudioFile(file: File, folder: string): Promise<string> {
+  const prepared = await prepareImageForUpload(file)
   const fd = new FormData()
-  fd.append('file', file)
+  fd.append('file', prepared)
   fd.append('conversationId', folder)
   const res = await fetch('/api/assistant/upload', { method: 'POST', body: fd })
   const data = await res.json().catch(() => ({}))
