@@ -324,6 +324,54 @@ async function fetchOpenRouterCreditsUsd(): Promise<number | null> {
   }
 }
 
+/**
+ * Authoritative month-to-date OpenRouter spend via the Activity API.
+ *
+ * Requires a *management* key — a normal inference key returns 403 on this endpoint.
+ * IMPORTANT: reads OPENROUTER_MANAGEMENT_KEY, NEVER OPENROUTER_API_KEY. The management
+ * key cannot make model/inference calls, so it is kept strictly separate from the
+ * routing key — using it for inference would break all OpenRouter model usage.
+ *
+ * Account-wide across all keys/models (matches the OpenRouter Activity page and the
+ * credit balance, which local agent tracking under-counts when non-agent usage draws
+ * on the same credit). Only COMPLETED UTC days are reported and it lags ~1–2 days, so
+ * syncedThrough marks the latest day included; the most-recent days fall back to local
+ * tracking + the platform deep link (same pattern as Anthropic). `usage` is already USD.
+ */
+async function fetchOpenRouterActivityMonthUsd(
+  todayStr: string,
+): Promise<{ usd: number; syncedThrough: string | null } | null> {
+  const mgmtKey = process.env.OPENROUTER_MANAGEMENT_KEY
+  if (!mgmtKey) return null
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/activity', {
+      headers: { Authorization: `Bearer ${mgmtKey}` },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      console.warn(`[api-balances] openrouter activity HTTP ${res.status}`)
+      return null
+    }
+    const data = await res.json() as { data?: Array<{ date?: string; usage?: number }> }
+    const ym = todayStr.slice(0, 7)            // current YYYY-MM
+    let usd = 0
+    let syncedThrough: string | null = null
+    let matched = false
+    for (const row of data.data ?? []) {
+      const day = (row.date ?? '').slice(0, 10)
+      if (!day.startsWith(ym) || day > todayStr) continue
+      matched = true
+      usd += typeof row.usage === 'number' && Number.isFinite(row.usage) ? row.usage : 0
+      if (syncedThrough == null || day > syncedThrough) syncedThrough = day
+    }
+    if (!matched) return null
+    return { usd: roundUsd(usd), syncedThrough }
+  } catch (err) {
+    console.warn('[api-balances] fetchOpenRouterActivityMonth failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** ElevenLabs subscription — character quota remaining (Starter plan). */
 async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY
@@ -392,11 +440,12 @@ export async function refreshApiBalanceCache(): Promise<{
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, elevenLabsLive] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
     fetchOpenRouterCreditsUsd(),
+    fetchOpenRouterActivityMonthUsd(todayStr),
     fetchElevenLabsBalanceUsd(),
   ])
 
@@ -415,20 +464,27 @@ export async function refreshApiBalanceCache(): Promise<{
     let balanceUsd: number | null = null
     let syncedThrough: string | null = null
 
+    // ---- Live balance (account credit / quota remaining) ----
     if (id === 'twilio') {
       balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
     } else if (id === 'elevenlabs' && elevenLabsLive != null) {
       balanceUsd = elevenLabsLive
     } else if (id === 'openrouter' && openRouterLive != null) {
       balanceUsd = openRouterLive
-    } else if (id === 'anthropic' && anthropicAdminMonth != null) {
-      // Floor the live figure at locally tracked spend so a stale/partial admin
-      // report can never display LESS than what we know we spent. The admin API
-      // lags ~1–2 days; syncedThrough tells the UI which day the figure is current to.
+    }
+
+    // ---- Authoritative month-to-date from each provider's billing API ----
+    // These APIs lag ~1–2 days; syncedThrough tells the UI which day the figure is
+    // current to. Floor at locally tracked spend so a stale/partial report can never
+    // display LESS than what we already know we spent.
+    if (id === 'anthropic' && anthropicAdminMonth != null) {
       monthUsd = roundUsd(Math.max(anthropicAdminMonth.usd, monthUsd))
       syncedThrough = anthropicAdminMonth.syncedThrough
     } else if (id === 'openai' && openaiAdminMonth != null) {
       monthUsd = roundUsd(Math.max(openaiAdminMonth, monthUsd))
+    } else if (id === 'openrouter' && openRouterActivityMonth != null) {
+      monthUsd = roundUsd(Math.max(openRouterActivityMonth.usd, monthUsd))
+      syncedThrough = openRouterActivityMonth.syncedThrough
     }
 
     // OpenRouter balance is live from the credits API; fall back to KV-credit

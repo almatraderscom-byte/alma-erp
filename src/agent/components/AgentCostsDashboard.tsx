@@ -213,9 +213,12 @@ function fmtSpendCell(n: number | null, providerId?: string) {
   return fmtUsd(n)
 }
 
-// Anthropic's billing platform — deep link to the live Cost page so the owner
-// can see the not-yet-synced most-recent ~2 days the Admin API hasn't published.
-const ANTHROPIC_COST_URL = 'https://platform.claude.com/workspaces/default/cost'
+// Per-provider deep link to the live billing page so the owner can see the
+// not-yet-synced most-recent ~2 days that the provider's API hasn't published.
+const PLATFORM_COST_URL: Record<string, string> = {
+  anthropic: 'https://platform.claude.com/workspaces/default/cost',
+  openrouter: 'https://openrouter.ai/activity',
+}
 
 // "2026-06-21" → "২১ জুন" (Bangla short date) for the sync note.
 function fmtSyncDate(ymd: string): string {
@@ -701,14 +704,16 @@ export default function AgentCostsDashboard() {
                           <span className="text-[9px] leading-tight text-amber-600/90">
                             ⏳ {fmtSyncDate(row.syncedThrough)} পর্যন্ত sync (API ~২ দিন পিছিয়ে)
                           </span>
-                          <a
-                            href={ANTHROPIC_COST_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex w-fit items-center gap-0.5 text-[9px] font-medium text-[#E07A5F] hover:underline"
-                          >
-                            শেষ ২ দিন platform-এ দেখুন →
-                          </a>
+                          {PLATFORM_COST_URL[row.id] && (
+                            <a
+                              href={PLATFORM_COST_URL[row.id]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex w-fit items-center gap-0.5 text-[9px] font-medium text-[#E07A5F] hover:underline"
+                            >
+                              শেষ ২ দিন platform-এ দেখুন →
+                            </a>
+                          )}
                         </span>
                       )}
                     </td>
