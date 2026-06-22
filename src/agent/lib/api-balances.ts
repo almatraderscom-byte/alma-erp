@@ -204,13 +204,16 @@ async function fetchTwilioBalance(): Promise<number | null> {
 /**
  * Live month-to-date Anthropic org spend via the Admin cost_report API.
  *
- * The Cost API uses daily UTC buckets and REQUIRES UTC-midnight-aligned bounds
- * (T00:00:00Z) — passing a Dhaka +06:00 boundary serialized to ...T18:00:00Z
- * makes the API return empty buckets, which previously collapsed the figure to
- * $0.00. We therefore build the window from the calendar month at UTC midnight:
- * [first-of-month 00:00Z .. tomorrow 00:00Z), follow pagination, and return null
- * (not 0) when the call fails or yields no buckets so the caller keeps the
- * locally tracked spend instead of overwriting it with zero.
+ * ROOT CAUSE of the old "$0.00" bug: the Cost API returns at most 7 daily
+ * buckets per page (1d granularity) and signals the rest via has_more/next_page.
+ * The previous code fetched only the FIRST page (days 1–7) — which can legitimately
+ * be empty early in some months — summed to 0, and that 0 overwrote the real
+ * tracked spend. We now paginate through every page so the whole month is summed.
+ *
+ * We also build the window at UTC midnight ([first-of-month 00:00Z .. tomorrow
+ * 00:00Z)) to match the API's daily UTC buckets, and return null (not 0) when the
+ * call fails or yields no buckets so the caller keeps locally tracked spend
+ * instead of overwriting it with zero.
  *
  * Returns USD (the API reports `amount` as a decimal string of cents).
  */
