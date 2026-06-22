@@ -3,7 +3,7 @@
  */
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
@@ -201,30 +201,62 @@ async function fetchTwilioBalance(): Promise<number | null> {
   }
 }
 
-async function fetchAnthropicMonthSpendUsd(monthStart: Date, monthEnd: Date): Promise<number | null> {
+/**
+ * Live month-to-date Anthropic org spend via the Admin cost_report API.
+ *
+ * The Cost API uses daily UTC buckets and REQUIRES UTC-midnight-aligned bounds
+ * (T00:00:00Z) — passing a Dhaka +06:00 boundary serialized to ...T18:00:00Z
+ * makes the API return empty buckets, which previously collapsed the figure to
+ * $0.00. We therefore build the window from the calendar month at UTC midnight:
+ * [first-of-month 00:00Z .. tomorrow 00:00Z), follow pagination, and return null
+ * (not 0) when the call fails or yields no buckets so the caller keeps the
+ * locally tracked spend instead of overwriting it with zero.
+ *
+ * Returns USD (the API reports `amount` as a decimal string of cents).
+ */
+async function fetchAnthropicMonthSpendUsd(todayStr: string): Promise<number | null> {
   const adminKey = process.env.ANTHROPIC_ADMIN_API_KEY
   if (!adminKey) return null
   try {
-    const start = monthStart.toISOString()
-    const end = monthEnd.toISOString()
-    const url = `https://api.anthropic.com/v1/organizations/cost_report?starting_at=${encodeURIComponent(start)}&ending_at=${encodeURIComponent(end)}`
-    const res = await fetch(url, {
-      headers: {
-        'x-api-key': adminKey,
-        'anthropic-version': '2023-06-01',
-      },
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) return null
-    const data = await res.json() as {
-      data?: Array<{ results?: Array<{ amount?: string }> }>
-    }
+    const startingAt = `${todayStr.slice(0, 7)}-01T00:00:00Z`     // first of month, UTC midnight
+    const endingAt = `${addDaysYmd(todayStr, 1)}T00:00:00Z`        // tomorrow, exclusive
+    let page: string | null = null
     let cents = 0
-    for (const bucket of data.data ?? []) {
-      for (const row of bucket.results ?? []) {
-        cents += parseFloat(row.amount ?? '0') || 0
+    let bucketCount = 0
+
+    for (let i = 0; i < 12; i++) {
+      const url = new URL('https://api.anthropic.com/v1/organizations/cost_report')
+      url.searchParams.set('starting_at', startingAt)
+      url.searchParams.set('ending_at', endingAt)
+      if (page) url.searchParams.set('page', page)
+
+      const res = await fetch(url, {
+        headers: { 'x-api-key': adminKey, 'anthropic-version': '2023-06-01' },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!res.ok) {
+        console.warn(`[api-balances] anthropic cost_report HTTP ${res.status}`)
+        return null
       }
+      const data = await res.json() as {
+        data?: Array<{ results?: Array<{ amount?: string | number }> }>
+        has_more?: boolean
+        next_page?: string | null
+      }
+      for (const bucket of data.data ?? []) {
+        bucketCount++
+        for (const row of bucket.results ?? []) {
+          const amt = typeof row.amount === 'number' ? row.amount : parseFloat(row.amount ?? '0')
+          cents += Number.isFinite(amt) ? amt : 0
+        }
+      }
+      if (data.has_more && data.next_page) { page = data.next_page; continue }
+      break
     }
+
+    // Empty response (e.g. individual account / misalignment) → "unavailable",
+    // so the caller falls back to tracked spend rather than showing $0.00.
+    if (bucketCount === 0) return null
     return cents / 100
   } catch (err) {
     console.warn('[api-balances] fetchAnthropicMonthSpend failed:', err instanceof Error ? err.message : err)
@@ -339,7 +371,7 @@ export async function refreshApiBalanceCache(): Promise<{
   twilioRaw?: { balance: string; currency: string } | null
   alerts: LowBalanceAlert[]
 }> {
-  const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+  const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
   const [todayByProvider, monthByProvider] = await Promise.all([
     querySpendByProviderBetween(dayStart, dayEnd),
     querySpendByProviderBetween(monthStart, monthEnd),
@@ -347,7 +379,7 @@ export async function refreshApiBalanceCache(): Promise<{
 
   const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, elevenLabsLive] = await Promise.all([
     fetchTwilioBalance(),
-    fetchAnthropicMonthSpendUsd(monthStart, monthEnd),
+    fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
     fetchOpenRouterCreditsUsd(),
     fetchElevenLabsBalanceUsd(),
@@ -374,9 +406,11 @@ export async function refreshApiBalanceCache(): Promise<{
     } else if (id === 'openrouter' && openRouterLive != null) {
       balanceUsd = openRouterLive
     } else if (id === 'anthropic' && anthropicAdminMonth != null) {
-      monthUsd = roundUsd(anthropicAdminMonth)
+      // Floor the live figure at locally tracked spend so a stale/partial admin
+      // report can never display LESS than what we know we spent.
+      monthUsd = roundUsd(Math.max(anthropicAdminMonth, monthUsd))
     } else if (id === 'openai' && openaiAdminMonth != null) {
-      monthUsd = roundUsd(openaiAdminMonth)
+      monthUsd = roundUsd(Math.max(openaiAdminMonth, monthUsd))
     }
 
     // OpenRouter balance is live from the credits API; fall back to KV-credit
