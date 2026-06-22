@@ -110,6 +110,8 @@ type ConversationCostDetail = {
   title: string | null
   source: string | null
   totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
   messageCount: number
   messages: ConversationCostMessage[]
 }
@@ -405,7 +407,7 @@ export default function AgentCostsDashboard() {
 
   async function openConversation(conversationId: string) {
     setConvLoading(true)
-    setConvDetail({ conversationId, title: null, source: null, totalCostUsd: 0, messageCount: 0, messages: [] })
+    setConvDetail({ conversationId, title: null, source: null, totalCostUsd: 0, totalTokensIn: 0, totalTokensOut: 0, messageCount: 0, messages: [] })
     try {
       const res = await fetch(`/api/assistant/costs/logs?conversationId=${encodeURIComponent(conversationId)}`)
       if (!res.ok) throw new Error('চ্যাট লোড ব্যর্থ')
@@ -1036,7 +1038,12 @@ export default function AgentCostsDashboard() {
                   {convDetail.title ?? 'কথোপকথন'}
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted">
-                  {convDetail.messageCount} message · মোট <span className="font-semibold text-[#E07A5F]">{fmtUsd(convDetail.totalCostUsd)}</span>
+                  {convDetail.messageCount} message · মোট টোকেন{' '}
+                  <span className="font-semibold text-cream tabular-nums">
+                    {(convDetail.totalTokensIn + convDetail.totalTokensOut).toLocaleString()}
+                  </span>{' '}
+                  ({convDetail.totalTokensIn.toLocaleString()} in → {convDetail.totalTokensOut.toLocaleString()} out) · মোট খরচ{' '}
+                  <span className="font-semibold text-[#E07A5F]">{fmtUsd(convDetail.totalCostUsd)}</span>
                 </p>
               </div>
               <button

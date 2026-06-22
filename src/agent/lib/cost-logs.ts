@@ -154,6 +154,8 @@ export type ConversationCostDetail = {
   title: string | null
   source: string | null
   totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
   messageCount: number
   messages: ConversationCostMessage[]
 }
@@ -177,9 +179,13 @@ export async function getConversationCostDetail(conversationId: string): Promise
   })
 
   let total = 0
+  let totalTokensIn = 0
+  let totalTokensOut = 0
   const rows: ConversationCostMessage[] = messages.map((m) => {
     const cost = m.costUsd != null ? Number(m.costUsd) : 0
     total += cost
+    totalTokensIn += m.tokensIn ?? 0
+    totalTokensOut += m.tokensOut ?? 0
     const usage = (m.usage ?? {}) as Record<string, unknown>
     const modelId = typeof usage.model === 'string' ? usage.model : null
     return {
@@ -199,6 +205,8 @@ export async function getConversationCostDetail(conversationId: string): Promise
     title: conv.title,
     source: conv.source,
     totalCostUsd: Math.round(total * 1_000_000) / 1_000_000,
+    totalTokensIn,
+    totalTokensOut,
     messageCount: rows.length,
     messages: rows,
   }
