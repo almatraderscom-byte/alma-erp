@@ -4,7 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { summarizeWaqts, pickAccountableWaqts, type Waqt } from '@/agent/lib/salah-context'
-import { detectSalahConfirmation, parseWaqtLabel } from '@/agent/lib/salah-confirm-intent'
+import { detectSalahConfirmation, detectSalahQaza, parseWaqtLabel } from '@/agent/lib/salah-confirm-intent'
 import { isSalahSettled, resolvePrayedStatus } from '@/agent/lib/salah-resolve'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,11 +69,20 @@ export async function applySalahAutoMarkFromUserTexts(
   const markedKeys = new Set<string>()
 
   for (const text of cleaned) {
-    const det = detectSalahConfirmation(text)
-    if (!det) continue
+    // An explicit qaza / missed declaration wins over a generic "prayed" — "কাযা পড়েছি"
+    // means qaza, not on-time, even though it contains "পড়েছি". Plain prayed text has no
+    // qaza/missed signal so it still falls through to detectSalahConfirmation.
+    // qaza/missed is only honoured once the waqt window (jamaat time) has started — the
+    // `now < windowStart` guard below enforces the owner's "jamat time er por theke" rule.
+    const qaza = detectSalahQaza(text)
+    const det = qaza ? null : detectSalahConfirmation(text)
+    if (!det && !qaza) continue
 
-    let targetWaqt: string | undefined = det.waqt
-    let dateYmd = det.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
+    const signal = det ?? qaza!
+    const mode: 'prayed' | 'qaza' | 'missed' = det ? 'prayed' : qaza!.kind
+
+    let targetWaqt: string | undefined = signal.waqt
+    let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
     if (!targetWaqt) {
       const candidate = accountable.find((a) => {
@@ -112,9 +121,14 @@ export async function applySalahAutoMarkFromUserTexts(
       continue
     }
 
-    const status = existing?.windowEnd
-      ? resolvePrayedStatus(new Date(existing.windowEnd), now)
-      : 'prayed_on_time'
+    let status: string
+    if (mode === 'prayed') {
+      status = existing?.windowEnd
+        ? resolvePrayedStatus(new Date(existing.windowEnd), now)
+        : 'prayed_on_time'
+    } else {
+      status = mode // 'qaza' | 'missed'
+    }
 
     await db.agentSalahRecord.upsert({
       where: { date_waqt: { date: dhakaMidnightUtc(dateYmd), waqt: targetWaqt } },

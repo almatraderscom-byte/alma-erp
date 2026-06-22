@@ -161,6 +161,23 @@ function qazaButtons(waqt, dateYmd = null) {
   }
 }
 
+// Prayer-start (jamaat) onward: same two buttons as salahButtons + an honest "কাযা হয়ে গেছে"
+// option so the owner is never forced to falsely say "পড়েছি". Never used before jamaat (Step 0 azan).
+function salahButtonsWithQaza(waqt, dateYmd = null) {
+  const d = dateYmd ? `:${dateYmd}` : ''
+  return {
+    inline_keyboard: [
+      [
+        { text: '✅ পড়েছি',    callback_data: `salah_done:${waqt}:prayed_on_time${d}` },
+        { text: '🕐 পরে পড়বো', callback_data: `salah_later:${waqt}${d}` },
+      ],
+      [
+        { text: '🕋 কাযা হয়ে গেছে', callback_data: `salah_done:${waqt}:qaza${d}` },
+      ],
+    ],
+  }
+}
+
 // ── Send azan notification ────────────────────────────────────────────────────
 
 async function sendAzanNotification(bot, ownerChatId, waqt, prevPendingWaqt, settings, prayerTimes, dateYmd) {
@@ -472,6 +489,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         ownerChatId,
         waqt,
         salahDate: today,
+        replyMarkup: salahButtonsWithQaza(waqt, today),
         ntfyMode: 'critical',
       })
       continue
@@ -504,6 +522,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         ownerChatId,
         waqt,
         salahDate: today,
+        replyMarkup: salahButtonsWithQaza(waqt, today),
         ntfyMode: 'critical',
       })
       continue
@@ -535,6 +554,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         ownerChatId,
         waqt,
         salahDate: today,
+        replyMarkup: salahButtonsWithQaza(waqt, today),
         withVoice: false,
         ntfyMode: 'critical',
       })
@@ -563,6 +583,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         ownerChatId,
         waqt,
         salahDate: today,
+        replyMarkup: salahButtonsWithQaza(waqt, today),
         ntfyMode: 'critical',
       })
       continue
@@ -590,6 +611,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         ownerChatId,
         waqt,
         salahDate: today,
+        replyMarkup: salahButtonsWithQaza(waqt, today),
         ntfyMode: 'critical',
       })
       continue
@@ -693,10 +715,10 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
     await upsertSalahRecord({ date: recordDate, waqt, status: resolved })
     console.log(`[salah] owner confirmed ${waqt} on ${recordDate} → ${resolved}`)
     const messages = {
-      prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।`,
-      prayed_late:    `✅ আলহামদুলিল্লাহ। পরের ওয়াক্ত সময়মতো পড়ার চেষ্টা করুন।`,
-      qaza:           `✅ কাযা পড়া হয়েছে — আল্লাহ কবুল করুন।`,
-      missed:         `😔 আল্লাহ মাফ করুন। পরের ওয়াক্ত মিস করবেন না।`,
+      prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।\n\nএকটু বলুন তো Sir — জামাতে পড়লেন, নাকি একা? 🤲 (আল্লাহ সব দেখছেন, তাই সত্যিটাই বলবেন)`,
+      prayed_late:    `✅ আলহামদুলিল্লাহ, পড়ে নিয়েছেন। আল্লাহ কবুল করুন।\n\nজামাতে নাকি একা পড়লেন Sir? 🤲 পরের ওয়াক্ত একটু সময়মতো ধরার চেষ্টা করি।`,
+      qaza:           `✅ কাযা পড়ে নিয়েছেন — আলহামদুলিল্লাহ, আল্লাহ কবুল করুন। সত্যি বলার জন্য জাযাকাল্লাহ।`,
+      missed:         `😔 আল্লাহ মাফ করুন। মিস হয়েছে স্বীকার করেছেন — এটাই সততা। তাওবা করে নিন, পরের ওয়াক্ত ইনশাআল্লাহ ধরবো।`,
     }
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
     await ctx.answerCbQuery(messages[resolved] || 'আপডেট হয়েছে')
