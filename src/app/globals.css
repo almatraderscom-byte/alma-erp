@@ -395,24 +395,6 @@ a,
   .alma-enter { animation: none; }
 }
 
-/* AppToast (react-hot-toast renderer) — icon pop, check/✕ draw, loading spin.
-   Keep additive: used only by .alma-toast in src/components/ui/AppToast.tsx. */
-@keyframes alma-toast-pop {
-  0%   { transform: scale(0.4); opacity: 0; }
-  60%  { transform: scale(1.12); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-@keyframes alma-toast-draw {
-  to { stroke-dashoffset: 0; }
-}
-@keyframes alma-toast-spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .alma-toast :is(span, svg, path) { animation: none !important; }
-  .alma-toast svg path { stroke-dashoffset: 0 !important; }
-}
-
 /* Claude-style shimmering status text ("Thinking…", "checking…"). A soft
    coral highlight sweeps across muted ink — calm, water-smooth, no bounce. */
 .alma-thinking-shimmer {

@@ -9,7 +9,6 @@ import { AppProviders } from '@/components/providers/AppProviders'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { ACCENT_COOKIE, THEME_COOKIE, accentStyle, normalizeAccent, normalizeMode } from '@/lib/theme'
 import { Toaster } from 'react-hot-toast'
-import { AppToast } from '@/components/ui/AppToast'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
 import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
@@ -108,19 +107,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <GlobalKeyboardManager />
         <GlobalPlatformChrome />
         <Toaster
-          position="top-center"
-          gutter={10}
-          containerStyle={{ top: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}
+          position="top-right"
           toastOptions={{
-            // Success/info auto-dismiss quickly; errors linger; loading stays until updated.
-            duration: 3500,
-            success: { duration: 3200 },
-            error: { duration: 5000 },
-            loading: { duration: Infinity },
+            duration: 4000,
+            style: {
+              background: '#FFFFFF',
+              color: '#1a1a2e',
+              border: '1px solid #e5e2dc',
+              fontFamily: 'var(--font-sans)',
+              fontSize: '13px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+            },
+            success: { iconTheme: { primary: '#81B29A', secondary: '#FFFFFF' } },
+            error:   { iconTheme: { primary: '#E74C3C', secondary: '#FFFFFF' } },
           }}
-        >
-          {(t) => <AppToast t={t} />}
-        </Toaster>
+        />
       </body>
     </html>
   )
