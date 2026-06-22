@@ -77,6 +77,9 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'staff'],
     instruction:
       'You are an operations specialist for staff/task coordination. Use the staff tools to check presence, tasks and dispatch state, then return a concise Bangla status with any issues that need the owner.',
+    // Owner decision: staff dispatch/coordination is a small job — run it on cheap DeepSeek,
+    // not Claude. `ops` is no longer a critical role (finance/`analyst` stays on Claude).
+    preferredModelId: 'or-deepseek-v4-flash',
   },
   cs: {
     label: 'কাস্টমার সার্ভিস',

@@ -26,6 +26,7 @@ import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { queryConversationCostBetween } from '@/agent/lib/cost-db'
 import { formatDutyCostLineBangla } from '@/agent/lib/format-cost'
+import { getOrComposeOpsSummary } from '@/agent/lib/intelligence/ops-shift-summary'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -213,12 +214,8 @@ async function measureDutyCostUsd(
 }
 
 function specialistBriefForDuty(dutyKey: string, briefing: OwnerBriefingData): string | null {
-  if (OPS_DUTIES.has(dutyKey)) {
-    const pending = (briefing.staffYesterday?.total ?? 0) - (briefing.staffYesterday?.done ?? 0)
-    const hasIssues = (briefing.staffPatterns?.length ?? 0) > 0 || pending > 2
-    if (!hasIssues) return null
-    return `আজকের staff_tasks — ${pending} pending, patterns ${briefing.staffPatterns?.length ?? 0}। বিস্তারিত চেক করে সংক্ষিপ্ত Bangla সারসংক্ষেপ দাও।`
-  }
+  // OPS duties are handled by the DeepSeek ops-shift summarizer (see runDutyWork) — they
+  // no longer delegate to the Claude `ops` specialist here.
   if (MARKETER_DUTIES.has(dutyKey)) {
     const anomalies = briefing.adsDigest?.anomalies?.length ?? 0
     if (anomalies === 0) return null
@@ -229,7 +226,7 @@ function specialistBriefForDuty(dutyKey: string, briefing: OwnerBriefingData): s
 }
 
 function specialistRoleForDuty(dutyKey: string): SpecialistRole | null {
-  if (OPS_DUTIES.has(dutyKey)) return 'ops'
+  // OPS handled by DeepSeek ops-shift summarizer, not the Claude `ops` specialist.
   if (MARKETER_DUTIES.has(dutyKey)) return 'marketer'
   if (CONTENT_DUTIES.has(dutyKey)) return 'content'
   return null
@@ -266,12 +263,12 @@ async function runDutyWork(
     const det = await runDeterministicTask('inventory', briefing)
     parts.push(det.narrative)
   } else if (OPS_DUTIES.has(dutyKey) && briefing) {
-    const staff = briefing.staffYesterday
-    parts.push(
-      staff?.summary
-        ? `✓ স্টাফ সারসংক্ষেপ: ${staff.summary}`
-        : '✓ স্টাফ টাস্ক ডেটা চেক করা হয়েছে — বিস্তারিত staff monitor-এ।',
-    )
+    // Partner-style staff read on DeepSeek, de-duplicated across the day's OPS ticks
+    // (unchanged staff state → cached text, zero LLM cost). Replaces the old per-duty
+    // Claude `ops` specialist call that produced near-identical paid summaries.
+    const ops = await getOrComposeOpsSummary(date, conversationId, briefing)
+    parts.push(ops.text)
+    subagentCostUsd += ops.costUsd
   } else if (dutyKey === 'owner_task_intake') {
     parts.push('✓ Sir-কাজ সংগ্রহ — scheduler ২০:৩০-এ chat + Telegram-এ জিজ্ঞেস করবে; reply থেকে owner todo যোগ হবে।')
   } else if (CONTENT_DUTIES.has(dutyKey)) {
@@ -437,9 +434,21 @@ async function runPatrolTick(state: DayShiftState): Promise<{ ok: boolean; detai
   return { ok: true, detail: 'patrol_done', conversationId: state.conversationId }
 }
 
+/** Point 3 — owner declared "no office today"; suspend the whole shift for that date. */
+async function isOfficeOffForDate(date: string): Promise<boolean> {
+  const row = await prisma.agentKvSetting.findUnique({
+    where: { key: `office_off:${date}` },
+    select: { value: true },
+  })
+  return Boolean(row?.value)
+}
+
 /** Start today's shift — intro + duty roster (Phase A todos seeded separately). */
 export async function startDayShift(): Promise<{ ok: boolean; conversationId?: string; detail: string }> {
   const date = todayYmdDhaka()
+  if (await isOfficeOffForDate(date)) {
+    return { ok: true, detail: 'office_off_today' }
+  }
   const duties = await shiftDutiesForToday()
   let state = await loadDayShiftState(date)
 
@@ -466,6 +475,23 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
         conversationId,
         `⚠️ briefing আংশিক — ${err instanceof Error ? err.message : 'error'}. যা পারি তা চালিয়ে যাচ্ছি।`,
       )
+    }
+
+    // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
+    // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
+    try {
+      const { runYesterdayAccountingSend } = await import('@/agent/lib/yesterday-accounting')
+      await runYesterdayAccountingSend()
+    } catch (err) {
+      console.warn('[day-shift] yesterday accounting send failed:', err instanceof Error ? err.message : err)
+    }
+
+    // Point 3 (Part B) — carry unfinished owner/agent todos forward and follow up on them.
+    try {
+      const { runDailyFollowupSend } = await import('@/agent/lib/followup-carryover')
+      await runDailyFollowupSend()
+    } catch (err) {
+      console.warn('[day-shift] daily followup send failed:', err instanceof Error ? err.message : err)
     }
 
     await appendShiftNarrative(
@@ -507,6 +533,9 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   }
 
   const date = todayYmdDhaka()
+  if (await isOfficeOffForDate(date)) {
+    return { ok: true, detail: 'office_off_today' }
+  }
   let state = await loadDayShiftState(date)
 
   if (state?.status === 'done') {
