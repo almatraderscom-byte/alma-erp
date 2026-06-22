@@ -116,6 +116,45 @@ type ConversationCostDetail = {
   messages: ConversationCostMessage[]
 }
 
+type ProviderLogMessage = {
+  id: string
+  occurredAt: string
+  kind: string
+  kindLabel: string
+  model: string | null
+  headline: string
+  inputTokens: number | null
+  outputTokens: number | null
+  costUsd: number
+  conversationId: string | null
+  source: string | null
+}
+
+type ProviderLogConversation = {
+  conversationId: string
+  title: string | null
+  source: string | null
+  totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
+  messageCount: number
+  lastAt: string
+}
+
+type ProviderLogs = {
+  provider: string
+  from: string
+  to: string
+  totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
+  eventCount: number
+  messages: ProviderLogMessage[]
+  conversations: ProviderLogConversation[]
+}
+
+type LogRange = 'today' | '7d' | '30d' | 'custom'
+
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#E07A5F',
   openai: '#81B29A',
@@ -183,6 +222,26 @@ function fmtCheckedAt(iso: string) {
   } catch {
     return iso
   }
+}
+
+function fmtShortTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return iso
+  }
+}
+
+function fmtTokens(inTok: number | null, outTok: number | null) {
+  if (inTok == null && outTok == null) return '—'
+  return `${(inTok ?? 0).toLocaleString()}→${(outTok ?? 0).toLocaleString()}`
 }
 
 function balanceColor(row: BalanceProviderRow): string {
@@ -348,6 +407,13 @@ export default function AgentCostsDashboard() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [convDetail, setConvDetail] = useState<ConversationCostDetail | null>(null)
   const [convLoading, setConvLoading] = useState(false)
+  // Per-provider Logs drilldown (opened from the balance table).
+  const [logProvider, setLogProvider] = useState<{ id: string; label: string } | null>(null)
+  const [logRange, setLogRange] = useState<LogRange>('today')
+  const [logFrom, setLogFrom] = useState('')
+  const [logTo, setLogTo] = useState('')
+  const [providerLogs, setProviderLogs] = useState<ProviderLogs | null>(null)
+  const [providerLogsLoading, setProviderLogsLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -416,6 +482,51 @@ export default function AgentCostsDashboard() {
       setConvDetail(null)
     } finally {
       setConvLoading(false)
+    }
+  }
+
+  const fetchProviderLogs = useCallback(async (
+    providerId: string,
+    range: LogRange,
+    from: string,
+    to: string,
+  ) => {
+    setProviderLogsLoading(true)
+    try {
+      const qs = new URLSearchParams({ provider: providerId })
+      if (range === 'custom' && from && to) {
+        qs.set('from', from)
+        qs.set('to', to)
+      } else {
+        qs.set('range', range)
+      }
+      const res = await fetch(`/api/assistant/costs/logs?${qs.toString()}`)
+      if (!res.ok) throw new Error('লগ লোড ব্যর্থ')
+      setProviderLogs(await res.json() as ProviderLogs)
+    } catch {
+      setProviderLogs(null)
+    } finally {
+      setProviderLogsLoading(false)
+    }
+  }, [])
+
+  function openProviderLogs(providerId: string, label: string) {
+    setLogProvider({ id: providerId, label })
+    setLogRange('today')
+    setProviderLogs(null)
+    void fetchProviderLogs(providerId, 'today', '', '')
+  }
+
+  function selectRange(range: LogRange) {
+    setLogRange(range)
+    if (range !== 'custom' && logProvider) {
+      void fetchProviderLogs(logProvider.id, range, '', '')
+    }
+  }
+
+  function applyCustomRange() {
+    if (logProvider && logFrom && logTo) {
+      void fetchProviderLogs(logProvider.id, 'custom', logFrom, logTo)
     }
   }
 
@@ -548,7 +659,8 @@ export default function AgentCostsDashboard() {
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">ব্যালেন্স</th>
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">আজ খরচ</th>
                   <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">এই মাসে</th>
-                  <th className="py-2.5 font-medium text-[#E07A5F]">সূত্র</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">সূত্র</th>
+                  <th className="py-2.5 font-medium text-[#E07A5F] text-right">লগ</th>
                 </tr>
               </thead>
               <tbody>
@@ -565,7 +677,19 @@ export default function AgentCostsDashboard() {
                     </td>
                     <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.todayUsd, row.id)}</td>
                     <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.monthUsd, row.id)}</td>
-                    <td className="py-2.5 text-muted">{row.source}</td>
+                    <td className="py-2.5 pr-3 text-muted">{row.source}</td>
+                    <td className="py-2.5 text-right">
+                      {row.free ? (
+                        <span className="text-[10px] text-muted/60">—</span>
+                      ) : (
+                        <button
+                          onClick={() => openProviderLogs(row.id, row.label)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-[#E07A5F]/25 bg-[#E07A5F]/[0.06] px-2.5 py-1 text-[10px] font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/12 hover:shadow-[0_2px_8px_rgba(224,122,95,0.12)] transition-all"
+                        >
+                          📊 লগ
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1017,6 +1141,165 @@ export default function AgentCostsDashboard() {
           </ul>
         )}
       </div>
+
+      {/* Per-provider Logs drilldown — date window + side-by-side messages / conversations. */}
+      {logProvider && (
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+          onClick={() => setLogProvider(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[92dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-2xl border border-border-subtle bg-card shadow-xl sm:rounded-2xl"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 border-b border-border-subtle p-4">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-sm font-semibold text-cream">
+                  <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PROVIDER_COLORS[logProvider.id] ?? '#94a3b8' }} />
+                  {logProvider.label} — খরচের লগ
+                </p>
+                {providerLogs && (
+                  <p className="mt-0.5 text-[11px] text-muted">
+                    {providerLogs.from === providerLogs.to ? providerLogs.from : `${providerLogs.from} → ${providerLogs.to}`}
+                    {' · '}{providerLogs.eventCount} ইভেন্ট · মোট টোকেন{' '}
+                    <span className="font-semibold text-cream tabular-nums">
+                      {(providerLogs.totalTokensIn + providerLogs.totalTokensOut).toLocaleString()}
+                    </span>
+                    {' · মোট খরচ '}
+                    <span className="font-semibold text-[#E07A5F]">{fmtUsd(providerLogs.totalCostUsd)}</span>
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setLogProvider(null)}
+                className="shrink-0 rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-xs text-muted hover:text-cream transition-all"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Date range selector */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-3">
+              {([['today', 'আজ'], ['7d', 'গত ৭ দিন'], ['30d', 'গত ৩০ দিন'], ['custom', 'কাস্টম']] as Array<[LogRange, string]>).map(([key, lbl]) => (
+                <button
+                  key={key}
+                  onClick={() => selectRange(key)}
+                  className={cn(
+                    'rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-all',
+                    logRange === key
+                      ? 'border-[#E07A5F]/40 bg-[#E07A5F]/12 text-[#E07A5F] shadow-[0_2px_8px_rgba(224,122,95,0.12)]'
+                      : 'border-border-subtle bg-transparent text-muted hover:text-cream hover:border-[#E07A5F]/25',
+                  )}
+                >
+                  {lbl}
+                </button>
+              ))}
+              {logRange === 'custom' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="date"
+                    value={logFrom}
+                    onChange={(e) => setLogFrom(e.target.value)}
+                    className="rounded-lg border border-border bg-transparent px-2 py-1 text-[11px] text-cream focus:outline-none focus:border-[#E07A5F]/40"
+                  />
+                  <span className="text-[11px] text-muted">→</span>
+                  <input
+                    type="date"
+                    value={logTo}
+                    onChange={(e) => setLogTo(e.target.value)}
+                    className="rounded-lg border border-border bg-transparent px-2 py-1 text-[11px] text-cream focus:outline-none focus:border-[#E07A5F]/40"
+                  />
+                  <button
+                    onClick={() => applyCustomRange()}
+                    disabled={!logFrom || !logTo}
+                    className="rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/20 px-3 py-1.5 text-[11px] font-semibold text-[#E07A5F] disabled:opacity-40 hover:bg-[#E07A5F]/15 transition-all"
+                  >
+                    দেখাও
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Two panes */}
+            {providerLogsLoading ? (
+              <p className="py-16 text-center text-[11px] text-muted">লোড হচ্ছে…</p>
+            ) : !providerLogs || providerLogs.eventCount === 0 ? (
+              <p className="py-16 text-center text-[11px] text-muted">এই সময়ে {logProvider.label}-এ কোনো খরচ নেই</p>
+            ) : (
+              <div className="grid flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-2">
+                {/* Left: messages */}
+                <div className="flex min-h-0 flex-col overflow-hidden border-b border-border-subtle lg:border-b-0 lg:border-r">
+                  <p className="shrink-0 border-b border-border-subtle px-4 py-2 text-[11px] font-semibold text-muted">
+                    💬 মেসেজ অনুযায়ী ({providerLogs.messages.length})
+                  </p>
+                  <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3">
+                    {providerLogs.messages.map((m) => (
+                      <div
+                        key={m.id}
+                        onClick={() => m.conversationId && void openConversation(m.conversationId)}
+                        className={cn(
+                          'rounded-xl border border-border-subtle bg-transparent px-3 py-2 transition-colors',
+                          m.conversationId ? 'cursor-pointer hover:bg-white/[0.05]' : '',
+                        )}
+                      >
+                        <div className="mb-0.5 flex items-center justify-between gap-2">
+                          <span className="truncate text-[10px] text-muted">
+                            {m.model ?? m.kindLabel}
+                            {m.source === 'telegram' && ' 📱'}
+                            {m.source === 'web' && ' 🌐'}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-muted">{fmtShortTime(m.occurredAt)}</span>
+                        </div>
+                        <p className="mb-1 line-clamp-2 break-words text-[11px] text-cream/90">{m.headline}</p>
+                        <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                          <span className="text-muted">{fmtTokens(m.inputTokens, m.outputTokens)} tok</span>
+                          <span className="font-semibold text-[#E07A5F]">{fmtUsd(m.costUsd)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right: conversations */}
+                <div className="flex min-h-0 flex-col overflow-hidden">
+                  <p className="shrink-0 border-b border-border-subtle px-4 py-2 text-[11px] font-semibold text-muted">
+                    🗂️ কথোপকথন অনুযায়ী ({providerLogs.conversations.length})
+                  </p>
+                  <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3">
+                    {providerLogs.conversations.length === 0 ? (
+                      <p className="py-8 text-center text-[11px] text-muted">এই সময়ে কোনো পূর্ণ কথোপকথন নেই</p>
+                    ) : (
+                      providerLogs.conversations.map((c) => (
+                        <div
+                          key={c.conversationId}
+                          onClick={() => void openConversation(c.conversationId)}
+                          className="cursor-pointer rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 transition-colors hover:bg-white/[0.05]"
+                        >
+                          <div className="mb-1 flex items-start justify-between gap-2">
+                            <span className="truncate text-[11px] font-medium text-cream">
+                              {c.source === 'telegram' ? '📱 ' : '🌐 '}
+                              {c.title ?? c.conversationId.slice(0, 8)}
+                            </span>
+                            <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F] tabular-nums">{fmtUsd(c.totalCostUsd)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[10px] text-muted tabular-nums">
+                            <span>{c.messageCount} মেসেজ · {(c.totalTokensIn + c.totalTokensOut).toLocaleString()} tok</span>
+                            <span>{fmtShortTime(c.lastAt)}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </div>
+      )}
 
       {/* Conversation cost detail — full chat with per-message cost. */}
       {convDetail && (

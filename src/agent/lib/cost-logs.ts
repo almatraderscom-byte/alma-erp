@@ -3,8 +3,11 @@
  * plus a per-conversation breakdown showing the full chat with what each message
  * cost. Answers "kon message e koto gelo, ar full chat-e total koto".
  */
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
+import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
+import { dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 
 const MODEL_LABEL = new Map(MODEL_REGISTRY.map((m) => [m.id, m.label]))
 
@@ -209,5 +212,175 @@ export async function getConversationCostDetail(conversationId: string): Promise
     totalTokensOut,
     messageCount: rows.length,
     messages: rows,
+  }
+}
+
+// ── Per-provider, date-ranged logs ────────────────────────────────────────────
+// Drives the "Logs" drilldown beside each provider in the balance table: pick a
+// date window (today / 7d / 30d / custom) and see, side by side, every spend
+// event (left) and the per-conversation rollup (right) for that one provider.
+
+export type ProviderLogMessage = {
+  id: string
+  occurredAt: string
+  kind: string
+  kindLabel: string
+  model: string | null
+  headline: string
+  inputTokens: number | null
+  outputTokens: number | null
+  costUsd: number
+  conversationId: string | null
+  source: string | null
+}
+
+export type ProviderLogConversation = {
+  conversationId: string
+  title: string | null
+  source: string | null
+  totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
+  messageCount: number
+  lastAt: string
+}
+
+export type ProviderLogs = {
+  provider: string
+  from: string
+  to: string
+  totalCostUsd: number
+  totalTokensIn: number
+  totalTokensOut: number
+  eventCount: number
+  messages: ProviderLogMessage[]
+  conversations: ProviderLogConversation[]
+}
+
+type RawProviderEvent = {
+  id: string
+  kind: string
+  units: Record<string, unknown> | null
+  cost: string
+  conversation_id: string | null
+  job_id: string | null
+  occurred_at: Date
+}
+
+const MAX_MESSAGE_ROWS = 400
+
+/**
+ * Every spend event for one effective provider within a Dhaka date window
+ * [from .. to] (inclusive, yyyy-MM-dd), plus a per-conversation rollup. Totals
+ * cover the whole window; the message list is capped for payload sanity while
+ * the rollup is computed from all events so conversation totals stay exact.
+ */
+export async function getProviderLogs(
+  provider: string,
+  from: string,
+  to: string,
+): Promise<ProviderLogs> {
+  const start = dhakaDayBounds(from).start
+  const end = dhakaDayBounds(to).end
+
+  const rows = await prisma.$queryRaw<RawProviderEvent[]>(Prisma.sql`
+    SELECT id, kind, units, cost_usd::text AS cost,
+           conversation_id, job_id, occurred_at
+    FROM agent_cost_events
+    WHERE occurred_at >= ${start} AND occurred_at < ${end}
+      AND ${EFFECTIVE_PROVIDER_SQL} = ${provider}
+    ORDER BY occurred_at DESC
+  `)
+
+  // Resolve headlines (from the assistant message keyed by job_id) and
+  // conversation titles in two batched lookups.
+  const jobIds = [...new Set(rows.map((r) => r.job_id).filter((x): x is string => Boolean(x)))]
+  const convIds = [...new Set(rows.map((r) => r.conversation_id).filter((x): x is string => Boolean(x)))]
+  const [msgs, convs] = await Promise.all([
+    jobIds.length
+      ? prisma.agentMessage.findMany({ where: { id: { in: jobIds } }, select: { id: true, content: true } })
+      : Promise.resolve([]),
+    convIds.length
+      ? prisma.agentConversation.findMany({ where: { id: { in: convIds } }, select: { id: true, title: true, source: true } })
+      : Promise.resolve([]),
+  ])
+  const msgMap = new Map(msgs.map((m) => [m.id, m]))
+  const convMap = new Map(convs.map((c) => [c.id, c]))
+
+  let totalCostUsd = 0
+  let totalTokensIn = 0
+  let totalTokensOut = 0
+  const messages: ProviderLogMessage[] = []
+  const convAgg = new Map<string, ProviderLogConversation>()
+
+  for (const r of rows) {
+    const units = r.units ?? {}
+    const cost = parseFloat(r.cost) || 0
+    const inTok = typeof units.input_tokens === 'number' ? units.input_tokens : null
+    const outTok = typeof units.output_tokens === 'number' ? units.output_tokens : null
+    const modelId = typeof units.model === 'string' ? units.model : null
+    const model = modelId ? (MODEL_LABEL.get(modelId) ?? modelId) : null
+    const conv = r.conversation_id ? convMap.get(r.conversation_id) : null
+    const msg = r.job_id ? msgMap.get(r.job_id) : null
+    const snippet = msg ? truncate(extractMessageText(msg.content), 100) : ''
+    const occurredAt = r.occurred_at.toISOString()
+
+    totalCostUsd += cost
+    totalTokensIn += inTok ?? 0
+    totalTokensOut += outTok ?? 0
+
+    if (messages.length < MAX_MESSAGE_ROWS) {
+      messages.push({
+        id: r.id,
+        occurredAt,
+        kind: r.kind,
+        kindLabel: kindLabel(r.kind),
+        model,
+        headline: snippet || kindLabel(r.kind),
+        inputTokens: inTok,
+        outputTokens: outTok,
+        costUsd: cost,
+        conversationId: r.conversation_id,
+        source: conv?.source ?? null,
+      })
+    }
+
+    if (r.conversation_id) {
+      const existing = convAgg.get(r.conversation_id)
+      if (existing) {
+        existing.totalCostUsd += cost
+        existing.totalTokensIn += inTok ?? 0
+        existing.totalTokensOut += outTok ?? 0
+        existing.messageCount += 1
+        if (occurredAt > existing.lastAt) existing.lastAt = occurredAt
+      } else {
+        convAgg.set(r.conversation_id, {
+          conversationId: r.conversation_id,
+          title: conv?.title ?? null,
+          source: conv?.source ?? null,
+          totalCostUsd: cost,
+          totalTokensIn: inTok ?? 0,
+          totalTokensOut: outTok ?? 0,
+          messageCount: 1,
+          lastAt: occurredAt,
+        })
+      }
+    }
+  }
+
+  const conversations = [...convAgg.values()]
+    .map((c) => ({ ...c, totalCostUsd: Math.round(c.totalCostUsd * 1_000_000) / 1_000_000 }))
+    .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+
+  return {
+    provider,
+    from,
+    to,
+    totalCostUsd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
+    totalTokensIn,
+    totalTokensOut,
+    eventCount: rows.length,
+    messages,
+    conversations,
   }
 }
