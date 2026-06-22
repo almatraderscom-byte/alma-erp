@@ -55,6 +55,56 @@ export function detectSalahConfirmation(text: string): SalahConfirmation | null 
   return { dateHint }
 }
 
+/**
+ * Owner declares a waqt as qaza (made-up / overdue) or missed.
+ * Conservative on the qaza term so it never collides with "kaj"/"কাজ" (= work):
+ * Banglish qaza must end in -a (qaza/kaza/kaja) with a word boundary, Bangla uses
+ * কাযা/কাজা (both distinct from কাজ). Missed = পড়িনি / মিস হয়েছে / পড়তে পারিনি etc.
+ */
+export type SalahQazaIntent = {
+  waqt?: Waqt
+  kind: 'qaza' | 'missed'
+  dateHint?: 'today' | 'yesterday'
+}
+
+function hasQazaSignal(text: string): boolean {
+  return (
+    /কাযা|কাজা/.test(text)
+    || /\b(qaza|qa?za|kaza|kaja)\b/i.test(text)
+  )
+}
+
+function hasMissedSignal(text: string): boolean {
+  return (
+    /পড়িনি|পরিনি|পড়া\s*হয়নি|পড়তে\s*পারিনি|মিস\s*হয়েছে|মিস\s*হয়ে|মিস\s*করেছি|বাদ\s*(পড়ে|গেছে|গেল)/i.test(text)
+    || /\b(porini|pori\s*nai|pora\s*hoyni|porte\s*parini|miss\s*hoye|miss\s*korechi|missed|baad\s*por)\b/i.test(text)
+  )
+}
+
+export function detectSalahQaza(text: string): SalahQazaIntent | null {
+  const t = text.trim()
+  if (!t || t.length < 3) return null
+  if (isSalahQuestion(t)) return null
+
+  const isQaza = hasQazaSignal(t)
+  const isMissed = hasMissedSignal(t)
+  if (!isQaza && !isMissed) return null
+
+  // qaza wins if both appear ("miss hoye geche, kaja kore nibo" → treat as qaza)
+  const kind: 'qaza' | 'missed' = isQaza ? 'qaza' : 'missed'
+
+  let dateHint: 'today' | 'yesterday' | undefined
+  if (/গতকাল|yesterday|kal\s*ke|কাল\s*রাত/i.test(t)) dateHint = 'yesterday'
+
+  for (const waqt of Object.keys(WAQT_PATTERNS) as Waqt[]) {
+    if (WAQT_PATTERNS[waqt].some((p) => p.test(t))) {
+      return { waqt, kind, dateHint }
+    }
+  }
+
+  return { kind, dateHint }
+}
+
 /** Strip "(গতকাল)" suffix from accountability waqt labels */
 export function parseWaqtLabel(label: string): { waqt: string; isYesterday: boolean } {
   const isYesterday = /গতকাল/.test(label)
