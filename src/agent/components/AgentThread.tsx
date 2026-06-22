@@ -608,12 +608,17 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   )
   const streamingMessage = messages.find((m) => m.streaming)
 
-  // Light haptic when the agent finishes a reply (Claude-app style on phone).
-  // Fires on the streaming→done transition for a finalized assistant message.
+  // Two light haptics per turn (Claude-app style on phone), NOT a continuous buzz:
+  //   • one when the agent STARTS working  (not-streaming → streaming)
+  //   • one when the agent FINISHES a reply (streaming → done)
+  // The "working" phase itself is silent — the animation conveys progress.
   const wasStreamingRef = useRef(false)
   useEffect(() => {
     const isStreaming = Boolean(streamingMessage)
-    if (wasStreamingRef.current && !isStreaming) {
+    if (!wasStreamingRef.current && isStreaming) {
+      // Agent just picked up the message and began working → single start tap.
+      agentReplyHaptic()
+    } else if (wasStreamingRef.current && !isStreaming) {
       const last = messages[messages.length - 1]
       if (last?.role === 'assistant' && last.text) agentReplyHaptic()
     }

@@ -65,10 +65,13 @@ export function AgentThinkingIndicator({
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
-      {/* The owner's animation with its Claude-style rotating verb (showVerb),
-          haptic + sound synced. This is the single primary "agent is working"
-          indicator, so it owns the feedback. */}
-      <AlmaSpinner mode={spinnerMode} size={18} showVerb haptics sound />
+      {/* The owner's animation with its Claude-style rotating verb (showVerb).
+          NO per-tick haptic/sound while working — the owner found the continuous
+          buzz (a pulse on every animation frame) annoying and unlike the Claude
+          app. Feedback is now just TWO taps: one when the agent starts (streaming
+          begins, fired in AgentThread) and one when it finishes. The animation
+          alone conveys "working". */}
+      <AlmaSpinner mode={spinnerMode} size={18} showVerb haptics={false} sound={false} />
       {/* Brand + model name so the owner always sees WHO is working. */}
       <span className="alma-thinking-shimmer text-[12px] font-medium text-muted">
         {variant === 'default' ? 'ALMA' : `ALMA · ${name}`}
