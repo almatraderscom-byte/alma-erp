@@ -3,7 +3,7 @@
  */
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
+import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
@@ -11,6 +11,7 @@ export type BalanceProviderId =
   | 'anthropic'
   | 'twilio'
   | 'openai'
+  | 'openrouter'
   | 'gemini'
   | 'google_tts'
   | 'meta_free'
@@ -32,6 +33,11 @@ export type BalanceProviderRow = {
   monthUsd: number | null
   source: string
   free?: boolean
+  // Latest day the provider's billing API has published data for (YYYY-MM-DD,
+  // Anthropic only). The Admin cost API lags ~1–2 days, so monthUsd is accurate
+  // only up to this date; the UI shows it as a "sync: <date>" note + a deep link
+  // to the platform for the not-yet-synced most-recent days.
+  syncedThrough?: string | null
 }
 
 export type ApiBalanceCache = {
@@ -55,6 +61,11 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   openai: 'openai',
   chatgpt: 'openai',
   gpt: 'openai',
+  openrouter: 'openrouter',
+  'open router': 'openrouter',
+  router: 'openrouter',
+  deepseek: 'openrouter',
+  qwen: 'openrouter',
   gemini: 'gemini',
   google_tts: 'google_tts',
   'google tts': 'google_tts',
@@ -72,6 +83,7 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   anthropic: { label: 'Anthropic', source: 'Auto+Input' },
   twilio: { label: 'Twilio', source: 'Live API' },
   openai: { label: 'OpenAI', source: 'Auto+Input' },
+  openrouter: { label: 'OpenRouter', source: 'Live API' },
   gemini: { label: 'Gemini', source: 'Input+Track' },
   google_tts: { label: 'Google TTS', source: 'Input+Track' },
   meta_free: { label: 'Meta/ntfy', source: '—', free: true },
@@ -81,7 +93,7 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
+  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -138,15 +150,29 @@ export async function setApiCredit(
   return credit
 }
 
+// Effective cost-provider for a row. Older OpenRouter chat turns were mislabeled
+// with provider='openai' (the cost column), but the model's true provider was
+// always recorded in units->>'provider' ('openrouter'). Remap from units when
+// present so historical OpenRouter (DeepSeek/Qwen) spend shows under OpenRouter,
+// while non-chat rows (no units.provider) keep their stored cost-provider column.
+// Note: units.provider stores the raw model provider ('google' → 'gemini' here).
+export const EFFECTIVE_PROVIDER_SQL = Prisma.sql`CASE
+  WHEN units->>'provider' = 'openrouter' THEN 'openrouter'
+  WHEN units->>'provider' = 'google' THEN 'gemini'
+  WHEN units->>'provider' = 'openai' THEN 'openai'
+  WHEN units->>'provider' = 'anthropic' THEN 'anthropic'
+  ELSE provider
+END`
+
 export async function querySpendByProviderBetween(
   start: Date,
   end: Date,
 ): Promise<Record<string, number>> {
   const rows = await prisma.$queryRaw<Array<{ provider: string; total: string }>>(
-    Prisma.sql`SELECT provider, COALESCE(SUM(cost_usd), 0)::text AS total
+    Prisma.sql`SELECT ${EFFECTIVE_PROVIDER_SQL} AS provider, COALESCE(SUM(cost_usd), 0)::text AS total
       FROM agent_cost_events
       WHERE occurred_at >= ${start} AND occurred_at < ${end}
-      GROUP BY provider`,
+      GROUP BY 1`,
   )
   return Object.fromEntries(rows.map((r) => [r.provider, parseFloat(r.total) || 0]))
 }
@@ -155,7 +181,7 @@ export async function querySpendSince(provider: string, since: Date): Promise<nu
   const rows = await prisma.$queryRaw<Array<{ total: string }>>(
     Prisma.sql`SELECT COALESCE(SUM(cost_usd), 0)::text AS total
       FROM agent_cost_events
-      WHERE provider = ${provider} AND occurred_at >= ${since}`,
+      WHERE ${EFFECTIVE_PROVIDER_SQL} = ${provider} AND occurred_at >= ${since}`,
   )
   return parseFloat(rows[0]?.total ?? '0') || 0
 }
@@ -180,31 +206,73 @@ async function fetchTwilioBalance(): Promise<number | null> {
   }
 }
 
-async function fetchAnthropicMonthSpendUsd(monthStart: Date, monthEnd: Date): Promise<number | null> {
+/**
+ * Live month-to-date Anthropic org spend via the Admin cost_report API.
+ *
+ * ROOT CAUSE of the old "$0.00" bug: the Cost API returns at most 7 daily
+ * buckets per page (1d granularity) and signals the rest via has_more/next_page.
+ * The previous code fetched only the FIRST page (days 1–7) — which can legitimately
+ * be empty early in some months — summed to 0, and that 0 overwrote the real
+ * tracked spend. We now paginate through every page so the whole month is summed.
+ *
+ * We also build the window at UTC midnight ([first-of-month 00:00Z .. tomorrow
+ * 00:00Z)) to match the API's daily UTC buckets, and return null (not 0) when the
+ * call fails or yields no buckets so the caller keeps locally tracked spend
+ * instead of overwriting it with zero.
+ *
+ * Returns USD (the API reports `amount` as a decimal string of cents).
+ */
+async function fetchAnthropicMonthSpendUsd(
+  todayStr: string,
+): Promise<{ usd: number; syncedThrough: string | null } | null> {
   const adminKey = process.env.ANTHROPIC_ADMIN_API_KEY
   if (!adminKey) return null
   try {
-    const start = monthStart.toISOString()
-    const end = monthEnd.toISOString()
-    const url = `https://api.anthropic.com/v1/organizations/cost_report?starting_at=${encodeURIComponent(start)}&ending_at=${encodeURIComponent(end)}`
-    const res = await fetch(url, {
-      headers: {
-        'x-api-key': adminKey,
-        'anthropic-version': '2023-06-01',
-      },
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) return null
-    const data = await res.json() as {
-      data?: Array<{ results?: Array<{ amount?: string }> }>
-    }
+    const startingAt = `${todayStr.slice(0, 7)}-01T00:00:00Z`     // first of month, UTC midnight
+    const endingAt = `${addDaysYmd(todayStr, 1)}T00:00:00Z`        // tomorrow, exclusive
+    let page: string | null = null
     let cents = 0
-    for (const bucket of data.data ?? []) {
-      for (const row of bucket.results ?? []) {
-        cents += parseFloat(row.amount ?? '0') || 0
+    let bucketCount = 0
+    let syncedThrough: string | null = null   // latest UTC day the API has data for
+
+    for (let i = 0; i < 12; i++) {
+      const url = new URL('https://api.anthropic.com/v1/organizations/cost_report')
+      url.searchParams.set('starting_at', startingAt)
+      url.searchParams.set('ending_at', endingAt)
+      if (page) url.searchParams.set('page', page)
+
+      const res = await fetch(url, {
+        headers: { 'x-api-key': adminKey, 'anthropic-version': '2023-06-01' },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!res.ok) {
+        console.warn(`[api-balances] anthropic cost_report HTTP ${res.status}`)
+        return null
       }
+      const data = await res.json() as {
+        data?: Array<{ starting_at?: string; results?: Array<{ amount?: string | number }> }>
+        has_more?: boolean
+        next_page?: string | null
+      }
+      for (const bucket of data.data ?? []) {
+        bucketCount++
+        // The API returns a contiguous daily range up to its processing horizon,
+        // so the max bucket date IS the latest day with published data.
+        const day = bucket.starting_at?.slice(0, 10) ?? null
+        if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
+        for (const row of bucket.results ?? []) {
+          const amt = typeof row.amount === 'number' ? row.amount : parseFloat(row.amount ?? '0')
+          cents += Number.isFinite(amt) ? amt : 0
+        }
+      }
+      if (data.has_more && data.next_page) { page = data.next_page; continue }
+      break
     }
-    return cents / 100
+
+    // Empty response (e.g. individual account / misalignment) → "unavailable",
+    // so the caller falls back to tracked spend rather than showing $0.00.
+    if (bucketCount === 0) return null
+    return { usd: cents / 100, syncedThrough }
   } catch (err) {
     console.warn('[api-balances] fetchAnthropicMonthSpend failed:', err instanceof Error ? err.message : err)
     return null
@@ -227,6 +295,79 @@ async function fetchOpenAIMonthSpendUsd(monthStart: Date, monthEnd: Date): Promi
     return (data.data ?? []).reduce((s, b) => s + (b.amount?.value ?? 0), 0) / 100
   } catch (err) {
     console.warn('[api-balances] fetchOpenAIMonthSpend failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
+ * OpenRouter live credit balance. GET /api/v1/credits returns total_credits
+ * (lifetime purchased/granted) and total_usage (lifetime spent); remaining
+ * balance = total_credits − total_usage. This is the real money left on the key,
+ * so we use it directly as the OpenRouter balance (no KV-credit fallback needed).
+ */
+async function fetchOpenRouterCreditsUsd(): Promise<number | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) return null
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/credits', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { data?: { total_credits?: number; total_usage?: number } }
+    const credits = data.data?.total_credits ?? 0
+    const usage = data.data?.total_usage ?? 0
+    return roundUsd(credits - usage)
+  } catch (err) {
+    console.warn('[api-balances] fetchOpenRouterCredits failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
+ * Authoritative month-to-date OpenRouter spend via the Activity API.
+ *
+ * Requires a *management* key — a normal inference key returns 403 on this endpoint.
+ * IMPORTANT: reads OPENROUTER_MANAGEMENT_KEY, NEVER OPENROUTER_API_KEY. The management
+ * key cannot make model/inference calls, so it is kept strictly separate from the
+ * routing key — using it for inference would break all OpenRouter model usage.
+ *
+ * Account-wide across all keys/models (matches the OpenRouter Activity page and the
+ * credit balance, which local agent tracking under-counts when non-agent usage draws
+ * on the same credit). Only COMPLETED UTC days are reported and it lags ~1–2 days, so
+ * syncedThrough marks the latest day included; the most-recent days fall back to local
+ * tracking + the platform deep link (same pattern as Anthropic). `usage` is already USD.
+ */
+async function fetchOpenRouterActivityMonthUsd(
+  todayStr: string,
+): Promise<{ usd: number; syncedThrough: string | null } | null> {
+  const mgmtKey = process.env.OPENROUTER_MANAGEMENT_KEY
+  if (!mgmtKey) return null
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/activity', {
+      headers: { Authorization: `Bearer ${mgmtKey}` },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      console.warn(`[api-balances] openrouter activity HTTP ${res.status}`)
+      return null
+    }
+    const data = await res.json() as { data?: Array<{ date?: string; usage?: number }> }
+    const ym = todayStr.slice(0, 7)            // current YYYY-MM
+    let usd = 0
+    let syncedThrough: string | null = null
+    let matched = false
+    for (const row of data.data ?? []) {
+      const day = (row.date ?? '').slice(0, 10)
+      if (!day.startsWith(ym) || day > todayStr) continue
+      matched = true
+      usd += typeof row.usage === 'number' && Number.isFinite(row.usage) ? row.usage : 0
+      if (syncedThrough == null || day > syncedThrough) syncedThrough = day
+    }
+    if (!matched) return null
+    return { usd: roundUsd(usd), syncedThrough }
+  } catch (err) {
+    console.warn('[api-balances] fetchOpenRouterActivityMonth failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -293,16 +434,18 @@ export async function refreshApiBalanceCache(): Promise<{
   twilioRaw?: { balance: string; currency: string } | null
   alerts: LowBalanceAlert[]
 }> {
-  const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+  const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
   const [todayByProvider, monthByProvider] = await Promise.all([
     querySpendByProviderBetween(dayStart, dayEnd),
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, elevenLabsLive] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive] = await Promise.all([
     fetchTwilioBalance(),
-    fetchAnthropicMonthSpendUsd(monthStart, monthEnd),
+    fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
+    fetchOpenRouterCreditsUsd(),
+    fetchOpenRouterActivityMonthUsd(todayStr),
     fetchElevenLabsBalanceUsd(),
   ])
 
@@ -319,18 +462,35 @@ export async function refreshApiBalanceCache(): Promise<{
     const todayUsd = roundUsd(todayByProvider[id] ?? 0)
     let monthUsd = roundUsd(monthByProvider[id] ?? 0)
     let balanceUsd: number | null = null
+    let syncedThrough: string | null = null
 
+    // ---- Live balance (account credit / quota remaining) ----
     if (id === 'twilio') {
       balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
     } else if (id === 'elevenlabs' && elevenLabsLive != null) {
       balanceUsd = elevenLabsLive
-    } else if (id === 'anthropic' && anthropicAdminMonth != null) {
-      monthUsd = roundUsd(anthropicAdminMonth)
-    } else if (id === 'openai' && openaiAdminMonth != null) {
-      monthUsd = roundUsd(openaiAdminMonth)
+    } else if (id === 'openrouter' && openRouterLive != null) {
+      balanceUsd = openRouterLive
     }
 
-    if (id !== 'twilio' && id !== 'elevenlabs' && credit) {
+    // ---- Authoritative month-to-date from each provider's billing API ----
+    // These APIs lag ~1–2 days; syncedThrough tells the UI which day the figure is
+    // current to. Floor at locally tracked spend so a stale/partial report can never
+    // display LESS than what we already know we spent.
+    if (id === 'anthropic' && anthropicAdminMonth != null) {
+      monthUsd = roundUsd(Math.max(anthropicAdminMonth.usd, monthUsd))
+      syncedThrough = anthropicAdminMonth.syncedThrough
+    } else if (id === 'openai' && openaiAdminMonth != null) {
+      monthUsd = roundUsd(Math.max(openaiAdminMonth, monthUsd))
+    } else if (id === 'openrouter' && openRouterActivityMonth != null) {
+      monthUsd = roundUsd(Math.max(openRouterActivityMonth.usd, monthUsd))
+      syncedThrough = openRouterActivityMonth.syncedThrough
+    }
+
+    // OpenRouter balance is live from the credits API; fall back to KV-credit
+    // tracking only if the live call returned null (key unset / API down).
+    const openRouterLiveResolved = id === 'openrouter' && openRouterLive != null
+    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && credit) {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
       balanceUsd = roundUsd(credit.initialCredit - spent)
@@ -343,6 +503,7 @@ export async function refreshApiBalanceCache(): Promise<{
       todayUsd,
       monthUsd,
       source: meta.source,
+      syncedThrough,
     })
   }
 
@@ -369,6 +530,8 @@ export async function refreshApiBalanceCache(): Promise<{
     creditFlags[id] = Boolean(await getApiBalanceCredit(id))
   }
   creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY || (await getApiBalanceCredit('elevenlabs')))
+  // OpenRouter low-balance alerting keys off the live credits API being available.
+  creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || (await getApiBalanceCredit('openrouter')))
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
@@ -435,9 +598,40 @@ export async function getApiBalances(opts?: { refresh?: boolean }): Promise<ApiB
     return cache
   }
   const cached = await readBalanceCache()
-  if (cached) return cached
+  if (cached) return overlayLiveLocalSpend(cached)
   const { cache } = await refreshApiBalanceCache()
   return cache
+}
+
+/**
+ * The expensive live-API balances (Anthropic admin cost, OpenRouter credits,
+ * Twilio, ElevenLabs) are cached and refreshed periodically. But each provider's
+ * "today / this month" spend is just a cheap local DB aggregate — so recompute it
+ * on every read and overlay it onto the cached snapshot. Without this the table
+ * shows a stale midnight snapshot (e.g. "today $0.00" all day until someone hits
+ * Refresh), even though spend is accruing. Live-API balances stay from cache.
+ */
+async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalanceCache> {
+  try {
+    const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+    const [todayByProvider, monthByProvider] = await Promise.all([
+      querySpendByProviderBetween(dayStart, dayEnd),
+      querySpendByProviderBetween(monthStart, monthEnd),
+    ])
+    const providers = cache.providers.map((row) => {
+      if (row.free) return row
+      const liveToday = roundUsd(todayByProvider[row.id] ?? 0)
+      const liveMonth = roundUsd(monthByProvider[row.id] ?? 0)
+      // Preserve any admin-API floor already baked into the cached month figure
+      // (e.g. Anthropic's authoritative month-to-date), but let local spend grow it.
+      const monthUsd = row.monthUsd != null ? roundUsd(Math.max(row.monthUsd, liveMonth)) : liveMonth
+      return { ...row, todayUsd: liveToday, monthUsd }
+    })
+    return { ...cache, providers }
+  } catch (err) {
+    console.warn('[api-balances] overlayLiveLocalSpend failed:', err instanceof Error ? err.message : err)
+    return cache
+  }
 }
 
 export async function wasLowBalanceAlerted(provider: string, dateStr: string): Promise<boolean> {

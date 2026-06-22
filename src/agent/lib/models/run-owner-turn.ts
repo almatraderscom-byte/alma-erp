@@ -89,7 +89,8 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
-  if (provider === 'openai' || provider === 'openrouter') return 'openai'
+  if (provider === 'openrouter') return 'openrouter'
+  if (provider === 'openai') return 'openai'
   return 'anthropic'
 }
 
