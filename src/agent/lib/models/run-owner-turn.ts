@@ -327,6 +327,10 @@ async function* runAlternateProviderTurn(
           iterationText += ev.text
           finalText += ev.text
           yield { type: 'text_delta', delta: ev.text }
+        } else if (ev.type === 'thinking_delta') {
+          // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
+          // the native Claude head produces — the UI (AgentApp) already handles this.
+          yield { type: 'thinking_delta', delta: ev.text }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
           yield { type: 'tool_start', id: ev.id, name: ev.name }

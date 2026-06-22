@@ -15,5 +15,9 @@ export function createOpenRouterAdapter(): OpenAiAdapter {
     // Cache the stable system-prompt prefix across turns (Qwen/DeepSeek/Claude via
     // OpenRouter). Big cost lever when a model runs as the direct head.
     cachePrefix: true,
+    // Stream reasoning/thinking tokens so the UI shows DeepSeek's (and Qwen's, when
+    // it reasons) live thinking block — the owner wants the same "thinking" feel the
+    // DeepSeek/Claude apps show. Non-reasoning models simply emit nothing here.
+    reasoning: true,
   })
 }
