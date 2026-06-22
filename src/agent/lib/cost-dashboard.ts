@@ -9,6 +9,8 @@ import { assertAgentCostSchemaReady, queryCostSumBetween, queryPromptCacheUsageB
 import { queryBillableCostSumBetween, formatBudgetPct } from '@/agent/lib/cost-budget'
 import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api/dhaka-date'
 import { PRICING_META } from '@/agent/lib/pricing'
+import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
+import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
 
 const DHAKA_TZ = 'Asia/Dhaka'
 
@@ -211,7 +213,7 @@ export async function getCostDashboardData() {
 
   const dailyRows = await prisma.$queryRaw<Array<{ day: string; provider: string; total: string }>>(
     Prisma.sql`SELECT to_char((occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
-                      provider,
+                      ${EFFECTIVE_PROVIDER_SQL} AS provider,
                       SUM(cost_usd)::text AS total
                FROM agent_cost_events
                WHERE occurred_at >= NOW() - INTERVAL '30 days'
@@ -248,16 +250,73 @@ export async function getCostDashboardData() {
   ).catch(() => [] as Array<{ kind: string; total: string }>)
 
   const providerRows = await prisma.$queryRaw<Array<{ provider: string; total: string }>>(
-    Prisma.sql`SELECT provider, SUM(cost_usd)::text AS total
+    Prisma.sql`SELECT ${EFFECTIVE_PROVIDER_SQL} AS provider, SUM(cost_usd)::text AS total
                FROM agent_cost_events
                WHERE occurred_at >= ${monthB.start} AND occurred_at < ${monthB.end}
-               GROUP BY provider
+               GROUP BY 1
                ORDER BY SUM(cost_usd) DESC`,
   )
   const byProvider = providerRows.map((r) => ({
     provider: r.provider,
     totalUsd: parseFloat(r.total) || 0,
   }))
+
+  // Per-MODEL breakdown (chat turns carry units->>'model'). Answers the owner's
+  // "every model, end-to-end, which day" — today/month totals plus a 30-day daily
+  // stack keyed on the model id, mapped to its registry label + provider. Rows with
+  // no units.model (TTS, images, calls, embeddings) are grouped under '_other'.
+  const modelLabelMap = new Map(MODEL_REGISTRY.map((m) => [m.id, { label: m.label, provider: m.provider }]))
+  const MODEL_KEY_SQL = Prisma.sql`COALESCE(NULLIF(units->>'model', ''), '_other')`
+
+  const [modelMonthRows, modelTodayRows, modelDailyRows] = await Promise.all([
+    prisma.$queryRaw<Array<{ model: string; provider: string; total: string }>>(
+      Prisma.sql`SELECT ${MODEL_KEY_SQL} AS model, ${EFFECTIVE_PROVIDER_SQL} AS provider, SUM(cost_usd)::text AS total
+                 FROM agent_cost_events
+                 WHERE occurred_at >= ${monthB.start} AND occurred_at < ${monthB.end}
+                 GROUP BY 1, 2
+                 ORDER BY SUM(cost_usd) DESC`,
+    ),
+    prisma.$queryRaw<Array<{ model: string; total: string }>>(
+      Prisma.sql`SELECT ${MODEL_KEY_SQL} AS model, SUM(cost_usd)::text AS total
+                 FROM agent_cost_events
+                 WHERE occurred_at >= ${todayBounds.start} AND occurred_at < ${todayBounds.end}
+                 GROUP BY 1`,
+    ),
+    prisma.$queryRaw<Array<{ day: string; model: string; total: string }>>(
+      Prisma.sql`SELECT to_char((occurred_at AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day,
+                        ${MODEL_KEY_SQL} AS model,
+                        SUM(cost_usd)::text AS total
+                 FROM agent_cost_events
+                 WHERE occurred_at >= NOW() - INTERVAL '30 days'
+                 GROUP BY 1, 2
+                 ORDER BY 1 ASC`,
+    ),
+  ])
+
+  const todayByModel = new Map<string, number>()
+  for (const r of modelTodayRows) todayByModel.set(r.model, parseFloat(r.total) || 0)
+
+  const byModel = modelMonthRows.map((r) => {
+    const meta = modelLabelMap.get(r.model)
+    return {
+      modelId: r.model,
+      label: meta?.label ?? (r.model === '_other' ? 'Other (TTS / image / calls)' : r.model),
+      provider: meta?.provider ?? r.provider,
+      monthUsd: parseFloat(r.total) || 0,
+      todayUsd: Math.round((todayByModel.get(r.model) ?? 0) * 1_000_000) / 1_000_000,
+    }
+  })
+
+  const modelDailyMap = new Map<string, Record<string, number>>()
+  for (const r of modelDailyRows) {
+    if (!modelDailyMap.has(r.day)) modelDailyMap.set(r.day, {})
+    const bucket = modelDailyMap.get(r.day)!
+    bucket[r.model] = parseFloat(r.total) || 0
+    bucket.total = (bucket.total ?? 0) + (parseFloat(r.total) || 0)
+  }
+  const modelDailyLast30 = [...modelDailyMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, models]) => ({ date, ...models }))
 
   const topConvRows = await prisma.$queryRaw<Array<{ conversation_id: string; total: string; title: string | null; source: string | null }>>(
     Prisma.sql`SELECT e.conversation_id,
@@ -370,6 +429,8 @@ export async function getCostDashboardData() {
     subscriptionAmortMonthUsd: Math.round(subMonthlyUsd * 1_000_000) / 1_000_000,
     dailyLast30,
     byProvider,
+    byModel,
+    modelDailyLast30,
     topConversations: topWebConversations,
     telegramTodayUsd: parseFloat(telegramTodayRow[0]?.total ?? '0') || 0,
     telegramMonthUsd: Math.round(telegramMonthUsd * 1_000_000) / 1_000_000,

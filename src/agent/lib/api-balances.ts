@@ -11,6 +11,7 @@ export type BalanceProviderId =
   | 'anthropic'
   | 'twilio'
   | 'openai'
+  | 'openrouter'
   | 'gemini'
   | 'google_tts'
   | 'meta_free'
@@ -55,6 +56,11 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   openai: 'openai',
   chatgpt: 'openai',
   gpt: 'openai',
+  openrouter: 'openrouter',
+  'open router': 'openrouter',
+  router: 'openrouter',
+  deepseek: 'openrouter',
+  qwen: 'openrouter',
   gemini: 'gemini',
   google_tts: 'google_tts',
   'google tts': 'google_tts',
@@ -72,6 +78,7 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   anthropic: { label: 'Anthropic', source: 'Auto+Input' },
   twilio: { label: 'Twilio', source: 'Live API' },
   openai: { label: 'OpenAI', source: 'Auto+Input' },
+  openrouter: { label: 'OpenRouter', source: 'Live API' },
   gemini: { label: 'Gemini', source: 'Input+Track' },
   google_tts: { label: 'Google TTS', source: 'Input+Track' },
   meta_free: { label: 'Meta/ntfy', source: '—', free: true },
@@ -81,7 +88,7 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
+  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -138,15 +145,29 @@ export async function setApiCredit(
   return credit
 }
 
+// Effective cost-provider for a row. Older OpenRouter chat turns were mislabeled
+// with provider='openai' (the cost column), but the model's true provider was
+// always recorded in units->>'provider' ('openrouter'). Remap from units when
+// present so historical OpenRouter (DeepSeek/Qwen) spend shows under OpenRouter,
+// while non-chat rows (no units.provider) keep their stored cost-provider column.
+// Note: units.provider stores the raw model provider ('google' → 'gemini' here).
+export const EFFECTIVE_PROVIDER_SQL = Prisma.sql`CASE
+  WHEN units->>'provider' = 'openrouter' THEN 'openrouter'
+  WHEN units->>'provider' = 'google' THEN 'gemini'
+  WHEN units->>'provider' = 'openai' THEN 'openai'
+  WHEN units->>'provider' = 'anthropic' THEN 'anthropic'
+  ELSE provider
+END`
+
 export async function querySpendByProviderBetween(
   start: Date,
   end: Date,
 ): Promise<Record<string, number>> {
   const rows = await prisma.$queryRaw<Array<{ provider: string; total: string }>>(
-    Prisma.sql`SELECT provider, COALESCE(SUM(cost_usd), 0)::text AS total
+    Prisma.sql`SELECT ${EFFECTIVE_PROVIDER_SQL} AS provider, COALESCE(SUM(cost_usd), 0)::text AS total
       FROM agent_cost_events
       WHERE occurred_at >= ${start} AND occurred_at < ${end}
-      GROUP BY provider`,
+      GROUP BY 1`,
   )
   return Object.fromEntries(rows.map((r) => [r.provider, parseFloat(r.total) || 0]))
 }
@@ -155,7 +176,7 @@ export async function querySpendSince(provider: string, since: Date): Promise<nu
   const rows = await prisma.$queryRaw<Array<{ total: string }>>(
     Prisma.sql`SELECT COALESCE(SUM(cost_usd), 0)::text AS total
       FROM agent_cost_events
-      WHERE provider = ${provider} AND occurred_at >= ${since}`,
+      WHERE ${EFFECTIVE_PROVIDER_SQL} = ${provider} AND occurred_at >= ${since}`,
   )
   return parseFloat(rows[0]?.total ?? '0') || 0
 }
@@ -231,6 +252,31 @@ async function fetchOpenAIMonthSpendUsd(monthStart: Date, monthEnd: Date): Promi
   }
 }
 
+/**
+ * OpenRouter live credit balance. GET /api/v1/credits returns total_credits
+ * (lifetime purchased/granted) and total_usage (lifetime spent); remaining
+ * balance = total_credits − total_usage. This is the real money left on the key,
+ * so we use it directly as the OpenRouter balance (no KV-credit fallback needed).
+ */
+async function fetchOpenRouterCreditsUsd(): Promise<number | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) return null
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/credits', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { data?: { total_credits?: number; total_usage?: number } }
+    const credits = data.data?.total_credits ?? 0
+    const usage = data.data?.total_usage ?? 0
+    return roundUsd(credits - usage)
+  } catch (err) {
+    console.warn('[api-balances] fetchOpenRouterCredits failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** ElevenLabs subscription — character quota remaining (Starter plan). */
 async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY
@@ -299,10 +345,11 @@ export async function refreshApiBalanceCache(): Promise<{
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, elevenLabsLive] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, elevenLabsLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(monthStart, monthEnd),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
+    fetchOpenRouterCreditsUsd(),
     fetchElevenLabsBalanceUsd(),
   ])
 
@@ -324,13 +371,18 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
     } else if (id === 'elevenlabs' && elevenLabsLive != null) {
       balanceUsd = elevenLabsLive
+    } else if (id === 'openrouter' && openRouterLive != null) {
+      balanceUsd = openRouterLive
     } else if (id === 'anthropic' && anthropicAdminMonth != null) {
       monthUsd = roundUsd(anthropicAdminMonth)
     } else if (id === 'openai' && openaiAdminMonth != null) {
       monthUsd = roundUsd(openaiAdminMonth)
     }
 
-    if (id !== 'twilio' && id !== 'elevenlabs' && credit) {
+    // OpenRouter balance is live from the credits API; fall back to KV-credit
+    // tracking only if the live call returned null (key unset / API down).
+    const openRouterLiveResolved = id === 'openrouter' && openRouterLive != null
+    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && credit) {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
       balanceUsd = roundUsd(credit.initialCredit - spent)
@@ -369,6 +421,8 @@ export async function refreshApiBalanceCache(): Promise<{
     creditFlags[id] = Boolean(await getApiBalanceCredit(id))
   }
   creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY || (await getApiBalanceCredit('elevenlabs')))
+  // OpenRouter low-balance alerting keys off the live credits API being available.
+  creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || (await getApiBalanceCredit('openrouter')))
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),

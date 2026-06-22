@@ -17,6 +17,8 @@ type DashboardData = {
   subscriptionAmortMonthUsd: number
   dailyLast30: Array<Record<string, number | string>>
   byProvider: Array<{ provider: string; totalUsd: number }>
+  byModel?: Array<{ modelId: string; label: string; provider: string; monthUsd: number; todayUsd: number }>
+  modelDailyLast30?: Array<Record<string, number | string>>
   topConversations: Array<{ conversationId: string; title: string | null; totalUsd: number }>
   telegramTodayUsd: number
   telegramMonthUsd: number
@@ -79,6 +81,7 @@ type BalanceData = {
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#E07A5F',
   openai: '#81B29A',
+  openrouter: '#A78BFA',
   gemini: '#3B82F6',
   google_tts: '#8B5CF6',
   twilio: '#D4A84B',
@@ -89,6 +92,7 @@ const PROVIDER_COLORS: Record<string, string> = {
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  openrouter: 'OpenRouter',
   gemini: 'Gemini',
   google_tts: 'Google TTS',
   twilio: 'Twilio',
@@ -96,6 +100,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   veo: 'VEO 3',
   oxylabs: 'Oxylabs',
 }
+
+// Stable color cycle for the per-model chart (model ids don't have fixed colors
+// like providers do; assign deterministically by index for visual consistency).
+const MODEL_CHART_COLORS = [
+  '#E07A5F', '#81B29A', '#A78BFA', '#3B82F6', '#D4A84B',
+  '#EC4899', '#0EA5E9', '#10B981', '#F59E0B', '#6366F1',
+  '#94a3b8',
+]
 
 function fmtUsd(n: number) {
   return `$${n.toFixed(n < 0.01 && n > 0 ? 4 : 2)}`
@@ -363,6 +375,7 @@ export default function AgentCostsDashboard() {
     date: String(d.date).slice(5),
     anthropic: Number(d.anthropic ?? 0),
     openai: Number(d.openai ?? 0),
+    openrouter: Number(d.openrouter ?? 0),
     gemini: Number(d.gemini ?? 0),
     google_tts: Number(d.google_tts ?? 0),
     elevenlabs: Number(d.elevenlabs ?? 0),
@@ -370,6 +383,19 @@ export default function AgentCostsDashboard() {
     twilio: Number(d.twilio ?? 0),
     total: Number(d.total ?? 0),
   }))
+
+  // Per-model month list (sorted desc) + the set of model ids that actually have
+  // spend, used to drive the stacked daily chart series.
+  const byModel = data?.byModel ?? []
+  const modelDaily = data?.modelDailyLast30 ?? []
+  const modelLabelById = new Map(byModel.map((m) => [m.modelId, m.label]))
+  const activeModelIds = byModel.map((m) => m.modelId)
+  const modelChartData = modelDaily.map((d) => {
+    const row: Record<string, number | string> = { date: String(d.date).slice(5) }
+    for (const id of activeModelIds) row[id] = Number(d[id] ?? 0)
+    row.total = Number(d.total ?? 0)
+    return row
+  })
 
   const pieData = (data?.byProvider ?? []).map((p) => ({
     name: PROVIDER_LABELS[p.provider] ?? p.provider,
@@ -658,6 +684,7 @@ export default function AgentCostsDashboard() {
                 />
                 <Bar dataKey="anthropic" stackId="a" fill={PROVIDER_COLORS.anthropic} radius={[0, 0, 0, 0]} />
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
+                <Bar dataKey="openrouter" stackId="a" fill={PROVIDER_COLORS.openrouter} />
                 <Bar dataKey="gemini" stackId="a" fill={PROVIDER_COLORS.gemini} />
                 <Bar dataKey="google_tts" stackId="a" fill={PROVIDER_COLORS.google_tts} />
                 <Bar dataKey="elevenlabs" stackId="a" fill={PROVIDER_COLORS.elevenlabs} />
@@ -692,6 +719,68 @@ export default function AgentCostsDashboard() {
           )}
         </div>
       </div>
+
+      {/* Per-model breakdown — every model, end-to-end: today + month totals, with
+          a 30-day stacked daily chart so the owner sees which model cost what, which day. */}
+      {byModel.length > 0 && (
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+          <p className="text-xs font-semibold text-[#E07A5F] mb-1">🤖 মডেল অনুযায়ী খরচ (প্রতিটি API key আলাদা)</p>
+          <p className="text-[10px] text-muted mb-3">কোন মডেল কত খরচ করল — আজ ও এই মাসে, এবং কোন দিন কত (নিচের চার্ট)</p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-left text-[11px]">
+              <thead>
+                <tr className="border-b border-border-subtle">
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">মডেল</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">প্রোভাইডার</th>
+                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F] text-right">আজ</th>
+                  <th className="py-2.5 font-medium text-[#E07A5F] text-right">এই মাসে</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byModel.map((m, idx) => (
+                  <tr key={m.modelId} className="border-b border-border-subtle last:border-0 hover:bg-white/[0.04] transition-colors">
+                    <td className="py-2.5 pr-3 text-cream">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: MODEL_CHART_COLORS[idx % MODEL_CHART_COLORS.length] }} />
+                        {m.label}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-3 text-muted">{PROVIDER_LABELS[m.provider] ?? m.provider}</td>
+                    <td className="py-2.5 pr-3 text-right text-muted tabular-nums">{fmtUsd(m.todayUsd)}</td>
+                    <td className="py-2.5 text-right text-[#E07A5F] font-medium tabular-nums">{fmtUsd(m.monthUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {modelChartData.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10px] text-muted mb-2">দৈনিক খরচ — মডেল অনুযায়ী (৩০ দিন)</p>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={modelChartData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={{ stroke: 'rgba(0,0,0,0.06)' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
+                  <Tooltip
+                    formatter={(v: number, name: string) => [fmtUsd(v), modelLabelById.get(name) ?? name]}
+                    contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid rgba(0,0,0,0.06)', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                    labelStyle={{ color: '#1a1a2e' }}
+                    itemStyle={{ color: '#64748b' }}
+                  />
+                  {activeModelIds.map((id, idx) => (
+                    <Bar
+                      key={id}
+                      dataKey={id}
+                      stackId="m"
+                      fill={MODEL_CHART_COLORS[idx % MODEL_CHART_COLORS.length]}
+                      radius={idx === activeModelIds.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Top conversations */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
