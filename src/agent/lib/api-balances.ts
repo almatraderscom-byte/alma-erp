@@ -542,9 +542,40 @@ export async function getApiBalances(opts?: { refresh?: boolean }): Promise<ApiB
     return cache
   }
   const cached = await readBalanceCache()
-  if (cached) return cached
+  if (cached) return overlayLiveLocalSpend(cached)
   const { cache } = await refreshApiBalanceCache()
   return cache
+}
+
+/**
+ * The expensive live-API balances (Anthropic admin cost, OpenRouter credits,
+ * Twilio, ElevenLabs) are cached and refreshed periodically. But each provider's
+ * "today / this month" spend is just a cheap local DB aggregate — so recompute it
+ * on every read and overlay it onto the cached snapshot. Without this the table
+ * shows a stale midnight snapshot (e.g. "today $0.00" all day until someone hits
+ * Refresh), even though spend is accruing. Live-API balances stay from cache.
+ */
+async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalanceCache> {
+  try {
+    const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+    const [todayByProvider, monthByProvider] = await Promise.all([
+      querySpendByProviderBetween(dayStart, dayEnd),
+      querySpendByProviderBetween(monthStart, monthEnd),
+    ])
+    const providers = cache.providers.map((row) => {
+      if (row.free) return row
+      const liveToday = roundUsd(todayByProvider[row.id] ?? 0)
+      const liveMonth = roundUsd(monthByProvider[row.id] ?? 0)
+      // Preserve any admin-API floor already baked into the cached month figure
+      // (e.g. Anthropic's authoritative month-to-date), but let local spend grow it.
+      const monthUsd = row.monthUsd != null ? roundUsd(Math.max(row.monthUsd, liveMonth)) : liveMonth
+      return { ...row, todayUsd: liveToday, monthUsd }
+    })
+    return { ...cache, providers }
+  } catch (err) {
+    console.warn('[api-balances] overlayLiveLocalSpend failed:', err instanceof Error ? err.message : err)
+    return cache
+  }
 }
 
 export async function wasLowBalanceAlerted(provider: string, dateStr: string): Promise<boolean> {
