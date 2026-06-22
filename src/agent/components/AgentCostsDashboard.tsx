@@ -78,6 +78,42 @@ type BalanceData = {
   summaryLine: string
 }
 
+type CostLogEvent = {
+  id: string
+  occurredAt: string
+  provider: string
+  model: string | null
+  kind: string
+  kindLabel: string
+  costUsd: number
+  inputTokens: number | null
+  outputTokens: number | null
+  conversationId: string | null
+  conversationTitle: string | null
+  source: string | null
+  snippet: string | null
+}
+
+type ConversationCostMessage = {
+  id: string
+  role: string
+  text: string
+  model: string | null
+  tokensIn: number | null
+  tokensOut: number | null
+  costUsd: number
+  createdAt: string
+}
+
+type ConversationCostDetail = {
+  conversationId: string
+  title: string | null
+  source: string | null
+  totalCostUsd: number
+  messageCount: number
+  messages: ConversationCostMessage[]
+}
+
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#E07A5F',
   openai: '#81B29A',
@@ -306,6 +342,10 @@ export default function AgentCostsDashboard() {
   const [budgetDaily, setBudgetDaily] = useState('')
   const [budgetMonthly, setBudgetMonthly] = useState('')
   const [savingBudget, setSavingBudget] = useState(false)
+  const [logs, setLogs] = useState<CostLogEvent[] | null>(null)
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [convDetail, setConvDetail] = useState<ConversationCostDetail | null>(null)
+  const [convLoading, setConvLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -349,7 +389,35 @@ export default function AgentCostsDashboard() {
     }
   }
 
-  useEffect(() => { void load() }, [load])
+  const loadLogs = useCallback(async () => {
+    setLogsLoading(true)
+    try {
+      const res = await fetch('/api/assistant/costs/logs?limit=100')
+      if (!res.ok) throw new Error('লগ লোড ব্যর্থ')
+      const json = await res.json() as { events: CostLogEvent[] }
+      setLogs(json.events ?? [])
+    } catch {
+      setLogs([])
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [])
+
+  async function openConversation(conversationId: string) {
+    setConvLoading(true)
+    setConvDetail({ conversationId, title: null, source: null, totalCostUsd: 0, messageCount: 0, messages: [] })
+    try {
+      const res = await fetch(`/api/assistant/costs/logs?conversationId=${encodeURIComponent(conversationId)}`)
+      if (!res.ok) throw new Error('চ্যাট লোড ব্যর্থ')
+      setConvDetail(await res.json() as ConversationCostDetail)
+    } catch {
+      setConvDetail(null)
+    } finally {
+      setConvLoading(false)
+    }
+  }
+
+  useEffect(() => { void load(); void loadLogs() }, [load, loadLogs])
 
   async function saveBudget() {
     setSavingBudget(true)
@@ -847,6 +915,77 @@ export default function AgentCostsDashboard() {
         </div>
       )}
 
+      {/* API খরচের লগ — every spend event across all APIs, newest first. Chat rows
+          are clickable → full per-message cost breakdown of that conversation. */}
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-[#E07A5F]">📋 API খরচের লগ (সব API)</p>
+          <button
+            onClick={() => void loadLogs()}
+            disabled={logsLoading}
+            className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-[10px] text-muted hover:text-cream hover:border-[#E07A5F]/30 disabled:opacity-50 transition-all"
+          >
+            {logsLoading ? 'লোড…' : '🔄 Refresh'}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted mb-3">প্রতিটি API কল — সময়, মডেল, কত টোকেন, কত খরচ। চ্যাট লাইনে ক্লিক করলে পুরো কথোপকথনের message-ভিত্তিক হিসাব দেখাবে।</p>
+        {!logs || logs.length === 0 ? (
+          <p className="py-6 text-center text-[11px] text-muted">{logsLoading ? 'লোড হচ্ছে…' : 'এখনো কোনো খরচ লগ নেই'}</p>
+        ) : (
+          <div className="max-h-[28rem] overflow-y-auto overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-[11px]">
+              <thead className="sticky top-0 bg-card">
+                <tr className="border-b border-border-subtle">
+                  <th className="py-2 pr-3 font-medium text-[#E07A5F]">সময়</th>
+                  <th className="py-2 pr-3 font-medium text-[#E07A5F]">Provider</th>
+                  <th className="py-2 pr-3 font-medium text-[#E07A5F]">মডেল / ধরন</th>
+                  <th className="py-2 pr-3 font-medium text-[#E07A5F]">কী হয়েছে</th>
+                  <th className="py-2 pr-3 font-medium text-[#E07A5F] text-right">টোকেন</th>
+                  <th className="py-2 font-medium text-[#E07A5F] text-right">খরচ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((ev) => {
+                  const clickable = Boolean(ev.conversationId)
+                  return (
+                    <tr
+                      key={ev.id}
+                      onClick={() => ev.conversationId && void openConversation(ev.conversationId)}
+                      className={cn(
+                        'border-b border-border-subtle last:border-0 transition-colors',
+                        clickable ? 'cursor-pointer hover:bg-white/[0.05]' : 'hover:bg-white/[0.02]',
+                      )}
+                    >
+                      <td className="py-2 pr-3 text-muted whitespace-nowrap">{fmtCheckedAt(ev.occurredAt)}</td>
+                      <td className="py-2 pr-3">
+                        <span className="inline-flex items-center gap-1.5 text-cream">
+                          <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: PROVIDER_COLORS[ev.provider] ?? '#94a3b8' }} />
+                          {PROVIDER_LABELS[ev.provider] ?? ev.provider}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-muted">
+                        {ev.model ?? ev.kindLabel}
+                        {ev.source === 'telegram' && <span className="ml-1.5 text-[9px]">📱</span>}
+                        {ev.source === 'web' && <span className="ml-1.5 text-[9px]">🌐</span>}
+                      </td>
+                      <td className="py-2 pr-3 text-muted max-w-[220px] truncate">
+                        {ev.snippet ?? <span className="opacity-60">{ev.kindLabel}</span>}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-muted tabular-nums whitespace-nowrap">
+                        {ev.inputTokens != null || ev.outputTokens != null
+                          ? `${(ev.inputTokens ?? 0).toLocaleString()}→${(ev.outputTokens ?? 0).toLocaleString()}`
+                          : '—'}
+                      </td>
+                      <td className="py-2 text-right font-medium text-[#E07A5F] tabular-nums whitespace-nowrap">{fmtUsd(ev.costUsd)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Subscriptions */}
       <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
         <p className="text-xs font-semibold text-muted mb-3">সাবস্ক্রিপশন</p>
@@ -876,6 +1015,77 @@ export default function AgentCostsDashboard() {
           </ul>
         )}
       </div>
+
+      {/* Conversation cost detail — full chat with per-message cost. */}
+      {convDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+          onClick={() => setConvDetail(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[85dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border-subtle bg-card shadow-xl sm:rounded-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-border-subtle p-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-cream">
+                  {convDetail.source === 'telegram' ? '📱 ' : '🌐 '}
+                  {convDetail.title ?? 'কথোপকথন'}
+                </p>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  {convDetail.messageCount} message · মোট <span className="font-semibold text-[#E07A5F]">{fmtUsd(convDetail.totalCostUsd)}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setConvDetail(null)}
+                className="shrink-0 rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-xs text-muted hover:text-cream transition-all"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+              {convLoading ? (
+                <p className="py-8 text-center text-[11px] text-muted">লোড হচ্ছে…</p>
+              ) : convDetail.messages.length === 0 ? (
+                <p className="py-8 text-center text-[11px] text-muted">কোনো message নেই</p>
+              ) : (
+                convDetail.messages.map((m) => {
+                  const isUser = m.role === 'user'
+                  return (
+                    <div
+                      key={m.id}
+                      className={cn(
+                        'rounded-xl border px-3 py-2.5',
+                        isUser
+                          ? 'border-border-subtle bg-transparent'
+                          : 'border-[#E07A5F]/20 bg-[#E07A5F]/[0.04]',
+                      )}
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                          {isUser ? '👤 Owner' : `🤖 ${m.model ?? 'Assistant'}`}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2 text-[10px] text-muted tabular-nums">
+                          {(m.tokensIn != null || m.tokensOut != null) && (
+                            <span>{(m.tokensIn ?? 0).toLocaleString()}→{(m.tokensOut ?? 0).toLocaleString()} tok</span>
+                          )}
+                          {m.costUsd > 0 && <span className="font-medium text-[#E07A5F]">{fmtUsd(m.costUsd)}</span>}
+                        </span>
+                      </div>
+                      <p className="whitespace-pre-wrap break-words text-xs text-cream/90">
+                        {m.text || <span className="opacity-50">—</span>}
+                      </p>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }
