@@ -33,6 +33,11 @@ export type BalanceProviderRow = {
   monthUsd: number | null
   source: string
   free?: boolean
+  // Latest day the provider's billing API has published data for (YYYY-MM-DD,
+  // Anthropic only). The Admin cost API lags ~1–2 days, so monthUsd is accurate
+  // only up to this date; the UI shows it as a "sync: <date>" note + a deep link
+  // to the platform for the not-yet-synced most-recent days.
+  syncedThrough?: string | null
 }
 
 export type ApiBalanceCache = {
@@ -217,7 +222,9 @@ async function fetchTwilioBalance(): Promise<number | null> {
  *
  * Returns USD (the API reports `amount` as a decimal string of cents).
  */
-async function fetchAnthropicMonthSpendUsd(todayStr: string): Promise<number | null> {
+async function fetchAnthropicMonthSpendUsd(
+  todayStr: string,
+): Promise<{ usd: number; syncedThrough: string | null } | null> {
   const adminKey = process.env.ANTHROPIC_ADMIN_API_KEY
   if (!adminKey) return null
   try {
@@ -226,6 +233,7 @@ async function fetchAnthropicMonthSpendUsd(todayStr: string): Promise<number | n
     let page: string | null = null
     let cents = 0
     let bucketCount = 0
+    let syncedThrough: string | null = null   // latest UTC day the API has data for
 
     for (let i = 0; i < 12; i++) {
       const url = new URL('https://api.anthropic.com/v1/organizations/cost_report')
@@ -242,12 +250,16 @@ async function fetchAnthropicMonthSpendUsd(todayStr: string): Promise<number | n
         return null
       }
       const data = await res.json() as {
-        data?: Array<{ results?: Array<{ amount?: string | number }> }>
+        data?: Array<{ starting_at?: string; results?: Array<{ amount?: string | number }> }>
         has_more?: boolean
         next_page?: string | null
       }
       for (const bucket of data.data ?? []) {
         bucketCount++
+        // The API returns a contiguous daily range up to its processing horizon,
+        // so the max bucket date IS the latest day with published data.
+        const day = bucket.starting_at?.slice(0, 10) ?? null
+        if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
         for (const row of bucket.results ?? []) {
           const amt = typeof row.amount === 'number' ? row.amount : parseFloat(row.amount ?? '0')
           cents += Number.isFinite(amt) ? amt : 0
@@ -260,7 +272,7 @@ async function fetchAnthropicMonthSpendUsd(todayStr: string): Promise<number | n
     // Empty response (e.g. individual account / misalignment) → "unavailable",
     // so the caller falls back to tracked spend rather than showing $0.00.
     if (bucketCount === 0) return null
-    return cents / 100
+    return { usd: cents / 100, syncedThrough }
   } catch (err) {
     console.warn('[api-balances] fetchAnthropicMonthSpend failed:', err instanceof Error ? err.message : err)
     return null
@@ -401,6 +413,7 @@ export async function refreshApiBalanceCache(): Promise<{
     const todayUsd = roundUsd(todayByProvider[id] ?? 0)
     let monthUsd = roundUsd(monthByProvider[id] ?? 0)
     let balanceUsd: number | null = null
+    let syncedThrough: string | null = null
 
     if (id === 'twilio') {
       balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
@@ -410,8 +423,10 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceUsd = openRouterLive
     } else if (id === 'anthropic' && anthropicAdminMonth != null) {
       // Floor the live figure at locally tracked spend so a stale/partial admin
-      // report can never display LESS than what we know we spent.
-      monthUsd = roundUsd(Math.max(anthropicAdminMonth, monthUsd))
+      // report can never display LESS than what we know we spent. The admin API
+      // lags ~1–2 days; syncedThrough tells the UI which day the figure is current to.
+      monthUsd = roundUsd(Math.max(anthropicAdminMonth.usd, monthUsd))
+      syncedThrough = anthropicAdminMonth.syncedThrough
     } else if (id === 'openai' && openaiAdminMonth != null) {
       monthUsd = roundUsd(Math.max(openaiAdminMonth, monthUsd))
     }
@@ -432,6 +447,7 @@ export async function refreshApiBalanceCache(): Promise<{
       todayUsd,
       monthUsd,
       source: meta.source,
+      syncedThrough,
     })
   }
 

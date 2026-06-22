@@ -70,6 +70,7 @@ type BalanceProviderRow = {
   monthUsd: number | null
   source: string
   free?: boolean
+  syncedThrough?: string | null
 }
 
 type BalanceData = {
@@ -210,6 +211,23 @@ function fmtSpendCell(n: number | null, providerId?: string) {
   if (n == null) return '—'
   if (providerId === 'oxylabs') return `${Math.round(n)} ক্রেডিট`
   return fmtUsd(n)
+}
+
+// Anthropic's billing platform — deep link to the live Cost page so the owner
+// can see the not-yet-synced most-recent ~2 days the Admin API hasn't published.
+const ANTHROPIC_COST_URL = 'https://platform.claude.com/workspaces/default/cost'
+
+// "2026-06-21" → "২১ জুন" (Bangla short date) for the sync note.
+function fmtSyncDate(ymd: string): string {
+  try {
+    return new Date(`${ymd}T00:00:00Z`).toLocaleDateString('bn-BD', {
+      timeZone: 'UTC',
+      day: 'numeric',
+      month: 'short',
+    })
+  } catch {
+    return ymd
+  }
 }
 
 function fmtCheckedAt(iso: string) {
@@ -676,7 +694,24 @@ export default function AgentCostsDashboard() {
                       )}
                     </td>
                     <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.todayUsd, row.id)}</td>
-                    <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.monthUsd, row.id)}</td>
+                    <td className="py-2.5 pr-3 text-muted">
+                      {fmtSpendCell(row.monthUsd, row.id)}
+                      {row.syncedThrough && (
+                        <span className="mt-0.5 flex flex-col gap-0.5">
+                          <span className="text-[9px] leading-tight text-amber-600/90">
+                            ⏳ {fmtSyncDate(row.syncedThrough)} পর্যন্ত sync (API ~২ দিন পিছিয়ে)
+                          </span>
+                          <a
+                            href={ANTHROPIC_COST_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex w-fit items-center gap-0.5 text-[9px] font-medium text-[#E07A5F] hover:underline"
+                          >
+                            শেষ ২ দিন platform-এ দেখুন →
+                          </a>
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2.5 pr-3 text-muted">{row.source}</td>
                     <td className="py-2.5 text-right">
                       {row.free ? (
