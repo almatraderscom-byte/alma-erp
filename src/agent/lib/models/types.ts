@@ -11,6 +11,7 @@ export type NeutralMsg =
 
 export type TurnEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; text: string }
   | { type: 'tool_start'; id: string; name: string }
   | { type: 'tool_input'; id: string; input: Record<string, unknown> }
   | {

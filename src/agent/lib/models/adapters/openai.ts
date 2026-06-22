@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type {
+  ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions'
@@ -71,10 +72,22 @@ function toOpenAiTools(tools: NeutralTool[]): ChatCompletionTool[] {
 export class OpenAiAdapter implements ProviderAdapter {
   private client: OpenAI
   private cachePrefix: boolean
+  private streamReasoning: boolean
 
   constructor(
     apiKey: string,
-    opts?: { baseURL?: string; defaultHeaders?: Record<string, string>; cachePrefix?: boolean },
+    opts?: {
+      baseURL?: string
+      defaultHeaders?: Record<string, string>
+      cachePrefix?: boolean
+      /**
+       * Ask the provider to stream its reasoning/thinking tokens (OpenRouter
+       * `reasoning`). Surfaced as `thinking_delta` so the UI shows a live
+       * "Thought for Ns" block for DeepSeek/Qwen, just like Claude's extended
+       * thinking. Owner can disable via STREAM_OPENROUTER_REASONING=false.
+       */
+      reasoning?: boolean
+    },
   ) {
     this.client = new OpenAI({
       apiKey,
@@ -84,6 +97,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // Enable system-prompt caching breakpoints (OpenRouter). Owner can disable via
     // ENABLE_OPENROUTER_CACHE=false if a provider ever rejects the extension field.
     this.cachePrefix = (opts?.cachePrefix ?? false) && process.env.ENABLE_OPENROUTER_CACHE !== 'false'
+    this.streamReasoning = (opts?.reasoning ?? false) && process.env.STREAM_OPENROUTER_REASONING !== 'false'
   }
 
   async *streamTurn(args: {
@@ -94,13 +108,21 @@ export class OpenAiAdapter implements ProviderAdapter {
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
   }): AsyncGenerator<TurnEvent> {
+    // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
+    // asks reasoning-capable models (DeepSeek-reasoner, Qwen-thinking) to stream
+    // their thinking tokens in `delta.reasoning`. Cast through unknown; providers
+    // that don't support it ignore the field safely.
+    const reasoningParam = this.streamReasoning ? { reasoning: { enabled: true } } : {}
+    // Cast to the streaming params type so the `reasoning` extension is accepted
+    // and the create() overload still resolves to a Stream (not a single reply).
     const stream = await this.client.chat.completions.create({
       model: args.apiModel,
       messages: toOpenAiMessages(args.system, args.messages, this.cachePrefix),
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true,
       stream_options: { include_usage: true },
-    })
+      ...reasoningParam,
+    } as ChatCompletionCreateParamsStreaming)
 
     const toolBuffers = new Map<number, { id: string; name: string; args: string }>()
 
@@ -109,6 +131,18 @@ export class OpenAiAdapter implements ProviderAdapter {
 
       const choice = chunk.choices[0]
       const delta = choice?.delta
+
+      // Reasoning/thinking tokens. OpenRouter streams them in `delta.reasoning`;
+      // some upstream providers (DeepSeek native) use `reasoning_content`. Surface
+      // either as a thinking_delta so the UI shows a live "Thought for Ns" block
+      // for DeepSeek/Qwen, exactly like Claude's extended thinking.
+      const reasoningDelta = delta as
+        | { reasoning?: string | null; reasoning_content?: string | null }
+        | undefined
+      const reasoningText = reasoningDelta?.reasoning ?? reasoningDelta?.reasoning_content
+      if (reasoningText) {
+        yield { type: 'thinking_delta', text: reasoningText }
+      }
 
       if (delta?.content) {
         yield { type: 'text_delta', text: delta.content }
