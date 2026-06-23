@@ -150,9 +150,7 @@ export async function deliverAgentTurn(jobData) {
     conversationId,
     personalMode = false,
     replyToText,
-    wantsVoice = false,
     voiceProfile = 'male',
-    useElevenLabs = false,
   } = jobData
 
   const bot = getDispatcherBot()
@@ -183,17 +181,9 @@ export async function deliverAgentTurn(jobData) {
       )
     }
 
-    if (wantsVoice && (process.env.GOOGLE_TTS_CREDENTIALS || (useElevenLabs && isElevenLabsAvailable()))) {
-      try {
-        await sendVoiceMessage(bot.telegram, chatId, replyText, {
-          useOwnerVoice: !useElevenLabs,
-          useElevenLabs: Boolean(useElevenLabs),
-          voiceProfile,
-        })
-      } catch (ttsErr) {
-        console.warn('[telegram] TTS voice reply failed:', ttsErr.message)
-      }
-    }
+    // The agent's full text reply is NOT voiced (owner: don't read the whole reply
+    // aloud). The only interactive voice is a CALL DRAFT — handled in the confirm-card
+    // loop below, where we play back ONLY the exact words the owner dictated.
 
     const miniCtx = {
       telegram: bot.telegram,
@@ -202,19 +192,42 @@ export async function deliverAgentTurn(jobData) {
     }
 
     const supabase = createSupabase()
+    let callDraftPayload = null
     for (const card of result.pendingCards ?? []) {
       const { data: row } = await supabase
         .from('agent_pending_actions')
-        .select('status, summary')
+        .select('status, summary, type, payload')
         .eq('id', card.pendingActionId)
         .maybeSingle()
       if (row?.status !== 'pending') continue
+      // An outbound-call draft → remember its dictated message so we can voice ONLY
+      // that (not the agent's reply) as a confirmable preview below.
+      if (row.type === 'outbound_call' && row.payload?.message) callDraftPayload = row.payload
       const summary = card.summary || row.summary || ''
       if (!summary.trim()) continue
       const keyboard = await buildConfirmCardKeyboard(card)
       await replyMarkdownSafe(miniCtx, `📋 *অনুমোদন প্রয়োজন*\n${summary}`, {
         reply_markup: { inline_keyboard: keyboard },
       })
+    }
+
+    // Call draft preview: voice ONLY the exact words the owner asked to be spoken on
+    // the call, using the call's own TTS settings — so he can hear and confirm before
+    // tapping Approve. This is the ONLY voice the agent sends in interactive chat.
+    if (callDraftPayload?.message && (process.env.GOOGLE_TTS_CREDENTIALS || isElevenLabsAvailable())) {
+      const useEl = callDraftPayload.ttsProvider === 'elevenlabs'
+      try {
+        await sendVoiceMessage(bot.telegram, chatId, String(callDraftPayload.message), {
+          useOwnerVoice: !useEl,
+          useElevenLabs: useEl && isElevenLabsAvailable(),
+          voiceProfile:
+            callDraftPayload.voiceGender === 'female' ? 'female'
+            : callDraftPayload.voiceGender === 'male' ? 'male'
+            : voiceProfile,
+        })
+      } catch (ttsErr) {
+        console.warn('[telegram] call draft voice failed:', ttsErr.message)
+      }
     }
 
     const { sendAskCardTelegram } = await import('./quick-commands.mjs')
