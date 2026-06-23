@@ -52,7 +52,7 @@ async function getStaffReality(): Promise<string> {
         COUNT(t.id) FILTER (WHERE t.status IN ('redo', 'redo_requested')) as redo_count,
         COUNT(t.id) as total
       FROM agent_staff s
-      LEFT JOIN agent_staff_tasks t ON t.staff_id = s.id AND t.created_at > NOW() - INTERVAL '30 days'
+      LEFT JOIN staff_tasks t ON t.staff_id = s.id AND t.created_at > NOW() - INTERVAL '30 days'
       WHERE s.active = true AND s.business_id = 'ALMA_LIFESTYLE'
       GROUP BY s.display_name, s.role
     `).catch(() => [])
@@ -83,7 +83,7 @@ async function getRecentTaskPerformance(): Promise<string> {
     const tasks: Array<{ type: string; status: string; cnt: bigint | number }> =
       await db.$queryRawUnsafe(`
         SELECT type, status, COUNT(*) as cnt
-        FROM agent_staff_tasks
+        FROM staff_tasks
         WHERE created_at >= $1
         GROUP BY type, status
         ORDER BY cnt DESC
@@ -119,7 +119,7 @@ async function getRecentApprovalPatterns(): Promise<string> {
                COUNT(*) FILTER (WHERE status = 'rejected') as rejected,
                COUNT(*) as total
         FROM agent_pending_actions
-        WHERE created_at > NOW() - INTERVAL '14 days'
+        WHERE "createdAt" > NOW() - INTERVAL '14 days'
       `).catch(() => [{ approved: 0, rejected: 0, total: 0 }])
 
     const r = rows[0] ?? { approved: 0, rejected: 0, total: 0 }
