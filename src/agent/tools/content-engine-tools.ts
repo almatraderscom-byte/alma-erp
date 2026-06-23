@@ -5,6 +5,7 @@ import {
   setContentEngineEnabled,
 } from '@/lib/content-engine/config'
 import type { ContentVariant } from '@/lib/content-engine/generate-variants'
+import { agentStorageSignedUrl, agentStorageSignedUrls } from '@/agent/lib/storage'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +73,138 @@ const list_product_assets: AgentTool = {
       take: 30,
     })
     return { success: true, data: { products: rows } }
+  },
+}
+
+const list_creative_studio_assets: AgentTool = {
+  name: 'list_creative_studio_assets',
+  description:
+    "View the owner's Creative Studio visual library: AI-generated product/model images & videos (the gallery), saved brand MODELS (the people used for try-on shoots), the flat product photo library, and the brand logo. " +
+    'Returns fetchable signed image URLs (valid ~1 hour) you can open directly or hand to a design tool (e.g. Canva upload-asset-from-url). Read-only. ' +
+    'Use `kind` to narrow: gallery | models | products | logo | all.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      kind: {
+        type: 'string',
+        enum: ['gallery', 'models', 'products', 'logo', 'all'],
+        description: 'Which slice to return (default all)',
+      },
+      limit: { type: 'number', description: 'Max generated-gallery items (default 20, max 50)' },
+    },
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: async (input: any) => {
+    try {
+      const kind = ['gallery', 'models', 'products', 'logo', 'all'].includes(String(input.kind))
+        ? String(input.kind)
+        : 'all'
+      const limit = Math.min(50, Math.max(1, Number(input.limit) || 20))
+      const want = (k: string) => kind === 'all' || kind === k
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out: Record<string, any> = {}
+
+      // 1) AI-generated gallery — agent_pending_actions (image_gen/video_gen, creativeStudio).
+      if (want('gallery')) {
+        const rows = await db.agentPendingAction.findMany({
+          where: { type: { in: ['image_gen', 'video_gen'] }, status: 'completed' },
+          orderBy: { createdAt: 'desc' },
+          take: limit + 40,
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const studio = rows.filter((r: any) => (r.payload as any)?.creativeStudio === true).slice(0, limit)
+        const paths = new Set<string>()
+        for (const r of studio) {
+          const res = (r.result ?? {}) as Record<string, string | undefined>
+          for (const p of [res.brandedPath, res.storagePath, res.videoPath, res.thumbPath]) if (p) paths.add(p)
+        }
+        let signed: Record<string, string> = {}
+        try {
+          signed = await agentStorageSignedUrls(Array.from(paths), 3600)
+        } catch {
+          signed = {}
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        out.gallery = studio.map((r: any) => {
+          const res = (r.result ?? {}) as Record<string, string | undefined>
+          const main = res.brandedPath ?? res.storagePath ?? res.videoPath ?? undefined
+          return {
+            id: r.id,
+            summary: r.summary,
+            mode: (r.payload as Record<string, unknown>)?.studioMode ?? r.type,
+            createdAt: r.createdAt,
+            imageUrl: main ? signed[main] ?? null : null,
+            thumbUrl: res.thumbPath ? signed[res.thumbPath] ?? null : null,
+          }
+        })
+      }
+
+      // 2) Brand models (the people). Query the table directly — getModelLibrary() runs a
+      // one-time KV→DB migration WRITE on first call, which a read-only tool must not trigger.
+      if (want('models')) {
+        const models = await db.agentBrandModel.findMany({ orderBy: { createdAt: 'asc' } })
+        const signed = await agentStorageSignedUrls(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          models.map((m: any) => m.imagePath).filter(Boolean),
+          3600,
+        ).catch(() => ({}) as Record<string, string>)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        out.models = models.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          role: m.role ?? null,
+          isDefault: m.isDefault,
+          imageUrl: m.imagePath ? signed[m.imagePath] ?? null : null,
+        }))
+      }
+
+      // 3) Flat product photo library — product_content_asset.
+      if (want('products')) {
+        const prods = await db.productContentAsset.findMany({
+          orderBy: [{ lastPostedAt: 'asc' }, { createdAt: 'asc' }],
+          take: 50,
+        })
+        const signed = await agentStorageSignedUrls(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          prods.map((p: any) => p.imagePath).filter(Boolean),
+          3600,
+        ).catch(() => ({}) as Record<string, string>)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        out.products = prods.map((p: any) => ({
+          productCode: p.productCode,
+          name: p.name,
+          category: p.category,
+          fabric: p.fabric,
+          familyMatch: p.familyMatch,
+          imageUrl: p.imagePath ? signed[p.imagePath] ?? null : null,
+        }))
+      }
+
+      // 4) Brand logo — brand_asset (prefer transparent).
+      if (want('logo')) {
+        let logoUrl: string | null = null
+        let hasLogo = false
+        for (const kindKey of ['logo_transparent', 'logo']) {
+          const row = await db.brandAsset.findUnique({ where: { kind: kindKey } }).catch(() => null)
+          if (row?.path) {
+            hasLogo = true
+            logoUrl = await agentStorageSignedUrl(row.path, 3600).catch(() => null)
+            if (logoUrl) break
+          }
+        }
+        out.logo = { hasLogo, logoUrl }
+      }
+
+      out.counts = {
+        gallery: Array.isArray(out.gallery) ? out.gallery.length : undefined,
+        models: Array.isArray(out.models) ? out.models.length : undefined,
+        products: Array.isArray(out.products) ? out.products.length : undefined,
+      }
+      out.note = 'Image URLs are signed and valid ~1 hour — fetch directly or hand to Canva upload-asset-from-url.'
+      return { success: true, data: out }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
   },
 }
 
@@ -188,6 +321,7 @@ const get_content_engine_status: AgentTool = {
 export const CONTENT_ENGINE_TOOLS: AgentTool[] = [
   add_product_asset,
   list_product_assets,
+  list_creative_studio_assets,
   run_content_post,
   pause_content_engine,
   resume_content_engine,
