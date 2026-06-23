@@ -667,7 +667,11 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         .slice(0, 30)
         .map((m) => `[${m.scope}] ${m.content}`)
         .join('\n')
-      stableParts.push(`\n## স্থায়ী ব্যক্তিগত তথ্য (Pinned)\n${pinned}`)
+      // VOLATILE, not stable: pinned memory rows change as the owner pins/unpins
+      // and `loadPinnedMemories` orders by createdAt desc — any change rewrites a
+      // cached stable block (expensive cache-WRITE). Injected into the per-turn
+      // volatile block, the big static prefix stays byte-stable and caches once.
+      volatileParts.push(`\n## স্থায়ী ব্যক্তিগত তথ্য (Pinned)\n${pinned}`)
     }
     if (relevantMemories && relevantMemories.length > 0) {
       const relevant = relevantMemories
@@ -707,14 +711,16 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     }
 
     if (activePlaybook && activePlaybook.length > 0) {
-      // NOTE: deliberately omit the per-turn `timesApplied` count. It lives in
-      // the cached stable block; rendering a number that bumps after every tool
-      // call would change this block's bytes each turn and bust the prompt cache
-      // (the expensive cache-WRITE we're trying to avoid). The count is cosmetic.
+      // VOLATILE, not stable. `getActivePlaybook` orders by `confidence desc` and
+      // `bumpPlaybookForTool` mutates confidence/timesApplied after tool calls, so
+      // the rendered list (and its order) shifts between turns. Keeping it in the
+      // cached stable block rewrote the whole prefix every turn (the expensive
+      // cache-WRITE this fix targets). Injected into the per-turn volatile block
+      // instead, the big static prefix stays byte-stable and caches once.
       const playbookLines = activePlaybook
         .map((h) => `- [${h.domain}] ${h.heuristic}`)
         .join('\n')
-      stableParts.push(
+      volatileParts.push(
         `\n## Learned rules (playbook)\n` +
           `What I've learned about this business, kept in mind when deciding (correlation, not causation):\n` +
           playbookLines +
@@ -762,7 +768,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         .slice(0, 30)
         .map((m) => `[${m.scope}] ${m.content}`)
         .join('\n')
-      stableParts.push(`\n## স্থায়ী গুরুত্বপূর্ণ তথ্য (Pinned)\n${pinned}`)
+      // VOLATILE, not stable — see the personal-branch note above. Pinned rows
+      // change with the owner's pins and are ordered by createdAt desc, so any
+      // change would rewrite the cached stable prefix. Keep the prefix byte-stable.
+      volatileParts.push(`\n## স্থায়ী গুরুত্বপূর্ণ তথ্য (Pinned)\n${pinned}`)
     }
 
     if (salahStatusTurn) {
