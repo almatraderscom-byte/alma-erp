@@ -23,7 +23,7 @@ function createSupabase() {
   )
 }
 
-export async function callAgentApi(userMessage, conversationId, { personalMode = false } = {}) {
+export async function callAgentApi(userMessage, conversationId, { personalMode = false, replyToText } = {}) {
   const res = await fetch(`${getAppUrl()}/api/assistant/chat?stream=false`, {
     method: 'POST',
     headers: {
@@ -35,6 +35,7 @@ export async function callAgentApi(userMessage, conversationId, { personalMode =
       message: userMessage,
       conversationId: conversationId ?? undefined,
       personalMode: personalMode || undefined,
+      replyToText: replyToText || undefined,
       source: 'telegram',
     }),
     signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
@@ -148,6 +149,7 @@ export async function deliverAgentTurn(jobData) {
     text,
     conversationId,
     personalMode = false,
+    replyToText,
     wantsVoice = false,
     voiceProfile = 'male',
     useElevenLabs = false,
@@ -166,7 +168,7 @@ export async function deliverAgentTurn(jobData) {
     }, 4000)
     await bot.telegram.sendChatAction(chatId, 'typing')
 
-    const result = await callAgentApi(text, conversationId, { personalMode })
+    const result = await callAgentApi(text, conversationId, { personalMode, replyToText })
 
     if (result.conversationId) {
       if (personalMode) ownerState.personalConversationId = result.conversationId

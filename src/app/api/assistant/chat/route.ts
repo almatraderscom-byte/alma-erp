@@ -50,6 +50,14 @@ interface ChatBody {
    * either on the premium model (approve) or on the cheap fallback (decline).
    */
   resume?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }
+  /**
+   * Telegram reply-threading: the verbatim text of the message the owner tapped
+   * "reply" on. When notifications interleave in the Telegram chat, the owner's
+   * reply could be aimed at an older card/notification; this carries that anchor
+   * so the agent binds to the right topic instead of the latest one. Set only by
+   * the VPS worker (internal call). Injected as quoted context into the user turn.
+   */
+  replyToText?: string
 }
 
 function isAgentDbError(err: unknown): boolean {
@@ -114,6 +122,13 @@ export async function POST(req: NextRequest) {
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!message && !resume) return Response.json({ error: 'message_required' }, { status: 400 })
+
+  // Telegram reply-threading anchor (internal/worker calls only). Capped to keep
+  // the quoted context small; injected into the stored user turn below so the
+  // agent re-anchors to the replied-to topic rather than the most recent one.
+  const replyToText = isInternalCall && typeof body.replyToText === 'string'
+    ? body.replyToText.trim().slice(0, 500)
+    : ''
 
   // Master pause — owner stopped the agent from the Control Center. Applies to
   // web + Telegram. Fail-open inside isAgentPaused() so a storage glitch can't
@@ -280,7 +295,16 @@ export async function POST(req: NextRequest) {
                 .join('\n'),
             }]
           : []),
-        { type: 'text', text: message },
+        // Reply-threading anchor: prepend the replied-to message as quoted context so
+        // the agent answers the right (possibly older) topic when notifications
+        // interleave. Kept on the stored content (not the title) so history + recall
+        // both carry the anchor; the conversation title above stays clean.
+        {
+          type: 'text',
+          text: replyToText
+            ? `[স্যার আপনার আগের এই মেসেজের রিপ্লাই দিয়ে লিখছেন — এই প্রসঙ্গেই উত্তর দিন:\n"${replyToText}"]\n\n${message}`
+            : message,
+        },
       ]
 
       const savedUserMsg = await prisma.agentMessage.create({

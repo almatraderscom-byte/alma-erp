@@ -186,6 +186,19 @@ async function handleOwnerText(ctx, text) {
   let convId = personalMode ? ownerState.personalConversationId : ownerState.conversationId
   // Per-conversation tracking: let chat route create a new conversation when none active
 
+  // Reply-threading: when notifications interleave, the owner may tap-reply on a
+  // specific (possibly older) card/notification. Telegram delivers the full text of
+  // the replied-to message right here on the inbound update, so we forward it as
+  // quoted context. This is stateless — no message-id map to drift or lose on
+  // restart — and re-anchors the agent to the right topic instead of the latest one.
+  const repliedTo = ctx.message?.reply_to_message
+  const replyToText =
+    typeof repliedTo?.text === 'string'
+      ? repliedTo.text
+      : typeof repliedTo?.caption === 'string'
+        ? repliedTo.caption
+        : ''
+
   await ctx.reply('⏳ ভাবছি স্যার...')
   const { enqueueAgentTurn } = await import('./agent-turn.mjs')
   const voiceIntent = parseOwnerVoiceIntent(text)
@@ -194,6 +207,7 @@ async function handleOwnerText(ctx, text) {
     text,
     conversationId: convId,
     personalMode,
+    replyToText: replyToText ? replyToText.slice(0, 500) : undefined,
     wantsVoice: voiceIntent.wantsVoice,
     voiceProfile: voiceIntent.voiceProfile,
     useElevenLabs: voiceIntent.useElevenLabs,
