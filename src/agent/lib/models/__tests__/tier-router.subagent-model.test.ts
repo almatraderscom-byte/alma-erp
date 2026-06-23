@@ -3,10 +3,12 @@
  *
  * Owner rule after the $0.35 incident: when a head delegates a discrete sub-task,
  * the WORKER should be DeepSeek (the cheapest tool-capable model) — never Qwen.
- * The non-critical specialist roles (researcher / marketer / content / cs) now
- * carry preferredModelId='or-deepseek-v4-flash', and resolveSubagentModel honors
- * it while the router experiment is on. Critical roles (analyst / ops) ignore the
- * preference and stay hard-locked to Claude.
+ * The non-critical specialist roles (researcher / marketer / content / cs / ops)
+ * now carry preferredModelId='or-deepseek-v4-flash', and resolveSubagentModel
+ * honors it while the router experiment is on. `ops` (staff dispatch/coordination)
+ * was intentionally moved OUT of critical per owner decision — staff handling is a
+ * small job, so it runs on DeepSeek too. Only `analyst` (finance / data analysis)
+ * stays hard-locked to Claude.
  *
  * prisma is mocked (KV empty) so routing falls back to ROUTING_DEFAULTS, offline.
  */
@@ -30,7 +32,7 @@ describe('resolveSubagentModel — Rule 2 DeepSeek workers', () => {
     delete process.env.DELEGATION_APPROVAL
   })
 
-  it.each(['researcher', 'marketer', 'content', 'cs'] as const)(
+  it.each(['researcher', 'marketer', 'content', 'cs', 'ops'] as const)(
     'routes non-critical role "%s" to DeepSeek',
     async (role) => {
       const { tier, model } = await resolveSubagentModel(role)
@@ -39,7 +41,7 @@ describe('resolveSubagentModel — Rule 2 DeepSeek workers', () => {
     },
   )
 
-  it.each(['analyst', 'ops'] as const)(
+  it.each(['analyst'] as const)(
     'critical role "%s" ignores the preference and stays on Claude',
     async (role) => {
       const { tier, model } = await resolveSubagentModel(role)

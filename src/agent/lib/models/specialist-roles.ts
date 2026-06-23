@@ -28,8 +28,8 @@ export interface SpecialistRoleDef {
   /**
    * Preferred worker model (registry id) for this non-critical role — e.g. a cheap
    * OpenRouter model. Consumed by resolveSubagentModel (tier-router): on NON-critical
-   * tiers this overrides the tier default; critical roles (analyst/ops) ignore it and
-   * stay on Claude via assertCriticalTierUsesClaude. Requires OPENROUTER_API_KEY for
+   * tiers this overrides the tier default; the critical role (analyst — finance/data
+   * analysis) ignores it and stays on Claude via assertCriticalTierUsesClaude. Requires OPENROUTER_API_KEY for
    * OpenRouter models — otherwise the worker falls back (Gemini → Claude).
    */
   preferredModelId?: string
