@@ -196,8 +196,37 @@ async function* runAlternateProviderTurn(
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
 
   const now = new Date()
+  // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
+  // (short salah replies like "porechi" can be triaged here, not only to the Claude head).
+  let intakeContextBlock: string | undefined
   if (!personalMode) {
-    await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
+    const autoMark = await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
+    if (autoMark.marked.length) {
+      const fresh = autoMark.marked[autoMark.marked.length - 1]
+      if (fresh.status === 'prayed_on_time' || fresh.status === 'prayed_late') {
+        intakeContextBlock =
+          `[SALAH CONFIRMED — CONSCIENCE NUDGE]\n` +
+          `Sir just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla, addressing him as Sir: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
+          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Sir?"), ` +
+          `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested.`
+      } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
+        intakeContextBlock =
+          `[SALAH ${fresh.status.toUpperCase()} — HONESTY HONOURED]\n` +
+          `Sir honestly told you ${fresh.waqt} (${fresh.date}) was ${fresh.status === 'qaza' ? 'prayed as qaza (made up late)' : 'missed'}; it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla as Sir: (1) sincerely thank/encourage him for telling the truth instead of a false "porechi", ` +
+          `(2) absolutely NO blame, (3) gently encourage tawba and catching the next waqt on time in jamaat. Keep it to 2-3 lines.`
+      }
+    }
+    if (!intakeContextBlock && lastUserText) {
+      try {
+        const { processMuhasabaReply } = await import('@/agent/lib/salah-muhasaba')
+        const mh = await processMuhasabaReply(lastUserText, conversationId, now)
+        if (mh?.contextBlock) intakeContextBlock = mh.contextBlock
+      } catch (err) {
+        console.warn('[run-owner-turn] salah muhasaba reply failed:', err instanceof Error ? err.message : err)
+      }
+    }
   }
 
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
@@ -234,6 +263,7 @@ async function* runAlternateProviderTurn(
     personalMode,
     businessId,
     activePlaybook,
+    intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,

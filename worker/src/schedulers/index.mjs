@@ -137,6 +137,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'todo-reconcile',          cronUtc: '55 17 * * *',  description: 'End-of-day: cancel agent todos not done today (23:55 Dhaka)' },
   { name: 'agent-scorecard',        cronUtc: '30 3 * * 6',  description: 'Weekly agent tool scorecard (Sat 09:30 Dhaka)' },
   { name: 'studio-archive',         cronUtc: '0 19 * * *',   description: 'Creative Studio → Drive archive + Supabase cleanup (01:00 Dhaka)' },
+  { name: 'salah-muhasaba',         cronUtc: '30 16 * * *',  description: 'Nightly salah muhasaba + encouragement (22:30 Dhaka)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -371,6 +372,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'personal-checkin': {
       const { runPersonalCheckin } = await lazy.personalCheckin()
       dutyResult = await runPersonalCheckin(context)
+      break
+    }
+    case 'salah-muhasaba': {
+      const { runSalahMuhasaba } = await import('../personal/salah-muhasaba.mjs')
+      dutyResult = await runSalahMuhasaba(context)
       break
     }
     case 'personal-midday': {
