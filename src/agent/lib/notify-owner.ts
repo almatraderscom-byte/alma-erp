@@ -3,6 +3,7 @@
  * Sends ntfy + logs to agent_notifications.
  */
 import { resilientFetch } from '@/agent/lib/fetch-retry'
+import { isOwnerAppActive } from '@/agent/lib/owner-presence'
 
 async function sendNtfy(topic: 'general' | 'critical', title: string, message: string, category?: string) {
   const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
@@ -99,4 +100,25 @@ export async function notifyOwner(opts: {
   }
 
   return { channels, statuses }
+}
+
+/**
+ * Push to the owner ONLY if he is not currently in the agent app (app-style
+ * notifications: silent while he's looking, delivered when he's away). Used for
+ * agent chat replies / approvals that land while the app is backgrounded or
+ * closed. Telegram turns are NOT routed here — they already push via Telegram.
+ */
+export async function notifyOwnerIfAway(opts: {
+  tier: 1 | 2 | 3
+  title: string
+  message: string
+  category?: 'salah' | 'urgent' | 'task' | 'report'
+}): Promise<{ skipped: boolean }> {
+  try {
+    if (await isOwnerAppActive()) return { skipped: true }
+  } catch {
+    // fail-open: notify
+  }
+  await notifyOwner(opts)
+  return { skipped: false }
 }

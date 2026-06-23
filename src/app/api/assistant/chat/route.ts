@@ -15,6 +15,7 @@ import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { createTurn, finalizeTurnIfRunning, isRunningTurnForConversation } from '@/agent/lib/turn-status'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
@@ -515,6 +516,8 @@ export async function POST(req: NextRequest) {
   req.signal.addEventListener('abort', markDisconnected)
   const turnStartedAt = Date.now()
   let doneTurnMs = -1
+  // Short preview of the reply, for the away-push (ntfy) when the app is closed.
+  let replyPreview = ''
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -540,6 +543,20 @@ export async function POST(req: NextRequest) {
       try {
         for await (const event of runTurn()) {
           enqueue(event)
+          // App-style push (ntfy) ONLY when the owner is away — suppressed while
+          // he's in the app (notifyOwnerIfAway checks app-presence). Telegram turns
+          // already push via Telegram, so skip them here.
+          if (event.type === 'text_delta' && replyPreview.length < 140) {
+            replyPreview += (event as { delta?: string }).delta ?? ''
+          } else if (event.type === 'confirm_card' && !isInternalCall) {
+            const summary = (event as { summary?: string }).summary
+            void notifyOwnerIfAway({
+              tier: 2,
+              title: 'অনুমোদন দরকার — ALMA Agent',
+              message: (summary && summary.slice(0, 200)) || 'একটি অনুমোদন আপনার অপেক্ষায় আছে স্যার।',
+              category: 'urgent',
+            }).catch(() => {})
+          }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
             await finalizeTurnIfRunning(turnId, 'done')
@@ -599,6 +616,16 @@ export async function POST(req: NextRequest) {
         // disconnected) so quick foreground turns never spam.
         if (doneTurnMs > 30_000 && !clientConnected) {
           void sendOwnerText('✅ আপনার আগের প্রশ্নের উত্তরটা তৈরি হয়ে গেছে স্যার — অ্যাপ খুললেই দেখতে পাবেন।').catch(() => {})
+        }
+        // App-style ntfy push when a reply lands while the owner is away (app
+        // backgrounded/closed → stream dropped). notifyOwnerIfAway double-checks
+        // app-presence so it never fires while he's actually in the app.
+        if (doneTurnMs >= 0 && !clientConnected && !isInternalCall) {
+          void notifyOwnerIfAway({
+            tier: 2,
+            title: 'ALMA Agent — উত্তর তৈরি',
+            message: replyPreview.trim() || 'আপনার প্রশ্নের উত্তর তৈরি হয়েছে স্যার।',
+          }).catch(() => {})
         }
         controller.close()
       }
