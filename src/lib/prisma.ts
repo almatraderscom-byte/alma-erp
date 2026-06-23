@@ -50,6 +50,12 @@ function createPrismaClient() {
               continue
             }
             void capturePrismaError(err, { model, operation })
+            // Short, greppable failure marker so the failing model+operation+code is
+            // readable in truncated log viewers (the full Prisma message is too long).
+            {
+              const e = err as { code?: string; name?: string }
+              console.error(`PRISMAFAIL ${model ?? '?'}.${operation ?? '?'} ${e?.code ?? e?.name ?? 'ERR'}`)
+            }
             throw err
           }
         }
