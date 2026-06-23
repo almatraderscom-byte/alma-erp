@@ -227,8 +227,19 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
           })
           try {
             apiBlocks.push(await resolveFileRef(block))
-          } catch {
-            apiBlocks.push({ type: 'text', text: '[ফাইল লোড করা যায়নি]' })
+          } catch (err) {
+            // Image/file download still failed after retries. Do NOT stay silent —
+            // a blank "[couldn't load]" used to make the agent quietly act as if no
+            // screenshot was attached. Tell the model exactly what happened so it
+            // honestly tells the owner the image didn't load and asks for a resend.
+            console.error('[core.loadHistory] file load failed:', block.path, err)
+            apiBlocks.push({
+              type: 'text',
+              text:
+                '[সংযুক্ত ছবি/ফাইলটি লোড করা যায়নি — storage থেকে আনা যায়নি। ' +
+                'এটা পড়তে পারোনি বলে স্যারকে স্পষ্ট জানাও এবং ছবিটা আবার পাঠাতে বলো। ' +
+                'ছবি দেখতে পেয়েছ ভান কোরো না।]',
+            })
           }
         } else {
           apiBlocks.push({
