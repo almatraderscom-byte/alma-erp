@@ -714,7 +714,10 @@ try {
 // ── Start polling ──────────────────────────────────────────────────────────
 
 await pollPendingJobs()
-const pollInterval = setInterval(pollPendingJobs, 30_000)
+// Poll cadence is env-tunable to relieve Supabase connection pressure (each poll
+// hits a Prisma endpoint on Vercel). Floors guard against accidental hammering.
+const PENDING_JOBS_POLL_MS = Math.max(15_000, Number(process.env.WORKER_PENDING_JOBS_POLL_MS) || 30_000)
+const pollInterval = setInterval(pollPendingJobs, PENDING_JOBS_POLL_MS)
 
 const { pollCsPendingReplies } = await import('./cs/reply.mjs')
 const csEnqueued = new Set()
@@ -751,7 +754,10 @@ csReplyWorker.on('failed', (job, err) => {
 })
 
 await pollAndEnqueueCsReplies()
-const csPollInterval = setInterval(pollAndEnqueueCsReplies, 10_000)
+// Was a fixed 10s — the dominant DB-load source in the connection-exhaustion
+// incident. Default 30s (3× less load); tune via WORKER_CS_POLL_MS, floor 15s.
+const CS_POLL_MS = Math.max(15_000, Number(process.env.WORKER_CS_POLL_MS) || 30_000)
+const csPollInterval = setInterval(pollAndEnqueueCsReplies, CS_POLL_MS)
 
 const { pollMessengerInbox } = await import('./cs/messenger-poll.mjs')
 await pollMessengerInbox().catch((err) => console.error('[cs-messenger-poll] startup error:', err.message))
