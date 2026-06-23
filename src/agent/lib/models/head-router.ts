@@ -21,6 +21,7 @@ import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, getModel, isKnownModelId } from '@/age
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { prisma } from '@/lib/prisma'
+import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing'
@@ -160,7 +161,8 @@ const TRIAGE_SYSTEM =
   'caption, ad copy, a campaign/promotion idea, product creative, "post banao/likhe dao", boost ideas. ' +
   'A dedicated marketing model handles these.\n' +
   '- "heavy": needs judgment or is sensitive — money decisions, finance write/edit/delete, payroll/salary/staff ' +
-  'discipline, multi-step tasks, planning or strategy, or anything ambiguous, unclear, ' +
+  'discipline, multi-step tasks, planning or strategy, asking you to phone/call a person and relay a message ' +
+  '(an outbound call, NOT a "remind me" note), or anything ambiguous, unclear, ' +
   'or where a wrong answer costs money or trust.\n' +
   'When unsure between light and heavy, choose "heavy". Answer with EXACTLY one word: light, marketing, or heavy.'
 
@@ -281,6 +283,10 @@ export async function resolveHeadModelId(opts: {
   const text = (opts.lastUserText ?? '').trim()
   if (!text) return heavy('empty')
   if (HEAVY_DENY_RE.test(text)) return heavy('deny_kw')
+  // Placing a real phone call to a person on the owner's behalf is high-stakes (trust /
+  // reputation) and must never be triaged to a cheap head — the cheap head mistook it for
+  // a "reminder". Force Sonnet so the outbound_phone_call flow is handled correctly.
+  if (isOutboundCallIntent(text)) return heavy('call_intent')
 
   // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop),
   // the same direct-responder pattern as the cheap head. FAST PATH: an obvious

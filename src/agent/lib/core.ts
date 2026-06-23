@@ -10,6 +10,7 @@ import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
+import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
@@ -513,6 +514,18 @@ export async function* runAgentTurn(
   let intakeContextBlock: string | undefined
   let intakeAutoReply: string | undefined
 
+  // HIGHEST PRIORITY — owner is instructing an OUTBOUND CALL ("oi nambare call kore bolo …").
+  // Recognised deterministically so neither the evening task-intake (below) nor any
+  // reminder path can mistake it for a todo/reminder (the exact bug the owner hit). The
+  // head-router has already forced Sonnet for this; here we inject the routing directive.
+  const callIntent =
+    !personalMode && lastUserText
+      ? detectOutboundCallIntent(lastUserText)
+      : { isCall: false, hasNumber: false }
+  if (callIntent.isCall) {
+    intakeContextBlock = buildOutboundCallIntakeBlock(callIntent.hasNumber)
+  }
+
   // Point 3 (Part A) — owner office on/off toggle. Highest priority owner-initiated
   // signal: declaring "no office today" suspends duties + asks the reason; replies while
   // the off-question is pending are captured here (short-circuits the LLM turn).
@@ -553,7 +566,7 @@ export async function* runAgentTurn(
     }
   }
 
-  if (!personalMode && lastUserText && !intakeAutoReply) {
+  if (!personalMode && lastUserText && !intakeAutoReply && !callIntent.isCall) {
     try {
       const { processOwnerIntakeReply } = await import('@/agent/lib/owner-task-intake')
       const intake = await processOwnerIntakeReply(lastUserText, conversationId)
