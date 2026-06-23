@@ -98,8 +98,8 @@ describe('B1 — system block is byte-stable across turns', () => {
     const turnA: BuildSystemPromptArgs = {
       ...BASE,
       activePlaybook: [
-        { domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin' },
-        { domain: 'cs', heuristic: 'PB_RULE_TWO reply fast' },
+        { id: 'pb1', domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin', confidence: 0.9, timesApplied: 5 },
+        { id: 'pb2', domain: 'cs', heuristic: 'PB_RULE_TWO reply fast', confidence: 0.7, timesApplied: 3 },
       ],
       pinnedMemories: [{ id: 'p1', content: 'PIN_ALPHA owner prefers concise', scope: 'personal' }],
     }
@@ -107,9 +107,9 @@ describe('B1 — system block is byte-stable across turns', () => {
       ...BASE,
       // reordered (confidence bump) AND a new rule appeared
       activePlaybook: [
-        { domain: 'cs', heuristic: 'PB_RULE_TWO reply fast' },
-        { domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin' },
-        { domain: 'stock', heuristic: 'PB_RULE_THREE reorder early' },
+        { id: 'pb2', domain: 'cs', heuristic: 'PB_RULE_TWO reply fast', confidence: 0.95, timesApplied: 4 },
+        { id: 'pb1', domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin', confidence: 0.9, timesApplied: 5 },
+        { id: 'pb3', domain: 'stock', heuristic: 'PB_RULE_THREE reorder early', confidence: 0.6, timesApplied: 1 },
       ],
       pinnedMemories: [{ id: 'p2', content: 'PIN_BETA eid campaign live', scope: 'business' }],
     }
