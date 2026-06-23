@@ -480,6 +480,10 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err)
+      // Surface the real cause to stdout (Vercel runtime logs). Previously this only
+      // went to Sentry, so a Telegram turn failure showed an opaque 500 with no
+      // readable reason in the logs. Include the stack to pinpoint the throw.
+      console.error('[assistant/chat] non-stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
     } finally {
       clearTimeout(turnCapTimer)
     }
@@ -576,6 +580,8 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         if (!req.signal.aborted) {
+          // Also log to stdout so the cause is visible in Vercel runtime logs, not only Sentry.
+          console.error('[assistant/chat] stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
           void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
           enqueue({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
