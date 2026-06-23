@@ -21,6 +21,69 @@ function readGitCommit(repo) {
   }
 }
 
+/** Locate the pm2 binary across PATH / npm-global / nvm install layouts. */
+function findPm2() {
+  for (const probe of ['command -v pm2', 'which pm2']) {
+    try {
+      const p = execSync(probe, { timeout: 5_000, encoding: 'utf8' }).trim().split('\n')[0]
+      if (p) return p
+    } catch { /* not on PATH */ }
+  }
+  const home = process.env.HOME ?? '/root'
+  const guesses = [
+    '/usr/local/bin/pm2', '/usr/bin/pm2',
+    `${home}/.npm-global/bin/pm2`, `${home}/.local/bin/pm2`,
+  ]
+  try {
+    const nvm = execSync(`ls -1 ${home}/.nvm/versions/node/*/bin/pm2 2>/dev/null`, { timeout: 5_000, encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean)
+    guesses.push(...nvm)
+  } catch { /* no nvm */ }
+  for (const g of guesses) {
+    try { execSync(`test -x ${g}`, { timeout: 3_000 }); return g } catch { /* next */ }
+  }
+  return null
+}
+
+/**
+ * Restart THIS worker so freshly-pulled code runs. Tries the pm2 CLI (resolved
+ * binary + actual process name from `pm2 jlist`); if pm2 can't be invoked, EXITS
+ * the process so pm2 (which manages it with autorestart) respawns it on the new
+ * code. Bulletproof as long as the worker runs under pm2. Call only AFTER the
+ * HTTP response is flushed — it may terminate this process.
+ */
+function restartSelf() {
+  const pm2 = findPm2()
+  if (pm2) {
+    let names = []
+    try {
+      names = JSON.parse(execSync(`${pm2} jlist`, { timeout: 10_000, encoding: 'utf8' }))
+        .map((p) => p?.name).filter(Boolean)
+    } catch { /* jlist unavailable */ }
+    if (!names.length) names = ['alma-agent-worker', 'agent-worker']
+    for (const n of names) {
+      try {
+        execSync(`${pm2} restart ${n} --update-env 2>&1`, { timeout: 30_000, encoding: 'utf8' })
+        console.log(`[diagnostic-http] restarted "${n}" via ${pm2}`)
+        return
+      } catch { /* try next name */ }
+    }
+    try {
+      execSync(`${pm2} restart all --update-env 2>&1`, { timeout: 30_000, encoding: 'utf8' })
+      console.log('[diagnostic-http] restarted all via pm2')
+      return
+    } catch { /* fall through to self-exit */ }
+  }
+  // Last resort: under pm2, exiting triggers an automatic respawn on the new code.
+  const underPm2 = process.env.pm_id !== undefined || Boolean(process.env.PM2_HOME) || Boolean(process.env.PM2_USAGE)
+  if (underPm2) {
+    console.log('[diagnostic-http] pm2 CLI unreachable — exiting so pm2 respawns on new code')
+    setTimeout(() => process.exit(0), 300)
+    return
+  }
+  console.error('[diagnostic-http] CRITICAL: cannot restart (pm2 not found and not under pm2)')
+}
+
 function verifyToken(token) {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
   if (!expected || !token) return false
@@ -125,10 +188,15 @@ export function startDiagnosticHttpServer() {
         const prevCommit = readGitCommit(repo)
 
         try {
-          const pullOut = execSync(`cd ${repo} && git pull origin main 2>&1`, { timeout: 60_000, encoding: 'utf8' })
+          // Hard-sync to origin/main so a click ALWAYS lands the latest code, even
+          // if the VPS working tree drifted (local edits make `git pull` conflict
+          // and silently stall). reset --hard touches only tracked files, leaving
+          // gitignored .env / secrets in place.
+          execSync(`cd ${repo} && git fetch origin main 2>&1`, { timeout: 60_000, encoding: 'utf8' })
+          const pullOut = execSync(`cd ${repo} && git reset --hard origin/main 2>&1`, { timeout: 60_000, encoding: 'utf8' })
           steps.push({ step: 'git_pull', ok: true, output: pullOut.slice(-300) })
         } catch (err) {
-          steps.push({ step: 'git_pull', ok: false, error: err.message?.slice(0, 300) ?? 'git pull failed' })
+          steps.push({ step: 'git_pull', ok: false, error: err.message?.slice(0, 300) ?? 'git sync failed' })
         }
 
         // Commit now on disk after the pull — the client polls /health until the
@@ -136,10 +204,17 @@ export function startDiagnosticHttpServer() {
         const targetCommit = readGitCommit(repo)
 
         try {
-          const npmOut = execSync(`cd ${repo}/worker && npm ci --omit=dev 2>&1`, { timeout: 120_000, encoding: 'utf8' })
+          let npmOut
+          try {
+            npmOut = execSync(`cd ${repo}/worker && npm ci --omit=dev 2>&1`, { timeout: 180_000, encoding: 'utf8' })
+          } catch {
+            // npm ci is strict (needs a perfectly in-sync lockfile). Fall back to
+            // npm install so a lockfile drift can't block the deploy.
+            npmOut = execSync(`cd ${repo}/worker && npm install --omit=dev 2>&1`, { timeout: 180_000, encoding: 'utf8' })
+          }
           steps.push({ step: 'npm_install', ok: true, output: npmOut.slice(-200) })
         } catch (err) {
-          steps.push({ step: 'npm_install', ok: false, error: err.message?.slice(0, 200) ?? 'npm ci failed' })
+          steps.push({ step: 'npm_install', ok: false, error: err.message?.slice(0, 200) ?? 'npm install failed' })
         }
 
         // PM2 restart must run AFTER the HTTP response — restarting kills this process.
@@ -159,23 +234,10 @@ export function startDiagnosticHttpServer() {
         res.end(JSON.stringify({ ok: allOk, steps, prevCommit, targetCommit }))
 
         if (gitOk && npmOk) {
-          setImmediate(() => {
-            // Try several pm2 invocations: process may be named differently and
-            // `pm2` may not be on PATH for the spawned shell (npm-global / nvm).
-            const candidates = [
-              'pm2 restart agent-worker --update-env',
-              'pm2 restart alma-agent-worker --update-env',
-              'npx pm2 restart agent-worker --update-env',
-              `${process.env.HOME ?? '/root'}/.npm-global/bin/pm2 restart agent-worker --update-env`,
-            ]
-            for (const cmd of candidates) {
-              try {
-                execSync(`${cmd} 2>&1`, { timeout: 30_000, encoding: 'utf8' })
-                return
-              } catch { /* try next */ }
-            }
-            console.error('[diagnostic-http] pm2 restart failed — all candidates errored')
-          })
+          // Runs AFTER the response is flushed — restartSelf() may exit the process
+          // so pm2 respawns it on the new code (verified by the caller via /health
+          // bootCommit).
+          setImmediate(restartSelf)
         }
         return
       }
