@@ -22,10 +22,14 @@ describe('applyToolSearchDeferral', () => {
     for (const n of ['get_sales_summary', 'get_staff_tasks', 'get_expense_summary']) {
       expect(byName.get(n)?.defer_loading).toBeUndefined()
     }
-    // specialised long-tail tools (content/growth/website/cost) are deferred
-    for (const n of ['run_content_post', 'plan_marketing', 'get_website_catalog', 'get_api_balances']) {
+    // specialised long-tail tools present on the slim head (website/cost/cs/etc)
+    // are deferred. content/growth are NOT in the head set at all (they delegate
+    // to specialist workers — the slim-router cost lever), so they can't be here.
+    for (const n of ['get_website_catalog', 'get_api_balances']) {
       expect(byName.get(n)?.defer_loading).toBe(true)
     }
+    expect(byName.get('run_content_post')).toBeUndefined() // content → delegated
+    expect(byName.get('plan_marketing')).toBeUndefined() // growth → delegated
   })
 
   it('appends the regex tool-search tool exactly once', async () => {
