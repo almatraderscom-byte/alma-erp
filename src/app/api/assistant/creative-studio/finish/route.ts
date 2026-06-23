@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     mode?: string
     theme?: string
     footer?: boolean
+    fit?: unknown
     layout?: unknown
     pendingActionId?: string
   }
@@ -86,6 +87,8 @@ export async function POST(req: NextRequest) {
       offer: typeof body.offer === 'string' ? body.offer.slice(0, 48) : undefined,
       theme,
       footer: body.footer === true,
+      // Lifestyle: 'contain' keeps the whole photo (no crop); default 'cover'.
+      fit: mode === 'lifestyle' && body.fit === 'contain' ? 'contain' : 'cover',
       // Editor geometry tweaks (lifestyle only). applyLayoutOverrides clamps every
       // value, so a malformed object can't push text off-canvas — pass through any
       // plain object and let the renderer validate.

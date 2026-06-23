@@ -147,7 +147,8 @@ export function computeAutoLayout(t: LifestyleText): LifestyleLayout {
   const circleCx = S - pad - circleR // 970
   const circleCy = 124
   const code = t.code.slice(0, 16)
-  const codeSize = code.length > 7 ? 18 : 24
+  // Size the code to actually fit inside the ring (Bangla glyphs are wide).
+  const codeSize = code.length > 9 ? 14 : code.length > 6 ? 17 : 22
 
   // bottom-left block, laid out bottom-up from the mustard rule
   const ruleY = 1018
