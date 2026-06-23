@@ -1190,7 +1190,9 @@ function FinishPanel({
 }) {
   const [hook, setHook] = useState('')
   const [code, setCode] = useState('')
-  const [mode, setMode] = useState<FinishMode>('model_overlay')
+  const [eyebrow, setEyebrow] = useState('')
+  const [offer, setOffer] = useState('')
+  const [mode, setMode] = useState<FinishMode>('lifestyle')
   const [theme, setTheme] = useState('default')
   const [footer, setFooter] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -1203,9 +1205,11 @@ function FinishPanel({
     winter: 'শীত',
   }
 
+  const isLifestyle = mode === 'lifestyle'
+
   const run = async () => {
     if (!hook.trim()) {
-      toast.error('একটা hook লেখা লাগবে স্যার')
+      toast.error(isLifestyle ? 'মূল লেখাটা (headline) দিন স্যার' : 'একটা hook লেখা লাগবে স্যার')
       return
     }
     setBusy(true)
@@ -1215,6 +1219,8 @@ function FinishPanel({
         pendingActionId,
         hook: hook.trim(),
         productCode: code.trim() || undefined,
+        eyebrow: isLifestyle ? eyebrow.trim() || undefined : undefined,
+        offer: isLifestyle ? offer.trim() || undefined : undefined,
         mode,
         theme,
         footer,
@@ -1239,17 +1245,35 @@ function FinishPanel({
   return (
     <div className={wrap}>
       <div className="grid gap-2">
+        {isLifestyle && (
+          <input
+            value={eyebrow}
+            onChange={(e) => setEyebrow(e.target.value)}
+            placeholder="ছোট লাইন (খালি রাখলে: নতুন এসেছে)"
+            maxLength={32}
+            className={cn('w-full', field)}
+          />
+        )}
         <input
           value={hook}
           onChange={(e) => setHook(e.target.value)}
-          placeholder="Hook (যেমন: ঈদ স্পেশাল অফার)"
-          maxLength={64}
+          placeholder={isLifestyle ? 'মূল লেখা (যেমন: পার্পেল কালার ফ্যামিলি কম্বো সেট)' : 'Hook (যেমন: ঈদ স্পেশাল অফার)'}
+          maxLength={isLifestyle ? 80 : 64}
           className={cn('w-full', field)}
         />
+        {isLifestyle && (
+          <input
+            value={offer}
+            onChange={(e) => setOffer(e.target.value)}
+            placeholder="অফার লাইন (খালি রাখলে: অফার প্রাইস জানতে ইনবক্স করুন)"
+            maxLength={48}
+            className={cn('w-full', field)}
+          />
+        )}
         <input
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          placeholder="Product code (যেমন: ALM-1023) — ঐচ্ছিক"
+          placeholder="Product code (যেমন: ALM-315) — ঐচ্ছিক"
           maxLength={24}
           className={cn('w-full', field)}
         />
@@ -1257,6 +1281,7 @@ function FinishPanel({
           <label className={cn('flex flex-col gap-1', labelCls)}>
             লেআউট
             <select value={mode} onChange={(e) => setMode(e.target.value as FinishMode)} className={field}>
+              <option value="lifestyle">পূর্ণ ছবি পোস্টার</option>
               <option value="model_overlay">ছবির উপর (overlay)</option>
               <option value="product_card">প্রোডাক্ট কার্ড</option>
             </select>
