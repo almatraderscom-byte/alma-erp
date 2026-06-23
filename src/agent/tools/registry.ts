@@ -26,6 +26,7 @@ import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
+import { COWORKER_TOOLS } from './coworker-tools'
 import { AD_CREATIVE_TOOLS } from './ad-creative-tools' // make_ad_creatives
 import { VIDEO_TOOLS } from './video-tools' // make_product_reel
 import { MARKETING_TOOLS } from './marketing-tools' // plan_marketing, marketing_report
@@ -427,6 +428,7 @@ export const TOOLS: AgentTool[] = [
   ...TRYON_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,
+  ...COWORKER_TOOLS,
   ...AD_CREATIVE_TOOLS,
   ...VIDEO_TOOLS,
   ...BRAND_TOOLS,

@@ -29,7 +29,14 @@ const READ_ONLY_PREFIXES = [
   'audit_', 'recall_', 'fetch_website', 'read_competitor', 'web_research',
   'simulate_', 'advisor_',
 ]
-const EXTRA_ALLOW = new Set(['marketing_report', 'check_order_issues', 'diagnose_issue'])
+// `request_agent_action` is the ONE controlled "write": it does not act, it only files a
+// proposal (coworker_request) that the owner's internal agent surfaces + executes on approval.
+const EXTRA_ALLOW = new Set([
+  'marketing_report',
+  'check_order_issues',
+  'diagnose_issue',
+  'request_agent_action',
+])
 // Read-only but out of "business/research" scope for option A.
 const FORCE_DENY = new Set(['list_family_contacts'])
 
