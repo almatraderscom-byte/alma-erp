@@ -28,7 +28,7 @@ export async function attachMemoryEmbedding(
     // Prisma Unsupported(vector) — attach embedding via raw SQL.
     await (prisma as unknown as { $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number> })
       .$executeRawUnsafe(
-        `UPDATE agent_memory SET embedding = $1::vector, updated_at = NOW() WHERE id = $2::uuid`,
+        `UPDATE agent_memory SET embedding = $1::vector, "updatedAt" = NOW() WHERE id = $2`,
         vec,
         memoryId,
       )
@@ -94,7 +94,7 @@ async function reinforceMemoriesOnUse(selectedIds: string[]): Promise<void> {
   await (prisma as any).$executeRawUnsafe(
     `UPDATE agent_memory
      SET access_count = access_count + 1, last_used_at = NOW()
-     WHERE id = ANY($1::uuid[])`,
+     WHERE id = ANY($1::text[])`,
     selectedIds,
   )
 }
