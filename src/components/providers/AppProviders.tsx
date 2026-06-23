@@ -89,7 +89,10 @@ function ErpChrome({ children }: { children: ReactNode }) {
           <main
             ref={mainScrollRef}
             className={cn(
-              'flex-1 min-w-0 scrollbar-hide overscroll-y-contain',
+              // overscroll-x-none kills the horizontal rubber-band drift that made
+              // the whole layout slide on touch in the iOS (WKWebView) app, while
+              // overflow-x-auto still lets genuinely wide tables scroll their own area.
+              'flex-1 min-w-0 scrollbar-hide overscroll-y-contain overscroll-x-none',
               isAgent
                 ? 'overflow-hidden'
                 : 'overflow-x-auto overflow-y-auto',
