@@ -47,14 +47,14 @@ async function getStaffReality(): Promise<string> {
       redo_count: bigint | number
       total: bigint | number
     }> = await db.$queryRawUnsafe(`
-      SELECT s.display_name as name, s.role,
+      SELECT s.name as name, s.role,
         COUNT(t.id) FILTER (WHERE t.status IN ('done', 'done_verified')) as completed,
         COUNT(t.id) FILTER (WHERE t.status IN ('redo', 'redo_requested')) as redo_count,
         COUNT(t.id) as total
       FROM agent_staff s
       LEFT JOIN staff_tasks t ON t.staff_id = s.id AND t.created_at > NOW() - INTERVAL '30 days'
       WHERE s.active = true AND s.business_id = 'ALMA_LIFESTYLE'
-      GROUP BY s.display_name, s.role
+      GROUP BY s.name, s.role
     `).catch(() => [])
 
     if (staff.length > 0) {
