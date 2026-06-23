@@ -85,7 +85,16 @@ export async function GET(req: NextRequest) {
 
   const items = meta.map(({ row, result, storagePath, brandedPath, thumbPath }) => {
     const payload = row.payload ?? {}
-    const previewUrl = storagePath ? signed[storagePath] ?? null : null
+    // When the big Supabase original has been archived to Drive and cleaned up,
+    // the signed URL is gone — serve the full-res original through the Drive
+    // proxy instead (thumbnails stay in Supabase, so the grid is unaffected).
+    const driveFiles = (result.driveFiles ?? {}) as Record<string, { fileId?: string }>
+    const archivedToDrive = Boolean(result.supabaseDeletedAt)
+    const signedPreview = storagePath ? signed[storagePath] ?? null : null
+    const driveAvailable = storagePath ? Boolean(driveFiles[storagePath]?.fileId) : false
+    const previewUrl =
+      signedPreview
+      ?? (driveAvailable ? `/api/assistant/creative-studio/drive-file?id=${encodeURIComponent(row.id)}` : null)
     return {
       id: row.id,
       type: row.type,
@@ -101,6 +110,8 @@ export async function GET(req: NextRequest) {
       // branded (logo + code + hook) variant, when the worker produced one
       brandedUrl: brandedPath ? signed[brandedPath] ?? null : null,
       storagePath,
+      // true once the original lives only on Google Drive (UI can show a badge)
+      archivedToDrive,
       error: result.error ?? null,
     }
   })

@@ -5,6 +5,10 @@
 
 const AGENT_BUCKET = 'agent-files'
 const DOWNLOAD_TIMEOUT_MS = 9_000
+// Creative Studio videos (Veo reels) can exceed the old 10 MB image limit, so the
+// bucket must accept larger files. Kept modest because originals are archived to
+// Google Drive and cleaned out of Supabase afterwards.
+const AGENT_BUCKET_FILE_LIMIT = 100 * 1024 * 1024 // 100 MB
 
 function getStorageBase() {
   const candidates = [
@@ -29,7 +33,26 @@ async function ensureAgentBucket() {
     headers: storageHeaders(serviceKey),
     signal: AbortSignal.timeout(10_000),
   })
-  if (check.ok) return { url, serviceKey }
+  if (check.ok) {
+    // Self-heal: older buckets were created with a 10 MB limit that rejects
+    // Creative Studio videos. Raise it once when below target (idempotent —
+    // after the first PATCH this branch is skipped).
+    try {
+      const cfg = (await check.json()) as { file_size_limit?: number | null }
+      const current = Number(cfg.file_size_limit ?? 0)
+      if (current > 0 && current < AGENT_BUCKET_FILE_LIMIT) {
+        await fetch(`${url}/storage/v1/bucket/${AGENT_BUCKET}`, {
+          method: 'PUT',
+          headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: AGENT_BUCKET, name: AGENT_BUCKET, public: false, file_size_limit: AGENT_BUCKET_FILE_LIMIT }),
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => console.warn('[storage] bucket limit raise failed:', err?.message))
+      }
+    } catch {
+      // Non-fatal: if we can't read/raise the limit, uploads still proceed.
+    }
+    return { url, serviceKey }
+  }
 
   const create = await fetch(`${url}/storage/v1/bucket`, {
     method: 'POST',
@@ -38,7 +61,7 @@ async function ensureAgentBucket() {
       id: AGENT_BUCKET,
       name: AGENT_BUCKET,
       public: false,
-      file_size_limit: 10 * 1024 * 1024,
+      file_size_limit: AGENT_BUCKET_FILE_LIMIT,
     }),
     signal: AbortSignal.timeout(10_000),
   })

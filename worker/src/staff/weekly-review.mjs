@@ -154,6 +154,15 @@ export async function runWeeklyReview({ supabase, bot }) {
     console.warn('[weekly-review] CS analytics failed:', err?.message ?? err)
   }
 
+  // ── Office-miss accounting reasons (owner-given) ────────────────────────────
+  let accountingSection = ''
+  try {
+    const accData = await callInternal('/api/assistant/internal/office-accounting?days=7')
+    if (accData?.formatted) accountingSection = `\n\n${accData.formatted}`
+  } catch (err) {
+    console.warn('[weekly-review] office accounting failed:', err?.message ?? err)
+  }
+
   let patternSection = ''
   try {
     const { detectStaffPatterns } = await import('./pattern-detect.mjs')
@@ -189,6 +198,7 @@ export async function runWeeklyReview({ supabase, bot }) {
     `📊 *সাপ্তাহিক রিভিউ — ${today}*\n\n` +
     salahSection + '\n\n' +
     `👥 *স্টাফ কমপ্লিশন (৭ দিন):*\n${staffSection || 'কোনো ডেটা নেই'}` +
+    accountingSection +
     patternSection +
     replySection +
     csSection +

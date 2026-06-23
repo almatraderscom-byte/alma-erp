@@ -141,6 +141,29 @@ async function prepareImageForUpload(file: File): Promise<File> {
   }
 }
 
+export type DriveStatus = {
+  configured: boolean
+  connected: boolean
+  email: string | null
+  connectedAt: string | null
+}
+
+export async function fetchDriveStatus(): Promise<DriveStatus> {
+  const res = await fetch('/api/assistant/creative-studio/drive-status')
+  if (!res.ok) throw new Error('drive_status_failed')
+  return res.json()
+}
+
+export async function disconnectDrive(): Promise<void> {
+  const res = await fetch('/api/assistant/creative-studio/drive-status', { method: 'DELETE' })
+  if (!res.ok) throw new Error('drive_disconnect_failed')
+}
+
+/** Full-page redirect into Google's consent screen (one-time connect). */
+export function connectDriveUrl(): string {
+  return '/api/assistant/creative-studio/drive-auth'
+}
+
 export async function uploadStudioFile(file: File, folder: string): Promise<string> {
   const prepared = await prepareImageForUpload(file)
   const fd = new FormData()
