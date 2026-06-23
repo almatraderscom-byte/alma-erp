@@ -13,6 +13,7 @@
  * Works on phone and desktop: all gestures use Pointer Events (touch + mouse).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LIFESTYLE_SIZE,
   LIFESTYLE_COLORS,
@@ -46,6 +47,8 @@ export type LifestyleEditorProps = {
   accent: string
   /** resolved text (brand defaults already applied) — must match what the server uses */
   texts: LifestyleText
+  /** 'cover' crops the photo to a square; 'contain' shows the whole photo (no crop) */
+  fit?: 'cover' | 'contain'
   busy?: boolean
   onCancel: () => void
   onApply: (overrides: LifestyleLayoutOverrides) => void
@@ -56,6 +59,7 @@ export default function LifestyleEditor({
   logoUrl,
   accent,
   texts,
+  fit = 'cover',
   busy = false,
   onCancel,
   onApply,
@@ -64,6 +68,12 @@ export default function LifestyleEditor({
   const [layout, setLayout] = useState<LifestyleLayout>(auto)
   const [selected, setSelected] = useState<ElId | null>(null)
   const [logoAspect, setLogoAspect] = useState(0.32) // height/width fallback until the logo loads
+
+  // Portal to <body>: the editor is rendered inside a Framer-Motion lightbox whose
+  // `transform` would otherwise trap our `position:fixed` to that box (the footer
+  // buttons then overlap the app's bottom tab bar). Portalling escapes it.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   const boxRef = useRef<HTMLDivElement>(null)
   const [boxW, setBoxW] = useState(0)
@@ -151,8 +161,10 @@ export default function LifestyleEditor({
   // ---- render -----------------------------------------------------------
   const sel = (id: ElId) => selected === id
 
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm">
+  if (!mounted) return null
+
+  const ui = (
+    <div className="fixed inset-0 z-[100] flex flex-col bg-black/95 backdrop-blur-sm">
       <style>{FONT_FACE_CSS}</style>
 
       <div className="flex items-center justify-between px-4 py-3 text-white">
@@ -168,9 +180,14 @@ export default function LifestyleEditor({
           className="relative aspect-square w-full max-w-[min(92vw,560px)] select-none overflow-hidden rounded-xl"
           style={{ touchAction: 'none' }}
         >
-          {/* background photo, cover-cropped like the server */}
+          {/* background photo — matches the server: 'cover' crops to square,
+              'contain' shows the whole photo over a blurred fill (no crop) */}
+          {fit === 'contain' && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover blur-xl brightness-[0.65]" draggable={false} />
+          )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />
+          <img src={imageUrl} alt="" className={`absolute inset-0 h-full w-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`} draggable={false} />
           {/* top + bottom scrims to match the render */}
           <div className="pointer-events-none absolute inset-x-0 top-0" style={{ height: px(240), background: `linear-gradient(${LIFESTYLE_COLORS.charcoal}57, transparent)` }} />
           <div className="pointer-events-none absolute inset-x-0" style={{ top: px(560), height: px(520), background: `linear-gradient(transparent, ${LIFESTYLE_COLORS.charcoal}73 52%, ${LIFESTYLE_COLORS.charcoal}e6)` }} />
@@ -190,14 +207,16 @@ export default function LifestyleEditor({
               {/* CODE badge (label + ring + code) */}
               <Movable selected={sel('codeBadge')} onDown={onPointerDownEl('codeBadge')} onMove={onPointerMove} onUp={endDrag} onResize={onPointerDownResize('codeBadge')}
                 center style={{ left: px(layout.codeBadge.cx), top: px(layout.codeBadge.cy), width: px(layout.codeBadge.r * 2), height: px(layout.codeBadge.r * 2) }}>
+                {/* soft charcoal disc keeps the code legible on any photo + de-emphasises the roundel */}
+                <div className="pointer-events-none absolute inset-0 rounded-full" style={{ background: LIFESTYLE_COLORS.charcoal, opacity: 0.26 }} />
                 <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap"
-                  style={{ top: px(layout.codeBadge.labelDy - layout.codeBadge.labelSize), color: accent, fontFamily: LIFESTYLE_FONT.display, fontSize: px(layout.codeBadge.labelSize), letterSpacing: px(3) }}>
+                  style={{ top: px(layout.codeBadge.labelDy - layout.codeBadge.labelSize), color: LIFESTYLE_COLORS.cream, opacity: 0.72, fontFamily: LIFESTYLE_FONT.display, fontSize: px(layout.codeBadge.labelSize), letterSpacing: px(3) }}>
                   {layout.codeBadge.label}
                 </div>
-                <div className="pointer-events-none absolute inset-0 rounded-full" style={{ border: `${Math.max(1, px(2.5))}px solid ${accent}` }} />
+                <div className="pointer-events-none absolute inset-0 rounded-full" style={{ border: `${Math.max(1, px(1.5))}px solid ${LIFESTYLE_COLORS.cream}`, opacity: 0.8 }} />
                 {layout.codeBadge.code && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap font-bold"
-                    style={{ color: accent, fontFamily: LIFESTYLE_FONT.serif, fontSize: px(layout.codeBadge.size) }}>
+                    style={{ color: LIFESTYLE_COLORS.cream, fontFamily: LIFESTYLE_FONT.serif, fontSize: px(layout.codeBadge.size) }}>
                     {layout.codeBadge.code.slice(0, 16)}
                   </div>
                 )}
@@ -240,6 +259,8 @@ export default function LifestyleEditor({
       </div>
     </div>
   )
+
+  return createPortal(ui, document.body)
 }
 
 const r = (v: number) => Math.round(v)

@@ -268,7 +268,7 @@ function buildLifestyleOverlaySvg(layout: LifestyleLayout, accent: string): Buff
   void _logo // logo is composited as a raster, not drawn in SVG
   const code = escapeXml(b.code.slice(0, 16))
   const codeText = code
-    ? `<text x="${b.cx}" y="${b.cy + Math.round(b.size / 3)}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="${b.size}" font-weight="700" text-anchor="middle">${code}</text>`
+    ? `<text x="${b.cx}" y="${b.cy + Math.round(b.size / 3)}" fill="${cream}" font-family="${BRAND_FONT.serif}" font-size="${b.size}" font-weight="700" text-anchor="middle">${code}</text>`
     : ''
 
   return Buffer.from(`<svg width="${S}" height="${S}" xmlns="http://www.w3.org/2000/svg">
@@ -287,8 +287,9 @@ function buildLifestyleOverlaySvg(layout: LifestyleLayout, accent: string): Buff
   <rect x="0" y="0" width="${S}" height="240" fill="url(#topFade)"/>
   <rect x="0" y="560" width="${S}" height="520" fill="url(#bottomFade)"/>
 
-  <text x="${b.cx}" y="${b.cy + b.labelDy}" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="${b.labelSize}" letter-spacing="3" text-anchor="middle">${escapeXml(b.label)}</text>
-  <circle cx="${b.cx}" cy="${b.cy}" r="${b.r}" fill="none" stroke="${accent}" stroke-width="2.5"/>
+  <circle cx="${b.cx}" cy="${b.cy}" r="${b.r}" fill="${charcoal}" fill-opacity="0.26"/>
+  <text x="${b.cx}" y="${b.cy + b.labelDy}" fill="${cream}" font-family="${BRAND_FONT.display}" font-size="${b.labelSize}" letter-spacing="3" text-anchor="middle" opacity="0.72">${escapeXml(b.label)}</text>
+  <circle cx="${b.cx}" cy="${b.cy}" r="${b.r}" fill="none" stroke="${cream}" stroke-width="1.5" opacity="0.8"/>
   ${codeText}
 
   ${svgTextEl(layout.eyebrow, accent)}
@@ -311,6 +312,8 @@ async function renderLifestylePoster(imagePath: string, opts: {
   code: string
   /** geometry overrides from the drag/resize editor (absent → pure auto-finish) */
   layout?: LifestyleLayoutOverrides | null
+  /** 'cover' (default) crops to a square; 'contain' keeps the whole photo (no crop) */
+  fit?: 'cover' | 'contain'
 }): Promise<Buffer> {
   const sharp = (await import('sharp')).default
   const photoBuf = await agentStorageDownload(imagePath)
@@ -328,11 +331,26 @@ async function renderLifestylePoster(imagePath: string, opts: {
     opts.layout,
   )
 
-  // Full-bleed square. `attention` keeps faces/garment in frame when the source
-  // isn't square, instead of a blind centre crop.
-  const base = await sharp(photoBuf)
-    .resize(S, S, { fit: 'cover', position: 'attention' })
-    .toBuffer()
+  // The poster canvas is always a 1080² square so the overlay geometry lines up.
+  //  • 'cover'   → fill the square, cropping overflow. `attention` keeps the
+  //               face/garment in frame instead of a blind centre crop.
+  //  • 'contain' → keep the WHOLE photo (nothing cropped): the full image is fit
+  //               inside the square over a blurred, dimmed copy of itself so the
+  //               letterbox bars look intentional rather than empty.
+  let base: Buffer
+  if (opts.fit === 'contain') {
+    const bg = await sharp(photoBuf)
+      .resize(S, S, { fit: 'cover', position: 'attention' })
+      .blur(30)
+      .modulate({ brightness: 0.62 })
+      .toBuffer()
+    const fg = await sharp(photoBuf).resize(S, S, { fit: 'inside' }).toBuffer()
+    base = await sharp(bg).composite([{ input: fg, gravity: 'center' }]).toBuffer()
+  } else {
+    base = await sharp(photoBuf)
+      .resize(S, S, { fit: 'cover', position: 'attention' })
+      .toBuffer()
+  }
 
   const overlay = buildLifestyleOverlaySvg(layout, opts.accent)
   const composites: Array<{ input: Buffer; top: number; left: number }> = [
@@ -371,6 +389,8 @@ export async function applyBrandFrame(
     footer?: boolean
     /** lifestyle only: geometry tweaks from the drag/resize editor */
     layout?: LifestyleLayoutOverrides | null
+    /** lifestyle only: 'contain' keeps the whole photo (no crop); default 'cover' */
+    fit?: 'cover' | 'contain'
   },
 ): Promise<string> {
   // Register bundled fonts with fontconfig BEFORE any librsvg text render — without
@@ -391,6 +411,7 @@ export async function applyBrandFrame(
       offer: (opts.offer ?? '').trim() || DEFAULT_OFFER,
       code: opts.productCode ?? '',
       layout: opts.layout ?? null,
+      fit: opts.fit ?? 'cover',
     })
   } else if (opts.mode === 'product_card') {
     framed = await renderProductCard(imagePath, {
@@ -409,7 +430,11 @@ export async function applyBrandFrame(
     })
   }
 
-  const outPath = `content/framed/${code}-${Date.now()}-${randomUUID().slice(0, 8)}.jpg`
+  // Supabase storage keys must be ASCII — a Bangla product code (e.g. "কোড-৩৫৪")
+  // makes the key invalid (400 InvalidKey). Slug the code to safe chars; fall back
+  // to the brand name when nothing ASCII survives.
+  const safeCode = code.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'alma'
+  const outPath = `content/framed/${safeCode}-${Date.now()}-${randomUUID().slice(0, 8)}.jpg`
   await agentStorageUpload(outPath, framed, 'image/jpeg')
   return outPath
 }

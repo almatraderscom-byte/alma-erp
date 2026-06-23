@@ -53,6 +53,8 @@ export type FinishOptions = {
   mode?: FinishMode
   theme?: string
   footer?: boolean
+  /** lifestyle only: 'contain' keeps the whole photo (no crop); default 'cover' */
+  fit?: 'cover' | 'contain'
   /** lifestyle only: geometry tweaks from the drag/resize editor (positions/sizes) */
   layout?: LifestyleLayoutOverrides | null
   /** when finishing a gallery item, persist the framed copy back onto it */

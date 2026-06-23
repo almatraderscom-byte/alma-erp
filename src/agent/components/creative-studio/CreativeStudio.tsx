@@ -1206,6 +1206,7 @@ function FinishPanel({
   const [mode, setMode] = useState<FinishMode>('lifestyle')
   const [theme, setTheme] = useState('default')
   const [footer, setFooter] = useState(false)
+  const [fit, setFit] = useState<'cover' | 'contain'>('cover')
   const [busy, setBusy] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
@@ -1237,6 +1238,7 @@ function FinishPanel({
         mode,
         theme,
         footer,
+        fit: isLifestyle ? fit : undefined,
         layout: isLifestyle ? layout ?? undefined : undefined,
       })
       toast.success('ফিনিশিং হয়ে গেছে স্যার ✅')
@@ -1351,6 +1353,15 @@ function FinishPanel({
             <input type="checkbox" checked={footer} onChange={(e) => setFooter(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
           </label>
         )}
+        {isLifestyle && (
+          <label className={cn('flex flex-col gap-1', labelCls)}>
+            ছবির সাইজ
+            <select value={fit} onChange={(e) => setFit(e.target.value as 'cover' | 'contain')} className={field}>
+              <option value="cover">পোস্টার ১০৮০×১০৮০ (ক্রপ করে ভরাট)</option>
+              <option value="contain">পুরো ছবি রাখুন (ক্রপ ছাড়া)</option>
+            </select>
+          </label>
+        )}
         <button
           type="button"
           disabled={busy}
@@ -1380,6 +1391,7 @@ function FinishPanel({
           logoUrl={logoUrl || null}
           accent={themeToken.accent}
           texts={editorTexts}
+          fit={fit}
           busy={busy}
           onCancel={() => setEditorOpen(false)}
           onApply={(overrides) => void run(overrides)}
