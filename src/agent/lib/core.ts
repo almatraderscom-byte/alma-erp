@@ -491,6 +491,19 @@ export async function* runAgentTurn(
     }
   }
 
+  // Part 2 — owner replies "busy / 30 min por / driving" to a pending-approval reminder:
+  // snooze the chase by exactly that long. Guarded (only when a reminder went out recently)
+  // so it never hijacks unrelated chat.
+  if (!personalMode && lastUserText && !intakeAutoReply) {
+    try {
+      const { processFollowupPaceReply } = await import('@/agent/lib/pending-followup')
+      const pace = await processFollowupPaceReply(lastUserText, conversationId)
+      if (pace?.autoReply) intakeAutoReply = pace.autoReply
+    } catch (err) {
+      console.warn('[core] followup pace reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   if (!personalMode && lastUserText && !intakeAutoReply) {
     try {
       const { processOwnerIntakeReply } = await import('@/agent/lib/owner-task-intake')
