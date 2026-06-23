@@ -1,68 +1,144 @@
 /**
- * Google Drive access for the Next.js app — reuses the GOOGLE_TTS_CREDENTIALS
- * service account (same one used by TTS) with the Drive scope.
+ * Google Drive access for the Next.js app — OAuth on the OWNER's own account.
  *
- * Used by the Creative Studio gallery proxy to stream archived originals back
- * to the owner after the Supabase copy has been cleaned up. The worker
- * (worker/src/drive.mjs) owns uploads; this side only reads.
+ * The owner connects once (see the drive-auth routes); the refresh token is
+ * stored in agent_kv_settings under `studio_drive_oauth`. The worker owns
+ * uploads + cleanup; this side only reads (gallery proxy) and stores the token
+ * during the OAuth callback.
+ *
+ * Scope: drive.file (the app only ever sees files it created).
  */
-import { createSign } from 'crypto'
+import { prisma } from '@/lib/prisma'
 
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
+export const DRIVE_OAUTH_KEY = 'studio_drive_oauth'
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 
-function getCredentials(): { client_email: string; private_key: string } | null {
-  const raw = process.env.GOOGLE_TTS_CREDENTIALS
-  if (!raw) return null
+type DriveConnection = { refresh_token: string; email?: string; connected_at?: string }
+
+export function getDriveClientCreds(): { clientId: string; clientSecret: string } | null {
+  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID ?? ''
+  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET ?? ''
+  return clientId && clientSecret ? { clientId, clientSecret } : null
+}
+
+/** The registered OAuth redirect URI — must match the GCP OAuth client exactly. */
+export function getDriveRedirectUri(): string {
+  const base = (process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '')
+  return `${base}/api/assistant/creative-studio/drive-auth/callback`
+}
+
+export async function getDriveConnection(): Promise<DriveConnection | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const row = await db.agentKvSetting.findUnique({
+    where: { key: DRIVE_OAUTH_KEY },
+    select: { value: true },
+  })
+  if (!row?.value) return null
   try {
-    return JSON.parse(raw)
-  } catch (err) {
-    console.warn('[drive] GOOGLE_TTS_CREDENTIALS parse failed:', err instanceof Error ? err.message : err)
+    const parsed = JSON.parse(row.value) as DriveConnection
+    return parsed?.refresh_token ? parsed : null
+  } catch {
     return null
   }
 }
 
-export function isDriveConfigured(): boolean {
-  return Boolean(getCredentials())
+export async function saveDriveConnection(conn: DriveConnection): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const value = JSON.stringify(conn)
+  await db.agentKvSetting.upsert({
+    where: { key: DRIVE_OAUTH_KEY },
+    create: { key: DRIVE_OAUTH_KEY, value },
+    update: { value },
+  })
 }
 
-async function getAccessToken(creds: { client_email: string; private_key: string }): Promise<string> {
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')
-  const now = Math.floor(Date.now() / 1000)
-  const payload = Buffer.from(JSON.stringify({
-    iss: creds.client_email,
-    scope: DRIVE_SCOPE,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-  })).toString('base64url')
+export async function clearDriveConnection(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  await db.agentKvSetting.deleteMany({ where: { key: DRIVE_OAUTH_KEY } })
+}
 
-  const sign = createSign('RSA-SHA256')
-  sign.update(`${header}.${payload}`)
-  const signature = sign.sign(creds.private_key, 'base64url')
-  const jwt = `${header}.${payload}.${signature}`
+/** True when client creds AND a stored refresh token are both present. */
+export async function isDriveConnected(): Promise<boolean> {
+  if (!getDriveClientCreds()) return false
+  return Boolean(await getDriveConnection())
+}
 
+async function getAccessToken(refreshToken: string): Promise<string> {
+  const creds = getDriveClientCreds()
+  if (!creds) throw new Error('GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET not set')
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
+    body: new URLSearchParams({
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
     signal: AbortSignal.timeout(10_000),
   })
-  if (!res.ok) throw new Error(`Google Drive auth failed: ${await res.text()}`)
-  const data = (await res.json()) as { access_token: string }
+  if (!res.ok) throw new Error(`Drive token refresh failed: ${await res.text()}`)
+  const data = (await res.json()) as { access_token?: string }
+  if (!data.access_token) throw new Error('Drive token refresh returned no access_token')
   return data.access_token
 }
 
 /**
- * Stream a Drive file's bytes by id (Shared-Drive aware). Returns the upstream
- * Response so the caller can pipe the body and headers straight through.
+ * Exchange an OAuth authorization code for tokens (callback route).
+ * @returns refresh_token + the connected account email (best effort).
+ */
+export async function exchangeCodeForTokens(code: string): Promise<DriveConnection> {
+  const creds = getDriveClientCreds()
+  if (!creds) throw new Error('GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET not set')
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: getDriveRedirectUri(),
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) throw new Error(`Drive code exchange failed: ${await res.text()}`)
+  const data = (await res.json()) as { refresh_token?: string; access_token?: string }
+  if (!data.refresh_token) {
+    throw new Error('No refresh_token returned — re-consent with prompt=consent + access_type=offline')
+  }
+
+  // Best-effort: fetch the connected account email so the UI can show it.
+  let email = ''
+  try {
+    if (data.access_token) {
+      const me = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+        signal: AbortSignal.timeout(8_000),
+      })
+      if (me.ok) email = ((await me.json()) as { email?: string }).email ?? ''
+    }
+  } catch {
+    // ignore — email is cosmetic
+  }
+
+  return { refresh_token: data.refresh_token, email, connected_at: new Date().toISOString() }
+}
+
+/**
+ * Stream a Drive file's bytes by id (owner's personal Drive). Returns the
+ * upstream Response so the caller can pipe the body + headers straight through.
  */
 export async function fetchDriveFile(fileId: string): Promise<Response | null> {
-  const creds = getCredentials()
-  if (!creds || !fileId) return null
-  const accessToken = await getAccessToken(creds)
+  if (!fileId) return null
+  const conn = await getDriveConnection()
+  if (!conn) return null
+  const accessToken = await getAccessToken(conn.refresh_token)
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`)
   url.searchParams.set('alt', 'media')
-  url.searchParams.set('supportsAllDrives', 'true')
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(60_000),

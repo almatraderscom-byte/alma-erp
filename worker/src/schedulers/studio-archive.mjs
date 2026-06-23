@@ -6,9 +6,9 @@
  * archive policy with ZERO manual work:
  *
  *   1. ARCHIVE pass — every executed Creative Studio item whose full-res files
- *      are not yet on Drive gets uploaded into a month-organized Shared Drive
- *      folder (Creative Studio/YYYY/MM-Month/). The Drive file ids are recorded
- *      back into the item's result JSON (no DB migration needed).
+ *      are not yet on Drive gets uploaded into a month-organized folder in the
+ *      OWNER's own Google Drive (Creative Studio/YYYY/MM-Month/). The Drive file
+ *      ids are recorded back into the item's result JSON (no DB migration).
  *
  *   2. CLEANUP pass — once a file is safely on Drive AND the item is older than
  *      the retention window (default 30 days, tunable via the kv setting
@@ -19,7 +19,7 @@
  * to exist and be non-trashed at delete time. Drive is the only-copy guardian.
  */
 
-import { isDriveConfigured, uploadToDrive, verifyDriveFile } from '../drive.mjs'
+import { getDriveConnection, getDriveAccessToken, uploadToDrive, verifyDriveFile } from '../drive.mjs'
 
 const BUCKET = 'agent-files'
 const ENABLED_KEY = 'studio_archive_enabled'
@@ -98,13 +98,24 @@ async function patchResult(supabase, id, result) {
 export async function runStudioArchive(context) {
   const { supabase } = context
 
-  if (!isDriveConfigured()) {
-    console.log('[studio-archive] skipped — Drive not configured (need GOOGLE_TTS_CREDENTIALS + STUDIO_DRIVE_ID)')
-    return { dutyStatus: 'skipped', dutyDetail: 'Drive not configured' }
-  }
   if (!(await isEnabled(supabase))) {
     console.log('[studio-archive] skipped — disabled by owner')
     return { dutyStatus: 'skipped', dutyDetail: 'disabled by owner' }
+  }
+
+  // Drive uses the owner's own account via OAuth (see worker/src/drive.mjs).
+  // Needs client creds (env) + a stored refresh token (owner connected once).
+  const conn = await getDriveConnection(supabase)
+  if (!conn) {
+    console.log('[studio-archive] skipped — Drive not connected (owner must Connect Google Drive once)')
+    return { dutyStatus: 'skipped', dutyDetail: 'Drive not connected' }
+  }
+  let accessToken
+  try {
+    accessToken = await getDriveAccessToken(conn.refreshToken)
+  } catch (err) {
+    console.error('[studio-archive] token refresh failed:', err.message)
+    return { dutyStatus: 'error', dutyDetail: `Drive token ব্যর্থ: ${err.message.slice(0, 40)}` }
   }
 
   const retentionDays = await getRetentionDays(supabase)
@@ -156,6 +167,7 @@ export async function runStudioArchive(context) {
         }
         const buffer = Buffer.from(await file.arrayBuffer())
         const up = await uploadToDrive({
+          token: accessToken,
           buffer,
           name: basename(path),
           contentType: file.type || guessContentType(path),
@@ -201,7 +213,7 @@ export async function runStudioArchive(context) {
     try {
       let deletedAny = false
       for (const { path, info } of deletable) {
-        const ok = await verifyDriveFile(info.fileId)
+        const ok = await verifyDriveFile(accessToken, info.fileId)
         if (!ok) {
           console.warn(`[studio-archive] skip delete ${path} — Drive copy unverified`)
           continue

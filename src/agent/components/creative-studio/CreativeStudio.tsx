@@ -30,10 +30,14 @@ import {
   fetchBrandStatus,
   saveBrandLogo,
   finishImage,
+  fetchDriveStatus,
+  disconnectDrive,
+  connectDriveUrl,
   type GalleryItem,
   type StudioConfig,
   type BrandStatus,
   type FinishMode,
+  type DriveStatus,
 } from '@/agent/components/creative-studio/studio-api'
 
 /** Native-safe download — a plain <a download> just opens a browser URL inside the
@@ -819,6 +823,7 @@ function GalleryView() {
   // Per-image finishing panel (logo + code + hook) inside the lightbox.
   const [showFinish, setShowFinish] = useState(false)
   const [themes, setThemes] = useState<string[]>(['default'])
+  const [drive, setDrive] = useState<DriveStatus | null>(null)
   const openItem = useCallback((item: GalleryItem) => {
     setShowBranded(Boolean(item.brandedUrl))
     setShowFinish(false)
@@ -827,6 +832,14 @@ function GalleryView() {
 
   useEffect(() => {
     void fetchBrandStatus().then((s) => setThemes(s.themes?.length ? s.themes : ['default'])).catch(() => {})
+    void fetchDriveStatus().then(setDrive).catch(() => {})
+  }, [])
+
+  const onDisconnectDrive = useCallback(async () => {
+    try {
+      await disconnectDrive()
+      setDrive((d) => (d ? { ...d, connected: false, email: null, connectedAt: null } : d))
+    } catch { /* ignore — UI stays as-is */ }
   }, [])
 
   // After finishing: attach the framed copy to the selected item + the grid so the
@@ -872,6 +885,35 @@ function GalleryView() {
           Refresh
         </button>
       </div>
+
+      {/* Google Drive archive status. When connected, the worker auto-uploads
+          gallery originals to the owner's own Drive (month folders) and frees
+          Supabase space — files stay safe in his 400GB Drive. */}
+      {drive?.configured && (
+        drive.connected ? (
+          <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-3 py-2.5">
+            <span className="text-sm">☁️</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-semibold text-emerald-300">
+                Google Drive যুক্ত — ছবি/ভিডিও অটো সেভ হচ্ছে
+              </p>
+              {drive.email && <p className="truncate text-[10px] text-emerald-400/70">{drive.email}</p>}
+            </div>
+            <button type="button" onClick={() => void onDisconnectDrive()} className="shrink-0 text-[11px] font-semibold text-muted hover:text-white">
+              বিচ্ছিন্ন করুন
+            </button>
+          </div>
+        ) : (
+          <a href={connectDriveUrl()} className="mb-3 flex items-center gap-2.5 rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.07] px-3 py-2.5">
+            <span className="text-sm">☁️</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-semibold text-[#E07A5F]">Google Drive যুক্ত করুন</p>
+              <p className="truncate text-[10px] text-[#E07A5F]/70">ছবি/ভিডিও আপনার Drive-এ অটো সেভ + জায়গা খালি রাখুন</p>
+            </div>
+            <span className="shrink-0 rounded-lg bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white">যুক্ত করুন</span>
+          </a>
+        )
+      )}
 
       {/* "Generation started / in progress" banner — fixes "kono bujhar way nai".
           Shows a live count of renders still cooking so the owner KNOWS work is
