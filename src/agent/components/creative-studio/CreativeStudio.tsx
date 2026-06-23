@@ -19,6 +19,13 @@ import {
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
+import {
+  DEFAULT_OFFER,
+  LIFESTYLE_EST,
+  LIFESTYLE_THEME_TOKENS,
+  type LifestyleLayoutOverrides,
+} from '@/lib/content-engine/lifestyle-layout'
 import {
   fetchStudioConfig,
   fetchGallery,
@@ -1157,6 +1164,7 @@ function GalleryView() {
               >
                 <FinishPanel
                   storagePath={selected.storagePath}
+                  imageUrl={selected.previewUrl}
                   pendingActionId={selected.id}
                   themes={themes}
                   onDone={(framedUrl) => applyFinished(selected.id, framedUrl)}
@@ -1177,12 +1185,15 @@ function GalleryView() {
  */
 function FinishPanel({
   storagePath,
+  imageUrl,
   pendingActionId,
   themes,
   onDone,
   dark = true,
 }: {
   storagePath: string
+  /** photo URL shown as the editor background (original, pre-frame) */
+  imageUrl?: string | null
   pendingActionId?: string
   themes: string[]
   onDone: (framedUrl: string, framedPath: string) => void
@@ -1196,6 +1207,8 @@ function FinishPanel({
   const [theme, setTheme] = useState('default')
   const [footer, setFooter] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
 
   const themeLabel: Record<string, string> = {
     default: 'সাধারণ',
@@ -1207,7 +1220,7 @@ function FinishPanel({
 
   const isLifestyle = mode === 'lifestyle'
 
-  const run = async () => {
+  const run = async (layout?: LifestyleLayoutOverrides | null) => {
     if (!hook.trim()) {
       toast.error(isLifestyle ? 'মূল লেখাটা (headline) দিন স্যার' : 'একটা hook লেখা লাগবে স্যার')
       return
@@ -1224,8 +1237,10 @@ function FinishPanel({
         mode,
         theme,
         footer,
+        layout: isLifestyle ? layout ?? undefined : undefined,
       })
       toast.success('ফিনিশিং হয়ে গেছে স্যার ✅')
+      setEditorOpen(false)
       onDone(framedUrl, framedPath)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'ফিনিশিং ব্যর্থ')
@@ -1233,6 +1248,41 @@ function FinishPanel({
       setBusy(false)
     }
   }
+
+  // Open the drag/resize editor — needs the headline + the photo to sit behind it,
+  // and the brand logo (fetched lazily, best-effort).
+  const openEditor = async () => {
+    if (!hook.trim()) {
+      toast.error('মূল লেখাটা (headline) দিন স্যার')
+      return
+    }
+    if (!imageUrl) {
+      toast.error('এই ছবিটার preview নেই, সরাসরি Finishing করুন')
+      return
+    }
+    if (logoUrl === null) {
+      try {
+        const b = await fetchBrandStatus()
+        setLogoUrl(b.logoUrl ?? '')
+      } catch {
+        setLogoUrl('')
+      }
+    }
+    setEditorOpen(true)
+  }
+
+  const themeToken = LIFESTYLE_THEME_TOKENS[theme] ?? LIFESTYLE_THEME_TOKENS.default
+  // Stable reference so the editor isn't re-seeded (drags wiped) on unrelated re-renders.
+  const editorTexts = useMemo(
+    () => ({
+      eyebrow: eyebrow.trim() || themeToken.eyebrow,
+      headline: hook.trim(),
+      offer: offer.trim() || DEFAULT_OFFER,
+      code: code.trim(),
+      est: LIFESTYLE_EST,
+    }),
+    [eyebrow, hook, offer, code, themeToken.eyebrow],
+  )
 
   const field = dark
     ? 'rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[13px] text-white placeholder:text-white/40'
@@ -1309,7 +1359,32 @@ function FinishPanel({
         >
           {busy ? 'হচ্ছে…' : 'Finishing করুন'}
         </button>
+        {isLifestyle && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void openEditor()}
+            className={cn(
+              'w-full rounded-lg border py-2.5 text-[13px] font-semibold disabled:opacity-50',
+              dark ? 'border-white/25 text-white/85' : 'border-border text-cream',
+            )}
+          >
+            🎚️ সাজিয়ে নিন (টেনে ছোট-বড়)
+          </button>
+        )}
       </div>
+
+      {editorOpen && imageUrl && (
+        <LifestyleEditor
+          imageUrl={imageUrl}
+          logoUrl={logoUrl || null}
+          accent={themeToken.accent}
+          texts={editorTexts}
+          busy={busy}
+          onCancel={() => setEditorOpen(false)}
+          onApply={(overrides) => void run(overrides)}
+        />
+      )}
     </div>
   )
 }
@@ -1570,6 +1645,7 @@ function FinishingView() {
       {uploadPath && !resultUrl && (
         <FinishPanel
           storagePath={uploadPath}
+          imageUrl={uploadPreview}
           themes={themes}
           dark={false}
           onDone={(framedUrl) => setResultUrl(framedUrl)}
