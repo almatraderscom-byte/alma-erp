@@ -10,12 +10,22 @@ import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+// Rotated through per-image on a multi-image FASHN run so the outputs vary in pose
+// instead of all rendering the same front shot.
+const STUDIO_POSE_ROTATION: string[] = [
+  'Pose: facing camera, relaxed confident full-front posture, full outfit clearly visible.',
+  'Pose: three-quarter angle showing the garment silhouette and side drape.',
+  'Pose: mid-stride walking toward camera, natural movement, fabric in motion.',
+  'Pose: seated naturally and elegantly, garment arranged to show fit and detail.',
+]
+
 export type CreativeStudioRunInput = {
   mode: StudioModeId
   provider?: StudioProvider
   productImagePath?: string
   modelImagePath?: string
   sourceImagePath?: string
+  secondSourceImagePath?: string
   faceReferencePath?: string
   modelId?: string
   familyPreset?: FamilyPresetId
@@ -36,8 +46,14 @@ export type CreativeStudioJobRef = {
   type: 'image_gen' | 'video_gen'
 }
 
-function resolveProvider(requested: StudioProvider | undefined, mode: StudioModeId): StudioProvider {
+function resolveProvider(
+  requested: StudioProvider | undefined,
+  mode: StudioModeId,
+  familyPreset?: FamilyPresetId,
+): StudioProvider {
   if (mode === 'image_to_video') return 'gemini'
+  // Multi-person family presets require Gemini compositing; FASHN tryon-max is single-person only.
+  if (familyPreset && familyPreset !== 'single') return 'gemini'
   if (requested === 'gemini') return 'gemini'
   if (requested === 'fashn' && isFashnConfigured()) return 'fashn'
   if (isFashnConfigured() && STUDIO_MODES.find((m) => m.id === mode)?.fashnModel) return 'fashn'
@@ -100,9 +116,44 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   const modeDef = STUDIO_MODES.find((m) => m.id === input.mode)
   if (!modeDef) throw new Error('invalid_mode')
 
-  const provider = resolveProvider(input.provider, input.mode)
+  const provider = resolveProvider(input.provider, input.mode, input.familyPreset)
   const fashnReady = isFashnConfigured()
   const jobs: CreativeStudioJobRef[] = []
+
+  // FAMILY MERGE: combine two already-generated images (e.g. father+son and mother+daughter)
+  // into ONE four-person family photoshoot. Worker composites both reference images via Gemini.
+  if (input.familyPreset === 'full_family' && input.sourceImagePath && input.secondSourceImagePath) {
+    const mergePrompt = [
+      'Combine the people from BOTH reference images into ONE cohesive Bangladeshi family photoshoot.',
+      'Reference image 1 shows some family members; reference image 2 shows the others.',
+      'Place ALL of them together in a single natural scene — full family (father, mother, son, daughter)',
+      'standing/posed together as one group. Preserve each person\'s face, outfit and identity exactly',
+      'as shown in their source image. One consistent lighting, background and photographic style.',
+      input.prompt,
+      input.backgroundPrompt,
+    ].filter(Boolean).join(' ')
+
+    const id = await createApprovedAction({
+      type: 'image_gen',
+      payload: {
+        // NOTE: no provider:'fashn' → worker uses the Gemini multi-image path
+        prompt: mergePrompt,
+        quality: input.generationMode === 'quality' ? 'pro' : 'standard',
+        referenceImageId: input.sourceImagePath,
+        secondReferenceImageId: input.secondSourceImagePath,
+        aspectRatio: input.aspectRatio ?? '4:5',
+        imageSize: input.resolution ? input.resolution.toUpperCase() : '2K',
+        creativeStudio: true,
+        studioMode: input.mode,
+        familyPreset: 'full_family',
+        familyMerge: true,
+      },
+      summary: '🎨 Studio Family Merge (Gemini)',
+      costEstimate: 0.25,
+    })
+    jobs.push({ pendingActionId: id, label: 'Family Merge', type: 'image_gen' })
+    return { jobs, provider: 'gemini', fashnReady: isFashnConfigured() }
+  }
 
   const extraPrompt = [input.prompt, input.backgroundPrompt, input.familyPreset ? familyPrompt(input.familyPreset) : '']
     .filter(Boolean)
@@ -192,7 +243,9 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           fashnModel: modeDef.fashnModel,
           fashnInputs,
           fashnOptions: {
-            prompt: extraPrompt || undefined,
+            prompt: (count > 1
+              ? [extraPrompt, STUDIO_POSE_ROTATION[i % STUDIO_POSE_ROTATION.length]].filter(Boolean).join(' ')
+              : extraPrompt) || undefined,
             resolution: input.resolution ?? '2k',
             generationMode: input.generationMode ?? 'balanced',
             numImages: 1,

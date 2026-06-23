@@ -96,6 +96,7 @@ export type RunPayload = {
   productImagePath?: string
   modelImagePath?: string
   sourceImagePath?: string
+  secondSourceImagePath?: string
   faceReferencePath?: string
   modelId?: string
   familyPreset?: FamilyPresetId

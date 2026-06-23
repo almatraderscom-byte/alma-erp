@@ -59,9 +59,11 @@ async function buildVariantNotes(
     const daughter = await getModelByRole('daughter')
     if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
     familyExtra = [
-      'COMPOSITION: Bangladeshi mother and young daughter (age 5–10) together in ONE scene,',
-      'both wearing the SAME matching coordinated outfits from the product reference — family fashion shoot.',
-      'Child proportions natural for age 5–10; garment on child sized correctly from the matching set.',
+      'COMPOSITION: Bangladeshi mother and young daughter (age 5–10) together in ONE scene — family fashion shoot.',
+      'The product reference shows a coordinated SET containing two garments: an adult-size piece and a child-size piece.',
+      'Dress the MOTHER in the adult piece and the DAUGHTER in the child piece — do NOT put the same single garment on both.',
+      'If the reference clearly shows only one garment, then both wear the same coordinated outfit instead.',
+      'Child proportions natural for age 5–10; garment on child sized correctly from the set.',
       fabricNote ?? '',
       daughter?.notes ? `Preserve daughter identity from brand library (${daughter.name}).` : '',
     ].filter(Boolean).join(' ')

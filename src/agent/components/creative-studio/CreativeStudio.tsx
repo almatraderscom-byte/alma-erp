@@ -252,6 +252,9 @@ function StudioWorkspace({
   const [productPath, setProductPath] = useState<string | null>(null)
   const [modelPath, setModelPath] = useState<string | null>(null)
   const [sourcePath, setSourcePath] = useState<string | null>(null)
+  // full_family merge: 2nd already-generated image (e.g. ma+meye) composited with the 1st.
+  const [secondSourcePreview, setSecondSourcePreview] = useState<string | null>(null)
+  const [secondSourcePath, setSecondSourcePath] = useState<string | null>(null)
   const [modelId, setModelId] = useState('')
   const [models, setModels] = useState<StudioModel[]>([])
   const [prompt, setPrompt] = useState('')
@@ -271,6 +274,10 @@ function StudioWorkspace({
 
   const modeDef = useMemo(() => STUDIO_MODES.find((m) => m.id === mode)!, [mode])
   const bgPrompt = BACKGROUND_PRESETS.find((b) => b.id === backgroundId)?.prompt ?? ''
+
+  // full_family merge mode: combine two uploaded images (baba+chele + ma+meye) into one shot.
+  const isFamilyMerge =
+    familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
@@ -330,9 +337,11 @@ function StudioWorkspace({
     setProductPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
     setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
     setSourcePreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+    setSecondSourcePreview((p) => { if (p) URL.revokeObjectURL(p); return null })
     setProductPath(null)
     setModelPath(null)
     setSourcePath(null)
+    setSecondSourcePath(null)
   }, [])
 
   const selectMode = useCallback(
@@ -348,7 +357,7 @@ function StudioWorkspace({
     [mode, config, clearUploads],
   )
 
-  const upload = async (file: File, kind: 'product' | 'model' | 'source') => {
+  const upload = async (file: File, kind: 'product' | 'model' | 'source' | 'source2') => {
     const path = await uploadStudioFile(file, `studio-${kind}`)
     const url = URL.createObjectURL(file)
     if (kind === 'product') {
@@ -359,6 +368,10 @@ function StudioWorkspace({
       if (modelPreview) URL.revokeObjectURL(modelPreview)
       setModelPreview(url)
       setModelPath(path)
+    } else if (kind === 'source2') {
+      if (secondSourcePreview) URL.revokeObjectURL(secondSourcePreview)
+      setSecondSourcePreview(url)
+      setSecondSourcePath(path)
     } else {
       if (sourcePreview) URL.revokeObjectURL(sourcePreview)
       setSourcePreview(url)
@@ -368,11 +381,13 @@ function StudioWorkspace({
 
   const canRun = useMemo(() => {
     if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
+    // Family merge needs BOTH uploaded images (1st = baba+chele, 2nd = ma+meye).
+    if (isFamilyMerge) return Boolean((sourcePath ?? productPath) && secondSourcePath)
     if (modeDef.needsProduct && !productPath) return false
     if (modeDef.needsModel && !modelPath && !modelId) return false
     if (modeDef.needsSource && !sourcePath) return false
     return true
-  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath])
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath])
 
   const handleRun = async () => {
     if (!canRun) {
@@ -387,6 +402,7 @@ function StudioWorkspace({
         productImagePath: productPath ?? undefined,
         modelImagePath: modelPath ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
+        secondSourceImagePath: isFamilyMerge ? (secondSourcePath ?? undefined) : undefined,
         modelId: modelId || undefined,
         familyPreset: mode === 'product_to_model' || mode === 'try_on' ? familyPreset : undefined,
         prompt,
@@ -449,12 +465,24 @@ function StudioWorkspace({
       <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 pt-3', panelOpen ? 'pb-[min(58vh,480px)] md:pb-[min(52vh,420px)]' : 'pb-28 md:pb-20')}>
         <div className="mx-auto flex max-w-2xl flex-col gap-3">
           <UploadTile
-            label={modeDef.needsProduct ? 'Product / mannequin' : 'Product (optional)'}
+            label={
+              isFamilyMerge
+                ? 'বাবা + ছেলে ছবি (১ম)'
+                : modeDef.needsProduct ? 'Product / mannequin' : 'Product (optional)'
+            }
             preview={productPreview}
             onFile={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
             required={modeDef.needsProduct}
           />
-          {(modeDef.needsModel || mode === 'try_on') && (
+          {isFamilyMerge && (
+            <UploadTile
+              label="মা + মেয়ে ছবি (২য়)"
+              preview={secondSourcePreview}
+              onFile={(f) => void upload(f, 'source2').catch((e) => toast.error(String(e)))}
+              required
+            />
+          )}
+          {!isFamilyMerge && (modeDef.needsModel || mode === 'try_on') && (
             <UploadTile
               label="Model photo"
               preview={modelPreview}
