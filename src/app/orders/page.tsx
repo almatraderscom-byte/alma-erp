@@ -962,9 +962,9 @@ function OrdersPageContent() {
                       : 'border-l-transparent'
                   }`}>
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
-                        <p className="text-sm font-semibold text-cream mt-0.5">{o.customer}</p>
+                        <p className="truncate text-sm font-semibold text-cream mt-0.5">{o.customer}</p>
                         <p className="text-[11px] text-muted truncate">{o.product}</p>
                       </div>
                       <div className="text-right shrink-0">

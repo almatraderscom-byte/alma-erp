@@ -89,13 +89,17 @@ function ErpChrome({ children }: { children: ReactNode }) {
           <main
             ref={mainScrollRef}
             className={cn(
-              // overscroll-x-none kills the horizontal rubber-band drift that made
-              // the whole layout slide on touch in the iOS (WKWebView) app, while
-              // overflow-x-auto still lets genuinely wide tables scroll their own area.
+              // On mobile (the iOS WKWebView app) the shell must NOT scroll/pan
+              // horizontally — that was what slid the whole layout on touch. Clip
+              // it (overflow-x-hidden) so the page is locked; every genuinely wide
+              // table on a page already has its OWN overflow-x-auto scroller, so
+              // nothing legitimately needs page-level horizontal scroll on mobile.
+              // Desktop (md+) keeps overflow-x-auto. overscroll-x-none stops any
+              // residual horizontal rubber-band on desktop too.
               'flex-1 min-w-0 scrollbar-hide overscroll-y-contain overscroll-x-none',
               isAgent
                 ? 'overflow-hidden'
-                : 'overflow-x-auto overflow-y-auto',
+                : 'overflow-x-hidden overflow-y-auto md:overflow-x-auto',
             )}
           >
             {isAgent ? (
