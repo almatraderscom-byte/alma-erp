@@ -34,6 +34,14 @@ export function useKeyboardInset() {
       try {
         const { Capacitor } = await import('@capacitor/core')
         if (!Capacitor?.isNativePlatform?.()) return false
+        // Mark the document as a native Capacitor shell. Native uses
+        // Keyboard.resize: None, so window.visualViewport does NOT shrink when
+        // the keyboard opens — CSS that needs to lift content above the keyboard
+        // (e.g. .mobile-modal-overlay) must subtract --kb-inset, but ONLY here.
+        // On web the visual viewport already shrinks, so subtracting again would
+        // double-count.
+        document.documentElement.classList.add('cap-native')
+        cleanups.push(() => document.documentElement.classList.remove('cap-native'))
         const { Keyboard } = await import('@capacitor/keyboard')
         const show = await Keyboard.addListener('keyboardWillShow', (info) => {
           if (!disposed) setInset(info.keyboardHeight)

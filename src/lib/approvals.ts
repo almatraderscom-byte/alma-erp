@@ -104,6 +104,64 @@ export async function createApprovalRequest(
   return approval
 }
 
+/**
+ * Super Admin self-action: record an already-APPROVED approval row WITHOUT
+ * routing it through the PENDING queue.
+ *
+ * Owner directive (2026-06-23): "Super admin er kichui jeno approve section na
+ * ashe" — a Super Admin's own action is final, so the caller executes the
+ * mutation directly and uses this to leave an audit trail. No Super-Admin
+ * notification is fired (there is nothing to approve).
+ */
+export async function recordSelfApproval(
+  input: CreateApprovalInput & { tx?: ApprovalTx },
+) {
+  const db = input.tx || prisma
+  const now = new Date()
+  const auditHistory = [
+    {
+      action: 'REQUESTED',
+      actorUserId: input.requestedBy,
+      reason: input.reason || null,
+      source: 'erp',
+      timestamp: now.toISOString(),
+    },
+    {
+      action: 'APPROVED',
+      actorUserId: input.requestedBy,
+      reason: 'Self-approved — Super Admin action is final',
+      source: 'erp',
+      timestamp: now.toISOString(),
+    },
+  ] satisfies ApprovalAuditEntry[]
+
+  const approval = await db.approvalRequest.create({
+    data: {
+      module: input.module,
+      type: input.type,
+      businessId: input.businessId || null,
+      entityId: input.entityId,
+      requestedBy: input.requestedBy,
+      reason: input.reason,
+      payloadSnapshot: input.payloadSnapshot ? input.payloadSnapshot as Prisma.InputJsonObject : undefined,
+      priority: input.priority || 'NORMAL',
+      actionUrl: input.actionUrl || null,
+      status: 'APPROVED',
+      approvedBy: input.requestedBy,
+      approvedAt: now,
+      auditHistory: auditHistory as unknown as Prisma.InputJsonValue,
+    },
+  })
+  logEvent('info', 'approval.self_approved', {
+    approvalId: approval.id,
+    module: approval.module,
+    type: approval.type,
+    entityId: approval.entityId,
+    actorUserId: input.requestedBy,
+  })
+  return approval
+}
+
 export async function resolveApprovalRequest(input: {
   module: ApprovalModule
   type: string

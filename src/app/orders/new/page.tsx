@@ -78,7 +78,9 @@ export default function NewOrderPage() {
       <footer
         className="fixed bottom-0 left-0 right-0 z-[110] border-t border-border bg-surface/95 backdrop-blur-md supports-[backdrop-filter]:bg-surface/85 shadow-[0_-8px_32px_rgba(0,0,0,0.08)]"
         style={{
-          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
+          // Lift the action bar above the on-screen keyboard when one is open
+          // (--kb-inset is driven app-wide by GlobalKeyboardManager).
+          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px), var(--kb-inset, 0px))',
           paddingTop: 12,
           paddingLeft: 'max(16px, env(safe-area-inset-left, 0px))',
           paddingRight: 'max(16px, env(safe-area-inset-right, 0px))',

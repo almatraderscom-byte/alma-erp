@@ -180,7 +180,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
             code,
             error: err,
           })
-          toast.error(err, { id: toastId })
+          toast.error(err, { id: toastId, duration: 5_000 })
           window.setTimeout(() => clearRowState(approvalId), 8_000)
           return { ok: false, error: err, rolledBack: parsed.rolledBack }
         }
@@ -195,18 +195,22 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
         })
 
         const warning = typeof json.warning === 'string' ? json.warning : null
+        // Reuses the loading toast's id to update it in place. MUST pass an explicit
+        // finite duration — react-hot-toast merges into the existing toast object, so
+        // without this the success toast inherits the loading toast's duration:Infinity
+        // and stays stuck on screen forever.
         if (json.reconciled) {
           toast.success(
             warning
               || (action === 'REJECT'
                 ? 'Approval synced (already handled elsewhere)'
                 : 'Approval synced with existing decision'),
-            { id: toastId },
+            { id: toastId, duration: 3_200 },
           )
         } else {
           toast.success(
             warning || (action === 'APPROVE' ? 'Approval committed' : 'Rejection committed'),
-            { id: toastId },
+            { id: toastId, duration: 3_200 },
           )
         }
 
@@ -230,7 +234,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           operationId,
           message: `No changes applied — ${err}`,
         })
-        toast.error(err, { id: toastId })
+        toast.error(err, { id: toastId, duration: 5_000 })
         logClient('approval.action.rolled_back', { approvalId, operationId, action, error: err })
         window.setTimeout(() => clearRowState(approvalId), 8_000)
         return { ok: false, error: err, rolledBack: true }

@@ -563,6 +563,17 @@ a,
     touch-action: manipulation;
   }
 
+  /* Native Capacitor shell (Keyboard.resize: None): visualViewport stays full
+     height when the keyboard opens, so the bottom-anchored modal would sit
+     UNDER the keyboard. Shrink the overlay by the real keyboard height
+     (--kb-inset, from the Keyboard plugin) so the shell — and its footer/Reject
+     button and focused textarea — lifts above the keyboard. Web/PWA already
+     shrinks the visual viewport, so this rule is scoped to native only. */
+  html.cap-native .mobile-modal-overlay {
+    height: calc(var(--ios-vv-height, 100dvh) - var(--kb-inset, 0px));
+    max-height: calc(var(--ios-vv-height, 100dvh) - var(--kb-inset, 0px));
+  }
+
   .mobile-modal-backdrop {
     @apply absolute inset-0 bg-black/50 backdrop-blur-sm;
     touch-action: none;
