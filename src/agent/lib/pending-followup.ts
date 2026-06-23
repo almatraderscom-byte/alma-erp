@@ -71,6 +71,8 @@ function prettyType(type: string): string {
       return 'একটি duty-এর approval'
     case 'ads_optimizer_batch':
       return 'বিজ্ঞাপন optimize approval'
+    case 'coworker_request':
+      return 'Claude co-worker-এর একটি অনুরোধ'
     default:
       return type.replace(/_/g, ' ')
   }
@@ -83,6 +85,8 @@ function typeIntervalMin(type: string): number {
       return 25 // staff are waiting on their day's work — chase soon
     case 'ads_optimizer_batch':
       return 45
+    case 'coworker_request':
+      return 45 // co-worker proposed an action; chase the owner at a moderate pace
     case 'duty_approval_block':
       return 60
     default:

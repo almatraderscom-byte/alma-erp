@@ -491,10 +491,24 @@ export async function* runAgentTurn(
     }
   }
 
+  // Owner approves / rejects a proposal filed by the external Claude co-worker. Only fires
+  // when such a request is pending AND recent (so it never hijacks unrelated chat). Approve →
+  // hand the head an EXECUTE-NOW context block; reject → short-circuit with a confirmation.
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+    try {
+      const { processCoworkerRequestReply } = await import('@/agent/lib/coworker-request')
+      const cw = await processCoworkerRequestReply(lastUserText, conversationId)
+      if (cw?.autoReply) intakeAutoReply = cw.autoReply
+      if (cw?.contextBlock) intakeContextBlock = cw.contextBlock
+    } catch (err) {
+      console.warn('[core] coworker request reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Part 2 — owner replies "busy / 30 min por / driving" to a pending-approval reminder:
   // snooze the chase by exactly that long. Guarded (only when a reminder went out recently)
   // so it never hijacks unrelated chat.
-  if (!personalMode && lastUserText && !intakeAutoReply) {
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processFollowupPaceReply } = await import('@/agent/lib/pending-followup')
       const pace = await processFollowupPaceReply(lastUserText, conversationId)
