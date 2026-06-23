@@ -27,12 +27,13 @@ describe('owner-chat tool prefix is stable across messages', () => {
   it('stable set exposes core business tools across domains', async () => {
     const { tools } = await selectToolsAndGroupsForTurnAsync('ajker sales koto', OWNER)
     const names = tools.map((t) => t.name)
+    // content (run_content_post) + growth (plan_marketing) are deliberately NOT on
+    // the owner head — the slim router delegates them to specialist workers, the
+    // core cost lever. The remaining business domains stay directly available.
     for (const tool of [
       'get_sales_summary', // erp
       'get_staff_tasks', // staff
       'get_expense_summary', // finance
-      'run_content_post', // content
-      'plan_marketing', // growth
       'get_website_catalog', // website
       'get_api_balances', // cost
     ]) {

@@ -105,10 +105,12 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     toolGroups: ['base', 'cs'],
     instruction:
       'You are a customer-service specialist for ALMA Lifestyle. Use the CS tools to read the customer, order and product context, then return a concise, empathetic Bangla/Banglish reply or status. Never invent stock or price — verify with tools first.',
-    // Owner rule: DeepSeek is the cheap sub-agent worker.
-    // NOTE: not yet delegatable — the head can't route to `cs` until the
-    // orchestrator + tier-router are wired in the later routing step.
-    preferredModelId: 'or-deepseek-v4-flash',
+    // Owner decision: CS is customer-facing, so it runs on Qwen (stronger Bangla
+    // quality) rather than DeepSeek — the cost trade-off is accepted for replies the
+    // customer actually reads. Staff/`ops` stays on cheap DeepSeek; finance/`analyst`
+    // stays on Claude. NOTE: not yet delegatable — the head can't route to `cs` until
+    // the orchestrator + tier-router are wired in the later routing step.
+    preferredModelId: 'or-qwen3-max',
   },
 }
 
