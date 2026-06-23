@@ -832,8 +832,8 @@ function OrdersPageContent() {
           <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="text-green-400" loading={tableLoading} />
         </div>
 
-        {/* Status pills */}
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+        {/* Status pills — wrap so every filter shows at once (no horizontal scroll) */}
+        <div className="flex flex-wrap gap-2 pb-1">
           <button onClick={() => setStatus('')}
             className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
             All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
