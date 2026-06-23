@@ -49,8 +49,17 @@ async function handleDownload(url: string | undefined | null, filename?: string)
   else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
 }
 
-type MainView = 'studio' | 'gallery' | 'models' | 'finishing'
+type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
+
+// Embedded browser video editor (OpenCut). Owner-tunable via env so we can later
+// point it at a self-hosted/rebranded instance without a code change.
+const OPENCUT_URL = process.env.NEXT_PUBLIC_OPENCUT_URL || 'https://opencut.app/projects'
+
+// These modes carry no product image, so the Gemini fallback (which requires a
+// product) can't serve them — they only render through FASHN. Gate them in the
+// UI so the owner never picks a mode that will fail server-side.
+const FASHN_ONLY_MODES: StudioModeId[] = ['model_swap', 'face_to_model', 'edit']
 
 export default function CreativeStudio() {
   const [view, setView] = useState<MainView>('studio')
@@ -89,6 +98,9 @@ export default function CreativeStudio() {
         </NavIcon>
         <NavIcon label="Finishing" active={view === 'finishing'} onClick={() => setView('finishing')}>
           <BrandingSvg />
+        </NavIcon>
+        <NavIcon label="Video" active={view === 'video'} onClick={() => setView('video')}>
+          <VideoSvg />
         </NavIcon>
       </aside>
 
@@ -143,6 +155,11 @@ export default function CreativeStudio() {
                 <FinishingView />
               </motion.div>
             )}
+            {view === 'video' && (
+              <motion.div key="video" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <VideoEditorView />
+              </motion.div>
+            )}
           </AnimatePresence>
         </main>
 
@@ -157,6 +174,7 @@ export default function CreativeStudio() {
               ['gallery', 'Gallery', GallerySvg],
               ['models', 'Models', UserSvg],
               ['finishing', 'Finishing', BrandingSvg],
+              ['video', 'Video', VideoSvg],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -289,11 +307,39 @@ function StudioWorkspace({
     }
   }
 
+  const fashnOnly = FASHN_ONLY_MODES.includes(mode)
+
   useEffect(() => {
-    if (config?.fashnConfigured && mode !== 'image_to_video') setProvider('fashn')
-    else if (mode === 'image_to_video') setProvider('gemini')
+    if (mode === 'image_to_video') setProvider('gemini')
+    else if (fashnOnly) setProvider('fashn') // these modes have no Gemini path
+    else if (config?.fashnConfigured) setProvider('fashn')
     else setProvider('gemini')
-  }, [config, mode])
+  }, [config, mode, fashnOnly])
+
+  // Switching mode invalidates the previously uploaded images (e.g. a Try-On
+  // product makes no sense as a Model-Swap source). Clear previews + paths so a
+  // stale upload from a different mode can't silently flow into the next Run.
+  const clearUploads = useCallback(() => {
+    setProductPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+    setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+    setSourcePreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+    setProductPath(null)
+    setModelPath(null)
+    setSourcePath(null)
+  }, [])
+
+  const selectMode = useCallback(
+    (next: StudioModeId) => {
+      if (next === mode) return
+      if (FASHN_ONLY_MODES.includes(next) && !config?.fashnConfigured) {
+        toast.error('এই mode-এর জন্য FASHN Pro দরকার — এখন configure করা নেই।')
+        return
+      }
+      clearUploads()
+      setMode(next)
+    },
+    [mode, config, clearUploads],
+  )
 
   const upload = async (file: File, kind: 'product' | 'model' | 'source') => {
     const path = await uploadStudioFile(file, `studio-${kind}`)
@@ -454,19 +500,25 @@ function StudioWorkspace({
           <div className="max-h-[min(50vh,400px)] overflow-y-auto px-3 pb-3">
             {/* Mode chips */}
             <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {STUDIO_MODES.map((m) => (
+              {STUDIO_MODES.map((m) => {
+                const locked = FASHN_ONLY_MODES.includes(m.id) && !config?.fashnConfigured
+                return (
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => setMode(m.id)}
+                  onClick={() => selectMode(m.id)}
+                  disabled={locked}
+                  title={locked ? 'FASHN Pro দরকার' : undefined}
                   className={cn(
                     'shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all',
                     mode === m.id ? 'bg-gold/20 border border-gold/30 text-cream shadow-sm' : 'bg-white/[0.05] text-muted',
+                    locked && 'cursor-not-allowed opacity-40',
                   )}
                 >
-                  {m.short}
+                  {m.short}{locked ? ' 🔒' : ''}
                 </button>
-              ))}
+                )
+              })}
             </div>
 
             {/* Family presets */}
@@ -506,7 +558,9 @@ function StudioWorkspace({
                     <option value="fashn" disabled={!config?.fashnConfigured}>
                       Pro (FASHN)
                     </option>
-                    <option value="gemini">Draft (Gemini)</option>
+                    <option value="gemini" disabled={fashnOnly}>
+                      Draft (Gemini){fashnOnly ? ' — N/A' : ''}
+                    </option>
                   </select>
                   <select
                     value={backgroundId}
@@ -1516,6 +1570,80 @@ function FinishingView() {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+function VideoSvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M10 9l5 3-5 3z" />
+    </svg>
+  )
+}
+
+function VideoEditorView() {
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+
+  // If the embedded editor never signals load (some mobile WebViews block
+  // heavy cross-origin frames), surface a clear fallback instead of a
+  // perpetual spinner.
+  useEffect(() => {
+    if (!loading) return
+    const t = setTimeout(() => setFailed(true), 12_000)
+    return () => clearTimeout(t)
+  }, [loading])
+
+  return (
+    <div className="flex h-full w-full flex-col bg-[#0c0b12]">
+      <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 py-2">
+        <div>
+          <p className="text-xs font-bold text-cream">Video Editor</p>
+          <p className="text-[10px] text-muted">OpenCut — short video &amp; reels (beta)</p>
+        </div>
+        <a
+          href={OPENCUT_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-lg bg-[#E07A5F] px-2.5 py-1.5 text-[11px] font-semibold text-white"
+        >
+          নতুন ট্যাবে ↗
+        </a>
+      </div>
+      <div className="relative min-h-0 flex-1">
+        {loading && !failed && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] text-muted">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#8b7cf6] border-t-transparent" />
+            <p className="text-xs">Video editor লোড হচ্ছে…</p>
+          </div>
+        )}
+        {failed && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] px-6 text-center text-muted">
+            <p className="text-xs">এখানে লোড হতে দেরি হচ্ছে। সরাসরি খুলুন —</p>
+            <a
+              href={OPENCUT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-lg bg-[#E07A5F] px-4 py-2 text-xs font-semibold text-white"
+            >
+              Video Editor খুলুন ↗
+            </a>
+          </div>
+        )}
+        <iframe
+          title="OpenCut Video Editor"
+          src={OPENCUT_URL}
+          onLoad={() => {
+            setLoading(false)
+            setFailed(false)
+          }}
+          className="h-full w-full border-0"
+          allow="clipboard-read; clipboard-write; fullscreen; encrypted-media; autoplay"
+          allowFullScreen
+        />
+      </div>
     </div>
   )
 }
