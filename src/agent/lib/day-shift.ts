@@ -494,6 +494,14 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       console.warn('[day-shift] daily followup send failed:', err instanceof Error ? err.message : err)
     }
 
+    // Part 2 — any approval/dispatch still pending from a previous day: confirm it FIRST.
+    try {
+      const { runPendingFollowupDayStart } = await import('@/agent/lib/pending-followup')
+      await runPendingFollowupDayStart()
+    } catch (err) {
+      console.warn('[day-shift] pending followup day-start failed:', err instanceof Error ? err.message : err)
+    }
+
     await appendShiftNarrative(
       conversationId,
       `**আজকের duty তালিকা (${duties.length}টি):**\n${formatDutyList(duties)}\n\n` +
@@ -536,6 +544,16 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   if (await isOfficeOffForDate(date)) {
     return { ok: true, detail: 'office_off_today' }
   }
+
+  // Part 2 — every tick, re-nag the owner about anything still awaiting his approval
+  // (~2h cadence, owner-tunable). Self-paced + spam-safe; never blocks the duty flow.
+  try {
+    const { runPendingFollowupTick } = await import('@/agent/lib/pending-followup')
+    await runPendingFollowupTick()
+  } catch (err) {
+    console.warn('[day-shift] pending followup tick failed:', err instanceof Error ? err.message : err)
+  }
+
   let state = await loadDayShiftState(date)
 
   if (state?.status === 'done') {
