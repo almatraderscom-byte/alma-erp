@@ -36,6 +36,10 @@ const EXTRA_ALLOW = new Set([
   'check_order_issues',
   'diagnose_issue',
   'request_agent_action',
+  // Owner-level READ tools whose names don't match a read prefix but give the same
+  // visibility the owner has. Both are verified read-only (no writes/side effects):
+  'generate_owner_briefing', // full money/customers/stock/ads/staff rundown + decisions
+  'run_health_scan', // failed jobs, dead heartbeats, cost anomalies, stuck approvals
 ])
 // Read-only but out of "business/research" scope for option A.
 const FORCE_DENY = new Set(['list_family_contacts'])
