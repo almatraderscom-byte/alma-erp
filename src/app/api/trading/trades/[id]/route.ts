@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
-import { createApprovalRequest, resolveApprovalRequest } from '@/lib/approvals'
+import { createApprovalRequest, recordSelfApproval, resolveApprovalRequest } from '@/lib/approvals'
+import { commitTradeDeletion } from '@/lib/trading-delete'
 import {
   TRADING_BUSINESS_ID,
   canAccessTradingAccount,
@@ -105,6 +106,34 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       if (trade.deleteReason && !trade.deleteApprovedAt) return NextResponse.json({ error: 'Delete request is already pending' }, { status: 400 })
       const reason = requireReason(body.deleteReason, 'Delete')
       if (isResponse(reason)) return reason
+
+      // Super Admin delete is final — execute immediately, skip the approval queue.
+      if (ctx.role === 'SUPER_ADMIN') {
+        const result = await commitTradeDeletion({
+          tradeId: trade.id,
+          actorUserId: ctx.userId,
+          actorRole: ctx.role,
+          reason,
+        })
+        await recordSelfApproval({
+          module: 'ALMA_TRADING',
+          type: 'TRADE_DELETE',
+          businessId: TRADING_BUSINESS_ID,
+          entityId: trade.id,
+          requestedBy: ctx.userId,
+          reason,
+          priority: 'HIGH',
+          actionUrl: `/trading/accounts/${trade.tradingAccountId}`,
+          payloadSnapshot: {
+            trade: tradeSnapshot(trade),
+            accountId: trade.tradingAccountId,
+            accountTitle: trade.tradingAccount.accountTitle,
+          },
+        })
+        logEvent('warn', 'trading.trade.delete_self_approved', { tradeId: trade.id, accountId: trade.tradingAccountId, actorUserId: ctx.userId, reason })
+        return NextResponse.json({ ok: true, selfApproved: true, ...result })
+      }
+
       const updated = await prisma.tradingTrade.update({
         where: { id: trade.id },
         data: {

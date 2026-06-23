@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJwt } from '@/lib/api-guards'
-import { createApprovalRequest } from '@/lib/approvals'
+import { createApprovalRequest, recordSelfApproval, resolveApprovalRequestById } from '@/lib/approvals'
 import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { canRequestOrderDelete, orderSnapshotForApproval } from '@/lib/order-access'
-import { normalizeAlmaRole } from '@/lib/roles'
+import { archiveOrderAfterDeleteApproval } from '@/lib/order-delete'
+import { isSystemOwner, normalizeAlmaRole } from '@/lib/roles'
 import { fetchOrderById } from '@/lib/lifestyle/read'
 import type { Order } from '@/types'
 import { prisma } from '@/lib/prisma'
@@ -46,14 +47,6 @@ export async function POST(req: NextRequest) {
     },
     select: { id: true },
   })
-  if (pending) {
-    return NextResponse.json({
-      ok: true,
-      duplicate: true,
-      approvalId: pending.id,
-      message: 'A delete request for this order is already pending Super Admin approval.',
-    })
-  }
 
   let order: Order
   try {
@@ -62,6 +55,58 @@ export async function POST(req: NextRequest) {
     order = found
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message || 'Order not found' }, { status: 404 })
+  }
+
+  // Super Admin deletes are final — execute immediately, never queue for self-approval.
+  if (isSystemOwner(role)) {
+    const archived = await archiveOrderAfterDeleteApproval({
+      businessId,
+      orderId,
+      actorUserId: token.sub,
+      reason,
+    })
+    // Resolve any pending staff request for this order, else record a fresh
+    // already-approved audit row, so the action is traceable without cluttering
+    // the queue.
+    if (pending) {
+      await resolveApprovalRequestById({
+        id: pending.id,
+        status: 'APPROVED',
+        actorUserId: token.sub,
+        reason,
+        skipRequesterNotification: true,
+      })
+    } else {
+      await recordSelfApproval({
+        module: APPROVAL_MODULES.ORDERS_CRM,
+        type: APPROVAL_TYPES.ORDER_DELETE,
+        businessId,
+        entityId: orderId,
+        requestedBy: token.sub,
+        reason,
+        priority: 'HIGH',
+        actionUrl: '/orders',
+        payloadSnapshot: {
+          order: orderSnapshotForApproval(order),
+          requestedByName: String(token.name || token.email || 'Super Admin'),
+        },
+      })
+    }
+    return NextResponse.json({
+      ok: true,
+      selfApproved: true,
+      result: archived,
+      message: 'Order deleted — Super Admin action, no approval needed.',
+    })
+  }
+
+  if (pending) {
+    return NextResponse.json({
+      ok: true,
+      duplicate: true,
+      approvalId: pending.id,
+      message: 'A delete request for this order is already pending Super Admin approval.',
+    })
   }
 
   const approval = await createApprovalRequest({

@@ -13,8 +13,9 @@ import {
   updateTelegramDraft,
 } from '@/lib/trading-telegram-drafts'
 import { reopenLockedTelegramDraft } from '@/lib/trading-telegram-lock'
-import { createApprovalRequest } from '@/lib/approvals'
+import { createApprovalRequest, recordSelfApproval } from '@/lib/approvals'
 import { TRADING_BUSINESS_ID, canAccessTradingAccount } from '@/lib/trading'
+import { commitTradeDeletion } from '@/lib/trading-delete'
 import { queueTradingDeleteRequestAlert } from '@/lib/telegram-notification/trading-ops-alerts'
 
 type RouteContext = { params: { id: string } }
@@ -98,6 +99,36 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       if (!reason) return NextResponse.json({ error: 'Delete reason required' }, { status: 400 })
       if (trade.deleteReason && !trade.deleteApprovedAt) {
         return NextResponse.json({ error: 'Delete request already pending' }, { status: 400 })
+      }
+
+      // Super Admin delete is final — execute immediately, skip the approval queue.
+      if (ctx.role === 'SUPER_ADMIN') {
+        const result = await commitTradeDeletion({
+          tradeId: trade.id,
+          actorUserId: ctx.userId,
+          actorRole: ctx.role,
+          reason,
+        })
+        await recordSelfApproval({
+          module: 'ALMA_TRADING',
+          type: 'TRADE_DELETE',
+          businessId: TRADING_BUSINESS_ID,
+          entityId: trade.id,
+          requestedBy: ctx.userId,
+          reason,
+          priority: 'HIGH',
+          actionUrl: `/trading/accounts/${trade.tradingAccountId}`,
+          payloadSnapshot: { tradeId: trade.id, draftId: draft.id },
+        })
+        await logTelegramDraftAudit({
+          eventType: 'DRAFT_DELETE_REQUESTED',
+          draftId: draft.id,
+          actorUserId: ctx.userId,
+          telegramUserId: draft.telegramUserId,
+          telegramChatId: draft.telegramChatId,
+          detail: `tradeId=${trade.id}; self-approved (Super Admin); ${reason}`,
+        })
+        return NextResponse.json({ ok: true, selfApproved: true, tradeId: trade.id, ...result })
       }
 
       await prisma.tradingTrade.update({

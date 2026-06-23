@@ -68,7 +68,7 @@ export function TradingStickyBar({
   highlightScreenshot?: boolean
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[51] border-t border-white/[0.06] bg-transparent px-2 py-2 backdrop-blur-md md:hidden md:bottom-0 md:pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom)+var(--kb-inset,0px))] z-[51] border-t border-white/[0.06] bg-transparent px-2 py-2 backdrop-blur-md md:hidden md:bottom-0 md:pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
         {ACTIONS.map(action => {
           if (action.id === 'accounts') {

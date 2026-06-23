@@ -47,9 +47,18 @@ export function EmployeeAvatar({
 }: Props) {
   const initials = initialsFor(name || email)
   const src = useMemo(() => {
-    const base = imageUrl ?? userAvatarUrl(userId, imageVersion)
-    if (!base) return null
-    return withCacheBust(base, imageVersion)
+    // Inline previews (upload capture) and external avatars are used verbatim.
+    if (imageUrl && /^(data:|blob:|https?:\/\/)/i.test(imageUrl)) return imageUrl
+    // Canonical source: the profile-image API keyed by userId. Resolving every
+    // avatar that has a userId through this endpoint makes the photo render
+    // consistently everywhere, regardless of the raw profileImageUrl shape a
+    // given loader happened to pass in (some pass the API path, some pass an
+    // unloadable storage path, some pass nothing — which caused the same staff
+    // to show a photo on one screen and a placeholder on another).
+    if (userId) return userAvatarUrl(userId, imageVersion)
+    // No userId: fall back to a relative API path if one was supplied.
+    if (imageUrl) return withCacheBust(imageUrl, imageVersion)
+    return null
   }, [imageUrl, imageVersion, userId])
 
   const [failed, setFailed] = useState(false)
