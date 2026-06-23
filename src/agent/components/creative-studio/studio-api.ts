@@ -1,5 +1,6 @@
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 
 export type StudioConfig = {
   fashnConfigured: boolean
@@ -52,6 +53,8 @@ export type FinishOptions = {
   mode?: FinishMode
   theme?: string
   footer?: boolean
+  /** lifestyle only: geometry tweaks from the drag/resize editor (positions/sizes) */
+  layout?: LifestyleLayoutOverrides | null
   /** when finishing a gallery item, persist the framed copy back onto it */
   pendingActionId?: string
 }

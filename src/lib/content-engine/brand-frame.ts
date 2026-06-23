@@ -9,37 +9,22 @@ import {
   getLogoPath,
   type BrandTheme,
 } from '@/lib/content-engine/brand-identity'
+import {
+  LIFESTYLE_SIZE,
+  LIFESTYLE_COLORS,
+  DEFAULT_OFFER,
+  computeAutoLayout,
+  applyLayoutOverrides,
+  type LifestyleLayout,
+  type LifestyleLayoutOverrides,
+  type TextEl,
+} from '@/lib/content-engine/lifestyle-layout'
 
 export type { BrandTheme }
+export type { LifestyleLayoutOverrides }
 
 const PRODUCT_CARD_SIZE = 1080
 const MODEL_CANVAS = { width: 1080, height: 1350 } as const
-const LIFESTYLE_SIZE = 1080
-/** Default bottom-right call-to-action when the owner leaves the offer field blank. */
-const DEFAULT_OFFER = 'অফার প্রাইস জানতে ইনবক্স করুন'
-
-/**
- * Greedy word-wrap for SVG text (librsvg has no auto-wrap). Packs words up to
- * ~maxChars per line; once it reaches the final allowed line it keeps appending so
- * nothing is dropped. Bangla clusters are wide, so callers pass a small maxChars.
- */
-function wrapText(text: string, maxChars: number, maxLines: number): string[] {
-  const words = text.trim().split(/\s+/).filter(Boolean)
-  if (!words.length) return []
-  const lines: string[] = []
-  let cur = ''
-  for (const wd of words) {
-    const tentative = cur ? `${cur} ${wd}` : wd
-    if (tentative.length > maxChars && cur && lines.length < maxLines - 1) {
-      lines.push(cur)
-      cur = wd
-    } else {
-      cur = tentative
-    }
-  }
-  if (cur) lines.push(cur)
-  return lines.slice(0, maxLines)
-}
 
 export function escapeXml(text: string): string {
   return text
@@ -247,54 +232,44 @@ async function renderModelOverlay(imagePath: string, opts: {
  *   bottom-right  → offer / call-to-action (1–2 lines, right-aligned)
  *   bottom-centre → EST. 2019 · DHAKA + small circled-A monogram
  */
-function buildLifestyleOverlaySvg(opts: {
-  accent: string
-  eyebrow: string
-  headline: string
-  offer: string
-  code: string
-}): Buffer {
+/** Render one positioned text block (1–N lines, anchored per `justify`). */
+function svgTextEl(el: TextEl, accent: string): string {
+  if (!el.lines.length) return ''
+  const fill = el.color === 'accent' ? accent : LIFESTYLE_COLORS.cream
+  const fam = el.font === 'display' ? BRAND_FONT.display : BRAND_FONT.serif
+  const wt = el.weight === 700 ? ' font-weight="700"' : ''
+  const ls = el.letterSpacing ? ` letter-spacing="${el.letterSpacing}"` : ''
+  return el.lines
+    .map((ln, i) =>
+      `<text x="${el.x}" y="${el.y + i * el.leading}" fill="${fill}" font-family="${fam}" font-size="${el.size}" text-anchor="${el.justify}"${wt}${ls}>${escapeXml(ln)}</text>`,
+    )
+    .join('\n  ')
+}
+
+/**
+ * Full-bleed "lifestyle poster" overlay built from a {@link LifestyleLayout}.
+ * Auto-finish and the drag/resize editor both produce that layout, so this is the
+ * one renderer for both paths. ALL visible text is passed in (never AI-rendered)
+ * so Bangla stays crisp and correct.
+ *
+ *   top-left      → brand logo (composited separately)
+ *   top-right     → "CODE" label + mustard ring with the product code
+ *   bottom-left   → eyebrow, headline (1–2 lines), thin mustard rule
+ *   bottom-right  → offer / call-to-action (1–2 lines, right-aligned)
+ *   bottom-centre → EST. 2019 · DHAKA + small circled-A monogram
+ */
+function buildLifestyleOverlaySvg(layout: LifestyleLayout, accent: string): Buffer {
   const S = LIFESTYLE_SIZE
   const fonts = buildBrandFontFaces()
-  const accent = opts.accent
-  const cream = BRAND.colors.cream
-  const charcoal = BRAND.colors.charcoal
-  const pad = 64
+  const cream = LIFESTYLE_COLORS.cream
+  const charcoal = LIFESTYLE_COLORS.charcoal
 
-  const eyebrow = escapeXml(opts.eyebrow.slice(0, 32))
-  const code = escapeXml(opts.code.slice(0, 16))
-  const est = escapeXml(BRAND.est)
-  const headlineLines = wrapText(opts.headline, 15, 2).map(escapeXml)
-  const offerLines = wrapText(opts.offer, 18, 2).map(escapeXml)
-
-  // top-right CODE ring
-  const circleR = 46
-  const circleCx = S - pad - circleR
-  const circleCy = 124
-  const codeSize = code.length > 7 ? 18 : 24
-
-  // bottom-left block laid out bottom-up from the mustard rule
-  const ruleY = 1018
-  const hlSize = 54
-  const hlLeading = 62
-  const nHl = Math.max(1, headlineLines.length)
-  const lastHlBaseline = ruleY - 16
-  const firstHlBaseline = lastHlBaseline - (nHl - 1) * hlLeading
-  const eyebrowBaseline = firstHlBaseline - 46
-  const headlineSvg = headlineLines
-    .map((ln, i) => `<text x="${pad}" y="${firstHlBaseline + i * hlLeading}" fill="${cream}" font-family="${BRAND_FONT.serif}" font-size="${hlSize}" font-weight="700">${ln}</text>`)
-    .join('\n  ')
-
-  // bottom-right offer block (right-aligned)
-  const offerRight = S - pad
-  const offerSize = 30
-  const offerLeading = 40
-  const nOf = Math.max(1, offerLines.length)
-  const offerLastBaseline = 998
-  const offerFirstBaseline = offerLastBaseline - (nOf - 1) * offerLeading
-  const offerSvg = offerLines
-    .map((ln, i) => `<text x="${offerRight}" y="${offerFirstBaseline + i * offerLeading}" fill="${cream}" font-family="${BRAND_FONT.serif}" font-size="${offerSize}" text-anchor="end">${ln}</text>`)
-    .join('\n  ')
+  const { codeBadge: b, rule, monogram: m, logo: _logo } = layout
+  void _logo // logo is composited as a raster, not drawn in SVG
+  const code = escapeXml(b.code.slice(0, 16))
+  const codeText = code
+    ? `<text x="${b.cx}" y="${b.cy + Math.round(b.size / 3)}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="${b.size}" font-weight="700" text-anchor="middle">${code}</text>`
+    : ''
 
   return Buffer.from(`<svg width="${S}" height="${S}" xmlns="http://www.w3.org/2000/svg">
   ${fonts}
@@ -312,19 +287,19 @@ function buildLifestyleOverlaySvg(opts: {
   <rect x="0" y="0" width="${S}" height="240" fill="url(#topFade)"/>
   <rect x="0" y="560" width="${S}" height="520" fill="url(#bottomFade)"/>
 
-  <text x="${circleCx}" y="58" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="17" letter-spacing="3" text-anchor="middle">CODE</text>
-  <circle cx="${circleCx}" cy="${circleCy}" r="${circleR}" fill="none" stroke="${accent}" stroke-width="2.5"/>
-  ${code ? `<text x="${circleCx}" y="${circleCy + Math.round(codeSize / 3)}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="${codeSize}" font-weight="700" text-anchor="middle">${code}</text>` : ''}
+  <text x="${b.cx}" y="${b.cy + b.labelDy}" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="${b.labelSize}" letter-spacing="3" text-anchor="middle">${escapeXml(b.label)}</text>
+  <circle cx="${b.cx}" cy="${b.cy}" r="${b.r}" fill="none" stroke="${accent}" stroke-width="2.5"/>
+  ${codeText}
 
-  <text x="${pad}" y="${eyebrowBaseline}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="27">${eyebrow}</text>
-  ${headlineSvg}
-  <rect x="${pad}" y="${ruleY}" width="74" height="3" fill="${accent}"/>
+  ${svgTextEl(layout.eyebrow, accent)}
+  ${svgTextEl(layout.headline, accent)}
+  <rect x="${rule.x}" y="${rule.y}" width="${rule.w}" height="${rule.h}" fill="${accent}"/>
 
-  ${offerSvg}
+  ${svgTextEl(layout.offer, accent)}
 
-  <text x="${Math.round(S / 2)}" y="1048" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="16" letter-spacing="2" text-anchor="middle">${est}</text>
-  <circle cx="${S - pad + 4}" cy="1034" r="18" fill="none" stroke="${cream}" stroke-width="1.5" opacity="0.85"/>
-  <text x="${S - pad + 4}" y="1041" fill="${cream}" font-family="${BRAND_FONT.display}" font-size="18" text-anchor="middle" opacity="0.9">A</text>
+  ${svgTextEl(layout.est, accent)}
+  <circle cx="${m.cx}" cy="${m.cy}" r="${m.r}" fill="none" stroke="${cream}" stroke-width="1.5" opacity="0.85"/>
+  <text x="${m.cx}" y="${m.cy + Math.round(m.size * 0.39)}" fill="${cream}" font-family="${BRAND_FONT.display}" font-size="${m.size}" text-anchor="middle" opacity="0.9">${escapeXml(m.letter)}</text>
 </svg>`)
 }
 
@@ -334,10 +309,24 @@ async function renderLifestylePoster(imagePath: string, opts: {
   headline: string
   offer: string
   code: string
+  /** geometry overrides from the drag/resize editor (absent → pure auto-finish) */
+  layout?: LifestyleLayoutOverrides | null
 }): Promise<Buffer> {
   const sharp = (await import('sharp')).default
   const photoBuf = await agentStorageDownload(imagePath)
   const S = LIFESTYLE_SIZE
+
+  // Build the layout: auto positions seeded from the text, then any editor tweaks.
+  const layout = applyLayoutOverrides(
+    computeAutoLayout({
+      eyebrow: opts.eyebrow.slice(0, 32),
+      headline: opts.headline,
+      offer: opts.offer,
+      code: opts.code,
+      est: BRAND.est,
+    }),
+    opts.layout,
+  )
 
   // Full-bleed square. `attention` keeps faces/garment in frame when the source
   // isn't square, instead of a blind centre crop.
@@ -345,12 +334,19 @@ async function renderLifestylePoster(imagePath: string, opts: {
     .resize(S, S, { fit: 'cover', position: 'attention' })
     .toBuffer()
 
-  const overlay = buildLifestyleOverlaySvg(opts)
+  const overlay = buildLifestyleOverlaySvg(layout, opts.accent)
   const composites: Array<{ input: Buffer; top: number; left: number }> = [
     { input: overlay, top: 0, left: 0 },
   ]
-  // Brand logo top-left, on top of the soft top scrim so it reads on busy photos.
-  await compositeLogo(composites, true, 280, 54, 60)
+  // Brand logo (raster) at the layout's logo box, on top of the soft top scrim.
+  // sharp rejects negative composite offsets, so clamp the logo box on-canvas.
+  await compositeLogo(
+    composites,
+    true,
+    Math.round(layout.logo.w),
+    Math.max(0, Math.round(layout.logo.y)),
+    Math.max(0, Math.round(layout.logo.x)),
+  )
 
   return sharp(base)
     .composite(composites)
@@ -373,6 +369,8 @@ export async function applyBrandFrame(
     offer?: string
     theme?: BrandTheme
     footer?: boolean
+    /** lifestyle only: geometry tweaks from the drag/resize editor */
+    layout?: LifestyleLayoutOverrides | null
   },
 ): Promise<string> {
   // Register bundled fonts with fontconfig BEFORE any librsvg text render — without
@@ -392,6 +390,7 @@ export async function applyBrandFrame(
       eyebrow: (opts.eyebrow ?? '').trim() || accentRow.eyebrow,
       offer: (opts.offer ?? '').trim() || DEFAULT_OFFER,
       code: opts.productCode ?? '',
+      layout: opts.layout ?? null,
     })
   } else if (opts.mode === 'product_card') {
     framed = await renderProductCard(imagePath, {

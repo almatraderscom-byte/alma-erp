@@ -15,6 +15,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { applyBrandFrame } from '@/lib/content-engine/brand-frame'
+import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import { THEME_ACCENT, type BrandTheme } from '@/lib/content-engine/brand-identity'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
     mode?: string
     theme?: string
     footer?: boolean
+    layout?: unknown
     pendingActionId?: string
   }
   try {
@@ -84,6 +86,13 @@ export async function POST(req: NextRequest) {
       offer: typeof body.offer === 'string' ? body.offer.slice(0, 48) : undefined,
       theme,
       footer: body.footer === true,
+      // Editor geometry tweaks (lifestyle only). applyLayoutOverrides clamps every
+      // value, so a malformed object can't push text off-canvas — pass through any
+      // plain object and let the renderer validate.
+      layout:
+        mode === 'lifestyle' && body.layout && typeof body.layout === 'object' && !Array.isArray(body.layout)
+          ? (body.layout as LifestyleLayoutOverrides)
+          : null,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
