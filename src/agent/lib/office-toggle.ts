@@ -32,7 +32,7 @@ const OFFICE_OFF_PATTERN =
 
 /** Re-open the office the same day after declaring it off. */
 const OFFICE_ON_PATTERN =
-  /(অফিস|office)\s*(আবার\s*)?(চালু|খোলা|খুলে|on|chalu|cholbe|choluk|khola|khulo|khol|start|back)|office\s*on/i
+  /(অফিস|office)\s*(আবার|abar|abr|আবার)?\s*(চালু|খোলা|খুলে|on|chalu|cholbe|choluk|khola|khulo|khol|start|back)|office\s*on/i
 
 /** Reason that reads like a passing whim rather than a real cause (suggest once). */
 const WHIM_PATTERN =
@@ -215,7 +215,14 @@ export async function processOfficeToggleReply(
       }
     }
 
-    // stage === 'awaiting_reason'
+    // stage === 'awaiting_reason' — but an "office on / keep open" reply must RE-OPEN,
+    // never be mistaken for a closure reason (this was the bug: "office on thakbe" got
+    // recorded as the reason and the office stayed shut all day).
+    if (detectOfficeOnDeclaration(trimmed) || KEEP_OPEN_PATTERN.test(trimmed)) {
+      await clearOfficeOff(today)
+      await narrate(today, '✅ Sir অফিস চালু রাখলেন — duty আবার শুরু করছি।')
+      return { autoReply: 'আলহামদুলিল্লাহ Sir, অফিস চালু রাখলাম — আজকের duty শুরু করছি ইনশাআল্লাহ।' }
+    }
     await recordOffReason(today, reason)
     if (WHIM_PATTERN.test(reason)) {
       await setPending(today, 'suggested')
