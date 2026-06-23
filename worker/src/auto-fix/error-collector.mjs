@@ -131,7 +131,7 @@ export async function runErrorCollector() {
     .from('agent_pending_actions')
     .select('*', { count: 'exact', head: true })
     .eq('type', 'auto_fix')
-    .gte('created_at', hourAgo)
+    .gte('createdAt', hourAgo)
 
   if ((recentCount ?? 0) >= 3) {
     detail = `Rate limited: ${issues.length} issues found but already 3+ requests this hour`
