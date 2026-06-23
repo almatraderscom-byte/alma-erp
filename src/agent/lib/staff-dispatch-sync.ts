@@ -221,9 +221,13 @@ export async function syncPendingDispatchAction(
   }
 
   if (existing) {
+    // Refresh createdAt too: editing the proposal makes this a freshly-current
+    // card, so its age (shown to the owner, and used by any TTL on transient
+    // types) should reset to "just updated" rather than keep the original
+    // 21:05 evening-proposal timestamp.
     await db.agentPendingAction.update({
       where: { id: existing.id },
-      data: { payload, summary: summaryText },
+      data: { payload, summary: summaryText, createdAt: new Date() },
     })
     return existing.id as string
   }

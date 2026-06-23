@@ -81,7 +81,7 @@ export async function POST(
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
   }
 
-  if (isPendingActionExpired(action.createdAt)) {
+  if (isPendingActionExpired(action.createdAt, action.type)) {
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
