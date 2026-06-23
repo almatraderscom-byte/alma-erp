@@ -86,6 +86,10 @@ export default function LifestyleEditor({
   useEffect(() => setLayout(auto), [auto])
 
   // Track the on-screen size of the square so we can map design ↔ screen pixels.
+  // Depends on `mounted`: the first render returns null (portal deferral), so the
+  // box isn't in the DOM yet — this effect must re-run once `mounted` flips true,
+  // otherwise boxW stays 0, scale stays 0 and every overlay (text/badge/logo)
+  // stays hidden, leaving only the bare photo.
   useEffect(() => {
     const el = boxRef.current
     if (!el) return
@@ -94,7 +98,7 @@ export default function LifestyleEditor({
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [mounted])
 
   const px = useCallback((v: number) => v * scale, [scale])
 
