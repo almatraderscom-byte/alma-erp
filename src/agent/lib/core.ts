@@ -115,6 +115,23 @@ const HEAD_TOOL_BUDGET_NUDGE =
   'অথবা বাকি কাজটা delegate_to_specialist দিয়ে একজন সস্তা worker-কে দিয়ে দাও। ' +
   'খরচ কমানোই উদ্দেশ্য — অযথা নিজে অনেক টুল চালিও না।'
 
+// ── Announced-intent-but-no-action safety net ────────────────────────────────
+// Bug: the head sometimes SAYS it will run a tool ("আগে recommend_ad_actions দিয়ে
+// দেখি", "let me check") and then ends the turn WITHOUT calling any tool — the
+// owner has to nudge it before it acts. claim-verifier catches false "I DID X"
+// claims, but not future-intent "I WILL do X" with zero tool calls. This regex
+// detects that announced intent (Bangla + Banglish + English) so we can re-prompt
+// the head to actually run the tool in the SAME turn instead of stopping.
+const ANNOUNCED_TOOL_INTENT =
+  /(দিয়ে\s*দেখি|করে\s*দেখি|চেক\s*কর(ি|ছি)|দেখে\s*নিই|দেখে\s*নি|বের\s*কর(ি|ছি)|চালাই|চালাচ্ছি|টান(ি|ছি)|আনছি|আগে.*দেখি|let me (check|look|see|pull|run|fetch)|i('|’)?ll (check|look|see|pull|run|fetch|grab)|i will (check|look|see|pull|run|fetch)|going to (check|look|run|pull|fetch)|let's (check|look|run|see))/i
+
+// One-time message injected when the head announces it will use a tool but ends
+// its turn without calling any. Force it to act NOW, in this same turn.
+const ACT_NOW_NUDGE =
+  'তুমি বললে যে একটা টুল/চেক চালাবে কিন্তু আসলে কোনো টুল কল করোনি — এই টার্নেই থেমে গেছ। ' +
+  'শুধু "দেখি/চেক করি" বলে থেমো না। এখনই, এই একই টার্নে, দরকারি টুলটা আসলে কল করো ' +
+  'এবং ফলাফল দেখে তারপর Sir-কে উত্তর দাও। মালিককে আবার তাগাদা দিতে হবে না।'
+
 // ── Anthropic client ────────────────────────────────────────────────────────
 
 const globalForAnthropic = globalThis as unknown as { anthropic: Anthropic | undefined }
@@ -643,6 +660,7 @@ export async function* runAgentTurn(
   }
   const toolRecords: ToolRecord[] = []
   let memoryNudgeSent = false
+  let intentNudgeSent = false
   let verifyRetries = 0
 
   if (intakeAutoReply) {
@@ -893,6 +911,37 @@ export async function* runAgentTurn(
             { role: 'user', content: [{ type: 'text', text: MEMORY_SAVE_NUDGE }] },
           ]
           continue
+        }
+
+        // Announced-intent-but-no-action safety net: the head said it would run a
+        // tool ("দিয়ে দেখি" / "let me check") but ended the turn with ZERO tool
+        // calls. Re-prompt it once to actually act in this same turn, so the owner
+        // doesn't have to nudge. Guarded: one-shot, never over budget, and only
+        // when no tool ran at all this whole turn (toolRecords empty).
+        if (
+          !signal?.aborted
+          && !intentNudgeSent
+          && !overBudget
+          && toolRecords.length === 0
+        ) {
+          const finalIntentText = currentBlocks
+            .filter((b): b is Extract<CollectedBlock, { type: 'text' }> => b.type === 'text')
+            .map((b) => b.text)
+            .join('\n')
+            .trim()
+          if (finalIntentText && ANNOUNCED_TOOL_INTENT.test(finalIntentText)) {
+            intentNudgeSent = true
+            assistantTurns.pop()
+            messages = [
+              ...messages,
+              {
+                role: 'assistant',
+                content: currentBlocks as unknown as Anthropic.Messages.ContentBlockParam[],
+              },
+              { role: 'user', content: [{ type: 'text', text: ACT_NOW_NUDGE }] },
+            ]
+            continue
+          }
         }
 
         // Wrong-refusal detection: agent said "can't" but relevant tool group wasn't loaded
