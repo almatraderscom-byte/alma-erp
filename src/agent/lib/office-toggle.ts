@@ -42,11 +42,26 @@ const WHIM_PATTERN =
 const KEEP_OPEN_PATTERN =
   /কাজ\s*কর|kaj\s*kor|খোলা\s*রাখ|khola\s*rakh|চালু\s*রাখ|chalu\s*rakh|choluk|চলুক|thik\s*ache.*kor|ঠিক\s*আছে.*কর|হ্যাঁ\s*কর|hae\s*kor|na\s*thak|না\s*থাক/i
 
+/** Owner explicitly confirming "yes, close the whole office today". */
+const CONFIRM_OFF_PATTERN =
+  /হ্যাঁ|হ্যা\b|হু\b|hae|han\b|ha\b|hu\b|yes|confirm|নিশ্চিত|nishchit|nischit|বন্ধই?\s*রাখ|bondhoi?\s*rakh|বন্ধ\s*কর|bondho\s*kor|off\s*kore?\s*da|বন্ধ\s*করে?\s*দা/i
+
+/** Owner backing out of the close confirmation — keep the office open. */
+const CANCEL_OFF_PATTERN =
+  /না\b|না,|nah?\b|thak|থাক|বাদ\s*দা|bad\s*da|cancel|বাতিল|batil|ভুল|bhul|vul|chalu\s*rakh|চালু\s*রাখ|খোলা\s*রাখ|khola\s*rakh|kaj\s*hobe|কাজ\s*হবে/i
+
+/** Owner talking about his OWN absence ("আমি আজ অফিসে নেই/যাবো না") — NOT a request to
+ *  shut the office for staff. Guards against false full-day shutdowns. */
+const SELF_ABSENCE_PATTERN =
+  /(আমি|ami|amar|আমার)\b[^।.!?]*?(অফিস|office)?[^।.!?]*?(যাব\s*না|jabo\s*na|আসব\s*না|asbo\s*na|থাকব\s*না|thakbo\s*na|নেই|nei|nai|absent|late|দেরি|deri)/i
+
 export function detectOfficeOffDeclaration(text: string): boolean {
   const t = text.trim()
   if (!t) return false
   // Don't capture staff-leave management ("রহিমের ছুটি approve করো").
   if (/approve|approv|staff|স্টাফ|কর্মচারী/i.test(t) && !/অফিস|office/i.test(t)) return false
+  // Don't confuse the owner's own absence with an office-wide closure.
+  if (SELF_ABSENCE_PATTERN.test(t) && !/(সবাই|সকল|সব\s*স্টাফ|all\s*staff|everyone|office\s*bondho|অফিস\s*বন্ধ|ছুটি\s*দা|chuti\s*da)/i.test(t)) return false
   return OFFICE_OFF_PATTERN.test(t)
 }
 
@@ -65,14 +80,14 @@ export async function isOfficeOffToday(today = todayYmdDhaka()): Promise<boolean
   return Boolean(await readKv(officeOffKey(today)))
 }
 
-type OffPending = { stage: 'awaiting_reason' | 'suggested'; declaredAt: string }
+type OffPending = { stage: 'awaiting_confirm' | 'awaiting_reason' | 'suggested'; declaredAt: string }
 
 async function getPendingOff(today: string): Promise<OffPending | null> {
   const raw = await readKv(officeOffPendingKey(today))
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as Partial<OffPending>
-    if (parsed.stage === 'awaiting_reason' || parsed.stage === 'suggested') {
+    if (parsed.stage === 'awaiting_confirm' || parsed.stage === 'awaiting_reason' || parsed.stage === 'suggested') {
       return { stage: parsed.stage, declaredAt: parsed.declaredAt ?? new Date().toISOString() }
     }
   } catch {
@@ -161,6 +176,26 @@ export async function processOfficeToggleReply(
 
   const pending = await getPendingOff(today)
 
+  // Stage 1.5: owner is replying to "are you sure you want the office closed today?"
+  // Nothing is suspended yet — we only suspend on an explicit confirmation.
+  if (pending?.stage === 'awaiting_confirm') {
+    if (CONFIRM_OFF_PATTERN.test(trimmed) && !CANCEL_OFF_PATTERN.test(trimmed)) {
+      await setOfficeOff(today)
+      await setPending(today, 'awaiting_reason')
+      await narrate(today, '🛑 Sir নিশ্চিত করলেন — আজকের সব অফিস duty থামিয়ে দিলাম।')
+      return {
+        autoReply:
+          'ঠিক আছে Sir, আজকের সব অফিস ডিউটি বন্ধ রাখলাম। একটু জানতে পারি — আজ কেন অফিস বন্ধ? (শুধু আমার রেকর্ডের জন্য)',
+      }
+    }
+    // Anything that is not a clear "yes" → keep the office open (fail-safe).
+    await clearPending(today)
+    await narrate(today, '✅ অফিস চালু রইলো — duty স্বাভাবিকভাবে চলবে।')
+    return {
+      autoReply: 'ঠিক আছে Sir, তাহলে অফিস চালু রাখলাম — আজকের কাজ স্বাভাবিকভাবে চলবে ইনশাআল্লাহ।',
+    }
+  }
+
   // Stage 2/3: owner is replying to "why is the office off today?"
   if (pending) {
     const reason = trimmed.slice(0, 500)
@@ -206,14 +241,14 @@ export async function processOfficeToggleReply(
     return null
   }
 
-  // New "no office today" declaration → suspend duties now, ask reason for the record.
+  // New "no office today" declaration → DO NOT suspend yet. Confirm first, because a
+  // single ambiguous message must never silently shut the whole business day.
   if (detectOfficeOffDeclaration(trimmed)) {
-    await setOfficeOff(today)
-    await setPending(today, 'awaiting_reason')
-    await narrate(today, '🛑 Sir আজ অফিস বন্ধ ঘোষণা করলেন — আজকের সব অফিস duty থামিয়ে দিলাম।')
+    await setPending(today, 'awaiting_confirm')
     return {
       autoReply:
-        'ঠিক আছে Sir, আজকের সব অফিস ডিউটি বন্ধ রাখলাম। একটু জানতে পারি — আজ কেন অফিস বন্ধ? (শুধু আমার রেকর্ডের জন্য)',
+        'Sir, একটু নিশ্চিত করি — আজ কি পুরো অফিস বন্ধ রাখবো? তাহলে আজকের সব স্টাফ duty থেমে যাবে। ' +
+        '"হ্যাঁ" বললে বন্ধ করছি, নাহলে স্বাভাবিকভাবে কাজ চলবে।',
     }
   }
 
