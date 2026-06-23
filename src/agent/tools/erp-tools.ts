@@ -23,6 +23,7 @@ import { buildReorderSuggestions } from '@/lib/inventory-forecast'
 import { segmentCustomers, type CustomerSegmentResult } from '@/lib/customer-intelligence'
 import { analyzeReturns } from '@/lib/return-analysis'
 import { analyzePricing } from '@/lib/pricing-insight'
+import { isPendingActionExpired } from '@/agent/lib/pending-action'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -825,11 +826,15 @@ const get_pending_approvals: AgentTool = {
   input_schema: { type: 'object' as const, properties: {} },
   handler: async () => {
     try {
-      const rows = await prisma.agentPendingAction.findMany({
+      const allRows = await prisma.agentPendingAction.findMany({
         where: { status: 'pending' },
         orderBy: { createdAt: 'asc' },
         select: { id: true, type: true, summary: true, createdAt: true },
       })
+      // Don't remind the owner about transient cards that have already passed their
+      // TTL (they 410 on approve anyway). Lifecycle cards (dispatch_staff_tasks)
+      // never expire, so they always remain in the list until acted on.
+      const rows = allRows.filter((r) => !isPendingActionExpired(r.createdAt, r.type))
       return {
         success: true,
         data: {

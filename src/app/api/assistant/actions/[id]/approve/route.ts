@@ -86,8 +86,9 @@ export async function POST(
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
   }
 
-  // Check expiry
-  if (isPendingActionExpired(action.createdAt)) {
+  // Check expiry (lifecycle-bound cards like dispatch_staff_tasks never expire —
+  // they re-read the live DB on approve and are retired by supersede, not a clock).
+  if (isPendingActionExpired(action.createdAt, action.type)) {
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
