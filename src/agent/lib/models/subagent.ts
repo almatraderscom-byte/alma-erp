@@ -37,7 +37,8 @@ const SUBAGENT_MAX_TOKENS = 2048
 const globalForSub = globalThis as unknown as { subAnthropic: Anthropic | undefined }
 function getClient(): Anthropic {
   if (!globalForSub.subAnthropic) {
-    globalForSub.subAnthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+    // Match the head client: ride out transient 529/429 overloads before failing.
+    globalForSub.subAnthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '', maxRetries: 4 })
   }
   return globalForSub.subAnthropic
 }

@@ -48,10 +48,12 @@ export const PRICING_META = {
     perMillionTokens: 0.02,
   },
   openai_whisper: {
-    model: 'whisper-1',
-    lastVerifiedAt: '2026-06-12',
+    // Bangla STT now runs on gpt-4o-transcribe (far better Bangla than whisper-1),
+    // billed at the same ~$0.006/min estimate. whisper-1 remains the fallback.
+    model: 'gpt-4o-transcribe',
+    lastVerifiedAt: '2026-06-23',
     verified: true,
-    source: 'https://platform.openai.com/docs/models/whisper-1',
+    source: 'https://platform.openai.com/docs/models/gpt-4o-transcribe',
     perMinute: 0.006,
   },
   gemini_image_standard: {

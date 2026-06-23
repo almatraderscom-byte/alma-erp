@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     void logCost({
       provider: 'openai',
       kind: 'transcribe',
-      units: { duration_seconds: durationSec, bytes: audioFile.size, model: 'whisper-1' },
+      units: { duration_seconds: durationSec, bytes: audioFile.size, model: transcription.model },
       costUsd: calcWhisperCostUsd(durationSec),
       dedupKey: `whisper:web:${audioFile.size}:${transcription.text.slice(0, 16)}`,
     })

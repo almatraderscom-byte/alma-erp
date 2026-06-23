@@ -137,7 +137,14 @@ const ACT_NOW_NUDGE =
 const globalForAnthropic = globalThis as unknown as { anthropic: Anthropic | undefined }
 function getClient(): Anthropic {
   if (!globalForAnthropic.anthropic) {
-    globalForAnthropic.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+    globalForAnthropic.anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY ?? '',
+      // Anthropic 529 "overloaded" / 429 spikes are usually transient (seconds).
+      // The SDK default (2) gave up too fast and the owner saw a raw
+      // "সার্ভার ব্যস্ত" instead of an answer. Retry the stream-start with
+      // exponential backoff before surfacing an error to the owner.
+      maxRetries: 4,
+    })
   }
   return globalForAnthropic.anthropic
 }
