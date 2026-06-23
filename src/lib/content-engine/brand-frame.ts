@@ -14,6 +14,32 @@ export type { BrandTheme }
 
 const PRODUCT_CARD_SIZE = 1080
 const MODEL_CANVAS = { width: 1080, height: 1350 } as const
+const LIFESTYLE_SIZE = 1080
+/** Default bottom-right call-to-action when the owner leaves the offer field blank. */
+const DEFAULT_OFFER = 'অফার প্রাইস জানতে ইনবক্স করুন'
+
+/**
+ * Greedy word-wrap for SVG text (librsvg has no auto-wrap). Packs words up to
+ * ~maxChars per line; once it reaches the final allowed line it keeps appending so
+ * nothing is dropped. Bangla clusters are wide, so callers pass a small maxChars.
+ */
+function wrapText(text: string, maxChars: number, maxLines: number): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return []
+  const lines: string[] = []
+  let cur = ''
+  for (const wd of words) {
+    const tentative = cur ? `${cur} ${wd}` : wd
+    if (tentative.length > maxChars && cur && lines.length < maxLines - 1) {
+      lines.push(cur)
+      cur = wd
+    } else {
+      cur = tentative
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines.slice(0, maxLines)
+}
 
 export function escapeXml(text: string): string {
   return text
@@ -210,16 +236,141 @@ async function renderModelOverlay(imagePath: string, opts: {
 }
 
 /**
+ * Full-bleed "lifestyle poster" overlay — the layout the owner finalised with the
+ * reference card: the photo fills the whole 1080² square, a dark bottom gradient
+ * lifts the copy, and brand text/graphics sit on top. ALL visible text is passed
+ * in (editable per image), never AI-rendered, so Bangla stays crisp and correct.
+ *
+ *   top-left      → brand logo (composited separately)
+ *   top-right     → "CODE" label + mustard ring with the product code
+ *   bottom-left   → eyebrow, headline (1–2 lines), thin mustard rule
+ *   bottom-right  → offer / call-to-action (1–2 lines, right-aligned)
+ *   bottom-centre → EST. 2019 · DHAKA + small circled-A monogram
+ */
+function buildLifestyleOverlaySvg(opts: {
+  accent: string
+  eyebrow: string
+  headline: string
+  offer: string
+  code: string
+}): Buffer {
+  const S = LIFESTYLE_SIZE
+  const fonts = buildBrandFontFaces()
+  const accent = opts.accent
+  const cream = BRAND.colors.cream
+  const charcoal = BRAND.colors.charcoal
+  const pad = 64
+
+  const eyebrow = escapeXml(opts.eyebrow.slice(0, 32))
+  const code = escapeXml(opts.code.slice(0, 16))
+  const est = escapeXml(BRAND.est)
+  const headlineLines = wrapText(opts.headline, 15, 2).map(escapeXml)
+  const offerLines = wrapText(opts.offer, 18, 2).map(escapeXml)
+
+  // top-right CODE ring
+  const circleR = 46
+  const circleCx = S - pad - circleR
+  const circleCy = 124
+  const codeSize = code.length > 7 ? 18 : 24
+
+  // bottom-left block laid out bottom-up from the mustard rule
+  const ruleY = 1018
+  const hlSize = 54
+  const hlLeading = 62
+  const nHl = Math.max(1, headlineLines.length)
+  const lastHlBaseline = ruleY - 16
+  const firstHlBaseline = lastHlBaseline - (nHl - 1) * hlLeading
+  const eyebrowBaseline = firstHlBaseline - 46
+  const headlineSvg = headlineLines
+    .map((ln, i) => `<text x="${pad}" y="${firstHlBaseline + i * hlLeading}" fill="${cream}" font-family="${BRAND_FONT.serif}" font-size="${hlSize}" font-weight="700">${ln}</text>`)
+    .join('\n  ')
+
+  // bottom-right offer block (right-aligned)
+  const offerRight = S - pad
+  const offerSize = 30
+  const offerLeading = 40
+  const nOf = Math.max(1, offerLines.length)
+  const offerLastBaseline = 998
+  const offerFirstBaseline = offerLastBaseline - (nOf - 1) * offerLeading
+  const offerSvg = offerLines
+    .map((ln, i) => `<text x="${offerRight}" y="${offerFirstBaseline + i * offerLeading}" fill="${cream}" font-family="${BRAND_FONT.serif}" font-size="${offerSize}" text-anchor="end">${ln}</text>`)
+    .join('\n  ')
+
+  return Buffer.from(`<svg width="${S}" height="${S}" xmlns="http://www.w3.org/2000/svg">
+  ${fonts}
+  <defs>
+    <linearGradient id="bottomFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${charcoal}" stop-opacity="0"/>
+      <stop offset="52%" stop-color="${charcoal}" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="${charcoal}" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="topFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${charcoal}" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="${charcoal}" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="${S}" height="240" fill="url(#topFade)"/>
+  <rect x="0" y="560" width="${S}" height="520" fill="url(#bottomFade)"/>
+
+  <text x="${circleCx}" y="58" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="17" letter-spacing="3" text-anchor="middle">CODE</text>
+  <circle cx="${circleCx}" cy="${circleCy}" r="${circleR}" fill="none" stroke="${accent}" stroke-width="2.5"/>
+  ${code ? `<text x="${circleCx}" y="${circleCy + Math.round(codeSize / 3)}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="${codeSize}" font-weight="700" text-anchor="middle">${code}</text>` : ''}
+
+  <text x="${pad}" y="${eyebrowBaseline}" fill="${accent}" font-family="${BRAND_FONT.serif}" font-size="27">${eyebrow}</text>
+  ${headlineSvg}
+  <rect x="${pad}" y="${ruleY}" width="74" height="3" fill="${accent}"/>
+
+  ${offerSvg}
+
+  <text x="${Math.round(S / 2)}" y="1048" fill="${accent}" font-family="${BRAND_FONT.display}" font-size="16" letter-spacing="2" text-anchor="middle">${est}</text>
+  <circle cx="${S - pad + 4}" cy="1034" r="18" fill="none" stroke="${cream}" stroke-width="1.5" opacity="0.85"/>
+  <text x="${S - pad + 4}" y="1041" fill="${cream}" font-family="${BRAND_FONT.display}" font-size="18" text-anchor="middle" opacity="0.9">A</text>
+</svg>`)
+}
+
+async function renderLifestylePoster(imagePath: string, opts: {
+  accent: string
+  eyebrow: string
+  headline: string
+  offer: string
+  code: string
+}): Promise<Buffer> {
+  const sharp = (await import('sharp')).default
+  const photoBuf = await agentStorageDownload(imagePath)
+  const S = LIFESTYLE_SIZE
+
+  // Full-bleed square. `attention` keeps faces/garment in frame when the source
+  // isn't square, instead of a blind centre crop.
+  const base = await sharp(photoBuf)
+    .resize(S, S, { fit: 'cover', position: 'attention' })
+    .toBuffer()
+
+  const overlay = buildLifestyleOverlaySvg(opts)
+  const composites: Array<{ input: Buffer; top: number; left: number }> = [
+    { input: overlay, top: 0, left: 0 },
+  ]
+  // Brand logo top-left, on top of the soft top scrim so it reads on busy photos.
+  await compositeLogo(composites, true, 280, 54, 60)
+
+  return sharp(base)
+    .composite(composites)
+    .jpeg({ quality: 94 })
+    .toBuffer()
+}
+
+/**
  * Deterministic brand frame — logo, typography, hook via code (never AI-rendered text).
  */
 export async function applyBrandFrame(
   imagePath: string,
   opts: {
-    mode: 'product_card' | 'model_overlay'
+    mode: 'product_card' | 'model_overlay' | 'lifestyle'
     productName?: string
     productCode?: string
     price?: string
     hook: string
+    eyebrow?: string
+    offer?: string
     theme?: BrandTheme
     footer?: boolean
   },
@@ -233,7 +384,16 @@ export async function applyBrandFrame(
   const code = opts.productCode ?? 'ALMA'
 
   let framed: Buffer
-  if (opts.mode === 'product_card') {
+  if (opts.mode === 'lifestyle') {
+    framed = await renderLifestylePoster(imagePath, {
+      accent,
+      // hook carries the main headline; eyebrow + offer fall back to brand defaults.
+      headline: opts.hook,
+      eyebrow: (opts.eyebrow ?? '').trim() || accentRow.eyebrow,
+      offer: (opts.offer ?? '').trim() || DEFAULT_OFFER,
+      code: opts.productCode ?? '',
+    })
+  } else if (opts.mode === 'product_card') {
     framed = await renderProductCard(imagePath, {
       hook: opts.hook,
       eyebrow: accentRow.eyebrow,

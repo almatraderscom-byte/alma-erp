@@ -36,14 +36,19 @@ export type BrandStatus = {
   brandName: string
 }
 
-export type FinishMode = 'model_overlay' | 'product_card'
+export type FinishMode = 'model_overlay' | 'product_card' | 'lifestyle'
 
 export type FinishOptions = {
   storagePath: string
+  /** for 'lifestyle' this is the big headline; other modes treat it as the hook */
   hook: string
   productCode?: string
   productName?: string
   price?: string
+  /** lifestyle: small line above the headline (blank → brand "নতুন এসেছে") */
+  eyebrow?: string
+  /** lifestyle: bottom-right call-to-action (blank → brand default) */
+  offer?: string
   mode?: FinishMode
   theme?: string
   footer?: boolean

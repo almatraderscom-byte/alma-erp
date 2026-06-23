@@ -42,6 +42,8 @@ export async function POST(req: NextRequest) {
     productCode?: string
     productName?: string
     price?: string
+    eyebrow?: string
+    offer?: string
     mode?: string
     theme?: string
     footer?: boolean
@@ -62,17 +64,24 @@ export async function POST(req: NextRequest) {
   const hook = (typeof body.hook === 'string' ? body.hook : '').trim()
   if (!hook) return Response.json({ error: 'hook_required', message: 'একটা hook লেখা লাগবে।' }, { status: 400 })
 
-  const mode = body.mode === 'product_card' ? 'product_card' : 'model_overlay'
+  const mode =
+    body.mode === 'product_card' ? 'product_card'
+    : body.mode === 'lifestyle' ? 'lifestyle'
+    : 'model_overlay'
   const theme: BrandTheme = isTheme(body.theme) ? body.theme : 'default'
 
   let framedPath: string
   try {
     framedPath = await applyBrandFrame(storagePath, {
       mode,
-      hook: hook.slice(0, 64),
+      // For 'lifestyle' the hook is the headline; eyebrow/offer are the other two
+      // editable lines (blank → brand defaults). The same hook drives other modes.
+      hook: hook.slice(0, mode === 'lifestyle' ? 80 : 64),
       productCode: typeof body.productCode === 'string' ? body.productCode.slice(0, 24) : undefined,
       productName: typeof body.productName === 'string' ? body.productName.slice(0, 48) : undefined,
       price: typeof body.price === 'string' ? body.price.slice(0, 24) : undefined,
+      eyebrow: typeof body.eyebrow === 'string' ? body.eyebrow.slice(0, 32) : undefined,
+      offer: typeof body.offer === 'string' ? body.offer.slice(0, 48) : undefined,
       theme,
       footer: body.footer === true,
     })
