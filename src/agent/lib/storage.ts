@@ -154,7 +154,9 @@ export async function agentStorageCopy(
   return agentStorageUpload(destPath, buf, contentType, { upsert: true })
 }
 
-export async function agentStorageDownload(objectPath: string): Promise<Buffer> {
+const DOWNLOAD_MAX_ATTEMPTS = 3
+
+async function agentStorageDownloadOnce(objectPath: string): Promise<Buffer> {
   const { url, serviceKey } = getStorageBase()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
@@ -169,4 +171,31 @@ export async function agentStorageDownload(objectPath: string): Promise<Buffer> 
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Download an agent-files object, retrying transient failures.
+ *
+ * Screenshots the owner pastes into the agent chat are read through THIS funnel
+ * (both the native image-attach path in core.ts and the read_screenshot tool).
+ * A single transient Supabase 5xx / timeout used to make the image silently fail
+ * to load — the agent then went blind and told the owner it "couldn't read" the
+ * screenshot. A 404 (object genuinely missing) is NOT retried — that won't
+ * recover and we want to fail fast.
+ */
+export async function agentStorageDownload(objectPath: string): Promise<Buffer> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await agentStorageDownloadOnce(objectPath)
+    } catch (err) {
+      lastErr = err
+      // 404 = object missing; retrying can't help. Bail immediately.
+      if (err instanceof Error && /\(404\)/.test(err.message)) break
+      if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 400 * attempt))
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Agent file download failed')
 }
