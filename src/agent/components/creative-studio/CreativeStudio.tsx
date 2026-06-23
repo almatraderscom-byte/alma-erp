@@ -279,6 +279,14 @@ function StudioWorkspace({
   const isFamilyMerge =
     familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
+  // Any multi-person family preset (baba+chele, ma+meye, full family) must render on
+  // Gemini — FASHN tryon-max is single-person only and can't place 2+ people. The
+  // backend already forces this; mirror it in the UI so the Run button / provider
+  // label is honest instead of saying "FASHN Pro" while Gemini actually runs.
+  const isMultiPersonFamily =
+    familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
+  const effectiveProvider: StudioProvider = isMultiPersonFamily ? 'gemini' : provider
+
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
     [models],
@@ -696,10 +704,14 @@ function StudioWorkspace({
                   Generating…
                 </>
               ) : (
-                <>Run — {provider === 'fashn' ? 'FASHN Pro' : 'Gemini Draft'}</>
+                <>Run — {effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
               )}
             </motion.button>
-            <p className="mt-1.5 text-center text-[10px] text-muted">No LLM cost — direct render queue</p>
+            <p className="mt-1.5 text-center text-[10px] text-muted">
+              {isMultiPersonFamily && provider === 'fashn'
+                ? 'একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে'
+                : 'No LLM cost — direct render queue'}
+            </p>
           </div>
         )}
       </div>
