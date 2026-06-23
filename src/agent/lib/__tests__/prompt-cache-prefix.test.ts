@@ -87,6 +87,50 @@ describe('B1 — system block is byte-stable across turns', () => {
     expect(volatileTextFor(turnA)).toContain('SENTINEL_SNAPSHOT_A')
     expect(volatileTextFor(turnA)).toContain('SENTINEL_MEM_A')
   })
+
+  it('playbook + pinned changing between turns do NOT rewrite the system block', () => {
+    // The cost regression: getActivePlaybook orders by confidence desc and
+    // bumpPlaybookForTool mutates confidence/timesApplied after tool calls, so the
+    // playbook list (and order) shifts turn-to-turn; pinned rows also change as the
+    // owner pins/unpins. While these lived in the cache_control'd stable block, any
+    // such change rewrote the whole prefix (expensive cache-WRITE every turn). They
+    // now ride the per-turn volatile block, so the system prefix is byte-stable.
+    const turnA: BuildSystemPromptArgs = {
+      ...BASE,
+      activePlaybook: [
+        { domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin' },
+        { domain: 'cs', heuristic: 'PB_RULE_TWO reply fast' },
+      ],
+      pinnedMemories: [{ id: 'p1', content: 'PIN_ALPHA owner prefers concise', scope: 'personal' }],
+    }
+    const turnB: BuildSystemPromptArgs = {
+      ...BASE,
+      // reordered (confidence bump) AND a new rule appeared
+      activePlaybook: [
+        { domain: 'cs', heuristic: 'PB_RULE_TWO reply fast' },
+        { domain: 'pricing', heuristic: 'PB_RULE_ONE keep margin' },
+        { domain: 'stock', heuristic: 'PB_RULE_THREE reorder early' },
+      ],
+      pinnedMemories: [{ id: 'p2', content: 'PIN_BETA eid campaign live', scope: 'business' }],
+    }
+
+    const sysA = systemBlocksFor(turnA)
+    const sysB = systemBlocksFor(turnB)
+
+    // THE cost fix: identical system bytes despite different playbook + pinned.
+    expect(JSON.stringify(sysA)).toEqual(JSON.stringify(sysB))
+
+    // The playbook/pinned content must NOT be in the system block at all…
+    const sysText = sysA.map((b) => b.text).join('\n')
+    for (const sentinel of ['PB_RULE_ONE', 'PB_RULE_TWO', 'PB_RULE_THREE', 'PIN_ALPHA', 'PIN_BETA']) {
+      expect(sysText).not.toContain(sentinel)
+    }
+    // …it rides the per-turn volatile block instead.
+    expect(volatileTextFor(turnA)).toContain('PB_RULE_ONE')
+    expect(volatileTextFor(turnA)).toContain('PIN_ALPHA')
+    expect(volatileTextFor(turnB)).toContain('PB_RULE_THREE')
+    expect(volatileTextFor(turnB)).toContain('PIN_BETA')
+  })
 })
 
 describe('B1 — conversation-history prefix is byte-stable across consecutive turns', () => {
