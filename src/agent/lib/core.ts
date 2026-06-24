@@ -635,6 +635,20 @@ export async function* runAgentTurn(
     }
   }
 
+  // Salah jamaat/alone answer — when the owner replies to the conscience-nudge's
+  // "জামাতে নাকি একা?" question, capture it as a conversational answer (saved to
+  // memory) and FORBID turning it into a todo/reminder. Permanent fix for the bug
+  // where "eka poreci" became "কালকের জন্য 1টি কাজ".
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+    try {
+      const { processJamaatReply } = await import('@/agent/lib/salah-jamaat')
+      const jm = await processJamaatReply(lastUserText, conversationId, now)
+      if (jm?.contextBlock) intakeContextBlock = jm.contextBlock
+    } catch (err) {
+      console.warn('[core] salah jamaat reply failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   if (!personalMode && lastUserText) {
     const teaching = detectTeachingIntent(lastUserText)
     if (teaching) {
@@ -660,6 +674,14 @@ export async function* runAgentTurn(
           `Reply in warm Bangla, addressing him as Sir: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
           `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Sir?"), ` +
           `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested — it helps his conscience stay honest before Allah.`
+        // Mark a one-shot pending so the owner's next reply ("eka"/"jamaate") is
+        // captured as a conversational answer, never turned into a todo/reminder.
+        try {
+          const { markJamaatPending } = await import('@/agent/lib/salah-jamaat')
+          await markJamaatPending(fresh.waqt, fresh.date, now)
+        } catch (err) {
+          console.warn('[core] markJamaatPending failed:', err instanceof Error ? err.message : err)
+        }
       } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
         intakeContextBlock =
           `[SALAH ${fresh.status.toUpperCase()} — HONESTY HONOURED]\n` +
