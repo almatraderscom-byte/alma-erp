@@ -3,13 +3,15 @@
  *
  * Runs on a Vercel cron during office hours only (09:30–20:00 Asia/Dhaka). Each
  * tick it processes the business's active tasks and, per the owner's plan:
- *   1. Auto-verifies the ~90% it can confirm (image proof via the existing
- *      vision assessor; text/link proof via a DeepSeek judgment; FB/ERP machine
- *      checks closed straight away) → task done, no owner needed.
- *   2. Asks the staff for an update in the office group when a task is taking
+ *   1. Auto-verifies the ~90% it can confirm. Per task type a strategy router
+ *      (office-verify.ts) picks the check: FB posts/reels verified live via the
+ *      Graph API; "reply to unread" verified against the real inbox/comments;
+ *      order follow-ups via an order-id+outcome; listing updates via a live URL;
+ *      learning tasks via a deliverable; visual content via the vision assessor.
+ *   2. Up front it tells the staff EXACTLY what verifiable proof to submit for
+ *      that task type — it does NOT ask the vague "how did you do it?".
+ *   3. Asks the staff for an update in the office group when a task is taking
  *      longer than normal (overdue vs. its deadline, or idle too long).
- *   3. When it can't understand how to supervise a task it asks the staff a
- *      clarifying question — up to TWICE.
  *
  * Phase-3 90/10 gate: whenever the agent can't confirm or understand a task it
  * does NOT bother the owner by default. It weighs the task's criticality
@@ -43,6 +45,14 @@ import {
   requestUpdate,
 } from '@/agent/lib/office-actions'
 import { raiseProposal } from '@/agent/lib/office-proposals'
+import {
+  classifyStrategy,
+  verifyFbLive,
+  verifyCustomerReply,
+  extractFbLink,
+  type ToolVerdict,
+  type TaskLite,
+} from '@/agent/lib/office-verify'
 
 /** Locked to DeepSeek per owner decision — the same model the `ops` specialist uses. */
 const SUPERVISOR_MODEL_ID = 'or-deepseek-v4-flash'
@@ -355,6 +365,32 @@ function needsFollowUp(task: TaskRow, now: Date): boolean {
   return overdue || idleTooLong
 }
 
+function taskLite(task: TaskRow): TaskLite {
+  return { type: task.type, title: task.title, detail: task.detail, businessId: task.businessId }
+}
+
+/**
+ * Map a tool-based verdict onto a supervisor outcome. `pass` closes the task,
+ * `fail` requests a redo (or hands off after MAX_AUTO_REDO), `unsure` lets the
+ * 90/10 gate decide. The redo/fail message goes to the staff in the office group.
+ */
+async function applyToolVerdict(task: TaskRow, v: ToolVerdict): Promise<'verified' | 'accepted' | 'redo' | 'escalated'> {
+  if (v.verdict === 'pass') {
+    await agentAutoVerify(task.id, task.businessId, { evidence: v.note, method: v.method })
+    return 'verified'
+  }
+  if (v.verdict === 'fail') {
+    if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
+      return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${v.note}`.trim())
+    }
+    await postGroupMessage({ authorType: 'agent', body: v.note, taskRef: task.id, businessId: task.businessId })
+    await agentRequestRedo(task.id, task.businessId, v.note)
+    return 'redo'
+  }
+  // unsure
+  return handoffSubmitted(task, v.note)
+}
+
 /** Verify a task whose proof the staff has already submitted. Returns the action taken. */
 async function verifySubmittedProof(
   task: TaskRow,
@@ -363,6 +399,30 @@ async function verifySubmittedProof(
   const data = asRecord(task.proofData)
   const imageUrl = proofImageUrl(data)
   const text = proofText(data)
+
+  // ── Tool-based verification first (real ground truth, no LLM needed) ──
+  const decision = classifyStrategy(taskLite(task))
+
+  // customer_reply: the agent checks the live inbox/comments itself — no proof needed.
+  if (decision.strategy === 'customer_reply') {
+    return applyToolVerdict(task, await verifyCustomerReply(taskLite(task)))
+  }
+
+  // fb_live: need a Facebook link in the proof; verify it's genuinely live on our page.
+  if (decision.strategy === 'fb_live') {
+    const link = extractFbLink(text) ?? extractFbLink(imageUrl ?? '')
+    if (link) {
+      return applyToolVerdict(task, await verifyFbLive(taskLite(task), link))
+    }
+    // No link supplied: an image-only "proof" can't be machine-verified for FB.
+    // Ask once for the link instead of guessing from a screenshot.
+    if ((task.redoCount ?? 0) < MAX_AUTO_REDO) {
+      await postGroupMessage({ authorType: 'agent', body: decision.proofSpecBn, taskRef: task.id, businessId: task.businessId })
+      await agentRequestRedo(task.id, task.businessId, decision.proofSpecBn)
+      return 'redo'
+    }
+    return handoffSubmitted(task, 'পোস্টের যাচাইযোগ্য লিংক পাওয়া যায়নি')
+  }
 
   // Image proof → existing Claude vision assessor.
   if (imageUrl && budget.llm > 0) {
@@ -421,12 +481,42 @@ async function verifySubmittedProof(
   return 'skipped'
 }
 
-/** Decide whether the supervisor understands the task; ask / escalate as needed. */
+/**
+ * First time the supervisor sees an in-progress task it does NOT ask "how did you
+ * do it?". Instead it tells the staff EXACTLY what verifiable proof to submit for
+ * this task type (the link / the order id+outcome / the deliverable / the image),
+ * so the proof, when it comes, can be machine- or vision-verified. This is the
+ * owner's requirement: request specific provable proof, not a vague explanation.
+ *
+ * Only genuinely ambiguous tasks (no clear strategy) fall back to one DeepSeek
+ * clarifying question, capped by MAX_CLARIFY and the 90/10 gate.
+ */
 async function triageUnderstanding(
   task: TaskRow,
   now: Date,
   budget: { llm: number },
 ): Promise<'understood' | 'clarified' | 'escalated' | 'deferred' | 'skipped'> {
+  const decision = classifyStrategy(taskLite(task))
+
+  // Mapped strategies (FB/customer-reply/order/listing/deliverable/image): on first
+  // contact announce the exact proof we need (no LLM call), then we're done — the
+  // proof gets machine-/vision-verified when it arrives.
+  if (decision.strategy !== 'text') {
+    if (!task.supervisorLastTickAt) {
+      await postGroupMessage({
+        authorType: 'agent',
+        body: `${task.staff.name} ভাই, "${task.title}" — ${decision.proofSpecBn}`,
+        taskRef: task.id,
+        businessId: task.businessId,
+      })
+      await prisma.agentStaffTask.update({ where: { id: task.id }, data: { supervisorLastTickAt: now } })
+      return 'clarified'
+    }
+    await prisma.agentStaffTask.update({ where: { id: task.id }, data: { supervisorLastTickAt: now } })
+    return 'understood'
+  }
+
+  // Unmapped 'text' task → ask what verifiable proof the staff can give (capped).
   if (budget.llm <= 0) return 'skipped'
   budget.llm--
   const judged = await deepseekJson<{ clear?: boolean; question?: string }>(
@@ -434,8 +524,8 @@ async function triageUnderstanding(
       `শিরোনাম: ${task.title}\n` +
       `বিস্তারিত: ${task.detail ?? '(নেই)'}\n` +
       `ধরন: ${task.type}\n\n` +
-      `তুমি কি বুঝতে পারছ কাজটি ঠিকঠাক হয়েছে কিনা পরে যাচাই করার জন্য কী দরকার? ` +
-      `যদি স্পষ্ট হয় clear=true দাও। যদি অস্পষ্ট হয়, স্টাফকে করার মতো একটি ছোট বাংলা প্রশ্ন দাও। ` +
+      `কাজটি যাচাই করার জন্য স্টাফের কাছ থেকে কী যাচাইযোগ্য প্রমাণ চাইতে হবে তা কি স্পষ্ট? ` +
+      `যদি স্পষ্ট হয় clear=true দাও। যদি অস্পষ্ট হয়, প্রমাণ হিসেবে কী দিতে হবে সেটা জানতে স্টাফকে একটি ছোট বাংলা প্রশ্ন দাও। ` +
       `শুধু JSON: {"clear":true|false,"question":"স্টাফকে প্রশ্ন (অস্পষ্ট হলে)"}`,
     `supervisor_triage:${task.id}:${task.supervisorClarifyCount}`,
   )
@@ -462,7 +552,7 @@ async function triageUnderstanding(
     return 'deferred'
   }
 
-  const question = (judged.question ?? '').trim() || `${task.staff.name} ভাই, "${task.title}" কাজটি ঠিক কীভাবে করছেন একটু বুঝিয়ে বলবেন?`
+  const question = (judged.question ?? '').trim() || `${task.staff.name} ভাই, "${task.title}" কাজটির প্রমাণ হিসেবে আমাকে ঠিক কী দিতে পারবেন?`
   await postGroupMessage({ authorType: 'agent', body: question, taskRef: task.id, businessId: task.businessId })
   await requestUpdate(task.id, task.businessId, { note: question, by: 'agent' })
   await prisma.agentStaffTask.update({
