@@ -2,9 +2,11 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
-import { isSystemOwner } from '@/lib/roles'
+import { isSystemOwner, normalizeAlmaRole, filterNavByRole } from '@/lib/roles'
+import { getNavForBusiness, BUSINESSES, type BusinessId } from '@/lib/businesses'
 import { prisma } from '@/lib/prisma'
 import { getOwnerHubData, getStaffOfficeData } from '@/agent/lib/office-hub'
+import { dailyMotivation } from '@/agent/lib/office-motivation'
 import OfficeShell from './office-shell'
 import { OFFICE_CSS } from './office-css'
 
@@ -35,6 +37,7 @@ export default async function StaffOfficePage() {
   })
 
   const headerDate = dhakaHeaderDate()
+  const motivation = dailyMotivation()
   const businessId = staff?.businessId ?? 'ALMA_LIFESTYLE'
 
   // Staff office data (interactive app) — tasks, proofs, threads, self-initiated.
@@ -42,6 +45,16 @@ export default async function StaffOfficePage() {
 
   // Owner Hub — pending-approval queue, update-tracking, team status, leaderboard.
   const hub = owner ? await getOwnerHubData(businessId) : null
+
+  // ERP nav links for the slide-in drawer — same role-filtered set the ERP
+  // sidebar shows, so the owner can reach the rest of the ERP from inside the
+  // office overlay (which paints over the normal sidebar). We drop the office's
+  // own entry since the user is already here.
+  const navBusinessId: BusinessId = (businessId in BUSINESSES ? businessId : 'ALMA_LIFESTYLE') as BusinessId
+  const role = normalizeAlmaRole(session.user.role)
+  const navItems = filterNavByRole(getNavForBusiness(navBusinessId), role, navBusinessId)
+    .filter((n) => n.href !== '/portal/office')
+    .map((n) => ({ href: n.href, icon: n.icon, label: n.label }))
 
   return (
     <div className="ohub">
@@ -51,6 +64,8 @@ export default async function StaffOfficePage() {
         staff={staffData}
         self={owner ? 'owner' : 'staff'}
         headerDate={headerDate}
+        motivation={motivation}
+        navItems={navItems}
       />
     </div>
   )

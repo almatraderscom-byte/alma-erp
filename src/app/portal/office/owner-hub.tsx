@@ -11,6 +11,7 @@ import type {
   TeamMember,
   LeaderRow,
 } from '@/agent/lib/office-hub'
+import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 
 // ── small formatting helpers ────────────────────────────────────────────────
@@ -90,12 +91,21 @@ async function postAction(body: ActionBody): Promise<boolean> {
 
 // ════════════════════════════════════════════════════════════════════════════
 
-export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; headerDate: string }) {
+export default function OwnerHub({
+  data,
+  headerDate,
+  motivation,
+}: {
+  data: OwnerHubData
+  headerDate: string
+  motivation: Motivation
+}) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [threadTask, setThreadTask] = useState<HubTaskCard | null>(null)
   const [awardOpen, setAwardOpen] = useState(false)
+  const [zoom, setZoom] = useState<string | null>(null)
 
   const run = useCallback(
     async (key: string, body: ActionBody) => {
@@ -111,24 +121,45 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
   const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, selfInitiated, activity, team, leaderboard } = data
   const busy = pending || busyId !== null
 
+  // staffId → profile image map (from team rows) for avatars across the hub
+  const imgByStaff = new Map<string, string | null>(team.map((m) => [m.staffId, m.imageUrl]))
+
+  // Group active tasks per staff so each staff member gets their own column.
+  const activeByStaff = (() => {
+    const groups = new Map<string, { staffId: string; staffName: string; tasks: HubTaskCard[] }>()
+    for (const t of activeTasks) {
+      let g = groups.get(t.staffId)
+      if (!g) {
+        g = { staffId: t.staffId, staffName: t.staffName, tasks: [] }
+        groups.set(t.staffId, g)
+      }
+      g.tasks.push(t)
+    }
+    return [...groups.values()]
+  })()
+
   // ── Thread detail swap (mirrors the demo's #owner-thread) ──
   if (threadTask) {
     return (
-      <ThreadDetail
-        task={threadTask}
-        businessId={data.businessId}
-        busy={busy}
-        onBack={() => setThreadTask(null)}
-        onApprove={async () => {
-          const ok = await run(`ok-${threadTask.id}`, { action: 'approve', taskId: threadTask.id })
-          if (ok) setThreadTask(null)
-        }}
-        onRedo={async (note) => {
-          const ok = await run(`redo-${threadTask.id}`, { action: 'redo', taskId: threadTask.id, note })
-          if (ok) setThreadTask(null)
-        }}
-        onComment={(body) => run(`cmt-${threadTask.id}`, { action: 'comment', taskId: threadTask.id, body })}
-      />
+      <>
+        <ThreadDetail
+          task={threadTask}
+          businessId={data.businessId}
+          busy={busy}
+          onZoom={setZoom}
+          onBack={() => setThreadTask(null)}
+          onApprove={async () => {
+            const ok = await run(`ok-${threadTask.id}`, { action: 'approve', taskId: threadTask.id })
+            if (ok) setThreadTask(null)
+          }}
+          onRedo={async (note) => {
+            const ok = await run(`redo-${threadTask.id}`, { action: 'redo', taskId: threadTask.id, note })
+            if (ok) setThreadTask(null)
+          }}
+          onComment={(body) => run(`cmt-${threadTask.id}`, { action: 'comment', taskId: threadTask.id, body })}
+        />
+        {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
+      </>
     )
   }
 
@@ -151,7 +182,8 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
         </div>
       </div>
 
-      {/* Performer of the Week */}
+      {/* Performer of the Week + daily motivation */}
+      <div className="hero-row">
       <div className="award">
         <Confetti />
         <div className="ownerctl">
@@ -162,7 +194,11 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
         <div className="inner">
           <div className="crownwrap">
             <span className="crown">👑</span>
-            <div className="photo">{winnerInitial}</div>
+            {award?.imageUrl ? (
+              <div className="photo img" style={{ backgroundImage: `url(${award.imageUrl})` }} />
+            ) : (
+              <div className="photo">{winnerInitial}</div>
+            )}
           </div>
           <div className="meta">
             <span className="tag">🏆 এই সপ্তাহের সেরা পারফরমার</span>
@@ -197,6 +233,8 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
             )}
           </div>
         </div>
+      </div>
+        <MotivationCard m={motivation} />
       </div>
 
       {/* KPIs */}
@@ -265,6 +303,7 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
                 idx={i}
                 busy={busy}
                 onOpen={() => setThreadTask(t)}
+                onZoom={setZoom}
                 onApprove={() => run(`ok-${t.id}`, { action: 'approve', taskId: t.id })}
                 onRedo={() => setThreadTask(t)}
               />
@@ -276,6 +315,7 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
                 idx={i}
                 busy={busy}
                 onOpen={() => setThreadTask(t)}
+                onZoom={setZoom}
                 onApprove={() => run(`self-ok-${t.id}`, { action: 'self_approve', taskId: t.id })}
               />
             ))}
@@ -285,14 +325,35 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
             <h2>🔄 চলমান কাজ</h2>
             <span className="count">{bn(activeTasks.length)}টি</span>
           </div>
-          <div className="card">
-            {activeTasks.length === 0 && (
+          {activeByStaff.length === 0 ? (
+            <div className="card">
               <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>এখন চলমান কোনো কাজ নেই।</div>
-            )}
-            {activeTasks.map((t, i) => (
-              <ActiveRow key={t.id} task={t} idx={i} />
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="actcols">
+              {activeByStaff.map((g) => {
+                const img = imgByStaff.get(g.staffId) ?? null
+                return (
+                  <div className="actcol" key={g.staffId}>
+                    <div className="actcol-h">
+                      {img ? (
+                        <span className={`av img`} style={{ backgroundImage: `url(${img})` }} />
+                      ) : (
+                        <span className={`av ${avClass(g.staffId)}`}>{(g.staffName.trim()[0] || '?').toUpperCase()}</span>
+                      )}
+                      <span className="nm">{g.staffName}</span>
+                      <span className="count">{bn(g.tasks.length)}টি</span>
+                    </div>
+                    <div className="card">
+                      {g.tasks.map((t, i) => (
+                        <ActiveRow key={t.id} task={t} idx={i} />
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* RIGHT: team status + activity + leaderboard */}
@@ -355,7 +416,41 @@ export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; hea
       {awardOpen && (
         <AwardModal businessId={data.businessId} winnerId={award?.staffId ?? null} onClose={() => setAwardOpen(false)} />
       )}
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </>
+  )
+}
+
+// ── daily motivation card (request 4) ───────────────────────────────────────
+function MotivationCard({ m }: { m: Motivation }) {
+  return (
+    <div className="motiv">
+      <div className="motiv-glow" />
+      <div className="motiv-tag">✨ আজকের অনুপ্রেরণা</div>
+      <div className="motiv-quote">{m.text}</div>
+      <div className="motiv-foot">— {m.tag}</div>
+    </div>
+  )
+}
+
+// ── fullscreen image lightbox (request 2) ───────────────────────────────────
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="ohub-lightbox" onClick={onClose}>
+      <button className="ohub-lightbox-close" aria-label="বন্ধ" onClick={onClose}>
+        ✕
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="proof" onClick={(e) => e.stopPropagation()} />
+    </div>
   )
 }
 
@@ -387,6 +482,11 @@ function OverdueRow({ u, busy, onRemind }: { u: OverdueUpdateCard; busy: boolean
         </div>
       </div>
       <div className="acts">
+        {u.phone && (
+          <a className="btn sm primary" href={`tel:${u.phone}`}>
+            📞 কল
+          </a>
+        )}
         <button className="btn sm" disabled={busy} onClick={onRemind}>
           🔔 মনে করান
         </button>
@@ -409,6 +509,7 @@ function ApprovalRow({
   idx,
   busy,
   onOpen,
+  onZoom,
   onApprove,
   onRedo,
 }: {
@@ -416,10 +517,12 @@ function ApprovalRow({
   idx: number
   busy: boolean
   onOpen: () => void
+  onZoom: (src: string) => void
   onApprove: () => void
   onRedo: () => void
 }) {
   const th = thumbProps(task, idx)
+  const proofImg = pickProofImage(task.proofData)
   const qc = pickQc(task.proofData)
   const count = proofCount(task.proofData)
   const text = pickProofText(task.proofData)
@@ -433,7 +536,18 @@ function ApprovalRow({
 
   return (
     <div className="appr" onClick={onOpen}>
-      <div {...th} />
+      <div
+        {...th}
+        className={proofImg ? `${th.className} zoomable` : th.className}
+        onClick={
+          proofImg
+            ? (e) => {
+                e.stopPropagation()
+                onZoom(proofImg)
+              }
+            : undefined
+        }
+      />
       <div className="body">
         <div className="top">
           <span className={`av ${avClass(task.staffId)}`}>{(task.staffName.trim()[0] || '?').toUpperCase()}</span>
@@ -464,18 +578,32 @@ function SelfRow({
   idx,
   busy,
   onOpen,
+  onZoom,
   onApprove,
 }: {
   task: HubTaskCard
   idx: number
   busy: boolean
   onOpen: () => void
+  onZoom: (src: string) => void
   onApprove: () => void
 }) {
   const th = thumbProps(task, idx)
+  const proofImg = pickProofImage(task.proofData)
   return (
     <div className="appr" onClick={onOpen}>
-      <div {...th} />
+      <div
+        {...th}
+        className={proofImg ? `${th.className} zoomable` : th.className}
+        onClick={
+          proofImg
+            ? (e) => {
+                e.stopPropagation()
+                onZoom(proofImg)
+              }
+            : undefined
+        }
+      />
       <div className="body">
         <div className="top">
           <span className={`av ${avClass(task.staffId)}`}>{(task.staffName.trim()[0] || '?').toUpperCase()}</span>
@@ -522,7 +650,11 @@ function TeamRow({ m }: { m: TeamMember }) {
   const dot = m.status === 'on' ? 'on' : m.status === 'lunch' ? 'lunch' : 'off'
   return (
     <div className="staff-row">
-      <span className={`av lg ${avClass(m.staffId)}`}>{m.initial}</span>
+      {m.imageUrl ? (
+        <span className="av lg img" style={{ backgroundImage: `url(${m.imageUrl})` }} />
+      ) : (
+        <span className={`av lg ${avClass(m.staffId)}`}>{m.initial}</span>
+      )}
       <div className="info">
         <div className="name">
           {m.name} <span className={`dotmini ${dot}`}></span>
@@ -575,7 +707,11 @@ function LeadRow({ r, rank, top, winnerId }: { r: LeaderRow; rank: number; top: 
   return (
     <div className={`lead${top ? ' top' : ''}`}>
       <div className="rank">{bn(rank)}</div>
-      <span className={`av ${avClass(r.staffId)}`}>{r.initial}</span>
+      {r.imageUrl ? (
+        <span className="av img" style={{ backgroundImage: `url(${r.imageUrl})` }} />
+      ) : (
+        <span className={`av ${avClass(r.staffId)}`}>{r.initial}</span>
+      )}
       <div className="info">
         <div className="nm">
           {r.name} {winnerId === r.staffId && <span className="pick">⭐ সেরা</span>}
@@ -604,6 +740,7 @@ function ThreadDetail({
   businessId,
   busy,
   onBack,
+  onZoom,
   onApprove,
   onRedo,
   onComment,
@@ -612,10 +749,12 @@ function ThreadDetail({
   businessId: string
   busy: boolean
   onBack: () => void
+  onZoom: (src: string) => void
   onApprove: () => void
   onRedo: (note: string) => void
   onComment: (body: string) => void
 }) {
+  const proofImg = pickProofImage(task.proofData)
   const [thread, setThread] = useState<TaskThread | null>(null)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
@@ -661,6 +800,14 @@ function ThreadDetail({
           <div className="instr">
             <div className="h">🧠 কাজটি যেভাবে করবেন</div>
             <p>{task.detail}</p>
+          </div>
+        )}
+
+        {proofImg && (
+          <div className="proof-shot" onClick={() => onZoom(proofImg)}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={proofImg} alt="জমা দেওয়া প্রমাণ" />
+            <span className="proof-zoom">🔍 বড় করে দেখুন</span>
           </div>
         )}
 

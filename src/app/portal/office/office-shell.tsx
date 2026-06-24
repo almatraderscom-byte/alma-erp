@@ -3,31 +3,41 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import type { OwnerHubData, StaffOfficeData } from '@/agent/lib/office-hub'
+import type { Motivation } from '@/agent/lib/office-motivation'
 import OwnerHub from './owner-hub'
 import StaffApp from './staff-app'
-import StaffPreview from './staff-preview'
 import NotifBell from './notif-bell'
 import GroupChat from './group-chat'
-
-type View = 'owner' | 'staff'
+import NavDrawer, { type OfficeNavItem } from './nav-drawer'
+import HistoryPanel from './history-panel'
 
 export default function OfficeShell({
   owner,
   staff,
   self,
   headerDate,
+  motivation,
+  navItems,
 }: {
   owner: OwnerHubData | null
   staff: StaffOfficeData | null
   self: 'owner' | 'staff'
   headerDate: string
+  motivation: Motivation
+  navItems: OfficeNavItem[]
 }) {
   const isOwner = self === 'owner'
-  const [view, setView] = useState<View>(isOwner ? 'owner' : 'staff')
+  const [navOpen, setNavOpen] = useState(false)
+  const [histOpen, setHistOpen] = useState(false)
 
   return (
     <>
       <div className="topbar">
+        <button className="tbtn" onClick={() => setNavOpen(true)} aria-label="ERP নেভিগেশন খুলুন">
+          <span className="tic">☰</span>
+          <span className="tlbl">মেনু</span>
+        </button>
+
         <Link href="/" className="brand" aria-label="ERP-তে ফিরুন">
           <span className="logo">🏢</span>
           <span>
@@ -35,41 +45,27 @@ export default function OfficeShell({
           </span>
         </Link>
 
-        {isOwner && (
-          <div className="seg">
-            <button className={view === 'owner' ? 'active' : ''} onClick={() => setView('owner')}>
-              👑 মালিক ভিউ
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isOwner && (
+            <button className="tbtn" onClick={() => setHistOpen(true)} aria-label="ইতিহাস">
+              <span className="tic">📅</span>
+              <span className="tlbl">ইতিহাস</span>
             </button>
-            <button className={view === 'staff' ? 'active' : ''} onClick={() => setView('staff')}>
-              👷 স্টাফ ভিউ
-            </button>
-          </div>
-        )}
-
-        <div style={isOwner ? undefined : { marginLeft: 'auto' }}>
+          )}
           <NotifBell />
         </div>
       </div>
 
       <div className="wrap">
-        {/* Owner perspective */}
         {isOwner && owner && (
-          <div className={`perspective ${view === 'owner' ? 'show' : ''}`}>
-            <OwnerHub data={owner} headerDate={headerDate} />
+          <div className="perspective show">
+            <OwnerHub data={owner} headerDate={headerDate} motivation={motivation} />
           </div>
         )}
 
-        {/* Owner's preview of the staff experience */}
-        {isOwner && (
-          <div className={`perspective ${view === 'staff' ? 'show' : ''}`}>
-            <StaffPreview headerDate={headerDate} />
-          </div>
-        )}
-
-        {/* Real staff app */}
         {!isOwner && staff && (
           <div className="perspective show">
-            <StaffApp data={staff} headerDate={headerDate} />
+            <StaffApp data={staff} headerDate={headerDate} motivation={motivation} />
           </div>
         )}
 
@@ -84,6 +80,9 @@ export default function OfficeShell({
           </div>
         )}
       </div>
+
+      <NavDrawer items={navItems} open={navOpen} onClose={() => setNavOpen(false)} />
+      {histOpen && <HistoryPanel onClose={() => setHistOpen(false)} />}
 
       <GroupChat self={self} />
     </>

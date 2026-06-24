@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
@@ -521,6 +522,7 @@ function AttendanceCard({
   onCheckInSuccess?: () => void | Promise<void>
   onEndWork?: () => void
 }) {
+  const router = useRouter()
   const [busy, setBusy] = useState<'out' | 'cancel' | null>(null)
   const [appealOpen, setAppealOpen] = useState(false)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
@@ -737,6 +739,9 @@ function AttendanceCard({
           onSuccess={async () => {
             await onRefresh()
             await onCheckInSuccess?.()
+            // Take staff straight to their Office Hub after a successful check-in.
+            setFaceCheckInOpen(false)
+            router.push('/portal/office')
           }}
         />
       )}
