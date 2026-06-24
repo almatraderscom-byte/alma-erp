@@ -1,0 +1,406 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cn } from '@/lib/utils'
+
+// ── Types (mirror src/agent/lib/catalog/product-images.ts) ──────────────────────
+type CatalogImageGroup = {
+  code: string
+  name: string
+  category: string
+  kind: 'collection' | 'sku'
+  members: string[]
+  imageCount: number
+  hasImages: boolean
+  primaryImageUrl: string | null
+}
+
+type CatalogResponse = {
+  ok: boolean
+  groups: CatalogImageGroup[]
+  totalGroups: number
+  withImages: number
+  missing: number
+}
+
+type ProductImageEntry = {
+  id: string
+  url: string | null
+  storagePath: string
+  isPrimary: boolean
+}
+
+type Filter = 'all' | 'missing' | 'with'
+
+export default function CatalogImagesScreen() {
+  const [data, setData] = useState<CatalogResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [active, setActive] = useState<CatalogImageGroup | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/assistant/catalog/products', { cache: 'no-store' })
+      const json = (await res.json()) as CatalogResponse & { error?: string }
+      if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      setData(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'লোড করা গেল না')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const filtered = useMemo(() => {
+    if (!data) return []
+    const q = query.trim().toLowerCase()
+    return data.groups.filter((g) => {
+      if (filter === 'missing' && g.hasImages) return false
+      if (filter === 'with' && !g.hasImages) return false
+      if (!q) return true
+      return (
+        g.code.toLowerCase().includes(q) ||
+        g.name.toLowerCase().includes(q) ||
+        g.category.toLowerCase().includes(q) ||
+        g.members.some((m) => m.toLowerCase().includes(q))
+      )
+    })
+  }, [data, query, filter])
+
+  return (
+    <div className="h-full min-h-0 overflow-y-auto pb-24">
+      <div className="mx-auto w-full max-w-5xl px-4 py-5">
+        {/* Header */}
+        <div className="mb-4">
+          <h1 className="text-lg font-bold text-cream">প্রোডাক্ট ছবি</h1>
+          <p className="mt-0.5 text-xs text-muted">
+            প্রতিটি প্রোডাক্টের ছবি দেখুন ও আপলোড করুন। ফ্যামিলি ম্যাচিং সেট একটি কার্ডে — ছবি দিলে সেটের সব
+            মেম্বারে যোগ হবে।
+          </p>
+        </div>
+
+        {/* Summary */}
+        {data && (
+          <div className="mb-4 grid grid-cols-3 gap-2">
+            <SummaryCard label="মোট প্রোডাক্ট" value={data.totalGroups} tone="neutral" />
+            <SummaryCard label="ছবি আছে" value={data.withImages} tone="good" />
+            <SummaryCard label="ছবি নেই" value={data.missing} tone="warn" />
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="কোড / নাম / ক্যাটাগরি খুঁজুন…"
+            className="w-full rounded-xl border border-border-subtle bg-white/[0.04] px-3 py-2 text-sm text-cream placeholder:text-muted focus:border-[#3D8BFD]/40 focus:outline-none"
+          />
+          <div className="flex shrink-0 gap-1">
+            {(['all', 'missing', 'with'] as Filter[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-xs font-medium transition-all',
+                  filter === f
+                    ? 'border-[#3D8BFD]/40 bg-[#3D8BFD]/10 text-[#3D8BFD]'
+                    : 'border-border-subtle bg-white/[0.04] text-muted hover:text-muted-hi',
+                )}
+              >
+                {f === 'all' ? 'সব' : f === 'missing' ? 'ছবি নেই' : 'ছবি আছে'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Body */}
+        {loading && <div className="py-12 text-center text-sm text-muted">লোড হচ্ছে…</div>}
+        {error && !loading && (
+          <div className="rounded-xl border border-red-400/30 bg-red-500/5 p-4 text-center text-sm text-red-300">
+            {error}
+            <button onClick={load} className="ml-2 underline">
+              আবার চেষ্টা করুন
+            </button>
+          </div>
+        )}
+        {!loading && !error && data && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {filtered.map((g) => (
+              <ProductCard key={g.code} group={g} onOpen={() => setActive(g)} />
+            ))}
+            {filtered.length === 0 && (
+              <div className="col-span-full py-10 text-center text-sm text-muted">কোনো প্রোডাক্ট মিলল না।</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {active && (
+        <ProductDetail
+          group={active}
+          onClose={() => setActive(null)}
+          onChanged={() => {
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function SummaryCard({ label, value, tone }: { label: string; value: number; tone: 'neutral' | 'good' | 'warn' }) {
+  const toneCls =
+    tone === 'good' ? 'text-[#81B29A]' : tone === 'warn' ? 'text-amber-400' : 'text-cream'
+  return (
+    <div className="rounded-xl border border-border-subtle bg-white/[0.04] px-3 py-2.5 text-center">
+      <div className={cn('text-xl font-bold', toneCls)}>{value}</div>
+      <div className="mt-0.5 text-[10px] text-muted">{label}</div>
+    </div>
+  )
+}
+
+function ProductCard({ group, onOpen }: { group: CatalogImageGroup; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="group flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-white/[0.04] text-left transition-all hover:border-[#3D8BFD]/30 hover:bg-white/[0.06]"
+    >
+      <div className="relative aspect-square w-full bg-black/20">
+        {group.primaryImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={group.primaryImageUrl} alt={group.name} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-3xl text-muted/40">🖼️</div>
+        )}
+        {/* count badge */}
+        <span
+          className={cn(
+            'absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold',
+            group.hasImages ? 'bg-[#81B29A]/90 text-white' : 'bg-amber-500/90 text-white',
+          )}
+        >
+          {group.hasImages ? `${group.imageCount} ছবি` : 'ছবি নেই'}
+        </span>
+        {group.kind === 'collection' && (
+          <span className="absolute left-1.5 top-1.5 rounded-full bg-[#3D8BFD]/90 px-2 py-0.5 text-[10px] font-bold text-white">
+            সেট ×{group.members.length}
+          </span>
+        )}
+      </div>
+      <div className="p-2">
+        <div className="truncate text-xs font-semibold text-cream">{group.code}</div>
+        <div className="truncate text-[10px] text-muted">{group.name || group.category || '—'}</div>
+      </div>
+    </button>
+  )
+}
+
+function ProductDetail({
+  group,
+  onClose,
+  onChanged,
+}: {
+  group: CatalogImageGroup
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const [images, setImages] = useState<ProductImageEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const loadImages = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/assistant/catalog/images/${encodeURIComponent(group.code)}`, {
+        cache: 'no-store',
+      })
+      const json = await res.json()
+      if (res.ok && json.ok) setImages(json.images as ProductImageEntry[])
+      else setImages([])
+    } catch {
+      setImages([])
+    } finally {
+      setLoading(false)
+    }
+  }, [group.code])
+
+  useEffect(() => {
+    loadImages()
+  }, [loadImages])
+
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files)
+      if (!list.length) return
+      setBusy(true)
+      setNote(null)
+      try {
+        const fd = new FormData()
+        for (const f of list) fd.append('file', f)
+        const res = await fetch(`/api/assistant/catalog/images/${encodeURIComponent(group.code)}`, {
+          method: 'POST',
+          body: fd,
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setNote(json.error === 'invalid_code' ? 'কোডটি মিলল না।' : `আপলোড ব্যর্থ: ${json.error || res.status}`)
+        } else {
+          setNote(`${json.uploaded}টি ছবি যোগ হয়েছে।`)
+          await loadImages()
+          onChanged()
+        }
+      } catch (err) {
+        setNote(err instanceof Error ? err.message : 'আপলোড ব্যর্থ')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [group.code, loadImages, onChanged],
+  )
+
+  const remove = useCallback(
+    async (imageId: string) => {
+      setBusy(true)
+      setNote(null)
+      try {
+        const res = await fetch(
+          `/api/assistant/catalog/images/${encodeURIComponent(group.code)}?imageId=${encodeURIComponent(imageId)}`,
+          { method: 'DELETE' },
+        )
+        const json = await res.json()
+        if (!res.ok || !json.ok) setNote(`মুছতে ব্যর্থ: ${json.error || res.status}`)
+        else {
+          setNote(`ছবি মুছে ফেলা হয়েছে।`)
+          await loadImages()
+          onChanged()
+        }
+      } catch (err) {
+        setNote(err instanceof Error ? err.message : 'মুছতে ব্যর্থ')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [group.code, loadImages, onChanged],
+  )
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border-subtle bg-card sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* head */}
+        <div className="flex items-start justify-between border-b border-border-subtle p-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-base font-bold text-cream">{group.code}</span>
+              {group.kind === 'collection' && (
+                <span className="rounded-full bg-[#3D8BFD]/15 px-2 py-0.5 text-[10px] font-bold text-[#3D8BFD]">
+                  ফ্যামিলি সেট ×{group.members.length}
+                </span>
+              )}
+            </div>
+            <div className="truncate text-xs text-muted">{group.name || group.category || '—'}</div>
+            {group.kind === 'collection' && (
+              <div className="mt-1 text-[10px] text-muted">মেম্বার: {group.members.join(', ')}</div>
+            )}
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-muted-hi">
+            ✕
+          </button>
+        </div>
+
+        {/* body */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {group.kind === 'collection' && (
+            <p className="mb-3 rounded-lg border border-[#3D8BFD]/20 bg-[#3D8BFD]/5 px-3 py-2 text-[11px] text-[#9cc0ff]">
+              এটি ফ্যামিলি ম্যাচিং সেট — এখানে আপলোড করা ছবি সেটের সব {group.members.length}টি মেম্বারে যোগ হবে।
+            </p>
+          )}
+
+          {/* dropzone */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragOver(true)
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOver(false)
+              if (e.dataTransfer.files?.length) upload(e.dataTransfer.files)
+            }}
+            onClick={() => fileRef.current?.click()}
+            className={cn(
+              'mb-4 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-6 text-center transition-all',
+              dragOver ? 'border-[#3D8BFD] bg-[#3D8BFD]/10' : 'border-border-subtle bg-white/[0.03] hover:border-[#3D8BFD]/40',
+            )}
+          >
+            <div className="text-2xl">⬆️</div>
+            <div className="mt-1 text-sm font-medium text-cream">ছবি যোগ করুন</div>
+            <div className="text-[11px] text-muted">ট্যাপ করুন বা ছবি টেনে এনে ছাড়ুন (একসাথে কয়েকটি)</div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) upload(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </div>
+
+          {note && <div className="mb-3 text-center text-xs text-[#81B29A]">{note}</div>}
+          {busy && <div className="mb-3 text-center text-xs text-muted">প্রসেস হচ্ছে…</div>}
+
+          {/* gallery */}
+          {loading ? (
+            <div className="py-8 text-center text-sm text-muted">লোড হচ্ছে…</div>
+          ) : images.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted">এখনো কোনো ছবি নেই।</div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {images.map((img) => (
+                <div key={img.id} className="group relative aspect-square overflow-hidden rounded-lg bg-black/20">
+                  {img.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={img.url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-muted/40">—</div>
+                  )}
+                  {img.isPrimary && (
+                    <span className="absolute left-1 top-1 rounded bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                      প্রধান
+                    </span>
+                  )}
+                  <button
+                    disabled={busy}
+                    onClick={() => remove(img.id)}
+                    className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[11px] text-white opacity-0 transition-opacity hover:bg-red-500 group-hover:opacity-100 disabled:opacity-40"
+                    title="মুছুন"
+                  >
+                    🗑
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
