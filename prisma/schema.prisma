@@ -1721,32 +1721,32 @@ model AgentProject {
 
 /// A single conversation thread, optionally scoped to a project.
 model AgentConversation {
-  id             String          @id @default(uuid())
-  projectId      String?
-  project        AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  title          String?
-  modelId  String  @default("claude-sonnet-4-6") @map("model")
-  source         String          @default("web")
-  archived       Boolean         @default(false)
-  summarizedAt   DateTime?       @map("summarized_at")
-  lastMessageAt  DateTime?       @map("last_message_at")
-  totalCostUsd   Float           @default(0) @map("total_cost_usd")
-  contextSummary String?         @map("context_summary")
-  compactedToId  String?         @map("compacted_to_id")
+  id                 String          @id @default(uuid())
+  projectId          String?
+  project            AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title              String?
+  modelId            String          @default("claude-sonnet-4-6") @map("model")
+  source             String          @default("web")
+  archived           Boolean         @default(false)
+  summarizedAt       DateTime?       @map("summarized_at")
+  lastMessageAt      DateTime?       @map("last_message_at")
+  totalCostUsd       Float           @default(0) @map("total_cost_usd")
+  contextSummary     String?         @map("context_summary")
+  compactedToId      String?         @map("compacted_to_id")
   // B3 tail compaction: the oldest turns are folded into `tailSummary` (which
   // rides the STABLE/cached system block) while recent turns stay verbatim.
   // `tailCompactedCount` is the watermark — how many of the oldest messages the
   // summary already represents — so folding happens in stable batches (one
   // cache-write per fold, byte-stable in between).
-  tailSummary        String?     @map("tail_summary")
-  tailCompactedCount Int         @default(0) @map("tail_compacted_count")
+  tailSummary        String?         @map("tail_summary")
+  tailCompactedCount Int             @default(0) @map("tail_compacted_count")
   /// Business scope inherited from project. null = personal / cross-business.
   /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
-  businessId     String?         @map("business_id")
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  messages       AgentMessage[]
-  artifacts      AgentArtifact[]
+  businessId         String?         @map("business_id")
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  messages           AgentMessage[]
+  artifacts          AgentArtifact[]
 
   @@index([projectId])
   @@index([source])
@@ -1757,21 +1757,21 @@ model AgentConversation {
 
 /// Individual turn in a conversation. content stores full Anthropic content blocks.
 model AgentMessage {
-  id             String            @id @default(uuid())
+  id             String                       @id @default(uuid())
   conversationId String
-  conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   AgentConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   content        Json
   tokensIn       Int?
   tokensOut      Int?
-  costUsd        Decimal?          @db.Decimal(10, 6)
+  costUsd        Decimal?                     @db.Decimal(10, 6)
   usage          Json?
   // B2: per-message embedding for semantic recall of OLD turns that have aged
   // out of the verbatim history window. Populated best-effort/async after the
   // row is written; `summary` is reserved for a future condensed form (B3).
   embedding      Unsupported("vector(1536)")?
-  summary        String?           @db.Text
-  createdAt      DateTime          @default(now())
+  summary        String?                      @db.Text
+  createdAt      DateTime                     @default(now())
   artifacts      AgentArtifact[]
   toolCalls      AgentToolCall[]
 
@@ -2080,7 +2080,7 @@ model AgentStaffTask {
   proofData          Json?                          @map("proof_data")
   reviewerNote       String?                        @map("reviewer_note") @db.Text
   redoCount          Int                            @default(0) @map("redo_count")
-  contextShot        String?                        @db.Text @map("context_shot")
+  contextShot        String?                        @map("context_shot") @db.Text
   // ── Office update-tracking: "update requested but not given" + escalation. ──
   /// When the owner/agent asked the staff for a progress update.
   updateRequestedAt  DateTime?                      @map("update_requested_at")
@@ -2981,18 +2981,18 @@ model LifestyleInvoiceSequence {
 }
 
 model AgentTrustRule {
-  id              String    @id @default(uuid())
-  domain          String
-  actionPattern   String    @map("action_pattern")
-  tier            String    @default("approve")
-  conditions      Json?
-  approvalCount   Int       @default(0) @map("approval_count")
-  rejectionCount  Int       @default(0) @map("rejection_count")
-  consecutiveApprovals Int  @default(0) @map("consecutive_approvals")
-  businessId      String    @default("ALMA_LIFESTYLE") @map("business_id")
-  lastPromotedAt  DateTime? @map("last_promoted_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id                   String    @id @default(uuid())
+  domain               String
+  actionPattern        String    @map("action_pattern")
+  tier                 String    @default("approve")
+  conditions           Json?
+  approvalCount        Int       @default(0) @map("approval_count")
+  rejectionCount       Int       @default(0) @map("rejection_count")
+  consecutiveApprovals Int       @default(0) @map("consecutive_approvals")
+  businessId           String    @default("ALMA_LIFESTYLE") @map("business_id")
+  lastPromotedAt       DateTime? @map("last_promoted_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   @@unique([domain, actionPattern, businessId])
   @@index([businessId, tier])
@@ -3063,14 +3063,14 @@ model AgentPlan {
 }
 
 model AgentPlanStep {
-  id        String   @id @default(uuid())
-  planId    String   @map("plan_id")
+  id        String    @id @default(uuid())
+  planId    String    @map("plan_id")
   plan      AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   seq       Int
   action    String
-  toolName  String?  @map("tool_name")
-  dependsOn String[] @map("depends_on")
-  status    String   @default("pending")
+  toolName  String?   @map("tool_name")
+  dependsOn String[]  @map("depends_on")
+  status    String    @default("pending")
   result    Json?
   error     String?
   startedAt DateTime? @map("started_at")
@@ -3118,17 +3118,17 @@ model OfficeComment {
 /// submitted, approved, redo_requested, update_requested, reminded,
 /// escalated, completed, self_initiated). Drives the per-task activity view.
 model OfficeTaskEvent {
-  id            String         @id @default(uuid())
-  taskId        String         @map("task_id")
-  task          AgentStaffTask @relation("TaskEvents", fields: [taskId], references: [id], onDelete: Cascade)
-  kind          String
-  summary       String
+  id           String         @id @default(uuid())
+  taskId       String         @map("task_id")
+  task         AgentStaffTask @relation("TaskEvents", fields: [taskId], references: [id], onDelete: Cascade)
+  kind         String
+  summary      String
   /// 'owner' | 'staff' | 'agent' | 'system'
-  actorType     String         @map("actor_type")
-  actorStaffId  String?        @map("actor_staff_id")
-  meta          Json?
-  businessId    String         @default("ALMA_LIFESTYLE") @map("business_id")
-  createdAt     DateTime       @default(now()) @map("created_at")
+  actorType    String         @map("actor_type")
+  actorStaffId String?        @map("actor_staff_id")
+  meta         Json?
+  businessId   String         @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt    DateTime       @default(now()) @map("created_at")
 
   @@index([taskId, createdAt])
   @@map("office_task_events")
@@ -3138,21 +3138,21 @@ model OfficeTaskEvent {
 /// (owner) or an AgentStaff. taskId is a loose ref (no FK) so notifications
 /// can outlive their task. Telegram becomes notify-only on top of this.
 model OfficeNotification {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   /// User.id (owner) — loose ref, no FK.
-  recipientUserId  String?  @map("recipient_user_id")
+  recipientUserId  String?   @map("recipient_user_id")
   /// AgentStaff.id — loose ref, no FK.
-  recipientStaffId String?  @map("recipient_staff_id")
-  taskId           String?  @map("task_id")
+  recipientStaffId String?   @map("recipient_staff_id")
+  taskId           String?   @map("task_id")
   /// 'task_assigned' | 'comment' | 'approved' | 'redo' | 'update_request' |
   /// 'reminder' | 'escalation' | 'award' | 'group_message'
   kind             String
   title            String
-  body             String?  @db.Text
-  read             Boolean  @default(false)
+  body             String?   @db.Text
+  read             Boolean   @default(false)
   readAt           DateTime? @map("read_at")
-  businessId       String   @default("ALMA_LIFESTYLE") @map("business_id")
-  createdAt        DateTime @default(now()) @map("created_at")
+  businessId       String    @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
   @@index([recipientStaffId, read, createdAt(sort: Desc)])
   @@index([recipientUserId, read, createdAt(sort: Desc)])
@@ -3201,4 +3201,29 @@ model OfficeWeeklyAward {
   @@unique([businessId, weekStart])
   @@index([staffId])
   @@map("office_weekly_awards")
+}
+
+/// Agent-placed outbound phone calls (ElevenLabs Conversational AI + Twilio).
+/// One row per call: status while live, full transcript + summary after the
+/// ElevenLabs post-call webhook fires. Keyed to ElevenLabs' conversation_id.
+model AgentVoiceCall {
+  id             String    @id @default(uuid())
+  elevenConvId   String?   @unique @map("eleven_conversation_id")
+  callSid        String?   @map("call_sid")
+  toNumber       String    @map("to_number")
+  recipientName  String?   @map("recipient_name")
+  purpose        String?
+  firstMessage   String?   @map("first_message")
+  status         String    @default("initiated")
+  transcript     Json?
+  summary        String?
+  durationSecs   Int?      @map("duration_secs")
+  costCredits    Int?      @map("cost_credits")
+  conversationId String?   @map("conversation_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  endedAt        DateTime? @map("ended_at")
+
+  @@index([status, createdAt])
+  @@index([conversationId])
+  @@map("agent_voice_calls")
 }
