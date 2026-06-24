@@ -109,6 +109,19 @@ export const OFFICE_CSS = `
 .ohub .b-done{background:rgba(34,197,94,.14);color:#6ee7b7;border-color:rgba(34,197,94,.3)}
 .ohub .b-redo{background:rgba(239,68,68,.14);color:#fca5a5;border-color:rgba(239,68,68,.3)}
 .ohub .b-carry{background:rgba(139,92,246,.14);color:#c4b5fd;border-color:rgba(139,92,246,.3)}
+.ohub .b-overdue{background:rgba(239,68,68,.18);color:#fca5a5;border-color:rgba(239,68,68,.42)}
+
+/* deadline (owner board) */
+.ohub .due-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}
+.ohub .due-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#cbd5e1;background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.22);padding:4px 10px;border-radius:var(--r-pill)}
+.ohub .due-chip.over{color:#fca5a5;background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.32)}
+.ohub .due-chip.none{color:var(--muted);background:transparent;border-style:dashed}
+.ohub .due-edit{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}
+.ohub .due-edit input[type="datetime-local"]{font-size:13px;color:var(--ink);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:7px 11px;color-scheme:dark}
+
+/* deadline (staff card) */
+.ohub .due-staff{font-size:12.5px;font-weight:600;color:#cbd5e1;margin-top:6px}
+.ohub .due-staff.over{color:#fca5a5}
 
 /* staff status board */
 .ohub .staff-row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)}

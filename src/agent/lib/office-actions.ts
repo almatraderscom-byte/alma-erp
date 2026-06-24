@@ -234,6 +234,54 @@ export async function requestUpdate(
   return { ok: true, status: task.status }
 }
 
+/** Bangla Asia/Dhaka label for a deadline, e.g. "২৪ জুন ৫:০০ PM". */
+function bnDueLabel(d: Date): string {
+  const date = new Intl.DateTimeFormat('bn-BD', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'long' }).format(d)
+  const time = new Intl.DateTimeFormat('bn-BD', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true }).format(d)
+  return `${date} ${time}`
+}
+
+/**
+ * Owner sets (or clears) the deadline for a task. Pass a valid ISO string to set
+ * it, or null to clear. Records a timeline event and pings the staff so they
+ * know the deadline. Used by the office board's deadline picker.
+ */
+export async function setTaskDue(taskId: string, businessId: string, dueAtIso: string | null): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  let dueAt: Date | null = null
+  if (dueAtIso) {
+    const parsed = new Date(dueAtIso)
+    if (Number.isNaN(parsed.getTime())) return { ok: false, error: 'invalid_due', code: 400 }
+    dueAt = parsed
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({ where: { id: taskId }, data: { dueAt } })
+    await logEvent(tx, {
+      taskId,
+      kind: 'due_set',
+      summary: dueAt ? `সময়সীমা নির্ধারণ: ${bnDueLabel(dueAt)} ⏳` : 'সময়সীমা সরানো হয়েছে',
+      actorType: 'owner',
+      businessId,
+      meta: dueAt ? { dueAt: dueAt.toISOString() } : undefined,
+    })
+    if (dueAt) {
+      await notifyStaff(tx, {
+        staffId: task.staff.id,
+        taskId,
+        kind: 'due_set',
+        title: 'কাজের সময়সীমা ⏳',
+        body: `"${task.title}" — ${bnDueLabel(dueAt)} এর মধ্যে শেষ করুন`,
+        businessId,
+      })
+    }
+  })
+  if (dueAt) await pushStaffPing(task.staff, 'কাজের সময়সীমা ⏳', `"${task.title}" — ${bnDueLabel(dueAt)} এর মধ্যে শেষ করুন`)
+  return { ok: true, status: task.status }
+}
+
 /** Owner approves or rejects a staff-initiated task. */
 export async function decideSelfInitiated(
   taskId: string,

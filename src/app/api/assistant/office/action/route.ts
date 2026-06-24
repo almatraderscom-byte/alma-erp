@@ -14,6 +14,7 @@ import {
   addComment,
   requestUpdate,
   decideSelfInitiated,
+  setTaskDue,
   type ActionResult,
 } from '@/agent/lib/office-actions'
 
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     note?: string
     body?: string
     businessId?: string
+    dueAt?: string | null
   }
   try {
     body = await req.json()
@@ -73,6 +75,8 @@ export async function POST(req: NextRequest) {
       return reply(await decideSelfInitiated(taskId, businessId, 'approve'))
     case 'self_reject':
       return reply(await decideSelfInitiated(taskId, businessId, 'reject'))
+    case 'set_due':
+      return reply(await setTaskDue(taskId, businessId, body.dueAt ?? null))
     default:
       return Response.json({ error: 'unknown_action' }, { status: 400 })
   }

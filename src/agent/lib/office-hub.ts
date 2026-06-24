@@ -47,6 +47,8 @@ export type HubTaskCard = {
   staffId: string
   staffName: string
   createdAt: string
+  /** Owner-set deadline (ISO), or null if none set yet. */
+  dueAt: string | null
 }
 
 export type OverdueUpdateCard = {
@@ -186,6 +188,7 @@ function toCard(t: {
   source: string
   staffId: string
   createdAt: Date
+  dueAt?: Date | null
   staff: { name: string } | null
 }): HubTaskCard {
   return {
@@ -204,6 +207,7 @@ function toCard(t: {
     staffId: t.staffId,
     staffName: t.staff?.name ?? 'অজানা',
     createdAt: t.createdAt.toISOString(),
+    dueAt: t.dueAt ? t.dueAt.toISOString() : null,
   }
 }
 
@@ -222,6 +226,7 @@ const CARD_SELECT = {
   source: true,
   staffId: true,
   createdAt: true,
+  dueAt: true,
   staff: { select: { name: true } },
 } as const
 

@@ -2070,6 +2070,8 @@ model AgentStaffTask {
   productRef         String?                        @map("product_ref")
   status             String                         @default("proposed")
   proposedFor        DateTime                       @map("proposed_for") @db.Date
+  /// Owner-set deadline for this task (when it should be finished). Drives office overdue flags.
+  dueAt              DateTime?                      @map("due_at")
   completedAt        DateTime?                      @map("completed_at")
   carriedFromTaskId  String?                        @map("carried_from_task_id")
   carriedFrom        AgentStaffTask?                @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
@@ -2102,6 +2104,7 @@ model AgentStaffTask {
   @@index([proposedFor, status])
   @@index([status])
   @@index([businessId, proposedFor, status])
+  @@index([businessId, dueAt])
   @@map("staff_tasks")
 }
 

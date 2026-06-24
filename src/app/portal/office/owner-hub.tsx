@@ -31,6 +31,27 @@ function bnTime(iso: string): string {
     return ''
   }
 }
+// Deadline label in Asia/Dhaka, e.g. "২৪ জুন, ৫:০০ PM".
+function bnDue(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const date = d.toLocaleDateString('bn-BD', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'long' })
+    const time = d.toLocaleTimeString('bn-BD', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true })
+    return `${date}, ${time}`
+  } catch {
+    return ''
+  }
+}
+// Convert a stored ISO deadline into the value an <input type="datetime-local"> wants
+// (local "YYYY-MM-DDTHH:mm"), so re-opening the picker shows the current deadline.
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 const AV_VARIANTS = ['e', 'm', 'gray'] as const
 function avClass(seed: string): string {
   let h = 0
@@ -73,11 +94,12 @@ function pickQc(data: Record<string, unknown> | null): number | null {
 }
 
 type ActionBody = {
-  action: 'approve' | 'redo' | 'comment' | 'request_update' | 'self_approve' | 'self_reject'
+  action: 'approve' | 'redo' | 'comment' | 'request_update' | 'self_approve' | 'self_reject' | 'set_due'
   taskId: string
   note?: string
   body?: string
   businessId?: string
+  dueAt?: string | null
 }
 
 async function postAction(body: ActionBody): Promise<boolean> {
@@ -346,7 +368,13 @@ export default function OwnerHub({
                     </div>
                     <div className="card">
                       {g.tasks.map((t, i) => (
-                        <ActiveRow key={t.id} task={t} idx={i} />
+                        <ActiveRow
+                          key={t.id}
+                          task={t}
+                          idx={i}
+                          busy={busy}
+                          onSetDue={(dueAt) => run(`due-${t.id}`, { action: 'set_due', taskId: t.id, dueAt })}
+                        />
                       ))}
                     </div>
                   </div>
@@ -625,8 +653,19 @@ function SelfRow({
   )
 }
 
-function ActiveRow({ task, idx }: { task: HubTaskCard; idx: number }) {
+function ActiveRow({
+  task,
+  idx,
+  busy,
+  onSetDue,
+}: {
+  task: HubTaskCard
+  idx: number
+  busy: boolean
+  onSetDue: (dueAt: string | null) => Promise<boolean>
+}) {
   const carried = task.status === 'carried' || task.source === 'carry'
+  const overdue = Boolean(task.dueAt) && task.status !== 'done' && new Date(task.dueAt!).getTime() < Date.now()
   return (
     <div className="appr" style={{ cursor: 'default' }}>
       <div className={`thumb ${PH[idx % PH.length]}`} style={{ opacity: 0.6 }} />
@@ -637,10 +676,78 @@ function ActiveRow({ task, idx }: { task: HubTaskCard; idx: number }) {
             {task.staffName} · {task.type}
           </span>
           <span className={`badge ${carried ? 'b-carry' : 'b-active'}`}>{carried ? 'গতকাল থেকে' : 'চলছে'}</span>
+          {overdue && <span className="badge b-overdue">⏰ সময় পেরিয়েছে</span>}
         </div>
         <h3>{task.title}</h3>
         <div className="meta">🕐 পাঠানো হয়েছে {bnTime(task.createdAt)} · এখনো জমা দেয়নি</div>
+        <DueControl dueAt={task.dueAt} overdue={overdue} busy={busy} onSetDue={onSetDue} />
       </div>
+    </div>
+  )
+}
+
+// Owner deadline picker for a task: shows the current deadline (or "set a deadline"),
+// with an inline datetime input. The browser is in Dhaka, so the local value maps
+// straight to the right instant via toISOString().
+function DueControl({
+  dueAt,
+  overdue,
+  busy,
+  onSetDue,
+}: {
+  dueAt: string | null
+  overdue: boolean
+  busy: boolean
+  onSetDue: (dueAt: string | null) => Promise<boolean>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState(() => isoToLocalInput(dueAt))
+
+  if (editing) {
+    return (
+      <div className="due-edit" onClick={(e) => e.stopPropagation()}>
+        <input type="datetime-local" value={val} onChange={(e) => setVal(e.target.value)} />
+        <button
+          className="btn primary sm"
+          disabled={busy || !val}
+          onClick={async () => {
+            const iso = val ? new Date(val).toISOString() : null
+            if (await onSetDue(iso)) setEditing(false)
+          }}
+        >
+          সেট
+        </button>
+        {dueAt && (
+          <button
+            className="btn ghost sm"
+            disabled={busy}
+            onClick={async () => {
+              if (await onSetDue(null)) {
+                setVal('')
+                setEditing(false)
+              }
+            }}
+          >
+            সরান
+          </button>
+        )}
+        <button className="btn ghost sm" onClick={() => setEditing(false)}>
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="due-row" onClick={(e) => e.stopPropagation()}>
+      {dueAt ? (
+        <span className={`due-chip${overdue ? ' over' : ''}`}>⏳ সময়সীমা {bnDue(dueAt)}</span>
+      ) : (
+        <span className="due-chip none">⏳ সময়সীমা দেওয়া হয়নি</span>
+      )}
+      <button className="btn ghost sm" disabled={busy} onClick={() => { setVal(isoToLocalInput(dueAt)); setEditing(true) }}>
+        {dueAt ? '✏️ বদলান' : '⏳ সময়সীমা দিন'}
+      </button>
     </div>
   )
 }

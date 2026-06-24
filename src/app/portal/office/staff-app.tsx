@@ -23,6 +23,17 @@ function bnTime(iso: string): string {
     return ''
   }
 }
+// Deadline label in Asia/Dhaka, e.g. "২৪ জুন, ৫:০০ PM".
+function bnDue(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const date = d.toLocaleDateString('bn-BD', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'long' })
+    const time = d.toLocaleTimeString('bn-BD', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true })
+    return `${date}, ${time}`
+  } catch {
+    return ''
+  }
+}
 
 type StaffActionBody = {
   action: 'done' | 'proof' | 'comment' | 'update' | 'self_create'
@@ -429,15 +440,22 @@ function StaskCard({ t, onOpen }: { t: StaffTaskCard; onOpen: () => void }) {
       : t.verificationStatus === 'proof_submitted' || t.verificationStatus === 'auto_verified'
         ? 'জমা দেওয়া হয়েছে'
         : 'এখনো জমা দেননি'
+  const overdue = Boolean(t.dueAt) && t.status !== 'done' && new Date(t.dueAt!).getTime() < Date.now()
   return (
     <div className="stask" onClick={onOpen}>
       <div className="top">
         <h4>{t.title}</h4>
         <span className={`badge ${badge.cls}`}>{badge.label}</span>
+        {overdue && <span className="badge b-overdue">⏰ সময় শেষ</span>}
       </div>
       <div className="d">
         📦 {t.type} · {statusText}
       </div>
+      {t.dueAt && (
+        <div className={`due-staff${overdue ? ' over' : ''}`}>
+          ⏳ সময়সীমা: {bnDue(t.dueAt)}{overdue ? ' — সময় পেরিয়ে গেছে, দ্রুত শেষ করুন' : ' এর মধ্যে শেষ করুন'}
+        </div>
+      )}
       {t.needsUpdate && <div className="ntf">🔔 Boss আপডেট চেয়েছেন — দেখুন</div>}
       {t.verificationStatus === 'redo_requested' && t.reviewerNote && (
         <div className="ntf">🔄 {t.reviewerNote}</div>
