@@ -117,6 +117,38 @@ export function buildStaffFriendlyDetail(task: DetailInput): string {
   }
 }
 
+/**
+ * Make a Gemini/owner-written explanation SURVIVE the dispatch-time regeneration in
+ * staff-dispatch-sync.ts, which calls `buildStaffFriendlyDetail` on every task right
+ * before sending. That preserves an existing detail only when it is 2–4 non-empty
+ * lines AND already names the task's tool. So we normalize the explanation to ≤4
+ * lines and, if the tool keyword is missing, append a "টুল: …" line — guaranteeing
+ * the explanation rides with the task instead of being overwritten by the template.
+ *
+ * Returns '' when the explanation is empty so the caller can fall back to the
+ * template (buildStaffFriendlyDetail) instead of persisting a blank detail.
+ */
+export function makeDispatchSafeDetail(
+  task: { title: string; type?: string; productRef?: string | null },
+  explanation: string,
+): string {
+  const type = task.type ?? 'misc'
+  const tool = TOOL_HINT_BY_TYPE[type] ?? TOOL_HINT_BY_TYPE.misc
+  let lines = explanation
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+  if (!lines.length) return ''
+  if (!hasToolHint(lines.join('\n'), tool)) {
+    lines = [...lines.slice(0, 3), `টুল: ${tool}`]
+  }
+  // buildStaffFriendlyDetail only preserves an existing detail when it has ≥2 lines;
+  // guarantee that floor so a thin one-line explanation isn't overwritten at dispatch.
+  if (lines.length < 2) lines.push(`টুল: ${tool}`)
+  return lines.join('\n')
+}
+
 export type StaffDispatchBreakdown = {
   date: string
   proposedToDispatch: number

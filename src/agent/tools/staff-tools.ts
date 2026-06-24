@@ -23,6 +23,7 @@ import {
   buildMergeOwnerFocusReply,
   buildApproveResultBangla,
   formatTasksGroupedByStaff,
+  makeDispatchSafeDetail,
 } from '@/agent/lib/staff-task-format'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
@@ -1705,98 +1706,118 @@ async function buildStaffTaskExplanation(opts: {
 const explain_staff_task_bangla: AgentTool = {
   name: 'explain_staff_task_bangla',
   description:
-    'Generate a clear, personalized Bangla "how to do it" explanation for ONE staff task, ' +
-    'so the staff member understands the steps. Uses Gemini (cheap, good Bangla) — NOT Claude. ' +
-    'Creates a PENDING approval card — does NOT change anything until the owner approves. ' +
-    'On approval the explanation appears in that staff member\'s অফিস (office) task view. ' +
-    'Use when the owner says "এই কাজটা বুঝিয়ে দে / staff ke explain kore de" or when a task is unclear. ' +
-    'This tool NEVER sends a Telegram message — dispatch stays on the existing gated flow.',
+    'Write a clear, personalized Bangla "how to do it" explanation directly into ONE OR MORE staff tasks. ' +
+    'Accepts a single `taskId` or a `taskIds` array — explain many at once. Uses Gemini (cheap, good Bangla), NOT Claude. ' +
+    'The explanation is saved straight into each task\'s `detail`, so it rides WITH the task automatically: ' +
+    'it shows in the staff member\'s অফিস (office) view and goes out on the SINGLE dispatch approval. ' +
+    'It does NOT create a per-task approval card and NEVER sends a Telegram message — so there is no "16 cards" problem ' +
+    'and no separate approve step. Use when the owner says "এই কাজগুলো বুঝিয়ে দে / staff ke explain kore de". ' +
+    'After this, the owner only needs to approve the dispatch once and the explanations travel with the tasks.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      taskId: { type: 'string', description: 'The staff task id to explain' },
+      taskId: { type: 'string', description: 'A single staff task id to explain' },
+      taskIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Multiple staff task ids to explain in one call (no per-task card — all ride with dispatch)',
+      },
       extraContext: {
         type: 'string',
-        description: 'Optional extra instruction from the owner about how this task should be done',
+        description: 'Optional extra instruction from the owner about how the task(s) should be done',
       },
     },
-    required: ['taskId'],
   },
   handler: async (input) => {
     try {
-      const taskId = String(input.taskId ?? '').trim()
-      if (!taskId) return { success: false, error: 'taskId is required' }
-
       const businessId = bizFrom(input)
-      const task = await db.agentStaffTask.findUnique({
-        where: { id: taskId },
-        select: {
-          id: true,
-          title: true,
-          detail: true,
-          type: true,
-          productRef: true,
-          status: true,
-          businessId: true,
-          staff: { select: { id: true, name: true } },
-        },
-      })
-      if (!task) return { success: false, error: 'এই taskId-এ কোনো staff task পাওয়া যায়নি।' }
-      if (task.businessId && task.businessId !== businessId) {
-        return {
-          success: false,
-          error: `Task is for ${task.businessId}, not ${businessId}. Cross-business action blocked.`,
+      const taskIds = [
+        ...(Array.isArray(input.taskIds) ? (input.taskIds as unknown[]).map((x) => String(x)) : []),
+        ...(input.taskId ? [String(input.taskId)] : []),
+      ]
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const uniqueIds = [...new Set(taskIds)]
+      if (!uniqueIds.length) return { success: false, error: 'taskId বা taskIds লাগবে।' }
+
+      const extraContext = input.extraContext ? String(input.extraContext) : undefined
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+
+      const explained: Array<{ taskId: string; staffName: string; title: string; detail: string }> = []
+      const skipped: Array<{ taskId: string; reason: string }> = []
+
+      for (const taskId of uniqueIds) {
+        const task = await db.agentStaffTask.findUnique({
+          where: { id: taskId },
+          select: {
+            id: true,
+            title: true,
+            detail: true,
+            type: true,
+            productRef: true,
+            status: true,
+            businessId: true,
+            staff: { select: { id: true, name: true } },
+          },
+        })
+        if (!task) {
+          skipped.push({ taskId, reason: 'not_found' })
+          continue
         }
+        if (task.businessId && task.businessId !== businessId) {
+          skipped.push({ taskId, reason: 'cross_business' })
+          continue
+        }
+
+        const explanation = await buildStaffTaskExplanation({
+          staffName: task.staff?.name ?? 'স্টাফ',
+          title: task.title,
+          type: task.type,
+          detail: task.detail,
+          productRef: task.productRef,
+          extraContext,
+          conversationId,
+        })
+
+        // Persist straight into `detail` so it rides with the task and survives the
+        // dispatch-time regeneration (makeDispatchSafeDetail guarantees that). No card.
+        const safeDetail = makeDispatchSafeDetail(
+          { title: task.title, type: task.type, productRef: task.productRef },
+          explanation,
+        )
+        if (!safeDetail) {
+          skipped.push({ taskId, reason: 'empty_explanation' })
+          continue
+        }
+        await db.agentStaffTask.update({ where: { id: task.id }, data: { detail: safeDetail } })
+        explained.push({
+          taskId: task.id,
+          staffName: task.staff?.name ?? 'স্টাফ',
+          title: task.title,
+          detail: safeDetail,
+        })
       }
 
-      const explanation = await buildStaffTaskExplanation({
-        staffName: task.staff?.name ?? 'স্টাফ',
-        title: task.title,
-        type: task.type,
-        detail: task.detail,
-        productRef: task.productRef,
-        extraContext: input.extraContext ? String(input.extraContext) : undefined,
-        conversationId: input.conversationId ? String(input.conversationId) : null,
-      })
-
-      const summary =
-        `🧠 স্টাফকে কাজ বুঝিয়ে দেওয়া — অনুমোদন প্রয়োজন\n\n` +
-        `স্টাফ: ${task.staff?.name ?? 'স্টাফ'}\n` +
-        `কাজ: ${task.title}\n\n` +
-        `--- ব্যাখ্যা (Gemini) ---\n${explanation}\n---\n\n` +
-        `(Approve করলে এই ব্যাখ্যা ${task.staff?.name ?? 'স্টাফ'}-এর অফিস ভিউতে দেখাবে — Telegram-এ আলাদা কিছু পাঠানো হবে না।)`
-
-      const pending = await db.agentPendingAction.create({
-        data: {
-          conversationId: input.conversationId ? String(input.conversationId) : null,
-          type: 'staff_task_explanation',
-          businessId,
-          payload: {
-            taskId: task.id,
-            staffId: task.staff?.id ?? null,
-            staffName: task.staff?.name ?? null,
-            title: task.title,
-            explanation,
-            businessId,
-            conversationId: input.conversationId ? String(input.conversationId) : null,
-          },
-          summary,
-          costEstimate: 0,
-          status: 'pending',
-        },
-        select: { id: true },
-      })
+      const summaryLines = [
+        `🧠 ${explained.length}টি টাস্ক বুঝিয়ে দেওয়া হয়েছে — ব্যাখ্যা এখন task-এর detail-এ আছে।`,
+        ...explained.slice(0, 8).map((e) => `• ${e.staffName}: ${e.title}`),
+        explained.length > 8 ? `…আরও ${explained.length - 8}টি` : '',
+        '',
+        'আলাদা করে approve করার দরকার নেই — dispatch একবার approve করলেই explanation সহ task স্টাফের কাছে যাবে।',
+      ].filter(Boolean)
 
       return {
         success: true,
         data: {
-          status: 'pending_approval',
-          pendingActionId: pending.id,
-          actionType: 'staff_task_explanation',
-          summary,
-          explanation,
-          message:
-            'ব্যাখ্যা তৈরি হয়েছে — মালিক Approve করলে স্টাফের অফিস ভিউতে দেখাবে। আগে "হয়েছে" বলবেন না।',
+          explainedCount: explained.length,
+          skippedCount: skipped.length,
+          explained,
+          skipped,
+          ridesWithTask: true,
+          summary: summaryLines.join('\n'),
+          message: explained.length
+            ? 'ব্যাখ্যা প্রতিটি task-এর detail-এ লেখা হয়েছে — dispatch approve করলেই একসাথে যাবে। আলাদা কোনো card নেই।'
+            : 'কোনো task explain করা যায়নি (পাওয়া যায়নি বা ভিন্ন business)।',
         },
       }
     } catch (err) {
