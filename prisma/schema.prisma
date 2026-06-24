@@ -2015,6 +2015,7 @@ model AgentStaff {
   replyStats     AgentStaffReplyStat[]
   locations      AgentStaffLocation[]
   feedback       StaffFeedback[]
+  awards         OfficeWeeklyAward[]   @relation("StaffAwards")
 
   @@index([businessId, active])
   @@index([userId])
@@ -2080,10 +2081,22 @@ model AgentStaffTask {
   reviewerNote       String?                        @map("reviewer_note") @db.Text
   redoCount          Int                            @default(0) @map("redo_count")
   contextShot        String?                        @db.Text @map("context_shot")
+  // ── Office update-tracking: "update requested but not given" + escalation. ──
+  /// When the owner/agent asked the staff for a progress update.
+  updateRequestedAt  DateTime?                      @map("update_requested_at")
+  /// Who asked: 'owner' | 'agent'.
+  updateRequestedBy  String?                        @map("update_requested_by")
+  updateRequestNote  String?                        @map("update_request_note") @db.Text
+  /// Last time the staff actually responded with an update.
+  lastStaffUpdateAt  DateTime?                      @map("last_staff_update_at")
+  /// Set once the unanswered request was escalated to the owner (countdown over).
+  escalatedAt        DateTime?                      @map("escalated_at")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")
   marketingHistory   AgentProductMarketingHistory[]
+  officeComments     OfficeComment[]                @relation("TaskComments")
+  officeEvents       OfficeTaskEvent[]              @relation("TaskEvents")
 
   @@index([staffId])
   @@index([proposedFor, status])
@@ -3065,4 +3078,127 @@ model AgentPlanStep {
 
   @@index([planId, seq])
   @@map("agent_plan_steps")
+}
+
+// ─── OFFICE SECTION: Phase A (data foundation) ──────────────────────────────
+// Centralized in-app office: per-task comment threads, task timeline, in-app
+// notifications, Messenger-style group chat, weekly "Performer of the Week"
+// award, and update-tracking columns on staff tasks. All additive; the task
+// engine (status/proof/redo/approve) already exists on AgentStaffTask.
+
+/// One message in a task's comment thread. Each task is its own thread —
+/// owner, staff, and agent all post here (revision requests, replies, the
+/// staff's submission note). Attachments are loose JSON (image URLs etc.).
+model OfficeComment {
+  id            String         @id @default(uuid())
+  taskId        String         @map("task_id")
+  task          AgentStaffTask @relation("TaskComments", fields: [taskId], references: [id], onDelete: Cascade)
+  /// 'owner' | 'staff' | 'agent'
+  authorType    String         @map("author_type")
+  /// AgentStaff.id when authorType='staff' (loose ref, no FK).
+  authorStaffId String?        @map("author_staff_id")
+  /// User.id when authorType='owner' (loose ref to ERP user, no FK).
+  authorUserId  String?        @map("author_user_id")
+  /// 'comment' | 'revision_request' | 'submission'
+  kind          String         @default("comment")
+  body          String         @db.Text
+  /// Loose JSON: [{ type:'image', url:'…' }, …]
+  attachments   Json?
+  seenByOwner   Boolean        @default(false) @map("seen_by_owner")
+  seenByStaff   Boolean        @default(false) @map("seen_by_staff")
+  businessId    String         @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([taskId, createdAt])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@map("office_comments")
+}
+
+/// Append-only timeline of what happened to a task (created, dispatched,
+/// submitted, approved, redo_requested, update_requested, reminded,
+/// escalated, completed, self_initiated). Drives the per-task activity view.
+model OfficeTaskEvent {
+  id            String         @id @default(uuid())
+  taskId        String         @map("task_id")
+  task          AgentStaffTask @relation("TaskEvents", fields: [taskId], references: [id], onDelete: Cascade)
+  kind          String
+  summary       String
+  /// 'owner' | 'staff' | 'agent' | 'system'
+  actorType     String         @map("actor_type")
+  actorStaffId  String?        @map("actor_staff_id")
+  meta          Json?
+  businessId    String         @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([taskId, createdAt])
+  @@map("office_task_events")
+}
+
+/// In-app notification bell items. Exactly one recipient is set: a User
+/// (owner) or an AgentStaff. taskId is a loose ref (no FK) so notifications
+/// can outlive their task. Telegram becomes notify-only on top of this.
+model OfficeNotification {
+  id               String   @id @default(uuid())
+  /// User.id (owner) — loose ref, no FK.
+  recipientUserId  String?  @map("recipient_user_id")
+  /// AgentStaff.id — loose ref, no FK.
+  recipientStaffId String?  @map("recipient_staff_id")
+  taskId           String?  @map("task_id")
+  /// 'task_assigned' | 'comment' | 'approved' | 'redo' | 'update_request' |
+  /// 'reminder' | 'escalation' | 'award' | 'group_message'
+  kind             String
+  title            String
+  body             String?  @db.Text
+  read             Boolean  @default(false)
+  readAt           DateTime? @map("read_at")
+  businessId       String   @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([recipientStaffId, read, createdAt(sort: Desc)])
+  @@index([recipientUserId, read, createdAt(sort: Desc)])
+  @@map("office_notifications")
+}
+
+/// Messenger-style office group chat (agent + all staff + owner). taskRef is
+/// an optional loose pointer to the task being discussed. isAgentReply marks
+/// the agent's owner-approved one-shot explanation.
+model OfficeGroupMessage {
+  id            String   @id @default(uuid())
+  /// 'owner' | 'staff' | 'agent'
+  authorType    String   @map("author_type")
+  authorStaffId String?  @map("author_staff_id")
+  authorUserId  String?  @map("author_user_id")
+  body          String   @db.Text
+  /// Optional AgentStaffTask.id this message is about (loose ref).
+  taskRef       String?  @map("task_ref")
+  attachments   Json?
+  isAgentReply  Boolean  @default(false) @map("is_agent_reply")
+  replyToId     String?  @map("reply_to_id")
+  businessId    String   @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([businessId, createdAt(sort: Desc)])
+  @@map("office_group_messages")
+}
+
+/// "Performer of the Week" award. One winner per business per week
+/// (unique on businessId+weekStart). auto=true means the score picked it;
+/// pinnedByOwner=true means the owner overrode the auto pick.
+model OfficeWeeklyAward {
+  id            String     @id @default(uuid())
+  /// Monday (or week anchor) date for the awarded week.
+  weekStart     DateTime   @map("week_start") @db.Date
+  staffId       String     @map("staff_id")
+  staff         AgentStaff @relation("StaffAwards", fields: [staffId], references: [id], onDelete: Cascade)
+  score         Int        @default(0)
+  auto          Boolean    @default(true)
+  pinnedByOwner Boolean    @default(false) @map("pinned_by_owner")
+  note          String?    @db.Text
+  businessId    String     @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  @@unique([businessId, weekStart])
+  @@index([staffId])
+  @@map("office_weekly_awards")
 }
