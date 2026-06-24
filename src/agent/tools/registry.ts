@@ -21,7 +21,7 @@ import { RESEARCH_TOOLS } from './research-tools'
 import { SEO_TOOLS } from './seo-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
-import { FAMILY_TOOLS } from './personal-tools'
+import { FAMILY_TOOLS, place_agent_call } from './personal-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
@@ -408,6 +408,10 @@ export const TOOLS: AgentTool[] = [
   ...OWNER_CUSTOMER_INTEL_TOOLS,
   ...COST_TOOLS,
   ...REMINDER_TOOLS,
+  // Two-way live call tool — exposed to the owner-business head via the `base`
+  // tool-group, so it must also be executable from the ALMA_LIFESTYLE pool
+  // (otherwise the head sees it but a call returns "Unknown tool").
+  place_agent_call,
   ...ASK_TOOLS,
   ...ADS_TOOLS,
   ...MARKETING_TOOLS,

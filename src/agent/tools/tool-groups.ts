@@ -35,6 +35,7 @@ import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
+import { place_agent_call } from './personal-tools'
 
 export const TOOL_GROUP_NAMES = [
   'base',
@@ -60,6 +61,11 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...CORE_AGENT_TOOLS,
     ...ASK_TOOLS,
     ...REMINDER_TOOLS,
+    // Two-way live call sibling of outbound_phone_call (one-way, in REMINDER_TOOLS).
+    // Both must travel together so the owner-business head can pick the right one;
+    // without this the head only ever saw the one-way tool and (correctly) said it
+    // had "no two-way call tool" when asked to talk + listen.
+    place_agent_call,
     ...OWNER_TODO_TOOLS,
     ...WORK_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,
