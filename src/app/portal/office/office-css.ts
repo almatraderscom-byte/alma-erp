@@ -17,6 +17,10 @@ export const OFFICE_CSS = `
   --r-sm:12px; --r-md:16px; --r-lg:22px; --r-pill:9999px;
   --shadow:0 6px 30px rgba(0,0,0,0.45);
   --font:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;
+  /* iPhone (Capacitor WKWebView) / Android notch + home-indicator insets, and a
+     single source of truth for the sticky topbar height so nothing overlaps it. */
+  --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
+  --topbar-h:calc(60px + var(--safe-top));
   position:fixed; inset:0; z-index:70; overflow-y:auto; overflow-x:hidden;
   font-family:var(--font); background:var(--bg-0); color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.5;
@@ -30,11 +34,13 @@ export const OFFICE_CSS = `
 .ohub .num{font-variant-numeric:tabular-nums}
 
 /* ── top perspective switcher ── */
-.ohub .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;
-  padding:14px 22px;background:rgba(18,18,22,0.82);backdrop-filter:blur(18px) saturate(1.1);
+.ohub .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;flex-wrap:nowrap;
+  padding:14px 22px;padding-top:max(14px,var(--safe-top));min-height:var(--topbar-h);
+  background:rgba(18,18,22,0.82);backdrop-filter:blur(18px) saturate(1.1);
   border-bottom:1px solid var(--border-subtle)}
-.ohub .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;color:var(--ink);text-decoration:none}
-.ohub .brand .logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:16px;
+.ohub .brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:700;letter-spacing:-.01em;color:var(--ink);text-decoration:none}
+.ohub .brand>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ohub .brand .logo{flex-shrink:0;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:16px;
   background:linear-gradient(135deg,var(--accent),var(--accent-dim));box-shadow:0 4px 14px rgba(224,122,95,.45)}
 .ohub .brand small{display:block;font-size:11px;font-weight:500;color:var(--muted)}
 .ohub .seg{margin-left:auto;display:flex;gap:4px;padding:4px;background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill)}
@@ -43,7 +49,7 @@ export const OFFICE_CSS = `
 .ohub .bell{position:relative;flex-shrink:0;width:40px;height:40px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:17px;background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--ink);cursor:pointer}
 .ohub .bell .bdot{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:10px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;display:grid;place-items:center;padding:0 5px;border:2px solid var(--bg-0)}
 
-.ohub .wrap{max-width:1280px;margin:0 auto;padding:26px 22px 100px}
+.ohub .wrap{max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
 .ohub .perspective{display:none}
 .ohub .perspective.show{display:block;animation:oh-fade .26s ease}
 @keyframes oh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -207,8 +213,8 @@ export const OFFICE_CSS = `
 .ohub .hidden{display:none!important}
 @media(max-width:960px){.ohub .kpis{grid-template-columns:repeat(2,1fr)}.ohub .grid2{grid-template-columns:1fr}}
 @media(max-width:680px){
-  .ohub .wrap{padding:18px 14px 100px}
-  .ohub .topbar{padding:11px 14px;flex-wrap:wrap;gap:10px}
+  .ohub .wrap{padding:18px 14px calc(100px + var(--safe-bottom))}
+  .ohub .topbar{padding:11px 14px;padding-top:max(11px,var(--safe-top));gap:10px}
   .ohub .brand small{display:none}
   .ohub .seg button{padding:7px 12px;font-size:12.5px}
   .ohub .phead h1{font-size:21px}
@@ -299,7 +305,7 @@ export const OFFICE_CSS = `
 .ohub .self-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:var(--r-pill);background:rgba(139,92,246,.16);color:#c4b5fd;border:1px solid rgba(139,92,246,.3)}
 
 /* ════ messenger-style chat head + group popup ════ */
-.ohub-chathead{position:fixed;right:20px;bottom:24px;z-index:80;display:flex;align-items:center;gap:9px;cursor:pointer;
+.ohub-chathead{position:fixed;right:20px;bottom:calc(24px + var(--safe-bottom));z-index:80;display:flex;align-items:center;gap:9px;cursor:pointer;
   padding:12px 18px 12px 14px;border-radius:9999px;font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;font-weight:700;font-size:14px;color:#fff;border:2px solid rgba(255,255,255,.2);
   background:linear-gradient(135deg,#E07A5F,#C45A3C);box-shadow:0 12px 32px rgba(224,122,95,.6);
   user-select:none;animation:oh-bob2 3s ease-in-out infinite}
@@ -309,7 +315,7 @@ export const OFFICE_CSS = `
 @keyframes oh-pulse{0%{transform:scale(.8);opacity:.7}100%{transform:scale(1.7);opacity:0}}
 .ohub-chathead .badge2{position:absolute;top:-6px;right:-6px;min-width:22px;height:22px;border-radius:11px;background:#ef4444;
   color:#fff;font-size:11.5px;font-weight:700;display:grid;place-items:center;padding:0 6px;border:2px solid #121216}
-.ohub-chatpanel{position:fixed;right:20px;bottom:90px;z-index:81;width:384px;max-width:calc(100vw - 28px);height:540px;max-height:74vh;
+.ohub-chatpanel{position:fixed;right:20px;bottom:calc(90px + var(--safe-bottom));z-index:81;width:384px;max-width:calc(100vw - 28px);height:540px;max-height:74vh;
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
   background:#1A1A20;border:1px solid rgba(255,255,255,0.10);border-radius:22px;box-shadow:0 26px 74px rgba(0,0,0,.62);
   display:flex;flex-direction:column;overflow:hidden;animation:oh-cpop .2s ease}
@@ -343,10 +349,10 @@ export const OFFICE_CSS = `
 .ohub-chatpanel .cp-foot input{flex:1;background:#121216;border:1px solid rgba(255,255,255,0.10);border-radius:9999px;padding:9px 14px;color:#F7F8FC;font-family:inherit;font-size:13px;outline:none}
 .ohub-chatpanel .cp-foot button{font-family:inherit;font-size:13px;font-weight:600;padding:9px 14px;border-radius:9999px;border:0;background:linear-gradient(135deg,#E07A5F,#C45A3C);color:#fff;cursor:pointer}
 .ohub-chatpanel .cp-foot button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:480px){.ohub-chatpanel{right:14px;left:14px;bottom:90px;width:auto}}
+@media(max-width:480px){.ohub-chatpanel{right:14px;left:14px;bottom:calc(90px + var(--safe-bottom));width:auto}}
 
 /* notification dropdown (anchored to topbar bell) */
-.ohub-notif{position:fixed;z-index:82;top:64px;right:20px;width:330px;max-width:calc(100vw - 28px);
+.ohub-notif{position:fixed;z-index:82;top:var(--topbar-h);right:20px;width:330px;max-width:calc(100vw - 28px);
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
   background:#1A1A20;border:1px solid rgba(255,255,255,0.12);border-radius:18px;box-shadow:0 26px 74px rgba(0,0,0,.62);overflow:hidden}
 .ohub-notif .nh{display:flex;align-items:center;justify-content:space-between;padding:12px 15px;border-bottom:1px solid rgba(255,255,255,0.07)}
@@ -375,7 +381,7 @@ export const OFFICE_CSS = `
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
   background:#16161b;border-right:1px solid rgba(255,255,255,0.08);box-shadow:0 0 70px rgba(0,0,0,.7);animation:oh-slidein .24s cubic-bezier(.2,.8,.2,1)}
 @keyframes oh-slidein{from{transform:translateX(-100%)}to{transform:none}}
-.ohub-drawer .dh{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,0.07)}
+.ohub-drawer .dh{display:flex;align-items:center;gap:11px;padding:16px 18px;padding-top:max(16px,var(--safe-top));border-bottom:1px solid rgba(255,255,255,0.07)}
 .ohub-drawer .dh .logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:17px;background:linear-gradient(135deg,#E07A5F,#C45A3C);box-shadow:0 4px 14px rgba(224,122,95,.45)}
 .ohub-drawer .dh .ttl{flex:1;min-width:0}
 .ohub-drawer .dh .ttl b{display:block;font-size:13px;font-weight:800;letter-spacing:.04em;color:#F4A28C}
@@ -390,11 +396,11 @@ export const OFFICE_CSS = `
 .ohub-drawer .dl.cur{background:linear-gradient(90deg,rgba(224,122,95,.22),transparent);border-color:rgba(224,122,95,.4);color:#F4A28C}
 .ohub-drawer .dl .di{font-size:17px;width:24px;text-align:center;flex-shrink:0}
 .ohub-drawer .dl .dt{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ohub-drawer .dft{padding:12px 14px;border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:#AEB2C0}
+.ohub-drawer .dft{padding:12px 14px calc(12px + var(--safe-bottom));border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:#AEB2C0}
 
 /* ════ day-end history archive ════ */
 .ohub-hist-ov{position:fixed;inset:0;z-index:92;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);
-  display:flex;justify-content:center;align-items:flex-start;padding:34px 16px 60px;overflow-y:auto;animation:oh-fade .2s ease;
+  display:flex;justify-content:center;align-items:flex-start;padding:max(34px,var(--safe-top)) 16px calc(60px + var(--safe-bottom));overflow-y:auto;animation:oh-fade .2s ease;
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC}
 .ohub-hist{width:100%;max-width:900px;background:#1A1A20;border:1px solid rgba(255,255,255,0.08);border-radius:22px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}
 .ohub-hist .hh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027;position:sticky;top:0;z-index:2}
@@ -489,11 +495,11 @@ export const OFFICE_CSS = `
 .ohub-lightbox{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.88);backdrop-filter:blur(4px);
   display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out;animation:oh-fade .15s ease}
 .ohub-lightbox img{max-width:96vw;max-height:92vh;border-radius:14px;box-shadow:0 30px 90px rgba(0,0,0,.7);cursor:default}
-.ohub-lightbox-close{position:fixed;top:18px;right:20px;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.25);
+.ohub-lightbox-close{position:fixed;top:max(18px,var(--safe-top));right:20px;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.25);
   background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:grid;place-items:center}
 
 /* ════ staff sticky performer + motivation hero (req 3 & 4) ════ */
-.ohub .staff-hero{position:sticky;top:60px;z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
+.ohub .staff-hero{position:sticky;top:var(--topbar-h);z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
 .ohub .staff-hero .award-mini{flex:1 1 300px;margin-bottom:0}
 .ohub .staff-hero .award-mini.hero .inner{align-items:center}
 .ohub .staff-hero .award-mini.hero .photo{width:60px;height:60px}
