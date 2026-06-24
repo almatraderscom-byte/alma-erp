@@ -14,6 +14,7 @@ import type { ApprovalAuditEntry } from '@/lib/approval-types'
 import { normalizeApprovalResponse } from '@/lib/approvals-response'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import AgentApprovalsTab from '@/components/approvals/AgentApprovalsTab'
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
 const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
@@ -78,6 +79,7 @@ export default function ApprovalsPage() {
 
 function ApprovalsPageInner() {
   const [data, setData] = useState<ApprovalResponse | null>(null)
+  const [view, setView] = useState<'business' | 'agent'>('business')
   const [status, setStatus] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'>('PENDING')
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<ApprovalRow | null>(null)
@@ -195,28 +197,53 @@ function ApprovalsPageInner() {
         actions={
           <>
             <Button
-              variant={showIntegrity ? 'gold' : 'ghost'}
-              onClick={() => {
-                setShowIntegrity(v => !v)
-                if (!integrity && !showIntegrity) void loadIntegrity()
-              }}
+              variant={view === 'business' ? 'gold' : 'ghost'}
+              onClick={() => setView('business')}
             >
-              Integrity
+              Business
             </Button>
-            {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
-              <Button
-                key={value}
-                variant={status === value ? 'gold' : 'ghost'}
-                disabled={actionsGloballyDisabled}
-                onClick={() => setStatus(value)}
-              >
-                {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
-              </Button>
-            ))}
+            <Button
+              variant={view === 'agent' ? 'gold' : 'ghost'}
+              onClick={() => setView('agent')}
+            >
+              Agent
+            </Button>
+            {view === 'business' && (
+              <>
+                <Button
+                  variant={showIntegrity ? 'gold' : 'ghost'}
+                  onClick={() => {
+                    setShowIntegrity(v => !v)
+                    if (!integrity && !showIntegrity) void loadIntegrity()
+                  }}
+                >
+                  Integrity
+                </Button>
+                {(['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const).map(value => (
+                  <Button
+                    key={value}
+                    variant={status === value ? 'gold' : 'ghost'}
+                    disabled={actionsGloballyDisabled}
+                    onClick={() => setStatus(value)}
+                  >
+                    {value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase()}
+                  </Button>
+                ))}
+              </>
+            )}
           </>
         }
       />
 
+      {view === 'agent' && (
+        <div className="min-w-0 max-w-full px-3 sm:px-6">
+          <SectionErrorBoundary section="approvals-agent" title="Agent approvals unavailable">
+            <AgentApprovalsTab />
+          </SectionErrorBoundary>
+        </div>
+      )}
+
+      {view === 'business' && (
       <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-5 px-3 sm:px-6">
       <ApprovalProcessingBanner
         count={processingOps.length}
@@ -546,6 +573,7 @@ function ApprovalsPageInner() {
         )
       })()}
       </motion.div>
+      )}
     </main>
   )
 }

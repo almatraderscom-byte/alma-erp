@@ -24,3 +24,4 @@ android/app/build/
 android/build/
 android/app/google-services.json
 android/capacitor-cordova-android-plugins/build/
+.vercel

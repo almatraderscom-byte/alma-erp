@@ -301,8 +301,12 @@ const get_outbound_call_status: AgentTool = {
 const outbound_phone_call: AgentTool = {
   name: 'outbound_phone_call',
   description:
-    'Places a Twilio voice call to a phone number and speaks the owner\'s message (Bangla TTS). ' +
-    'Use when Sir gives a phone number AND what to say on the call (e.g. "017… কে কল করে বলো …"). ' +
+    'ONE-WAY voice call: dials a number, speaks a fixed Bangla TTS message, then hangs up. ' +
+    'The agent does NOT listen and gets NO reply back — it cannot answer questions or report ' +
+    'what the other person said. Use ONLY when Sir just wants a message DELIVERED/announced and ' +
+    'expects nothing back (e.g. "017… কে কল করে জানিয়ে দাও/বলে দাও …"). ' +
+    'If Sir wants the agent to ASK something, LISTEN, hold a conversation, or report back what ' +
+    'the person said, DO NOT use this — use place_agent_call (two-way) instead. ' +
     'Always requires Approve confirm card before dialing. Owner-only; Bangladesh +880 numbers.',
   input_schema: {
     type: 'object' as const,

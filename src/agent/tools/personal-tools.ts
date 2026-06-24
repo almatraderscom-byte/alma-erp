@@ -135,11 +135,13 @@ export const call_family_member: AgentTool = {
 export const place_agent_call: AgentTool = {
   name: 'place_agent_call',
   description:
-    'Place a REAL two-way Bangla phone call where the agent itself talks AND listens. ' +
-    'Unlike call_family_member (one-way TTS message), this holds a live conversation: the ' +
-    'agent speaks in the owner\'s Bangla voice, hears the other person\'s replies, and after ' +
-    'the call reports back a transcript + summary. Use when the owner wants the agent to ' +
-    '"কাউকে কল দিয়ে জিজ্ঞেস করো / কথা বলো / জেনে নাও" — family, friends, or work. ' +
+    'Place a REAL two-way Bangla phone call where the agent itself talks AND listens — this is ' +
+    'the DEFAULT call tool whenever a back-and-forth is needed. Unlike outbound_phone_call ' +
+    '(one-way TTS that only delivers a message and hangs up), this holds a LIVE conversation: ' +
+    'the agent speaks in the owner\'s Bangla voice, hears the other person\'s replies, and after ' +
+    'the call reports back a transcript + summary. ALWAYS use this (never the one-way tool) when ' +
+    'the owner wants the agent to ASK/FIND OUT/CONFIRM something or report what was said — ' +
+    '"কাউকে কল দিয়ে জিজ্ঞেস করো / কথা বলো / জেনে নাও / কনফার্ম করো" — family, friends, or work. ' +
     'Resolve a saved contact when a name/relation is given, else accept a raw number. ' +
     'Creates a confirm card — owner approves before it dials. Cost is high; use sparingly.',
   input_schema: {
