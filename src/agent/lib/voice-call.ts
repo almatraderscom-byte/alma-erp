@@ -138,7 +138,13 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
           conversation_config_override: {
             agent: {
               first_message: firstMessage,
-              language: 'bn',
+              // NOTE: do NOT send `language` here. ElevenLabs has no Bengali (`bn`)
+              // agent language, and the language override is intentionally disabled
+              // agent-side. Sending an unsupported/disabled field makes ElevenLabs
+              // reject the whole conversation init → the call connects then drops
+              // silently after ~2s. The agent's base config (flash_v2_5 multilingual
+              // TTS + Bangla prompt) already speaks Bangla; we only override the
+              // per-call first_message and prompt (both enabled).
               ...(purpose
                 ? {
                     prompt: {
