@@ -48,6 +48,14 @@
     {
       "path": "/api/assistant/internal/watchdog",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/assistant/internal/office-supervisor",
+      "schedule": "0,20,40 3-14 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/office-digest",
+      "schedule": "5 14 * * *"
     }
   ],
   "headers": [

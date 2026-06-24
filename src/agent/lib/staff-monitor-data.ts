@@ -363,30 +363,62 @@ async function getProductivityAlerts(): Promise<ProductivityAlert[]> {
 
 /**
  * Set of staffIds who have actually checked in on the given Dhaka date.
- * attendance_records.employee_id == agent_staff.user_id; checkInAt is the real
- * check-in timestamp, so we gate on it falling inside that day's Dhaka bounds.
- * Staff with no linked user_id (or no attendance row) are treated as NOT checked
- * in — the monitor then won't count them as active before they actually arrive.
+ *
+ * The link is `AgentStaff.userId == AttendanceRecord.userId` — BOTH are the ERP
+ * `User.id`. (Historic bug: this matched `AttendanceRecord.employeeId`, which holds
+ * the HR code like "EMP-51", against `AgentStaff.userId`, a User cuid — two different
+ * id spaces, so the join NEVER matched and every staff showed AWAITING forever. Even
+ * a correctly-set `user_id` was ignored, which is why re-linking by hand never stuck.)
+ *
+ * Self-healing: if a staff row has no `user_id` yet, we resolve it by exact name
+ * against `User` and backfill the link (write-once, fire-and-forget). So the moment a
+ * staff first checks in, the link repairs itself and persists for every consumer —
+ * no manual re-linking, and it can't silently regress to AWAITING again.
  */
-async function getCheckedInStaffIds(staffIds: string[], ymd: string): Promise<Set<string>> {
+export async function getCheckedInStaffIds(staffIds: string[], ymd: string): Promise<Set<string>> {
   if (!staffIds.length) return new Set()
   const staffRows = await prisma.agentStaff.findMany({
     where: { id: { in: staffIds } },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, name: true },
   })
-  const userIdByStaff = new Map(staffRows.map((r) => [r.id, r.userId]))
-  const userIds = staffRows.map((r) => r.userId).filter((u): u is string => Boolean(u))
+
+  // staffId → User.id (the stable link). Prefer the stored link; self-heal the rest by name.
+  const userIdByStaff = new Map<string, string>()
+  const needNameResolve: Array<{ id: string; name: string }> = []
+  for (const r of staffRows) {
+    if (r.userId) userIdByStaff.set(r.id, r.userId)
+    else if (r.name?.trim()) needNameResolve.push({ id: r.id, name: r.name.trim() })
+  }
+
+  if (needNameResolve.length) {
+    const users = await prisma.user.findMany({
+      where: { name: { in: needNameResolve.map((s) => s.name) } },
+      select: { id: true, name: true },
+    })
+    const userIdByName = new Map(
+      users.filter((u) => u.name).map((u) => [u.name!.trim().toLowerCase(), u.id]),
+    )
+    for (const s of needNameResolve) {
+      const uid = userIdByName.get(s.name.toLowerCase())
+      if (!uid) continue
+      userIdByStaff.set(s.id, uid)
+      // Backfill the link so it persists for all consumers (greeting/follow-up too) and
+      // future runs are a straight lookup. Fire-and-forget — never block the monitor read.
+      void prisma.agentStaff.update({ where: { id: s.id }, data: { userId: uid } }).catch(() => {})
+    }
+  }
+
+  const userIds = [...new Set(userIdByStaff.values())]
   if (!userIds.length) return new Set()
   const { start, end } = dhakaDayBounds(ymd)
   const attendance = await prisma.attendanceRecord.findMany({
-    where: { employeeId: { in: userIds }, checkInAt: { gte: start, lte: end } },
-    select: { employeeId: true },
+    where: { userId: { in: userIds }, checkInAt: { gte: start, lte: end } },
+    select: { userId: true },
   })
-  const checkedInUserIds = new Set(attendance.map((a) => a.employeeId))
+  const checkedInUserIds = new Set(attendance.map((a) => a.userId))
   const result = new Set<string>()
-  for (const sid of staffIds) {
-    const uid = userIdByStaff.get(sid)
-    if (uid && checkedInUserIds.has(uid)) result.add(sid)
+  for (const [sid, uid] of userIdByStaff) {
+    if (checkedInUserIds.has(uid)) result.add(sid)
   }
   return result
 }

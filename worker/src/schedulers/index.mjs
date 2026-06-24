@@ -29,6 +29,7 @@ const lazy = {
   eveningProposal:    () => import('../staff/evening-proposal.mjs'),
   morningStaffReminder: () => import('../staff/morning-staff-reminder.mjs'),
   middayCheckin:      () => import('../staff/midday-checkin.mjs'),
+  checkinGreeting:    () => import('../staff/checkin-greeting.mjs'),
   nightReport:        () => import('../staff/night-report.mjs'),
   weeklyReview:       () => import('../staff/weekly-review.mjs'),
   messengerScan:      () => import('../messenger/scan.mjs'),
@@ -91,6 +92,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'ads-monitor',            cronUtc: '30 3 * * *',   description: 'Ads daily digest (09:30 Dhaka)' },
   { name: 'ads-optimizer',          cronUtc: '45 3 * * *',   description: 'Ads optimizer batch card (09:45 Dhaka)' },
   { name: 'midday-checkin',         cronUtc: '30 7 * * *',   description: 'Staff midday reminder (13:30 Dhaka)' },
+  { name: 'checkin-greeting',       cronUtc: '*/5 3-14 * * *', description: 'Greet + start task follow-up when staff check in (every 5 min, office hours)' },
   { name: 'content-engine-2',       cronUtc: '0 9 * * *',   description: 'Auto post prep #2 (15:00 Dhaka)' },
   { name: 'staff-morale',           cronUtc: '0 7 * * *',    description: 'Daily staff encouragement (13:00 Dhaka)' },
   { name: 'staff-presence',         cronUtc: '0 5,11 * * *', description: 'Staff presence nudges (11:00, 17:00 Dhaka)' },
@@ -258,6 +260,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'midday-checkin': {
       const { runMiddayCheckin } = await lazy.middayCheckin()
       dutyResult = await runMiddayCheckin(context) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'checkin-greeting': {
+      const { runCheckinGreeting } = await lazy.checkinGreeting()
+      dutyResult = await runCheckinGreeting(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'staff-morale': {
