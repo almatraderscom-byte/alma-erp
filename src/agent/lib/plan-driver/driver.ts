@@ -33,7 +33,7 @@ import {
   setAutodriveState,
   recordDriveTick,
 } from '@/agent/lib/planner'
-import { type AutodriveConfig, usdToTaka } from '@/agent/lib/autodrive-config'
+import { type AutodriveConfig, usdToTaka, getPlanCapOverrideTaka } from '@/agent/lib/autodrive-config'
 import { executeStep } from '@/agent/lib/plan-driver/executor'
 import { runCompletionGate } from '@/agent/lib/plan-driver/completion-gate'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
@@ -59,10 +59,21 @@ export interface DriveResult {
   costTaka: number
 }
 
-const BACKOFF_LONG_MS = 6 * 60 * 60 * 1000 // 6h park when escalated to the owner
-
-function backoffNextTick(config: AutodriveConfig, now: Date): Date {
-  return new Date(now.getTime() + config.backoffMin * 60 * 1000)
+/**
+ * Self-scheduled wake-up — the driver decides WHEN to come back to a plan based on
+ * what just happened, the way Claude paces its own follow-ups:
+ *   - 'progress'  → real movement; come back soon to keep the momentum.
+ *   - 'retry'     → a step failed / approval pending; wait a few cycles before retry.
+ * Escalations don't schedule a tick at all (they wait on the owner, see escalate()).
+ */
+function backoffNextTick(
+  config: AutodriveConfig,
+  now: Date,
+  kind: 'progress' | 'retry' = 'progress',
+): Date {
+  const baseMs = config.backoffMin * 60 * 1000
+  const factor = kind === 'retry' ? 4 : 1 // back off harder after a stall
+  return new Date(now.getTime() + baseMs * factor)
 }
 
 /**
@@ -79,15 +90,20 @@ async function hasOpenApproval(conversationId: string | null | undefined): Promi
   return open > 0
 }
 
-/** Escalate to the owner: park 'blocked', long backoff, push if he is away. */
+/**
+ * Escalate to the owner: park in the dedicated 'escalated' state and push if he is
+ * away. Unlike 'blocked' (approval, auto-resumes), 'escalated' is NOT re-picked by
+ * the tick — so a capped/stuck plan can't re-hit the same wall every backoff and
+ * spam the owner. It stays visible in the Plan-Drive panel until the owner acts.
+ * nextTickAt is cleared for honesty: nothing auto-fires until a decision is made.
+ */
 async function escalate(
   plan: Plan,
   outcome: Extract<DriveOutcome, `escalated-${string}`>,
   reason: string,
-  now: Date,
 ): Promise<DriveResult> {
-  await setAutodriveState(plan.id, 'blocked', {
-    nextTickAt: new Date(now.getTime() + BACKOFF_LONG_MS),
+  await setAutodriveState(plan.id, 'escalated', {
+    nextTickAt: null,
     selfCheckNote: reason,
   })
   void notifyOwnerIfAway({
@@ -108,13 +124,16 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
   const businessId: AgentBusinessId = normalizeBusinessId(plan.businessId ?? undefined)
 
   try {
-    // 1. Per-plan cost cap — a hard stop that needs the owner to lift.
-    if (config.planCapTaka > 0 && plan.costTaka >= config.planCapTaka) {
+    // 1. Per-plan cost cap — a hard stop that needs the owner to lift. The owner can
+    //    grant THIS plan extra budget from the Live Desk (per-plan KV override),
+    //    which takes precedence over the global cap.
+    const capOverride = await getPlanCapOverrideTaka(plan.id)
+    const effectiveCap = Math.max(config.planCapTaka, capOverride)
+    if (effectiveCap > 0 && plan.costTaka >= effectiveCap) {
       return await escalate(
         plan,
         'escalated-cap',
-        `প্ল্যানের খরচ সীমা ছুঁয়েছে (${plan.costTaka}/${config.planCapTaka} টাকা)। এগোতে অনুমতি দিন।`,
-        now,
+        `প্ল্যানের খরচ সীমা ছুঁয়েছে (${plan.costTaka}/${effectiveCap} টাকা)। এগোতে অনুমতি দিন।`,
       )
     }
 
@@ -124,7 +143,6 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
         plan,
         'escalated-attempts',
         `${plan.maxAttempts} বার চেষ্টা করেও আটকে আছে। হাতে নিয়ে দেখুন কী দরকার।`,
-        now,
       )
     }
 
@@ -161,7 +179,7 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
       // Steps ran but the goal is not truly met and we have no auto-repair yet
       // (Phase C generalises dynamic re-planning) → escalate to the owner.
       await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'increment', now })
-      return await escalate(plan, 'escalated-gate', `যাচাই: ${verdict.reason}`, now)
+      return await escalate(plan, 'escalated-gate', `যাচাই: ${verdict.reason}`)
     }
 
     // 5. Pick the next ready step and execute exactly one.
@@ -171,7 +189,7 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
       const failedNote = check.failedSteps.length > 0
         ? `আটকে আছে — ব্যর্থ ধাপ: ${check.failedSteps.join(', ')}`
         : 'কোনো ধাপ এগোনোর মতো প্রস্তুত নেই (নির্ভরতা অসম্পূর্ণ)।'
-      return await escalate(plan, 'escalated-stuck', failedNote, now)
+      return await escalate(plan, 'escalated-stuck', failedNote)
     }
 
     const step = ready[0]
@@ -183,7 +201,7 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
     //     resumes from the same point once the owner acts on the card.
     if (res.blocked) {
       await setAutodriveState(plan.id, 'blocked', {
-        nextTickAt: backoffNextTick(config, now),
+        nextTickAt: backoffNextTick(config, now, 'retry'),
         selfCheckNote: `অনুমোদনের অপেক্ষায়: ${step.action}`,
       })
       await recordDriveTick(plan.id, { addCostTaka: stepTaka, attempt: 'increment', now })
@@ -200,7 +218,7 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
     //     retries from here until maxAttempts consecutive stalls escalate.
     if (res.error) {
       await markStepFailed(step.id, res.error)
-      await recordDriveTick(plan.id, { addCostTaka: stepTaka, nextTickAt: backoffNextTick(config, now), attempt: 'increment', now })
+      await recordDriveTick(plan.id, { addCostTaka: stepTaka, nextTickAt: backoffNextTick(config, now, 'retry'), attempt: 'increment', now })
       return { planId: plan.id, goal: plan.goal, outcome: 'step-failed', detail: res.error, costTaka: stepTaka }
     }
 
@@ -214,7 +232,7 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[plan-driver] drivePlan ${plan.id} failed:`, msg)
     try {
-      await recordDriveTick(plan.id, { nextTickAt: backoffNextTick(config, now), attempt: 'increment', now })
+      await recordDriveTick(plan.id, { nextTickAt: backoffNextTick(config, now, 'retry'), attempt: 'increment', now })
     } catch { /* swallow */ }
     return { planId: plan.id, goal: plan.goal, outcome: 'no-op', detail: `error: ${msg}`, costTaka: 0 }
   }

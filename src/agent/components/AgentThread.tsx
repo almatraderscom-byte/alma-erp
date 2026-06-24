@@ -81,6 +81,8 @@ interface AgentThreadProps {
   streamMode?: ThinkingMode
   streamVariant?: ModelVariant
   compacting?: boolean
+  /** Plan-Drive "Live Desk" panel — shown on the home/empty screen above the greeting. */
+  homePanel?: ReactNode
 }
 
 function detectArtifact(text: string): { type: 'code' | 'markdown'; content: string; title: string } | null {
@@ -591,7 +593,7 @@ function AgentModelSwitchCard({
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -698,7 +700,10 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
         {messages.length === 0 && (
-          <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
+          <>
+            {homePanel && <div className="mb-6">{homePanel}</div>}
+            <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
+          </>
         )}
 
         {isOfficeShift && staticMessages.length > 0 && (

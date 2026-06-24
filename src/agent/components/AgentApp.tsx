@@ -13,6 +13,8 @@ import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
+import { cn } from '@/lib/utils'
+import { PlanDriveTimeline, type PlanDrivePanelData } from '@/agent/components/monitor/PlanDriveTimeline'
 
 interface AgentAppProps {
   userName: string
@@ -147,6 +149,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   } | null>(null)
 
   const [voiceOpen, setVoiceOpen] = useState(false)
+  const [planDrive, setPlanDrive] = useState<PlanDrivePanelData | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
@@ -284,6 +287,22 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
     void refreshShift()
     const id = setInterval(() => void refreshShift(), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Plan-Drive "Live Desk" — poll the in-flight autonomous plans so the owner can
+  // watch them advance step-by-step on the home screen, and see at a glance what is
+  // parked on his approval/decision. Self-contained; safe to poll.
+  useEffect(() => {
+    async function refreshPlanDrive() {
+      try {
+        const res = await fetch('/api/assistant/plan-driver')
+        if (!res.ok) return
+        setPlanDrive((await res.json()) as PlanDrivePanelData)
+      } catch { /* ignore */ }
+    }
+    void refreshPlanDrive()
+    const id = setInterval(() => void refreshPlanDrive(), 30_000)
     return () => clearInterval(id)
   }, [])
 
@@ -1098,6 +1117,37 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
           </button>
         )}
+        {/* Plan-Drive attention strip — surfaces decisions/approvals waiting on the
+            owner from ANY screen, so urgent autonomous-plan blocks never hide. Opens
+            the most urgent plan's conversation. */}
+        {(() => {
+          const attention = (planDrive?.drives ?? []).filter(
+            (d) => d.phase === 'needs-decision' || d.phase === 'waiting-approval',
+          )
+          if (attention.length === 0) return null
+          const top = attention[0]
+          const decisions = attention.filter((d) => d.phase === 'needs-decision').length
+          return (
+            <button
+              type="button"
+              onClick={() => top.conversationId && void loadConversation({
+                id: top.conversationId, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
+              })}
+              className={cn(
+                'safe-x shrink-0 border-b px-4 py-2 text-left text-[11px] font-medium transition-colors',
+                decisions > 0
+                  ? 'border-red-200/60 bg-red-50/90 text-red-800 hover:bg-red-100/90'
+                  : 'border-amber-200/60 bg-amber-50/90 text-amber-800 hover:bg-amber-100/90',
+              )}
+            >
+              {decisions > 0 ? '🛑' : '✋'}{' '}
+              <span className="font-semibold">
+                {attention.length}টি কাজ আপনার {decisions > 0 ? 'সিদ্ধান্তের' : 'অনুমোদনের'} অপেক্ষায়
+              </span>{' '}
+              — “{top.goal}”। দেখতে চাপুন →
+            </button>
+          )
+        })()}
         {/* Header — floating translucent pods (FOUND-1B "Claude-app feel").
             Top inset now lives on the parent column (safe-top), so the header
             keeps only safe-x to avoid double-padding below the status bar. */}
@@ -1209,6 +1259,31 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             streamMode={streamMode}
             streamVariant={streamVariant}
             compacting={compacting}
+            homePanel={planDrive && planDrive.drives.length > 0 ? (
+              <PlanDriveTimeline
+                data={planDrive}
+                onOpenConversation={(cid) => void loadConversation({
+                  id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
+                })}
+                onAction={async (planId, action) => {
+                  try {
+                    const res = await fetch('/api/assistant/plan-driver/action', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ planId, action }),
+                    })
+                    if (!res.ok) { toast.error('কাজটি করা গেল না'); return }
+                    toast.success(
+                      action === 'abandon' ? 'প্ল্যান বাদ দেওয়া হলো' :
+                      action === 'add-budget' ? 'বাজেট বাড়িয়ে আবার চালু করা হলো' :
+                      'আবার চালু করা হলো',
+                    )
+                    const r = await fetch('/api/assistant/plan-driver')
+                    if (r.ok) setPlanDrive((await r.json()) as PlanDrivePanelData)
+                  } catch { toast.error('নেটওয়ার্ক সমস্যা') }
+                }}
+              />
+            ) : null}
           />
           )}
           <AgentArtifactsPanel
