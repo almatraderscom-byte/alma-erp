@@ -572,3 +572,116 @@ export async function getMessengerInbox(opts: {
     }
   })
 }
+
+// ── Unanswered comments + combined reply status (for customer_reply tasks) ──
+
+export interface FbUnansweredComment {
+  postId: string
+  commentId: string
+  from: string | null
+  message: string
+  createdTime: string | null
+  permalinkUrl: string | null
+}
+
+type RawComment = {
+  id?: string
+  from?: { id?: string; name?: string }
+  message?: string
+  created_time?: string
+}
+
+/**
+ * Find top-level comments from customers on recent posts that the page has NOT
+ * replied to. Best-effort: a comment counts as unanswered when, after it, there
+ * is no later comment authored by the page on the same post.
+ */
+export async function getUnansweredComments(opts: {
+  pageId: string
+  postLimit?: number
+}): Promise<FbUnansweredComment[]> {
+  const token = tokenFor(opts.pageId)
+  const postLimit = Math.min(Math.max(opts.postLimit ?? 12, 1), 25)
+  const fields = encodeURIComponent(
+    `id,permalink_url,comments.limit(30){id,from,message,created_time}`,
+  )
+  const res = await resilientFetch(
+    `${GRAPH_BASE}/${opts.pageId}/feed?fields=${fields}&limit=${postLimit}&access_token=${token}`,
+    { timeoutMs: 30_000, retries: 1 },
+  )
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph API error ${res.status}: ${err}`)
+  }
+  const payload = (await res.json()) as {
+    data?: Array<{ id: string; permalink_url?: string; comments?: { data?: RawComment[] } }>
+  }
+
+  const out: FbUnansweredComment[] = []
+  for (const post of payload.data ?? []) {
+    const comments = [...(post.comments?.data ?? [])].sort(
+      (a, b) => new Date(a.created_time ?? 0).getTime() - new Date(b.created_time ?? 0).getTime(),
+    )
+    // Time of the page's most recent comment on this post.
+    const lastPageReplyMs = comments
+      .filter((c) => c.from?.id === opts.pageId)
+      .reduce((max, c) => Math.max(max, new Date(c.created_time ?? 0).getTime()), 0)
+    for (const c of comments) {
+      const fromCustomer = c.from?.id && c.from.id !== opts.pageId
+      if (!fromCustomer) continue
+      const ms = new Date(c.created_time ?? 0).getTime()
+      if (ms > lastPageReplyMs) {
+        out.push({
+          postId: post.id,
+          commentId: c.id ?? '',
+          from: c.from?.name ?? null,
+          message: c.message?.trim() || '(no text)',
+          createdTime: c.created_time ?? null,
+          permalinkUrl: post.permalink_url ?? null,
+        })
+      }
+    }
+  }
+  return out
+}
+
+export interface CustomerReplyStatus {
+  ok: boolean
+  messengerUnanswered: number
+  commentUnanswered: number
+  totalUnanswered: number
+  /** True when nothing is waiting on a reply right now. */
+  allCaughtUp: boolean
+  sampleMessenger: FbMessengerThread[]
+  sampleComments: FbUnansweredComment[]
+  note: string
+}
+
+/**
+ * Combined ground-truth check for "reply to all unread Messenger + FB comments"
+ * tasks. The agent calls this AFTER staff says done — if anything is still
+ * unanswered, the task is NOT complete.
+ */
+export async function getCustomerReplyStatus(pageId: string): Promise<CustomerReplyStatus> {
+  const [inbox, comments] = await Promise.all([
+    getMessengerInbox({ pageId, limit: 25 }).catch(() => [] as FbMessengerThread[]),
+    getUnansweredComments({ pageId, postLimit: 12 }).catch(() => [] as FbUnansweredComment[]),
+  ])
+  const pendingThreads = inbox.filter((t) => t.lastMessage?.from === 'customer')
+  const messengerUnanswered = pendingThreads.length
+  const commentUnanswered = comments.length
+  const totalUnanswered = messengerUnanswered + commentUnanswered
+  return {
+    ok: true,
+    messengerUnanswered,
+    commentUnanswered,
+    totalUnanswered,
+    allCaughtUp: totalUnanswered === 0,
+    sampleMessenger: pendingThreads.slice(0, 5),
+    sampleComments: comments.slice(0, 5),
+    note:
+      totalUnanswered === 0
+        ? 'No unanswered customer messages or comments right now.'
+        : `${messengerUnanswered} Messenger thread(s) and ${commentUnanswered} comment(s) still awaiting a reply.`,
+  }
+}
