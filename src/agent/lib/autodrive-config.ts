@@ -27,6 +27,10 @@ export const AUTODRIVE_PLAN_CAP_TAKA_KEY = 'autodrive_plan_cap_taka'
 export const AUTODRIVE_MAX_ATTEMPTS_KEY = 'autodrive_max_attempts'
 export const AUTODRIVE_BATCH_SIZE_KEY = 'autodrive_batch_size'
 export const AUTODRIVE_GATE_MODEL_KEY = 'autodrive_gate_model'
+/** The head model the driver runs each step on (owner decision: Qwen, not Sonnet). */
+export const AUTODRIVE_DRIVER_MODEL_KEY = 'autodrive_driver_model'
+/** Backoff (minutes) between drive ticks of the SAME plan. */
+export const AUTODRIVE_BACKOFF_MIN_KEY = 'autodrive_backoff_min'
 
 // ── Defaults (conservative — tighten, never loosen, by default) ─────────────
 /** Whole-taka cap on TOTAL autodrive spend per day. 0 disables (= hard stop). */
@@ -42,6 +46,26 @@ export const DEFAULT_AUTODRIVE_BATCH_SIZE = 10
  * validate its judgement, then move to Claude (`claude-sonnet-4-6`) if needed.
  */
 export const DEFAULT_AUTODRIVE_GATE_MODEL = 'or-deepseek-v4-flash'
+/**
+ * Driver head model. Owner decision (recorded): Qwen orchestrates each step as the
+ * head — NOT Sonnet (`sonnet apatoto ekhane dorkar nei`). DeepSeek does sub-agent
+ * work via delegate_to_specialist when the head chooses to hand off.
+ */
+export const DEFAULT_AUTODRIVE_DRIVER_MODEL = 'or-qwen3-max'
+/** Default minutes to wait before re-driving the same plan. */
+export const DEFAULT_AUTODRIVE_BACKOFF_MIN = 3
+/**
+ * Whole-taka conversion for model spend (USD → BDT). Matches the rate used for
+ * media-cost estimates elsewhere (content-engine/video-brief). Owner-visible only;
+ * autodrive caps are whole-taka so we round UP (never undercount spend).
+ */
+export const AUTODRIVE_USD_TO_BDT = 125
+
+/** Convert a USD model-spend figure to whole taka, rounding UP (conservative). */
+export function usdToTaka(costUsd: number): number {
+  if (!Number.isFinite(costUsd) || costUsd <= 0) return 0
+  return Math.ceil(costUsd * AUTODRIVE_USD_TO_BDT)
+}
 
 export interface AutodriveConfig {
   /** Hard master gate (env). When false the driver is fully inert. */
@@ -51,6 +75,8 @@ export interface AutodriveConfig {
   maxAttempts: number
   batchSize: number
   gateModel: string
+  driverModel: string
+  backoffMin: number
 }
 
 /**
@@ -82,6 +108,8 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
           AUTODRIVE_MAX_ATTEMPTS_KEY,
           AUTODRIVE_BATCH_SIZE_KEY,
           AUTODRIVE_GATE_MODEL_KEY,
+          AUTODRIVE_DRIVER_MODEL_KEY,
+          AUTODRIVE_BACKOFF_MIN_KEY,
         ],
       },
     },
@@ -89,6 +117,7 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
   const byKey = new Map(rows.map((r) => [r.key, r.value]))
 
   const gateModel = byKey.get(AUTODRIVE_GATE_MODEL_KEY)?.trim()
+  const driverModel = byKey.get(AUTODRIVE_DRIVER_MODEL_KEY)?.trim()
 
   return {
     enabled: isAutodriveEnabled(),
@@ -97,6 +126,8 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
     maxAttempts: parseIntSetting(byKey.get(AUTODRIVE_MAX_ATTEMPTS_KEY), DEFAULT_AUTODRIVE_MAX_ATTEMPTS, 1, 50),
     batchSize: parseIntSetting(byKey.get(AUTODRIVE_BATCH_SIZE_KEY), DEFAULT_AUTODRIVE_BATCH_SIZE, 1, 100),
     gateModel: gateModel && gateModel.length > 0 ? gateModel : DEFAULT_AUTODRIVE_GATE_MODEL,
+    driverModel: driverModel && driverModel.length > 0 ? driverModel : DEFAULT_AUTODRIVE_DRIVER_MODEL,
+    backoffMin: parseIntSetting(byKey.get(AUTODRIVE_BACKOFF_MIN_KEY), DEFAULT_AUTODRIVE_BACKOFF_MIN, 1, 1440),
   }
 }
 

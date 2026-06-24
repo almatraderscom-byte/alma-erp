@@ -36,6 +36,10 @@ export interface Plan {
   id: string
   goal: string
   status: 'draft' | 'approved' | 'executing' | 'done' | 'failed' | 'cancelled'
+  /** Owner conversation this plan belongs to — the executor drives steps here. */
+  conversationId?: string | null
+  /** Business scope ('ALMA_LIFESTYLE' | 'ALMA_TRADING'). */
+  businessId: string
   steps: PlanStep[]
   selfCheckNote?: string
   /** Plain-language "what counts as DONE" — read by the completion gate. */
@@ -143,6 +147,76 @@ export async function markStepFailed(stepId: string, error: string): Promise<voi
   })
 }
 
+// ── Plan-Driver mutations (Phase B — autodrive lifecycle) ───────────────────
+
+/**
+ * Enroll a plan under the autonomous driver. Sets it 'driving', records the
+ * plain-language done-criteria the completion gate reads, and (optionally) the
+ * per-plan attempt ceiling. Idempotent — re-enrolling just refreshes the fields.
+ */
+export async function enrollPlanForAutodrive(
+  planId: string,
+  opts: { doneCriteria?: string; maxAttempts?: number } = {},
+): Promise<void> {
+  const data: Record<string, unknown> = {
+    autodriveState: 'driving',
+    status: 'executing',
+    nextTickAt: new Date(), // eligible on the very next tick
+  }
+  if (opts.doneCriteria !== undefined) data.doneCriteria = opts.doneCriteria
+  if (opts.maxAttempts !== undefined) data.maxAttempts = opts.maxAttempts
+  await db.agentPlan.update({ where: { id: planId }, data })
+}
+
+/**
+ * Transition a plan's autodrive_state (and optionally schedule the next tick /
+ * leave a self-check note). Terminal states (done/failed/abandoned) clear the
+ * next-tick so the driver never re-picks them.
+ */
+export async function setAutodriveState(
+  planId: string,
+  state: AutodriveState,
+  opts: { nextTickAt?: Date | null; selfCheckNote?: string } = {},
+): Promise<void> {
+  const data: Record<string, unknown> = { autodriveState: state }
+  if (TERMINAL_AUTODRIVE_STATES.has(state)) {
+    data.nextTickAt = null
+  } else if (opts.nextTickAt !== undefined) {
+    data.nextTickAt = opts.nextTickAt
+  }
+  if (opts.selfCheckNote !== undefined) data.selfCheckNote = opts.selfCheckNote
+  await db.agentPlan.update({ where: { id: planId }, data })
+}
+
+/**
+ * Record one drive tick: always stamps last_driven_at, adds this tick's whole-taka
+ * spend to the running total, and (optionally) schedules the next tick via backoff.
+ *
+ * attempt_count is a STALL counter, not a step counter — `attempt: 'increment'` on
+ * a stall (failed/blocked/not-done), `attempt: 'reset'` on real progress (a step
+ * just completed). This way a long plan that keeps advancing never escalates, but
+ * one stuck at the same point escalates after maxAttempts consecutive stalls.
+ */
+export async function recordDriveTick(
+  planId: string,
+  opts: {
+    addCostTaka?: number
+    nextTickAt?: Date | null
+    attempt?: 'increment' | 'reset' | 'keep'
+    now?: Date
+  } = {},
+): Promise<void> {
+  const now = opts.now ?? new Date()
+  const data: Record<string, unknown> = { lastDrivenAt: now }
+  if (opts.addCostTaka && opts.addCostTaka > 0) {
+    data.costTaka = { increment: Math.round(opts.addCostTaka) }
+  }
+  if (opts.nextTickAt !== undefined) data.nextTickAt = opts.nextTickAt
+  if (opts.attempt === 'increment') data.attemptCount = { increment: 1 }
+  else if (opts.attempt === 'reset') data.attemptCount = 0
+  await db.agentPlan.update({ where: { id: planId }, data })
+}
+
 /**
  * Get steps that are ready to execute (all dependencies done).
  */
@@ -243,6 +317,8 @@ interface DbPlan {
   id: string
   goal: string
   status: string
+  conversationId?: string | null
+  businessId?: string | null
   selfCheckNote?: string | null
   doneCriteria?: string | null
   autodriveState?: string | null
@@ -267,6 +343,8 @@ function dbPlanToDto(plan: DbPlan): Plan {
     id: plan.id,
     goal: plan.goal,
     status: plan.status as Plan['status'],
+    conversationId: plan.conversationId ?? null,
+    businessId: plan.businessId ?? 'ALMA_LIFESTYLE',
     selfCheckNote: plan.selfCheckNote ?? undefined,
     doneCriteria: plan.doneCriteria ?? undefined,
     autodriveState: (plan.autodriveState ?? 'idle') as AutodriveState,

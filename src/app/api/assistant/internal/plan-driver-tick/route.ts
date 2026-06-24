@@ -5,21 +5,24 @@
  * Called by the worker scheduler every couple of minutes. The heavy logic lives
  * here (TypeScript + Prisma + planner), the worker is only a thin trigger.
  *
- * PHASE A = SHADOW / DRY-RUN ONLY. This endpoint loads the plans the driver WOULD
- * act on, computes each plan's next ready step + a deterministic completion read,
- * and returns a report of what it WOULD do — but mutates NOTHING and spends NO
- * model money. Real step execution + the AI completion gate land in Phase B/C.
+ * PHASE B = LIVE. When the kill-switch is on, this endpoint actually advances each
+ * drivable plan by ONE bounded step (Qwen head turn), runs the completion gate when
+ * all steps are done, and escalates stalls/cost-caps to the owner. Caps are checked
+ * before any paid work, so the driver can never overspend by more than one in-flight
+ * step. With the kill-switch OFF it is fully inert (no DB scan, no spend).
  *
  * Safety gates, in order:
  *   1. requireAgentEnabled()           — global agent kill switch.
  *   2. internal token                  — worker-only caller.
  *   3. AGENT_AUTODRIVE_ENABLED (env)   — autodrive master switch, default OFF.
+ *   4. daily cost cap                  — no driving once the day's spend hits the cap.
  */
 import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { getAutodriveConfig, getTodayAutodriveSpendTaka } from '@/agent/lib/autodrive-config'
-import { loadDrivablePlans, getReadySteps, selfCheck } from '@/agent/lib/planner'
+import { loadDrivablePlans } from '@/agent/lib/planner'
+import { drivePlan } from '@/agent/lib/plan-driver/driver'
 
 export const runtime = 'nodejs'
 
@@ -52,57 +55,63 @@ export async function POST(req: NextRequest) {
     return Response.json({ mode: 'disabled', skipped: true, reason: 'AGENT_AUTODRIVE_ENABLED != true' })
   }
 
-  // Phase A: always shadow, even when the kill-switch is on. The executor is gated
-  // behind a later phase; for now we only observe + report.
-  const [plans, spentTodayTaka] = await Promise.all([
-    loadDrivablePlans({ limit: config.batchSize }),
-    getTodayAutodriveSpendTaka(),
-  ])
+  const spentBeforeTaka = await getTodayAutodriveSpendTaka()
+  const dailyCapReached = config.dailyCapTaka > 0 && spentBeforeTaka >= config.dailyCapTaka
 
-  const dailyCapReached = config.dailyCapTaka > 0 && spentTodayTaka >= config.dailyCapTaka
+  // Daily cap is a hard stop — don't even scan plans; nothing paid runs today.
+  if (dailyCapReached) {
+    console.log(`[plan-driver] daily cap reached (${spentBeforeTaka}/${config.dailyCapTaka} taka) — idle`)
+    return Response.json({
+      mode: 'live',
+      phase: 'B',
+      dailyCapReached: true,
+      dailyCapTaka: config.dailyCapTaka,
+      spentTodayTaka: spentBeforeTaka,
+      driven: 0,
+      report: [],
+    })
+  }
 
-  const report = plans.map((plan) => {
-    const ready = getReadySteps(plan)
-    const check = selfCheck(plan)
-    const planCapReached = config.planCapTaka > 0 && plan.costTaka >= config.planCapTaka
-    const attemptsExhausted = plan.attemptCount >= plan.maxAttempts
+  const plans = await loadDrivablePlans({ limit: config.batchSize })
 
-    // What WOULD the driver decide this tick? (computed, not executed)
-    let wouldDo: string
-    if (dailyCapReached) wouldDo = 'halt — daily cost cap reached'
-    else if (planCapReached) wouldDo = 'halt — plan cost cap reached'
-    else if (attemptsExhausted) wouldDo = 'escalate — max attempts exhausted'
-    else if (check.allDone) wouldDo = 'run completion gate → likely mark DONE'
-    else if (ready.length > 0) wouldDo = `execute next step: "${ready[0].action}"`
-    else wouldDo = 'wait — no ready step (blocked on deps/approval)'
+  const report: Array<{ planId: string; goal: string; outcome: string; detail: string; costTaka: number }> = []
+  let spentThisTick = 0
 
-    return {
-      planId: plan.id,
-      goal: plan.goal,
-      autodriveState: plan.autodriveState,
-      attempts: `${plan.attemptCount}/${plan.maxAttempts}`,
-      costTaka: plan.costTaka,
-      progress: `${check.completedCount}/${check.totalCount}`,
-      nextReadyStep: ready[0]?.action ?? null,
-      wouldDo,
+  for (const plan of plans) {
+    // Re-check the daily cap as we spend within the tick — stop the moment we hit it.
+    if (config.dailyCapTaka > 0 && spentBeforeTaka + spentThisTick >= config.dailyCapTaka) {
+      console.log('[plan-driver] daily cap reached mid-tick — stopping')
+      break
     }
-  })
+    const result = await drivePlan(plan, config)
+    spentThisTick += result.costTaka
+    report.push({
+      planId: result.planId,
+      goal: result.goal,
+      outcome: result.outcome,
+      detail: result.detail,
+      costTaka: result.costTaka,
+    })
+  }
 
   const summary = {
-    mode: 'shadow',
-    phase: 'A',
+    mode: 'live',
+    phase: 'B',
     autodriveEnabled: config.enabled,
+    driverModel: config.driverModel,
     gateModel: config.gateModel,
     dailyCapTaka: config.dailyCapTaka,
-    spentTodayTaka,
-    dailyCapReached,
+    spentTodayTaka: spentBeforeTaka + spentThisTick,
+    spentThisTickTaka: spentThisTick,
+    dailyCapReached: false,
     drivablePlans: plans.length,
+    driven: report.length,
     report,
   }
 
   console.log(
-    `[plan-driver] shadow tick — ${plans.length} drivable plan(s), spent ${spentTodayTaka}/${config.dailyCapTaka} taka today` +
-      (dailyCapReached ? ' (DAILY CAP REACHED)' : ''),
+    `[plan-driver] live tick — ${report.length}/${plans.length} plan(s) driven, ` +
+      `spent ${spentThisTick} taka this tick (${summary.spentTodayTaka}/${config.dailyCapTaka} today)`,
   )
 
   return Response.json(summary)

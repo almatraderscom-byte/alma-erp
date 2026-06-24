@@ -1,0 +1,221 @@
+/**
+ * Plan-Driver orchestration — the per-plan decision engine behind the autonomous
+ * "pursue-until-completion" loop. The tick route loads the drivable plans + the
+ * day's spend, then hands each plan here for ONE bounded advance.
+ *
+ * Per plan, in strict safety order:
+ *   1. plan cost cap        → escalate (blocked), owner must decide.
+ *   2. max consecutive stalls → escalate (blocked).
+ *   3. currently 'blocked'  → re-check the owner approval; resume only when cleared.
+ *   4. all steps done       → completion gate; DONE only if the gate agrees.
+ *   5. a ready step         → execute ONE step (Qwen head turn).
+ *   6. no ready step         → stuck on a failed/incomplete dep → escalate.
+ *
+ * Everything mutating funnels through the planner helpers; every paid action
+ * (executor turn + completion gate) adds its whole-taka spend to the plan and the
+ * daily ledger. Caps are checked BEFORE any paid work, so the driver can never
+ * overspend by more than one in-flight step.
+ *
+ * Daily-cap enforcement lives in the caller (tick route): when the day's spend is
+ * already at/over the cap, it does not call into the driver at all.
+ */
+import { prisma } from '@/lib/prisma'
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+import { normalizeBusinessId } from '@/lib/agent-api/business-context'
+import {
+  type Plan,
+  getReadySteps,
+  selfCheck,
+  markStepRunning,
+  markStepDone,
+  markStepFailed,
+  updatePlanStatus,
+  setAutodriveState,
+  recordDriveTick,
+} from '@/agent/lib/planner'
+import { type AutodriveConfig, usdToTaka } from '@/agent/lib/autodrive-config'
+import { executeStep } from '@/agent/lib/plan-driver/executor'
+import { runCompletionGate } from '@/agent/lib/plan-driver/completion-gate'
+import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
+
+export type DriveOutcome =
+  | 'step-done'
+  | 'step-failed'
+  | 'blocked-approval'
+  | 'waiting-approval'
+  | 'plan-done'
+  | 'escalated-cap'
+  | 'escalated-attempts'
+  | 'escalated-stuck'
+  | 'escalated-gate'
+  | 'no-op'
+
+export interface DriveResult {
+  planId: string
+  goal: string
+  outcome: DriveOutcome
+  detail: string
+  /** Whole-taka spent advancing this plan this tick (head turn + gate). */
+  costTaka: number
+}
+
+const BACKOFF_LONG_MS = 6 * 60 * 60 * 1000 // 6h park when escalated to the owner
+
+function backoffNextTick(config: AutodriveConfig, now: Date): Date {
+  return new Date(now.getTime() + config.backoffMin * 60 * 1000)
+}
+
+/**
+ * Is the plan's conversation still waiting on an owner approval? A 'blocked' plan
+ * resumes only when no pending action remains for its conversation.
+ */
+async function hasOpenApproval(conversationId: string | null | undefined): Promise<boolean> {
+  if (!conversationId) return false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const open = await db.agentPendingAction.count({
+    where: { conversationId, status: 'pending' },
+  })
+  return open > 0
+}
+
+/** Escalate to the owner: park 'blocked', long backoff, push if he is away. */
+async function escalate(
+  plan: Plan,
+  outcome: Extract<DriveOutcome, `escalated-${string}`>,
+  reason: string,
+  now: Date,
+): Promise<DriveResult> {
+  await setAutodriveState(plan.id, 'blocked', {
+    nextTickAt: new Date(now.getTime() + BACKOFF_LONG_MS),
+    selfCheckNote: reason,
+  })
+  void notifyOwnerIfAway({
+    tier: 2,
+    title: 'Plan-Driver — সিদ্ধান্ত দরকার',
+    message: `"${plan.goal}" — ${reason}`,
+    category: 'task',
+  }).catch(() => {})
+  return { planId: plan.id, goal: plan.goal, outcome, detail: reason, costTaka: 0 }
+}
+
+/**
+ * Advance ONE plan by at most one step. Never throws — any unexpected error parks
+ * the plan with a backoff and reports a no-op, so one bad plan can't break the tick.
+ */
+export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<DriveResult> {
+  const now = new Date()
+  const businessId: AgentBusinessId = normalizeBusinessId(plan.businessId ?? undefined)
+
+  try {
+    // 1. Per-plan cost cap — a hard stop that needs the owner to lift.
+    if (config.planCapTaka > 0 && plan.costTaka >= config.planCapTaka) {
+      return await escalate(
+        plan,
+        'escalated-cap',
+        `প্ল্যানের খরচ সীমা ছুঁয়েছে (${plan.costTaka}/${config.planCapTaka} টাকা)। এগোতে অনুমতি দিন।`,
+        now,
+      )
+    }
+
+    // 2. Too many consecutive stalls — watchdog escalation.
+    if (plan.attemptCount >= plan.maxAttempts) {
+      return await escalate(
+        plan,
+        'escalated-attempts',
+        `${plan.maxAttempts} বার চেষ্টা করেও আটকে আছে। হাতে নিয়ে দেখুন কী দরকার।`,
+        now,
+      )
+    }
+
+    // 3. Blocked plan — resume only when the owner approval cleared.
+    if (plan.autodriveState === 'blocked') {
+      if (await hasOpenApproval(plan.conversationId)) {
+        await recordDriveTick(plan.id, { nextTickAt: backoffNextTick(config, now), attempt: 'keep', now })
+        return {
+          planId: plan.id, goal: plan.goal, outcome: 'waiting-approval',
+          detail: 'অনুমোদনের অপেক্ষায়', costTaka: 0,
+        }
+      }
+      // Approval resolved (or none was pending) → resume driving.
+      await setAutodriveState(plan.id, 'driving', { nextTickAt: now })
+    }
+
+    // 4. Every step done → completion gate decides true DONE.
+    const check = selfCheck(plan)
+    if (check.allDone) {
+      const verdict = await runCompletionGate(plan, config.gateModel, { conversationId: plan.conversationId })
+      const gateTaka = usdToTaka(verdict.costUsd)
+      if (verdict.done) {
+        await updatePlanStatus(plan.id, 'done', verdict.reason)
+        await setAutodriveState(plan.id, 'done', { selfCheckNote: verdict.reason })
+        await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'reset', now })
+        void notifyOwnerIfAway({
+          tier: 1,
+          title: 'Plan-Driver — সম্পন্ন ✅',
+          message: `"${plan.goal}" শেষ হয়েছে। ${verdict.reason}`,
+          category: 'report',
+        }).catch(() => {})
+        return { planId: plan.id, goal: plan.goal, outcome: 'plan-done', detail: verdict.reason, costTaka: gateTaka }
+      }
+      // Steps ran but the goal is not truly met and we have no auto-repair yet
+      // (Phase C generalises dynamic re-planning) → escalate to the owner.
+      await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'increment', now })
+      return await escalate(plan, 'escalated-gate', `যাচাই: ${verdict.reason}`, now)
+    }
+
+    // 5. Pick the next ready step and execute exactly one.
+    const ready = getReadySteps(plan)
+    if (ready.length === 0) {
+      // Nothing ready and not all done → a dependency failed or is stuck.
+      const failedNote = check.failedSteps.length > 0
+        ? `আটকে আছে — ব্যর্থ ধাপ: ${check.failedSteps.join(', ')}`
+        : 'কোনো ধাপ এগোনোর মতো প্রস্তুত নেই (নির্ভরতা অসম্পূর্ণ)।'
+      return await escalate(plan, 'escalated-stuck', failedNote, now)
+    }
+
+    const step = ready[0]
+    await markStepRunning(step.id)
+    const res = await executeStep(plan, step, { businessId, driverModelId: config.driverModel })
+    const stepTaka = usdToTaka(res.costUsd)
+
+    // 5a. Needs owner approval → park as blocked; leave the step running so it
+    //     resumes from the same point once the owner acts on the card.
+    if (res.blocked) {
+      await setAutodriveState(plan.id, 'blocked', {
+        nextTickAt: backoffNextTick(config, now),
+        selfCheckNote: `অনুমোদনের অপেক্ষায়: ${step.action}`,
+      })
+      await recordDriveTick(plan.id, { addCostTaka: stepTaka, attempt: 'increment', now })
+      void notifyOwnerIfAway({
+        tier: 2,
+        title: 'Plan-Driver — অনুমোদন দরকার',
+        message: `"${plan.goal}" — "${step.action}" এর জন্য আপনার অনুমোদন দরকার।`,
+        category: 'task',
+      }).catch(() => {})
+      return { planId: plan.id, goal: plan.goal, outcome: 'blocked-approval', detail: step.action, costTaka: stepTaka }
+    }
+
+    // 5b. Hard failure → mark the step failed; count a stall. Next ready tick
+    //     retries from here until maxAttempts consecutive stalls escalate.
+    if (res.error) {
+      await markStepFailed(step.id, res.error)
+      await recordDriveTick(plan.id, { addCostTaka: stepTaka, nextTickAt: backoffNextTick(config, now), attempt: 'increment', now })
+      return { planId: plan.id, goal: plan.goal, outcome: 'step-failed', detail: res.error, costTaka: stepTaka }
+    }
+
+    // 5c. Progress → mark the step done, reset the stall counter, keep driving.
+    await markStepDone(step.id, res.summary)
+    await setAutodriveState(plan.id, 'driving', { nextTickAt: backoffNextTick(config, now) })
+    await recordDriveTick(plan.id, { addCostTaka: stepTaka, attempt: 'reset', now })
+    return { planId: plan.id, goal: plan.goal, outcome: 'step-done', detail: step.action, costTaka: stepTaka }
+  } catch (err) {
+    // Defensive: never let one plan break the whole tick. Park with a short backoff.
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[plan-driver] drivePlan ${plan.id} failed:`, msg)
+    try {
+      await recordDriveTick(plan.id, { nextTickAt: backoffNextTick(config, now), attempt: 'increment', now })
+    } catch { /* swallow */ }
+    return { planId: plan.id, goal: plan.goal, outcome: 'no-op', detail: `error: ${msg}`, costTaka: 0 }
+  }
+}

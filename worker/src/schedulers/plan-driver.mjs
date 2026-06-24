@@ -9,8 +9,9 @@
  * off we don't even make the HTTP call — zero activity, zero cost. The endpoint
  * re-checks the same switch (defence in depth).
  *
- * Phase A: the endpoint runs in SHADOW mode (reports what it WOULD do, mutates
- * nothing), so this tick is safe to register now even before the executor exists.
+ * Phase B: the endpoint is LIVE — each tick advances drivable plans by one bounded
+ * step (Qwen head turn), runs the completion gate, and escalates stalls/cost-caps.
+ * Caps are enforced before any paid work; with the kill-switch OFF it stays inert.
  */
 import { getAppUrl, getInternalToken } from '../env.mjs'
 
@@ -34,8 +35,9 @@ export async function runPlanDriverTick() {
       return { dutyStatus: 'skipped', dutyDetail: data.reason ?? 'skipped' }
     }
     const n = data.drivablePlans ?? 0
-    console.log(`[plan-driver] ${data.mode ?? 'shadow'} tick — ${n} drivable plan(s)`, JSON.stringify(data.report ?? []))
-    const detail = `${data.mode ?? 'shadow'} — ${n} plan, খরচ ${data.spentTodayTaka ?? 0}/${data.dailyCapTaka ?? 0} টাকা`
+    const driven = data.driven ?? n
+    console.log(`[plan-driver] ${data.mode ?? 'live'} tick — ${driven}/${n} plan(s) driven`, JSON.stringify(data.report ?? []))
+    const detail = `${data.mode ?? 'live'} — ${driven}/${n} plan, খরচ ${data.spentTodayTaka ?? 0}/${data.dailyCapTaka ?? 0} টাকা`
     return { dutyStatus: 'done', dutyDetail: detail }
   } catch (err) {
     console.error('[plan-driver] failed:', err.message)

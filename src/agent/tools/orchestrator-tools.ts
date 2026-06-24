@@ -11,7 +11,9 @@ import {
   updatePlanStatus,
   selfCheck,
   formatPlanForDisplay,
+  enrollPlanForAutodrive,
 } from '@/agent/lib/planner'
+import { isAutodriveEnabled } from '@/agent/lib/autodrive-config'
 
 // Roles that run directly without an owner "transfer to worker?" card. Marketing
 // + content are owner-approved to flow straight to Qwen; their internal money/
@@ -207,9 +209,12 @@ const make_plan: AgentTool = {
 const execute_plan: AgentTool = {
   name: 'execute_plan',
   description:
-    'Execute a previously created plan (by plan_id). Runs steps respecting dependency order. ' +
-    'Independent steps run in parallel. If a step fails, execution STOPS and reports the failure. ' +
-    'After all steps complete, runs a self-check comparing results against the original goal.',
+    'Execute a previously created plan (by plan_id). When autodrive is ON the plan is ' +
+    'enrolled under the autonomous Plan-Driver, which pursues it to completion step by ' +
+    'step on its own (and escalates to you if it stalls or hits a cost cap). When autodrive ' +
+    'is OFF it falls back to a self-check and you run each ready step yourself. ' +
+    'Optionally pass done_criteria — a plain-language "what counts as DONE" the completion ' +
+    'gate checks the finished work against.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -217,18 +222,42 @@ const execute_plan: AgentTool = {
         type: 'string',
         description: 'The plan ID returned by make_plan',
       },
+      done_criteria: {
+        type: 'string',
+        description: 'Optional plain-language definition of done — what real outcome means the goal is achieved.',
+      },
     },
     required: ['plan_id'],
   },
   handler: async (input) => {
     const planId = String(input.plan_id ?? '').trim()
     if (!planId) return { success: false, error: 'plan_id is required' }
+    const doneCriteria = typeof input.done_criteria === 'string' && input.done_criteria.trim()
+      ? input.done_criteria.trim()
+      : undefined
 
     try {
       const plan = await loadPlan(planId)
       if (!plan) return { success: false, error: `Plan not found: ${planId}` }
       if (plan.status === 'done') {
         return { success: true, data: { status: 'already_done', display: formatPlanForDisplay(plan) } }
+      }
+
+      // Autodrive ON → hand the plan to the autonomous driver and return. The
+      // worker tick advances it step by step; the head does not run steps inline.
+      if (isAutodriveEnabled()) {
+        await enrollPlanForAutodrive(planId, { doneCriteria })
+        const updated = await loadPlan(planId)
+        return {
+          success: true,
+          data: {
+            plan_id: planId,
+            status: updated?.status ?? 'executing',
+            autodrive: true,
+            display: updated ? formatPlanForDisplay(updated) : plan.goal,
+            message: 'Plan স্বয়ংক্রিয় Plan-Driver-এ দেওয়া হলো — ধাপে ধাপে নিজে শেষ করবে, আটকে গেলে বা খরচ সীমায় পৌঁছালে আপনাকে জানাবে।',
+          },
+        }
       }
 
       await updatePlanStatus(planId, 'executing')
