@@ -11,7 +11,7 @@ import { getCustomerOrderStatus } from '@/agent/lib/cs/order-lifecycle'
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { describeProductImage } from '@/agent/lib/cs/gemini-vision'
 import { searchVisualIndex } from '@/agent/lib/cs/product-index'
-import { getPrimaryImageUrl } from '@/agent/lib/catalog/product-images'
+import { getPrimaryImageUrl, listProductImages } from '@/agent/lib/catalog/product-images'
 import {
   buildCollectionProfile,
   expandSkuToCollectionIfFamily,
@@ -315,7 +315,8 @@ const get_product_details: AgentTool = {
     }
 
     const variants = await loadVariantsForCode(resolved.code)
-    const imageUrl = await getPrimaryImageUrl(resolved.code)
+    const allImages = await listProductImages(resolved.code).catch(() => [])
+    const imageUrl = allImages.find((i) => i.isPrimary)?.url ?? allImages[0]?.url ?? (await getPrimaryImageUrl(resolved.code))
     return {
       success: true,
       data: {
@@ -327,6 +328,8 @@ const get_product_details: AgentTool = {
         stock: variants.reduce((s, v) => s + v.currentStock, 0),
         variants: variants.map((v) => ({ size: v.sizeValue || v.size, stock: v.currentStock })),
         imageUrl,
+        images: allImages.map((i) => ({ url: i.url, isPrimary: i.isPrimary })),
+        imageCount: allImages.length,
         description: `${resolved.row.name} — ${resolved.row.category}`,
       },
     }
@@ -347,6 +350,39 @@ const send_product_image: AgentTool = {
     const imageUrl = await getPrimaryImageUrl(resolved.code)
     if (!imageUrl) return { success: false, error: 'no image for product' }
     return { success: true, data: { code: resolved.code, imageUrl } }
+  },
+}
+
+const get_product_images: AgentTool = {
+  name: 'get_product_images',
+  description:
+    'Return ALL catalog images (4-5 per product, not just the primary) for a product code. ' +
+    'Use this to SEE what a product actually looks like — to answer customer questions about ' +
+    'colour/design/fabric from the images, to pick the best photo to send, or to verify a ' +
+    'visual task against the real product. Returns image URLs ordered primary-first.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      code: { type: 'string', description: 'Product code / SKU' },
+      limit: { type: 'number', description: 'Max images to return (default 8)' },
+    },
+    required: ['code'],
+  },
+  handler: async (input) => {
+    const resolved = await resolveProductCode(String(input.code ?? ''))
+    if (!resolved.ok) return { success: false, error: 'product not found' }
+    const limit = Math.max(1, Math.min(Number(input.limit ?? 8), 12))
+    const images = await listProductImages(resolved.code, undefined, limit)
+    if (images.length === 0) return { success: false, error: 'no images for product', data: { code: resolved.code, images: [], count: 0 } }
+    return {
+      success: true,
+      data: {
+        code: resolved.code,
+        count: images.length,
+        primaryImageUrl: images.find((i) => i.isPrimary)?.url ?? images[0]?.url ?? null,
+        images: images.map((i) => ({ url: i.url, isPrimary: i.isPrimary })),
+      },
+    }
   },
 }
 
@@ -619,6 +655,7 @@ export const CS_CUSTOMER_TOOLS: AgentTool[] = [
   search_products,
   get_product_details,
   send_product_image,
+  get_product_images,
   create_order_draft,
   get_customer_order_status,
   handoff_to_human,

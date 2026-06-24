@@ -87,6 +87,43 @@ export async function addProductImage(input: {
   return { ok: true, code: first.code, total: first.total, isPrimary: first.isPrimary }
 }
 
+export type ProductImageEntry = {
+  url: string | null
+  storagePath: string
+  isPrimary: boolean
+}
+
+/**
+ * Returns ALL images for a product code (not just the primary), primary first.
+ * Re-signs storage URLs on the fly when the stored URL is missing/expired so the
+ * agent (and CS) always receive a usable link. Limited to `limit` images.
+ */
+export async function listProductImages(
+  productCode: string,
+  business = DEFAULT_CATALOG_BUSINESS,
+  limit = 8,
+): Promise<ProductImageEntry[]> {
+  const code = normalizeProductCode(productCode)
+  const rows = await db.productImage.findMany({
+    where: { productCode: code, business },
+    orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+    take: limit,
+  })
+  const out: ProductImageEntry[] = []
+  for (const row of rows as Array<{ url: string | null; storagePath: string; isPrimary: boolean }>) {
+    let url = row.url
+    if (!url) {
+      try {
+        url = await agentStorageSignedUrl(row.storagePath, 86400)
+      } catch {
+        url = null
+      }
+    }
+    out.push({ url, storagePath: row.storagePath, isPrimary: Boolean(row.isPrimary) })
+  }
+  return out
+}
+
 export async function getPrimaryImageUrl(productCode: string, business = DEFAULT_CATALOG_BUSINESS): Promise<string | null> {
   const code = normalizeProductCode(productCode)
   const row = await db.productImage.findFirst({

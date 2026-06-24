@@ -7,6 +7,7 @@ import {
 } from '@/lib/agent-api/orders.service'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listLowStock, listProducts } from '@/lib/agent-api/services/products.service'
+import { getPrimaryImageUrl, listProductImages } from '@/agent/lib/catalog/product-images'
 import { listCustomers } from '@/lib/agent-api/services/customers.service'
 import { listEmployees } from '@/lib/agent-api/services/employees.service'
 import { getAttendanceHistory } from '@/lib/agent-api/services/attendance.service'
@@ -341,7 +342,11 @@ const get_inventory_status: AgentTool = {
 
 const get_product: AgentTool = {
   name: 'get_product',
-  description: 'Search products by name or SKU keyword. Returns matching products with price and stock.',
+  description:
+    'Search products by name or SKU keyword. Returns matching products with price, stock, ' +
+    'a primary catalog image URL and the total image count per product. ' +
+    'When exactly one product matches, ALL its catalog images (4-5) are returned in `images` ' +
+    'so the agent can actually SEE the product to understand or verify a visual task.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -355,7 +360,20 @@ const get_product: AgentTool = {
         search: String(input.query),
         limit: 20,
       })
-      return { success: true, data: { products, meta } }
+      // Attach primary image + count to each product (lightweight).
+      const enriched = await Promise.all(
+        products.map(async (p) => ({
+          ...p,
+          primaryImageUrl: await getPrimaryImageUrl(p.sku).catch(() => null),
+        })),
+      )
+      // When a single product matches, return its full image set so the agent can see it.
+      let images: Array<{ url: string | null; isPrimary: boolean }> | undefined
+      if (enriched.length === 1) {
+        const all = await listProductImages(enriched[0].sku).catch(() => [])
+        images = all.map((i) => ({ url: i.url, isPrimary: i.isPrimary }))
+      }
+      return { success: true, data: { products: enriched, images, meta } }
     } catch (err) {
       return { success: false, error: String(err) }
     }
