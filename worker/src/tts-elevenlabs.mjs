@@ -50,11 +50,19 @@ async function synthesizeChunk(preparedText, opts = {}) {
   if (!voiceId) throw new Error('ElevenLabs voice ID not configured for profile')
   if (!preparedText) throw new Error('No text to synthesize')
 
+  const modelId = ELEVENLABS_MODEL_ID()
   const body = {
     text: preparedText,
-    model_id: ELEVENLABS_MODEL_ID(),
+    model_id: modelId,
     voice_settings: voiceSettings(opts),
-    language_code: 'ben',
+  }
+  // `language_code` is only honored by some models (Turbo/Flash/multilingual_v2).
+  // eleven_v3 REJECTS it outright ("Model 'eleven_v3' does not support
+  // language_code 'ben'" → 400), which silently killed every ElevenLabs call +
+  // call-draft voice preview. v3 auto-detects language from the (Bangla) text, so
+  // we simply omit the field for v3 and keep enforcing 'ben' on models that allow it.
+  if (modelId !== 'eleven_v3') {
+    body.language_code = 'ben'
   }
 
   const format = ELEVENLABS_OUTPUT_FORMAT()
