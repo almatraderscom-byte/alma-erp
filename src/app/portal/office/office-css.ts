@@ -8,6 +8,11 @@
  * are prefixed `oh-` to avoid collisions with ERP animations.
  */
 export const OFFICE_CSS = `
+/* While the office overlay is mounted it is the ONLY scroller: lock the page
+   behind it and kill the browser's native pull-to-refresh, so scrolling back
+   up inside the office never reloads the page. */
+html,body{overscroll-behavior-y:none}
+body:has(.ohub){overflow:hidden;height:100%}
 .ohub{
   --accent:#E07A5F; --accent-lt:#F4A28C; --accent-dim:#C45A3C;
   --bg-0:#121216; --bg-1:#1A1A20; --bg-2:#202027; --bg-3:#26262e;
@@ -22,6 +27,7 @@ export const OFFICE_CSS = `
   --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
   --topbar-h:calc(60px + var(--safe-top));
   position:fixed; inset:0; z-index:70; overflow-y:auto; overflow-x:hidden;
+  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
   font-family:var(--font); background:var(--bg-0); color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.5;
   background-image:

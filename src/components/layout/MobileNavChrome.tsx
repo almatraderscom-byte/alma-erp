@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation'
 import { MobileNav } from '@/components/layout/Sidebar'
 
-const HIDE_PREFIXES = ['/orders/new', '/agent']
+const HIDE_PREFIXES = ['/orders/new', '/agent', '/portal/office']
 
 function useHideMobileChrome() {
   const path = usePathname() ?? ''
