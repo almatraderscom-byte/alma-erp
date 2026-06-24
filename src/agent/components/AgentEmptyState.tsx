@@ -1,14 +1,66 @@
 'use client'
 
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { VoiceOrb } from './voice/VoiceOrb'
 
-const SUGGESTIONS = [
-  { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
-  { text: 'স্টক কম আছে কি চেক করো', icon: '📊' },
-  { text: 'একটা Facebook পোস্ট ড্রাফট করো', icon: '✍️' },
-  { text: 'স্টাফদের আজকের টাস্ক রিভিউ করো', icon: '👥' },
-]
+type Suggestion = { text: string; icon: string }
+type DayPart = 'morning' | 'afternoon' | 'evening' | 'night'
+
+/**
+ * Time-of-day quick suggestions (Phase C). The home grid felt static showing the
+ * same four prompts at every hour; this rotates them by Dhaka day-part so the agent
+ * surfaces what the owner most likely wants right now — start-of-day review in the
+ * morning, sales/approvals at midday, wrap-up + tomorrow's plan in the evening, and
+ * a quiet digest at night. Purely cosmetic; each item is just a seed message.
+ */
+const SUGGESTIONS_BY_PART: Record<DayPart, Suggestion[]> = {
+  morning: [
+    { text: 'আজকের অর্ডার সারাংশ দাও', icon: '📦' },
+    { text: 'স্টাফদের আজকের টাস্ক রিভিউ করো', icon: '👥' },
+    { text: 'স্টক কম আছে কি চেক করো', icon: '📊' },
+    { text: 'আজকের জন্য একটা প্ল্যান বানাও', icon: '🗒️' },
+  ],
+  afternoon: [
+    { text: 'এখন পর্যন্ত আজকের বিক্রি কেমন?', icon: '💰' },
+    { text: 'অনুমোদনের জন্য কী কী পেন্ডিং আছে?', icon: '✅' },
+    { text: 'একটা Facebook পোস্ট ড্রাফট করো', icon: '✍️' },
+    { text: 'স্টক কম আছে কি চেক করো', icon: '📊' },
+  ],
+  evening: [
+    { text: 'আজকের দিনের বিক্রির রিপোর্ট দাও', icon: '📈' },
+    { text: 'কালকের জন্য স্টাফ টাস্ক প্রস্তাব করো', icon: '👥' },
+    { text: 'একটা Facebook পোস্ট ড্রাফট করো', icon: '✍️' },
+    { text: 'আজকের খরচ রিভিউ করো', icon: '🧾' },
+  ],
+  night: [
+    { text: 'আজকের দিনের সারাংশ দাও', icon: '🌙' },
+    { text: 'ব্যবসার আর্থিক অবস্থা কেমন?', icon: '💹' },
+    { text: 'কালকের জন্য কী কী ঠিক করা দরকার?', icon: '🗒️' },
+    { text: 'কোনো রিমাইন্ডার বা ফলো-আপ বাকি আছে?', icon: '🔔' },
+  ],
+}
+
+const GREETING_SUBTITLE: Record<DayPart, string> = {
+  morning: 'শুভ সকাল, Sir — দিনটা শুরু করি',
+  afternoon: 'শুভ দুপুর, Sir — কীভাবে সাহায্য করতে পারি',
+  evening: 'শুভ সন্ধ্যা, Sir — দিনটা গুছিয়ে নিই',
+  night: 'শুভ রাত্রি, Sir — কী দেখে নেবো',
+}
+
+/** Current Dhaka hour → day-part. */
+function dhakaDayPart(now = new Date()): DayPart {
+  const hourStr = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    hour: '2-digit',
+    hour12: false,
+  }).format(now)
+  const hour = Number(hourStr) % 24
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 17) return 'afternoon'
+  if (hour >= 17 && hour < 21) return 'evening'
+  return 'night'
+}
 
 interface AgentEmptyStateProps {
   onSuggestion?: (text: string) => void
@@ -16,6 +68,8 @@ interface AgentEmptyStateProps {
 }
 
 export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: AgentEmptyStateProps) {
+  const dayPart = useMemo(() => dhakaDayPart(), [])
+  const suggestions = SUGGESTIONS_BY_PART[dayPart]
   return (
     <div className="flex flex-col px-4 py-6">
       <div className="flex flex-col items-center text-center mb-6">
@@ -57,7 +111,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15, duration: 0.4 }}
         >
-          Orb-এ ট্যাপ করে কথা বলুন — অথবা নিচে টাইপ করুন
+          {GREETING_SUBTITLE[dayPart]} — Orb-এ ট্যাপ করে কথা বলুন বা টাইপ করুন
         </motion.p>
       </div>
 
@@ -71,7 +125,7 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
             visible: { transition: { staggerChildren: 0.06, delayChildren: 0.25 } },
           }}
         >
-          {SUGGESTIONS.map((s) => (
+          {suggestions.map((s) => (
             <motion.button
               key={s.text}
               type="button"

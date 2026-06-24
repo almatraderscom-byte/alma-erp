@@ -2,6 +2,40 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react'
 
+/**
+ * Pick a recording mimeType the platform actually supports. Chrome/Firefox give us
+ * webm/opus; iOS Safari + the Capacitor WKWebView app only support mp4/aac (they
+ * return false for every webm variant), which is why voice silently failed on the
+ * phone before — we forced webm and got an empty/garbled blob. We probe mp4/aac as
+ * first-class options and fall back to '' (let MediaRecorder choose its default).
+ */
+function pickRecorderMime(): string {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return ''
+  }
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4;codecs=mp4a.40.2',
+    'audio/mp4',
+    'audio/aac',
+    'audio/ogg;codecs=opus',
+  ]
+  for (const c of candidates) {
+    if (MediaRecorder.isTypeSupported(c)) return c
+  }
+  return ''
+}
+
+/** Map a negotiated mimeType to a file extension the transcription backend accepts. */
+function extForMime(mime: string): string {
+  if (/mp4|aac|m4a/i.test(mime)) return 'm4a'
+  if (/ogg/i.test(mime)) return 'ogg'
+  if (/mpeg|mp3/i.test(mime)) return 'mp3'
+  if (/wav/i.test(mime)) return 'wav'
+  return 'webm'
+}
+
 export function useVoiceRecorder(opts: {
   onTranscribed: (text: string) => void
   onError?: (msg: string) => void
@@ -32,16 +66,16 @@ export function useVoiceRecorder(opts: {
       callbacksRef.current.onError?.('মাইক্রোফোন এই ব্রাউজারে সাপোর্ট করে না — HTTPS বা অ্যাপ থেকে খুলুন।')
       return
     }
+    if (typeof MediaRecorder === 'undefined') {
+      callbacksRef.current.onError?.('এই অ্যাপ/ব্রাউজারে অডিও রেকর্ডিং সাপোর্ট করে না — আপডেট করে আবার চেষ্টা করুন।')
+      return
+    }
     try {
       const ms = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
       })
       setStream(ms)
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : ''
+      const mime = pickRecorderMime()
       const mr = mime ? new MediaRecorder(ms, { mimeType: mime }) : new MediaRecorder(ms)
       mrRef.current = mr
       const chunks: Blob[] = []
@@ -56,8 +90,8 @@ export function useVoiceRecorder(opts: {
 
         // iOS/Safari record mp4/aac, not webm — use the negotiated type so the
         // transcription backend gets a correctly-labeled file.
-        const actualType = mrRef.current?.mimeType || mr.mimeType || 'audio/webm'
-        const ext = /mp4|aac|m4a/i.test(actualType) ? 'm4a' : /ogg/i.test(actualType) ? 'ogg' : 'webm'
+        const actualType = mrRef.current?.mimeType || mr.mimeType || mime || 'audio/webm'
+        const ext = extForMime(actualType)
         const blob = new Blob(chunks, { type: actualType })
         if (blob.size < 800) {
           callbacksRef.current.onError?.('অডিও খুব ছোট — আবার বলুন।')

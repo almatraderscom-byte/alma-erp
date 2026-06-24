@@ -182,6 +182,71 @@ async function patchTodoByDutyKey(
   })
 }
 
+/**
+ * Self-healing reconcile (Phase C — permanent fix for the "staff dispatch stuck
+ * pending" bug). A duty can be parked `pending` (approval gate) and then completed
+ * LATE via a path that never re-enters the day-shift loop — e.g. the owner approves
+ * the dispatch hours later and the VPS worker (worker/src/staff/dispatch.mjs) writes
+ * agent_duty_log='done' but does NOT touch agent_todos. Result: the dock todo shows
+ * "approval লাগবে" forever and piles up day after day.
+ *
+ * Fix: every tick, scan today's day_shift todos that are still pending/in_progress
+ * and carry a dutyKey. For each, if the duty is no longer genuinely blocked
+ * (checkDutyApprovalBlock === null) AND its duty_log shows it actually ran
+ * (status done/skipped), flip the todo to completed. Idempotent and cheap (a handful
+ * of rows). Runs regardless of shift status so a late dispatch ALWAYS reconciles.
+ */
+async function reconcileDutyTodosFromLog(date: string): Promise<number> {
+  const { start, end } = dueDateRangeDhaka(date)
+  const stuck = await prisma.agentTodo.findMany({
+    where: {
+      businessId: BUSINESS_ID,
+      source: 'day_shift',
+      status: { in: ['pending', 'in_progress'] },
+      dutyKey: { not: null },
+      dueDate: { gte: start, lte: end },
+    },
+    select: { id: true, title: true, dutyKey: true },
+  })
+  if (stuck.length === 0) return 0
+
+  let healed = 0
+  for (const todo of stuck) {
+    const dutyKey = todo.dutyKey
+    if (!dutyKey) continue
+    try {
+      // Still genuinely waiting on the owner? Leave it pending.
+      const block = await checkDutyApprovalBlock(dutyKey, date, todo.title)
+      if (block) continue
+
+      // No longer blocked — did the duty actually run (late dispatch / approval)?
+      const log = await getDutyLogRow(dutyKey, date)
+      if (!log || (log.status !== 'done' && log.status !== 'skipped')) continue
+
+      const detail = (log.detail ?? '').trim()
+      const doneLine =
+        log.status === 'done'
+          ? `✅ Sir, "${todo.title}" শেষ হয়ে গেছে${detail ? ` — ${detail}` : ''}।`
+          : `✅ Sir, "${todo.title}" সম্পন্ন${detail ? ` — ${detail}` : ' — করার কিছু ছিল না'}।`
+      await patchTodoByDutyKey(dutyKey, date, {
+        status: 'completed',
+        description: doneLine,
+        completedAt: log.ranAt ?? new Date(),
+      })
+      healed += 1
+    } catch (err) {
+      console.warn(
+        `[day-shift] reconcile failed for duty ${dutyKey}:`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+  if (healed > 0) {
+    console.log(`[day-shift] reconcile healed ${healed} stuck duty todo(s) for ${date}`)
+  }
+  return healed
+}
+
 function stripMarkdown(line: string): string {
   return line.replace(/\*\*/g, '').replace(/^✓\s*/, '').replace(/^⚠️\s*/, '').trim()
 }
@@ -543,6 +608,16 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   const date = todayYmdDhaka()
   if (await isOfficeOffForDate(date)) {
     return { ok: true, detail: 'office_off_today' }
+  }
+
+  // Self-heal first — flip any duty todo that was parked pending (approval gate) but
+  // has since been completed out-of-band (e.g. late staff-task dispatch writes
+  // agent_duty_log='done' without touching agent_todos). Runs every tick, before the
+  // patrol/state early-returns, so a late dispatch ALWAYS un-sticks the dock todo.
+  try {
+    await reconcileDutyTodosFromLog(date)
+  } catch (err) {
+    console.warn('[day-shift] duty-todo reconcile failed:', err instanceof Error ? err.message : err)
   }
 
   // Part 2 — every tick, re-nag the owner about anything still awaiting his approval
