@@ -539,6 +539,144 @@ export async function getStaffOfficeData(
   }
 }
 
+// ── Day-end history / archive ───────────────────────────────────────────────
+//
+// The office board for any past day is reconstructed on demand from the durable
+// `agent_staff_task` records (keyed by `proposedFor`, the Dhaka calendar date)
+// plus that day's `office_task_event` rows. No snapshot table or end-of-day job
+// is needed — the source records already persist, so "yesterday's board" is just
+// a date-filtered read of the same data the live board uses.
+
+/** Bangla pretty date label, e.g. "২৪ জুন, মঙ্গলবার", from a YYYY-MM-DD string. */
+function bnDayLabel(ymd: string): string {
+  const d = new Date(`${ymd}T06:00:00Z`) // noon-ish Dhaka, avoids TZ edge flips
+  const dm = new Intl.DateTimeFormat('bn-BD', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'long' }).format(d)
+  const wd = new Intl.DateTimeFormat('bn-BD', { timeZone: 'Asia/Dhaka', weekday: 'long' }).format(d)
+  return `${dm}, ${wd}`
+}
+
+export type ArchiveDaySummary = {
+  date: string
+  label: string
+  total: number
+  done: number
+  approved: number
+  staffCount: number
+}
+
+export type ArchiveStaffRow = {
+  staffId: string
+  name: string
+  initial: string
+  done: number
+  total: number
+}
+
+export type ArchiveDay = {
+  date: string
+  label: string
+  kpis: { total: number; done: number; approved: number; redo: number; selfInitiated: number; staffCount: number }
+  tasks: HubTaskCard[]
+  perStaff: ArchiveStaffRow[]
+  activity: ActivityItem[]
+}
+
+/** Distinct past Dhaka days (most-recent first) that have at least one task. */
+export async function getOfficeHistoryIndex(businessId = 'ALMA_LIFESTYLE', limit = 30): Promise<ArchiveDaySummary[]> {
+  const todayDate = new Date(`${dhakaToday()}T00:00:00Z`)
+  const rows = await prisma.agentStaffTask.findMany({
+    where: { businessId, proposedFor: { lt: todayDate } },
+    select: { proposedFor: true, status: true, verificationStatus: true, staffId: true },
+  })
+
+  const byDay = new Map<string, { total: number; done: number; approved: number; staff: Set<string> }>()
+  for (const r of rows) {
+    if (!r.proposedFor) continue
+    const key = r.proposedFor.toISOString().slice(0, 10)
+    const agg = byDay.get(key) ?? { total: 0, done: 0, approved: 0, staff: new Set<string>() }
+    agg.total += 1
+    if (r.status === 'done') agg.done += 1
+    if (r.verificationStatus === 'owner_approved') agg.approved += 1
+    agg.staff.add(r.staffId)
+    byDay.set(key, agg)
+  }
+
+  return [...byDay.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .slice(0, limit)
+    .map(([date, agg]) => ({
+      date,
+      label: bnDayLabel(date),
+      total: agg.total,
+      done: agg.done,
+      approved: agg.approved,
+      staffCount: agg.staff.size,
+    }))
+}
+
+/** Full read-only board for one past Dhaka day. */
+export async function getOfficeHistoryDay(businessId: string, date: string): Promise<ArchiveDay | null> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  const dayDate = new Date(`${date}T00:00:00Z`)
+  if (Number.isNaN(dayDate.getTime())) return null
+  const nextDay = new Date(dayDate.getTime() + 24 * 60 * 60 * 1000)
+  // Dhaka (UTC+6) calendar day maps to this UTC instant window for events.
+  const sixH = 6 * 60 * 60 * 1000
+  const evGte = new Date(dayDate.getTime() - sixH)
+  const evLt = new Date(nextDay.getTime() - sixH)
+
+  const [tasks, events, staffList] = await Promise.all([
+    prisma.agentStaffTask.findMany({
+      where: { businessId, proposedFor: dayDate },
+      orderBy: { createdAt: 'asc' },
+      select: CARD_SELECT,
+    }),
+    prisma.officeTaskEvent.findMany({
+      where: { businessId, createdAt: { gte: evGte, lt: evLt } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, taskId: true, kind: true, summary: true, actorType: true, createdAt: true },
+    }),
+    prisma.agentStaff.findMany({ where: { businessId }, select: { id: true, name: true } }),
+  ])
+
+  if (tasks.length === 0) return null
+
+  const cards = tasks.map(toCard)
+  const nameById = new Map(staffList.map((s) => [s.id, s.name]))
+
+  const perStaffMap = new Map<string, ArchiveStaffRow>()
+  for (const t of tasks) {
+    const name = nameById.get(t.staffId) ?? t.staff?.name ?? 'অজানা'
+    const row = perStaffMap.get(t.staffId) ?? { staffId: t.staffId, name, initial: initialOf(name), done: 0, total: 0 }
+    row.total += 1
+    if (t.status === 'done') row.done += 1
+    perStaffMap.set(t.staffId, row)
+  }
+
+  return {
+    date,
+    label: bnDayLabel(date),
+    kpis: {
+      total: tasks.length,
+      done: tasks.filter((t) => t.status === 'done').length,
+      approved: tasks.filter((t) => t.verificationStatus === 'owner_approved').length,
+      redo: tasks.filter((t) => t.verificationStatus === 'redo_requested').length,
+      selfInitiated: tasks.filter((t) => t.source === 'staff_initiated').length,
+      staffCount: perStaffMap.size,
+    },
+    tasks: cards,
+    perStaff: [...perStaffMap.values()].sort((a, b) => b.done - a.done),
+    activity: events.map((e) => ({
+      id: e.id,
+      taskId: e.taskId,
+      kind: e.kind,
+      summary: e.summary,
+      actorType: e.actorType,
+      createdAt: e.createdAt.toISOString(),
+    })),
+  }
+}
+
 export async function getTaskThread(taskId: string, businessId = 'ALMA_LIFESTYLE'): Promise<TaskThread> {
   const [task, comments, events] = await Promise.all([
     prisma.agentStaffTask.findFirst({

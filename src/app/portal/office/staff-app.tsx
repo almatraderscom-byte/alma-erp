@@ -104,8 +104,8 @@ export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; 
       </div>
 
       <div className="stage">
-        <div className="phone" style={{ width: '100%', maxWidth: 520 }}>
-          <div className="pscreen">
+        <div className="staffapp">
+          <div className="sscreen">
             <div className="stitle">আমার কাজ · {headerDate}</div>
             <div className="sh1">আসসালামু আলাইকুম, {data.staffName}</div>
             <div className="ssub">
@@ -356,8 +356,8 @@ function StaffDetail({
   const isRedo = t.verificationStatus === 'redo_requested'
 
   return (
-    <div className="phone" style={{ width: '100%', maxWidth: 520 }}>
-      <div className="pscreen">
+    <div className="staffapp">
+      <div className="sscreen">
         <button className="backbtn" onClick={onBack}>
           ← আমার কাজ
         </button>

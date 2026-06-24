@@ -337,4 +337,89 @@ export const OFFICE_CSS = `
 .ohub-notif .ni .nb{font-size:11.5px;color:#AEB2C0;margin-top:2px}
 .ohub-notif .ni .nt{font-size:11px;color:#AEB2C0;margin-top:2px}
 .ohub-notif .nempty{padding:26px 15px;text-align:center;font-size:13px;color:#AEB2C0}
+
+/* ════ header icon buttons (nav toggle + history) ════ */
+.ohub .tbtn{flex-shrink:0;height:40px;min-width:40px;padding:0 12px;border-radius:var(--r-pill);display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  font-family:inherit;font-size:13px;font-weight:600;background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--ink);cursor:pointer;transition:.16s}
+.ohub .tbtn:hover{border-color:var(--border-strong)}
+.ohub .tbtn .tic{font-size:17px;line-height:1}
+.ohub .tbtn .tlbl{display:inline}
+@media(max-width:680px){.ohub .tbtn .tlbl{display:none}.ohub .tbtn{padding:0 11px}}
+
+/* ════ ERP nav drawer (slide-in from left) ════ */
+.ohub-drawer-ov{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);animation:oh-fade .2s ease}
+.ohub-drawer{position:fixed;top:0;left:0;bottom:0;z-index:91;width:280px;max-width:86vw;display:flex;flex-direction:column;
+  font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
+  background:#16161b;border-right:1px solid rgba(255,255,255,0.08);box-shadow:0 0 70px rgba(0,0,0,.7);animation:oh-slidein .24s cubic-bezier(.2,.8,.2,1)}
+@keyframes oh-slidein{from{transform:translateX(-100%)}to{transform:none}}
+.ohub-drawer .dh{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,0.07)}
+.ohub-drawer .dh .logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:17px;background:linear-gradient(135deg,#E07A5F,#C45A3C);box-shadow:0 4px 14px rgba(224,122,95,.45)}
+.ohub-drawer .dh .ttl{flex:1;min-width:0}
+.ohub-drawer .dh .ttl b{display:block;font-size:13px;font-weight:800;letter-spacing:.04em;color:#F4A28C}
+.ohub-drawer .dh .ttl span{display:block;font-size:10.5px;color:#AEB2C0;margin-top:1px}
+.ohub-drawer .dh .x{background:none;border:0;color:#AEB2C0;font-size:22px;cursor:pointer;padding:0 4px;line-height:1}
+.ohub-drawer .dnav{flex:1;overflow-y:auto;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.ohub-drawer .dnav::-webkit-scrollbar{width:7px}
+.ohub-drawer .dnav::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:7px}
+.ohub-drawer .dl{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:12px;text-decoration:none;color:#D0D4E0;
+  border:1px solid transparent;transition:.14s}
+.ohub-drawer .dl:hover{background:rgba(255,255,255,0.05);border-color:rgba(255,255,255,0.08);color:#fff}
+.ohub-drawer .dl.cur{background:linear-gradient(90deg,rgba(224,122,95,.22),transparent);border-color:rgba(224,122,95,.4);color:#F4A28C}
+.ohub-drawer .dl .di{font-size:17px;width:24px;text-align:center;flex-shrink:0}
+.ohub-drawer .dl .dt{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub-drawer .dft{padding:12px 14px;border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:#AEB2C0}
+
+/* ════ day-end history archive ════ */
+.ohub-hist-ov{position:fixed;inset:0;z-index:92;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);
+  display:flex;justify-content:center;align-items:flex-start;padding:34px 16px 60px;overflow-y:auto;animation:oh-fade .2s ease;
+  font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC}
+.ohub-hist{width:100%;max-width:900px;background:#1A1A20;border:1px solid rgba(255,255,255,0.08);border-radius:22px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}
+.ohub-hist .hh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027;position:sticky;top:0;z-index:2}
+.ohub-hist .hh .hic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:18px;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;flex-shrink:0}
+.ohub-hist .hh .ttl{flex:1;min-width:0} .ohub-hist .hh .ttl b{font-size:15.5px;font-weight:700} .ohub-hist .hh .ttl span{display:block;font-size:12px;color:#AEB2C0}
+.ohub-hist .hh .x{background:none;border:0;color:#AEB2C0;font-size:24px;cursor:pointer;padding:0 6px;line-height:1}
+.ohub-hist .hh .back{font-family:inherit;font-size:12.5px;font-weight:600;color:#D0D4E0;background:#26262e;border:1px solid rgba(255,255,255,0.10);border-radius:9999px;padding:7px 13px;cursor:pointer}
+.ohub-hist .hbody{padding:16px 20px;max-height:none}
+.ohub-hist .hloading{padding:50px 20px;text-align:center;color:#AEB2C0;font-size:13.5px}
+/* index: list of days */
+.ohub-hist .hday{display:flex;align-items:center;gap:14px;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;
+  background:#202027;border:1px solid rgba(255,255,255,0.07);border-radius:16px;color:inherit;cursor:pointer;font-family:inherit;transition:.16s}
+.ohub-hist .hday:hover{border-color:rgba(224,122,95,.4);transform:translateY(-1px)}
+.ohub-hist .hday .cal{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;font-size:20px;background:#26262e;border:1px solid rgba(255,255,255,0.08);flex-shrink:0}
+.ohub-hist .hday .info{flex:1;min-width:0}
+.ohub-hist .hday .dt{font-size:14.5px;font-weight:700}
+.ohub-hist .hday .sub{font-size:12.5px;color:#AEB2C0;margin-top:3px}
+.ohub-hist .hday .arr{color:#AEB2C0;font-size:18px}
+.ohub-hist .hempty{padding:50px 20px;text-align:center;color:#AEB2C0;font-size:13.5px}
+/* day board: reuse kpi + stask cards */
+.ohub-hist .hk{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+.ohub-hist .hk .c{background:#202027;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px;text-align:center}
+.ohub-hist .hk .c .v{font-size:23px;font-weight:700} .ohub-hist .hk .c .l{font-size:11px;color:#AEB2C0;margin-top:2px}
+.ohub-hist .hsec{font-size:13px;font-weight:700;color:#D0D4E0;margin:18px 0 10px}
+.ohub-hist .hstaff{display:flex;align-items:center;gap:11px;padding:11px 13px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.ohub-hist .hstaff:last-child{border-bottom:0}
+.ohub-hist .hstaff .nm{flex:1;font-size:13.5px;font-weight:600}
+.ohub-hist .hstaff .ct{font-size:12.5px;color:#AEB2C0}
+.ohub-hist .htask{background:#202027;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px;margin-bottom:9px}
+.ohub-hist .htask .tp{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ohub-hist .htask h4{font-size:14px;font-weight:600;line-height:1.35}
+.ohub-hist .htask .d{font-size:12px;color:#AEB2C0;margin-top:6px}
+@media(max-width:680px){.ohub-hist .hk{grid-template-columns:repeat(2,1fr)}}
+
+/* ════ responsive polish for staff phone view on real devices ════ */
+@media(max-width:680px){
+  .ohub .topbar{position:sticky}
+  .ohub .grid2{gap:14px}
+  .ohub .appr{padding:13px;gap:11px}
+  .ohub .thumb{width:54px;height:54px}
+  .ohub .award .stats{gap:16px}
+  .ohub .award h2.aw,.ohub h2.aw{font-size:20px}
+  .ohub-drawer{width:84vw}
+}
+/* ── real staff app: a clean responsive column (NOT a phone mockup) ──
+   Works full-width on a phone and as a centred card on a PC; grows with
+   content instead of the fixed-height device frame used in the old demo. */
+.ohub .staffapp{width:100%;max-width:560px;margin:0 auto}
+.ohub .sscreen{padding:8px 6px 30px}
+@media(max-width:560px){.ohub .sscreen{padding:4px 2px 24px}}
 `
