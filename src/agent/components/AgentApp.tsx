@@ -15,7 +15,6 @@ import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndic
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { cn } from '@/lib/utils'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
-import { PlanDriveInChat } from '@/agent/components/monitor/PlanDriveInChat'
 
 interface AgentAppProps {
   userName: string
@@ -1280,24 +1279,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             streamMode={streamMode}
             streamVariant={streamVariant}
             compacting={compacting}
-            homePanel={planDrive && planDrive.drives.length > 0 ? (
-              <PlanDriveInChat
-                data={planDrive}
-                onOpenConversation={(cid) => void loadConversation({
-                  id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
-                })}
-                onAction={handlePlanDriveAction}
-              />
-            ) : null}
-            officePanel={planDrive && planDrive.drives.length > 0 ? (
-              <PlanDriveInChat
-                data={planDrive}
-                onOpenConversation={(cid) => void loadConversation({
-                  id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
-                })}
-                onAction={handlePlanDriveAction}
-              />
-            ) : null}
+            planDrive={planDrive}
+            onPlanDriveAction={handlePlanDriveAction}
+            onPlanDriveOpen={(cid) => void loadConversation({
+              id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
+            })}
           />
           )}
           <AgentArtifactsPanel
