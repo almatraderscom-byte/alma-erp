@@ -21,6 +21,9 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname.startsWith('/api/invoice/public')) return true
   if (pathname === '/api/telegram/webhook') return true
   if (pathname === '/api/wa/webhook') return true
+  // ElevenLabs ConvAI post-call webhook — self-protects via HMAC-SHA256 signature
+  // (ElevenLabs-Signature header) + replay window in the route handler; no session cookie.
+  if (pathname === '/api/assistant/voice-call/webhook') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true
