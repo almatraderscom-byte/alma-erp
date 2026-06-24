@@ -10,6 +10,7 @@ import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
 import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
+import { placeOutboundCall } from '@/agent/lib/voice-call'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -716,6 +717,46 @@ export async function POST(
       success: true,
       queued: true,
       message: 'Outbound call approved. Worker will place the call shortly.',
+    })
+  }
+
+  // Two-way Bangla phone call via ElevenLabs Conversational AI. Placed inline on
+  // approval (synchronous API call ~ a few seconds) so the owner gets the
+  // conversation_id immediately; the transcript + summary land later via webhook.
+  if (action.type === 'agent_voice_call') {
+    const p = payload as {
+      phone?: string
+      toNumber?: string
+      recipientName?: string
+      purpose?: string
+      firstMessage?: string
+    }
+    const result = await placeOutboundCall({
+      toNumber: String(p.toNumber ?? p.phone ?? ''),
+      recipientName: p.recipientName,
+      purpose: String(p.purpose ?? ''),
+      firstMessage: String(p.firstMessage ?? ''),
+      conversationId: resolveConversationId(action),
+    })
+    if (!result.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: result.error } },
+      })
+      return Response.json({ error: result.error }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: {
+        status: 'executed',
+        resolvedAt: new Date(),
+        result: { callRecordId: result.callRecordId, elevenConvId: result.elevenConvId, callSid: result.callSid },
+      },
+    })
+    return Response.json({
+      success: true,
+      message: 'কল দেওয়া হয়েছে — রিং হচ্ছে। কথা শেষ হলে সারাংশ পাবেন।',
+      callRecordId: result.callRecordId,
     })
   }
 
