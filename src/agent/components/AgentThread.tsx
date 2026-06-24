@@ -12,6 +12,8 @@ import { AgentTodoDock } from './AgentTodoDock'
 import { useAgentTodosOptional } from './AgentTodoContext'
 import { isFailedStatus, isInProgressStatus } from './todo-panel-utils'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
+import { PlanDriveInlineTurn } from './monitor/PlanDriveInlineTurn'
+import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTimeline'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
@@ -81,6 +83,12 @@ interface AgentThreadProps {
   streamMode?: ThinkingMode
   streamVariant?: ModelVariant
   compacting?: boolean
+  /** Plan-Drive "Live Desk" panel — shown on the home/empty screen above the greeting. */
+  homePanel?: ReactNode
+  /** Plan-Drive data — drives render INLINE inside the relevant conversation turn. */
+  planDrive?: PlanDrivePanelData | null
+  onPlanDriveAction?: (planId: string, action: PlanDriveAction) => void | Promise<void>
+  onPlanDriveOpen?: (conversationId: string) => void
 }
 
 function detectArtifact(text: string): { type: 'code' | 'markdown'; content: string; title: string } | null {
@@ -591,7 +599,7 @@ function AgentModelSwitchCard({
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -606,6 +614,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     () => messages.filter((m) => !m.streaming),
     [messages],
   )
+  // Plan-Drive rows that belong to THIS conversation render inline in its turn.
+  // In the office-shift thread we also surface autonomous follow-ups (plans with
+  // no owner conversation — e.g. promoted stuck todos), so they never hide.
+  const inlineDrives = useMemo(() => {
+    const all = planDrive?.drives ?? []
+    return all.filter((d) =>
+      d.conversationId === conversationId || (isOfficeShift && d.conversationId == null),
+    )
+  }, [planDrive, conversationId, isOfficeShift])
   const streamingMessage = messages.find((m) => m.streaming)
 
   // Two light haptics per turn (Claude-app style on phone), NOT a continuous buzz:
@@ -697,8 +714,21 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
+        {/* Plan-Drive autonomous follow-ups in the office thread — inline accordions
+            (separate from the daily dock above), same Claude-Code step style. */}
+        {isOfficeShift && (
+          <PlanDriveInlineTurn
+            drives={inlineDrives}
+            onAction={onPlanDriveAction}
+            onOpenConversation={onPlanDriveOpen}
+          />
+        )}
+
         {messages.length === 0 && (
-          <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
+          <>
+            {homePanel && <div className="mb-6">{homePanel}</div>}
+            <AgentEmptyState onSuggestion={onQuickSend} onStartVoiceSession={onStartVoiceSession} />
+          </>
         )}
 
         {isOfficeShift && staticMessages.length > 0 && (
@@ -790,6 +820,16 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
 
                   {!isOfficeShift && msg.id === messages[messages.length - 1]?.id && (
                     <InlineAgentTodos />
+                  )}
+
+                  {/* Plan-Drive — inline accordion(s) for this conversation, attached
+                      to the last assistant turn (Claude-Code "headline → expand" feel). */}
+                  {!isOfficeShift && msg.role === 'assistant' && msg.id === messages[messages.length - 1]?.id && (
+                    <PlanDriveInlineTurn
+                      drives={inlineDrives}
+                      onAction={onPlanDriveAction}
+                      onOpenConversation={onPlanDriveOpen}
+                    />
                   )}
 
                   {(!msg.streaming || msg.text) && (

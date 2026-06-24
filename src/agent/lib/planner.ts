@@ -24,12 +24,32 @@ export interface PlanStep {
  *   blocked   — waiting on an owner approval / external signal
  *   done|failed|abandoned — terminal; the driver never touches it again
  */
-export type AutodriveState = 'idle' | 'driving' | 'blocked' | 'done' | 'failed' | 'abandoned'
+/**
+ * Autodrive lifecycle:
+ *  - 'driving'   → actively advancing, auto-picked each due tick.
+ *  - 'blocked'   → waiting on an owner APPROVAL card; auto-resumes the moment the
+ *                  approval clears (still loaded by the tick, re-checks each time).
+ *  - 'escalated' → waiting on an owner DECISION (cost cap hit, too many stalls, or
+ *                  the completion gate said "not done" with no auto-repair). This
+ *                  state is deliberately NOT auto-picked by the tick — otherwise a
+ *                  capped/stuck plan would re-hit the same wall every backoff and
+ *                  spam the owner forever. It stays VISIBLE in the Plan-Drive panel
+ *                  (never dropped) until the owner acts, which re-enrols it.
+ *  - terminal    → 'done' | 'failed' | 'abandoned'.
+ */
+export type AutodriveState = 'idle' | 'driving' | 'blocked' | 'escalated' | 'done' | 'failed' | 'abandoned'
 
 export const TERMINAL_AUTODRIVE_STATES: ReadonlySet<AutodriveState> = new Set<AutodriveState>([
   'done',
   'failed',
   'abandoned',
+])
+
+/** States that are still "in flight" for the owner — shown in the Plan-Drive panel. */
+export const VISIBLE_AUTODRIVE_STATES: ReadonlySet<AutodriveState> = new Set<AutodriveState>([
+  'driving',
+  'blocked',
+  'escalated',
 ])
 
 export interface Plan {
@@ -169,6 +189,33 @@ export async function enrollPlanForAutodrive(
 }
 
 /**
+ * Owner lifts an escalated/blocked plan back into the drive loop (Live Desk
+ * "আবার চালাও"). Clears the stall counter so a fresh attempt budget applies,
+ * wipes the self-check note, and schedules an immediate tick. The per-plan cost
+ * override (if the owner granted more budget) is set separately in autodrive-config.
+ */
+export async function resumeAutodrive(planId: string): Promise<void> {
+  await db.agentPlan.update({
+    where: { id: planId },
+    data: {
+      autodriveState: 'driving',
+      status: 'executing',
+      attemptCount: 0,
+      nextTickAt: new Date(),
+      selfCheckNote: null,
+    },
+  })
+}
+
+/** Owner drops a plan from autodrive (Live Desk "বাদ দাও") — terminal, never re-picked. */
+export async function abandonAutodrive(planId: string): Promise<void> {
+  await db.agentPlan.update({
+    where: { id: planId },
+    data: { autodriveState: 'abandoned', status: 'cancelled', nextTickAt: null },
+  })
+}
+
+/**
  * Transition a plan's autodrive_state (and optionally schedule the next tick /
  * leave a self-check note). Terminal states (done/failed/abandoned) clear the
  * next-tick so the driver never re-picks them.
@@ -273,11 +320,31 @@ export async function loadDrivablePlans(opts?: { limit?: number; now?: Date }): 
   const limit = opts?.limit ?? 20
   const rows = await db.agentPlan.findMany({
     where: {
+      // 'escalated' is intentionally excluded — it waits on an explicit owner
+      // decision and must NOT auto-resume (that was the re-escalation loop).
       autodriveState: { in: ['driving', 'blocked'] },
       OR: [{ nextTickAt: null }, { nextTickAt: { lte: now } }],
     },
     include: { steps: { orderBy: { seq: 'asc' } } },
     orderBy: [{ lastDrivenAt: 'asc' }, { createdAt: 'asc' }],
+    take: limit,
+  })
+  return rows.map(dbPlanToDto)
+}
+
+/**
+ * Load every plan the owner should SEE in the Plan-Drive panel — all non-terminal
+ * autodrive plans (driving / blocked / escalated), regardless of the backoff
+ * window. This is the "never falls through the cracks" guarantee: even a plan
+ * parked until tomorrow, or escalated for an owner decision, stays on screen until
+ * it is genuinely done or the owner abandons it. Read-only.
+ */
+export async function loadVisiblePlanDrives(opts?: { limit?: number }): Promise<Plan[]> {
+  const limit = opts?.limit ?? 50
+  const rows = await db.agentPlan.findMany({
+    where: { autodriveState: { in: ['driving', 'blocked', 'escalated'] } },
+    include: { steps: { orderBy: { seq: 'asc' } } },
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
     take: limit,
   })
   return rows.map(dbPlanToDto)
