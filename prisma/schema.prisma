@@ -3174,10 +3174,13 @@ model OfficeGroupMessage {
   attachments   Json?
   isAgentReply  Boolean  @default(false) @map("is_agent_reply")
   replyToId     String?  @map("reply_to_id")
+  /// 'posted' (visible to all) | 'pending' (agent draft awaiting owner) | 'dismissed'
+  status        String   @default("posted")
   businessId    String   @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@index([businessId, createdAt(sort: Desc)])
+  @@index([businessId, status, createdAt(sort: Desc)])
   @@map("office_group_messages")
 }
 

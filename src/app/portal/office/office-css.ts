@@ -315,6 +315,15 @@ export const OFFICE_CSS = `
 .ohub-chatpanel .gm.me .gb{background:rgba(224,122,95,.13);border-color:rgba(224,122,95,.26);border-radius:14px 4px 14px 14px;color:#F7F8FC}
 .ohub-chatpanel .gm.agent .av{background:linear-gradient(135deg,#10b981,#059669)}
 .ohub-chatpanel .gm.agent .gb{background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.26)}
+.ohub-chatpanel .gm.draft .gb{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.30);border-style:dashed}
+.ohub-chatpanel .gm.draft .nmt .dtag{margin-left:6px;font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:9999px;padding:1px 7px}
+.ohub-chatpanel .gm.draft .dedit{width:100%;min-width:210px;background:#121216;border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:8px 11px;color:#F7F8FC;font-family:inherit;font-size:13px;outline:none;resize:vertical}
+.ohub-chatpanel .gm.draft .dact{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.ohub-chatpanel .gm.draft .dact button{font-family:inherit;font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:9999px;border:0;cursor:pointer}
+.ohub-chatpanel .gm.draft .dact button:disabled{opacity:.5;cursor:not-allowed}
+.ohub-chatpanel .gm.draft .dact .ap{background:linear-gradient(135deg,#10b981,#059669);color:#fff}
+.ohub-chatpanel .gm.draft .dact .ed{background:rgba(255,255,255,.07);color:#D0D4E0;border:1px solid rgba(255,255,255,.12)}
+.ohub-chatpanel .gm.draft .dact .ds{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.3)}
 .ohub-chatpanel .gsys{text-align:center;font-size:11px;color:#AEB2C0}
 .ohub-chatpanel .cp-foot{padding:10px 12px;border-top:1px solid rgba(255,255,255,0.07);background:#202027;display:flex;gap:8px;align-items:center}
 .ohub-chatpanel .cp-foot input{flex:1;background:#121216;border:1px solid rgba(255,255,255,0.10);border-radius:9999px;padding:9px 14px;color:#F7F8FC;font-family:inherit;font-size:13px;outline:none}

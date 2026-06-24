@@ -13,7 +13,11 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [lastSeen, setLastSeen] = useState<string | null>(null)
+  const [actingId, setActingId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Staff message ids we've already asked the agent to draft a reply for, so the
+  // poll loop never re-requests (the server also enforces "reply once").
+  const requestedRef = useRef<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     try {
@@ -24,11 +28,56 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     }
   }, [])
 
+  // Owner only: when a staff posts and the agent hasn't drafted a reply yet,
+  // ask the server to draft ONE (DeepSeek). The draft lands as a pending bubble
+  // the owner approves or dismisses. One request per message.
+  const maybeDraft = useCallback(async () => {
+    if (self !== 'owner') return
+    const msgs = feed.messages
+    if (msgs.length === 0) return
+    // The most recent staff message that has no agent reply (pending/posted) after it.
+    const repliedTo = new Set(
+      msgs.filter((m) => m.authorType === 'agent' && m.replyToId).map((m) => m.replyToId as string),
+    )
+    const target = [...msgs].reverse().find((m) => m.authorType === 'staff' && !repliedTo.has(m.id))
+    if (!target || requestedRef.current.has(target.id)) return
+    requestedRef.current.add(target.id)
+    try {
+      const res = await fetch('/api/assistant/office/chat/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'draft', replyToId: target.id }),
+      })
+      if (res.ok) await load()
+    } catch {
+      /* best-effort */
+    }
+  }, [self, feed.messages, load])
+
   useEffect(() => {
     load()
     const id = setInterval(load, POLL_MS)
     return () => clearInterval(id)
   }, [load])
+
+  useEffect(() => {
+    void maybeDraft()
+  }, [maybeDraft])
+
+  const act = async (id: string, action: 'approve' | 'dismiss', editedBody?: string) => {
+    if (actingId) return
+    setActingId(id)
+    try {
+      const res = await fetch('/api/assistant/office/chat/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, id, body: editedBody }),
+      })
+      if (res.ok) await load()
+    } finally {
+      setActingId(null)
+    }
+  }
 
   useEffect(() => {
     if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -94,9 +143,20 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
             {feed.messages.length === 0 && (
               <div className="gsys">— এখনো কোনো বার্তা নেই। প্রথম বার্তাটি লিখুন। —</div>
             )}
-            {feed.messages.map((m) => (
-              <GroupMsg key={m.id} m={m} self={self} />
-            ))}
+            {feed.messages.map((m) =>
+              m.status === 'pending' ? (
+                <AgentDraft
+                  key={m.id}
+                  m={m}
+                  busy={actingId === m.id}
+                  disabled={actingId !== null}
+                  onApprove={(body) => act(m.id, 'approve', body)}
+                  onDismiss={() => act(m.id, 'dismiss')}
+                />
+              ) : (
+                <GroupMsg key={m.id} m={m} self={self} />
+              ),
+            )}
           </div>
           <div className="cp-foot">
             <input
@@ -136,6 +196,57 @@ function GroupMsg({ m, self }: { m: ChatMessage; self: 'owner' | 'staff' }) {
       <div>
         <div className="nmt">{name}</div>
         <div className="gb">{m.body}</div>
+      </div>
+    </div>
+  )
+}
+
+// Owner-only: a pending agent draft (DeepSeek). The owner reviews it, optionally
+// edits the text, then approves (→ posted for everyone) or dismisses it. Staff
+// never receive 'pending' rows from the server, so this only renders for the owner.
+function AgentDraft({
+  m,
+  busy,
+  disabled,
+  onApprove,
+  onDismiss,
+}: {
+  m: ChatMessage
+  busy: boolean
+  disabled: boolean
+  onApprove: (body?: string) => void
+  onDismiss: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState(m.body)
+
+  return (
+    <div className="gm agent draft">
+      <span className="av">🤖</span>
+      <div>
+        <div className="nmt">
+          Agent <span className="dtag">খসড়া · শুধু আপনি দেখছেন</span>
+        </div>
+        {editing ? (
+          <textarea className="dedit" value={text} onChange={(e) => setText(e.target.value)} rows={3} />
+        ) : (
+          <div className="gb">{m.body}</div>
+        )}
+        <div className="dact">
+          <button
+            className="ap"
+            disabled={disabled || !text.trim()}
+            onClick={() => onApprove(editing ? text.trim() : undefined)}
+          >
+            {busy ? '…' : '✅ পাঠান'}
+          </button>
+          <button className="ed" disabled={disabled} onClick={() => setEditing((v) => !v)}>
+            {editing ? '↩ ফিরে যান' : '✏️ এডিট'}
+          </button>
+          <button className="ds" disabled={disabled} onClick={onDismiss}>
+            ✖ বাতিল
+          </button>
+        </div>
       </div>
     </div>
   )

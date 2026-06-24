@@ -43,7 +43,8 @@ export async function GET(req: NextRequest) {
   const id = await identify(req)
   if (!id.ok) return Response.json({ error: id.error }, { status: id.code })
 
-  const feed = await getGroupMessages(id.businessId)
+  // The owner additionally sees pending agent drafts (to approve/dismiss).
+  const feed = await getGroupMessages(id.businessId, { includePending: id.authorType === 'owner' })
   return Response.json(feed)
 }
 
