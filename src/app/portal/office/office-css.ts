@@ -110,6 +110,7 @@ export const OFFICE_CSS = `
 .ohub .b-redo{background:rgba(239,68,68,.14);color:#fca5a5;border-color:rgba(239,68,68,.3)}
 .ohub .b-carry{background:rgba(139,92,246,.14);color:#c4b5fd;border-color:rgba(139,92,246,.3)}
 .ohub .b-overdue{background:rgba(239,68,68,.18);color:#fca5a5;border-color:rgba(239,68,68,.42)}
+.ohub .b-needowner{display:inline-block;margin:6px 0 2px;background:rgba(245,158,11,.16);color:#fcd34d;border-color:rgba(245,158,11,.36)}
 
 /* deadline (owner board) */
 .ohub .due-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}

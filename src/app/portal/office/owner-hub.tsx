@@ -584,6 +584,7 @@ function ApprovalRow({
           </span>
         </div>
         <h3>{task.title}</h3>
+        {task.needsOwner && <span className="badge b-needowner">🔎 এজেন্ট পারেনি — আপনি যাচাই করুন</span>}
         <div className="meta">{text ? text : meta}</div>
         <div className="actions" onClick={(e) => e.stopPropagation()}>
           <button className="btn primary sm" disabled={busy} onClick={onApprove}>

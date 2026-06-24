@@ -49,6 +49,8 @@ export type HubTaskCard = {
   createdAt: string
   /** Owner-set deadline (ISO), or null if none set yet. */
   dueAt: string | null
+  /** Supervisor couldn't auto-verify/understand this → owner must review (the ~10%). */
+  needsOwner: boolean
 }
 
 export type OverdueUpdateCard = {
@@ -189,6 +191,7 @@ function toCard(t: {
   staffId: string
   createdAt: Date
   dueAt?: Date | null
+  supervisorNeedsOwner?: boolean
   staff: { name: string } | null
 }): HubTaskCard {
   return {
@@ -208,6 +211,7 @@ function toCard(t: {
     staffName: t.staff?.name ?? 'অজানা',
     createdAt: t.createdAt.toISOString(),
     dueAt: t.dueAt ? t.dueAt.toISOString() : null,
+    needsOwner: Boolean(t.supervisorNeedsOwner),
   }
 }
 
@@ -227,6 +231,7 @@ const CARD_SELECT = {
   staffId: true,
   createdAt: true,
   dueAt: true,
+  supervisorNeedsOwner: true,
   staff: { select: { name: true } },
 } as const
 
@@ -250,7 +255,12 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const lunchDate = today // Dhaka YYYY-MM-DD, matches StaffLunch.lunchDate
   const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows] = await Promise.all([
     prisma.agentStaffTask.findMany({
-      where: { businessId, verificationStatus: { in: [...PENDING_REVIEW_VS] } },
+      // Owner review queue: proof awaiting review + anything the supervisor
+      // couldn't auto-verify/understand and handed to the owner (the ~10%).
+      where: {
+        businessId,
+        OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true, status: { not: 'done' } }],
+      },
       orderBy: { createdAt: 'asc' },
       select: CARD_SELECT,
     }),
@@ -265,6 +275,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
         proposedFor: todayDate,
         status: { in: [...ACTIVE_STATUSES] },
         verificationStatus: { notIn: [...PENDING_REVIEW_VS] },
+        supervisorNeedsOwner: false,
       },
       orderBy: { createdAt: 'asc' },
       take: 12,

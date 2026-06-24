@@ -9,7 +9,7 @@
  */
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { pushStaffPing } from '@/agent/lib/office-notify'
+import { pushStaffPing, pushOwnerPing } from '@/agent/lib/office-notify'
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 
@@ -318,4 +318,136 @@ export async function decideSelfInitiated(
   })
   await pushStaffPing(task.staff, approve ? 'আপনার কাজ অনুমোদিত ✨' : 'কাজ অনুমোদন হয়নি', task.title)
   return { ok: true, status: approve ? 'sent' : 'cancelled' }
+}
+
+// ── Phase-2 supervisor actions (agent acting autonomously on ~90% of tasks) ──
+
+/**
+ * Supervisor auto-verifies a task and closes it (done). This is the agent
+ * standing in for the owner on the ~90% it can confirm. Records an agent
+ * timeline event and notifies the staff. `evidence` is a short Bangla note on
+ * how it was verified (e.g. "ছবি যাচাই হয়েছে — QC 88/100").
+ */
+export async function agentAutoVerify(
+  taskId: string,
+  businessId: string,
+  args: { evidence?: string; method?: string } = {},
+): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  const now = new Date()
+  const evidence = args.evidence?.trim() || 'এজেন্ট স্বয়ংক্রিয়ভাবে যাচাই করেছে'
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'done',
+        verificationStatus: 'auto_verified',
+        completedAt: now,
+        supervisorNeedsOwner: false,
+        supervisorLastTickAt: now,
+        proofData: {
+          ...((task.proofData as object) ?? {}),
+          agentVerifiedAt: now.toISOString(),
+          agentEvidence: evidence,
+          agentMethod: args.method ?? 'supervisor',
+        },
+      },
+    })
+    await logEvent(tx, {
+      taskId,
+      kind: 'agent_verified',
+      summary: `এজেন্ট যাচাই করে কাজটি সম্পন্ন করেছে ✅ — ${evidence}`,
+      actorType: 'agent',
+      businessId,
+      meta: { method: args.method ?? 'supervisor' },
+    })
+    await notifyStaff(tx, {
+      staffId: task.staff.id,
+      taskId,
+      kind: 'approved',
+      title: 'কাজ যাচাই হয়েছে ✅',
+      body: task.title,
+      businessId,
+    })
+  })
+  await pushStaffPing(task.staff, 'কাজ যাচাই হয়েছে ✅', task.title)
+  return { ok: true, status: 'done' }
+}
+
+/** Supervisor sends a task back for redo (failed verification) — actorType agent. */
+export async function agentRequestRedo(taskId: string, businessId: string, note: string): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  const trimmed = note?.trim() || 'কাজটি আবার ঠিক করে পাঠান'
+  const redoCount = (task.redoCount ?? 0) + 1
+  const now = new Date()
+
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'sent',
+        verificationStatus: 'redo_requested',
+        reviewerNote: trimmed,
+        redoCount,
+        proofType: null,
+        completedAt: null,
+        supervisorLastTickAt: now,
+        proofData: { redoAt: now.toISOString(), redoCount, by: 'agent' },
+      },
+    })
+    await tx.officeComment.create({
+      data: { taskId, authorType: 'agent', kind: 'revision_request', body: trimmed, businessId },
+    })
+    await logEvent(tx, {
+      taskId,
+      kind: 'redo_requested',
+      summary: `এজেন্ট সংশোধন চেয়েছে: ${trimmed}`,
+      actorType: 'agent',
+      businessId,
+      meta: { redoCount },
+    })
+    await notifyStaff(tx, {
+      staffId: task.staff.id,
+      taskId,
+      kind: 'redo',
+      title: 'সংশোধন দরকার 🔄',
+      body: trimmed,
+      businessId,
+    })
+  })
+  await pushStaffPing(task.staff, 'সংশোধন দরকার 🔄', trimmed)
+  return { ok: true, status: 'sent' }
+}
+
+/**
+ * Supervisor gives up on a task it cannot auto-verify or understand and hands it
+ * to the owner (the ~10%). Sets `supervisorNeedsOwner`, records the reason, and
+ * pings the owner. Staff are NOT notified (nothing for them to do yet).
+ */
+export async function escalateToOwner(taskId: string, businessId: string, reason: string): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+  if (task.supervisorNeedsOwner) return { ok: true, status: task.status }
+
+  const trimmed = reason?.trim() || 'এজেন্ট নিশ্চিত হতে পারেনি'
+  const now = new Date()
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({
+      where: { id: taskId },
+      data: { supervisorNeedsOwner: true, supervisorLastTickAt: now, escalatedAt: now },
+    })
+    await logEvent(tx, {
+      taskId,
+      kind: 'supervisor_escalated',
+      summary: `এজেন্ট নিশ্চিত হতে পারেনি — Boss যাচাই করবেন: ${trimmed}`,
+      actorType: 'agent',
+      businessId,
+    })
+  })
+  await pushOwnerPing('যাচাই দরকার 🔎', `"${task.title}" — ${trimmed}`)
+  return { ok: true, status: task.status }
 }

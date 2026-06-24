@@ -2093,6 +2093,13 @@ model AgentStaffTask {
   lastStaffUpdateAt  DateTime?                      @map("last_staff_update_at")
   /// Set once the unanswered request was escalated to the owner (countdown over).
   escalatedAt        DateTime?                      @map("escalated_at")
+  // ── Phase-2 DeepSeek supervisor state. ──
+  /// How many clarifying questions the supervisor has asked the staff (capped at 2).
+  supervisorClarifyCount Int                        @default(0) @map("supervisor_clarify_count")
+  /// Task the supervisor couldn't auto-verify/understand → owner must review (the ~10%).
+  supervisorNeedsOwner   Boolean                    @default(false) @map("supervisor_needs_owner")
+  /// Last time the supervisor acted on this task (debounce + re-triage marker).
+  supervisorLastTickAt   DateTime?                  @map("supervisor_last_tick_at")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")
@@ -2105,6 +2112,7 @@ model AgentStaffTask {
   @@index([status])
   @@index([businessId, proposedFor, status])
   @@index([businessId, dueAt])
+  @@index([businessId, status, supervisorNeedsOwner])
   @@map("staff_tasks")
 }
 
