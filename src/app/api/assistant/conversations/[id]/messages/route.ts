@@ -55,13 +55,44 @@ export async function GET(
       if (b?.type === 'confirm_card' && typeof b.pendingActionId === 'string') cardIds.add(b.pendingActionId)
     }
   }
+
+  // ROBUST RECONSTRUCTION: the in-content breadcrumb is fragile — for some tools
+  // (notably the two-way agent call) it never lands in the saved message, so the
+  // approve/reject decision vanished on reload. The durable source of truth is the
+  // agent_pending_actions table, which ALWAYS carries conversationId. Pull every
+  // action for this conversation; this both supplies live status for existing
+  // breadcrumbs AND lets us synthesize cards that were never breadcrumbed.
+  const allActions = await prisma.agentPendingAction.findMany({
+    where: { conversationId: id },
+    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
   const statusById = new Map<string, string>()
-  if (cardIds.size > 0) {
-    const actions = await prisma.agentPendingAction.findMany({
-      where: { id: { in: [...cardIds] } },
-      select: { id: true, status: true },
-    })
-    for (const a of actions) statusById.set(a.id, a.status)
+  for (const a of allActions) statusById.set(a.id, a.status)
+
+  // For any action with no breadcrumb anywhere in the saved messages, attach a
+  // synthetic confirm-card block to the earliest assistant message at/after the
+  // action's creation time (the turn that asked for confirmation). Fallback: the
+  // last assistant message, so the card is never lost.
+  const assistantMsgs = messages.filter((m) => m.role === 'assistant')
+  const syntheticByMsg = new Map<string, Array<Record<string, unknown>>>()
+  for (const a of allActions) {
+    if (cardIds.has(a.id)) continue
+    const target =
+      assistantMsgs.find((m) => m.createdAt >= a.createdAt) ??
+      assistantMsgs[assistantMsgs.length - 1]
+    if (!target) continue
+    const block: Record<string, unknown> = {
+      type: 'confirm_card',
+      pendingActionId: a.id,
+      summary: a.summary ?? '',
+      actionType: a.type,
+      status: a.status,
+    }
+    if (a.costEstimate != null) block.costEstimate = a.costEstimate
+    const list = syntheticByMsg.get(target.id) ?? []
+    list.push(block)
+    syntheticByMsg.set(target.id, list)
   }
 
   // Surface cache tokens (hidden inside the usage JSON) so the UI can show the
@@ -72,13 +103,20 @@ export async function GET(
     // Inject the live status onto each persisted confirm-card block. A missing
     // action row (purged) is treated as 'expired' so the card settles, never
     // re-arming an approve/reject for an action that no longer exists.
-    const content = Array.isArray(m.content)
+    const baseContent = Array.isArray(m.content)
       ? (m.content as Array<Record<string, unknown>>).map((b) =>
           b?.type === 'confirm_card' && typeof b.pendingActionId === 'string'
             ? { ...b, status: statusById.get(b.pendingActionId) ?? 'expired' }
             : b,
         )
       : m.content
+    // Append any synthetic cards reconstructed from agent_pending_actions for
+    // actions that were never breadcrumbed into this message's saved content.
+    const synthetic = syntheticByMsg.get(m.id)
+    const content =
+      synthetic && Array.isArray(baseContent)
+        ? [...baseContent, ...synthetic]
+        : baseContent
     return {
       ...m,
       content,
