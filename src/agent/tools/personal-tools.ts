@@ -132,8 +132,91 @@ export const call_family_member: AgentTool = {
   },
 }
 
+export const place_agent_call: AgentTool = {
+  name: 'place_agent_call',
+  description:
+    'Place a REAL two-way Bangla phone call where the agent itself talks AND listens. ' +
+    'Unlike call_family_member (one-way TTS message), this holds a live conversation: the ' +
+    'agent speaks in the owner\'s Bangla voice, hears the other person\'s replies, and after ' +
+    'the call reports back a transcript + summary. Use when the owner wants the agent to ' +
+    '"কাউকে কল দিয়ে জিজ্ঞেস করো / কথা বলো / জেনে নাও" — family, friends, or work. ' +
+    'Resolve a saved contact when a name/relation is given, else accept a raw number. ' +
+    'Creates a confirm card — owner approves before it dials. Cost is high; use sparingly.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      relationOrName: { type: 'string', description: 'Saved contact name/relation (e.g. "মা", "ভাই"). Optional if phone given.' },
+      phone: { type: 'string', description: 'Raw number (01XXXXXXXXX or +880…). Optional if relationOrName resolves.' },
+      purpose: { type: 'string', description: 'Why we are calling, in Bangla — steers the conversation (e.g. "কালকের ডেলিভারি কনফার্ম করো").' },
+      firstMessage: { type: 'string', description: 'First Bangla line the agent speaks when picked up. Optional — sensible default used.' },
+      conversationId: { type: 'string' },
+    },
+    required: ['purpose'],
+  },
+  handler: async (input) => {
+    try {
+      const needle = String(input.relationOrName ?? '').trim()
+      const rawPhone = String(input.phone ?? '').trim()
+      const purpose = String(input.purpose ?? '').trim()
+      if (!purpose) return { success: false, error: 'purpose is required' }
+      if (!needle && !rawPhone) return { success: false, error: 'relationOrName বা phone — একটা লাগবে' }
+
+      let recipientName: string | undefined
+      let phone: string | null = null
+
+      if (needle) {
+        const contacts = await db.familyContact.findMany({
+          select: { id: true, name: true, relation: true, phone: true },
+        })
+        const contact = contacts.find(
+          (c: { name: string; relation: string }) =>
+            c.relation.includes(needle) ||
+            c.name.includes(needle) ||
+            needle.includes(c.relation) ||
+            needle.includes(c.name),
+        )
+        if (contact) {
+          recipientName = contact.name
+          phone = normalizeOutboundPhone(contact.phone)
+        } else if (!rawPhone) {
+          return {
+            success: true,
+            data: { status: 'not_found', message: `"${needle}" নামে contact সেভ নেই। নাম্বার দিন বা আগে add করুন।` },
+          }
+        }
+      }
+      if (!phone && rawPhone) phone = normalizeOutboundPhone(rawPhone)
+      if (!phone) return { success: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… দিন।' }
+
+      const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, কেমন আছেন?'
+      const who = recipientName ?? phone
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'agent_voice_call',
+          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage },
+          summary: `📞 ${who} কে লাইভ কল — "${purpose.slice(0, 60)}"`,
+          costEstimate: 0.5,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: {
+          status: 'confirm_required',
+          pendingActionId: action.id,
+          message: `${who} কে লাইভ কল করার জন্য confirm করুন। কথা শেষ হলে সারাংশ পাবেন।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const FAMILY_TOOLS: AgentTool[] = [
   add_family_contact,
   list_family_contacts,
   call_family_member,
+  place_agent_call,
 ]

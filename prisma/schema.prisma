@@ -3066,3 +3066,28 @@ model AgentPlanStep {
   @@index([planId, seq])
   @@map("agent_plan_steps")
 }
+
+/// Agent-placed outbound phone calls (ElevenLabs Conversational AI + Twilio).
+/// One row per call: status while live, full transcript + summary after the
+/// ElevenLabs post-call webhook fires. Keyed to ElevenLabs' conversation_id.
+model AgentVoiceCall {
+  id             String    @id @default(uuid())
+  elevenConvId   String?   @unique @map("eleven_conversation_id")
+  callSid        String?   @map("call_sid")
+  toNumber       String    @map("to_number")
+  recipientName  String?   @map("recipient_name")
+  purpose        String?
+  firstMessage   String?   @map("first_message")
+  status         String    @default("initiated")
+  transcript     Json?
+  summary        String?
+  durationSecs   Int?      @map("duration_secs")
+  costCredits    Int?      @map("cost_credits")
+  conversationId String?   @map("conversation_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  endedAt        DateTime? @map("ended_at")
+
+  @@index([status, createdAt])
+  @@index([conversationId])
+  @@map("agent_voice_calls")
+}
