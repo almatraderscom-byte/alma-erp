@@ -56,6 +56,7 @@ type MessageRow = {
     summary?: string
     actionType?: string
     costEstimate?: number
+    status?: string
   }>
   tokensIn: number | null
   tokensOut: number | null
@@ -88,6 +89,9 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             summary: confirmBlock.summary ?? '',
             costEstimate: confirmBlock.costEstimate,
             actionType: confirmBlock.actionType,
+            // Persisted/reloaded cards carry their resolved status so the card
+            // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
+            resolvedStatus: confirmBlock.status,
           }
         : undefined,
     }

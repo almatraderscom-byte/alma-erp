@@ -15,6 +15,23 @@ export interface PendingAction {
   entryCount?: number
   isFinance?: boolean
   isBatch?: boolean
+  /**
+   * Only set for cards rebuilt from history on page reload. Carries the current
+   * pending-action status ('approved' | 'executed' | 'rejected' | 'expired' |
+   * 'failed' | 'pending'). A resolved value renders a static record breadcrumb
+   * instead of a fresh actionable card; 'pending'/undefined → normal interactive
+   * card. Live cards from the SSE stream never set this.
+   */
+  resolvedStatus?: string
+}
+
+/** Settled-record presentation for a confirm card rebuilt from history. */
+const RESOLVED_RECORD: Record<string, { icon: string; label: string; tone: string; text: string }> = {
+  approved: { icon: '✅', label: 'অনুমোদিত', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700', text: 'আপনি অনুমোদন করেছিলেন' },
+  executed: { icon: '✅', label: 'অনুমোদিত ও সম্পন্ন', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700', text: 'আপনি অনুমোদন করেছিলেন — কাজটি সম্পন্ন হয়েছে' },
+  rejected: { icon: '❌', label: 'বাতিল', tone: 'border-red-200 bg-red-50 text-red-600', text: 'আপনি বাতিল করেছিলেন' },
+  expired: { icon: '⏱️', label: 'সময় শেষ', tone: 'border-slate-200 bg-slate-50 text-slate-600', text: 'সময় শেষ হয়ে গিয়েছিল — সিদ্ধান্ত নেওয়া হয়নি' },
+  failed: { icon: '⚠️', label: 'ব্যর্থ', tone: 'border-amber-200 bg-amber-50 text-amber-700', text: 'অনুমোদন করেছিলেন, কিন্তু কাজটি ব্যর্থ হয়েছে' },
 }
 
 type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled'
@@ -59,6 +76,29 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       .then((d) => { if (d?.editFields) setEditFields(d.editFields as string[]) })
       .catch(() => {})
   }, [action.id, action.isFinance])
+
+  // Reloaded-from-history card whose action is already resolved → show a static
+  // record so the owner can SEE that they approved/rejected and that the tool was
+  // called, instead of the card silently vanishing on refresh. Live cards (from
+  // the SSE stream) never set resolvedStatus, so they keep the interactive flow.
+  if (action.resolvedStatus && action.resolvedStatus !== 'pending') {
+    const rec = RESOLVED_RECORD[action.resolvedStatus] ?? RESOLVED_RECORD.expired
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: 'easeOut' }}
+        className={`mt-3 w-full max-w-full overflow-hidden rounded-2xl border px-3.5 py-2.5 text-xs shadow-card ${rec.tone}`}
+      >
+        <div className="flex items-center gap-1.5 font-semibold">
+          <span aria-hidden>{rec.icon}</span>
+          <span>{rec.label}</span>
+          <span className="ml-auto text-[10px] font-normal opacity-70">{rec.text}</span>
+        </div>
+        <pre className="mt-1.5 max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-[11px] leading-relaxed text-cream opacity-90">{action.summary}</pre>
+      </motion.div>
+    )
+  }
 
   async function resolve(decision: 'approve' | 'reject') {
     if (phase !== 'idle' && phase !== 'editing') return
