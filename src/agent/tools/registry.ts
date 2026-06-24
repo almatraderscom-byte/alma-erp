@@ -327,7 +327,7 @@ const delete_memory: AgentTool = {
 
 /** Personal reminders only — no business urgent/outbound tools (use call_family_member). */
 const PERSONAL_REMINDER_TOOLS: AgentTool[] = REMINDER_TOOLS.filter(
-  (t) => !['send_urgent_alert', 'get_outbound_call_status', 'outbound_phone_call'].includes(t.name),
+  (t) => !['send_urgent_alert', 'get_outbound_call_status', 'outbound_phone_call', 'preview_call_voice'].includes(t.name),
 )
 
 export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
