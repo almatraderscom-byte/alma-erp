@@ -336,7 +336,6 @@ const outbound_phone_call: AgentTool = {
       const rate = await checkOutboundCallRateLimit()
       if (!rate.ok) return { success: false, error: rate.error }
 
-      const conversationId = input.conversationId ? String(input.conversationId) : null
       {
         const recent = await db.agentPendingAction.findMany({
           where: {
@@ -353,6 +352,38 @@ const outbound_phone_call: AgentTool = {
           return outboundWasDialed(r as Parameters<typeof outboundWasDialed>[0])
         })
         if (duplicate) {
+          // A still-PENDING card is an editable draft (not yet dialing). The old code
+          // refused outright here, which stranded every redraft AND suppressed the voice
+          // preview (the preview only fires when a card surfaces this turn). Instead,
+          // update the draft in place with the latest wording/voice and re-surface it:
+          // returning pendingActionId makes core.ts emit a fresh confirm_card, which the
+          // delivery layer turns into a NEW voice preview — so Sir always hears the
+          // CURRENT message. No reject-then-recreate dance, no "duplicate" dead-ends.
+          if (duplicate.status === 'pending') {
+            const updated = await db.agentPendingAction.update({
+              where: { id: duplicate.id },
+              data: {
+                payload: {
+                  phone,
+                  message,
+                  ttsProvider: input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
+                  voiceGender: input.voiceGender === 'female' ? 'female' : 'male',
+                },
+                summary: `📞 কল → ${phone}\n\n🗣️ "${message.slice(0, 300)}"`,
+              },
+            })
+            return {
+              success: true,
+              data: {
+                pendingActionId: updated.id,
+                phone,
+                updatedExisting: true,
+                message:
+                  'Existing draft updated with the new wording — confirm card refreshed and the voice preview re-sent. Sir must Approve before dialing.',
+              },
+            }
+          }
+          // Already approved / dialing / dialed → must NOT be edited or duplicated; just report.
           const summary = summarizeOutboundAction(duplicate)
           return {
             success: true,
@@ -365,7 +396,7 @@ const outbound_phone_call: AgentTool = {
               dialed: summary.dialed,
               answered: summary.answered,
               message:
-                'Existing outbound call for this number — use get_outbound_call_status to report status; do not create another card.',
+                'A call to this number is already approved/in progress — use get_outbound_call_status to report; do not create another card.',
             },
           }
         }
@@ -400,6 +431,73 @@ const outbound_phone_call: AgentTool = {
   },
 }
 
+const preview_call_voice: AgentTool = {
+  name: 'preview_call_voice',
+  description:
+    'Re-sends the VOICE PREVIEW (spoken audio) of a pending outbound-call draft so Sir can HEAR the exact words before approving. ' +
+    'Use whenever Sir asks to hear/replay the call message ("voice শোনাও / draft শুনি / আগে শোনাও / let me hear it"). ' +
+    'You DO have this capability — never tell Sir you cannot play or preview the call audio. ' +
+    'Defaults to the most recent pending draft; pass phone or pendingActionId to target a specific one.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      pendingActionId: { type: 'string', description: 'Specific draft to preview. Optional — defaults to the latest pending draft.' },
+      phone: { type: 'string', description: 'Target the latest pending draft for this number. Optional.' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const phoneFilter = input.phone ? normalizeOutboundPhone(String(input.phone)) : null
+      let row: { id: string; type?: string; status?: string; payload?: { phone?: string } } | null = null
+
+      if (input.pendingActionId) {
+        row = await db.agentPendingAction.findUnique({ where: { id: String(input.pendingActionId) } })
+        if (row && (row.type !== 'outbound_call' || row.status !== 'pending')) row = null
+      }
+      if (!row) {
+        const rows = await db.agentPendingAction.findMany({
+          where: {
+            type: 'outbound_call',
+            status: 'pending',
+            createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        })
+        const filtered = phoneFilter
+          ? rows.filter((r: { payload: { phone?: string } }) =>
+              normalizeOutboundPhone(String(r.payload?.phone ?? '')) === phoneFilter)
+          : rows
+        row = filtered[0] ?? null
+      }
+
+      if (!row) {
+        return {
+          success: true,
+          data: {
+            noPendingDraft: true,
+            message: 'No pending call draft to preview — create one with outbound_phone_call first (it auto-sends the voice).',
+          },
+        }
+      }
+
+      // Returning pendingActionId makes core.ts emit a confirm_card for this still-pending
+      // draft; the delivery layer turns that into a fresh voice preview Sir can hear.
+      return {
+        success: true,
+        data: {
+          pendingActionId: row.id,
+          phone: String(row.payload?.phone ?? ''),
+          previewResent: true,
+          message: 'Voice preview re-sent — Sir can hear the draft now; ask him to Approve when satisfied.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const REMINDER_TOOLS: AgentTool[] = [
   set_reminder,
   list_reminders,
@@ -407,5 +505,6 @@ export const REMINDER_TOOLS: AgentTool[] = [
   snooze_reminder,
   send_urgent_alert,
   get_outbound_call_status,
+  preview_call_voice,
   outbound_phone_call,
 ]

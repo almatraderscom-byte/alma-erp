@@ -23,6 +23,8 @@ const mockPrisma = {
   agentPendingAction: {
     create: vi.fn(),
     findMany: vi.fn(),
+    update: vi.fn(),
+    findUnique: vi.fn(),
   },
   agentSalahOverride: {
     deleteMany: vi.fn(),
@@ -333,5 +335,99 @@ describe('get_salah_status', () => {
     const result = await handler({})
     expect(result.success).toBe(true)
     expect((result.data as Record<string, unknown>).date).toBe('2026-06-16')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// outbound_phone_call — redraft / dedup behavior (locks the call-voice fix)
+// ═══════════════════════════════════════════════════════════════════════════
+describe('outbound_phone_call', () => {
+  it('creates a fresh pending card (returns pendingActionId) when no duplicate exists', async () => {
+    const handler = await loadHandler('outbound_phone_call')
+    mockPrisma.agentPendingAction.findMany.mockResolvedValue([])
+    mockPrisma.agentPendingAction.create.mockResolvedValue({ id: 'pa-new' })
+
+    const result = await handler({ phone: '+8801711111111', message: 'স্যার সালাম' })
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    expect(data.pendingActionId).toBe('pa-new')
+    expect(mockPrisma.agentPendingAction.create).toHaveBeenCalledOnce()
+  })
+
+  it('UPDATES an existing pending draft in place (re-surfaces card + voice) instead of refusing', async () => {
+    const handler = await loadHandler('outbound_phone_call')
+    mockPrisma.agentPendingAction.findMany.mockResolvedValue([
+      { id: 'pa-draft', status: 'pending', payload: { phone: '+8801711111111' } },
+    ])
+    mockPrisma.agentPendingAction.update.mockResolvedValue({ id: 'pa-draft' })
+
+    const result = await handler({ phone: '+8801711111111', message: 'নতুন কথা' })
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    // Must re-surface the SAME card so a fresh voice preview fires this turn.
+    expect(data.pendingActionId).toBe('pa-draft')
+    expect(data.updatedExisting).toBe(true)
+    expect(mockPrisma.agentPendingAction.update).toHaveBeenCalledOnce()
+    expect(mockPrisma.agentPendingAction.create).not.toHaveBeenCalled()
+    // The new wording is persisted to the draft payload.
+    const updateArg = mockPrisma.agentPendingAction.update.mock.calls[0][0]
+    expect(updateArg.where.id).toBe('pa-draft')
+    expect(updateArg.data.payload.message).toBe('নতুন কথা')
+  })
+
+  it('still REFUSES to duplicate a call that is already approved/dialed (reports instead)', async () => {
+    const handler = await loadHandler('outbound_phone_call')
+    mockPrisma.agentPendingAction.findMany.mockResolvedValue([
+      { id: 'pa-live', status: 'approved', payload: { phone: '+8801711111111' } },
+    ])
+
+    const result = await handler({ phone: '+8801711111111', message: 'আবার কল' })
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    expect(data.duplicatePrevented).toBe(true)
+    // No new card, no draft edit on an in-flight call.
+    expect(mockPrisma.agentPendingAction.create).not.toHaveBeenCalled()
+    expect(mockPrisma.agentPendingAction.update).not.toHaveBeenCalled()
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// preview_call_voice — replays the spoken draft (capability must exist)
+// ═══════════════════════════════════════════════════════════════════════════
+describe('preview_call_voice', () => {
+  it('returns the latest pending draft pendingActionId to re-trigger the voice', async () => {
+    const handler = await loadHandler('preview_call_voice')
+    mockPrisma.agentPendingAction.findMany.mockResolvedValue([
+      { id: 'pa-latest', type: 'outbound_call', status: 'pending', payload: { phone: '+8801711111111' } },
+    ])
+
+    const result = await handler({})
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    expect(data.pendingActionId).toBe('pa-latest')
+    expect(data.previewResent).toBe(true)
+  })
+
+  it('targets a specific draft by pendingActionId when given', async () => {
+    const handler = await loadHandler('preview_call_voice')
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValue({
+      id: 'pa-target', type: 'outbound_call', status: 'pending', payload: { phone: '+8801722222222' },
+    })
+
+    const result = await handler({ pendingActionId: 'pa-target' })
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    expect(data.pendingActionId).toBe('pa-target')
+    expect(mockPrisma.agentPendingAction.findUnique).toHaveBeenCalledOnce()
+  })
+
+  it('reports noPendingDraft (does NOT deny capability) when nothing is pending', async () => {
+    const handler = await loadHandler('preview_call_voice')
+    mockPrisma.agentPendingAction.findMany.mockResolvedValue([])
+
+    const result = await handler({})
+    expect(result.success).toBe(true)
+    const data = result.data as Record<string, unknown>
+    expect(data.noPendingDraft).toBe(true)
   })
 })
