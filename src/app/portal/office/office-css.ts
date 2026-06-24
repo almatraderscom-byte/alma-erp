@@ -422,4 +422,70 @@ export const OFFICE_CSS = `
 .ohub .staffapp{width:100%;max-width:560px;margin:0 auto}
 .ohub .sscreen{padding:8px 6px 30px}
 @media(max-width:560px){.ohub .sscreen{padding:4px 2px 24px}}
+
+/* ════ profile-photo avatars (real ERP images) ════ */
+.ohub .av.img{background-size:cover;background-position:center;background-repeat:no-repeat;color:transparent}
+.ohub .photo.img{background-size:cover;background-position:center;background-repeat:no-repeat;font-size:0}
+.ohub a.btn{text-decoration:none}
+
+/* ════ owner hero row: performer + daily motivation (req 4) ════ */
+.ohub .hero-row{display:flex;gap:18px;align-items:stretch;margin-bottom:22px}
+.ohub .hero-row .award{flex:2 1 360px;margin-bottom:0}
+.ohub .hero-row .motiv{flex:1 1 250px}
+@media(max-width:820px){.ohub .hero-row{flex-direction:column}}
+
+/* ════ daily motivation card (req 4) ════ */
+.ohub .motiv{position:relative;overflow:hidden;border-radius:var(--r-lg);padding:22px;display:flex;flex-direction:column;justify-content:center;gap:8px;
+  background:radial-gradient(120% 130% at 100% 0%, rgba(124,58,237,.30), transparent 55%),linear-gradient(135deg,#171327,#120f1f);
+  border:1px solid rgba(139,92,246,.34)}
+.ohub .motiv-glow{position:absolute;right:-30px;top:-30px;width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle,rgba(139,92,246,.5),transparent 70%);filter:blur(22px);animation:oh-motiv-glow 5s ease-in-out infinite}
+.ohub .motiv-tag{position:relative;z-index:2;font-size:12px;font-weight:700;letter-spacing:.05em;color:#c4b5fd}
+.ohub .motiv-quote{position:relative;z-index:2;font-size:18px;font-weight:700;line-height:1.55;
+  background:linear-gradient(90deg,#e9d5ff,#fbcfe8,#bfdbfe,#e9d5ff);background-size:300% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:#f3f0ff;
+  animation:oh-motiv-shine 9s linear infinite}
+.ohub .motiv-foot{position:relative;z-index:2;font-size:12.5px;color:#a78bce}
+@keyframes oh-motiv-glow{0%,100%{opacity:.55;transform:scale(1)}50%{opacity:.95;transform:scale(1.16)}}
+@keyframes oh-motiv-shine{0%{background-position:0% 0}100%{background-position:300% 0}}
+
+/* ════ active tasks split into per-staff columns (req 1) ════ */
+.ohub .actcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.ohub .actcol{min-width:0}
+.ohub .actcol-h{display:flex;align-items:center;gap:9px;padding:4px 4px 8px}
+.ohub .actcol-h .nm{font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .actcol-h .count{font-size:12px;color:var(--muted)}
+
+/* ════ proof thumbnail zoom + thread proof shot (req 2) ════ */
+.ohub .thumb.zoomable{cursor:zoom-in}
+.ohub .proof-shot{position:relative;margin:14px 0;border-radius:14px;overflow:hidden;border:1px solid var(--border);cursor:zoom-in;max-width:340px}
+.ohub .proof-shot img{display:block;width:100%;max-height:300px;object-fit:cover}
+.ohub .proof-zoom{position:absolute;right:8px;bottom:8px;font-size:11.5px;font-weight:600;color:#fff;background:rgba(0,0,0,.6);padding:4px 10px;border-radius:9999px}
+
+/* ════ fullscreen image lightbox (req 2) — global, above everything ════ */
+.ohub-lightbox{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.88);backdrop-filter:blur(4px);
+  display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out;animation:oh-fade .15s ease}
+.ohub-lightbox img{max-width:96vw;max-height:92vh;border-radius:14px;box-shadow:0 30px 90px rgba(0,0,0,.7);cursor:default}
+.ohub-lightbox-close{position:fixed;top:18px;right:20px;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.25);
+  background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:grid;place-items:center}
+
+/* ════ staff sticky performer + motivation hero (req 3 & 4) ════ */
+.ohub .staff-hero{position:sticky;top:60px;z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
+.ohub .staff-hero .award-mini{flex:1 1 300px;margin-bottom:0}
+.ohub .staff-hero .award-mini.hero .inner{align-items:center}
+.ohub .staff-hero .award-mini.hero .photo{width:60px;height:60px}
+.ohub .staff-hero .motiv{flex:1 1 250px;padding:16px}
+.ohub .staff-hero .motiv-quote{font-size:15px}
+@media(max-width:680px){.ohub .staff-hero{position:static;flex-direction:column}}
+
+/* ════ staff lunch control (req 6) — 45-min allowance ════ */
+.ohub .lunch-btn{font-family:inherit;font-size:13px;font-weight:700;padding:9px 16px;border-radius:9999px;cursor:pointer;
+  border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.12);color:#fcd34d;display:inline-flex;align-items:center;gap:6px}
+.ohub .lunch-btn:hover{filter:brightness(1.08)}
+.ohub .lunch-btn:disabled{opacity:.5;cursor:not-allowed}
+.ohub .lunch-btn.end{background:var(--bg-2);border-color:var(--border);color:var(--ink)}
+.ohub .lunch-live{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ohub .lunch-timer{font-size:13px;font-weight:700;color:#fcd34d;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.34);padding:7px 13px;border-radius:9999px}
+.ohub .lunch-live.over .lunch-timer{color:#fca5a5;background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.4);animation:oh-lunch-pulse 1.4s ease-in-out infinite}
+@keyframes oh-lunch-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
 `

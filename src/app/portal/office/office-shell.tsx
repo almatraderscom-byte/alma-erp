@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import type { OwnerHubData, StaffOfficeData } from '@/agent/lib/office-hub'
+import type { Motivation } from '@/agent/lib/office-motivation'
 import OwnerHub from './owner-hub'
 import StaffApp from './staff-app'
 import NotifBell from './notif-bell'
@@ -15,12 +16,14 @@ export default function OfficeShell({
   staff,
   self,
   headerDate,
+  motivation,
   navItems,
 }: {
   owner: OwnerHubData | null
   staff: StaffOfficeData | null
   self: 'owner' | 'staff'
   headerDate: string
+  motivation: Motivation
   navItems: OfficeNavItem[]
 }) {
   const isOwner = self === 'owner'
@@ -56,13 +59,13 @@ export default function OfficeShell({
       <div className="wrap">
         {isOwner && owner && (
           <div className="perspective show">
-            <OwnerHub data={owner} headerDate={headerDate} />
+            <OwnerHub data={owner} headerDate={headerDate} motivation={motivation} />
           </div>
         )}
 
         {!isOwner && staff && (
           <div className="perspective show">
-            <StaffApp data={staff} headerDate={headerDate} />
+            <StaffApp data={staff} headerDate={headerDate} motivation={motivation} />
           </div>
         )}
 

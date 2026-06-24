@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/office-hub'
+import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -52,7 +53,15 @@ async function uploadProof(file: File): Promise<string | null> {
 
 // ════════════════════════════════════════════════════════════════════════════
 
-export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; headerDate: string }) {
+export default function StaffApp({
+  data,
+  headerDate,
+  motivation,
+}: {
+  data: StaffOfficeData
+  headerDate: string
+  motivation: Motivation
+}) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -95,12 +104,19 @@ export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; 
 
   return (
     <>
+      {/* sticky performer + daily motivation hero (requests 3 & 4) */}
+      <div className="staff-hero">
+        <PerformerHero data={data} />
+        <MotivationCard m={motivation} />
+      </div>
+
       <div className="phead">
         <div>
           <div className="kicker">আমার অফিস · মোবাইল অ্যাপ</div>
           <h1>👷 আমার কাজ</h1>
           <p>কাজ দেখুন, রেজাল্ট জমা দিন, আর Boss-এর ফিডব্যাক সাথে সাথে পান।</p>
         </div>
+        <LunchControl initial={data.lunch} />
       </div>
 
       <div className="stage">
@@ -115,34 +131,6 @@ export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; 
             {needUpdate.map((t) => (
               <UpdateAlert key={t.id} t={t} busy={busy} onSend={(text) => run(`upd-${t.id}`, { action: 'update', taskId: t.id, body: text })} />
             ))}
-
-            {data.isWinner && (
-              <div className="award-mini">
-                <Confetti mini />
-                <div className="inner">
-                  <div className="crownwrap">
-                    <span className="crown" style={{ fontSize: 20, top: -12 }}>
-                      👑
-                    </span>
-                    <div className="photo">{(data.staffName.trim()[0] || '?').toUpperCase()}</div>
-                  </div>
-                  <div>
-                    <span className="tag">🏆 এই সপ্তাহের সেরা পারফরমার</span>
-                    <h3>আপনিই সেরা, মাশাআল্লাহ! 🎉</h3>
-                    <div className="sub">টিমের #১ · অভিনন্দন!</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!data.isWinner && data.award && (
-              <div className="stask" style={{ borderColor: 'rgba(245,200,90,.3)' }}>
-                <div className="top">
-                  <h4>🏆 এই সপ্তাহের সেরা: {data.award.staffName}</h4>
-                </div>
-                <div className="d">নিজের সেরাটা দিন — পরের সপ্তাহে আপনিও হতে পারেন!</div>
-              </div>
-            )}
 
             {data.active.length === 0 && data.done.length === 0 && (
               <div className="stask" style={{ textAlign: 'center' }}>
@@ -210,6 +198,129 @@ export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; 
         </div>
       </div>
     </>
+  )
+}
+
+// ── sticky performer hero (request 3) ───────────────────────────────────────
+function PerformerHero({ data }: { data: StaffOfficeData }) {
+  const award = data.award
+  const winner = data.isWinner
+  const img = award?.imageUrl ?? null
+  const initial = (award?.staffName?.trim()[0] ?? data.staffName.trim()[0] ?? '?').toUpperCase()
+  return (
+    <div className={`award-mini hero${winner ? ' me' : ''}`}>
+      {winner && <Confetti mini />}
+      <div className="inner">
+        <div className="crownwrap">
+          <span className="crown" style={{ fontSize: 22, top: -12 }}>
+            👑
+          </span>
+          {img ? (
+            <div className="photo img" style={{ backgroundImage: `url(${img})` }} />
+          ) : (
+            <div className="photo">{initial}</div>
+          )}
+        </div>
+        <div>
+          <span className="tag">🏆 এই সপ্তাহের সেরা পারফরমার</span>
+          {winner ? (
+            <>
+              <h3>আপনিই সেরা, মাশাআল্লাহ! 🎉</h3>
+              <div className="sub">টিমের #১ · অভিনন্দন!</div>
+            </>
+          ) : award ? (
+            <>
+              <h3>{award.staffName}</h3>
+              <div className="sub">নিজের সেরাটা দিন — পরের সপ্তাহে আপনিও হতে পারেন!</div>
+            </>
+          ) : (
+            <>
+              <h3>আজ সেরাটা দিন 💪</h3>
+              <div className="sub">প্রতিটি কাজ আপনাকে #১ এর দিকে এগিয়ে নেবে।</div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── daily motivation card (request 4) ───────────────────────────────────────
+function MotivationCard({ m }: { m: Motivation }) {
+  return (
+    <div className="motiv">
+      <div className="motiv-glow" />
+      <div className="motiv-tag">✨ আজকের অনুপ্রেরণা</div>
+      <div className="motiv-quote">{m.text}</div>
+      <div className="motiv-foot">— {m.tag}</div>
+    </div>
+  )
+}
+
+// ── lunch control (request 6) — 45-min allowance ────────────────────────────
+const LUNCH_LIMIT_SEC = 45 * 60
+function LunchControl({ initial }: { initial: { active: boolean; startedAt: string | null } }) {
+  const router = useRouter()
+  const [active, setActive] = useState(initial.active)
+  const [startedAt, setStartedAt] = useState<string | null>(initial.startedAt)
+  const [busy, setBusy] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    setActive(initial.active)
+    setStartedAt(initial.startedAt)
+  }, [initial.active, initial.startedAt])
+
+  useEffect(() => {
+    if (!active || !startedAt) return
+    const tick = () => setElapsed(Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [active, startedAt])
+
+  const toggle = async () => {
+    setBusy(true)
+    const action = active ? 'end' : 'start'
+    const res = await fetch('/api/assistant/office/lunch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    })
+    setBusy(false)
+    if (!res.ok) return
+    const d = (await res.json().catch(() => ({}))) as { startedAt?: string }
+    if (action === 'start') {
+      setActive(true)
+      setStartedAt(d.startedAt ?? new Date().toISOString())
+    } else {
+      setActive(false)
+      setStartedAt(null)
+      setElapsed(0)
+    }
+    router.refresh()
+  }
+
+  if (!active) {
+    return (
+      <button className="lunch-btn" disabled={busy} onClick={toggle}>
+        🍽️ লাঞ্চে যাচ্ছি
+      </button>
+    )
+  }
+
+  const remaining = LUNCH_LIMIT_SEC - elapsed
+  const over = remaining <= 0
+  const mm = Math.floor(Math.abs(remaining) / 60)
+  const ss = Math.abs(remaining) % 60
+  const clock = `${bn(mm)}:${bn(String(ss).padStart(2, '0'))}`
+  return (
+    <div className={`lunch-live${over ? ' over' : ''}`}>
+      <span className="lunch-timer">🍽️ লাঞ্চ · {over ? `⚠️ ${clock} বেশি` : `${clock} বাকি`}</span>
+      <button className="lunch-btn end" disabled={busy} onClick={toggle}>
+        ফিরে এসেছি
+      </button>
+    </div>
   )
 }
 

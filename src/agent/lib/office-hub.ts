@@ -8,6 +8,18 @@
 import { prisma } from '@/lib/prisma'
 import { buildStaffFriendlyDetail } from '@/agent/lib/staff-task-format'
 import { computeWeeklyScores } from '@/agent/lib/office-award'
+import { userAvatarUrl } from '@/lib/user-display'
+
+/** Build the stable avatar-route URL for a staff's linked ERP user, if a photo is set. */
+function staffImageUrl(
+  user: { id: string; profileImageUrl: string | null; updatedAt: Date | null } | null | undefined,
+): string | null {
+  if (!user || !user.profileImageUrl) return null
+  return userAvatarUrl(user.id, user.updatedAt)
+}
+
+/** Minimal `staff.user` select used wherever we want a profile photo. */
+const STAFF_USER_SELECT = { select: { id: true, profileImageUrl: true, updatedAt: true } } as const
 
 const ACTIVE_STATUSES = ['sent', 'approved', 'carried'] as const
 
@@ -42,6 +54,8 @@ export type OverdueUpdateCard = {
   title: string
   staffId: string
   staffName: string
+  /** Staff's phone (from linked ERP user) for the owner's quick-call button. */
+  phone: string | null
   requestedAt: string
   requestedBy: string | null
   note: string | null
@@ -62,6 +76,8 @@ export type ActivityItem = {
 export type HubAward = {
   staffId: string
   staffName: string
+  /** Winner's real ERP profile photo, or null to fall back to an initial. */
+  imageUrl: string | null
   score: number
   auto: boolean
   pinnedByOwner: boolean
@@ -84,6 +100,7 @@ export type TeamMember = {
   staffId: string
   name: string
   initial: string
+  imageUrl: string | null
   status: 'on' | 'lunch' | 'off'
   sub: string
   doneToday: number
@@ -95,6 +112,7 @@ export type LeaderRow = {
   staffId: string
   name: string
   initial: string
+  imageUrl: string | null
   score: number
   /** Bar width 0–100 relative to the top score. */
   pct: number
@@ -210,7 +228,8 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   })()
   const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
 
-  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores] = await Promise.all([
+  const lunchDate = today // Dhaka YYYY-MM-DD, matches StaffLunch.lunchDate
+  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { businessId, verificationStatus: { in: [...PENDING_REVIEW_VS] } },
       orderBy: { createdAt: 'asc' },
@@ -251,7 +270,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
         lastStaffUpdateAt: true,
         escalatedAt: true,
         status: true,
-        staff: { select: { name: true } },
+        staff: { select: { name: true, user: { select: { phone: true } } } },
       },
     }),
     prisma.officeTaskEvent.findMany({
@@ -270,13 +289,13 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
         pinnedByOwner: true,
         note: true,
         weekStart: true,
-        staff: { select: { name: true } },
+        staff: { select: { name: true, user: STAFF_USER_SELECT } },
       },
     }),
     prisma.agentStaff.findMany({
       where: { businessId, active: true },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true },
+      select: { id: true, name: true, user: STAFF_USER_SELECT },
     }),
     prisma.agentStaffTask.findMany({
       where: { businessId, proposedFor: todayDate },
@@ -287,7 +306,17 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       select: { staffId: true, status: true, verificationStatus: true, source: true, proofData: true },
     }),
     computeWeeklyScores(businessId, weekStartDate),
+    prisma.staffLunch.findMany({
+      where: { businessId, lunchDate, endedAt: null },
+      select: { staffId: true, startedAt: true },
+    }),
   ])
+
+  // Staff currently on lunch (open StaffLunch row today) → lights up the 'lunch'
+  // dot in team status. The VPS worker cron owns the 45/60-min overrun alerts.
+  const onLunch = new Set(openLunch.map((l) => l.staffId))
+  // staffId → profile photo URL (from the linked ERP user, if any).
+  const imageByStaff = new Map<string, string | null>(staffList.map((s) => [s.id, staffImageUrl(s.user)]))
 
   // Overdue updates: a request is open until the staff answers it (a later
   // lastStaffUpdateAt) or it's resolved. Still-open ones drive the countdown.
@@ -306,6 +335,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
         title: t.title,
         staffId: t.staffId,
         staffName: t.staff?.name ?? 'অজানা',
+        phone: t.staff?.user?.phone ?? null,
         requestedAt: t.updateRequestedAt!.toISOString(),
         requestedBy: t.updateRequestedBy,
         note: t.updateRequestNote,
@@ -319,6 +349,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     award = {
       staffId: awardRow.staffId,
       staffName: awardRow.staff?.name ?? 'অজানা',
+      imageUrl: staffImageUrl(awardRow.staff?.user) ?? imageByStaff.get(awardRow.staffId) ?? null,
       score: awardRow.score,
       auto: awardRow.auto,
       pinnedByOwner: awardRow.pinnedByOwner,
@@ -342,9 +373,12 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   }
   const team: TeamMember[] = staffList.map((s) => {
     const agg = byStaffToday.get(s.id)
-    const status: TeamMember['status'] = agg && (agg.active > 0 || agg.done > 0) ? 'on' : 'off'
+    const lunching = onLunch.has(s.id)
+    const status: TeamMember['status'] = lunching ? 'lunch' : agg && (agg.active > 0 || agg.done > 0) ? 'on' : 'off'
     let sub: string
-    if (!agg || agg.total === 0) {
+    if (lunching) {
+      sub = '🍽️ এখন লাঞ্চে আছেন'
+    } else if (!agg || agg.total === 0) {
       sub = 'আজ কোনো কাজ নেই'
     } else if (agg.current) {
       sub = `এখন: ${agg.current} · ${agg.done}/${agg.total} কাজ আজ`
@@ -353,7 +387,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     } else {
       sub = `${agg.done}/${agg.total} কাজ আজ`
     }
-    return { staffId: s.id, name: s.name, initial: initialOf(s.name), status, sub, doneToday: agg?.done ?? 0, totalToday: agg?.total ?? 0 }
+    return { staffId: s.id, name: s.name, initial: initialOf(s.name), imageUrl: imageByStaff.get(s.id) ?? null, status, sub, doneToday: agg?.done ?? 0, totalToday: agg?.total ?? 0 }
   })
   const onlineCount = team.filter((m) => m.status !== 'off').length
 
@@ -363,6 +397,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     staffId: s.staffId,
     name: s.staffName,
     initial: initialOf(s.staffName),
+    imageUrl: imageByStaff.get(s.staffId) ?? null,
     score: s.score,
     pct: topScore > 0 ? Math.max(6, Math.round((s.score / topScore) * 100)) : 0,
   }))
@@ -450,6 +485,8 @@ export type StaffOfficeData = {
   proposals: StaffTaskCard[]
   isWinner: boolean
   award: HubAward
+  /** Open lunch today (drives the in-app 45-min timer), if any. */
+  lunch: { active: boolean; startedAt: string | null }
 }
 
 function pickImage(data: Record<string, unknown> | null): string | null {
@@ -470,7 +507,7 @@ export async function getStaffOfficeData(
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
 
-  const [rows, proposalRows, awardRow] = await Promise.all([
+  const [rows, proposalRows, awardRow, openLunch] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { staffId: staff.id, proposedFor: todayDate, status: { in: [...VISIBLE_STAFF_STATUSES] } },
       orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
@@ -484,7 +521,12 @@ export async function getStaffOfficeData(
     prisma.officeWeeklyAward.findFirst({
       where: { businessId: staff.businessId },
       orderBy: { weekStart: 'desc' },
-      select: { staffId: true, score: true, auto: true, pinnedByOwner: true, note: true, weekStart: true, staff: { select: { name: true } } },
+      select: { staffId: true, score: true, auto: true, pinnedByOwner: true, note: true, weekStart: true, staff: { select: { name: true, user: STAFF_USER_SELECT } } },
+    }),
+    prisma.staffLunch.findFirst({
+      where: { staffId: staff.id, lunchDate: today, endedAt: null },
+      orderBy: { startedAt: 'desc' },
+      select: { startedAt: true },
     }),
   ])
 
@@ -518,6 +560,7 @@ export async function getStaffOfficeData(
     award = {
       staffId: awardRow.staffId,
       staffName: awardRow.staff?.name ?? 'অজানা',
+      imageUrl: staffImageUrl(awardRow.staff?.user),
       score: awardRow.score,
       auto: awardRow.auto,
       pinnedByOwner: awardRow.pinnedByOwner,
@@ -536,6 +579,7 @@ export async function getStaffOfficeData(
     proposals: proposalRows.map(toStaffCard),
     isWinner: Boolean(awardRow && awardRow.staffId === staff.id),
     award,
+    lunch: { active: Boolean(openLunch), startedAt: openLunch?.startedAt.toISOString() ?? null },
   }
 }
 
