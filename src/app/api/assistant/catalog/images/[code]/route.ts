@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { isSystemOwner } from '@/lib/roles'
+import { canManageCatalogImages, isSystemOwner } from '@/lib/roles'
 import {
   listProductImages,
   addProductImage,
@@ -21,12 +21,18 @@ function isHeic(type: string, ext: string): boolean {
   return HEIC_TYPES.includes(type.toLowerCase()) || HEIC_EXTS.includes(ext.toLowerCase())
 }
 
-async function requireOwner(req: NextRequest) {
+/**
+ * Gate a request. `level: 'manage'` allows SUPER_ADMIN + ADMIN (view/upload);
+ * `level: 'owner'` is SUPER_ADMIN-only (delete). Returns the token on success so
+ * the caller never re-reads it.
+ */
+async function requireRole(req: NextRequest, level: 'manage' | 'owner') {
   const disabled = requireAgentEnabled()
   if (disabled) return { res: disabled }
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return { res: Response.json({ error: 'unauthorized' }, { status: 401 }) }
-  if (!isSystemOwner(token)) return { res: Response.json({ error: 'forbidden' }, { status: 403 }) }
+  const ok = level === 'owner' ? isSystemOwner(token) : canManageCatalogImages(token)
+  if (!ok) return { res: Response.json({ error: 'forbidden' }, { status: 403 }) }
   return { res: null }
 }
 
@@ -51,7 +57,7 @@ async function listCodeFor(code: string, business: string): Promise<string> {
 
 // GET → all images for the product/collection (primary first).
 export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
-  const gate = await requireOwner(req)
+  const gate = await requireRole(req, 'manage')
   if (gate.res) return gate.res
 
   const business = req.nextUrl.searchParams.get('business') || DEFAULT_CATALOG_BUSINESS
@@ -69,7 +75,7 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
 
 // POST → upload one or more photos (replicated across collection members).
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
-  const gate = await requireOwner(req)
+  const gate = await requireRole(req, 'manage')
   if (gate.res) return gate.res
 
   const code = decodeURIComponent(params.code)
@@ -136,7 +142,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
 
 // DELETE → remove one photo (across all collection members at that index).
 export async function DELETE(req: NextRequest, { params }: { params: { code: string } }) {
-  const gate = await requireOwner(req)
+  // Delete is destructive → SUPER_ADMIN only (Admins can add but not remove).
+  const gate = await requireRole(req, 'owner')
   if (gate.res) return gate.res
 
   const code = decodeURIComponent(params.code)

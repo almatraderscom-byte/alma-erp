@@ -32,7 +32,7 @@ type ProductImageEntry = {
 
 type Filter = 'all' | 'missing' | 'with'
 
-export default function CatalogImagesScreen() {
+export default function CatalogImagesScreen({ canDelete = false }: { canDelete?: boolean }) {
   const [data, setData] = useState<CatalogResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -147,6 +147,7 @@ export default function CatalogImagesScreen() {
       {active && (
         <ProductDetail
           group={active}
+          canDelete={canDelete}
           onClose={() => setActive(null)}
           onChanged={() => {
             load()
@@ -206,10 +207,12 @@ function ProductCard({ group, onOpen }: { group: CatalogImageGroup; onOpen: () =
 
 function ProductDetail({
   group,
+  canDelete,
   onClose,
   onChanged,
 }: {
   group: CatalogImageGroup
+  canDelete: boolean
   onClose: () => void
   onChanged: () => void
 }) {
@@ -387,14 +390,16 @@ function ProductDetail({
                       প্রধান
                     </span>
                   )}
-                  <button
-                    disabled={busy}
-                    onClick={() => remove(img.id)}
-                    className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[11px] text-white opacity-0 transition-opacity hover:bg-red-500 group-hover:opacity-100 disabled:opacity-40"
-                    title="মুছুন"
-                  >
-                    🗑
-                  </button>
+                  {canDelete && (
+                    <button
+                      disabled={busy}
+                      onClick={() => remove(img.id)}
+                      className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[11px] text-white opacity-0 transition-opacity hover:bg-red-500 group-hover:opacity-100 disabled:opacity-40"
+                      title="মুছুন"
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

@@ -34,6 +34,21 @@ export function isSystemOwner(subject: unknown): boolean {
   return normalizeAlmaRole(role) === 'SUPER_ADMIN'
 }
 
+/**
+ * Product-image screen access. SUPER_ADMIN has full control (view/upload/delete);
+ * ADMIN can view + upload (delete stays SUPER_ADMIN-only, enforced in the route).
+ * This is the ONLY part of /agent/* shared beyond the owner — see the carve-out in
+ * isPathAllowedForRole.
+ */
+export function canManageCatalogImages(subject: unknown): boolean {
+  const role = typeof subject === 'string'
+    ? subject
+    : (subject as { user?: { role?: string | null }; role?: string | null } | null | undefined)?.user?.role
+      ?? (subject as { role?: string | null } | null | undefined)?.role
+  const r = normalizeAlmaRole(role)
+  return r === 'SUPER_ADMIN' || r === 'ADMIN'
+}
+
 export function roleHomePath(role: AlmaRole, businessId: BusinessId): string {
   if (role === 'HR') return businessId === 'ALMA_TRADING' ? '/trading/hr' : '/employees'
   if (role === 'VIEWER') return BUSINESSES[businessId].homePath
@@ -74,6 +89,12 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
   }
 
   if (pathname.startsWith('/operations')) return role === 'SUPER_ADMIN'
+
+  // Product-image screen is shared with Admins (view/upload); everything else
+  // under /agent stays owner-only.
+  if (pathname.startsWith('/agent/catalog-images')) {
+    return role === 'SUPER_ADMIN' || role === 'ADMIN'
+  }
 
   if (pathname.startsWith('/agent')) return role === 'SUPER_ADMIN'
 

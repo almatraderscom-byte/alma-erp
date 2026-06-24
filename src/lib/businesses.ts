@@ -63,6 +63,8 @@ const FINANCE_SUITE: NavItem[] = [
 
 /** Super Admin only — filtered in filterNavByRole; requires AGENT_ENABLED=true on server. */
 export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✨', label: 'ALMA Agent' }
+// Shared with Admins (not owner-only like the rest of /agent) — product photos.
+export const CATALOG_IMAGES_NAV_ITEM: NavItem = { href: '/agent/catalog-images', icon: '📷', label: 'Product Images' }
 export const OFFICE_NAV_ITEM: NavItem = { href: '/portal/office', icon: '🏢', label: 'Office' }
 
 const SETTINGS_NAV: NavItem[] = [
@@ -86,6 +88,7 @@ const ALMA_NAV: NavItem[] = [
   { href: '/orders', icon: '📦', label: 'Orders' },
   { href: '/crm', icon: '👥', label: 'CRM' },
   { href: '/inventory', icon: '📊', label: 'Inventory' },
+  CATALOG_IMAGES_NAV_ITEM,
   { href: '/invoice', icon: '🧾', label: 'Invoice' },
   ...FINANCE_SUITE,
   { href: '/analytics', icon: '📈', label: 'Analytics' },
