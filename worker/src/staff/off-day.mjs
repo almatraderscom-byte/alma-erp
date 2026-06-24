@@ -65,6 +65,7 @@ export async function isOfficeOffToday(supabase, now = new Date()) {
  */
 export const STAFF_OFFICE_JOBS = new Set([
   'morning-staff-reminder',
+  'checkin-greeting',
   'day-shift-start',
   'day-shift-morning-brief',
   'day-shift-tick',
