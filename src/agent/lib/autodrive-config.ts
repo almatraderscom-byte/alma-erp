@@ -67,6 +67,34 @@ export function usdToTaka(costUsd: number): number {
   return Math.ceil(costUsd * AUTODRIVE_USD_TO_BDT)
 }
 
+/**
+ * Per-plan cost-cap OVERRIDE (whole taka), stored in agent_kv_settings keyed by
+ * plan id. When the owner lifts a plan's escalated cap from the Live Desk, we grant
+ * it more budget HERE instead of touching the global cap (which would loosen every
+ * plan). 0 / missing ⇒ no override, the global `planCapTaka` applies. Avoids a DB
+ * migration — the override lives alongside the other autodrive KV dials.
+ */
+export const AUTODRIVE_PLAN_CAP_OVERRIDE_PREFIX = 'autodrive_plan_cap_override:'
+
+function planCapOverrideKey(planId: string): string {
+  return `${AUTODRIVE_PLAN_CAP_OVERRIDE_PREFIX}${planId}`
+}
+
+export async function getPlanCapOverrideTaka(planId: string): Promise<number> {
+  const row = await prisma.agentKvSetting.findUnique({ where: { key: planCapOverrideKey(planId) } })
+  const n = row?.value ? parseInt(row.value, 10) : 0
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+export async function setPlanCapOverrideTaka(planId: string, taka: number): Promise<void> {
+  const value = String(Math.max(0, Math.round(taka)))
+  await prisma.agentKvSetting.upsert({
+    where: { key: planCapOverrideKey(planId) },
+    update: { value },
+    create: { key: planCapOverrideKey(planId), value },
+  })
+}
+
 export interface AutodriveConfig {
   /** Hard master gate (env). When false the driver is fully inert. */
   enabled: boolean
