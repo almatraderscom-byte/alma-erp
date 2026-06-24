@@ -294,13 +294,21 @@ function withCacheControlOnLastBlock(msg: ApiMessage): ApiMessage {
  * CURRENT owner user turn rather than the system block. That keeps the system
  * block and ALL prior history byte-stable across turns, so the conversation
  * history finally cache-hits instead of being re-billed at full input price
- * every turn. Breakpoints (≤4, the API max — system stable block is the 4th):
+ * every turn. The API allows at most 4 cache_control breakpoints per request,
+ * and the system stable block (1) + the tool list (1) already consume two of
+ * them — so this function must place AT MOST 2 message breakpoints, never 3.
+ * (Placing 3 here triggered "A maximum of 4 blocks with cache_control may be
+ * provided. Found 5." → a 400 that failed every multi-tool-round turn, e.g. an
+ * outbound-call request.) The two message breakpoints are:
  *   - last prior assistant message  → caches the conversation-history prefix
  *     (byte-stable across turns; this is the cross-turn win)
- *   - current owner user turn (last block) → caches system+history+this request
- *     across the within-turn tool-iteration loop
- *   - latest message when mid tool-loop → caches the growing tool exchange so
- *     repeated tool rounds don't re-bill prior rounds (preserves prior behaviour)
+ *   - the LAST message → caches the within-turn tool-iteration prefix so repeated
+ *     tool rounds don't re-bill prior rounds. On the first iteration the last
+ *     message IS the owner turn, so its volatile context is cached too.
+ *
+ * The volatile per-turn context is always injected into the owner turn, but that
+ * turn only carries a breakpoint when it is also the last message — otherwise a
+ * mid-loop turn would produce the 3rd (over-budget) message breakpoint.
  *
  * `messages` itself is never mutated — volatile lives only in this transient
  * copy and is never persisted, so replayed history stays clean.
@@ -326,25 +334,27 @@ export function buildTurnApiMessages(
   const lastIdx = messages.length - 1
 
   return messages.map((msg, i) => {
-    if (i === ownerTurnIndex) {
-      const base = blocksOf(msg)
-      const blocks = volatileText
-        ? [
-            { type: 'text', text: `[Per-turn context]\n${volatileText}` } as Anthropic.Messages.ContentBlockParam,
-            ...base,
-          ]
-        : base
-      if (blocks.length === 0) return msg
-      blocks[blocks.length - 1] = {
-        ...blocks[blocks.length - 1],
-        cache_control: { type: 'ephemeral', ttl: '1h' },
-      } as Anthropic.Messages.ContentBlockParam
-      return { role: 'user' as const, content: blocks }
+    // Inject volatile per-turn context into the owner turn (no breakpoint here
+    // on its own — the breakpoint is only added when this turn is also the last
+    // message, via the lastIdx branch below; see the budget note above).
+    let out = msg
+    if (i === ownerTurnIndex && volatileText) {
+      out = {
+        role: 'user' as const,
+        content: [
+          { type: 'text', text: `[Per-turn context]\n${volatileText}` } as Anthropic.Messages.ContentBlockParam,
+          ...blocksOf(msg),
+        ],
+      }
     }
-    if (i === priorAssistantIdx || (i === lastIdx && i > ownerTurnIndex)) {
-      return withCacheControlOnLastBlock(msg)
+    // At most 2 message breakpoints: the prior assistant (cross-turn prefix) and
+    // the last message (within-turn tool-loop prefix). These two are always
+    // distinct (priorAssistantIdx < ownerTurnIndex ≤ lastIdx), so the total with
+    // system + tools never exceeds the API's max of 4.
+    if (i === priorAssistantIdx || i === lastIdx) {
+      return withCacheControlOnLastBlock(out)
     }
-    return msg
+    return out
   })
 }
 

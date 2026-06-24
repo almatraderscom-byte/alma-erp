@@ -179,8 +179,11 @@ describe('B1 — conversation-history prefix is byte-stable across consecutive t
 
     // a1 = last prior assistant (history breakpoint)
     expect(hasCC(out[1])).toBe(true)
-    // u2 = current owner turn breakpoint (and carries volatile)
-    expect(hasCC(out[2])).toBe(true)
+    // u2 = owner turn: carries volatile, but NO breakpoint mid-loop. A 3rd
+    // message breakpoint here would blow the budget — system (1) + tools (1) +
+    // 3 messages = 5 → "Found 5" 400. It only earns a breakpoint when it is also
+    // the last message (first iteration), which is covered by other tests.
+    expect(hasCC(out[2])).toBe(false)
     expect(JSON.stringify(out[2])).toContain('VOL')
     // uToolResult = latest message (within-turn tool-exchange breakpoint)
     expect(hasCC(out[4])).toBe(true)
@@ -188,7 +191,10 @@ describe('B1 — conversation-history prefix is byte-stable across consecutive t
     expect(hasCC(out[0])).toBe(false)
     expect(hasCC(out[3])).toBe(false)
 
+    // At most 2 MESSAGE breakpoints. With the system block (1) + the tool list
+    // (1), the request total stays within the API's hard max of 4 cache_control
+    // blocks. (The old code allowed 3 here → 5 total → 400 on multi-tool turns.)
     const totalBreakpoints = out.filter(hasCC).length
-    expect(totalBreakpoints).toBeLessThanOrEqual(3) // +1 for the system block = ≤4
+    expect(totalBreakpoints).toBeLessThanOrEqual(2)
   })
 })
