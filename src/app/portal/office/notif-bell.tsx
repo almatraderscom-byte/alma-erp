@@ -5,15 +5,17 @@ import { useRouter } from 'next/navigation'
 import type { NotificationFeed, OfficeNotice } from '@/agent/lib/office-notifications'
 
 const POLL_MS = 30_000
+const BN = '০১২৩৪৫৬৭৮৯'
+const bn = (n: number | string) => String(n).replace(/\d/g, (d) => BN[Number(d)])
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const m = Math.floor(diff / 60_000)
   if (m < 1) return 'এইমাত্র'
-  if (m < 60) return `${m} মিনিট আগে`
+  if (m < 60) return `${bn(m)} মিনিট আগে`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} ঘণ্টা আগে`
-  return `${Math.floor(h / 24)} দিন আগে`
+  if (h < 24) return `${bn(h)} ঘণ্টা আগে`
+  return `${bn(Math.floor(h / 24))} দিন আগে`
 }
 
 const KIND_ICON: Record<string, string> = {
@@ -83,49 +85,36 @@ export default function NotifBell() {
   }
 
   return (
-    <div ref={boxRef} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-label="নোটিফিকেশন"
-        className="relative flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-lg ring-1 ring-white/10"
-      >
+    <div ref={boxRef} style={{ display: 'inline-block' }}>
+      <button className="bell" onClick={() => setOpen((v) => !v)} aria-label="নোটিফিকেশন">
         🔔
-        {feed.unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">
-            {feed.unread > 9 ? '9+' : feed.unread}
-          </span>
-        )}
+        {feed.unread > 0 && <span className="bdot">{feed.unread > 9 ? '৯+' : bn(feed.unread)}</span>}
       </button>
 
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-80 max-w-[88vw] overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020] shadow-xl ring-1 ring-black/40">
-          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-            <p className="text-sm font-semibold text-white">নোটিফিকেশন</p>
-            {feed.unread > 0 && (
-              <button onClick={markAll} className="text-xs font-medium text-sky-300 hover:text-sky-200">
-                সব পড়া হয়েছে
-              </button>
-            )}
+        <div className="ohub-notif">
+          <div className="nh">
+            <b>নোটিফিকেশন</b>
+            {feed.unread > 0 && <button onClick={markAll}>সব পড়া হয়েছে</button>}
           </div>
-          <div className="max-h-96 overflow-y-auto">
-            {feed.items.length === 0 && (
-              <p className="px-3 py-6 text-center text-sm text-slate-500">কোনো নোটিফিকেশন নেই।</p>
-            )}
+          <div className="nlist">
+            {feed.items.length === 0 && <div className="nempty">কোনো নোটিফিকেশন নেই।</div>}
             {feed.items.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => onItem(n)}
-                className={`flex w-full gap-2.5 border-b border-white/5 px-3 py-2.5 text-left last:border-0 ${
-                  n.read ? 'opacity-60' : 'bg-sky-500/[0.06]'
-                }`}
-              >
-                <span className="mt-0.5 text-base">{KIND_ICON[n.kind] ?? '🔔'}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium leading-snug text-slate-100">{n.title}</span>
-                  {n.body && <span className="mt-0.5 block truncate text-xs text-slate-400">{n.body}</span>}
-                  <span className="mt-0.5 block text-[11px] text-slate-500">{timeAgo(n.createdAt)}</span>
+              <button key={n.id} className={`ni${n.read ? '' : ' unread'}`} onClick={() => onItem(n)}>
+                <span className="ic">{KIND_ICON[n.kind] ?? '🔔'}</span>
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span className="nm" style={{ display: 'block' }}>
+                    {n.title}
+                  </span>
+                  {n.body && (
+                    <span className="nb" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {n.body}
+                    </span>
+                  )}
+                  <span className="nt" style={{ display: 'block' }}>
+                    {timeAgo(n.createdAt)}
+                  </span>
                 </span>
-                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-sky-400" />}
               </button>
             ))}
           </div>

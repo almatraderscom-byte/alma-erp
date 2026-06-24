@@ -7,6 +7,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { buildStaffFriendlyDetail } from '@/agent/lib/staff-task-format'
+import { computeWeeklyScores } from '@/agent/lib/office-award'
 
 const ACTIVE_STATUSES = ['sent', 'approved', 'carried'] as const
 
@@ -68,14 +69,49 @@ export type HubAward = {
   weekStart: string
 } | null
 
+/** Headline stats for the gold "Performer of the Week" hero (winner only). */
+export type AwardStats = {
+  done: number
+  /** % of the winner's reviewed proofs that the owner approved this week (0–100), or null if none reviewed. */
+  approvalRate: number | null
+  /** Average auto-QC score of the winner's proofs this week (0–100), or null if none scored. */
+  avgQc: number | null
+  selfInitiated: number
+}
+
+/** A row in the right-rail "Team Status" panel. */
+export type TeamMember = {
+  staffId: string
+  name: string
+  initial: string
+  status: 'on' | 'lunch' | 'off'
+  sub: string
+  doneToday: number
+  totalToday: number
+}
+
+/** A row in the right-rail weekly performance leaderboard. */
+export type LeaderRow = {
+  staffId: string
+  name: string
+  initial: string
+  score: number
+  /** Bar width 0–100 relative to the top score. */
+  pct: number
+}
+
 export type OwnerHubData = {
   businessId: string
-  kpis: { pending: number; active: number; overdue: number; doneToday: number }
+  kpis: { pending: number; active: number; overdue: number; doneToday: number; online: number; staffTotal: number }
   pendingApproval: HubTaskCard[]
+  activeTasks: HubTaskCard[]
   selfInitiated: HubTaskCard[]
   overdueUpdates: OverdueUpdateCard[]
   activity: ActivityItem[]
   award: HubAward
+  awardStats: AwardStats | null
+  team: TeamMember[]
+  leaderboard: LeaderRow[]
 }
 
 /** Dhaka-local YYYY-MM-DD. */
@@ -85,6 +121,22 @@ function dhakaToday(): string {
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+}
+
+/** Pull an auto-QC score (0–100) out of proofData if one was stored. */
+function pickQc(v: unknown): number | null {
+  const r = asRecord(v)
+  if (!r) return null
+  for (const k of ['qcScore', 'qc', 'score', 'autoQc']) {
+    const val = r[k]
+    if (typeof val === 'number' && val >= 0 && val <= 100) return val
+  }
+  return null
+}
+
+function initialOf(name: string): string {
+  const t = name.trim()
+  return t ? t[0].toUpperCase() : '?'
 }
 
 function toCard(t: {
@@ -146,7 +198,19 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
 
-  const [pendingRows, selfRows, activeCount, doneToday, updateRows, events, awardRow] = await Promise.all([
+  const weekStartDate = (() => {
+    // Monday 00:00 UTC anchoring the current Dhaka week (mirrors office-award).
+    const dhaka = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }))
+    const dow = dhaka.getDay()
+    const diff = (dow + 6) % 7
+    const monday = new Date(dhaka)
+    monday.setDate(dhaka.getDate() - diff)
+    const ymd = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`
+    return new Date(`${ymd}T00:00:00Z`)
+  })()
+  const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { businessId, verificationStatus: { in: [...PENDING_REVIEW_VS] } },
       orderBy: { createdAt: 'asc' },
@@ -155,6 +219,17 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     prisma.agentStaffTask.findMany({
       where: { businessId, status: 'proposed', source: 'staff_initiated' },
       orderBy: { createdAt: 'asc' },
+      select: CARD_SELECT,
+    }),
+    prisma.agentStaffTask.findMany({
+      where: {
+        businessId,
+        proposedFor: todayDate,
+        status: { in: [...ACTIVE_STATUSES] },
+        verificationStatus: { notIn: [...PENDING_REVIEW_VS] },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 12,
       select: CARD_SELECT,
     }),
     prisma.agentStaffTask.count({
@@ -198,6 +273,20 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
         staff: { select: { name: true } },
       },
     }),
+    prisma.agentStaff.findMany({
+      where: { businessId, active: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
+    prisma.agentStaffTask.findMany({
+      where: { businessId, proposedFor: todayDate },
+      select: { staffId: true, status: true, title: true, type: true, verificationStatus: true, updateRequestedAt: true, lastStaffUpdateAt: true },
+    }),
+    prisma.agentStaffTask.findMany({
+      where: { businessId, proposedFor: { gte: weekStartDate, lt: weekEndDate } },
+      select: { staffId: true, status: true, verificationStatus: true, source: true, proofData: true },
+    }),
+    computeWeeklyScores(businessId, weekStartDate),
   ])
 
   // Overdue updates: a request is open until the staff answers it (a later
@@ -238,6 +327,64 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     }
   }
 
+  // ── Team status (right rail): each active staff's today counts + a status. ──
+  type TodayAgg = { done: number; total: number; current: string | null; active: number }
+  const byStaffToday = new Map<string, TodayAgg>()
+  for (const t of todayTasks) {
+    const agg = byStaffToday.get(t.staffId) ?? { done: 0, total: 0, current: null, active: 0 }
+    agg.total += 1
+    if (t.status === 'done') agg.done += 1
+    if ((['sent', 'approved', 'carried'] as string[]).includes(t.status)) {
+      agg.active += 1
+      if (!agg.current) agg.current = t.title
+    }
+    byStaffToday.set(t.staffId, agg)
+  }
+  const team: TeamMember[] = staffList.map((s) => {
+    const agg = byStaffToday.get(s.id)
+    const status: TeamMember['status'] = agg && (agg.active > 0 || agg.done > 0) ? 'on' : 'off'
+    let sub: string
+    if (!agg || agg.total === 0) {
+      sub = 'আজ কোনো কাজ নেই'
+    } else if (agg.current) {
+      sub = `এখন: ${agg.current} · ${agg.done}/${agg.total} কাজ আজ`
+    } else if (agg.done >= agg.total) {
+      sub = `আজকের সব কাজ শেষ · ${agg.done}/${agg.total}`
+    } else {
+      sub = `${agg.done}/${agg.total} কাজ আজ`
+    }
+    return { staffId: s.id, name: s.name, initial: initialOf(s.name), status, sub, doneToday: agg?.done ?? 0, totalToday: agg?.total ?? 0 }
+  })
+  const onlineCount = team.filter((m) => m.status !== 'off').length
+
+  // ── Weekly leaderboard (right rail) ──
+  const topScore = scores.reduce((m, s) => Math.max(m, s.score), 0)
+  const leaderboard: LeaderRow[] = scores.slice(0, 5).map((s) => ({
+    staffId: s.staffId,
+    name: s.staffName,
+    initial: initialOf(s.staffName),
+    score: s.score,
+    pct: topScore > 0 ? Math.max(6, Math.round((s.score / topScore) * 100)) : 0,
+  }))
+
+  // ── Award headline stats (winner only) ──
+  let awardStats: AwardStats | null = null
+  if (award) {
+    const mine = weekStatRows.filter((t) => t.staffId === award!.staffId)
+    const done = mine.filter((t) => t.status === 'done').length
+    const reviewed = mine.filter((t) =>
+      (['owner_approved', 'redo_requested', 'proof_submitted', 'auto_verified'] as string[]).includes(t.verificationStatus),
+    )
+    const approved = mine.filter((t) => t.verificationStatus === 'owner_approved').length
+    const qcs = mine.map((t) => pickQc(t.proofData)).filter((n): n is number => n !== null)
+    awardStats = {
+      done,
+      approvalRate: reviewed.length > 0 ? Math.round((approved / reviewed.length) * 100) : null,
+      avgQc: qcs.length > 0 ? Math.round((qcs.reduce((a, b) => a + b, 0) / qcs.length) * 10) / 10 : null,
+      selfInitiated: mine.filter((t) => t.source === 'staff_initiated' && t.status === 'done').length,
+    }
+  }
+
   return {
     businessId,
     kpis: {
@@ -245,8 +392,11 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       active: activeCount,
       overdue: overdueUpdates.length,
       doneToday,
+      online: onlineCount,
+      staffTotal: team.length,
     },
     pendingApproval: pendingRows.map(toCard),
+    activeTasks: activeRows.map(toCard),
     selfInitiated: selfRows.map(toCard),
     overdueUpdates,
     activity: events.map((e) => ({
@@ -258,6 +408,9 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       createdAt: e.createdAt.toISOString(),
     })),
     award,
+    awardStats,
+    team,
+    leaderboard,
   }
 }
 

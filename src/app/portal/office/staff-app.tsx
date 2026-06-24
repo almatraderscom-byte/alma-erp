@@ -2,7 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { StaffOfficeData, StaffTaskCard, TaskThread, ThreadMessage } from '@/agent/lib/office-hub'
+import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/office-hub'
+import Confetti from './confetti'
+
+const BN = '০১২৩৪৫৬৭৮৯'
+function bn(n: number | string): string {
+  return String(n).replace(/\d/g, (d) => BN[Number(d)])
+}
+function bnTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return ''
+  }
+}
 
 type StaffActionBody = {
   action: 'done' | 'proof' | 'comment' | 'update' | 'self_create'
@@ -14,14 +32,13 @@ type StaffActionBody = {
   detail?: string
 }
 
-async function postStaff(body: StaffActionBody): Promise<{ ok: boolean; data?: Record<string, unknown> }> {
+async function postStaff(body: StaffActionBody): Promise<{ ok: boolean }> {
   const res = await fetch('/api/assistant/office/staff-action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const data = res.ok ? await res.json().catch(() => ({})) : undefined
-  return { ok: res.ok, data }
+  return { ok: res.ok }
 }
 
 async function uploadProof(file: File): Promise<string | null> {
@@ -33,11 +50,13 @@ async function uploadProof(file: File): Promise<string | null> {
   return data.url ?? null
 }
 
-export default function StaffApp({ data }: { data: StaffOfficeData }) {
+// ════════════════════════════════════════════════════════════════════════════
+
+export default function StaffApp({ data, headerDate }: { data: StaffOfficeData; headerDate: string }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const busy = pending || busyId !== null
 
   const run = useCallback(
@@ -51,247 +70,277 @@ export default function StaffApp({ data }: { data: StaffOfficeData }) {
     [router],
   )
 
-  const needUpdate = data.active.filter((t) => t.needsUpdate)
+  const detailTask = detailId ? data.active.find((t) => t.id === detailId) ?? data.done.find((t) => t.id === detailId) ?? null : null
 
-  return (
-    <div className="space-y-6">
-      {/* Award */}
-      {data.isWinner ? (
-        <WinnerBanner name={data.staffName} />
-      ) : (
-        data.award && (
-          <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-center">
-            <p className="text-sm text-amber-200">🏆 এই সপ্তাহের সেরা: <span className="font-semibold text-white">{data.award.staffName}</span></p>
-          </div>
-        )
-      )}
-
-      {/* Update-requested alerts */}
-      {needUpdate.length > 0 && (
-        <section className="space-y-2">
-          {needUpdate.map((t) => (
-            <UpdateAlert key={t.id} t={t} busy={busy} onSend={(text) => run(`upd-${t.id}`, { action: 'update', taskId: t.id, body: text })} />
-          ))}
-        </section>
-      )}
-
-      {/* Active tasks */}
-      {data.active.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-base font-semibold text-white">আজকের কাজ</h2>
-          {data.active.map((t) => (
-            <StaffTaskCardView
-              key={t.id}
-              t={t}
-              open={openId === t.id}
-              busy={busy}
-              onToggle={() => setOpenId(openId === t.id ? null : t.id)}
-              onDone={() => run(`done-${t.id}`, { action: 'done', taskId: t.id })}
-              onProof={async (url, text) => run(`proof-${t.id}`, { action: 'proof', taskId: t.id, imageUrl: url, text })}
-              onComment={(text) => run(`cmt-${t.id}`, { action: 'comment', taskId: t.id, body: text })}
-            />
-          ))}
-        </section>
-      )}
-
-      {data.active.length === 0 && (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center">
-          <p className="text-base font-medium text-white">আজ কোনো কাজ নেই</p>
-          <p className="mt-2 text-sm text-slate-400">নতুন কাজ এলে এখানে দেখতে পাবেন।</p>
-        </div>
-      )}
-
-      {/* Self-initiated */}
-      <SelfInitiated
-        proposals={data.proposals}
-        busy={busy}
-        onCreate={(title, detail) => run('self-create', { action: 'self_create', title, detail })}
-      />
-
-      {/* Done */}
-      {data.done.length > 0 && (
-        <section>
-          <h2 className="mb-2 text-sm font-medium text-slate-400">সম্পন্ন</h2>
-          <div className="space-y-3 opacity-70">
-            {data.done.map((t) => (
-              <article key={t.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <h3 className="text-base font-medium text-white">{t.title} ✅</h3>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
-  )
-}
-
-function WinnerBanner({ name }: { name: string }) {
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/20 via-amber-500/10 to-yellow-600/[0.08] p-5 text-center">
-      <div className="pointer-events-none absolute inset-0 opacity-60">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <span
-            key={i}
-            className="confetti-piece"
-            style={{
-              left: `${(i * 4.1) % 100}%`,
-              animationDelay: `${(i % 8) * 0.25}s`,
-              background: ['#FCD34D', '#FBBF24', '#F59E0B', '#FDE68A'][i % 4],
-            }}
-          />
-        ))}
+  if (detailTask) {
+    return (
+      <div className="stage">
+        <StaffDetail
+          t={detailTask}
+          staffName={data.staffName}
+          busy={busy}
+          onBack={() => setDetailId(null)}
+          onDone={() => run(`done-${detailTask.id}`, { action: 'done', taskId: detailTask.id })}
+          onProof={(url, text) => run(`proof-${detailTask.id}`, { action: 'proof', taskId: detailTask.id, imageUrl: url, text })}
+          onComment={(text) => run(`cmt-${detailTask.id}`, { action: 'comment', taskId: detailTask.id, body: text })}
+        />
       </div>
-      <p className="relative text-xs font-medium uppercase tracking-wide text-amber-200">🏆 এই সপ্তাহের সেরা পারফর্মার</p>
-      <p className="relative mt-1 text-2xl font-bold text-white">🎉 {name} 🎉</p>
-      <p className="relative mt-1 text-sm text-amber-100/90">অভিনন্দন! পুরো সপ্তাহ জুড়ে আপনার নাম সবার অফিসে দেখা যাবে।</p>
-      <style>{`
-        .confetti-piece{position:absolute;top:-10px;width:7px;height:12px;border-radius:1px;animation:office-confetti 2.6s linear infinite}
-        @keyframes office-confetti{0%{transform:translateY(-10px) rotate(0)}100%{transform:translateY(160px) rotate(360deg)}}
-      `}</style>
-    </div>
+    )
+  }
+
+  const needUpdate = data.active.filter((t) => t.needsUpdate)
+  const total = data.active.length + data.done.length
+  const doneN = data.done.length
+  const remaining = data.active.length
+
+  return (
+    <>
+      <div className="phead">
+        <div>
+          <div className="kicker">আমার অফিস · মোবাইল অ্যাপ</div>
+          <h1>👷 আমার কাজ</h1>
+          <p>কাজ দেখুন, রেজাল্ট জমা দিন, আর Boss-এর ফিডব্যাক সাথে সাথে পান।</p>
+        </div>
+      </div>
+
+      <div className="stage">
+        <div className="phone" style={{ width: '100%', maxWidth: 520 }}>
+          <div className="pscreen">
+            <div className="stitle">আমার কাজ · {headerDate}</div>
+            <div className="sh1">আসসালামু আলাইকুম, {data.staffName}</div>
+            <div className="ssub">
+              আজ {bn(total)}টি কাজ · {bn(doneN)}টি সম্পন্ন, {bn(remaining)}টি বাকি
+            </div>
+
+            {needUpdate.map((t) => (
+              <UpdateAlert key={t.id} t={t} busy={busy} onSend={(text) => run(`upd-${t.id}`, { action: 'update', taskId: t.id, body: text })} />
+            ))}
+
+            {data.isWinner && (
+              <div className="award-mini">
+                <Confetti mini />
+                <div className="inner">
+                  <div className="crownwrap">
+                    <span className="crown" style={{ fontSize: 20, top: -12 }}>
+                      👑
+                    </span>
+                    <div className="photo">{(data.staffName.trim()[0] || '?').toUpperCase()}</div>
+                  </div>
+                  <div>
+                    <span className="tag">🏆 এই সপ্তাহের সেরা পারফরমার</span>
+                    <h3>আপনিই সেরা, মাশাআল্লাহ! 🎉</h3>
+                    <div className="sub">টিমের #১ · অভিনন্দন!</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!data.isWinner && data.award && (
+              <div className="stask" style={{ borderColor: 'rgba(245,200,90,.3)' }}>
+                <div className="top">
+                  <h4>🏆 এই সপ্তাহের সেরা: {data.award.staffName}</h4>
+                </div>
+                <div className="d">নিজের সেরাটা দিন — পরের সপ্তাহে আপনিও হতে পারেন!</div>
+              </div>
+            )}
+
+            {data.active.length === 0 && data.done.length === 0 && (
+              <div className="stask" style={{ textAlign: 'center' }}>
+                <div className="top">
+                  <h4 style={{ width: '100%', textAlign: 'center' }}>আজ কোনো কাজ নেই</h4>
+                </div>
+                <div className="d" style={{ textAlign: 'center' }}>নতুন কাজ এলে এখানে দেখতে পাবেন।</div>
+              </div>
+            )}
+
+            {data.active.map((t) => (
+              <StaskCard key={t.id} t={t} onOpen={() => setDetailId(t.id)} />
+            ))}
+
+            <SelfInitiated
+              proposals={data.proposals}
+              busy={busy}
+              onCreate={(title, detail) => run('self-create', { action: 'self_create', title, detail })}
+            />
+
+            {data.done.map((t) => (
+              <div key={t.id} className="stask" style={{ opacity: 0.65 }} onClick={() => setDetailId(t.id)}>
+                <div className="top">
+                  <h4>{t.title}</h4>
+                  <span className="badge b-done">সম্পন্ন ✓</span>
+                </div>
+                <div className="d">📦 {t.type} · Boss অনুমোদন করেছেন</div>
+              </div>
+            ))}
+
+            <div className="stitle" style={{ marginTop: 22 }}>
+              আমার পারফরম্যান্স
+            </div>
+            <div className="perf">
+              <div className="pc">
+                <div className="v num" style={{ color: '#6ee7b7' }}>
+                  {bn(doneN)}
+                </div>
+                <div className="l">আজ সম্পন্ন</div>
+              </div>
+              <div className="pc">
+                <div className="v num" style={{ color: '#7dd3fc' }}>
+                  {bn(remaining)}
+                </div>
+                <div className="l">বাকি কাজ</div>
+              </div>
+              <div className="pc">
+                <div className="v num" style={{ color: '#fcd34d' }}>
+                  {bn(data.proposals.length)}
+                </div>
+                <div className="l">নিজ উদ্যোগে</div>
+              </div>
+            </div>
+            <div className="bar">
+              <i style={{ width: `${total > 0 ? Math.round((doneN / total) * 100) : 0}%` }}></i>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="note" style={{ maxWidth: 820, margin: '26px auto 0' }}>
+        <span className="i">💡</span>
+        <div>
+          সব আলোচনা, ছবি ও অনুমোদন এখন Office Hub-এ। নতুন কাজ, কমেন্ট বা অনুমোদনের নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।
+        </div>
+      </div>
+    </>
   )
 }
 
-function fmt(secondsLeft: number): { text: string; danger: boolean } {
-  if (secondsLeft <= 0) return { text: 'সময় শেষ — বসকে জানানো হবে', danger: true }
+// ── update alert (`.alert`) ─────────────────────────────────────────────────
+function fmt(secondsLeft: number): string {
+  if (secondsLeft <= 0) return 'সময় শেষ'
   const m = Math.floor(secondsLeft / 60)
-  const s = secondsLeft % 60
-  return { text: `${m}:${String(s).padStart(2, '0')} এর মধ্যে দিন`, danger: secondsLeft < 120 }
+  return `${bn(m)} মিনিট বাকি`
 }
 
 function UpdateAlert({ t, busy, onSend }: { t: StaffTaskCard; busy: boolean; onSend: (text: string) => Promise<boolean> }) {
   const [left, setLeft] = useState(t.updateSecondsLeft)
+  const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   useEffect(() => {
     setLeft(t.updateSecondsLeft)
     const id = setInterval(() => setLeft((v) => v - 1), 1000)
     return () => clearInterval(id)
   }, [t.updateSecondsLeft])
-  const cd = fmt(left)
+
   return (
-    <div className="rounded-xl border border-rose-500/30 bg-rose-500/[0.08] p-3">
-      <p className="text-sm font-medium text-rose-100">⏰ আপডেট চাওয়া হয়েছে: {t.title}</p>
-      {t.updateNote && <p className="mt-0.5 text-xs text-slate-300">“{t.updateNote}”</p>}
-      <p className={`mt-1 text-xs font-medium ${cd.danger ? 'text-rose-300' : 'text-amber-300'}`}>⏳ {cd.text}</p>
-      <div className="mt-2 flex gap-2">
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="অবস্থা লিখুন…"
-          className="flex-1 rounded-md bg-black/30 px-2 py-1.5 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-        />
-        <button
-          disabled={busy || !text.trim()}
-          onClick={async () => { if (await onSend(text.trim())) setText('') }}
-          className="rounded-md bg-emerald-500/20 px-3 py-1.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-500/30 disabled:opacity-50"
-        >
-          দিন
-        </button>
+    <div className="alert">
+      <div className="t">⚠️ কাজের আপডেট চাওয়া হয়েছে</div>
+      <div className="d">
+        &ldquo;{t.title}&rdquo; — Boss আপডেট চেয়েছেন। {t.updateNote ? t.updateNote : 'কাজের ছবি/আপডেট দিন।'}
       </div>
+      <div className="cd">⏱ ১০ মিনিটের মধ্যে না দিলে Boss-কে জানানো হবে · {fmt(left)}</div>
+      {!open ? (
+        <button className="btn primary sm" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>
+          📤 এখনই আপডেট দিন
+        </button>
+      ) : (
+        <div className="ibox" style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="অবস্থা লিখুন…"
+            style={{ flex: 1, background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '8px 14px', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none' }}
+          />
+          <button
+            className="btn primary sm"
+            disabled={busy || !text.trim()}
+            onClick={async () => {
+              if (await onSend(text.trim())) {
+                setText('')
+                setOpen(false)
+              }
+            }}
+          >
+            দিন
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-const VS_LABEL: Record<string, { label: string; tone: string }> = {
-  redo_requested: { label: 'সংশোধন দরকার', tone: 'bg-amber-500/15 text-amber-300 ring-amber-500/30' },
-  proof_submitted: { label: 'প্রমাণ জমা — যাচাই চলছে', tone: 'bg-sky-500/15 text-sky-300 ring-sky-500/30' },
-  awaiting_proof: { label: 'প্রমাণ দিন', tone: 'bg-violet-500/15 text-violet-300 ring-violet-500/30' },
-  owner_approved: { label: 'অনুমোদিত', tone: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30' },
+// ── task card (`.stask`) ────────────────────────────────────────────────────
+const STASK_BADGE: Record<string, { cls: string; label: string }> = {
+  redo_requested: { cls: 'b-redo', label: 'সংশোধন' },
+  proof_submitted: { cls: 'b-pending', label: 'অপেক্ষায়' },
+  auto_verified: { cls: 'b-pending', label: 'অপেক্ষায়' },
+  awaiting_proof: { cls: 'b-active', label: 'চলছে' },
+  owner_approved: { cls: 'b-done', label: 'সম্পন্ন ✓' },
 }
 
-function StaffTaskCardView({
+function StaskCard({ t, onOpen }: { t: StaffTaskCard; onOpen: () => void }) {
+  const badge = STASK_BADGE[t.verificationStatus] ?? { cls: 'b-active', label: 'চলছে' }
+  const statusText =
+    t.verificationStatus === 'redo_requested'
+      ? 'Boss সংশোধন চেয়েছেন'
+      : t.verificationStatus === 'proof_submitted' || t.verificationStatus === 'auto_verified'
+        ? 'জমা দেওয়া হয়েছে'
+        : 'এখনো জমা দেননি'
+  return (
+    <div className="stask" onClick={onOpen}>
+      <div className="top">
+        <h4>{t.title}</h4>
+        <span className={`badge ${badge.cls}`}>{badge.label}</span>
+      </div>
+      <div className="d">
+        📦 {t.type} · {statusText}
+      </div>
+      {t.needsUpdate && <div className="ntf">🔔 Boss আপডেট চেয়েছেন — দেখুন</div>}
+      {t.verificationStatus === 'redo_requested' && t.reviewerNote && (
+        <div className="ntf">🔄 {t.reviewerNote}</div>
+      )}
+    </div>
+  )
+}
+
+// ── task detail / thread (phone-2) ──────────────────────────────────────────
+function StaffDetail({
   t,
-  open,
+  staffName,
   busy,
-  onToggle,
+  onBack,
   onDone,
   onProof,
   onComment,
 }: {
   t: StaffTaskCard
-  open: boolean
+  staffName: string
   busy: boolean
-  onToggle: () => void
+  onBack: () => void
   onDone: () => void
   onProof: (url: string | undefined, text: string | undefined) => Promise<boolean>
   onComment: (text: string) => void
 }) {
-  const meta = VS_LABEL[t.verificationStatus]
-  const isRedo = t.verificationStatus === 'redo_requested'
-
-  return (
-    <article className={`rounded-2xl border p-4 ${isRedo ? 'border-amber-500/30 bg-amber-500/[0.05]' : 'border-white/10 bg-white/[0.03]'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-base font-medium leading-snug text-white">
-          {t.needsUpdate ? '🔔 ' : ''}{t.title}
-        </h3>
-        {meta && <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${meta.tone}`}>{meta.label}</span>}
-      </div>
-
-      {t.friendlyDetail && (
-        <div className="mt-2">
-          <p className="mb-1 text-xs font-medium text-slate-400">🧠 কাজটি যেভাবে করবেন</p>
-          <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">{t.friendlyDetail}</p>
-        </div>
-      )}
-
-      {isRedo && t.reviewerNote && (
-        <div className="mt-2 rounded-lg bg-amber-500/10 p-2">
-          <p className="text-xs font-medium text-amber-300">🔄 মালিক যা সংশোধন চেয়েছেন:</p>
-          <p className="text-sm text-amber-100">{t.reviewerNote}</p>
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {t.status !== 'done' && (
-          <button
-            disabled={busy}
-            onClick={onDone}
-            className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-500/30 disabled:opacity-50"
-          >
-            ✅ সম্পন্ন
-          </button>
-        )}
-        <ProofButton busy={busy} onProof={onProof} />
-        <button
-          disabled={busy}
-          onClick={onToggle}
-          className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-white/10 disabled:opacity-50"
-        >
-          💬 থ্রেড {open ? '▲' : '▼'}
-        </button>
-      </div>
-
-      {open && <StaffThread taskId={t.id} busy={busy} onComment={onComment} />}
-    </article>
-  )
-}
-
-function ProofButton({
-  busy,
-  onProof,
-}: {
-  busy: boolean
-  onProof: (url: string | undefined, text: string | undefined) => Promise<boolean>
-}) {
-  const [editing, setEditing] = useState(false)
-  const [text, setText] = useState('')
+  const [thread, setThread] = useState<TaskThread | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [draft, setDraft] = useState('')
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileUrl = useRef<string | undefined>(undefined)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const camRef = useRef<HTMLInputElement>(null)
+  const galRef = useRef<HTMLInputElement>(null)
+  const reqId = useRef(0)
 
-  if (!editing) {
-    return (
-      <button
-        disabled={busy}
-        onClick={() => setEditing(true)}
-        className="rounded-lg bg-sky-500/15 px-3 py-1.5 text-sm font-medium text-sky-200 ring-1 ring-sky-500/30 disabled:opacity-50"
-      >
-        📷 প্রমাণ পাঠান
-      </button>
-    )
-  }
+  useEffect(() => {
+    const my = ++reqId.current
+    setLoading(true)
+    fetch(`/api/assistant/office/thread?taskId=${encodeURIComponent(t.id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: TaskThread | null) => {
+        if (my === reqId.current) setThread(d)
+      })
+      .finally(() => {
+        if (my === reqId.current) setLoading(false)
+      })
+  }, [t.id, busy])
 
   const onPick = async (f: File | null) => {
     if (!f) return
@@ -303,113 +352,162 @@ function ProofButton({
     if (!url) setPreview(null)
   }
 
-  return (
-    <div className="flex w-full flex-col gap-2 rounded-lg bg-white/5 p-2 ring-1 ring-white/10">
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-      />
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => inputRef.current?.click()}
-          className="rounded-md bg-white/10 px-3 py-1 text-sm text-slate-200 ring-1 ring-white/10"
-        >
-          🖼️ ছবি নির্বাচন
-        </button>
-        {uploading && <span className="text-xs text-slate-400">আপলোড হচ্ছে…</span>}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {preview && !uploading && <img src={preview} alt="preview" className="h-10 w-10 rounded object-cover" />}
-      </div>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={2}
-        placeholder="ছবি বা লেখা — যেকোনো একটি প্রমাণ দিন…"
-        className="w-full resize-none rounded-md bg-black/20 p-2 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-      />
-      <div className="flex gap-2">
-        <button
-          disabled={busy || uploading || (!fileUrl.current && !text.trim())}
-          onClick={async () => {
-            const ok = await onProof(fileUrl.current, text.trim() || undefined)
-            if (ok) { setEditing(false); setText(''); setPreview(null); fileUrl.current = undefined }
-          }}
-          className="rounded-md bg-sky-500/20 px-3 py-1 text-sm font-medium text-sky-200 ring-1 ring-sky-500/30 disabled:opacity-50"
-        >
-          পাঠান
-        </button>
-        <button
-          onClick={() => { setEditing(false); setText(''); setPreview(null); fileUrl.current = undefined }}
-          className="rounded-md bg-white/5 px-3 py-1 text-sm text-slate-300 ring-1 ring-white/10"
-        >
-          বাতিল
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function StaffThread({ taskId, busy, onComment }: { taskId: string; busy: boolean; onComment: (text: string) => void }) {
-  const [thread, setThread] = useState<TaskThread | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [draft, setDraft] = useState('')
-  const reqId = useRef(0)
-
-  useEffect(() => {
-    const my = ++reqId.current
-    setLoading(true)
-    fetch(`/api/assistant/office/thread?taskId=${encodeURIComponent(taskId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: TaskThread | null) => { if (my === reqId.current) setThread(d) })
-      .finally(() => { if (my === reqId.current) setLoading(false) })
-  }, [taskId, busy])
+  const badge = STASK_BADGE[t.verificationStatus] ?? { cls: 'b-active', label: 'চলছে' }
+  const isRedo = t.verificationStatus === 'redo_requested'
 
   return (
-    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-      {loading && <p className="text-xs text-slate-500">লোড হচ্ছে…</p>}
-      {!loading && thread && (
-        <>
-          {thread.comments.length === 0 && <p className="text-xs text-slate-500">এখনো কোনো মন্তব্য নেই।</p>}
-          <div className="space-y-2">
-            {thread.comments.map((c) => <Bubble key={c.id} c={c} />)}
+    <div className="phone" style={{ width: '100%', maxWidth: 520 }}>
+      <div className="pscreen">
+        <button className="backbtn" onClick={onBack}>
+          ← আমার কাজ
+        </button>
+        <h4 style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.3 }}>{t.title}</h4>
+        <div className="row" style={{ display: 'flex', gap: 8, margin: '10px 0 4px', flexWrap: 'wrap' }}>
+          <span className={`badge ${badge.cls}`}>{isRedo ? '🔄 সংশোধন দরকার' : badge.label}</span>
+          <span className="chip" style={{ fontSize: 11, padding: '5px 10px' }}>
+            📦 {t.type}
+          </span>
+        </div>
+
+        {t.friendlyDetail && (
+          <div className="instr" style={{ margin: '14px 0' }}>
+            <div className="h">🧠 কাজটি যেভাবে করবেন</div>
+            <p>{t.friendlyDetail}</p>
           </div>
-        </>
-      )}
-      <div className="mt-3 flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="মালিককে কিছু লিখুন…"
-          className="flex-1 rounded-md bg-black/30 px-2 py-1.5 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-        />
-        <button
-          disabled={busy || !draft.trim()}
-          onClick={() => { onComment(draft.trim()); setDraft('') }}
-          className="rounded-md bg-emerald-500/20 px-3 py-1.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-500/30 disabled:opacity-50"
+        )}
+
+        {isRedo && t.reviewerNote && (
+          <div className="instr" style={{ margin: '14px 0', borderColor: 'rgba(245,158,11,.3)' }}>
+            <div className="h">🔄 Boss যা সংশোধন চেয়েছেন</div>
+            <p>{t.reviewerNote}</p>
+          </div>
+        )}
+
+        <div className="msgs" style={{ padding: 0 }}>
+          {loading && <div className="sysline"><span>লোড হচ্ছে…</span></div>}
+          {!loading && thread && thread.comments.length === 0 && (
+            <div className="sysline"><span>এখনো কোনো মন্তব্য নেই</span></div>
+          )}
+          {!loading &&
+            thread?.comments.map((c) => {
+              const isOwner = c.authorType === 'owner'
+              const isAgent = c.authorType === 'agent'
+              const who = isOwner ? 'Boss' : isAgent ? 'Agent' : 'আপনি'
+              const initial = isOwner ? 'M' : isAgent ? '🤖' : (staffName.trim()[0] || '?').toUpperCase()
+              const avv = isOwner ? 'o' : isAgent ? 'gray' : 'e'
+              return (
+                <div key={c.id} className={`msg${isOwner ? ' owner' : ''}${isAgent ? ' agent' : ''}`}>
+                  <span className={`av ${avv}`}>{initial}</span>
+                  <div className="bubble">
+                    <div className="mh">
+                      <span className="nm">{who}</span>
+                      <span className="tm">{bnTime(c.createdAt)}</span>
+                    </div>
+                    <div className="content" style={{ fontSize: 13 }}>
+                      {c.body}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+        </div>
+
+        {/* submit result */}
+        <div
+          style={{
+            background: 'var(--bg-1)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--r-md)',
+            padding: 14,
+            marginTop: 8,
+          }}
         >
-          পাঠান
-        </button>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>📎 রেজাল্ট জমা দিন</div>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
+          <input ref={galRef} type="file" accept="image/*" hidden onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => camRef.current?.click()}>
+              📷 ছবি তুলুন
+            </button>
+            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => galRef.current?.click()}>
+              🖼️ গ্যালারি
+            </button>
+          </div>
+          {uploading && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>আপলোড হচ্ছে…</div>}
+          {preview && !uploading && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="preview" style={{ marginTop: 8, height: 64, borderRadius: 8, objectFit: 'cover' }} />
+          )}
+          <div
+            className="ibox"
+            style={{
+              display: 'flex',
+              gap: 10,
+              alignItems: 'center',
+              background: 'var(--bg-0)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-pill)',
+              padding: '6px 6px 6px 14px',
+              marginTop: 10,
+            }}
+          >
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="কমেন্ট লিখুন…"
+              style={{ flex: 1, background: 'transparent', border: 0, color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none' }}
+            />
+            <button
+              className="btn primary sm"
+              disabled={busy || uploading || (!fileUrl.current && !draft.trim())}
+              onClick={async () => {
+                if (fileUrl.current || draft.trim()) {
+                  const ok = await onProof(fileUrl.current, draft.trim() || undefined)
+                  if (ok) {
+                    setDraft('')
+                    setPreview(null)
+                    fileUrl.current = undefined
+                  }
+                }
+              }}
+            >
+              পাঠান
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+            {t.status !== 'done' && (
+              <button className="btn primary sm" disabled={busy} onClick={onDone} style={{ flex: 1, justifyContent: 'center' }}>
+                ✅ সম্পন্ন হিসেবে চিহ্নিত করুন
+              </button>
+            )}
+            <button
+              className="btn sm"
+              disabled={busy || !draft.trim()}
+              onClick={() => {
+                if (draft.trim()) {
+                  onComment(draft.trim())
+                  setDraft('')
+                }
+              }}
+              style={{ flex: 1, justifyContent: 'center' }}
+            >
+              💬 শুধু কমেন্ট
+            </button>
+          </div>
+        </div>
+
+        <div className="note" style={{ marginTop: 14, fontSize: 12.5 }}>
+          <span className="i">🔔</span>
+          <div>
+            Boss অনুমোদন দিলে কাজটি <b>সম্পন্ন</b> হবে। নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-function Bubble({ c }: { c: ThreadMessage }) {
-  const isOwner = c.authorType === 'owner'
-  const isAgent = c.authorType === 'agent'
-  const who = isOwner ? '👑 মালিক' : isAgent ? '🤖 এজেন্ট' : '👤 আপনি'
-  const tone = isOwner ? 'bg-emerald-500/10 text-emerald-100' : isAgent ? 'bg-violet-500/10 text-violet-100' : 'bg-white/5 text-slate-200'
-  return (
-    <div className={`rounded-lg p-2 ${tone}`}>
-      <p className="mb-0.5 text-xs opacity-70">{who}{c.kind === 'revision_request' ? ' · সংশোধন' : ''}</p>
-      <p className="whitespace-pre-line text-sm">{c.body}</p>
-    </div>
-  )
-}
-
+// ── self-initiated (`.selfbtn` + dashed `.stask`) ───────────────────────────
 function SelfInitiated({
   proposals,
   busy,
@@ -424,53 +522,56 @@ function SelfInitiated({
   const [detail, setDetail] = useState('')
 
   return (
-    <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-white">✨ নিজ উদ্যোগে কাজ</h2>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="rounded-lg bg-violet-500/20 px-3 py-1 text-sm font-medium text-violet-200 ring-1 ring-violet-500/30"
-        >
-          {open ? 'বন্ধ' : '+ নতুন'}
-        </button>
-      </div>
-      <p className="mt-1 text-xs text-slate-400">নিজে কোনো কাজ করতে চাইলে এখানে দিন — মালিক অনুমোদন দিলে পারফরম্যান্সে যোগ হবে।</p>
+    <>
+      <button className="selfbtn" onClick={() => setOpen((v) => !v)}>
+        ✨ নিজে থেকে একটা কাজ করেছি — জমা দিন
+      </button>
 
       {open && (
-        <div className="mt-3 space-y-2">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="কাজের শিরোনাম"
-            className="w-full rounded-md bg-black/30 px-2 py-1.5 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-          />
-          <textarea
-            value={detail}
-            onChange={(e) => setDetail(e.target.value)}
-            rows={2}
-            placeholder="বিস্তারিত (ঐচ্ছিক)"
-            className="w-full resize-none rounded-md bg-black/30 p-2 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-          />
-          <button
-            disabled={busy || !title.trim()}
-            onClick={async () => { if (await onCreate(title.trim(), detail.trim())) { setTitle(''); setDetail(''); setOpen(false) } }}
-            className="rounded-md bg-violet-500/20 px-3 py-1.5 text-sm font-medium text-violet-200 ring-1 ring-violet-500/30 disabled:opacity-50"
-          >
-            পাঠান
-          </button>
+        <div className="stask" style={{ borderStyle: 'dashed', borderColor: 'rgba(139,92,246,.4)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="কাজের শিরোনাম"
+              style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm,10px)', padding: '8px 12px', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none' }}
+            />
+            <textarea
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
+              rows={2}
+              placeholder="বিস্তারিত (ঐচ্ছিক)"
+              style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm,10px)', padding: '8px 12px', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none', resize: 'none' }}
+            />
+            <button
+              className="btn primary sm"
+              disabled={busy || !title.trim()}
+              onClick={async () => {
+                if (await onCreate(title.trim(), detail.trim())) {
+                  setTitle('')
+                  setDetail('')
+                  setOpen(false)
+                }
+              }}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              পাঠান
+            </button>
+          </div>
         </div>
       )}
 
-      {proposals.length > 0 && (
-        <ul className="mt-3 space-y-1.5">
-          {proposals.map((p) => (
-            <li key={p.id} className="flex items-center justify-between rounded-lg bg-white/5 px-2.5 py-1.5 text-sm">
-              <span className="min-w-0 truncate text-slate-200">{p.title}</span>
-              <span className="shrink-0 text-xs text-amber-300">অপেক্ষমাণ</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+      {proposals.map((p) => (
+        <div key={p.id} className="stask" style={{ borderStyle: 'dashed', borderColor: 'rgba(139,92,246,.4)' }}>
+          <div className="top">
+            <h4>{p.title}</h4>
+            <span className="self-badge">নিজ উদ্যোগে</span>
+          </div>
+          <div className="d">
+            💡 অতিরিক্ত কাজ · <span style={{ color: '#fcd34d' }}>Boss অনুমোদন দিলে পারফরম্যান্সে +পয়েন্ট</span>
+          </div>
+        </div>
+      ))}
+    </>
   )
 }

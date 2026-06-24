@@ -5,12 +5,71 @@ import { useRouter } from 'next/navigation'
 import type {
   OwnerHubData,
   HubTaskCard,
-  HubAward,
   OverdueUpdateCard,
   TaskThread,
-  ThreadMessage,
   ActivityItem,
+  TeamMember,
+  LeaderRow,
 } from '@/agent/lib/office-hub'
+import Confetti from './confetti'
+
+// ── small formatting helpers ────────────────────────────────────────────────
+const BN = '০১২৩৪৫৬৭৮৯'
+function bn(n: number | string): string {
+  return String(n).replace(/\d/g, (d) => BN[Number(d)])
+}
+function bnTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return ''
+  }
+}
+const AV_VARIANTS = ['e', 'm', 'gray'] as const
+function avClass(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AV_VARIANTS[h % AV_VARIANTS.length]
+}
+const PH = ['ph1', 'ph2', 'ph3'] as const
+
+function pickProofImage(data: Record<string, unknown> | null): string | null {
+  if (!data) return null
+  for (const k of ['imageUrl', 'image', 'photo', 'url', 'fileUrl']) {
+    const v = data[k]
+    if (typeof v === 'string' && /^https?:\/\//.test(v)) return v
+  }
+  return null
+}
+function pickProofText(data: Record<string, unknown> | null): string | null {
+  if (!data) return null
+  for (const k of ['text', 'note', 'caption', 'evidence', 'link']) {
+    const v = data[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+function proofCount(data: Record<string, unknown> | null): number {
+  if (!data) return 0
+  for (const k of ['images', 'photos', 'attachments', 'files']) {
+    const v = data[k]
+    if (Array.isArray(v)) return v.length
+  }
+  return pickProofImage(data) ? 1 : 0
+}
+function pickQc(data: Record<string, unknown> | null): number | null {
+  if (!data) return null
+  for (const k of ['qcScore', 'qc', 'score', 'autoQc']) {
+    const v = data[k]
+    if (typeof v === 'number' && v >= 0 && v <= 100) return v
+  }
+  return null
+}
 
 type ActionBody = {
   action: 'approve' | 'redo' | 'comment' | 'request_update' | 'self_approve' | 'self_reject'
@@ -29,11 +88,14 @@ async function postAction(body: ActionBody): Promise<boolean> {
   return res.ok
 }
 
-export default function OwnerHub({ data }: { data: OwnerHubData }) {
+// ════════════════════════════════════════════════════════════════════════════
+
+export default function OwnerHub({ data, headerDate }: { data: OwnerHubData; headerDate: string }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  const [threadTask, setThreadTask] = useState<HubTaskCard | null>(null)
+  const [awardOpen, setAwardOpen] = useState(false)
 
   const run = useCallback(
     async (key: string, body: ActionBody) => {
@@ -46,250 +108,262 @@ export default function OwnerHub({ data }: { data: OwnerHubData }) {
     [data.businessId, router],
   )
 
-  const { kpis, award, overdueUpdates, pendingApproval, selfInitiated, activity } = data
+  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, selfInitiated, activity, team, leaderboard } = data
   const busy = pending || busyId !== null
 
-  return (
-    <div className="space-y-6">
-      <AwardManager award={award} businessId={data.businessId} />
-
-      {/* KPIs */}
-      <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Kpi label="অনুমোদনের অপেক্ষায়" value={kpis.pending} tone="text-amber-300" />
-        <Kpi label="আজ চলমান" value={kpis.active} tone="text-sky-300" />
-        <Kpi label="আপডেট বাকি" value={kpis.overdue} tone="text-rose-300" />
-        <Kpi label="আজ সম্পন্ন" value={kpis.doneToday} tone="text-emerald-300" />
-      </section>
-
-      {/* Update tracking */}
-      {overdueUpdates.length > 0 && (
-        <section>
-          <SectionHead icon="⏰" title="আপডেট চাওয়া হয়েছে — এখনো দেয়নি" />
-          <div className="space-y-2">
-            {overdueUpdates.map((u) => (
-              <OverdueRow
-                key={u.id}
-                u={u}
-                busy={busy}
-                onRemind={() => run(`remind-${u.id}`, { action: 'request_update', taskId: u.id, note: u.note ?? undefined })}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Self-initiated */}
-      {selfInitiated.length > 0 && (
-        <section>
-          <SectionHead icon="✨" title="নিজ উদ্যোগের কাজ — অনুমোদন দিন" />
-          <div className="space-y-2">
-            {selfInitiated.map((t) => (
-              <article key={t.id} className="rounded-2xl border border-violet-500/25 bg-violet-500/[0.06] p-4">
-                <p className="text-xs text-violet-300">✨ {t.staffName} — নিজ উদ্যোগে</p>
-                <h3 className="mt-0.5 text-base font-medium text-white">{t.title}</h3>
-                {t.detail && <p className="mt-1 whitespace-pre-line text-sm text-slate-300">{t.detail}</p>}
-                <div className="mt-3 flex gap-2">
-                  <button
-                    disabled={busy}
-                    onClick={() => run(`self-ok-${t.id}`, { action: 'self_approve', taskId: t.id })}
-                    className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-500/30 disabled:opacity-50"
-                  >
-                    ✅ অনুমোদন
-                  </button>
-                  <button
-                    disabled={busy}
-                    onClick={() => run(`self-no-${t.id}`, { action: 'self_reject', taskId: t.id })}
-                    className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-white/10 disabled:opacity-50"
-                  >
-                    বাতিল
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Pending approval */}
-      <section>
-        <SectionHead icon="🔍" title={`অনুমোদনের অপেক্ষায় (${pendingApproval.length})`} />
-        {pendingApproval.length === 0 ? (
-          <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
-            এখন অনুমোদনের অপেক্ষায় কোনো কাজ নেই।
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {pendingApproval.map((t) => (
-              <ApprovalCard
-                key={t.id}
-                task={t}
-                open={openTaskId === t.id}
-                busy={busy}
-                onToggle={() => setOpenTaskId(openTaskId === t.id ? null : t.id)}
-                businessId={data.businessId}
-                onApprove={() => run(`ok-${t.id}`, { action: 'approve', taskId: t.id })}
-                onRedo={(note) => run(`redo-${t.id}`, { action: 'redo', taskId: t.id, note })}
-                onComment={(body) => run(`cmt-${t.id}`, { action: 'comment', taskId: t.id, body })}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Activity feed */}
-      {activity.length > 0 && (
-        <section>
-          <SectionHead icon="📜" title="সাম্প্রতিক কার্যক্রম" />
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
-            <ul className="space-y-2">
-              {activity.slice(0, 12).map((a) => (
-                <ActivityRow key={a.id} a={a} />
-              ))}
-            </ul>
-          </div>
-        </section>
-      )}
-    </div>
-  )
-}
-
-function Kpi({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-center">
-      <p className={`text-2xl font-semibold ${tone}`}>{value}</p>
-      <p className="mt-0.5 text-xs text-slate-400">{label}</p>
-    </div>
-  )
-}
-
-function SectionHead({ icon, title }: { icon: string; title: string }) {
-  return (
-    <h2 className="mb-2 text-base font-semibold text-white">
-      {icon} {title}
-    </h2>
-  )
-}
-
-type AwardScore = { staffId: string; staffName: string; score: number; done: number }
-
-function AwardManager({ award, businessId }: { award: HubAward; businessId: string }) {
-  const router = useRouter()
-  const [open, setOpen] = useState(false)
-  const [scores, setScores] = useState<AwardScore[] | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const loadScores = useCallback(async () => {
-    const res = await fetch(`/api/assistant/office/award?businessId=${encodeURIComponent(businessId)}`, { cache: 'no-store' })
-    if (res.ok) {
-      const data = (await res.json()) as { scores: AwardScore[] }
-      setScores(data.scores)
-    }
-  }, [businessId])
-
-  const toggle = async () => {
-    const next = !open
-    setOpen(next)
-    if (next && scores === null) await loadScores()
+  // ── Thread detail swap (mirrors the demo's #owner-thread) ──
+  if (threadTask) {
+    return (
+      <ThreadDetail
+        task={threadTask}
+        businessId={data.businessId}
+        busy={busy}
+        onBack={() => setThreadTask(null)}
+        onApprove={async () => {
+          const ok = await run(`ok-${threadTask.id}`, { action: 'approve', taskId: threadTask.id })
+          if (ok) setThreadTask(null)
+        }}
+        onRedo={async (note) => {
+          const ok = await run(`redo-${threadTask.id}`, { action: 'redo', taskId: threadTask.id, note })
+          if (ok) setThreadTask(null)
+        }}
+        onComment={(body) => run(`cmt-${threadTask.id}`, { action: 'comment', taskId: threadTask.id, body })}
+      />
+    )
   }
 
-  const act = async (body: { action: 'recompute' | 'pin' | 'clear'; staffId?: string }) => {
-    setBusy(true)
-    const res = await fetch('/api/assistant/office/award', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, businessId }),
-    })
-    setBusy(false)
-    if (res.ok) {
-      await loadScores()
-      router.refresh()
-    }
-  }
+  const winnerInitial = award ? (award.staffName.trim()[0] || '?').toUpperCase() : '?'
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/15 to-amber-600/[0.06] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-300">🏆 এই সপ্তাহের সেরা পারফর্মার</p>
-          {award ? (
-            <>
-              <p className="mt-1 text-xl font-semibold text-white">{award.staffName}</p>
-              <p className="mt-0.5 text-sm text-amber-200/80">
-                স্কোর {award.score}
-                {award.pinnedByOwner ? ' · মালিক নির্বাচিত' : ' · স্বয়ংক্রিয়'}
-              </p>
-            </>
-          ) : (
-            <p className="mt-1 text-sm text-amber-200/80">এখনো কেউ নির্বাচিত হয়নি — হিসাব করুন।</p>
-          )}
+    <>
+      {/* greeting */}
+      <div className="phead">
+        <div>
+          <div className="kicker">অফিস হাব · {headerDate}</div>
+          <h1>আসসালামু আলাইকুম, Boss 👋</h1>
+          <p>আজকের অফিস এক নজরে — সব কাজ, সাবমিশন আর অনুমোদন এক জায়গায়।</p>
         </div>
-        <button
-          onClick={toggle}
-          className="shrink-0 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-amber-100 ring-1 ring-amber-500/30"
-        >
-          {open ? 'বন্ধ' : 'পরিচালনা'}
-        </button>
+        <div className="pill-row">
+          <span className="chip live">
+            <span className="dot"></span> {bn(kpis.online)} জন অনলাইন
+          </span>
+          <span className="chip">🔔 টেলিগ্রাম: শুধু নোটিফিকেশন</span>
+        </div>
       </div>
 
-      {open && (
-        <div className="mt-4 space-y-3 border-t border-amber-500/20 pt-3">
-          <div className="flex flex-wrap gap-2">
-            <button
-              disabled={busy}
-              onClick={() => act({ action: 'recompute' })}
-              className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-sm font-medium text-amber-100 ring-1 ring-amber-500/30 disabled:opacity-50"
-            >
-              🔄 স্বয়ংক্রিয় হিসাব
-            </button>
-            {award?.pinnedByOwner && (
-              <button
-                disabled={busy}
-                onClick={() => act({ action: 'clear' })}
-                className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-white/10 disabled:opacity-50"
-              >
-                পিন সরান
-              </button>
+      {/* Performer of the Week */}
+      <div className="award">
+        <Confetti />
+        <div className="ownerctl">
+          <button className="btn ghost sm" onClick={() => setAwardOpen(true)}>
+            ⚙️ ম্যানুয়াল নির্বাচন
+          </button>
+        </div>
+        <div className="inner">
+          <div className="crownwrap">
+            <span className="crown">👑</span>
+            <div className="photo">{winnerInitial}</div>
+          </div>
+          <div className="meta">
+            <span className="tag">🏆 এই সপ্তাহের সেরা পারফরমার</span>
+            {award ? (
+              <>
+                <h2 className="aw">{award.staffName} — মাশাআল্লাহ!</h2>
+                <div className="sub">পুরো টিমের মধ্যে সবচেয়ে বেশি কাজ ও সেরা মান। অভিনন্দন! 🎉</div>
+                <div className="stats">
+                  <div className="s">
+                    <b>{bn(awardStats?.done ?? award.score)}</b>
+                    <span>সম্পন্ন কাজ</span>
+                  </div>
+                  <div className="s">
+                    <b>{awardStats?.approvalRate != null ? `${bn(awardStats.approvalRate)}%` : '—'}</b>
+                    <span>অনুমোদন হার</span>
+                  </div>
+                  <div className="s">
+                    <b>{awardStats?.avgQc != null ? bn(awardStats.avgQc) : '—'}</b>
+                    <span>গড় QC স্কোর</span>
+                  </div>
+                  <div className="s">
+                    <b>+{bn(awardStats?.selfInitiated ?? 0)}</b>
+                    <span>নিজ উদ্যোগে</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="aw">এখনো নির্বাচিত হয়নি</h2>
+                <div className="sub">এই সপ্তাহের সেরা পারফরমার নির্বাচন করতে &ldquo;ম্যানুয়াল নির্বাচন&rdquo;-এ ক্লিক করুন।</div>
+              </>
             )}
           </div>
+        </div>
+      </div>
 
-          {scores === null ? (
-            <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
-          ) : scores.length === 0 ? (
-            <p className="text-xs text-slate-400">এই সপ্তাহে এখনো কোনো স্কোর নেই।</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {scores.map((s) => {
-                const isWinner = award?.staffId === s.staffId
-                return (
-                  <li key={s.staffId} className="flex items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-1.5">
-                    <span className="min-w-0 truncate text-sm text-slate-200">
-                      {isWinner ? '🏆 ' : ''}
-                      {s.staffName}
-                      <span className="ml-1.5 text-xs text-slate-500">স্কোর {s.score} · {s.done} সম্পন্ন</span>
-                    </span>
-                    <button
-                      disabled={busy || isWinner}
-                      onClick={() => act({ action: 'pin', staffId: s.staffId })}
-                      className="shrink-0 rounded-md bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-500/25 disabled:opacity-40"
-                    >
-                      {isWinner ? 'নির্বাচিত' : '📌 নির্বাচন'}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+      {/* KPIs */}
+      <div className="kpis">
+        <div className="kpi amber">
+          <div className="glow"></div>
+          <div className="ic">⏳</div>
+          <div className="v num">{bn(kpis.pending)}</div>
+          <div className="l">অনুমোদনের অপেক্ষায়</div>
+        </div>
+        <div className="kpi sky">
+          <div className="glow"></div>
+          <div className="ic">🔄</div>
+          <div className="v num">{bn(kpis.active)}</div>
+          <div className="l">চলমান কাজ</div>
+        </div>
+        <div className="kpi green">
+          <div className="glow"></div>
+          <div className="ic">✅</div>
+          <div className="v num">{bn(kpis.doneToday)}</div>
+          <div className="l">আজ সম্পন্ন</div>
+        </div>
+        <div className="kpi violet">
+          <div className="glow"></div>
+          <div className="ic">👥</div>
+          <div className="v num">
+            {bn(kpis.online)}/{bn(kpis.staffTotal)}
+          </div>
+          <div className="l">স্টাফ অনলাইন</div>
+        </div>
+      </div>
+
+      {/* update tracking */}
+      {overdueUpdates.length > 0 && (
+        <div className="track">
+          <div className="track-h">
+            ⚠️ আপডেট ট্র্যাকিং — সাড়া পাওয়া যায়নি <span className="c">{bn(overdueUpdates.length)} জন</span>
+          </div>
+          {overdueUpdates.map((u) => (
+            <OverdueRow
+              key={u.id}
+              u={u}
+              busy={busy}
+              onRemind={() => run(`remind-${u.id}`, { action: 'request_update', taskId: u.id, note: u.note ?? undefined })}
+            />
+          ))}
         </div>
       )}
-    </div>
+
+      {/* main grid */}
+      <div className="grid2">
+        {/* LEFT: pending approvals + active tasks */}
+        <div>
+          <div className="section-h">
+            <h2>⏳ অনুমোদনের অপেক্ষায়</h2>
+            <span className="count">{bn(pendingApproval.length + selfInitiated.length)}টি</span>
+          </div>
+          <div className="card" style={{ marginBottom: 20 }}>
+            {pendingApproval.length === 0 && selfInitiated.length === 0 && (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>এখন অনুমোদনের অপেক্ষায় কোনো কাজ নেই।</div>
+            )}
+            {pendingApproval.map((t, i) => (
+              <ApprovalRow
+                key={t.id}
+                task={t}
+                idx={i}
+                busy={busy}
+                onOpen={() => setThreadTask(t)}
+                onApprove={() => run(`ok-${t.id}`, { action: 'approve', taskId: t.id })}
+                onRedo={() => setThreadTask(t)}
+              />
+            ))}
+            {selfInitiated.map((t, i) => (
+              <SelfRow
+                key={t.id}
+                task={t}
+                idx={i}
+                busy={busy}
+                onOpen={() => setThreadTask(t)}
+                onApprove={() => run(`self-ok-${t.id}`, { action: 'self_approve', taskId: t.id })}
+              />
+            ))}
+          </div>
+
+          <div className="section-h">
+            <h2>🔄 চলমান কাজ</h2>
+            <span className="count">{bn(activeTasks.length)}টি</span>
+          </div>
+          <div className="card">
+            {activeTasks.length === 0 && (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>এখন চলমান কোনো কাজ নেই।</div>
+            )}
+            {activeTasks.map((t, i) => (
+              <ActiveRow key={t.id} task={t} idx={i} />
+            ))}
+          </div>
+        </div>
+
+        {/* RIGHT: team status + activity + leaderboard */}
+        <div>
+          <div className="section-h">
+            <h2>👥 টিম স্ট্যাটাস</h2>
+          </div>
+          <div className="card" style={{ marginBottom: 20 }}>
+            {team.length === 0 && (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>কোনো স্টাফ যুক্ত নেই।</div>
+            )}
+            {team.map((m) => (
+              <TeamRow key={m.staffId} m={m} />
+            ))}
+          </div>
+
+          <div className="section-h">
+            <h2>📡 টিম অ্যাক্টিভিটি</h2>
+          </div>
+          <div className="card feed">
+            {activity.length === 0 && (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>আজ এখনো কোনো কার্যক্রম নেই।</div>
+            )}
+            {activity.slice(0, 8).map((a, i, arr) => (
+              <ActivityEv key={a.id} a={a} last={i === arr.length - 1} />
+            ))}
+          </div>
+
+          <div className="section-h" style={{ marginTop: 20 }}>
+            <h2>🏆 সাপ্তাহিক পারফরম্যান্স</h2>
+            <span className="count">auto</span>
+          </div>
+          <div className="card">
+            {leaderboard.length === 0 && (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>এই সপ্তাহে এখনো স্কোর নেই।</div>
+            )}
+            {leaderboard.map((r, i) => (
+              <LeadRow key={r.staffId} r={r} rank={i + 1} top={i === 0} winnerId={award?.staffId} />
+            ))}
+            <div
+              style={{
+                padding: '12px 16px',
+                borderTop: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+              }}
+            >
+              <span style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
+                প্রতি শুক্রবার auto-নির্বাচন · আপনি চাইলে বদলাতে পারবেন
+              </span>
+              <button className="btn sm" onClick={() => setAwardOpen(true)}>
+                ✋ আমি নির্বাচন করব
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {awardOpen && (
+        <AwardModal businessId={data.businessId} winnerId={award?.staffId ?? null} onClose={() => setAwardOpen(false)} />
+      )}
+    </>
   )
 }
 
-function fmtCountdown(secondsLeft: number): { text: string; danger: boolean } {
-  if (secondsLeft <= 0) return { text: 'সময় শেষ — বসকে জানানো হবে', danger: true }
+// ── update-tracking row ─────────────────────────────────────────────────────
+function fmtCountdown(secondsLeft: number): string {
+  if (secondsLeft <= 0) return 'সময় শেষ'
   const m = Math.floor(secondsLeft / 60)
-  const s = secondsLeft % 60
-  return { text: `${m}:${String(s).padStart(2, '0')} বাকি`, danger: secondsLeft < 120 }
+  return `${bn(m)} মিনিট বাকি`
 }
 
 function OverdueRow({ u, busy, onRemind }: { u: OverdueUpdateCard; busy: boolean; onRemind: () => void }) {
@@ -300,172 +374,258 @@ function OverdueRow({ u, busy, onRemind }: { u: OverdueUpdateCard; busy: boolean
     return () => clearInterval(id)
   }, [u.secondsLeft])
 
-  const cd = fmtCountdown(left)
   return (
-    <div className="rounded-xl border border-rose-500/25 bg-rose-500/[0.06] p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">{u.title}</p>
-          <p className="text-xs text-slate-400">{u.staffName}</p>
-          {u.note && <p className="mt-1 text-xs text-slate-300">“{u.note}”</p>}
+    <div className="trow">
+      <span className={`av lg ${avClass(u.staffId)}`}>{(u.staffName.trim()[0] || '?').toUpperCase()}</span>
+      <div className="info">
+        <div className="nm">{u.staffName}</div>
+        <div className="meta">
+          📋 &ldquo;{u.title}&rdquo;{u.note ? ` — ${u.note}` : ' — কাজের ছবি/আপডেট পাঠায়নি।'}
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cd.danger ? 'bg-rose-500/20 text-rose-200' : 'bg-amber-500/15 text-amber-200'}`}>
-          {u.escalated ? '⚠️ বসকে জানানো হয়েছে' : `⏳ ${cd.text}`}
-        </span>
+        <div className="esc">
+          {u.escalated ? '🔔 অটো-রিমাইন্ডার পাঠানো হয়েছে · অপেক্ষা করা হচ্ছে' : `⏱ ১০ মিনিটে আপনাকে জানানো হবে · ${fmtCountdown(left)}`}
+        </div>
       </div>
-      <button
-        disabled={busy}
-        onClick={onRemind}
-        className="mt-2 rounded-lg bg-white/5 px-3 py-1 text-xs font-medium text-slate-200 ring-1 ring-white/10 disabled:opacity-50"
-      >
-        🔔 আবার মনে করিয়ে দিন
-      </button>
+      <div className="acts">
+        <button className="btn sm" disabled={busy} onClick={onRemind}>
+          🔔 মনে করান
+        </button>
+      </div>
     </div>
   )
 }
 
-const STATUS_TONE: Record<string, string> = {
-  proof_submitted: 'bg-sky-500/15 text-sky-300 ring-sky-500/30',
-  auto_verified: 'bg-violet-500/15 text-violet-300 ring-violet-500/30',
-  redo_requested: 'bg-amber-500/15 text-amber-300 ring-amber-500/30',
-  owner_approved: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30',
+// ── approval / active / self rows (`.appr`) ─────────────────────────────────
+function thumbProps(card: HubTaskCard, idx: number): { className: string; style?: React.CSSProperties } {
+  const img = pickProofImage(card.proofData)
+  if (img) {
+    return { className: 'thumb', style: { backgroundImage: `url(${img})`, backgroundSize: 'cover', backgroundPosition: 'center' } }
+  }
+  return { className: `thumb ${PH[idx % PH.length]}` }
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  proof_submitted: 'প্রমাণ জমা',
-  auto_verified: 'অটো-যাচাই',
-  redo_requested: 'সংশোধন চাওয়া',
-  owner_approved: 'অনুমোদিত',
-}
-
-function ApprovalCard({
+function ApprovalRow({
   task,
-  open,
+  idx,
   busy,
-  onToggle,
+  onOpen,
+  onApprove,
+  onRedo,
+}: {
+  task: HubTaskCard
+  idx: number
+  busy: boolean
+  onOpen: () => void
+  onApprove: () => void
+  onRedo: () => void
+}) {
+  const th = thumbProps(task, idx)
+  const qc = pickQc(task.proofData)
+  const count = proofCount(task.proofData)
+  const text = pickProofText(task.proofData)
+  const meta = [
+    count > 0 ? `📎 ${bn(count)}টি জমা` : task.verificationStatus === 'auto_verified' ? '🤖 অটো-যাচাই' : 'ম্যানুয়াল রিভিউ দরকার',
+    bnTime(task.createdAt),
+    qc != null ? `QC স্কোর ${bn(qc)}/১০০` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <div className="appr" onClick={onOpen}>
+      <div {...th} />
+      <div className="body">
+        <div className="top">
+          <span className={`av ${avClass(task.staffId)}`}>{(task.staffName.trim()[0] || '?').toUpperCase()}</span>
+          <span className="meta">
+            {task.staffName} · {task.type}
+          </span>
+        </div>
+        <h3>{task.title}</h3>
+        <div className="meta">{text ? text : meta}</div>
+        <div className="actions" onClick={(e) => e.stopPropagation()}>
+          <button className="btn primary sm" disabled={busy} onClick={onApprove}>
+            ✅ অনুমোদন
+          </button>
+          <button className="btn danger sm" disabled={busy} onClick={onRedo}>
+            🔄 সংশোধন চাই
+          </button>
+          <button className="btn ghost sm" onClick={onOpen}>
+            থ্রেড খুলুন →
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SelfRow({
+  task,
+  idx,
+  busy,
+  onOpen,
+  onApprove,
+}: {
+  task: HubTaskCard
+  idx: number
+  busy: boolean
+  onOpen: () => void
+  onApprove: () => void
+}) {
+  const th = thumbProps(task, idx)
+  return (
+    <div className="appr" onClick={onOpen}>
+      <div {...th} />
+      <div className="body">
+        <div className="top">
+          <span className={`av ${avClass(task.staffId)}`}>{(task.staffName.trim()[0] || '?').toUpperCase()}</span>
+          <span className="meta">{task.staffName}</span>
+          <span className="self-badge">✨ নিজ উদ্যোগে</span>
+        </div>
+        <h3>{task.title}</h3>
+        <div className="meta">💡 অতিরিক্ত কাজ · অনুমোদন দিলে ওর পারফরম্যান্সে +যোগ হবে</div>
+        <div className="actions" onClick={(e) => e.stopPropagation()}>
+          <button className="btn primary sm" disabled={busy} onClick={onApprove}>
+            ✅ অনুমোদন + পয়েন্ট দিন
+          </button>
+          <button className="btn ghost sm" onClick={onOpen}>
+            থ্রেড খুলুন →
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ActiveRow({ task, idx }: { task: HubTaskCard; idx: number }) {
+  const carried = task.status === 'carried' || task.source === 'carry'
+  return (
+    <div className="appr" style={{ cursor: 'default' }}>
+      <div className={`thumb ${PH[idx % PH.length]}`} style={{ opacity: 0.6 }} />
+      <div className="body">
+        <div className="top">
+          <span className={`av ${avClass(task.staffId)}`}>{(task.staffName.trim()[0] || '?').toUpperCase()}</span>
+          <span className="meta">
+            {task.staffName} · {task.type}
+          </span>
+          <span className={`badge ${carried ? 'b-carry' : 'b-active'}`}>{carried ? 'গতকাল থেকে' : 'চলছে'}</span>
+        </div>
+        <h3>{task.title}</h3>
+        <div className="meta">🕐 পাঠানো হয়েছে {bnTime(task.createdAt)} · এখনো জমা দেয়নি</div>
+      </div>
+    </div>
+  )
+}
+
+// ── team status / activity / leaderboard ────────────────────────────────────
+function TeamRow({ m }: { m: TeamMember }) {
+  const dot = m.status === 'on' ? 'on' : m.status === 'lunch' ? 'lunch' : 'off'
+  return (
+    <div className="staff-row">
+      <span className={`av lg ${avClass(m.staffId)}`}>{m.initial}</span>
+      <div className="info">
+        <div className="name">
+          {m.name} <span className={`dotmini ${dot}`}></span>
+        </div>
+        <div className="sub">{m.sub}</div>
+      </div>
+    </div>
+  )
+}
+
+const KIND_ICON: Record<string, string> = {
+  proof_submitted: '📤',
+  proof: '📤',
+  comment: '💬',
+  approved: '✅',
+  owner_approved: '✅',
+  redo_requested: '🔄',
+  self_created: '✨',
+  task_created: '📝',
+  update_requested: '🔔',
+  lunch: '🍽️',
+  done: '✅',
+}
+
+function ActivityEv({ a, last }: { a: ActivityItem; last: boolean }) {
+  return (
+    <div className="ev">
+      <div className="tl">
+        <div className="ic">{KIND_ICON[a.kind] ?? '•'}</div>
+        {!last && <div className="line"></div>}
+      </div>
+      <div>
+        <div className="txt">{a.summary}</div>
+        <div className="t">{bnTime(a.createdAt)}</div>
+      </div>
+    </div>
+  )
+}
+
+const BAR_COLORS = [
+  undefined,
+  'linear-gradient(90deg,#0ea5e9,#7dd3fc)',
+  'linear-gradient(90deg,#64748b,#94a3b8)',
+]
+
+function LeadRow({ r, rank, top, winnerId }: { r: LeaderRow; rank: number; top: boolean; winnerId?: string }) {
+  const barStyle: React.CSSProperties = { width: `${r.pct}%` }
+  const c = BAR_COLORS[Math.min(rank - 1, BAR_COLORS.length - 1)]
+  if (c) barStyle.background = c
+  return (
+    <div className={`lead${top ? ' top' : ''}`}>
+      <div className="rank">{bn(rank)}</div>
+      <span className={`av ${avClass(r.staffId)}`}>{r.initial}</span>
+      <div className="info">
+        <div className="nm">
+          {r.name} {winnerId === r.staffId && <span className="pick">⭐ সেরা</span>}
+        </div>
+        <div className="ln">
+          <div className="bar">
+            <i style={barStyle}></i>
+          </div>
+        </div>
+      </div>
+      <div className="score">{bn(r.score)}</div>
+    </div>
+  )
+}
+
+// ── owner thread detail (mirrors #owner-thread) ─────────────────────────────
+const VS_BADGE: Record<string, { cls: string; label: string }> = {
+  proof_submitted: { cls: 'b-pending', label: '⏳ অনুমোদনের অপেক্ষায়' },
+  auto_verified: { cls: 'b-pending', label: '🤖 অটো-যাচাই হয়েছে' },
+  redo_requested: { cls: 'b-redo', label: '🔄 সংশোধন চাওয়া হয়েছে' },
+  owner_approved: { cls: 'b-done', label: '✅ অনুমোদিত' },
+}
+
+function ThreadDetail({
+  task,
   businessId,
+  busy,
+  onBack,
   onApprove,
   onRedo,
   onComment,
 }: {
   task: HubTaskCard
-  open: boolean
-  busy: boolean
-  onToggle: () => void
   businessId: string
+  busy: boolean
+  onBack: () => void
   onApprove: () => void
   onRedo: (note: string) => void
-  onComment: (body: string) => void
-}) {
-  const tone = STATUS_TONE[task.verificationStatus] ?? 'bg-slate-500/15 text-slate-300 ring-slate-500/30'
-  const label = STATUS_LABEL[task.verificationStatus] ?? task.verificationStatus
-  const proofImg = pickProofImage(task.proofData)
-  const proofText = pickProofText(task.proofData)
-
-  return (
-    <article className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-base font-medium leading-snug text-white">{task.title}</h3>
-          <p className="mt-0.5 text-xs text-slate-400">
-            {task.staffName}
-            {task.redoCount > 0 ? ` · ${task.redoCount} বার সংশোধন` : ''}
-          </p>
-        </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${tone}`}>{label}</span>
-      </div>
-
-      {proofImg && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={proofImg} alt="proof" className="mt-3 max-h-60 w-full rounded-xl object-cover" />
-      )}
-      {proofText && <p className="mt-2 rounded-lg bg-white/5 p-2 text-sm text-slate-300">{proofText}</p>}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          disabled={busy}
-          onClick={onApprove}
-          className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-500/30 disabled:opacity-50"
-        >
-          ✅ অনুমোদন
-        </button>
-        <RedoButton busy={busy} onRedo={onRedo} />
-        <button
-          disabled={busy}
-          onClick={onToggle}
-          className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-white/10 disabled:opacity-50"
-        >
-          💬 থ্রেড {open ? '▲' : '▼'}
-        </button>
-      </div>
-
-      {open && <Thread taskId={task.id} businessId={businessId} busy={busy} onComment={onComment} />}
-    </article>
-  )
-}
-
-function RedoButton({ busy, onRedo }: { busy: boolean; onRedo: (note: string) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [note, setNote] = useState('')
-  if (!editing) {
-    return (
-      <button
-        disabled={busy}
-        onClick={() => setEditing(true)}
-        className="rounded-lg bg-amber-500/15 px-3 py-1.5 text-sm font-medium text-amber-200 ring-1 ring-amber-500/30 disabled:opacity-50"
-      >
-        🔄 সংশোধন
-      </button>
-    )
-  }
-  return (
-    <div className="flex w-full flex-col gap-2 rounded-lg bg-white/5 p-2 ring-1 ring-white/10">
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        rows={2}
-        placeholder="কী সংশোধন করতে হবে লিখুন…"
-        className="w-full resize-none rounded-md bg-black/20 p-2 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-      />
-      <div className="flex gap-2">
-        <button
-          disabled={busy || !note.trim()}
-          onClick={() => onRedo(note.trim())}
-          className="rounded-md bg-amber-500/20 px-3 py-1 text-sm font-medium text-amber-200 ring-1 ring-amber-500/30 disabled:opacity-50"
-        >
-          পাঠান
-        </button>
-        <button
-          onClick={() => { setEditing(false); setNote('') }}
-          className="rounded-md bg-white/5 px-3 py-1 text-sm text-slate-300 ring-1 ring-white/10"
-        >
-          বাতিল
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function Thread({
-  taskId,
-  businessId,
-  busy,
-  onComment,
-}: {
-  taskId: string
-  businessId: string
-  busy: boolean
   onComment: (body: string) => void
 }) {
   const [thread, setThread] = useState<TaskThread | null>(null)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
+  const [redoMode, setRedoMode] = useState(false)
   const reqId = useRef(0)
 
   useEffect(() => {
     const my = ++reqId.current
     setLoading(true)
-    fetch(`/api/assistant/office/thread?taskId=${encodeURIComponent(taskId)}&businessId=${encodeURIComponent(businessId)}`)
+    fetch(`/api/assistant/office/thread?taskId=${encodeURIComponent(task.id)}&businessId=${encodeURIComponent(businessId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d: TaskThread | null) => {
         if (my === reqId.current) setThread(d)
@@ -473,94 +633,233 @@ function Thread({
       .finally(() => {
         if (my === reqId.current) setLoading(false)
       })
-  }, [taskId, businessId, busy])
+  }, [task.id, businessId, busy])
+
+  const badge = VS_BADGE[task.verificationStatus] ?? { cls: 'b-pending', label: task.verificationStatus }
 
   return (
-    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-      {loading && <p className="text-xs text-slate-500">লোড হচ্ছে…</p>}
-      {!loading && thread && (
-        <>
-          {thread.comments.length === 0 && thread.events.length === 0 && (
-            <p className="text-xs text-slate-500">এখনো কোনো মন্তব্য নেই।</p>
-          )}
-          <div className="space-y-2">
-            {thread.comments.map((c) => (
-              <CommentBubble key={c.id} c={c} />
-            ))}
+    <div className="grid2">
+      <div className="card">
+        <div className="thread-head">
+          <div className="crumb" onClick={onBack}>
+            ← অনুমোদনের অপেক্ষায়
           </div>
-          {thread.events.length > 0 && (
-            <ul className="mt-3 space-y-1 border-t border-white/10 pt-2">
-              {thread.events.map((e) => (
-                <li key={e.id} className="text-xs text-slate-500">
-                  · {e.summary}
-                </li>
-              ))}
-            </ul>
+          <h2>{task.title}</h2>
+          <div className="row">
+            <span className={`badge ${badge.cls}`}>{badge.label}</span>
+            <span className="chip">
+              <span className={`av ${avClass(task.staffId)}`} style={{ width: 20, height: 20, fontSize: 10 }}>
+                {(task.staffName.trim()[0] || '?').toUpperCase()}
+              </span>{' '}
+              {task.staffName}
+            </span>
+            <span className="chip">📦 {task.type}</span>
+          </div>
+        </div>
+
+        {task.detail && (
+          <div className="instr">
+            <div className="h">🧠 কাজটি যেভাবে করবেন</div>
+            <p>{task.detail}</p>
+          </div>
+        )}
+
+        <div className="msgs">
+          {loading && <div className="sysline"><span>লোড হচ্ছে…</span></div>}
+          {!loading && thread && thread.comments.length === 0 && (
+            <div className="sysline"><span>এখনো কোনো মন্তব্য নেই</span></div>
           )}
-        </>
-      )}
-      <div className="mt-3 flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="মন্তব্য লিখুন…"
-          className="flex-1 rounded-md bg-black/30 px-2 py-1.5 text-sm text-slate-100 outline-none ring-1 ring-white/10"
-        />
-        <button
-          disabled={busy || !draft.trim()}
-          onClick={() => { onComment(draft.trim()); setDraft('') }}
-          className="rounded-md bg-sky-500/20 px-3 py-1.5 text-sm font-medium text-sky-200 ring-1 ring-sky-500/30 disabled:opacity-50"
-        >
-          পাঠান
-        </button>
+          {!loading &&
+            thread?.comments.map((c) => {
+              const isOwner = c.authorType === 'owner'
+              const isAgent = c.authorType === 'agent'
+              const who = isOwner ? 'আপনি (Boss)' : isAgent ? 'Agent' : task.staffName
+              const initial = isOwner ? 'M' : isAgent ? '🤖' : (task.staffName.trim()[0] || '?').toUpperCase()
+              const avv = isOwner ? 'o' : isAgent ? 'gray' : avClass(task.staffId)
+              return (
+                <div key={c.id} className={`msg${isOwner ? ' owner' : ''}${isAgent ? ' agent' : ''}`}>
+                  <span className={`av ${avv}`}>{initial}</span>
+                  <div className="bubble">
+                    <div className="mh">
+                      <span className="nm">{who}</span>
+                      <span className="tm">{bnTime(c.createdAt)}</span>
+                    </div>
+                    <div className="content">{c.body}</div>
+                  </div>
+                </div>
+              )
+            })}
+        </div>
+
+        <div className="composer">
+          <div className="owner-actions">
+            <button className="btn primary" disabled={busy} onClick={onApprove}>
+              ✅ অনুমোদন করুন (Completed)
+            </button>
+            <button className="btn danger" disabled={busy} onClick={() => setRedoMode((v) => !v)}>
+              🔄 সংশোধন চাই
+            </button>
+          </div>
+          <div className="ibox">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={redoMode ? 'কী সংশোধন করতে হবে লিখুন…' : 'কমেন্ট লিখুন… স্টাফ সাথে সাথে নোটিফিকেশন পাবে'}
+            />
+            <button
+              className="btn primary sm"
+              disabled={busy || !draft.trim()}
+              onClick={() => {
+                const t = draft.trim()
+                if (!t) return
+                if (redoMode) onRedo(t)
+                else onComment(t)
+                setDraft('')
+              }}
+            >
+              পাঠান
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="section-h">
+          <h2>🧾 টাস্ক টাইমলাইন</h2>
+        </div>
+        <div className="card feed">
+          {!thread || thread.events.length === 0 ? (
+            <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>কোনো টাইমলাইন তথ্য নেই।</div>
+          ) : (
+            thread.events.map((e, i, arr) => (
+              <div className="ev" key={e.id}>
+                <div className="tl">
+                  <div className="ic">{KIND_ICON[e.kind] ?? '•'}</div>
+                  {i !== arr.length - 1 && <div className="line"></div>}
+                </div>
+                <div>
+                  <div className="txt">{e.summary}</div>
+                  <div className="t">{bnTime(e.createdAt)}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="note">
+          <span className="i">🔔</span>
+          <div>
+            এই থ্রেডের প্রতিটি কমেন্ট {task.staffName}-র মোবাইল অ্যাপ <b>ও</b> টেলিগ্রামে সাথে সাথে পৌঁছায় — কিছু মিস হয় না।
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-function CommentBubble({ c }: { c: ThreadMessage }) {
-  const isOwner = c.authorType === 'owner'
-  const isAgent = c.authorType === 'agent'
-  const who = isOwner ? '👑 মালিক' : isAgent ? '🤖 এজেন্ট' : '👤 স্টাফ'
-  const tone = isOwner
-    ? 'bg-emerald-500/10 text-emerald-100'
-    : isAgent
-      ? 'bg-violet-500/10 text-violet-100'
-      : 'bg-white/5 text-slate-200'
+// ── award manual-selection modal ────────────────────────────────────────────
+type AwardScore = { staffId: string; staffName: string; score: number; done: number }
+
+function AwardModal({
+  businessId,
+  winnerId,
+  onClose,
+}: {
+  businessId: string
+  winnerId: string | null
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [scores, setScores] = useState<AwardScore[] | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    const res = await fetch(`/api/assistant/office/award?businessId=${encodeURIComponent(businessId)}`, { cache: 'no-store' })
+    if (res.ok) {
+      const d = (await res.json()) as { scores: AwardScore[] }
+      setScores(d.scores)
+    }
+  }, [businessId])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const act = async (body: { action: 'recompute' | 'pin' | 'clear'; staffId?: string }) => {
+    setBusy(true)
+    const res = await fetch('/api/assistant/office/award', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, businessId }),
+    })
+    setBusy(false)
+    if (res.ok) {
+      await load()
+      router.refresh()
+    }
+  }
+
   return (
-    <div className={`rounded-lg p-2 ${tone}`}>
-      <p className="mb-0.5 text-xs opacity-70">
-        {who}
-        {c.kind === 'revision_request' ? ' · সংশোধন' : ''}
-      </p>
-      <p className="whitespace-pre-line text-sm">{c.body}</p>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.6)',
+        backdropFilter: 'blur(3px)',
+        display: 'grid',
+        placeItems: 'center',
+        zIndex: 90,
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{ width: 'min(440px,100%)', maxHeight: '80vh', overflowY: 'auto', padding: 18 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <h2 style={{ flex: 1, fontSize: 16, fontWeight: 700 }}>🏆 সেরা পারফরমার নির্বাচন</h2>
+          <button className="btn ghost sm" onClick={onClose}>
+            বন্ধ
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <button className="btn sm" disabled={busy} onClick={() => act({ action: 'recompute' })}>
+            🔄 স্বয়ংক্রিয় হিসাব
+          </button>
+          {winnerId && (
+            <button className="btn ghost sm" disabled={busy} onClick={() => act({ action: 'clear' })}>
+              পিন সরান
+            </button>
+          )}
+        </div>
+        {scores === null ? (
+          <p style={{ fontSize: 13, color: 'var(--muted)' }}>লোড হচ্ছে…</p>
+        ) : scores.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--muted)' }}>এই সপ্তাহে এখনো কোনো স্কোর নেই।</p>
+        ) : (
+          scores.map((s) => {
+            const isWinner = winnerId === s.staffId
+            return (
+              <div key={s.staffId} className="staff-row">
+                <span className={`av lg ${avClass(s.staffId)}`}>{(s.staffName.trim()[0] || '?').toUpperCase()}</span>
+                <div className="info">
+                  <div className="name">
+                    {isWinner ? '🏆 ' : ''}
+                    {s.staffName}
+                  </div>
+                  <div className="sub">
+                    স্কোর {bn(s.score)} · {bn(s.done)} সম্পন্ন
+                  </div>
+                </div>
+                <button className="btn sm" disabled={busy || isWinner} onClick={() => act({ action: 'pin', staffId: s.staffId })}>
+                  {isWinner ? 'নির্বাচিত' : '📌 নির্বাচন'}
+                </button>
+              </div>
+            )
+          })
+        )}
+      </div>
     </div>
   )
-}
-
-function ActivityRow({ a }: { a: ActivityItem }) {
-  return (
-    <li className="flex items-baseline gap-2 text-sm text-slate-300">
-      <span className="text-slate-500">·</span>
-      <span className="min-w-0 flex-1 truncate">{a.summary}</span>
-    </li>
-  )
-}
-
-function pickProofImage(data: Record<string, unknown> | null): string | null {
-  if (!data) return null
-  for (const k of ['imageUrl', 'image', 'photo', 'url', 'fileUrl']) {
-    const v = data[k]
-    if (typeof v === 'string' && /^https?:\/\//.test(v)) return v
-  }
-  return null
-}
-
-function pickProofText(data: Record<string, unknown> | null): string | null {
-  if (!data) return null
-  for (const k of ['text', 'note', 'caption', 'evidence', 'link']) {
-    const v = data[k]
-    if (typeof v === 'string' && v.trim()) return v.trim()
-  }
-  return null
 }
