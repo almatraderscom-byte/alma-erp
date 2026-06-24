@@ -11,6 +11,8 @@ import type {
   TeamMember,
   LeaderRow,
 } from '@/agent/lib/office-hub'
+import type { StaffPerformance } from '@/agent/lib/office-performance'
+import type { ProposalCard } from '@/agent/lib/office-proposals'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 
@@ -94,8 +96,20 @@ function pickQc(data: Record<string, unknown> | null): number | null {
 }
 
 type ActionBody = {
-  action: 'approve' | 'redo' | 'comment' | 'request_update' | 'self_approve' | 'self_reject' | 'set_due'
-  taskId: string
+  action:
+    | 'approve'
+    | 'redo'
+    | 'comment'
+    | 'request_update'
+    | 'self_approve'
+    | 'self_reject'
+    | 'set_due'
+    | 'set_always_escalate'
+    | 'proposal_decide'
+  taskId?: string
+  proposalId?: string
+  decision?: 'approve' | 'dismiss'
+  on?: boolean
   note?: string
   body?: string
   businessId?: string
@@ -140,7 +154,7 @@ export default function OwnerHub({
     [data.businessId, router],
   )
 
-  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, selfInitiated, activity, team, leaderboard } = data
+  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, selfInitiated, activity, team, leaderboard, performance, proposals } = data
   const busy = pending || busyId !== null
 
   // staffId → profile image map (from team rows) for avatars across the hub
@@ -179,6 +193,10 @@ export default function OwnerHub({
             if (ok) setThreadTask(null)
           }}
           onComment={(body) => run(`cmt-${threadTask.id}`, { action: 'comment', taskId: threadTask.id, body })}
+          onAlwaysEscalate={async (on) => {
+            const ok = await run(`esc-${threadTask.id}`, { action: 'set_always_escalate', taskId: threadTask.id, on })
+            if (ok) setThreadTask({ ...threadTask, alwaysEscalate: on })
+          }}
         />
         {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
       </>
@@ -301,6 +319,27 @@ export default function OwnerHub({
               u={u}
               busy={busy}
               onRemind={() => run(`remind-${u.id}`, { action: 'request_update', taskId: u.id, note: u.note ?? undefined })}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* penalty / reward proposals — agent proposes, owner decides (no payroll write) */}
+      {proposals.length > 0 && (
+        <div className="props">
+          <div className="props-h">
+            🧾 এজেন্টের প্রস্তাব — আপনার সিদ্ধান্ত দরকার <span className="c">{bn(proposals.length)}টি</span>
+          </div>
+          <div className="props-note">
+            💡 এজেন্ট শুধু প্রস্তাব করে — টাকা/পেরোলে কোনো পরিবর্তন হয় না। জরিমানা অনুমোদন করলে আপনি নিজে ERP-তে প্রয়োগ করবেন।
+          </div>
+          {proposals.map((p) => (
+            <ProposalRow
+              key={p.id}
+              p={p}
+              busy={busy}
+              onApprove={() => run(`prop-ok-${p.id}`, { action: 'proposal_decide', proposalId: p.id, decision: 'approve' })}
+              onDismiss={() => run(`prop-no-${p.id}`, { action: 'proposal_decide', proposalId: p.id, decision: 'dismiss' })}
             />
           ))}
         </div>
@@ -438,6 +477,29 @@ export default function OwnerHub({
               </button>
             </div>
           </div>
+
+          <div className="section-h" style={{ marginTop: 20 }}>
+            <h2>📊 স্টাফ পারফরম্যান্স</h2>
+            <span className="count">এই সপ্তাহ</span>
+          </div>
+          <div className="card perf">
+            {performance.length === 0 ? (
+              <div style={{ padding: 18, fontSize: 13.5, color: 'var(--muted)' }}>এই সপ্তাহে এখনো কোনো তথ্য নেই।</div>
+            ) : (
+              <>
+                <div className="perf-head">
+                  <span className="nm">স্টাফ</span>
+                  <span>সম্পন্ন</span>
+                  <span>সময়মতো</span>
+                  <span>সংশোধন</span>
+                  <span>Boss-এ</span>
+                </div>
+                {performance.map((p) => (
+                  <PerfRow key={p.staffId} p={p} img={imgByStaff.get(p.staffId) ?? null} />
+                ))}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -519,6 +581,65 @@ function OverdueRow({ u, busy, onRemind }: { u: OverdueUpdateCard; busy: boolean
           🔔 মনে করান
         </button>
       </div>
+    </div>
+  )
+}
+
+// ── penalty / reward proposal row ───────────────────────────────────────────
+function ProposalRow({
+  p,
+  busy,
+  onApprove,
+  onDismiss,
+}: {
+  p: ProposalCard
+  busy: boolean
+  onApprove: () => void
+  onDismiss: () => void
+}) {
+  const isPenalty = p.kind === 'penalty'
+  return (
+    <div className="prow">
+      <span className={`prow-ic ${isPenalty ? 'pen' : 'rew'}`}>{isPenalty ? '⚠️' : '🎁'}</span>
+      <div className="info">
+        <div className="nm">
+          {p.staffName}
+          <span className={`prow-tag ${isPenalty ? 'pen' : 'rew'}`}>{isPenalty ? 'জরিমানার প্রস্তাব' : 'পুরস্কারের প্রস্তাব'}</span>
+          {p.amount != null && <span className="prow-amt">৳{bn(p.amount)}</span>}
+        </div>
+        <div className="meta">{p.reason}</div>
+        {p.taskTitle && <div className="meta sub">📋 {p.taskTitle}</div>}
+      </div>
+      <div className="acts">
+        <button className={`btn sm ${isPenalty ? 'danger' : 'primary'}`} disabled={busy} onClick={onApprove}>
+          ✅ অনুমোদন
+        </button>
+        <button className="btn ghost sm" disabled={busy} onClick={onDismiss}>
+          বাতিল
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── staff performance scorecard row ─────────────────────────────────────────
+function PerfRow({ p, img }: { p: StaffPerformance; img: string | null }) {
+  const rate = p.onTimeRate
+  const rateCls = rate == null ? 'na' : rate >= 80 ? 'good' : rate >= 50 ? 'mid' : 'bad'
+  return (
+    <div className="perf-row">
+      <div className="who">
+        {img ? (
+          <span className="av img" style={{ backgroundImage: `url(${img})` }} />
+        ) : (
+          <span className={`av ${avClass(p.staffId)}`}>{(p.staffName.trim()[0] || '?').toUpperCase()}</span>
+        )}
+        <span className="nm">{p.staffName}</span>
+      </div>
+      <span className="num">{bn(p.done)}</span>
+      <span className={`num rate ${rateCls}`}>{rate == null ? '—' : `${bn(rate)}%`}</span>
+      <span className={`num ${p.redo > 0 ? 'warn' : ''}`}>{bn(p.redo)}</span>
+      <span className={`num ${p.escalated > 0 ? 'warn' : ''}`}>{bn(p.escalated)}</span>
     </div>
   )
 }
@@ -853,6 +974,7 @@ function ThreadDetail({
   onApprove,
   onRedo,
   onComment,
+  onAlwaysEscalate,
 }: {
   task: HubTaskCard
   businessId: string
@@ -862,6 +984,7 @@ function ThreadDetail({
   onApprove: () => void
   onRedo: (note: string) => void
   onComment: (body: string) => void
+  onAlwaysEscalate: (on: boolean) => void
 }) {
   const proofImg = pickProofImage(task.proofData)
   const [thread, setThread] = useState<TaskThread | null>(null)
@@ -948,6 +1071,15 @@ function ThreadDetail({
         </div>
 
         <div className="composer">
+          <label className="esc-toggle" title="চালু থাকলে এই কাজটি এজেন্ট নিজে বন্ধ করবে না — সবসময় আপনাকে দেখাবে">
+            <input
+              type="checkbox"
+              checked={task.alwaysEscalate}
+              disabled={busy}
+              onChange={(e) => onAlwaysEscalate(e.target.checked)}
+            />
+            <span>🔔 এই কাজটি সবসময় আমাকে দেখাও (এজেন্ট নিজে বন্ধ করবে না)</span>
+          </label>
           <div className="owner-actions">
             <button className="btn primary" disabled={busy} onClick={onApprove}>
               ✅ অনুমোদন করুন (Completed)

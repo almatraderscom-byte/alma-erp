@@ -529,4 +529,43 @@ export const OFFICE_CSS = `
 .ohub .checkin-banner.off .ci-dot{background:#f59e0b}
 .ohub .checkin-banner.out .ci-dot{background:#64748b}
 @keyframes oh-ci-pulse{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 5px rgba(34,197,94,0)}}
+
+/* ── Phase 3: penalty / reward proposals ── */
+.ohub .props{border-radius:var(--r-lg);margin-bottom:22px;overflow:hidden;border:1px solid rgba(168,85,247,.28);background:rgba(168,85,247,.06)}
+.ohub .props-h{display:flex;align-items:center;gap:10px;padding:14px 18px;font-size:15px;font-weight:700;color:#d8b4fe;border-bottom:1px solid rgba(168,85,247,.18)}
+.ohub .props-h .c{margin-left:auto;font-size:12px;font-weight:700;background:rgba(168,85,247,.18);color:#e9d5ff;padding:3px 11px;border-radius:var(--r-pill)}
+.ohub .props-note{padding:9px 18px;font-size:12px;color:var(--muted);border-bottom:1px solid rgba(168,85,247,.12);background:rgba(168,85,247,.04)}
+.ohub .prow{display:flex;align-items:flex-start;gap:13px;padding:14px 18px;border-bottom:1px solid rgba(168,85,247,.1)}
+.ohub .prow:last-child{border-bottom:0}
+.ohub .prow-ic{font-size:20px;flex:none;line-height:1.3}
+.ohub .prow .info{flex:1;min-width:0}
+.ohub .prow .nm{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ohub .prow-tag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:var(--r-pill)}
+.ohub .prow-tag.pen{background:rgba(239,68,68,.16);color:#fca5a5}
+.ohub .prow-tag.rew{background:rgba(34,197,94,.16);color:#86efac}
+.ohub .prow-amt{font-size:12.5px;font-weight:800;color:var(--ink)}
+.ohub .prow .meta{font-size:12.5px;color:var(--muted);margin-top:4px}
+.ohub .prow .meta.sub{margin-top:2px;opacity:.85}
+.ohub .prow .acts{display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+
+/* ── Phase 3: staff performance scorecard ── */
+.ohub .card.perf{padding:4px 0}
+.ohub .perf-head,.ohub .perf-row{display:grid;grid-template-columns:1.7fr .7fr .9fr .9fr .8fr;align-items:center;gap:6px;padding:9px 16px}
+.ohub .perf-head{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid var(--border-subtle)}
+.ohub .perf-head span:not(.nm),.ohub .perf-row .num{text-align:center}
+.ohub .perf-row{border-bottom:1px solid var(--border-subtle);font-size:13.5px}
+.ohub .perf-row:last-child{border-bottom:0}
+.ohub .perf-row .who{display:flex;align-items:center;gap:9px;min-width:0}
+.ohub .perf-row .who .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .perf-row .num{font-weight:700;font-variant-numeric:tabular-nums}
+.ohub .perf-row .num.warn{color:#fca5a5}
+.ohub .perf-row .num.rate.good{color:#86efac}
+.ohub .perf-row .num.rate.mid{color:#fcd34d}
+.ohub .perf-row .num.rate.bad{color:#fca5a5}
+.ohub .perf-row .num.rate.na{color:var(--muted)}
+
+/* ── Phase 3: always-escalate toggle (thread detail) ── */
+.ohub .esc-toggle{display:flex;align-items:center;gap:9px;margin-bottom:12px;padding:9px 12px;border-radius:12px;
+  background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);font-size:12.5px;font-weight:600;color:#fcd34d;cursor:pointer}
+.ohub .esc-toggle input{width:16px;height:16px;accent-color:#f59e0b;cursor:pointer;flex:none}
 `

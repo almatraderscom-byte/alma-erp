@@ -2100,6 +2100,11 @@ model AgentStaffTask {
   supervisorNeedsOwner   Boolean                    @default(false) @map("supervisor_needs_owner")
   /// Last time the supervisor acted on this task (debounce + re-triage marker).
   supervisorLastTickAt   DateTime?                  @map("supervisor_last_tick_at")
+  // ── Phase-3 90/10 escalation gate. ──
+  /// Owner forced this task to always reach him, overriding the criticality gate.
+  supervisorAlwaysEscalate Boolean                  @default(false) @map("supervisor_always_escalate")
+  /// Last criticality the supervisor computed ('critical' | 'normal'). Audit only.
+  supervisorCriticality  String?                    @map("supervisor_criticality")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")
@@ -3215,6 +3220,34 @@ model OfficeWeeklyAward {
   @@unique([businessId, weekStart])
   @@index([staffId])
   @@map("office_weekly_awards")
+}
+
+/// Penalty / reward the supervisor proposes for a staff member. The agent NEVER
+/// writes payroll/ledger — it only raises a proposal here; the owner approves or
+/// dismisses it from the office section. kind = 'penalty' | 'reward'.
+model OfficeStaffProposal {
+  id         String    @id @default(uuid())
+  businessId String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// AgentStaff.id — loose ref, no FK (proposals can outlive a staff row).
+  staffId    String    @map("staff_id")
+  /// AgentStaffTask.id that triggered this — loose ref, no FK.
+  taskId     String?   @map("task_id")
+  /// 'penalty' | 'reward'
+  kind       String
+  /// Suggested amount in whole taka (optional — owner sets the real figure).
+  amount     Int?
+  reason     String    @db.Text
+  /// 'pending' | 'approved' | 'dismissed'
+  status     String    @default("pending")
+  /// User.id of the owner who decided — loose ref, no FK.
+  decidedBy  String?   @map("decided_by")
+  decidedAt  DateTime? @map("decided_at")
+  meta       Json?
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([businessId, status, createdAt])
+  @@index([staffId, createdAt])
+  @@map("office_staff_proposals")
 }
 
 /// Agent-placed outbound phone calls (ElevenLabs Conversational AI + Twilio).

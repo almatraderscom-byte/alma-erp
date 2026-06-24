@@ -9,8 +9,15 @@
  *   2. Asks the staff for an update in the office group when a task is taking
  *      longer than normal (overdue vs. its deadline, or idle too long).
  *   3. When it can't understand how to supervise a task it asks the staff a
- *      clarifying question — up to TWICE. If it still can't understand, that
- *      one task's verification falls to the owner with an alert (the ~10%).
+ *      clarifying question — up to TWICE.
+ *
+ * Phase-3 90/10 gate: whenever the agent can't confirm or understand a task it
+ * does NOT bother the owner by default. It weighs the task's criticality
+ * (assessCriticality: money/customer types + keywords, repeated rework, or the
+ * owner's "always escalate" flag). Only the critical ~10% escalate to the owner;
+ * low-stakes ones are accepted as done (clearly logged as unverified-accept) or
+ * quietly left for the staff. This keeps the owner's review queue to the few
+ * things that genuinely need him.
  *
  * The supervisor's reasoning/coordination runs on DeepSeek (or-deepseek-v4-flash,
  * the `ops` model) per the locked owner decision — never the head/Claude. The
@@ -28,7 +35,14 @@ import { logCost } from '@/agent/lib/cost-events'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { postGroupMessage } from '@/agent/lib/office-chat'
-import { agentAutoVerify, agentRequestRedo, escalateToOwner, requestUpdate } from '@/agent/lib/office-actions'
+import {
+  agentAutoVerify,
+  agentAcceptUnverified,
+  agentRequestRedo,
+  escalateToOwner,
+  requestUpdate,
+} from '@/agent/lib/office-actions'
+import { raiseProposal } from '@/agent/lib/office-proposals'
 
 /** Locked to DeepSeek per owner decision — the same model the `ops` specialist uses. */
 const SUPERVISOR_MODEL_ID = 'or-deepseek-v4-flash'
@@ -61,6 +75,8 @@ export type SupervisorTickResult = {
   withinHours: boolean
   considered: number
   verified: number
+  /** Low-stakes tasks the agent accepted without full verification (90/10 gate). */
+  accepted: number
   redo: number
   escalated: number
   clarified: number
@@ -216,7 +232,13 @@ async function assessImageProof(task: TaskRow, imageUrl: string): Promise<{ matc
 
 // ── Task processing ──────────────────────────────────────────────────────────
 
-type StaffLite = { id: string; name: string; telegramChatId: string | null; ntfyTopic: string | null }
+type StaffLite = {
+  id: string
+  name: string
+  telegramChatId: string | null
+  ntfyTopic: string | null
+  userId: string | null
+}
 type TaskRow = {
   id: string
   title: string
@@ -233,11 +255,89 @@ type TaskRow = {
   lastStaffUpdateAt: Date | null
   supervisorClarifyCount: number
   supervisorLastTickAt: Date | null
+  supervisorAlwaysEscalate: boolean
   businessId: string
   staff: StaffLite
 }
 
 const ACTIVE_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof'] as const
+
+// ── 90/10 criticality gate ───────────────────────────────────────────────────
+// Only the truly-critical ~10% of tasks should reach the owner when the agent
+// can't fully confirm them. Everything else the supervisor resolves itself.
+
+/** Task types that are inherently owner-critical (money / customer-facing). */
+const CRITICAL_TYPES = new Set(['finance', 'payment', 'order', 'delivery', 'inventory', 'cs', 'customer'])
+/** Bangla + English keywords that mark a task as money/customer critical. */
+const CRITICAL_KEYWORDS =
+  /(টাকা|পেমেন্ট|পরিশোধ|ইনভয়েস|বিল|অর্ডার|ডেলিভারি|কুরিয়ার|কাস্টমার|গ্রাহক|ক্রেতা|ব্যাংক|বিকাশ|নগদ|লেনদেন|রিফান্ড|ফেরত|অভিযোগ|payment|invoice|order|delivery|refund|customer|complaint|bank|money|cash)/i
+/** Repeated rework on the same task is a signal something is genuinely wrong. */
+const CRITICAL_REDO = 3
+
+/** Decide whether an unverifiable/unclear task is critical enough for the owner. */
+function assessCriticality(task: TaskRow): { critical: boolean; reason: string } {
+  if (task.supervisorAlwaysEscalate) return { critical: true, reason: 'মালিক এই কাজটি সবসময় দেখতে চেয়েছেন' }
+  if (CRITICAL_TYPES.has(task.type)) return { critical: true, reason: 'অর্থ/গ্রাহক সম্পর্কিত কাজ' }
+  const hay = `${task.title} ${task.detail ?? ''}`
+  if (CRITICAL_KEYWORDS.test(hay)) return { critical: true, reason: 'অর্থ/গ্রাহক সম্পর্কিত কাজ' }
+  if ((task.redoCount ?? 0) >= CRITICAL_REDO) return { critical: true, reason: 'বারবার সংশোধন লেগেছে' }
+  return { critical: false, reason: '' }
+}
+
+/**
+ * Gate for the "couldn't verify, but staff submitted work" case. Critical →
+ * owner; non-critical low-stakes → accept as done (clearly logged). Returns the
+ * outcome label for the tick counters.
+ */
+async function handoffSubmitted(task: TaskRow, reason: string): Promise<'escalated' | 'accepted'> {
+  const crit = assessCriticality(task)
+  if (crit.critical) {
+    await escalateToOwner(task.id, task.businessId, reason)
+    return 'escalated'
+  }
+  await agentAcceptUnverified(task.id, task.businessId, `যাচাই করা যায়নি, কম-ঝুঁকির কাজ — ${reason}`)
+  return 'accepted'
+}
+
+// ── Penalty / reward proposals (owner approves; agent never touches payroll) ──
+
+/** Rework this many times or more on one task → propose a penalty for the owner. */
+const PENALTY_REDO_THRESHOLD = 3
+
+/**
+ * After verifying a task, raise a penalty or reward proposal when the signal is
+ * strong enough. Idempotent per (task, kind); best-effort (never blocks a tick).
+ */
+async function maybeRaiseProposals(task: TaskRow, outcome: string, now: Date): Promise<void> {
+  // Penalty: the same task bounced back too many times.
+  if ((task.redoCount ?? 0) >= PENALTY_REDO_THRESHOLD) {
+    await raiseProposal({
+      businessId: task.businessId,
+      staffId: task.staff.id,
+      taskId: task.id,
+      kind: 'penalty',
+      reason: `"${task.title}" — একই কাজ ${task.redoCount} বার সংশোধন করতে হয়েছে`,
+      meta: { redoCount: task.redoCount },
+    })
+    return
+  }
+  // Reward: a confident, first-try, on-time completion.
+  if (
+    outcome === 'verified' &&
+    (task.redoCount ?? 0) === 0 &&
+    task.dueAt &&
+    now.getTime() <= task.dueAt.getTime()
+  ) {
+    await raiseProposal({
+      businessId: task.businessId,
+      staffId: task.staff.id,
+      taskId: task.id,
+      kind: 'reward',
+      reason: `"${task.title}" — সময়ের মধ্যে প্রথম চেষ্টাতেই নির্ভুল কাজ`,
+      meta: { onTime: true },
+    })
+  }
+}
 
 /** Does this task need a "how's it going?" nudge right now? */
 function needsFollowUp(task: TaskRow, now: Date): boolean {
@@ -259,7 +359,7 @@ function needsFollowUp(task: TaskRow, now: Date): boolean {
 async function verifySubmittedProof(
   task: TaskRow,
   budget: { llm: number },
-): Promise<'verified' | 'redo' | 'escalated' | 'skipped'> {
+): Promise<'verified' | 'accepted' | 'redo' | 'escalated' | 'skipped'> {
   const data = asRecord(task.proofData)
   const imageUrl = proofImageUrl(data)
   const text = proofText(data)
@@ -269,8 +369,8 @@ async function verifySubmittedProof(
     budget.llm--
     const verdict = await assessImageProof(task, imageUrl)
     if (!verdict) {
-      await escalateToOwner(task.id, task.businessId, 'ছবি যাচাই করা যায়নি — Boss দেখে নিন')
-      return 'escalated'
+      // Couldn't assess → critical to owner, low-stakes accepted (90/10 gate).
+      return handoffSubmitted(task, 'ছবি যাচাই করা যায়নি')
     }
     if (verdict.matches && verdict.confidence === 'high') {
       await agentAutoVerify(task.id, task.businessId, { evidence: verdict.note || 'ছবি যাচাই হয়েছে', method: 'vision' })
@@ -278,15 +378,13 @@ async function verifySubmittedProof(
     }
     if (!verdict.matches && verdict.confidence === 'high') {
       if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
-        await escalateToOwner(task.id, task.businessId, `বারবার যাচাই ব্যর্থ — ${verdict.note || 'Boss দেখুন'}`)
-        return 'escalated'
+        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${verdict.note || ''}`.trim())
       }
       await agentRequestRedo(task.id, task.businessId, verdict.note || 'কাজটি কাজের সাথে মিলছে না — আবার পাঠান')
       return 'redo'
     }
-    // Unsure → owner.
-    await escalateToOwner(task.id, task.businessId, verdict.note || 'এজেন্ট নিশ্চিত হতে পারেনি')
-    return 'escalated'
+    // Unsure.
+    return handoffSubmitted(task, verdict.note || 'এজেন্ট নিশ্চিত হতে পারেনি')
   }
 
   // Text / link proof → DeepSeek judgment.
@@ -300,8 +398,7 @@ async function verifySubmittedProof(
       `supervisor_verify:${task.id}:${task.redoCount}`,
     )
     if (!judged) {
-      await escalateToOwner(task.id, task.businessId, 'প্রমাণ যাচাই করা যায়নি — Boss দেখুন')
-      return 'escalated'
+      return handoffSubmitted(task, 'প্রমাণ যাচাই করা যায়নি')
     }
     if (judged.verdict === 'pass') {
       await agentAutoVerify(task.id, task.businessId, { evidence: judged.reason || 'প্রমাণ যাচাই হয়েছে', method: 'text' })
@@ -309,20 +406,17 @@ async function verifySubmittedProof(
     }
     if (judged.verdict === 'fail') {
       if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
-        await escalateToOwner(task.id, task.businessId, `বারবার যাচাই ব্যর্থ — ${judged.reason || 'Boss দেখুন'}`)
-        return 'escalated'
+        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${judged.reason || ''}`.trim())
       }
       await agentRequestRedo(task.id, task.businessId, judged.reason || 'প্রমাণ যথেষ্ট নয় — আবার পাঠান')
       return 'redo'
     }
-    await escalateToOwner(task.id, task.businessId, judged.reason || 'এজেন্ট নিশ্চিত হতে পারেনি')
-    return 'escalated'
+    return handoffSubmitted(task, judged.reason || 'এজেন্ট নিশ্চিত হতে পারেনি')
   }
 
-  // No usable proof, or LLM budget exhausted → leave for the owner.
+  // No usable proof, or LLM budget exhausted → gate decides owner vs. accept.
   if (!imageUrl && !text) {
-    await escalateToOwner(task.id, task.businessId, 'প্রমাণ পাওয়া যায়নি — Boss দেখে নিন')
-    return 'escalated'
+    return handoffSubmitted(task, 'প্রমাণ পাওয়া যায়নি')
   }
   return 'skipped'
 }
@@ -332,7 +426,7 @@ async function triageUnderstanding(
   task: TaskRow,
   now: Date,
   budget: { llm: number },
-): Promise<'understood' | 'clarified' | 'escalated' | 'skipped'> {
+): Promise<'understood' | 'clarified' | 'escalated' | 'deferred' | 'skipped'> {
   if (budget.llm <= 0) return 'skipped'
   budget.llm--
   const judged = await deepseekJson<{ clear?: boolean; question?: string }>(
@@ -352,10 +446,20 @@ async function triageUnderstanding(
     return 'understood'
   }
 
-  // Unclear: ask up to MAX_CLARIFY times, then hand to the owner.
+  // Unclear after asking MAX_CLARIFY times → 90/10 gate: only critical tasks go
+  // to the owner; for low-stakes ones the agent stops nagging and lets the staff
+  // get on with it (it'll verify the proof when submitted).
   if ((task.supervisorClarifyCount ?? 0) >= MAX_CLARIFY) {
-    await escalateToOwner(task.id, task.businessId, 'এজেন্ট কাজটি বুঝতে পারেনি — Boss যাচাই করবেন')
-    return 'escalated'
+    const crit = assessCriticality(task)
+    if (crit.critical) {
+      await escalateToOwner(task.id, task.businessId, 'এজেন্ট কাজটি বুঝতে পারেনি — Boss যাচাই করবেন')
+      return 'escalated'
+    }
+    await prisma.agentStaffTask.update({
+      where: { id: task.id },
+      data: { supervisorLastTickAt: now, supervisorCriticality: 'normal' },
+    })
+    return 'deferred'
   }
 
   const question = (judged.question ?? '').trim() || `${task.staff.name} ভাই, "${task.title}" কাজটি ঠিক কীভাবে করছেন একটু বুঝিয়ে বলবেন?`
@@ -378,6 +482,53 @@ async function askForUpdate(task: TaskRow, now: Date): Promise<void> {
   await requestUpdate(task.id, task.businessId, { note: body, by: 'agent' })
 }
 
+// ── Attendance / leave presence gate (read-only) ─────────────────────────────
+
+/**
+ * Build a `(staffId) => working today?` predicate from ERP attendance + leave.
+ * - On approved leave today → not working.
+ * - Linked to an ERP user: working only if checked in and not yet checked out.
+ * - Not linked to a user (can't check in) → assume working (can't tell).
+ * Read-only; failures degrade to "assume working" so the supervisor still runs.
+ */
+async function buildPresenceGate(businessId: string, now: Date): Promise<(staffId: string) => boolean> {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(now) // YYYY-MM-DD (Dhaka)
+  const todayDate = new Date(`${ymd}T00:00:00Z`)
+
+  try {
+    const [staff, attendance, leaves] = await Promise.all([
+      prisma.agentStaff.findMany({ where: { businessId, active: true }, select: { id: true, userId: true } }),
+      prisma.attendanceRecord.findMany({
+        where: { businessId, attendanceDate: todayDate },
+        select: { userId: true, checkInAt: true, checkOutAt: true },
+      }),
+      prisma.staffLeave.findMany({
+        where: { businessId, status: 'approved', startDate: { lte: ymd }, endDate: { gte: ymd } },
+        select: { staffId: true },
+      }),
+    ])
+
+    const presenceByUser = new Map<string, { in: boolean; out: boolean }>()
+    for (const a of attendance) {
+      if (!a.userId) continue
+      presenceByUser.set(a.userId, { in: Boolean(a.checkInAt), out: Boolean(a.checkOutAt) })
+    }
+    const onLeave = new Set(leaves.map((l) => l.staffId))
+    const userByStaff = new Map(staff.map((s) => [s.id, s.userId]))
+
+    return (staffId: string): boolean => {
+      if (onLeave.has(staffId)) return false
+      const uid = userByStaff.get(staffId)
+      if (!uid) return true // not linked → can't tell, assume working
+      const p = presenceByUser.get(uid)
+      if (!p) return false // linked but no check-in record today → not in yet
+      return p.in && !p.out
+    }
+  } catch {
+    return () => true // degrade gracefully
+  }
+}
+
 // ── Main tick ────────────────────────────────────────────────────────────────
 
 export async function runSupervisorTick(
@@ -392,6 +543,7 @@ export async function runSupervisorTick(
     withinHours: true,
     considered: 0,
     verified: 0,
+    accepted: 0,
     redo: 0,
     escalated: 0,
     clarified: 0,
@@ -427,8 +579,9 @@ export async function runSupervisorTick(
       lastStaffUpdateAt: true,
       supervisorClarifyCount: true,
       supervisorLastTickAt: true,
+      supervisorAlwaysEscalate: true,
       businessId: true,
-      staff: { select: { id: true, name: true, telegramChatId: true, ntfyTopic: true } },
+      staff: { select: { id: true, name: true, telegramChatId: true, ntfyTopic: true, userId: true } },
     },
   })
 
@@ -443,6 +596,10 @@ export async function runSupervisorTick(
   })
   const latestStaffMsgAt = latestStaffMsg?.createdAt?.getTime() ?? 0
 
+  // Attendance / leave (read-only): don't nag a staff member who isn't working
+  // today. Verification of already-submitted proof still runs regardless.
+  const isStaffWorking = await buildPresenceGate(businessId, now)
+
   for (const row of rows) {
     const task = row as unknown as TaskRow
 
@@ -450,9 +607,11 @@ export async function runSupervisorTick(
     if (task.verificationStatus === 'proof_submitted') {
       const outcome = await verifySubmittedProof(task, budget)
       if (outcome === 'verified') base.verified++
+      else if (outcome === 'accepted') base.accepted++
       else if (outcome === 'redo') base.redo++
       else if (outcome === 'escalated') base.escalated++
       else base.skipped++
+      await maybeRaiseProposals(task, outcome, now)
       continue
     }
 
@@ -460,6 +619,14 @@ export async function runSupervisorTick(
     if (task.verificationStatus === 'auto_verified' && task.status !== 'done') {
       await agentAutoVerify(task.id, businessId, { evidence: 'স্বয়ংক্রিয় যাচাই (FB/ERP)', method: task.proofType ?? 'auto' })
       base.verified++
+      continue
+    }
+
+    // Attendance gate: from here on we'd nag the staff (clarify / follow-up).
+    // If they're not working today (on leave, or not checked in) skip nagging —
+    // proof verification above already ran regardless.
+    if (!isStaffWorking(task.staff.id)) {
+      base.skipped++
       continue
     }
 
@@ -478,6 +645,10 @@ export async function runSupervisorTick(
       }
       if (outcome === 'escalated') {
         base.escalated++
+        continue
+      }
+      if (outcome === 'deferred') {
+        base.skipped++
         continue
       }
       // 'understood' or 'skipped' → fall through to follow-up.

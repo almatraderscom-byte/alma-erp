@@ -438,7 +438,12 @@ export async function escalateToOwner(taskId: string, businessId: string, reason
   await prisma.$transaction(async (tx) => {
     await tx.agentStaffTask.update({
       where: { id: taskId },
-      data: { supervisorNeedsOwner: true, supervisorLastTickAt: now, escalatedAt: now },
+      data: {
+        supervisorNeedsOwner: true,
+        supervisorLastTickAt: now,
+        escalatedAt: now,
+        supervisorCriticality: 'critical',
+      },
     })
     await logEvent(tx, {
       taskId,
@@ -449,5 +454,86 @@ export async function escalateToOwner(taskId: string, businessId: string, reason
     })
   })
   await pushOwnerPing('যাচাই দরকার 🔎', `"${task.title}" — ${trimmed}`)
+  return { ok: true, status: task.status }
+}
+
+/**
+ * Phase-3 90/10 gate, non-critical branch: the supervisor couldn't fully verify
+ * a LOW-stakes task, but the staff did submit work — so rather than bother the
+ * owner, the agent accepts it as done (clearly logged as unverified-accept) and
+ * gently tells the staff. Distinct from agentAutoVerify (a confident pass) so
+ * the audit trail and scorecard can tell them apart.
+ */
+export async function agentAcceptUnverified(
+  taskId: string,
+  businessId: string,
+  note?: string,
+): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  const now = new Date()
+  const reason = note?.trim() || 'কম-ঝুঁকির কাজ — ধরে নেওয়া হলো সম্পন্ন'
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'done',
+        verificationStatus: 'auto_verified',
+        completedAt: now,
+        supervisorNeedsOwner: false,
+        supervisorLastTickAt: now,
+        supervisorCriticality: 'normal',
+        proofData: {
+          ...((task.proofData as object) ?? {}),
+          agentVerifiedAt: now.toISOString(),
+          agentEvidence: reason,
+          agentMethod: 'accepted_unverified',
+        },
+      },
+    })
+    await logEvent(tx, {
+      taskId,
+      kind: 'agent_accepted',
+      summary: `এজেন্ট কম-ঝুঁকির কাজটি সম্পন্ন ধরে নিয়েছে ✅ — ${reason}`,
+      actorType: 'agent',
+      businessId,
+      meta: { method: 'accepted_unverified' },
+    })
+    await notifyStaff(tx, {
+      staffId: task.staff.id,
+      taskId,
+      kind: 'approved',
+      title: 'কাজ গ্রহণ করা হয়েছে ✅',
+      body: task.title,
+      businessId,
+    })
+  })
+  await pushStaffPing(task.staff, 'কাজ গ্রহণ করা হয়েছে ✅', task.title)
+  return { ok: true, status: 'done' }
+}
+
+/** Owner toggles "always escalate this task to me", overriding the criticality gate. */
+export async function setAlwaysEscalate(
+  taskId: string,
+  businessId: string,
+  on: boolean,
+): Promise<ActionResult> {
+  const task = await loadTask(taskId, businessId)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.agentStaffTask.update({
+      where: { id: taskId },
+      data: { supervisorAlwaysEscalate: on },
+    })
+    await logEvent(tx, {
+      taskId,
+      kind: 'always_escalate_set',
+      summary: on ? 'মালিক এই কাজটি সবসময় দেখতে চেয়েছেন 🔔' : 'সবসময়-জানানো বন্ধ করা হয়েছে',
+      actorType: 'owner',
+      businessId,
+    })
+  })
   return { ok: true, status: task.status }
 }

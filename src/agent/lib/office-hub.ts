@@ -8,6 +8,8 @@
 import { prisma } from '@/lib/prisma'
 import { buildStaffFriendlyDetail } from '@/agent/lib/staff-task-format'
 import { computeWeeklyScores } from '@/agent/lib/office-award'
+import { computeStaffPerformance, type StaffPerformance } from '@/agent/lib/office-performance'
+import { listPendingProposals, type ProposalCard } from '@/agent/lib/office-proposals'
 import { userAvatarUrl } from '@/lib/user-display'
 
 /** Build the stable avatar-route URL for a staff's linked ERP user, if a photo is set. */
@@ -51,6 +53,8 @@ export type HubTaskCard = {
   dueAt: string | null
   /** Supervisor couldn't auto-verify/understand this → owner must review (the ~10%). */
   needsOwner: boolean
+  /** Owner pinned this task to always escalate (never agent-auto-resolve). */
+  alwaysEscalate: boolean
 }
 
 export type OverdueUpdateCard = {
@@ -138,6 +142,10 @@ export type OwnerHubData = {
   awardStats: AwardStats | null
   team: TeamMember[]
   leaderboard: LeaderRow[]
+  /** Per-staff performance scorecard for the current week (Phase 3). */
+  performance: StaffPerformance[]
+  /** Pending penalty/reward proposals awaiting the owner's decision (Phase 3). */
+  proposals: ProposalCard[]
 }
 
 /** Dhaka-local YYYY-MM-DD. */
@@ -192,6 +200,7 @@ function toCard(t: {
   createdAt: Date
   dueAt?: Date | null
   supervisorNeedsOwner?: boolean
+  supervisorAlwaysEscalate?: boolean
   staff: { name: string } | null
 }): HubTaskCard {
   return {
@@ -212,6 +221,7 @@ function toCard(t: {
     createdAt: t.createdAt.toISOString(),
     dueAt: t.dueAt ? t.dueAt.toISOString() : null,
     needsOwner: Boolean(t.supervisorNeedsOwner),
+    alwaysEscalate: Boolean(t.supervisorAlwaysEscalate),
   }
 }
 
@@ -232,6 +242,7 @@ const CARD_SELECT = {
   createdAt: true,
   dueAt: true,
   supervisorNeedsOwner: true,
+  supervisorAlwaysEscalate: true,
   staff: { select: { name: true } },
 } as const
 
@@ -253,7 +264,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const lunchDate = today // Dhaka YYYY-MM-DD, matches StaffLunch.lunchDate
-  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows] = await Promise.all([
+  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows, performance, proposals] = await Promise.all([
     prisma.agentStaffTask.findMany({
       // Owner review queue: proof awaiting review + anything the supervisor
       // couldn't auto-verify/understand and handed to the owner (the ~10%).
@@ -347,6 +358,8 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       where: { businessId, attendanceDate: todayDate },
       select: { userId: true, checkInAt: true, checkOutAt: true },
     }),
+    computeStaffPerformance(businessId, weekStartDate),
+    listPendingProposals(businessId),
   ])
 
   // Staff currently on lunch (open StaffLunch row today) → lights up the 'lunch'
@@ -540,6 +553,8 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     awardStats,
     team,
     leaderboard,
+    performance,
+    proposals,
   }
 }
 
