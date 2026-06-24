@@ -488,4 +488,22 @@ export const OFFICE_CSS = `
 .ohub .lunch-timer{font-size:13px;font-weight:700;color:#fcd34d;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.34);padding:7px 13px;border-radius:9999px}
 .ohub .lunch-live.over .lunch-timer{color:#fca5a5;background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.4);animation:oh-lunch-pulse 1.4s ease-in-out infinite}
 @keyframes oh-lunch-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
+
+/* ════ check-in → office "active" linkage ════ */
+/* owner team-status row: small green check-in time pill next to the name */
+.ohub .chip-in{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:10.5px;font-weight:700;
+  color:#86efac;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);padding:1px 7px;border-radius:9999px;vertical-align:middle}
+/* staff page banner: shows whether the staff is checked in (active) today */
+.ohub .checkin-banner{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:13px;font-weight:600;
+  padding:11px 15px;border-radius:14px;margin-bottom:16px;border:1px solid var(--border);background:var(--bg-2);color:var(--ink)}
+.ohub .checkin-banner .ci-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.ohub .checkin-banner .ci-tail{color:var(--muted);font-weight:500;font-size:12px}
+.ohub .checkin-banner a{color:inherit;font-weight:700;text-decoration:underline}
+.ohub .checkin-banner.in{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.34);color:#bbf7d0}
+.ohub .checkin-banner.in .ci-dot{background:#22c55e;box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:oh-ci-pulse 1.8s ease-in-out infinite}
+.ohub .checkin-banner.in .ci-tail{color:#86efac}
+.ohub .checkin-banner.off{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.34);color:#fcd34d}
+.ohub .checkin-banner.off .ci-dot{background:#f59e0b}
+.ohub .checkin-banner.out .ci-dot{background:#64748b}
+@keyframes oh-ci-pulse{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 5px rgba(34,197,94,0)}}
 `

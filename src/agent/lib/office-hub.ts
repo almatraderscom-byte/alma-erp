@@ -105,6 +105,10 @@ export type TeamMember = {
   sub: string
   doneToday: number
   totalToday: number
+  /** True when the staff has checked in today (attendance) and not checked out. */
+  checkedIn: boolean
+  /** Bangla check-in time label (e.g. "৯:০৫ AM"), or null if not checked in. */
+  checkInLabel: string | null
 }
 
 /** A row in the right-rail weekly performance leaderboard. */
@@ -155,6 +159,16 @@ function pickQc(v: unknown): number | null {
 function initialOf(name: string): string {
   const t = name.trim()
   return t ? t[0].toUpperCase() : '?'
+}
+
+/** Dhaka-local clock label in Bangla numerals, e.g. "৯:০৫ AM". */
+function bnTime(d: Date): string {
+  return new Intl.DateTimeFormat('bn-BD', {
+    timeZone: 'Asia/Dhaka',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d)
 }
 
 function toCard(t: {
@@ -229,7 +243,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const lunchDate = today // Dhaka YYYY-MM-DD, matches StaffLunch.lunchDate
-  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch] = await Promise.all([
+  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { businessId, verificationStatus: { in: [...PENDING_REVIEW_VS] } },
       orderBy: { createdAt: 'asc' },
@@ -310,6 +324,13 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       where: { businessId, lunchDate, endedAt: null },
       select: { staffId: true, startedAt: true },
     }),
+    // Today's attendance (ERP face check-in). attendanceDate is stored as the
+    // UTC-midnight of the Dhaka calendar day (attendanceDateFor), which equals
+    // `todayDate` here — so an exact match is correct. Drives office "active".
+    prisma.attendanceRecord.findMany({
+      where: { businessId, attendanceDate: todayDate },
+      select: { userId: true, checkInAt: true, checkOutAt: true },
+    }),
   ])
 
   // Staff currently on lunch (open StaffLunch row today) → lights up the 'lunch'
@@ -317,6 +338,22 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const onLunch = new Set(openLunch.map((l) => l.staffId))
   // staffId → profile photo URL (from the linked ERP user, if any).
   const imageByStaff = new Map<string, string | null>(staffList.map((s) => [s.id, staffImageUrl(s.user)]))
+
+  // ── Attendance → office presence ──────────────────────────────────────────
+  // The office now reflects real check-in: a staff is "active" when they have
+  // checked in today (and not yet checked out). Mapped via the userId link
+  // (AttendanceRecord.userId == AgentStaff.userId), mirroring the worker gate.
+  type Presence = { checkInAt: Date | null; checkOutAt: Date | null }
+  const attendanceByUser = new Map<string, Presence>()
+  for (const r of attendanceRows) {
+    if (!r.userId) continue
+    attendanceByUser.set(r.userId, { checkInAt: r.checkInAt ?? null, checkOutAt: r.checkOutAt ?? null })
+  }
+  const attendanceByStaff = new Map<string, Presence>()
+  for (const s of staffList) {
+    const uid = s.user?.id
+    if (uid && attendanceByUser.has(uid)) attendanceByStaff.set(s.id, attendanceByUser.get(uid)!)
+  }
 
   // Overdue updates: a request is open until the staff answers it (a later
   // lastStaffUpdateAt) or it's resolved. Still-open ones drive the countdown.
@@ -374,10 +411,40 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const team: TeamMember[] = staffList.map((s) => {
     const agg = byStaffToday.get(s.id)
     const lunching = onLunch.has(s.id)
-    const status: TeamMember['status'] = lunching ? 'lunch' : agg && (agg.active > 0 || agg.done > 0) ? 'on' : 'off'
+    const linked = Boolean(s.user?.id)
+    const att = attendanceByStaff.get(s.id)
+    const checkedIn = Boolean(att?.checkInAt) && !att?.checkOutAt
+    const checkedOut = Boolean(att?.checkOutAt)
+    const checkInLabel = att?.checkInAt ? bnTime(att.checkInAt) : null
+    const hasTaskActivity = Boolean(agg && (agg.active > 0 || agg.done > 0))
+
+    // Presence is check-in driven for staff linked to an ERP user. Staff not
+    // linked to a User can't check in, so they fall back to task-derived status.
+    const status: TeamMember['status'] = lunching
+      ? 'lunch'
+      : checkedIn
+        ? 'on'
+        : linked
+          ? 'off'
+          : hasTaskActivity
+            ? 'on'
+            : 'off'
+
     let sub: string
+    const taskTail =
+      agg && agg.total > 0
+        ? agg.current
+          ? ` · এখন: ${agg.current} (${agg.done}/${agg.total})`
+          : ` · ${agg.done}/${agg.total} কাজ`
+        : ''
     if (lunching) {
       sub = '🍽️ এখন লাঞ্চে আছেন'
+    } else if (checkedIn) {
+      sub = `✅ চেক-ইন ${checkInLabel}${taskTail || (agg && agg.total > 0 ? '' : ' · আজ কোনো কাজ নেই')}`
+    } else if (checkedOut) {
+      sub = `🏁 চেক-আউট হয়ে গেছে${taskTail}`
+    } else if (linked) {
+      sub = agg && agg.total > 0 ? `⏳ এখনো চেক-ইন করেননি · ${agg.total} কাজ অপেক্ষায়` : '⏳ এখনো চেক-ইন করেননি'
     } else if (!agg || agg.total === 0) {
       sub = 'আজ কোনো কাজ নেই'
     } else if (agg.current) {
@@ -387,7 +454,18 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     } else {
       sub = `${agg.done}/${agg.total} কাজ আজ`
     }
-    return { staffId: s.id, name: s.name, initial: initialOf(s.name), imageUrl: imageByStaff.get(s.id) ?? null, status, sub, doneToday: agg?.done ?? 0, totalToday: agg?.total ?? 0 }
+    return {
+      staffId: s.id,
+      name: s.name,
+      initial: initialOf(s.name),
+      imageUrl: imageByStaff.get(s.id) ?? null,
+      status,
+      sub,
+      doneToday: agg?.done ?? 0,
+      totalToday: agg?.total ?? 0,
+      checkedIn,
+      checkInLabel,
+    }
   })
   const onlineCount = team.filter((m) => m.status !== 'off').length
 
@@ -487,6 +565,8 @@ export type StaffOfficeData = {
   award: HubAward
   /** Open lunch today (drives the in-app 45-min timer), if any. */
   lunch: { active: boolean; startedAt: string | null }
+  /** Today's attendance: drives the "active in office" banner on the staff page. */
+  attendance: { checkedIn: boolean; checkedOut: boolean; checkInLabel: string | null }
 }
 
 function pickImage(data: Record<string, unknown> | null): string | null {
@@ -501,13 +581,13 @@ function pickImage(data: Record<string, unknown> | null): string | null {
 const VISIBLE_STAFF_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof', 'done'] as const
 
 export async function getStaffOfficeData(
-  staff: { id: string; name: string; businessId: string },
+  staff: { id: string; name: string; businessId: string; userId?: string | null },
 ): Promise<StaffOfficeData> {
   const today = dhakaToday()
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
 
-  const [rows, proposalRows, awardRow, openLunch] = await Promise.all([
+  const [rows, proposalRows, awardRow, openLunch, attendanceRow] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { staffId: staff.id, proposedFor: todayDate, status: { in: [...VISIBLE_STAFF_STATUSES] } },
       orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
@@ -528,6 +608,14 @@ export async function getStaffOfficeData(
       orderBy: { startedAt: 'desc' },
       select: { startedAt: true },
     }),
+    // The staff's own check-in for today (null when not linked / not checked in).
+    staff.userId
+      ? prisma.attendanceRecord.findFirst({
+          where: { businessId: staff.businessId, userId: staff.userId, attendanceDate: todayDate },
+          orderBy: { checkInAt: 'desc' },
+          select: { checkInAt: true, checkOutAt: true },
+        })
+      : Promise.resolve(null),
   ])
 
   const toStaffCard = (t: (typeof rows)[number]): StaffTaskCard => {
@@ -580,6 +668,11 @@ export async function getStaffOfficeData(
     isWinner: Boolean(awardRow && awardRow.staffId === staff.id),
     award,
     lunch: { active: Boolean(openLunch), startedAt: openLunch?.startedAt.toISOString() ?? null },
+    attendance: {
+      checkedIn: Boolean(attendanceRow?.checkInAt) && !attendanceRow?.checkOutAt,
+      checkedOut: Boolean(attendanceRow?.checkOutAt),
+      checkInLabel: attendanceRow?.checkInAt ? bnTime(attendanceRow.checkInAt) : null,
+    },
   }
 }
 

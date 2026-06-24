@@ -33,7 +33,7 @@ export default async function StaffOfficePage() {
   // off the authenticated user id — a staff member can never see another's tasks.
   const staff = await prisma.agentStaff.findFirst({
     where: { userId: session.user.id, active: true },
-    select: { id: true, name: true, businessId: true },
+    select: { id: true, name: true, businessId: true, userId: true },
   })
 
   const headerDate = dhakaHeaderDate()

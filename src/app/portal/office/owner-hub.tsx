@@ -658,6 +658,7 @@ function TeamRow({ m }: { m: TeamMember }) {
       <div className="info">
         <div className="name">
           {m.name} <span className={`dotmini ${dot}`}></span>
+          {m.checkedIn && m.checkInLabel && <span className="chip-in">✅ {m.checkInLabel}</span>}
         </div>
         <div className="sub">{m.sub}</div>
       </div>

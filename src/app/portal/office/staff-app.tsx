@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
@@ -118,6 +119,8 @@ export default function StaffApp({
         </div>
         <LunchControl initial={data.lunch} />
       </div>
+
+      <CheckInBanner att={data.attendance} />
 
       <div className="stage">
         <div className="staffapp">
@@ -253,6 +256,37 @@ function MotivationCard({ m }: { m: Motivation }) {
       <div className="motiv-tag">✨ আজকের অনুপ্রেরণা</div>
       <div className="motiv-quote">{m.text}</div>
       <div className="motiv-foot">— {m.tag}</div>
+    </div>
+  )
+}
+
+// ── check-in status banner — office "active" follows ERP attendance ─────────
+function CheckInBanner({ att }: { att: StaffOfficeData['attendance'] }) {
+  if (att.checkedIn) {
+    return (
+      <div className="checkin-banner in">
+        <span className="ci-dot" />
+        <span>
+          ✅ আপনি অফিসে <b>সক্রিয়</b> · চেক-ইন {att.checkInLabel}
+        </span>
+        <span className="ci-tail">আজকের কাজ নিচে দেখুন — শেষ হলে ✅ দিন।</span>
+      </div>
+    )
+  }
+  if (att.checkedOut) {
+    return (
+      <div className="checkin-banner out">
+        <span className="ci-dot" />
+        <span>🏁 আজকের চেক-আউট সম্পন্ন। আগামীকাল আবার দেখা হবে, ইনশাআল্লাহ।</span>
+      </div>
+    )
+  }
+  return (
+    <div className="checkin-banner off">
+      <span className="ci-dot" />
+      <span>
+        ⏳ এখনো চেক-ইন করেননি — <Link href="/portal">চেক-ইন করুন</Link> তাহলে অফিসে সক্রিয় দেখাবে।
+      </span>
     </div>
   )
 }
