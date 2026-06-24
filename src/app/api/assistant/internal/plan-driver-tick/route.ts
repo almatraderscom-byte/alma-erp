@@ -23,6 +23,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { getAutodriveConfig, getTodayAutodriveSpendTaka } from '@/agent/lib/autodrive-config'
 import { loadDrivablePlans } from '@/agent/lib/planner'
 import { drivePlan } from '@/agent/lib/plan-driver/driver'
+import { promoteStuckTodosToPlanDrive } from '@/agent/lib/plan-driver/promote'
 
 export const runtime = 'nodejs'
 
@@ -72,6 +73,16 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  // Bridge (option খ): before driving plans, sweep the daily todo list and pull any
+  // genuinely-stuck agent-task into the Plan-Driver. Newly promoted plans are
+  // enrolled with nextTickAt=now, so loadDrivablePlans below picks them up this tick.
+  let promotion = { scanned: 0, promoted: [] as Array<{ todoId: string; planId: string; goal: string }> }
+  try {
+    promotion = await promoteStuckTodosToPlanDrive({ limit: config.batchSize })
+  } catch (err) {
+    console.warn('[plan-driver] stuck-todo sweep failed:', err instanceof Error ? err.message : err)
+  }
+
   const plans = await loadDrivablePlans({ limit: config.batchSize })
 
   const report: Array<{ planId: string; goal: string; outcome: string; detail: string; costTaka: number }> = []
@@ -104,6 +115,7 @@ export async function POST(req: NextRequest) {
     spentTodayTaka: spentBeforeTaka + spentThisTick,
     spentThisTickTaka: spentThisTick,
     dailyCapReached: false,
+    promotedFromTodos: promotion.promoted.length,
     drivablePlans: plans.length,
     driven: report.length,
     report,

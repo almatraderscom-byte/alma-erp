@@ -83,6 +83,8 @@ interface AgentThreadProps {
   compacting?: boolean
   /** Plan-Drive "Live Desk" panel — shown on the home/empty screen above the greeting. */
   homePanel?: ReactNode
+  /** Plan-Drive in-chat follow-up list — pinned at the top of the office-shift thread. */
+  officePanel?: ReactNode
 }
 
 function detectArtifact(text: string): { type: 'code' | 'markdown'; content: string; title: string } | null {
@@ -593,7 +595,7 @@ function AgentModelSwitchCard({
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, officePanel }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -699,6 +701,10 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
       <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
+        {/* Plan-Drive follow-up list — its own in-chat todolist, pinned at the top of
+            the office-shift thread (separate from the daily dock above). */}
+        {isOfficeShift && officePanel}
+
         {messages.length === 0 && (
           <>
             {homePanel && <div className="mb-6">{homePanel}</div>}

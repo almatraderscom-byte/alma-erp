@@ -14,7 +14,8 @@ import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { cn } from '@/lib/utils'
-import { PlanDriveTimeline, type PlanDrivePanelData } from '@/agent/components/monitor/PlanDriveTimeline'
+import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
+import { PlanDriveInChat } from '@/agent/components/monitor/PlanDriveInChat'
 
 interface AgentAppProps {
   userName: string
@@ -304,6 +305,26 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     void refreshPlanDrive()
     const id = setInterval(() => void refreshPlanDrive(), 30_000)
     return () => clearInterval(id)
+  }, [])
+
+  // One owner-action handler for the Plan-Drive in-chat list (resume / add-budget /
+  // abandon), reused on both the home screen and inside the office-shift thread.
+  const handlePlanDriveAction = useCallback(async (planId: string, action: PlanDriveAction) => {
+    try {
+      const res = await fetch('/api/assistant/plan-driver/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId, action }),
+      })
+      if (!res.ok) { toast.error('কাজটি করা গেল না'); return }
+      toast.success(
+        action === 'abandon' ? 'প্ল্যান বাদ দেওয়া হলো' :
+        action === 'add-budget' ? 'বাজেট বাড়িয়ে আবার চালু করা হলো' :
+        'আবার চালু করা হলো',
+      )
+      const r = await fetch('/api/assistant/plan-driver')
+      if (r.ok) setPlanDrive((await r.json()) as PlanDrivePanelData)
+    } catch { toast.error('নেটওয়ার্ক সমস্যা') }
   }, [])
 
   useEffect(() => {
@@ -1260,28 +1281,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             streamVariant={streamVariant}
             compacting={compacting}
             homePanel={planDrive && planDrive.drives.length > 0 ? (
-              <PlanDriveTimeline
+              <PlanDriveInChat
                 data={planDrive}
                 onOpenConversation={(cid) => void loadConversation({
                   id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
                 })}
-                onAction={async (planId, action) => {
-                  try {
-                    const res = await fetch('/api/assistant/plan-driver/action', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ planId, action }),
-                    })
-                    if (!res.ok) { toast.error('কাজটি করা গেল না'); return }
-                    toast.success(
-                      action === 'abandon' ? 'প্ল্যান বাদ দেওয়া হলো' :
-                      action === 'add-budget' ? 'বাজেট বাড়িয়ে আবার চালু করা হলো' :
-                      'আবার চালু করা হলো',
-                    )
-                    const r = await fetch('/api/assistant/plan-driver')
-                    if (r.ok) setPlanDrive((await r.json()) as PlanDrivePanelData)
-                  } catch { toast.error('নেটওয়ার্ক সমস্যা') }
-                }}
+                onAction={handlePlanDriveAction}
+              />
+            ) : null}
+            officePanel={planDrive && planDrive.drives.length > 0 ? (
+              <PlanDriveInChat
+                data={planDrive}
+                onOpenConversation={(cid) => void loadConversation({
+                  id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
+                })}
+                onAction={handlePlanDriveAction}
               />
             ) : null}
           />

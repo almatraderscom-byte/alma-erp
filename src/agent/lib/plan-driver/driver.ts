@@ -36,6 +36,7 @@ import {
 import { type AutodriveConfig, usdToTaka, getPlanCapOverrideTaka } from '@/agent/lib/autodrive-config'
 import { executeStep } from '@/agent/lib/plan-driver/executor'
 import { runCompletionGate } from '@/agent/lib/plan-driver/completion-gate'
+import { completeSourceTodoForPlan } from '@/agent/lib/plan-driver/promote'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 
 export type DriveOutcome =
@@ -168,6 +169,8 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
         await updatePlanStatus(plan.id, 'done', verdict.reason)
         await setAutodriveState(plan.id, 'done', { selfCheckNote: verdict.reason })
         await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'reset', now })
+        // If this plan was born from a stuck daily todo, close that todo too.
+        await completeSourceTodoForPlan(plan.id).catch(() => {})
         void notifyOwnerIfAway({
           tier: 1,
           title: 'Plan-Driver — সম্পন্ন ✅',
