@@ -11,6 +11,7 @@
  * (registry, core, tools) without circular-dependency hazards.
  */
 import type { ToolGroupName } from '@/agent/tools/tool-groups'
+import { MARKETER_KNOWLEDGE_BRIEF, CONTENT_KNOWLEDGE_BRIEF } from '@/agent/lib/marketing/playbook-knowledge'
 
 export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops' | 'cs'
 
@@ -71,7 +72,8 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
       'campaign needs office-staff work (e.g. a product photoshoot or packaging push), PREPARE that as a staff task ' +
       'with the staff tools. Anything that spends money, publishes publicly, or dispatches a staff task will surface ' +
       'its own owner-approval card — so propose freely, the owner confirms the final spend/post/dispatch. Return a ' +
-      'concise Bangla summary of what you did and what is awaiting the owner\'s approval.',
+      'concise Bangla summary of what you did and what is awaiting the owner\'s approval.' +
+      MARKETER_KNOWLEDGE_BRIEF,
     // Owner rule: sub-agent work goes to DeepSeek (cheapest worker), Qwen stays the
     // orchestrating head. The marketer sub-agent is only invoked when a non-marketing
     // head delegates marketing, so DeepSeek keeps that hop cheap.
@@ -83,7 +85,8 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     icon: '✍️',
     toolGroups: ['base', 'content'],
     instruction:
-      'You are a brand content & creative specialist. Draft on-brand, halal-compliant copy/ideas using the content tools. Return a concise Bangla draft or set of options.',
+      'You are a brand content & creative specialist. Draft on-brand, halal-compliant copy/ideas using the content tools. Return a concise Bangla draft or set of options.' +
+      CONTENT_KNOWLEDGE_BRIEF,
     // Owner rule: DeepSeek does the sub-agent content drafting (cheap), not Qwen.
     preferredModelId: 'or-deepseek-v4-flash',
   },
