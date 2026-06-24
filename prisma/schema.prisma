@@ -3033,10 +3033,19 @@ model AgentPlan {
   updatedAt      DateTime        @updatedAt @map("updated_at")
   completedAt    DateTime?       @map("completed_at")
   selfCheckNote  String?         @map("self_check_note")
+  // Plan-Driver (autonomous pursue-until-completion). Phase A reads these only.
+  doneCriteria   String?         @map("done_criteria")
+  autodriveState String          @default("idle") @map("autodrive_state")
+  attemptCount   Int             @default(0) @map("attempt_count")
+  maxAttempts    Int             @default(5) @map("max_attempts")
+  nextTickAt     DateTime?       @map("next_tick_at")
+  lastDrivenAt   DateTime?       @map("last_driven_at")
+  costTaka       Int             @default(0) @map("cost_taka")
   steps          AgentPlanStep[]
 
   @@index([conversationId])
   @@index([businessId, status])
+  @@index([autodriveState, nextTickAt], map: "agent_plans_autodrive_idx")
   @@map("agent_plans")
 }
 

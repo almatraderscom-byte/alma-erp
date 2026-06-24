@@ -41,6 +41,7 @@ const lazy = {
   balanceCheck:       () => import('./balance-check.mjs'),
   proofTimeout:       () => import('../staff/proof-timeout.mjs'),
   costReconcile:      () => import('./cost-reconcile.mjs'),
+  planDriver:         () => import('./plan-driver.mjs'),
   reminderTicker:     () => import('../reminders/ticker.mjs'),
   csIndexProducts:    () => import('../cs/index-products.mjs'),
   csEscalation:       () => import('../cs/escalation.mjs'),
@@ -138,6 +139,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'agent-scorecard',        cronUtc: '30 3 * * 6',  description: 'Weekly agent tool scorecard (Sat 09:30 Dhaka)' },
   { name: 'studio-archive',         cronUtc: '0 19 * * *',   description: 'Creative Studio → Drive archive + Supabase cleanup (01:00 Dhaka)' },
   { name: 'salah-muhasaba',         cronUtc: '30 16 * * *',  description: 'Nightly salah muhasaba + encouragement (22:30 Dhaka)' },
+  { name: 'plan-driver',            cronUtc: '*/2 * * * *',  description: 'Autonomous plan-driver tick — pursue stalled plans (every 2 min; self-gated by AGENT_AUTODRIVE_ENABLED)' },
 ]
 
 // ── Shared job runner (cron worker + catch-up) ───────────────────────────────
@@ -387,6 +389,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'cost-reconcile': {
       const { runCostReconciliation } = await lazy.costReconcile()
       await runCostReconciliation()
+      break
+    }
+    case 'plan-driver': {
+      const { runPlanDriverTick } = await lazy.planDriver()
+      dutyResult = await runPlanDriverTick() ?? { dutyStatus: 'done' }
       break
     }
     case 'reminder-ticker': {

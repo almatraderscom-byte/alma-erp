@@ -17,12 +17,36 @@ export interface PlanStep {
   error?: string
 }
 
+/**
+ * Plan-Driver lifecycle (autonomous pursue-until-completion).
+ *   idle      — not under the driver yet (or hand-driven only)
+ *   driving   — the driver is actively re-driving this plan tick by tick
+ *   blocked   — waiting on an owner approval / external signal
+ *   done|failed|abandoned — terminal; the driver never touches it again
+ */
+export type AutodriveState = 'idle' | 'driving' | 'blocked' | 'done' | 'failed' | 'abandoned'
+
+export const TERMINAL_AUTODRIVE_STATES: ReadonlySet<AutodriveState> = new Set<AutodriveState>([
+  'done',
+  'failed',
+  'abandoned',
+])
+
 export interface Plan {
   id: string
   goal: string
   status: 'draft' | 'approved' | 'executing' | 'done' | 'failed' | 'cancelled'
   steps: PlanStep[]
   selfCheckNote?: string
+  /** Plain-language "what counts as DONE" — read by the completion gate. */
+  doneCriteria?: string
+  autodriveState: AutodriveState
+  attemptCount: number
+  maxAttempts: number
+  nextTickAt?: Date
+  lastDrivenAt?: Date
+  /** Whole-taka autodrive spend on this plan (daily cost-cap input). */
+  costTaka: number
 }
 
 /**
@@ -122,7 +146,7 @@ export async function markStepFailed(stepId: string, error: string): Promise<voi
 /**
  * Get steps that are ready to execute (all dependencies done).
  */
-export function getReadySteps(plan: Plan): PlanStep[] {
+export function getReadySteps(plan: Pick<Plan, 'steps'>): PlanStep[] {
   const doneIds = new Set(
     plan.steps.filter(s => s.status === 'done').map(s => s.id),
   )
@@ -135,7 +159,7 @@ export function getReadySteps(plan: Plan): PlanStep[] {
 /**
  * Check if plan has any failed steps.
  */
-export function hasFailed(plan: Plan): boolean {
+export function hasFailed(plan: Pick<Plan, 'steps'>): boolean {
   return plan.steps.some(s => s.status === 'failed')
 }
 
@@ -143,7 +167,7 @@ export function hasFailed(plan: Plan): boolean {
  * Self-check: verify all steps marked done vs the goal.
  * Returns a gap assessment.
  */
-export function selfCheck(plan: Plan): {
+export function selfCheck(plan: Pick<Plan, 'steps'>): {
   allDone: boolean
   completedCount: number
   totalCount: number
@@ -161,6 +185,28 @@ export function selfCheck(plan: Plan): {
     failedSteps: failed.map(s => s.action),
     pendingSteps: pending.map(s => s.action),
   }
+}
+
+/**
+ * Load plans the driver may act on: non-terminal autodrive_state whose backoff
+ * window (next_tick_at) has elapsed. Read-only — Phase A consumes this in shadow
+ * mode (compute the next ready step, log what it WOULD do, mutate nothing).
+ *
+ * Ordered oldest-driven-first so no single plan can starve the others.
+ */
+export async function loadDrivablePlans(opts?: { limit?: number; now?: Date }): Promise<Plan[]> {
+  const now = opts?.now ?? new Date()
+  const limit = opts?.limit ?? 20
+  const rows = await db.agentPlan.findMany({
+    where: {
+      autodriveState: { in: ['driving', 'blocked'] },
+      OR: [{ nextTickAt: null }, { nextTickAt: { lte: now } }],
+    },
+    include: { steps: { orderBy: { seq: 'asc' } } },
+    orderBy: [{ lastDrivenAt: 'asc' }, { createdAt: 'asc' }],
+    take: limit,
+  })
+  return rows.map(dbPlanToDto)
 }
 
 /**
@@ -198,6 +244,13 @@ interface DbPlan {
   goal: string
   status: string
   selfCheckNote?: string | null
+  doneCriteria?: string | null
+  autodriveState?: string | null
+  attemptCount?: number | null
+  maxAttempts?: number | null
+  nextTickAt?: Date | null
+  lastDrivenAt?: Date | null
+  costTaka?: number | null
   steps: Array<{
     id: string
     action: string
@@ -215,6 +268,13 @@ function dbPlanToDto(plan: DbPlan): Plan {
     goal: plan.goal,
     status: plan.status as Plan['status'],
     selfCheckNote: plan.selfCheckNote ?? undefined,
+    doneCriteria: plan.doneCriteria ?? undefined,
+    autodriveState: (plan.autodriveState ?? 'idle') as AutodriveState,
+    attemptCount: plan.attemptCount ?? 0,
+    maxAttempts: plan.maxAttempts ?? 5,
+    nextTickAt: plan.nextTickAt ?? undefined,
+    lastDrivenAt: plan.lastDrivenAt ?? undefined,
+    costTaka: plan.costTaka ?? 0,
     steps: plan.steps.map(s => ({
       id: s.id,
       action: s.action,
