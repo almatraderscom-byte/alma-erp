@@ -26,6 +26,13 @@ const config: CapacitorConfig = {
     ...(remoteServerUrl ? { url: remoteServerUrl } : {}),
     cleartext: false,
     androidScheme: 'https',
+    // The local bootstrap (mobile/www/index.html) hands off to the live site via
+    // location.replace(PROD). Without this allowlist Capacitor treats that as an
+    // off-origin navigation and punts it to the system browser (Safari) instead
+    // of loading it INSIDE the webview — the app then stays stuck on the aura and
+    // "refresh" opens Safari. Allowlisting the production host keeps the whole app
+    // in-shell. Same-host login redirects stay in-app too.
+    allowNavigation: ['alma-erp-six.vercel.app'],
   },
   ios: {
     handleApplicationNotifications: false,
