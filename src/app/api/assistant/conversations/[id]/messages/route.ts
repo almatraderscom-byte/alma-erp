@@ -44,13 +44,44 @@ export async function GET(
     },
   })
 
+  // Confirm cards are persisted inside assistant message content as breadcrumbs so
+  // they survive a page reload. Their interactive vs. resolved state depends on the
+  // CURRENT pending-action status, so resolve those live (a card approved earlier
+  // must render as "✅ অনুমোদিত", not a fresh actionable card).
+  const cardIds = new Set<string>()
+  for (const m of messages) {
+    const blocks = Array.isArray(m.content) ? (m.content as Array<Record<string, unknown>>) : []
+    for (const b of blocks) {
+      if (b?.type === 'confirm_card' && typeof b.pendingActionId === 'string') cardIds.add(b.pendingActionId)
+    }
+  }
+  const statusById = new Map<string, string>()
+  if (cardIds.size > 0) {
+    const actions = await prisma.agentPendingAction.findMany({
+      where: { id: { in: [...cardIds] } },
+      select: { id: true, status: true },
+    })
+    for (const a of actions) statusById.set(a.id, a.status)
+  }
+
   // Surface cache tokens (hidden inside the usage JSON) so the UI can show the
   // real per-message token count, not just the tiny non-cached input_tokens.
   const withCache = messages.map((m) => {
     const u = (m.usage ?? {}) as Record<string, unknown>
     const num = (v: unknown) => (typeof v === 'number' ? v : null)
+    // Inject the live status onto each persisted confirm-card block. A missing
+    // action row (purged) is treated as 'expired' so the card settles, never
+    // re-arming an approve/reject for an action that no longer exists.
+    const content = Array.isArray(m.content)
+      ? (m.content as Array<Record<string, unknown>>).map((b) =>
+          b?.type === 'confirm_card' && typeof b.pendingActionId === 'string'
+            ? { ...b, status: statusById.get(b.pendingActionId) ?? 'expired' }
+            : b,
+        )
+      : m.content
     return {
       ...m,
+      content,
       cacheCreation: num(u.cache_creation_input_tokens),
       cacheRead: num(u.cache_read_input_tokens),
     }

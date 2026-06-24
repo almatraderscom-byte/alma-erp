@@ -170,6 +170,7 @@ interface FileRefBlock {
 type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
+  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }
   | FileRefBlock
 
 // ── History loading with file reconstruction ───────────────────────────────
@@ -255,10 +256,19 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
             text: `[পূর্ববর্তী ফাইল সংযুক্তি: ${block.path}]`,
           })
         }
+      } else if (block.type === 'confirm_card') {
+        // A confirm card is a UI breadcrumb persisted in the assistant turn so it
+        // survives a page reload. It is NOT a valid Anthropic content block, so it
+        // must never be sent verbatim to the model — collapse it to a short note.
+        const cc = block as Extract<StoredContentBlock, { type: 'confirm_card' }>
+        apiBlocks.push({ type: 'text', text: `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${cc.summary}]` })
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }
     }
+
+    // Guard: never send an empty-content message to the API.
+    if (apiBlocks.length === 0) apiBlocks.push({ type: 'text', text: '' })
 
     result.push({ role: row.role as 'user' | 'assistant', content: apiBlocks })
   }
@@ -700,6 +710,9 @@ export async function* runAgentTurn(
     durationMs: number; error: string | null
   }
   const toolRecords: ToolRecord[] = []
+  // Confirm cards emitted this turn — persisted into the assistant message so the
+  // card (and later its approved/rejected outcome) survives a page reload.
+  const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }> = []
   let memoryNudgeSent = false
   let intentNudgeSent = false
   let verifyRetries = 0
@@ -1141,18 +1154,32 @@ export async function* runAgentTurn(
               select: { status: true, summary: true, costEstimate: true },
             })
             if (row?.status === 'pending') {
+              const cardSummary = typeof d.summary === 'string' && d.summary
+                ? d.summary
+                : (row.summary ?? '')
+              const cardCost = typeof d.costEstimate === 'number' ? d.costEstimate : (row.costEstimate ?? undefined)
+              const cardActionType = typeof d.actionType === 'string' ? d.actionType : undefined
               yield {
                 type: 'confirm_card',
                 pendingActionId: d.pendingActionId,
-                summary: typeof d.summary === 'string' && d.summary
-                  ? d.summary
-                  : (row.summary ?? ''),
-                costEstimate: typeof d.costEstimate === 'number' ? d.costEstimate : (row.costEstimate ?? undefined),
-                actionType: typeof d.actionType === 'string' ? d.actionType : undefined,
+                summary: cardSummary,
+                costEstimate: cardCost,
+                actionType: cardActionType,
                 entryCount: typeof d.entryCount === 'number' ? d.entryCount : undefined,
                 isFinance: d.isFinance === true,
                 isBatch: d.isBatch === true,
               }
+              // Persist a breadcrumb so the card re-renders after a page reload
+              // (the live SSE event alone is lost on refresh). Batch/finance edit
+              // metadata is intentionally NOT stored — a reloaded card is a record,
+              // not a re-editable draft; its current status drives what's shown.
+              emittedConfirmCards.push({
+                type: 'confirm_card',
+                pendingActionId: d.pendingActionId,
+                summary: cardSummary,
+                ...(cardCost != null ? { costEstimate: cardCost } : {}),
+                ...(cardActionType ? { actionType: cardActionType } : {}),
+              })
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
@@ -1212,9 +1239,13 @@ export async function* runAgentTurn(
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     const joinedText = textContent.map((b) => b.text).join('\n')
-    const storedContent = joinedText
-      ? [{ type: 'text' as const, text: joinedText }]
-      : [{ type: 'text' as const, text: '' }]
+    const storedContent: StoredContentBlock[] = joinedText
+      ? [{ type: 'text', text: joinedText }]
+      : [{ type: 'text', text: '' }]
+    // Append confirm-card breadcrumbs so the approval card (and its eventual
+    // approved/rejected outcome) survives a page reload — issue: cards vanished
+    // on refresh because only text blocks were persisted.
+    for (const card of emittedConfirmCards) storedContent.push(card)
     const costUsd = calcModelTurnCostUsd(chatModel, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
