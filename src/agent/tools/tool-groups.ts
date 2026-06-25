@@ -39,6 +39,9 @@ import { place_agent_call } from './personal-tools'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
+import { APPOINTMENT_TOOLS } from './appointment-tools'
+import { HEALTH_TOOLS } from './health-tools'
+import { DOCUMENT_TOOLS } from './document-tools'
 
 export const TOOL_GROUP_NAMES = [
   'base',
@@ -81,6 +84,12 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...BILLS_TOOLS,
     ...IMPORTANT_DATE_TOOLS,
     ...PERSONAL_BRIEFING_TOOLS,
+    // Personal-life autonomy (Tier 2): calendar/appointments (salah-deconflict),
+    // health & medication tracking, and the OCR document/receipt vault. Always-on
+    // alongside Tier 1 so personal life is manageable from any chat.
+    ...APPOINTMENT_TOOLS,
+    ...HEALTH_TOOLS,
+    ...DOCUMENT_TOOLS,
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],

@@ -77,8 +77,10 @@ export async function runPersonalBriefing(context) {
     }
   }
 
-  const [salahRows, reminderRows, billRows, dateRows, expenseRows] = await Promise.all([
+  const [salahRows, salahWindowRows, reminderRows, billRows, dateRows, expenseRows, apptRows, medRows] =
+    await Promise.all([
     safe(supabase.from('salah_records').select('waqt, status').eq('date', today)),
+    safe(supabase.from('salah_records').select('waqt, window_start, window_end').eq('date', today)),
     safe(
       supabase
         .from('agent_reminders')
@@ -114,6 +116,23 @@ export async function runPersonalBriefing(context) {
         .gte('occurred_at', monthStartIso)
         .lt('occurred_at', monthEndIso)
         .limit(2000),
+    ),
+    safe(
+      supabase
+        .from('agent_appointments')
+        .select('title, location, start_at')
+        .eq('status', 'scheduled')
+        .gte('start_at', dayStartIso)
+        .lt('start_at', dayEndIso)
+        .order('start_at')
+        .limit(30),
+    ),
+    safe(
+      supabase
+        .from('agent_medications')
+        .select('name, dosage, times, start_date, end_date')
+        .eq('active', true)
+        .limit(50),
     ),
   ])
 
@@ -162,6 +181,31 @@ export async function runPersonalBriefing(context) {
     time: String(r.due_at).slice(11, 16),
   }))
 
+  // ── Appointments today (with salah-window conflict flag) ──
+  const fmtTimeDhaka = (iso) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Dhaka',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date(iso))
+  const appointments = apptRows.map((a) => {
+    const t = new Date(a.start_at).getTime()
+    const clash = salahWindowRows.find(
+      (w) => t >= new Date(w.window_start).getTime() && t < new Date(w.window_end).getTime(),
+    )
+    return { title: a.title, location: a.location, time: fmtTimeDhaka(a.start_at), salahConflict: clash ? clash.waqt : null }
+  })
+
+  // ── Medications due today (active + within course window) ──
+  const meds = medRows
+    .filter((m) => {
+      const startOk = !m.start_date || String(m.start_date).slice(0, 10) <= today
+      const endOk = !m.end_date || String(m.end_date).slice(0, 10) >= today
+      return startOk && endOk
+    })
+    .map((m) => ({ name: m.name, dosage: m.dosage, times: m.times }))
+
   // ── Compose ──
   const L = ['🌅 *আজকের ব্যক্তিগত ব্রিফিং*', '']
   let hasContent = false
@@ -196,6 +240,28 @@ export async function runPersonalBriefing(context) {
     hasContent = true
   }
 
+  if (appointments.length) {
+    L.push('🗓️ *আজকের অ্যাপয়েন্টমেন্ট:*')
+    appointments.forEach((a) => {
+      const loc = a.location ? ` @ ${a.location}` : ''
+      const warn = a.salahConflict ? ` ⚠️ (${a.salahConflict} নামাজের সময়)` : ''
+      L.push(`  • ${a.time} — ${a.title}${loc}${warn}`)
+    })
+    L.push('')
+    hasContent = true
+  }
+
+  if (meds.length) {
+    L.push('💊 *আজকের ওষুধ:*')
+    meds.slice(0, 12).forEach((m) => {
+      const dose = m.dosage ? ` (${m.dosage})` : ''
+      const times = m.times ? ` — ${m.times}` : ''
+      L.push(`  • ${m.name}${dose}${times}`)
+    })
+    L.push('')
+    hasContent = true
+  }
+
   if (reminders.length) {
     L.push('⏰ *আজকের রিমাইন্ডার:*')
     reminders.slice(0, 8).forEach((r) => L.push(`  • ${r.time} — ${r.title}`))
@@ -216,6 +282,6 @@ export async function runPersonalBriefing(context) {
 
   return {
     dutyStatus: 'done',
-    dutyDetail: `briefing sent (${bills.length} bills, ${dates.length} dates, ${reminders.length} reminders)`,
+    dutyDetail: `briefing sent (${bills.length} bills, ${dates.length} dates, ${appointments.length} appts, ${meds.length} meds, ${reminders.length} reminders)`,
   }
 }

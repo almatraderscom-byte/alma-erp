@@ -2450,6 +2450,92 @@ model AgentImportantDate {
   @@map("agent_important_dates")
 }
 
+// ─── PERSONAL LIFE TIER 2 ───────────────────────────────────────────────────
+
+// Calendar appointments (salah-deconflict handled in the tool layer).
+model AgentAppointment {
+  id                  String    @id @default(uuid())
+  title               String
+  location            String?
+  startAt             DateTime  @map("start_at")
+  endAt               DateTime? @map("end_at")
+  type                String    @default("meeting")
+  status              String    @default("scheduled")
+  remindMinutesBefore Int       @default(60) @map("remind_minutes_before")
+  reminderId          String?   @map("reminder_id")
+  notes               String?   @db.Text
+  lastRemindedAt      DateTime? @map("last_reminded_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, startAt])
+  @@map("agent_appointments")
+}
+
+// Medication schedule.
+model AgentMedication {
+  id             String    @id @default(uuid())
+  name           String
+  dosage         String?
+  times          String?
+  frequency      String    @default("daily")
+  startDate      DateTime? @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  active         Boolean   @default(true)
+  notes          String?   @db.Text
+  lastRemindedAt DateTime? @map("last_reminded_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@map("agent_medications")
+}
+
+// Health logs (weight, BP, sugar, etc.).
+model AgentHealthLog {
+  id        String   @id @default(uuid())
+  type      String
+  value     String?
+  unit      String?
+  note      String?
+  loggedAt  DateTime @default(now()) @map("logged_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([type, loggedAt])
+  @@map("agent_health_logs")
+}
+
+// Document / receipt vault (OCR extracted).
+model AgentDocument {
+  id         String    @id @default(uuid())
+  title      String
+  type       String    @default("receipt")
+  category   String?
+  objectPath String?   @map("object_path")
+  mimeType   String?   @map("mime_type")
+  ocrText    String?   @map("ocr_text") @db.Text
+  vendor     String?
+  amount     Int?
+  docDate    DateTime? @map("doc_date") @db.Date
+  tags       String?
+  notes      String?   @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([type, createdAt])
+  @@map("agent_documents")
+}
+
+// Festival / Eid marketing nudges (dedupe so each festival fires once).
+model AgentMarketingNudge {
+  id           String    @id @default(uuid())
+  festivalKey  String    @unique @map("festival_key")
+  festivalName String?   @map("festival_name")
+  festivalDate DateTime? @map("festival_date") @db.Date
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("agent_marketing_nudges")
+}
+
 // ─── PHASE 10: ask_user, reply stats, staff GPS ─────────────────────────────
 
 model AgentAskCard {

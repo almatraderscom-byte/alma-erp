@@ -18,6 +18,8 @@ export type PersonalBriefing = {
   importantDates: Array<{ title: string; type: string; nextOccurrence: string; daysUntil: number }>
   expenses: { monthToDate: number; today: number } | null
   openTodos: Array<{ title: string; priority: string; ageDays: number }>
+  appointmentsToday: Array<{ title: string; location: string | null; startAt: string; salahConflict: string | null }>
+  medsToday: Array<{ name: string; dosage: string | null; times: string | null }>
 }
 
 function nextOccurrenceYmd(eventYmd: string, recurring: boolean, calendar: string, todayYmd: string): string {
@@ -132,6 +134,63 @@ export async function buildPersonalBriefing(opts: { billWindowDays?: number; dat
     /* expenses optional */
   }
 
+  let appointmentsToday: PersonalBriefing['appointmentsToday'] = []
+  try {
+    const { start, end } = dhakaDayBounds(today)
+    const rows = await db.agentAppointment.findMany({
+      where: { status: 'scheduled', startAt: { gte: start, lt: end } },
+      orderBy: { startAt: 'asc' },
+      take: 30,
+    })
+    // Pull today's salah windows once to flag any time clash.
+    let salahWindows: { waqt: string; windowStart: Date; windowEnd: Date }[] = []
+    try {
+      salahWindows = await db.agentSalahRecord.findMany({
+        where: { date: { gte: start, lte: end } },
+        select: { waqt: true, windowStart: true, windowEnd: true },
+      })
+    } catch {
+      /* salah optional */
+    }
+    appointmentsToday = rows.map((a: { title: string; location: string | null; startAt: Date }) => {
+      const t = new Date(a.startAt).getTime()
+      const clash = salahWindows.find(
+        (w) => t >= new Date(w.windowStart).getTime() && t < new Date(w.windowEnd).getTime(),
+      )
+      return {
+        title: a.title,
+        location: a.location,
+        startAt: new Date(a.startAt).toISOString(),
+        salahConflict: clash ? clash.waqt : null,
+      }
+    })
+  } catch {
+    /* appointments optional */
+  }
+
+  let medsToday: PersonalBriefing['medsToday'] = []
+  try {
+    const todayMidnight = dhakaMidnightUtc(today)
+    const rows = await db.agentMedication.findMany({
+      where: {
+        active: true,
+        AND: [
+          { OR: [{ startDate: null }, { startDate: { lte: todayMidnight } }] },
+          { OR: [{ endDate: null }, { endDate: { gte: todayMidnight } }] },
+        ],
+      },
+      orderBy: { name: 'asc' },
+      take: 50,
+    })
+    medsToday = rows.map((m: { name: string; dosage: string | null; times: string | null }) => ({
+      name: m.name,
+      dosage: m.dosage,
+      times: m.times,
+    }))
+  } catch {
+    /* meds optional */
+  }
+
   let openTodos: PersonalBriefing['openTodos'] = []
   try {
     const todos = await db.agentTodo.findMany({
@@ -158,5 +217,7 @@ export async function buildPersonalBriefing(opts: { billWindowDays?: number; dat
     importantDates,
     expenses,
     openTodos,
+    appointmentsToday,
+    medsToday,
   }
 }

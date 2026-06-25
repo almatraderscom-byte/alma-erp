@@ -43,6 +43,9 @@ import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
+import { APPOINTMENT_TOOLS } from './appointment-tools'
+import { HEALTH_TOOLS } from './health-tools'
+import { DOCUMENT_TOOLS } from './document-tools'
 
 export interface ToolResult {
   success: boolean
@@ -344,6 +347,9 @@ export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
+  ...APPOINTMENT_TOOLS,
+  ...HEALTH_TOOLS,
+  ...DOCUMENT_TOOLS,
 ]
 
 export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
@@ -404,6 +410,9 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
+  ...APPOINTMENT_TOOLS,
+  ...HEALTH_TOOLS,
+  ...DOCUMENT_TOOLS,
 ]
 
 export const TOOLS: AgentTool[] = [
@@ -450,6 +459,9 @@ export const TOOLS: AgentTool[] = [
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
+  ...APPOINTMENT_TOOLS,
+  ...HEALTH_TOOLS,
+  ...DOCUMENT_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

@@ -67,6 +67,9 @@ const lazy = {
   todoReminder:       () => import('./todo-reminder.mjs'),
   dailyFocus:         () => import('../intelligence/daily-focus.mjs'),
   personalBriefing:   () => import('../intelligence/personal-briefing.mjs'),
+  salesAnomaly:       () => import('../intelligence/sales-anomaly.mjs'),
+  courierWatch:       () => import('../intelligence/courier-watch.mjs'),
+  festivalMarketing:  () => import('../intelligence/festival-marketing.mjs'),
   dayShift:           () => import('../intelligence/day-shift.mjs'),
   weeklyBusinessIntel: () => import('../reports/weekly-business-intel.mjs'),
   securityAudit:       () => import('../security/audit-scan.mjs'),
@@ -134,6 +137,9 @@ export const SCHEDULER_REGISTRY = [
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
   { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
   { name: 'personal-briefing',        cronUtc: '50 1 * * *',   description: 'Personal life morning briefing — bills/dates/salah/expenses (07:50 Dhaka)' },
+  { name: 'sales-anomaly',            cronUtc: '0 8,12 * * *', description: 'Intraday sales-pace anomaly alert (14:00, 18:00 Dhaka)' },
+  { name: 'courier-watch',            cronUtc: '0 5 * * *',    description: 'Delivery SLA breach watch (11:00 Dhaka)' },
+  { name: 'festival-marketing',       cronUtc: '0 3 * * *',    description: 'Festival/Eid marketing-prep nudge (09:00 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
   { name: 'day-shift-start',         cronUtc: '5 2 * * *',     description: 'Agent office cycle start (08:05 Dhaka — office hours)' },
   { name: 'day-shift-morning-brief', cronUtc: '0 2 * * *',     description: 'Day shift morning summary for owner (08:00 Dhaka)' },
@@ -483,6 +489,21 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'personal-briefing': {
       const { runPersonalBriefing } = await lazy.personalBriefing()
       dutyResult = await runPersonalBriefing({ supabase, bot }) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'sales-anomaly': {
+      const { runSalesAnomaly } = await lazy.salesAnomaly()
+      dutyResult = await runSalesAnomaly({ supabase, bot }) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'courier-watch': {
+      const { runCourierWatch } = await lazy.courierWatch()
+      dutyResult = await runCourierWatch({ supabase, bot }) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'festival-marketing': {
+      const { runFestivalMarketing } = await lazy.festivalMarketing()
+      dutyResult = await runFestivalMarketing({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'morning-todo-reminder': {
