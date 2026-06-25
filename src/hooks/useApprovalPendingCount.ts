@@ -12,6 +12,26 @@ function dispatchAuthFailure() {
   window.dispatchEvent(new Event('alma:auth-failure'))
 }
 
+/**
+ * Agent-proposed actions (agent_pending_actions) live in a separate system from
+ * ERP business approvals, but the owner wants them surfaced "ekhaner motoi" — so
+ * their pending count folds into the same badge. Talks ONLY over HTTP, never
+ * importing src/agent (one-way dependency rule). Any failure → 0, so a flaky
+ * agent endpoint can never blank out the canonical ERP approval count.
+ */
+async function fetchAgentPendingCount(): Promise<number> {
+  try {
+    const result = await safeFetchJson<{ count?: number }>(
+      '/api/assistant/actions?status=pending&limit=100',
+      { cache: 'no-store' },
+    )
+    if (!result.ok) return 0
+    return Number(result.data.count || 0)
+  } catch {
+    return 0
+  }
+}
+
 export default function useApprovalPendingCount() {
   const { status: sessionStatus } = useSession()
   const [count, setCount] = useState(0)
@@ -29,9 +49,15 @@ export default function useApprovalPendingCount() {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'retry'
 
     try {
-      const result = await safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1', {
-        cache: 'no-store',
-      })
+      // ERP approvals are the canonical/auth source — its 401 pauses polling.
+      // Agent pending count rides alongside; it can't pause and can't error out
+      // the badge (failure → 0, handled inside fetchAgentPendingCount).
+      const [result, agentCount] = await Promise.all([
+        safeFetchJson<{ totalPending?: number }>('/api/approvals?summary=1', {
+          cache: 'no-store',
+        }),
+        fetchAgentPendingCount(),
+      ])
       if (result.status === 401) {
         pausedRef.current = true
         dispatchAuthFailure()
@@ -42,7 +68,7 @@ export default function useApprovalPendingCount() {
         return 'retry'
       }
       backoffIndexRef.current = 0
-      setCount(Number(result.data.totalPending || 0))
+      setCount(Number(result.data.totalPending || 0) + agentCount)
       return 'ok'
     } catch {
       setCount(countRef.current)

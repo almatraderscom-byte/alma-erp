@@ -35,34 +35,66 @@ function createPrismaClient() {
   const base = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
-  return base.$extends({
-    query: {
-      async $allOperations({ model, operation, args, query }) {
-        let lastErr: unknown
-        for (let attempt = 0; attempt <= POOL_RETRY_BACKOFF_MS.length; attempt++) {
-          try {
-            return await query(args)
-          } catch (err: unknown) {
-            lastErr = err
-            // Only a connection-pool timeout is safe to retry (the query never ran).
-            if (isPoolTimeout(err) && attempt < POOL_RETRY_BACKOFF_MS.length) {
-              await sleep(POOL_RETRY_BACKOFF_MS[attempt])
-              continue
+  return base
+    .$extends({
+      query: {
+        async $allOperations({ model, operation, args, query }) {
+          let lastErr: unknown
+          for (let attempt = 0; attempt <= POOL_RETRY_BACKOFF_MS.length; attempt++) {
+            try {
+              return await query(args)
+            } catch (err: unknown) {
+              lastErr = err
+              // Only a connection-pool timeout is safe to retry (the query never ran).
+              if (isPoolTimeout(err) && attempt < POOL_RETRY_BACKOFF_MS.length) {
+                await sleep(POOL_RETRY_BACKOFF_MS[attempt])
+                continue
+              }
+              void capturePrismaError(err, { model, operation })
+              // Short, greppable failure marker so the failing model+operation+code is
+              // readable in truncated log viewers (the full Prisma message is too long).
+              {
+                const e = err as { code?: string; name?: string }
+                console.error(`PRISMAFAIL ${model ?? '?'}.${operation ?? '?'} ${e?.code ?? e?.name ?? 'ERR'}`)
+              }
+              throw err
             }
-            void capturePrismaError(err, { model, operation })
-            // Short, greppable failure marker so the failing model+operation+code is
-            // readable in truncated log viewers (the full Prisma message is too long).
-            {
-              const e = err as { code?: string; name?: string }
-              console.error(`PRISMAFAIL ${model ?? '?'}.${operation ?? '?'} ${e?.code ?? e?.name ?? 'ERR'}`)
-            }
-            throw err
           }
-        }
-        throw lastErr
+          throw lastErr
+        },
       },
-    },
-  })
+    })
+    // Mirror new agent approval items into the ERP notification bell + push, so
+    // agent approvals surface "like ERP approvals" (owner directive 2026-06-25).
+    // Surgical: wraps only agentPendingAction.create, returns the row unchanged,
+    // and fires the notification fire-and-forget so it can never block or break
+    // the write. Lazy import avoids a load-time cycle (notifications → prisma).
+    .$extends({
+      query: {
+        agentPendingAction: {
+          async create({ args, query }) {
+            const created = await query(args)
+            void (async () => {
+              try {
+                const { notifyAgentPendingCreated } = await import('@/lib/agent-pending-notify')
+                await notifyAgentPendingCreated(
+                  created as unknown as {
+                    id: string
+                    type: string
+                    status: string
+                    summary: string | null
+                    businessId?: string | null
+                  },
+                )
+              } catch {
+                /* never let notification side-effects affect the write */
+              }
+            })()
+            return created
+          },
+        },
+      },
+    })
 }
 
 export const prisma = (globalForPrisma.prisma ?? createPrismaClient()) as unknown as PrismaClient
