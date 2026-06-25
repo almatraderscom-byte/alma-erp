@@ -87,15 +87,37 @@ export async function runCheckinGreeting({ supabase, bot }) {
   }
 
   // Durable dedupe: who has already been greeted today?
+  // A greeting is sent at most ONCE per staff per day. Two durable records can
+  // prove it happened, and we must honour BOTH — otherwise we re-greet forever:
+  //   1. agent_outbox — written only when the message actually goes out (i.e. the
+  //      approval was auto/owner-approved). status queued|delivered.
+  //   2. agent_pending_actions — written when the message needs owner approval and
+  //      is waiting. The outbox row only appears AFTER approval, so if we ignored
+  //      this table a pending (or owner-rejected) greeting would never count as
+  //      "done" and the job would resend a fresh approval card every tick.
+  // We treat a greeting as handled regardless of the pending action's outcome
+  // (pending / approved / rejected): if the owner said "বাতিল", that's a decision
+  // for today — don't nag again.
   const sinceIso = dhakaDayStartIso(today)
-  const { data: priorGreets } = await supabase
-    .from('agent_outbox')
-    .select('staff_id, status')
-    .eq('type', GREETING_TYPE)
-    .in('status', ['queued', 'delivered'])
-    .gte('created_at', sinceIso)
+  const [{ data: priorGreets }, { data: priorPending }] = await Promise.all([
+    supabase
+      .from('agent_outbox')
+      .select('staff_id, status')
+      .eq('type', GREETING_TYPE)
+      .in('status', ['queued', 'delivered'])
+      .gte('created_at', sinceIso),
+    supabase
+      .from('agent_pending_actions')
+      .select('payload')
+      .eq('type', 'staff_auto_message')
+      .gte('createdAt', sinceIso), // NOTE: this table uses camelCase createdAt (agent_outbox uses created_at)
+  ])
 
   const alreadyGreeted = new Set((priorGreets ?? []).map((r) => r.staff_id).filter(Boolean))
+  for (const row of priorPending ?? []) {
+    const p = row?.payload
+    if (p && p.type === GREETING_TYPE && p.staffId) alreadyGreeted.add(p.staffId)
+  }
   const showProgress = await isStaffTaskEnabled(supabase, 'progress_ask')
 
   let greeted = 0
