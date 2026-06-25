@@ -143,7 +143,11 @@ export async function nextCustomerId(): Promise<string> {
   return `CUST-${String(max + 1).padStart(4, '0')}`
 }
 
-async function findStockBySku(sku: string, size = '') {
+// Accepts either the shared client or an interactive-transaction client so callers
+// can keep stock writes atomic with the surrounding order write.
+type DbClient = typeof prisma | Prisma.TransactionClient
+
+async function findStockBySku(sku: string, size = '', db: DbClient = prisma) {
   const normalized = sku.trim()
   // The resolved stock SKU already encodes the size/variant pool (e.g. 133-KIDS,
   // 133-ADULT, 133T-ORNA). For MEN/WOMEN collections the order line's `size` is a
@@ -151,27 +155,27 @@ async function findStockBySku(sku: string, size = '') {
   // the stock row's `size` column, so an exact sku+size filter would miss the row.
   // Try the exact match first, then fall back to the SKU alone (effectively unique).
   if (size) {
-    const exact = await prisma.lifestyleStockItem.findFirst({
+    const exact = await db.lifestyleStockItem.findFirst({
       where: { sku: normalized, size },
       orderBy: { updatedAt: 'desc' },
     })
     if (exact) return exact
   }
-  return prisma.lifestyleStockItem.findFirst({
+  return db.lifestyleStockItem.findFirst({
     where: { sku: normalized },
     orderBy: { updatedAt: 'desc' },
   })
 }
 
-async function deductStockForItems(items: OrderItemInput[]) {
+async function deductStockForItems(items: OrderItemInput[], db: DbClient = prisma) {
   for (const item of items) {
-    const stock = await findStockBySku(item.stock_sku, item.size)
+    const stock = await findStockBySku(item.stock_sku, item.size, db)
     if (!stock) throw new Error(`Inventory not found: ${item.stock_sku}`)
     const next = stock.currentStock - item.qty
     if (next < 0) throw new Error(`Insufficient stock for ${item.stock_sku}`)
     const available = Math.max(0, next - stock.reserved)
     const buying = stock.buyingPrice ?? 0
-    await prisma.lifestyleStockItem.update({
+    await db.lifestyleStockItem.update({
       where: { id: stock.id },
       data: {
         currentStock: next,
@@ -275,9 +279,9 @@ export async function createOrderInPostgres(body: Record<string, unknown>) {
   const profit = estimatedProfit || money.profit
 
   const orderId = await nextOrderId()
-  await prisma.$transaction(async () => {
-    if (items.length) await deductStockForItems(items)
-    await prisma.lifestyleOrder.create({
+  await prisma.$transaction(async (tx) => {
+    if (items.length) await deductStockForItems(items, tx)
+    await tx.lifestyleOrder.create({
       data: {
         id: orderId,
         businessId,

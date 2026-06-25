@@ -183,11 +183,14 @@ export function NewOrderFormFields({
             const collection = itemCollectionInfo(item, stockItems)
             const isMenCollection = collection?.collectionType === 'MEN' || item.collection_type === 'MEN'
             const isWomenCollection = collection?.collectionType === 'WOMEN' || item.collection_type === 'WOMEN'
+            const isSingleCollection = collection?.collectionType === 'SINGLE' || item.collection_type === 'SINGLE'
             const isCustomCollection = collection?.collectionType === 'CUSTOM' || collection?.collectionType === 'SINGLE'
               || item.collection_type === 'CUSTOM' || item.collection_type === 'SINGLE'
             const customVariants = collection && isCustomCollection
               ? getCollectionVariantOptions(stockItems, collection)
               : []
+            // Single products have one stock row and no variant pool: auto-connect, no picker.
+            const isSingleNoVariant = isSingleCollection && customVariants.length === 0
             return (
               <div key={item.id} className="rounded-2xl border border-border bg-white/[0.03] p-3 space-y-2">
                 {collection && isCustomCollection && (
@@ -251,6 +254,12 @@ export function NewOrderFormFields({
                           <option key={variant} value={variant}>{variant}</option>
                         ))}
                       </select>
+                    </NewOrderField>
+                  ) : isSingleNoVariant ? (
+                    <NewOrderField label="Variant / Size">
+                      <div className="flex h-10 items-center rounded-xl border border-border bg-white/[0.03] px-3 text-xs text-muted">
+                        Single product
+                      </div>
                     </NewOrderField>
                   ) : isCustomCollection ? (
                     <NewOrderField label="Variant / Size" required>
