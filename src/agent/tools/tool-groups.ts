@@ -36,6 +36,9 @@ import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 import { place_agent_call } from './personal-tools'
+import { BILLS_TOOLS } from './bills-tools'
+import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
+import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
 
 export const TOOL_GROUP_NAMES = [
   'base',
@@ -72,6 +75,12 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...LEARNING_TOOLS,
     ...SALAH_TOOLS,
     ...ORCHESTRATOR_TOOLS,
+    // Personal-life autonomy (Tier 1): bills/subscriptions, important dates, and the
+    // one-shot personal morning briefing. Always-on so the owner can manage personal
+    // life from any chat without a keyword unlocking the group.
+    ...BILLS_TOOLS,
+    ...IMPORTANT_DATE_TOOLS,
+    ...PERSONAL_BRIEFING_TOOLS,
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS],

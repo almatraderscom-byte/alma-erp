@@ -2406,6 +2406,50 @@ model AgentSubscription {
   @@map("agent_subscriptions")
 }
 
+// ─── PERSONAL LIFE TIER 1: bills tracker + important dates ───────────────────
+
+// Recurring personal bills / subscriptions (rent, utilities, loans, SaaS…).
+// Money is whole-taka INTEGER per the ERP money rule (roundMoney); currency BDT.
+model AgentBill {
+  id               String    @id @default(uuid())
+  name             String
+  amount           Int       @default(0)
+  currency         String    @default("BDT")
+  category         String?
+  cycle            String    @default("monthly")
+  dueDay           Int?      @map("due_day")
+  nextDueAt        DateTime? @map("next_due_at") @db.Date
+  remindDaysBefore Int       @default(3) @map("remind_days_before")
+  active           Boolean   @default(true)
+  lastRemindedAt   DateTime? @map("last_reminded_at")
+  lastPaidAt       DateTime? @map("last_paid_at")
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([active, nextDueAt])
+  @@map("agent_bills")
+}
+
+// Important dates: birthdays, anniversaries, Islamic/Gregorian events, deadlines.
+model AgentImportantDate {
+  id               String    @id @default(uuid())
+  title            String
+  type             String    @default("custom")
+  eventDate        DateTime  @map("event_date") @db.Date
+  recurring        Boolean   @default(true)
+  calendar         String    @default("gregorian")
+  relatedName      String?   @map("related_name")
+  remindDaysBefore Int       @default(1) @map("remind_days_before")
+  active           Boolean   @default(true)
+  lastRemindedAt   DateTime? @map("last_reminded_at")
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([active, eventDate])
+  @@map("agent_important_dates")
+}
+
 // ─── PHASE 10: ask_user, reply stats, staff GPS ─────────────────────────────
 
 model AgentAskCard {

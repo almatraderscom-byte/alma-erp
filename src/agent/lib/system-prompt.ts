@@ -7,6 +7,8 @@ import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
 import { COMPETITOR_ROLE_PROMPT } from '@/agent/tools/competitor-tools'
 import { ADVISOR_ROLE_PROMPT } from '@/agent/tools/advisor-tools'
 import { OWNER_TODO_ROLE_PROMPT } from '@/agent/tools/owner-todo-tools'
+import { BILLS_ROLE_PROMPT } from '@/agent/tools/bills-tools'
+import { IMPORTANT_DATE_ROLE_PROMPT } from '@/agent/tools/important-dates-tools'
 import { WORK_TODO_PROMPT } from '@/agent/tools/work-todo-tools'
 import { TRYON_ROLE_PROMPT } from '@/agent/tools/tryon-tools'
 import { DIAGNOSTIC_ROLE_PROMPT } from '@/agent/tools/diagnostic-tools'
@@ -481,7 +483,7 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
   const parts: string[] = []
 
   // base group (always loaded → always relevant)
-  parts.push(OWNER_TODO_ROLE_PROMPT, WORK_TODO_PROMPT, PLAYBOOK_ROLE_PROMPT)
+  parts.push(OWNER_TODO_ROLE_PROMPT, WORK_TODO_PROMPT, PLAYBOOK_ROLE_PROMPT, BILLS_ROLE_PROMPT, IMPORTANT_DATE_ROLE_PROMPT)
 
   if (has('website')) parts.push(WEBSITE_ROLE_PROMPT)
   if (has('growth')) parts.push(RESEARCH_ROLE_PROMPT, SEO_ROLE_PROMPT, COMPETITOR_ROLE_PROMPT, ADVISOR_ROLE_PROMPT, ADS_ROLE_PROMPT)
@@ -519,6 +521,8 @@ const TRADING_STATIC_PROMPT =
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
   + `\n${WORK_TODO_PROMPT}\n`
+  + `\n${BILLS_ROLE_PROMPT}\n`
+  + `\n${IMPORTANT_DATE_ROLE_PROMPT}\n`
   + `\n${PLAYBOOK_ROLE_PROMPT}\n`
   + `\n${DIAGNOSTIC_ROLE_PROMPT}\n`
   + `\n${TRADING_READ_ROLE_PROMPT}\n`

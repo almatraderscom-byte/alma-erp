@@ -66,6 +66,7 @@ const lazy = {
   dailyStrategist:    () => import('../intelligence/strategist.mjs'),
   todoReminder:       () => import('./todo-reminder.mjs'),
   dailyFocus:         () => import('../intelligence/daily-focus.mjs'),
+  personalBriefing:   () => import('../intelligence/personal-briefing.mjs'),
   dayShift:           () => import('../intelligence/day-shift.mjs'),
   weeklyBusinessIntel: () => import('../reports/weekly-business-intel.mjs'),
   securityAudit:       () => import('../security/audit-scan.mjs'),
@@ -132,6 +133,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'staff-approval-escalation', cronUtc: '*/5 * * * *',  description: 'Escalate unapproved staff messages (every 5 min)' },
   { name: 'auto-fix-scan',            cronUtc: '*/15 * * * *', description: 'Scan for production errors and request auto-fix (every 15 min)' },
   { name: 'daily-focus',              cronUtc: '45 1 * * *',   description: 'AI daily focus planner for owner (07:45 Dhaka)' },
+  { name: 'personal-briefing',        cronUtc: '50 1 * * *',   description: 'Personal life morning briefing — bills/dates/salah/expenses (07:50 Dhaka)' },
   { name: 'morning-todo-reminder',   cronUtc: '0 2 * * *',    description: 'Morning agent todo reminder to owner (08:00 Dhaka)' },
   { name: 'day-shift-start',         cronUtc: '5 2 * * *',     description: 'Agent office cycle start (08:05 Dhaka — office hours)' },
   { name: 'day-shift-morning-brief', cronUtc: '0 2 * * *',     description: 'Day shift morning summary for owner (08:00 Dhaka)' },
@@ -476,6 +478,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'daily-focus': {
       const { runDailyFocus } = await lazy.dailyFocus()
       dutyResult = await runDailyFocus({ supabase, bot })
+      break
+    }
+    case 'personal-briefing': {
+      const { runPersonalBriefing } = await lazy.personalBriefing()
+      dutyResult = await runPersonalBriefing({ supabase, bot }) ?? { dutyStatus: 'done' }
       break
     }
     case 'morning-todo-reminder': {
