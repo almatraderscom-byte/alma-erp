@@ -163,7 +163,7 @@ export default function AgentApprovalsTab() {
         <div className="space-y-3">
           {actions.map((a) => {
             const isPending = a.status === 'pending'
-            const disabled = a.expired || busyId === a.id || !isPending
+            const disabled = busyId === a.id || !isPending
             return (
               <Card key={a.id} className="space-y-3">
                 <div className="flex items-start justify-between gap-3">
@@ -200,23 +200,41 @@ export default function AgentApprovalsTab() {
 
                 {isPending && (
                   <div className="flex gap-2 border-t border-border-subtle pt-3">
-                    <Button
-                      size="xs"
-                      variant="gold"
-                      disabled={disabled}
-                      loading={busyId === a.id}
-                      onClick={() => void act(a.id, 'approve')}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="danger"
-                      disabled={disabled}
-                      onClick={() => void act(a.id, 'reject')}
-                    >
-                      Reject
-                    </Button>
+                    {a.expired ? (
+                      // Expired card: can't be approved/rejected anymore, but the
+                      // owner must be able to clear it. "সরান" hits the reject
+                      // route, which transitions it to terminal 'expired' (410)
+                      // and it drops out of the queue on reload.
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={busyId === a.id}
+                        loading={busyId === a.id}
+                        onClick={() => void act(a.id, 'reject')}
+                      >
+                        সরান
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="gold"
+                          disabled={disabled}
+                          loading={busyId === a.id}
+                          onClick={() => void act(a.id, 'approve')}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="danger"
+                          disabled={disabled}
+                          onClick={() => void act(a.id, 'reject')}
+                        >
+                          Reject
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
               </Card>

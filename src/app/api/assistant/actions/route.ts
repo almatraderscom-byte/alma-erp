@@ -68,8 +68,7 @@ export async function GET(req: NextRequest) {
     })
     .catch(() => [])
 
-  // Flag transient cards that have aged past their TTL so the UI can grey them
-  // out (the approve route rejects them with 410 anyway). Lifecycle-bound cards
+  // Flag transient cards that have aged past their TTL. Lifecycle-bound cards
   // like dispatch never expire — isPendingActionExpired handles that.
   const actions = rows.map(
     (r: { status: string; type: string; createdAt: Date | string } & Record<string, unknown>) => ({
@@ -78,5 +77,23 @@ export async function GET(req: NextRequest) {
     }),
   )
 
-  return Response.json({ count: actions.length, actions })
+  // Proactively retire expired-but-still-pending cards. Without this they sit in
+  // the queue forever as status='pending' — and the UI greys out both buttons on
+  // an expired card, so the owner had no way to clear them ("remove hoy na").
+  // Transition them to the terminal 'expired' status (same as the approve/reject
+  // routes do on a 410) and drop them from the pending view so they disappear.
+  const expiredIds = actions.filter((a: { expired: boolean }) => a.expired).map((a: { id: string }) => a.id)
+  if (expiredIds.length) {
+    await db.agentPendingAction
+      .updateMany({
+        where: { id: { in: expiredIds }, status: 'pending' },
+        data: { status: 'expired', resolvedAt: new Date() },
+      })
+      .catch((err: unknown) => {
+        console.warn('[assistant/actions] expired sweep failed:', err instanceof Error ? err.message : err)
+      })
+  }
+
+  const visible = status === 'pending' ? actions.filter((a: { expired: boolean }) => !a.expired) : actions
+  return Response.json({ count: visible.length, actions: visible })
 }
