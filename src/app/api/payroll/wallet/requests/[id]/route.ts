@@ -8,6 +8,7 @@ import {
   requestStatusFromApproval,
 } from '@/lib/payroll-wallet'
 import { notifyUser } from '@/lib/notifications'
+import { enqueueWalletWithdrawalApprovedSms } from '@/services/sms/events'
 import { sendPayrollAlert } from '@/lib/resend'
 import { dispatchApprovalsUpdated, notifyApprovalResolved, resolveApprovalRequest } from '@/lib/approvals'
 import { logEvent } from '@/lib/logger'
@@ -23,7 +24,9 @@ export async function PATCH(
     action?: 'APPROVE' | 'REJECT'
     approvedAmount?: number
     note?: string
+    transactionId?: string
   }
+  const transactionId = body.transactionId?.trim().slice(0, 120) || null
   const ctx = await getWalletContext(req)
   if ('error' in ctx) return ctx.error
   if (!ctx.isAdmin) return forbidden('Only HR/Admin can review wallet requests.')
@@ -157,6 +160,7 @@ export async function PATCH(
         reviewedById: ctx.userId,
         reviewedAt: new Date(),
         ledgerEntryId: entry.id,
+        transactionId: request.type === 'WITHDRAWAL' ? transactionId : null,
       },
     })
     const approval = await resolveApprovalRequest({
@@ -210,6 +214,24 @@ export async function PATCH(
       dedupeKey: `wallet-request-approved:${request.id}`,
       metadata: { requestId: request.id, employeeId: request.employeeId, approvedAmount },
     })
+    // Withdrawal-approved evidence SMS to the staff member (with the owner-entered txn id).
+    if (request.type === 'WITHDRAWAL') {
+      try {
+        const staff = request.userId
+          ? await prisma.user.findUnique({ where: { id: request.userId }, select: { phone: true } })
+          : null
+        enqueueWalletWithdrawalApprovedSms({
+          businessId: request.businessId,
+          phone: staff?.phone,
+          employeeId: request.employeeId,
+          amount: approvedAmount,
+          transactionId,
+          requestId: request.id,
+        })
+      } catch (e) {
+        logEvent('warn', 'wallet.withdrawal_sms.failed', { requestId: request.id, message: (e as Error).message })
+      }
+    }
   })
   dispatchApprovalsUpdated()
   return apiSuccess(result)

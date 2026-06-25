@@ -8,6 +8,7 @@ import {
   payrollAdvanceAlertSms,
   salaryReceivedSms,
   tradingDailySummarySms,
+  walletWithdrawalApprovedSms,
 } from '@/lib/sms/templates'
 
 export async function enqueueOrderConfirmationSms(input: {
@@ -122,6 +123,29 @@ export function enqueueSalaryReceivedSms(input: {
     message: salaryReceivedSms({ amount: input.amount, periodYm: input.periodYm }),
     metadata: { employeeId: input.employeeId, periodYm: input.periodYm, entryId: input.entryId },
     cooldownMinutes: 20 * 60,
+  })
+}
+
+export function enqueueWalletWithdrawalApprovedSms(input: {
+  businessId?: string | null
+  phone?: string | null
+  employeeId?: string | null
+  amount: number
+  transactionId?: string | null
+  requestId?: string | null
+}) {
+  if (!input.phone?.trim()) return
+  queueSmsAndFlush({
+    businessId: input.businessId || 'ALMA_LIFESTYLE',
+    phone: input.phone,
+    type: 'WALLET_WITHDRAWAL_APPROVED',
+    message: walletWithdrawalApprovedSms({ amount: input.amount, transactionId: input.transactionId }),
+    metadata: {
+      employeeId: input.employeeId,
+      requestId: input.requestId,
+      transactionId: input.transactionId,
+    },
+    cooldownMinutes: 10,
   })
 }
 

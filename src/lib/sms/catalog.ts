@@ -7,12 +7,17 @@ export const ALL_SMS_TYPES: SmsType[] = [
   'COURIER_UPDATE',
   'TRADING_DAILY_SUMMARY',
   'SALARY_RECEIVED',
+  'WALLET_WITHDRAWAL_APPROVED',
   'PAYROLL_ADVANCE_ALERT',
   'LOW_STOCK_ALERT',
   'TEST',
 ]
 
-export const DEFAULT_SMS_ENABLED_TYPES: SmsType[] = ['ORDER_CONFIRMATION', 'SALARY_RECEIVED']
+export const DEFAULT_SMS_ENABLED_TYPES: SmsType[] = [
+  'ORDER_CONFIRMATION',
+  'SALARY_RECEIVED',
+  'WALLET_WITHDRAWAL_APPROVED',
+]
 
 export type SmsTypeCatalogItem = {
   type: SmsType
@@ -40,6 +45,15 @@ export const SMS_TYPE_CATALOG: SmsTypeCatalogItem[] = [
     label: 'Salary credited',
     labelBn: 'বেতন জমা হয়েছে',
     description: 'মাসিক payroll accrual-এ employee wallet-এ টাকা গেলে',
+    audience: 'Employee phone',
+    suggestedBusiness: 'ANY',
+    defaultEnabled: true,
+  },
+  {
+    type: 'WALLET_WITHDRAWAL_APPROVED',
+    label: 'Wallet withdrawal approved',
+    labelBn: 'উইথড্র অনুমোদিত',
+    description: 'Staff wallet withdrawal approve হলে transaction id সহ employee-কে',
     audience: 'Employee phone',
     suggestedBusiness: 'ANY',
     defaultEnabled: true,

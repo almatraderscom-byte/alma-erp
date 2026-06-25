@@ -16,6 +16,7 @@ import {
 import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { archiveOrderAfterDeleteApproval } from '@/lib/order-delete'
 import { notifyUser } from '@/lib/notifications'
+import { enqueueWalletWithdrawalApprovedSms } from '@/services/sms/events'
 import { canReviewPenaltyAppeals, penaltyAppealDto, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { logEvent } from '@/lib/logger'
 import {
@@ -111,6 +112,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     action?: 'APPROVE' | 'REJECT'
     note?: string
     approvedAmount?: number
+    transactionId?: string
     operation_id?: string
   }
   if (body.action !== 'APPROVE' && body.action !== 'REJECT') {
@@ -231,7 +233,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     } else if (approval.module === 'PAYROLL' && approval.type === 'SALARY_ADVANCE') {
       response = await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
     } else if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
-      response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount)
+      response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount, body.transactionId)
     } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.MEAL_ALLOWANCE) {
       const moduleResult = await processMealAllowanceApproval(
         approval.id,
@@ -563,7 +565,9 @@ async function processWalletRequest(
   actorUserId: string,
   note?: string,
   approvedAmountInput?: number,
+  transactionIdInput?: string,
 ) {
+  const transactionId = transactionIdInput?.trim().slice(0, 120) || null
   const request = await prisma.walletRequest.findUnique({ where: { id: requestId } })
   if (!request) {
     logEvent('error', 'approval.entity.missing', { approvalId, entityId: requestId, module: 'PAYROLL' })
@@ -691,6 +695,7 @@ async function processWalletRequest(
         reviewedById: actorUserId,
         reviewedAt: new Date(),
         ledgerEntryId: entry.id,
+        transactionId: request.type === 'WITHDRAWAL' ? transactionId : null,
       },
     })
     const approval = await resolveApprovalRequest({
@@ -715,6 +720,24 @@ async function processWalletRequest(
   if (result.approval) {
     deferAfterApprovalCommit('approval.center.wallet_approve_notify', async () => {
       await notifyApprovalResolved(result.approval!, actorUserId, 'APPROVED', note?.slice(0, 500) || 'Approved')
+      // Withdrawal-approved evidence SMS to the staff member (with the owner-entered txn id).
+      if (request.type === 'WITHDRAWAL') {
+        try {
+          const staff = request.userId
+            ? await prisma.user.findUnique({ where: { id: request.userId }, select: { phone: true } })
+            : null
+          enqueueWalletWithdrawalApprovedSms({
+            businessId: request.businessId,
+            phone: staff?.phone,
+            employeeId: request.employeeId,
+            amount: approvedAmount,
+            transactionId,
+            requestId: request.id,
+          })
+        } catch (e) {
+          logEvent('warn', 'wallet.withdrawal_sms.failed', { requestId: request.id, message: (e as Error).message })
+        }
+      }
     })
   }
   dispatchApprovalsUpdated()

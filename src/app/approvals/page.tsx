@@ -84,6 +84,7 @@ function ApprovalsPageInner() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<ApprovalRow | null>(null)
   const [actionTarget, setActionTarget] = useState<{ row: ApprovalRow; action: 'APPROVE' | 'REJECT' } | null>(null)
+  const [withdrawApprove, setWithdrawApprove] = useState<{ row: ApprovalRow; transactionId: string } | null>(null)
   const [note, setNote] = useState('')
   const [integrity, setIntegrity] = useState<IntegrityReport | null>(null)
   const [integrityLoading, setIntegrityLoading] = useState(false)
@@ -168,7 +169,7 @@ function ApprovalsPageInner() {
   const priorityCounts = useMemo(() => Object.fromEntries((data?.byPriority || []).map(row => [row.priority, row.count])), [data])
   const orphanCount = integrity?.orphans?.length ?? 0
 
-  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '') {
+  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '', transactionId?: string) {
     if (isRowProcessing(row.id)) return
     if (action === 'REJECT' && actionNote.trim().length < 5) {
       toast.error('Rejection reason must be at least 5 characters')
@@ -179,12 +180,23 @@ function ApprovalsPageInner() {
       action,
       note: actionNote,
       rowLabel: row.type.replace(/_/g, ' '),
+      transactionId,
     })
     if (result.ok) {
       setSelected(current => (current?.id === row.id ? null : current))
       setActionTarget(null)
+      setWithdrawApprove(null)
       setNote('')
     }
+  }
+
+  // Wallet withdrawals need a transaction id (sent to staff via SMS) — collect it first.
+  function handleApproveClick(row: ApprovalRow) {
+    if (row.type === 'WALLET_WITHDRAWAL') {
+      setWithdrawApprove({ row, transactionId: '' })
+      return
+    }
+    void processApproval(row, 'APPROVE')
   }
 
   const actionsGloballyDisabled = hasProcessing
@@ -405,7 +417,7 @@ function ApprovalsPageInner() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="xs" variant="ghost" disabled={rowBusy} onClick={() => setSelected(row)}>View Details</Button>
                     {row.status === 'PENDING' && row.executable && (
-                      <Button size="xs" variant="gold" disabled={actionDisabled} onClick={() => void processApproval(row, 'APPROVE')}>
+                      <Button size="xs" variant="gold" disabled={actionDisabled} onClick={() => handleApproveClick(row)}>
                         {ui.state === 'processing' ? <><Spinner /> Processing</> : 'Approve'}
                       </Button>
                     )}
@@ -500,7 +512,7 @@ function ApprovalsPageInner() {
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex flex-wrap gap-2">
                 {selected.status === 'PENDING' && selected.executable && (
-                  <Button variant="gold" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, 'APPROVE')}>
+                  <Button variant="gold" disabled={selectedActionDisabled} onClick={() => handleApproveClick(selected)}>
                     {selectedUi.state === 'processing' ? <><Spinner /> Processing approval…</> : 'Approve'}
                   </Button>
                 )}
@@ -566,6 +578,60 @@ function ApprovalsPageInner() {
                 onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}
               >
                 {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
+              </Button>
+            </div>
+          </Card>
+        </MobileModalPortal>
+        )
+      })()}
+      {withdrawApprove && (() => {
+        const waUi = getRowUi(withdrawApprove.row.id)
+        const waBusy = isRowProcessing(withdrawApprove.row.id)
+        const waDisabled = waBusy || actionsGloballyDisabled
+        const txn = withdrawApprove.transactionId.trim()
+        return (
+        <MobileModalPortal open zIndex={10001} onBackdropClick={() => setWithdrawApprove(null)}>
+          <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-cream">Approve withdrawal</p>
+                  <p className="mt-1 text-xs text-muted">{withdrawApprove.row.requester?.name || withdrawApprove.row.requestedBy} · {withdrawApprove.row.businessName || withdrawApprove.row.businessId || 'Global'}</p>
+                </div>
+                <Button size="xs" variant="ghost" disabled={waBusy} onClick={() => setWithdrawApprove(null)}>Close</Button>
+              </div>
+              {waUi.state === 'processing' && (
+                <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                  <Spinner />
+                  Processing approval…
+                </div>
+              )}
+            </div>
+            <div className="mobile-modal-body px-5 space-y-2">
+              <label className="block text-[11px] font-black uppercase tracking-[0.14em] text-muted">
+                Transaction ID
+                <input
+                  autoFocus
+                  type="text"
+                  value={withdrawApprove.transactionId}
+                  onChange={e => setWithdrawApprove(w => w ? { ...w, transactionId: e.target.value } : w)}
+                  disabled={waDisabled}
+                  placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
+                  className="mt-2 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+                />
+              </label>
+              <p className={`text-[11px] ${!txn ? 'text-amber-600' : 'text-muted'}`}>
+                {!txn ? 'Transaction ID আবশ্যক' : 'এই ID সহ staff-কে SMS পাঠানো হবে।'}
+              </p>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <Button
+                variant="gold"
+                className="w-full justify-center"
+                disabled={waDisabled || !txn}
+                onClick={() => void processApproval(withdrawApprove.row, 'APPROVE', '', txn)}
+              >
+                {waUi.state === 'processing' ? <><Spinner /> Processing approval…</> : 'Confirm approval'}
               </Button>
             </div>
           </Card>

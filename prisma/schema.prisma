@@ -351,6 +351,7 @@ model WalletRequest {
   reviewedById    String?
   reviewedAt      DateTime?
   ledgerEntryId   String?
+  transactionId   String?
   isArchived      Boolean             @default(false)
   archivedAt      DateTime?
   archivedById    String?

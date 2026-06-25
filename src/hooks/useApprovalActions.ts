@@ -22,6 +22,7 @@ type ExecuteInput = {
   action: ApprovalActionKind
   note?: string
   rowLabel?: string
+  transactionId?: string
 }
 
 type ExecuteResult =
@@ -117,7 +118,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
 
   const executeApproval = useCallback(
     async (input: ExecuteInput): Promise<ExecuteResult> => {
-      const { approvalId, action, note = '', rowLabel } = input
+      const { approvalId, action, note = '', rowLabel, transactionId } = input
 
       if (action === 'REJECT' && note.trim().length < 5) {
         toast.error('Rejection reason must be at least 5 characters')
@@ -156,7 +157,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, note, operation_id: operationId }),
+            body: JSON.stringify({ action, note, operation_id: operationId, ...(transactionId ? { transactionId } : {}) }),
             cache: 'no-store',
           },
         )

@@ -67,7 +67,7 @@ export default function PayrollPage() {
   const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
-  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; requestedAmount: number; approvedAmount: string } | null>(null)
+  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string } | null>(null)
   const [reviewBusy, setReviewBusy] = useState(false)
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState('ALL')
   const [employeeFilter, setEmployeeFilter] = useState('')
@@ -232,12 +232,17 @@ export default function PayrollPage() {
       toast.error('Enter a valid approved amount')
       return
     }
+    const transactionId = review.transactionId.trim()
+    if (review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && !transactionId) {
+      toast.error('Transaction ID দিন (staff-কে SMS-এ পাঠানো হবে)')
+      return
+    }
     setReviewBusy(true)
     try {
       const result = await safeFetchJsonWithToast(`/api/payroll/wallet/requests/${review.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: review.action, approvedAmount, note: '' }),
+        body: JSON.stringify({ action: review.action, approvedAmount, note: '', transactionId }),
       })
       if (!result.ok) return
       toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
@@ -481,8 +486,8 @@ export default function PayrollPage() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-mono text-[#E07A5F] text-sm font-bold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
-                    <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount) })}>Reject</Button>
-                    <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount) })}>Approve</Button>
+                    <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Reject</Button>
+                    <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Approve</Button>
                   </div>
                 </div>
               ))}
@@ -708,6 +713,20 @@ export default function PayrollPage() {
                     onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
                     className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
                   />
+                </label>
+              )}
+              {review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && (
+                <label className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-muted">
+                  Transaction ID
+                  <input
+                    inputMode="text"
+                    type="text"
+                    placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
+                    value={review.transactionId}
+                    onChange={e => setReview(r => r ? { ...r, transactionId: e.target.value } : r)}
+                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  />
+                  <span className="mt-1 block text-[10px] font-normal normal-case text-muted">এই ID সহ staff-কে SMS পাঠানো হবে।</span>
                 </label>
               )}
             </div>

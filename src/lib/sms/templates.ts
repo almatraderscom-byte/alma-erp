@@ -18,6 +18,11 @@ export function salaryReceivedSms(input: { amount: number; periodYm?: string | n
   return `ALMA: আপনার salary wallet এ যোগ হয়েছে। Amount: ${money(input.amount)}${input.periodYm ? ` | Period: ${input.periodYm}` : ''}`
 }
 
+export function walletWithdrawalApprovedSms(input: { amount: number; transactionId?: string | null }) {
+  const txn = input.transactionId?.trim()
+  return `ALMA: আপনার withdrawal accept করা হয়েছে। Amount: ৳${money(input.amount)}${txn ? ` | TxID: ${txn}` : ''}। ধন্যবাদ — ALMA`
+}
+
 export function payrollAdvanceAlertSms() {
   return 'ALMA ALERT: নতুন salary advance request এসেছে'
 }
