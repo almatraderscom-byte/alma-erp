@@ -6,6 +6,7 @@
  * Sends structured data to Vercel API which generates AI-powered plan.
  */
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
+import { isPendingActionExpired } from '../db/pending-action-fields.mjs'
 
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -58,7 +59,11 @@ export async function runDailyFocus(context) {
 
   const todos = todosRes?.data ?? []
   const reminders = remindersRes?.data ?? []
-  const approvals = approvalsRes?.data ?? []
+  // Drop transient cards past their 30-min TTL — the Approval Center hides them,
+  // so the focus plan must not count them or it reports phantom "pending approvals".
+  const approvals = (approvalsRes?.data ?? []).filter(
+    (a) => !isPendingActionExpired(a.createdAt, a.type),
+  )
 
   const salesInfo = briefing?.sales ? `Yesterday: ৳${briefing.sales.yesterdayTotal}, Orders: ${briefing.sales.yesterdayOrders}` : ''
   const pendingOrders = briefing?.pendingOrders?.count ?? 0

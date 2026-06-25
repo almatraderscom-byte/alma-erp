@@ -370,6 +370,11 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     rows.push([leaveRequestButton()])
   }
 
+  // skipApproval: this dispatch already cleared the owner's `dispatch_staff_tasks`
+  // approval card. Re-gating here through requireStaffApproval was double-asking:
+  // when the staff trust tier resolved to 'approve' it returned ok:false (so the
+  // dispatch reported "❌ যায়নি — task dispatch send failed") AND inserted a fresh
+  // staff_auto_message pending row — the phantom "N pending" the owner kept seeing.
   const sendResult = await loggedSendToStaff(bot.telegram, {
     supabase,
     staffId,
@@ -380,7 +385,7 @@ async function sendTasksToStaff({ bot, chatId, staffName, staffTasks, supabase, 
     chatId,
     relatedTaskIds: staffTasks.map((t) => t.id),
     requiresAck: true,
-    extra: { reply_markup: { inline_keyboard: rows } },
+    extra: { reply_markup: { inline_keyboard: rows }, skipApproval: true },
   })
 
   if (!sendResult.ok) {

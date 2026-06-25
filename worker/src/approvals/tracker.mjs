@@ -1,5 +1,6 @@
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { buildCallbackData } from '../telegram/callback-data.mjs'
+import { isPendingActionExpired } from '../db/pending-action-fields.mjs'
 
 function todayDhaka() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
@@ -56,14 +57,29 @@ export async function runApprovalTracker({ supabase, bot }) {
   }
 
   const cutoff = new Date(Date.now() - 30 * 60_000).toISOString()
-  const { data: pending } = await supabase
+  const { data: pendingRaw } = await supabase
     .from('agent_pending_actions')
     .select('id, type, summary, createdAt')
     .eq('status', 'pending')
     .lt('createdAt', cutoff)
     .order('createdAt', { ascending: true })
 
-  if (!pending?.length) return
+  if (!pendingRaw?.length) return
+
+  // Transient cards past their 30-min TTL are dead — the Approval Center and
+  // get_pending_approvals already hide them. Sweep them to 'expired' and never
+  // nag about them, so the owner never sees "N pending" for cards the app shows
+  // as empty. Lifecycle cards (dispatch_staff_tasks) survive and still remind.
+  const expired = pendingRaw.filter((p) => isPendingActionExpired(p.createdAt, p.type))
+  if (expired.length) {
+    await supabase
+      .from('agent_pending_actions')
+      .update({ status: 'expired', resolvedAt: new Date().toISOString() })
+      .in('id', expired.map((p) => p.id))
+      .catch((err) => console.warn('[approval-tracker] transient expire sweep failed:', err.message))
+  }
+  const pending = pendingRaw.filter((p) => !isPendingActionExpired(p.createdAt, p.type))
+  if (!pending.length) return
 
   const sorted = [...pending].sort((a, b) => priorityRank(a.type) - priorityRank(b.type))
 
