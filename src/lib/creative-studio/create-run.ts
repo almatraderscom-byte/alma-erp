@@ -52,10 +52,14 @@ function resolveProvider(
   familyPreset?: FamilyPresetId,
 ): StudioProvider {
   if (mode === 'image_to_video') return 'gemini'
-  // Multi-person family presets require Gemini compositing; FASHN tryon-max is single-person only.
-  if (familyPreset && familyPreset !== 'single') return 'gemini'
+  // Owner's explicit provider choice wins — including for multi-person family presets.
+  // FASHN dresses whoever is already in the supplied model photo (so for 2 people you
+  // must give it a 2-person model shot); Gemini composites the family from the brand
+  // library. Both are valid routes, so honor the selection instead of forcing Gemini.
   if (requested === 'gemini') return 'gemini'
   if (requested === 'fashn' && isFashnConfigured()) return 'fashn'
+  // No explicit choice → default multi-person family presets to Gemini compositing.
+  if (familyPreset && familyPreset !== 'single') return 'gemini'
   if (isFashnConfigured() && STUDIO_MODES.find((m) => m.id === mode)?.fashnModel) return 'fashn'
   return 'gemini'
 }
@@ -204,7 +208,10 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     && input.familyPreset !== 'single'
     && (input.mode === 'try_on' || input.mode === 'product_to_model')
   ) {
-    const variants = [input.familyPreset] as ChatTryOnVariant[]
+    // Produce numImages (1–4) variants of the chosen family preset so multi-person
+    // shoots get the same "give me 2/4 options" behavior as single-model runs.
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    const variants = Array.from({ length: count }, () => input.familyPreset) as ChatTryOnVariant[]
     const batch = await queueTryOnBatch({
       productImagePath: input.productImagePath,
       modelId: input.modelId,
@@ -270,10 +277,11 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   if (!input.productImagePath) throw new Error('product_image_required')
 
   if (input.familyPreset && input.familyPreset !== 'single') {
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
     const batch = await queueTryOnBatch({
       productImagePath: input.productImagePath,
       modelId: input.modelId,
-      variants: [input.familyPreset],
+      variants: Array.from({ length: count }, () => input.familyPreset) as ChatTryOnVariant[],
       extra: extraPrompt,
       conversationId: null,
     })

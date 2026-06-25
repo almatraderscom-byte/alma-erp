@@ -279,13 +279,14 @@ function StudioWorkspace({
   const isFamilyMerge =
     familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
-  // Any multi-person family preset (baba+chele, ma+meye, full family) must render on
-  // Gemini — FASHN tryon-max is single-person only and can't place 2+ people. The
-  // backend already forces this; mirror it in the UI so the Run button / provider
-  // label is honest instead of saying "FASHN Pro" while Gemini actually runs.
+  // Multi-person family preset (baba+chele, ma+meye, full family). Both providers can
+  // serve these now, but they work differently: Gemini composites the family from the
+  // brand library; FASHN dresses whoever is already in the model photo you upload (so
+  // for 2 people you must supply a 2-person model shot). The owner's selection is
+  // honored — except full_family merge, which always composites on Gemini.
   const isMultiPersonFamily =
     familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
-  const effectiveProvider: StudioProvider = isMultiPersonFamily ? 'gemini' : provider
+  const effectiveProvider: StudioProvider = isFamilyMerge ? 'gemini' : provider
 
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
@@ -708,8 +709,12 @@ function StudioWorkspace({
               )}
             </motion.button>
             <p className="mt-1.5 text-center text-[10px] text-muted">
-              {isMultiPersonFamily && provider === 'fashn'
-                ? 'একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে'
+              {isFamilyMerge
+                ? 'দুই ছবি একসাথে — Gemini দিয়ে কম্পোজিট হবে'
+                : isMultiPersonFamily && provider === 'fashn'
+                ? 'FASHN: আপনার মডেল ছবিতে যে কজন থাকবে, সবাইকে পোশাক পরাবে (২ জনের জন্য ২ জনের ছবি দিন)'
+                : isMultiPersonFamily
+                ? 'Gemini ব্র্যান্ড লাইব্রেরি থেকে ফ্যামিলি বানাবে'
                 : 'No LLM cost — direct render queue'}
             </p>
           </div>
