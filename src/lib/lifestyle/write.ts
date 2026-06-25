@@ -145,8 +145,20 @@ export async function nextCustomerId(): Promise<string> {
 
 async function findStockBySku(sku: string, size = '') {
   const normalized = sku.trim()
+  // The resolved stock SKU already encodes the size/variant pool (e.g. 133-KIDS,
+  // 133-ADULT, 133T-ORNA). For MEN/WOMEN collections the order line's `size` is a
+  // customer-facing value (numeric size, age band) that intentionally differs from
+  // the stock row's `size` column, so an exact sku+size filter would miss the row.
+  // Try the exact match first, then fall back to the SKU alone (effectively unique).
+  if (size) {
+    const exact = await prisma.lifestyleStockItem.findFirst({
+      where: { sku: normalized, size },
+      orderBy: { updatedAt: 'desc' },
+    })
+    if (exact) return exact
+  }
   return prisma.lifestyleStockItem.findFirst({
-    where: size ? { sku: normalized, size } : { sku: normalized },
+    where: { sku: normalized },
     orderBy: { updatedAt: 'desc' },
   })
 }
