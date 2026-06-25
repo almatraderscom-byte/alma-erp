@@ -235,11 +235,26 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!input.modelImagePath && modeDef.needsModel) throw new Error('model_image_required')
     if (!input.sourceImagePath && modeDef.needsSource) throw new Error('source_image_required')
 
+    const isEdit = modeDef.fashnModel === 'edit'
     const fashnInputs: Record<string, string> = {}
-    if (input.productImagePath) fashnInputs.product_image = input.productImagePath
-    if (input.modelImagePath) fashnInputs.model_image = input.modelImagePath
-    if (input.sourceImagePath) fashnInputs.model_image = input.sourceImagePath
-    if (input.faceReferencePath) fashnInputs.face_reference = input.faceReferencePath
+    if (isEdit) {
+      // FASHN Edit endpoint: a base `image` + freeform `prompt`, plus an optional
+      // `image_context` reference image. This is the owner's "add a 5–7 yr old boy
+      // wearing the same panjabi" workflow — base = the model/source photo,
+      // image_context = the product/outfit reference to copy onto the new person.
+      const base = input.sourceImagePath ?? input.modelImagePath ?? input.productImagePath
+      if (base) fashnInputs.image = base
+      const context = input.secondSourceImagePath ?? input.productImagePath
+      if (context && context !== base) fashnInputs.image_context = context
+    } else {
+      if (input.productImagePath) fashnInputs.product_image = input.productImagePath
+      if (input.modelImagePath) fashnInputs.model_image = input.modelImagePath
+      if (input.sourceImagePath) fashnInputs.model_image = input.sourceImagePath
+      if (input.faceReferencePath) fashnInputs.face_reference = input.faceReferencePath
+    }
+
+    // Edit is prompt-driven (no pose rotation): use the owner's instruction directly.
+    const basePrompt = isEdit ? (input.prompt?.trim() || extraPrompt) : extraPrompt
 
     const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
     for (let i = 0; i < count; i++) {
@@ -250,9 +265,9 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           fashnModel: modeDef.fashnModel,
           fashnInputs,
           fashnOptions: {
-            prompt: (count > 1
-              ? [extraPrompt, STUDIO_POSE_ROTATION[i % STUDIO_POSE_ROTATION.length]].filter(Boolean).join(' ')
-              : extraPrompt) || undefined,
+            prompt: (count > 1 && !isEdit
+              ? [basePrompt, STUDIO_POSE_ROTATION[i % STUDIO_POSE_ROTATION.length]].filter(Boolean).join(' ')
+              : basePrompt) || undefined,
             resolution: input.resolution ?? '2k',
             generationMode: input.generationMode ?? 'balanced',
             numImages: 1,

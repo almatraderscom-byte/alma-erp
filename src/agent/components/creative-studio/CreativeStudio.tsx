@@ -279,6 +279,11 @@ function StudioWorkspace({
   const isFamilyMerge =
     familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
+  // FASHN Edit mode: base image + a prompt + an optional reference (image_context).
+  // This is the "add a 5–7 yr old boy wearing the same panjabi" workflow — upload the
+  // base photo, a reference (the product/panjabi), and write the instruction.
+  const isEditMode = mode === 'edit'
+
   // Multi-person family preset (baba+chele, ma+meye, full family). Both providers can
   // serve these now, but they work differently: Gemini composites the family from the
   // brand library; FASHN dresses whoever is already in the model photo you upload (so
@@ -411,7 +416,7 @@ function StudioWorkspace({
         productImagePath: productPath ?? undefined,
         modelImagePath: modelPath ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
-        secondSourceImagePath: isFamilyMerge ? (secondSourcePath ?? undefined) : undefined,
+        secondSourceImagePath: isFamilyMerge || isEditMode ? (secondSourcePath ?? undefined) : undefined,
         modelId: modelId || undefined,
         familyPreset: mode === 'product_to_model' || mode === 'try_on' ? familyPreset : undefined,
         prompt,
@@ -489,6 +494,13 @@ function StudioWorkspace({
               preview={secondSourcePreview}
               onFile={(f) => void upload(f, 'source2').catch((e) => toast.error(String(e)))}
               required
+            />
+          )}
+          {isEditMode && (
+            <UploadTile
+              label="Reference ছবি (যেমন product/পাঞ্জাবি) — optional"
+              preview={secondSourcePreview}
+              onFile={(f) => void upload(f, 'source2').catch((e) => toast.error(String(e)))}
             />
           )}
           {!isFamilyMerge && (modeDef.needsModel || mode === 'try_on') && (
@@ -587,7 +599,9 @@ function StudioWorkspace({
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Optional: Blonde hair, studio photoshoot, festive mood…"
+              placeholder={isEditMode
+                ? 'যেমন: পাশে একটা ৫–৭ বছরের ছেলে একই পাঞ্জাবি পরিয়ে যোগ করো'
+                : 'Optional: Blonde hair, studio photoshoot, festive mood…'}
               className="mb-2 w-full rounded-xl border border-border bg-bg-1 text-cream px-3 py-2 text-[13px] outline-none focus:border-[#E07A5F]/40"
             />
 
