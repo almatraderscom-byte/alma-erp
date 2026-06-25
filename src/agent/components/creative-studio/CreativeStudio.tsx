@@ -14,6 +14,7 @@ import {
   GEN_MODES,
   BACKGROUND_PRESETS,
   VIDEO_VIBES,
+  FASHN_ONLY_MODES,
   type StudioModeId,
   type StudioProvider,
   type FamilyPresetId,
@@ -63,10 +64,8 @@ type StudioModel = { id: string; name: string; role: string | null; isDefault: b
 // point it at a self-hosted/rebranded instance without a code change.
 const OPENCUT_URL = process.env.NEXT_PUBLIC_OPENCUT_URL || 'https://opencut.app/projects'
 
-// These modes carry no product image, so the Gemini fallback (which requires a
-// product) can't serve them — they only render through FASHN. Gate them in the
-// UI so the owner never picks a mode that will fail server-side.
-const FASHN_ONLY_MODES: StudioModeId[] = ['model_swap', 'face_to_model', 'edit']
+// FASHN_ONLY_MODES (model_swap / face_to_model / edit) is imported from constants —
+// shared with the backend so the UI lock and the server guard never drift apart.
 
 export default function CreativeStudio() {
   const [view, setView] = useState<MainView>('studio')
@@ -366,6 +365,12 @@ function StudioWorkspace({
         return
       }
       clearUploads()
+      // Reset per-mode inputs too — a prompt / family preset / saved model from the
+      // previous mode shouldn't silently carry into the next one (e.g. a Try-On
+      // family prompt leaking into Edit).
+      setPrompt('')
+      setFamilyPreset('single')
+      setModelId('')
       setMode(next)
     },
     [mode, config, clearUploads],
@@ -400,8 +405,11 @@ function StudioWorkspace({
     if (modeDef.needsProduct && !productPath) return false
     if (modeDef.needsModel && !modelPath && !modelId) return false
     if (modeDef.needsSource && !sourcePath) return false
+    // Edit is prompt-driven: without an instruction (or a reference image) it just
+    // returns the original unchanged — block the run so the owner isn't confused.
+    if (isEditMode && !prompt.trim() && !secondSourcePath) return false
     return true
-  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath])
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, isEditMode, prompt])
 
   const handleRun = async () => {
     if (!canRun) {
@@ -1068,7 +1076,11 @@ function GalleryView() {
                 layout
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
-                onClick={() => item.previewUrl && openItem(item)}
+                onClick={() => {
+                  if (item.previewUrl) { openItem(item); return }
+                  if (pending) { toast('এখনো তৈরি হচ্ছে — একটু পরে দেখুন।', { icon: '⏳' }); return }
+                  if (failed) { toast.error(item.error ? `ব্যর্থ: ${item.error}` : 'এই ছবিটি তৈরি ব্যর্থ হয়েছে।'); return }
+                }}
                 className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 text-left shadow-sm transition-transform active:scale-[0.98]"
               >
                 <div className="relative aspect-[4/5] bg-bg-1">

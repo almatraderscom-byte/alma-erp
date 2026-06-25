@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { isFashnConfigured } from '@/lib/fashn/client'
 import { buildVideoBrief, estimateReelCostUsd } from '@/lib/content-engine/video-brief'
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
-import { STUDIO_MODES } from '@/lib/creative-studio/constants'
+import { STUDIO_MODES, FASHN_ONLY_MODES } from '@/lib/creative-studio/constants'
 import { queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
 import { getDefaultModel, getModelByRole } from '@/lib/tryon/model-library'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
@@ -52,6 +52,13 @@ function resolveProvider(
   familyPreset?: FamilyPresetId,
 ): StudioProvider {
   if (mode === 'image_to_video') return 'gemini'
+  // FASHN-only modes (model_swap / face_to_model / edit) have no Gemini fallback.
+  // If FASHN isn't configured, fail loudly with the real reason instead of falling
+  // through to the Gemini path and dying on a misleading "product_image_required".
+  if (FASHN_ONLY_MODES.includes(mode)) {
+    if (!isFashnConfigured()) throw new Error('fashn_required_not_configured')
+    return 'fashn'
+  }
   // Owner's explicit provider choice wins — including for multi-person family presets.
   // FASHN dresses whoever is already in the supplied model photo (so for 2 people you
   // must give it a 2-person model shot); Gemini composites the family from the brand
@@ -62,6 +69,14 @@ function resolveProvider(
   if (familyPreset && familyPreset !== 'single') return 'gemini'
   if (isFashnConfigured() && STUDIO_MODES.find((m) => m.id === mode)?.fashnModel) return 'fashn'
   return 'gemini'
+}
+
+// Mirror the worker's FASHN credit math (worker/src/fashn/process.mjs): 4k=4,
+// 2k=3, else 2 credits × $0.075. Keeps the pending-action estimate in step with
+// what actually gets logged to the ledger instead of a flat guess.
+function fashnCostEstimate(resolution?: FashnResolution): number {
+  const credits = resolution === '4k' ? 4 : resolution === '2k' ? 3 : 2
+  return Math.round(credits * 0.075 * 100) / 100
 }
 
 function familyPrompt(preset: FamilyPresetId): string {
@@ -281,7 +296,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           modelImagePath: input.modelImagePath,
         },
         summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (FASHN)`,
-        costEstimate: 0.25,
+        costEstimate: fashnCostEstimate(input.resolution),
       })
       jobs.push({ pendingActionId: id, label: modeDef.label, type: 'image_gen' })
     }
@@ -385,7 +400,7 @@ export async function runAutoStudio(input: {
         modelImagePath: defaultModel.imagePath,
       },
       summary: '🎨 Auto Studio — On-model (FASHN best realism)',
-      costEstimate: 0.25,
+      costEstimate: fashnCostEstimate('2k'),
     })
     jobs.push({ pendingActionId: id, label: 'On-model (best realism)', type: 'image_gen' })
   } else {

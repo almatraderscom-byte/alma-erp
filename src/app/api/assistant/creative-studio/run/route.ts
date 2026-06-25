@@ -11,6 +11,14 @@ const AUTO_ERRORS: Record<string, string> = {
   product_image_required: 'Product ছবি upload করুন।',
 }
 
+const RUN_ERRORS: Record<string, string> = {
+  product_image_required: 'Product ছবি upload করুন।',
+  model_image_required: 'Model ছবি upload করুন।',
+  source_image_required: 'Source ছবি upload করুন।',
+  fashn_required_not_configured: 'এই mode-টি শুধু FASHN দিয়ে চলে, কিন্তু FASHN এখন configure করা নেই।',
+  invalid_mode: 'অজানা mode।',
+}
+
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
@@ -81,6 +89,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return Response.json({ error: msg }, { status: 422 })
+    return Response.json({ error: RUN_ERRORS[msg] ?? msg }, { status: 422 })
   }
 }

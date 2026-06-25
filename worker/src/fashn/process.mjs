@@ -139,7 +139,10 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
     const qcLevel = await fetchQcLevel(supabase)
     if (qcLevel !== 'off') {
       const productType = payload.contentPipeline?.productCode ?? null
+      // Edit mode has no product/garment key — its outfit reference is `image_context`.
+      // Feed that to QC so the product-fidelity check isn't inert for edits.
       const productImagePath = pickGarmentPath(fashnInputs)
+        ?? (fashnModel === 'edit' ? (fashnInputs?.image_context ?? null) : null)
       let regenAttempt = 0
       const qcResult = await runImageQcLoop({
         supabase,

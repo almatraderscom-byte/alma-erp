@@ -31,6 +31,11 @@ export const STUDIO_MODES: Array<{
   { id: 'image_to_video', label: 'Image to Video', short: 'Reel', isVideo: true, needsProduct: false, needsModel: false, needsSource: true },
 ]
 
+// Modes that ONLY work through FASHN — they have no usable Gemini fallback, so if
+// FASHN isn't configured the run must fail with a clear reason (not a misleading
+// "product image required"). Shared by the UI (to lock the chips) and the backend.
+export const FASHN_ONLY_MODES: StudioModeId[] = ['model_swap', 'face_to_model', 'edit']
+
 export const FAMILY_PRESETS: Array<{ id: FamilyPresetId; label: string; labelBn: string }> = [
   { id: 'single', label: 'Single', labelBn: 'Single' },
   { id: 'father_son', label: 'Baba + Chele', labelBn: 'বাবা + ছেলে' },
