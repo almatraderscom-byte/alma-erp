@@ -55,21 +55,26 @@ export default function SmsSettingsPage() {
 
   async function load() {
     setLoading(true)
-    const qs = new URLSearchParams({ business_id: businessId, status })
-    const [logsRes, balanceRes] = await Promise.all([
-      fetch(`/api/sms/logs?${qs}`, { cache: 'no-store' }),
-      fetch('/api/sms/balance', { cache: 'no-store' }),
-    ])
-    if (logsRes.ok) {
-      const json = await logsRes.json() as SmsData
-      setData(json)
-      setEnabledTypes(json.setting?.enabledTypes?.length ? json.setting.enabledTypes : [...DEFAULT_SMS_ENABLED_TYPES])
-    } else {
-      const err = await logsRes.json().catch(() => ({})) as { error?: string }
-      toast.error(err.error || 'SMS settings load failed')
+    try {
+      const qs = new URLSearchParams({ business_id: businessId, status })
+      const [logsRes, balanceRes] = await Promise.all([
+        fetch(`/api/sms/logs?${qs}`, { cache: 'no-store' }),
+        fetch('/api/sms/balance', { cache: 'no-store' }),
+      ])
+      if (logsRes.ok) {
+        const json = await logsRes.json() as SmsData
+        setData(json)
+        setEnabledTypes(json.setting?.enabledTypes?.length ? json.setting.enabledTypes : [...DEFAULT_SMS_ENABLED_TYPES])
+      } else {
+        const err = await logsRes.json().catch(() => ({})) as { error?: string }
+        toast.error(err.error || 'SMS settings load failed')
+      }
+      if (balanceRes.ok) setBalance(await balanceRes.json())
+    } catch {
+      toast.error('Network সমস্যা — আবার চেষ্টা করুন')
+    } finally {
+      setLoading(false)
     }
-    if (balanceRes.ok) setBalance(await balanceRes.json())
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -81,19 +86,24 @@ export default function SmsSettingsPage() {
     senderId?: string
     enabled_types?: SmsType[]
   }) {
-    const res = await fetch('/api/sms/logs', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: businessId, ...patch }),
-    })
-    const json = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(json.error || 'Could not save SMS settings')
+    try {
+      const res = await fetch('/api/sms/logs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, ...patch }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json.error || 'Could not save SMS settings')
+        return false
+      }
+      if (Array.isArray(json.enabledTypes)) setEnabledTypes(json.enabledTypes)
+      await load()
+      return true
+    } catch {
+      toast.error('Network সমস্যা — সেভ হয়নি, আবার চেষ্টা করুন')
       return false
     }
-    if (Array.isArray(json.enabledTypes)) setEnabledTypes(json.enabledTypes)
-    await load()
-    return true
   }
 
   async function saveEnabled(enabled: boolean) {
@@ -125,41 +135,54 @@ export default function SmsSettingsPage() {
       return
     }
     setTesting(true)
-    const res = await fetch('/api/sms/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: businessId, phone: testPhone.trim() }),
-    })
-    const json = await res.json().catch(() => ({}))
-    setTesting(false)
-    if (!res.ok) {
-      toast.error(json.error || 'Test SMS failed')
-      return
+    try {
+      const res = await fetch('/api/sms/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, phone: testPhone.trim() }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json.error || 'Test SMS failed')
+        return
+      }
+      toast.success('Test SMS queued')
+      await load()
+    } catch {
+      toast.error('Network সমস্যা — Test SMS পাঠানো যায়নি')
+    } finally {
+      setTesting(false)
     }
-    toast.success('Test SMS queued')
-    await load()
   }
 
   async function retry(id: string) {
-    const res = await fetch('/api/sms/retry', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-    if (!res.ok) toast.error('Retry failed')
-    else toast.success('Retry queued')
-    await load()
+    try {
+      const res = await fetch('/api/sms/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      if (!res.ok) toast.error('Retry failed')
+      else toast.success('Retry queued')
+      await load()
+    } catch {
+      toast.error('Network সমস্যা — আবার চেষ্টা করুন')
+    }
   }
 
   async function report(id: string) {
-    const res = await fetch('/api/sms/report', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-    if (!res.ok) toast.error('Report check failed')
-    else toast.success('Report refreshed')
-    await load()
+    try {
+      const res = await fetch('/api/sms/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      if (!res.ok) toast.error('Report check failed')
+      else toast.success('Report refreshed')
+      await load()
+    } catch {
+      toast.error('Network সমস্যা — আবার চেষ্টা করুন')
+    }
   }
 
   const catalog = SMS_TYPE_CATALOG
