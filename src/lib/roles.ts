@@ -102,6 +102,15 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
 
   if (role === 'SUPER_ADMIN') return true
 
+  // Finance hub, expense ledger and CDIT (digital) are owner/admin only
+  // (owner decision 2026-06). SUPER_ADMIN already returned above, so this allows
+  // ADMIN and blocks HR / STAFF / VIEWER from these pages and their nav links.
+  if (
+    pathname.startsWith('/finance')
+    || pathname.startsWith('/expenses')
+    || pathname.startsWith('/digital')
+  ) return role === 'ADMIN'
+
   if (pathname.startsWith('/settings/users')) {
     return role === 'ADMIN'
   }

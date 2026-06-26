@@ -4,6 +4,8 @@ import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendFinanceAlert } from '@/lib/resend'
 import { prisma } from '@/lib/prisma'
 import { notifyRole } from '@/lib/notifications'
+import { logEvent } from '@/lib/logger'
+import { apiFailure } from '@/lib/safe-api-response'
 import { TRADING_BUSINESS_ID, numberFromDecimal } from '@/lib/trading'
 
 export const revalidate = 0
@@ -20,7 +22,10 @@ export async function GET(req: NextRequest) {
       headers: { 'Cache-Control': 'private, no-store' },
     })
   }
-  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  catch (e) {
+    logEvent('error', 'finance.read_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'Could not load finance data.', { status: 500 })
+  }
 }
 
 async function tradingFinanceLedger(params: Record<string, string>) {
@@ -119,5 +124,8 @@ export async function POST(req: NextRequest) {
     ]).catch(() => {})
     return NextResponse.json(result)
   }
-  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  catch (e) {
+    logEvent('error', 'finance.expense_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'Could not save the expense.', { status: 500 })
+  }
 }

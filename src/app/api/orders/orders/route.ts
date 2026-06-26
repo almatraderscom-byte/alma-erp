@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     })
   } catch (e) {
     logEvent('error', 'orders.list_failed', errorMeta(e))
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+    return NextResponse.json({ error: 'Could not load orders.' }, { status: 500 })
   }
 }
 

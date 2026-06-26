@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react'
 import type React from 'react'
+import { useSession } from 'next-auth/react'
+import { normalizeAlmaRole } from '@/lib/roles'
 import type { OrderStatus, StockItem } from '@/types'
 import { GoldDivider } from '@/components/ui'
 import { CATEGORIES, COURIERS, NEW_ORDER_STATUSES, PAYMENTS, SOURCES } from './constants'
@@ -93,6 +95,11 @@ export function NewOrderFormFields({
   stockItems?: StockItem[]
   catalogLoading?: boolean
 }) {
+  // Buying price / profit are owner+admin only — staff create orders without seeing margin.
+  const { data: session } = useSession()
+  const role = normalizeAlmaRole((session?.user as { role?: string } | undefined)?.role)
+  const canSeeProfit = role === 'SUPER_ADMIN' || role === 'ADMIN'
+
   function focusNext(e: React.KeyboardEvent<HTMLElement>) {
     if (e.key !== 'Enter') return
     const target = e.target as HTMLElement
@@ -386,7 +393,7 @@ export function NewOrderFormFields({
                   <span>SKU: {item.sku || 'not connected'}</span>
                   {item.available != null && <span>Available: {item.available}</span>}
                 </div>
-                {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) > 0 && (
+                {canSeeProfit && Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) > 0 && (
                   <div className="flex items-center justify-between rounded-xl border border-border bg-white/[0.03] px-3 py-2 text-[11px]">
                     <span className="text-muted">Item profit preview</span>
                     <span className={`font-bold ${itemProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
@@ -394,7 +401,7 @@ export function NewOrderFormFields({
                     </span>
                   </div>
                 )}
-                {Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) < Number(item.cogs || 0) && (
+                {canSeeProfit && Number(item.cogs || 0) > 0 && Number(item.sell_price || 0) < Number(item.cogs || 0) && (
                   <p className="text-[10px] font-semibold text-red-300">Warning: selling below cost</p>
                 )}
                 {item.warning && (
@@ -494,7 +501,7 @@ export function NewOrderFormFields({
             <div className="flex justify-between border-t border-gold-dim/20 pt-1 font-bold text-gold-lt"><span>Payable</span><Money amount={totals.payable} /></div>
             <div className="flex justify-between text-muted"><span>Due</span><Money amount={totals.due} /></div>
             <div className="flex justify-between text-muted-hi"><span>Courier cost (you pay)</span><Money amount={totals.courierCost} /></div>
-            {totals.shippingMargin !== 0 && (
+            {canSeeProfit && totals.shippingMargin !== 0 && (
               <div className="flex justify-between text-muted-hi">
                 <span>Shipping margin</span>
                 <span className={totals.shippingMargin >= 0 ? 'text-green-400' : 'text-red-300'}>
@@ -502,13 +509,15 @@ export function NewOrderFormFields({
                 </span>
               </div>
             )}
-            <div className="flex justify-between border-t border-border pt-1">
-              <span className="text-muted">Estimated Profit</span>
-              <span className={`font-bold ${totals.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
-                {totals.estimatedProfit >= 0 ? '+' : ''}<Money amount={totals.estimatedProfit} /> {totals.estimatedProfit >= 0 ? 'PROFIT' : 'LOSS'}
-              </span>
-            </div>
-            {totals.estimatedProfit < 0 && (
+            {canSeeProfit && (
+              <div className="flex justify-between border-t border-border pt-1">
+                <span className="text-muted">Estimated Profit</span>
+                <span className={`font-bold ${totals.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-300'}`}>
+                  {totals.estimatedProfit >= 0 ? '+' : ''}<Money amount={totals.estimatedProfit} /> {totals.estimatedProfit >= 0 ? 'PROFIT' : 'LOSS'}
+                </span>
+              </div>
+            )}
+            {canSeeProfit && totals.estimatedProfit < 0 && (
               <p className="text-[10px] font-semibold text-red-300">
                 Profit Status: LOSS. Review seller price, discount, shipping vs courier cost.
               </p>

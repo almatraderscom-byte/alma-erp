@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireRoles } from '@/lib/api-guards'
+import { apiFailure } from '@/lib/safe-api-response'
+import { logEvent } from '@/lib/logger'
 import { getLifestyleOrder } from '@/lib/lifestyle/read'
 import { dispatchUpdateOrderTracking } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendOrderAlert } from '@/lib/resend'
-import type { Order } from '@/types'
 import { enqueueCourierUpdateSms } from '@/services/sms/events'
 export async function POST(req: NextRequest) {
+  const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
+  if (denied) return denied
   try {
     const { id, tracking_id, courier } = await req.json()
     if (!id || !tracking_id) return NextResponse.json({ error: 'id and tracking_id required' }, { status: 400 })
@@ -31,5 +35,8 @@ export async function POST(req: NextRequest) {
       metadata: { orderId: id, trackingId: tracking_id, courier, result },
     })
     return NextResponse.json(result)
-  } catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  } catch (e) {
+    logEvent('error', 'orders.tracking_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'Could not update tracking.', { status: 500 })
+  }
 }
