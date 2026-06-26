@@ -159,7 +159,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
       )
       if (!result.ok) throw new Error(result.error.message)
       if (result.data?.failed?.length) {
-        toast.error(`Some fields failed: ${result.data.failed.map(f => f.field).join(', ')}`)
+        toast.error(result.data.failed.map(f => f.error || f.field).join('; '))
       } else {
         toast.success('Order updated')
       }
