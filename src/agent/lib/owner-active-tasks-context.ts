@@ -62,3 +62,95 @@ export async function buildOwnerActiveTasksContextBlock(
 
   return `${OWNER_TASK_REMINDER_RULES}\n\n## Boss-এর active tasks (${rows.length})\n${lines.join('\n')}`
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase A — inject ACTIVE STAFF tasks into the head agent's per-turn context.
+// Until now the head (Claude) only saw owner todos; active staff tasks lived only
+// in the office-supervisor cron + DB, so the conversational head was blind to them
+// ("কী দিয়েছিলাম Mustahid-কে?" → had to guess from chat). This makes the head an
+// office manager: it always knows the durable office state. READ-ONLY awareness —
+// the head still uses staff tools to assign / follow-up / verify / escalate.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Mirrors office-supervisor ACTIVE_STATUSES; plus tasks flagged for owner review
+// (escalated / needs-owner) even if their status moved on.
+const STAFF_ACTIVE_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof'] as const
+
+export const STAFF_TASK_AWARENESS_RULES = `
+## 🏢 অফিস ম্যানেজার ভূমিকা (active staff কাজ — আপনি জানেন)
+- নিচের তালিকা durable DB থেকে, সবসময় up-to-date। staff/কাজ নিয়ে প্রশ্নে এখান থেকেই উত্তর দিন — অপ্রয়োজনে get_staff_tasks ডাকবেন না (নতুন/আরও ডিটেইল লাগলে ডাকুন)।
+- নতুন কাজ দিতে prepare_staff_task_proposal; ফলো-আপ/আপডেট/QC/escalation staff tools দিয়ে — এই block শুধু awareness, এখান থেকে কিছু লেখা হয় না।
+- চিহ্ন: ⏰ = deadline, ⚠️ = আপনার রিভিউ দরকার (escalated/needs-owner), ⏳ = আপডেট চাওয়া হয়েছে কিন্তু staff এখনো দেয়নি।`
+
+function staffDueLabel(due: Date | null, today: string, tomorrow: string): string {
+  if (!due) return ''
+  const ymd = due.toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+  if (ymd < today) return ' ⏰ overdue'
+  if (ymd === today) return ' ⏰ আজ'
+  if (ymd === tomorrow) return ' ⏰ কাল'
+  return ` ⏰ ${ymd}`
+}
+
+export async function buildStaffActiveTasksContextBlock(
+  businessId = BUSINESS_ID,
+): Promise<string> {
+  const today = todayYmdDhaka()
+  const tomorrow = tomorrowYmdDhaka(today)
+
+  const rows = await prisma.agentStaffTask.findMany({
+    where: {
+      businessId,
+      OR: [
+        { status: { in: [...STAFF_ACTIVE_STATUSES] } },
+        { supervisorNeedsOwner: true, status: { notIn: ['done', 'cancelled', 'rejected'] } },
+        { escalatedAt: { not: null }, status: { notIn: ['done', 'cancelled', 'rejected'] } },
+      ],
+    },
+    orderBy: [{ dueAt: 'asc' }, { createdAt: 'asc' }],
+    take: 30,
+    select: {
+      title: true,
+      status: true,
+      verificationStatus: true,
+      dueAt: true,
+      updateRequestedAt: true,
+      lastStaffUpdateAt: true,
+      escalatedAt: true,
+      supervisorNeedsOwner: true,
+      staff: { select: { name: true } },
+    },
+  })
+
+  if (rows.length === 0) {
+    return `${STAFF_TASK_AWARENESS_RULES}\n\n(এখন কোনো active staff কাজ নেই)`
+  }
+
+  // Group by staff name, preserving the dueAt/createdAt ordering within each group.
+  const byStaff = new Map<string, string[]>()
+  for (const r of rows) {
+    const name = r.staff?.name ?? 'অজানা'
+    const flags: string[] = []
+    flags.push(staffDueLabel(r.dueAt, today, tomorrow))
+    const needsOwner =
+      r.supervisorNeedsOwner || (r.escalatedAt != null && r.status !== 'done')
+    if (needsOwner) flags.push(' ⚠️ রিভিউ দরকার')
+    const updatePending =
+      r.updateRequestedAt != null &&
+      (r.lastStaffUpdateAt == null || r.lastStaffUpdateAt < r.updateRequestedAt)
+    if (updatePending) flags.push(' ⏳ আপডেট pending')
+    const verif =
+      r.verificationStatus && r.verificationStatus !== 'not_required'
+        ? ` · ${r.verificationStatus}`
+        : ''
+    const line = `- [${r.status}${verif}] ${r.title}${flags.join('')}`
+    const list = byStaff.get(name) ?? []
+    list.push(line)
+    byStaff.set(name, list)
+  }
+
+  const sections = Array.from(byStaff.entries()).map(
+    ([name, lines]) => `### ${name} (${lines.length})\n${lines.join('\n')}`,
+  )
+
+  return `${STAFF_TASK_AWARENESS_RULES}\n\n## অফিসের active staff কাজ (${rows.length})\n${sections.join('\n\n')}`
+}

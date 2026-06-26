@@ -32,6 +32,7 @@ import {
   buildCorrectionNoticeMessage,
   getStaffDispatchCorrectionContext,
 } from '@/agent/lib/dispatch-correction-notice'
+import { setTaskDue } from '@/agent/lib/office-actions'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1379,6 +1380,121 @@ const update_staff_task_status: AgentTool = {
   },
 }
 
+// ── set_staff_task_due ────────────────────────────────────────────────────────
+
+const STAFF_TASK_DUE_ACTIVE = ['sent', 'approved', 'carried', 'awaiting_proof', 'proposed'] as const
+
+/** Bangla "তারিখ সময়" label in Asia/Dhaka for tool replies. */
+function dhakaDueLabel(d: Date): string {
+  const date = new Intl.DateTimeFormat('bn-BD', {
+    timeZone: 'Asia/Dhaka', day: 'numeric', month: 'short',
+  }).format(d)
+  const time = new Intl.DateTimeFormat('bn-BD', {
+    timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(d)
+  return `${date} ${time}`
+}
+
+const set_staff_task_due: AgentTool = {
+  name: 'set_staff_task_due',
+  description:
+    'Sets (or clears) the deadline for a single active staff task, then pings the staff. ' +
+    'Use when the owner says things like "Mustahid-এর কাজটা বিকাল ৫টার মধ্যে" or ' +
+    '"deadline সরিয়ে দাও". Resolve the task by taskId, or by staffName + titleContains ' +
+    'among active tasks. dueAtIso must be a full ISO datetime with the +06:00 Dhaka ' +
+    'offset (e.g. "2026-06-26T17:00:00+06:00"); pass null/empty to clear the deadline. ' +
+    'If staffName+titleContains matches more than one task, the tool lists them so you ' +
+    'can disambiguate — do NOT guess.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      taskId:        { type: 'string', description: 'Exact task ID (preferred when known)' },
+      staffName:     { type: 'string', description: 'Staff name (fuzzy) — used with titleContains when taskId is unknown' },
+      titleContains: { type: 'string', description: 'Substring of the task title to match' },
+      dueAtIso:      { type: 'string', description: 'Full ISO datetime with +06:00 offset, or empty/null to clear' },
+      businessId:    { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const businessId = bizFrom(input)
+      const dueRaw = input.dueAtIso == null ? '' : String(input.dueAtIso).trim()
+      const dueAtIso = dueRaw === '' ? null : dueRaw
+
+      if (dueAtIso) {
+        const parsed = new Date(dueAtIso)
+        if (Number.isNaN(parsed.getTime())) {
+          return { success: false, error: `সময় বুঝতে পারিনি ("${dueRaw}")। পূর্ণ ISO দিন, যেমন 2026-06-26T17:00:00+06:00।` }
+        }
+      }
+
+      // 1) Resolve the target task.
+      let taskId = input.taskId ? String(input.taskId).trim() : ''
+      if (!taskId) {
+        const staffName = input.staffName ? String(input.staffName).trim() : ''
+        const titleContains = input.titleContains ? String(input.titleContains).trim() : ''
+        if (!staffName && !titleContains) {
+          return { success: false, error: 'taskId অথবা (staffName + titleContains) দিন।' }
+        }
+        const where: Record<string, unknown> = {
+          businessId,
+          status: { in: [...STAFF_TASK_DUE_ACTIVE] },
+        }
+        if (staffName) {
+          const staff = await findStaffByName(staffName, businessId)
+          if (!staff) {
+            return { success: false, error: `"${staffName}" পাওয়া যায়নি। get_all_staff দিয়ে নাম চেক করুন।` }
+          }
+          where.staffId = staff.id
+        }
+        if (titleContains) where.title = { contains: titleContains, mode: 'insensitive' }
+
+        const matches = await db.agentStaffTask.findMany({
+          where,
+          include: { staff: { select: { name: true } } },
+          orderBy: { createdAt: 'asc' },
+          take: 10,
+        })
+        if (matches.length === 0) {
+          return { success: false, error: 'কোনো সক্রিয় কাজ মেলেনি। get_staff_tasks দিয়ে দেখে নিন।' }
+        }
+        if (matches.length > 1) {
+          return {
+            success: false,
+            error: 'একাধিক কাজ মিলেছে — কোনটা বলুন (taskId দিন)।',
+            data: {
+              candidates: matches.map((t: { id: string; title: string; status: string; staff: { name: string } }) => ({
+                taskId: t.id, staff: t.staff.name, title: t.title, status: t.status,
+              })),
+            },
+          }
+        }
+        taskId = matches[0].id
+      }
+
+      // 2) Apply the deadline (logs timeline event + pings staff inside setTaskDue).
+      const res = await setTaskDue(taskId, businessId, dueAtIso)
+      if (!res.ok) {
+        return { success: false, error: res.error || 'সময়সীমা সেট করা যায়নি।' }
+      }
+
+      const label = dueAtIso ? dhakaDueLabel(new Date(dueAtIso)) : null
+      return {
+        success: true,
+        data: {
+          taskId,
+          dueAt: dueAtIso,
+          message: label
+            ? `সময়সীমা সেট হয়েছে: ${label} ⏳ — স্টাফকে জানিয়ে দেওয়া হয়েছে।`
+            : 'সময়সীমা সরানো হয়েছে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── get_marketing_history ─────────────────────────────────────────────────────
 
 const get_marketing_history: AgentTool = {
@@ -1845,6 +1961,7 @@ export const STAFF_TOOLS: AgentTool[] = [
   send_dispatch_correction_notice,
   send_staff_announcement,
   update_staff_task_status,
+  set_staff_task_due,
   get_marketing_history,
   update_staff_task_profile,
   explain_staff_task_bangla,

@@ -599,6 +599,8 @@ export type BuildSystemPromptArgs = {
   teachingBlock?: string
   intakeContextBlock?: string
   ownerActiveTasksBlock?: string
+  /** Phase A — active STAFF tasks (office-manager awareness), injected every business turn. */
+  staffActiveTasksBlock?: string
   outcomeLearnings?: OutcomeLearning[]
   ownerDecisions?: OwnerDecision[]
   conflictSignals?: Array<{ source: string; detail: string; confidence: number }>
@@ -663,6 +665,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock,
+    staffActiveTasksBlock,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,
@@ -758,6 +761,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     if (ownerActiveTasksBlock) {
       volatileParts.push(ownerActiveTasksBlock)
+    }
+
+    if (staffActiveTasksBlock) {
+      volatileParts.push(staffActiveTasksBlock)
     }
 
     if (businessContext) {

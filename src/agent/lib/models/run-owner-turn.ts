@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
-import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
+import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
@@ -229,7 +229,7 @@ async function* runAlternateProviderTurn(
     }
   }
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
@@ -243,6 +243,7 @@ async function* runAlternateProviderTurn(
     (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
     personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
+    personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
@@ -269,6 +270,7 @@ async function* runAlternateProviderTurn(
     conflictSignals,
     businessContext,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
+    staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
     businessSnapshot,
     headTier,

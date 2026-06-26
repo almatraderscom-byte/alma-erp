@@ -245,6 +245,21 @@ export async function syncPendingDispatchAction(
   return action.id as string
 }
 
+/**
+ * Default deadline for a freshly-approved task that has none. Gives the staff the
+ * rest of today (8 PM Dhaka), or — if it's already evening — tomorrow 2 PM Dhaka.
+ * This guarantees every dispatched task has a `dueAt`, so the office supervisor's
+ * overdue tracking / follow-ups / on-time reward actually fire. The owner (or the
+ * agent via set_staff_task_due) can override any time.
+ */
+export function defaultStaffDeadline(now: Date = new Date()): Date {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka' }).format(now)
+  const today8pm = new Date(`${ymd}T20:00:00+06:00`)
+  if (now.getTime() < today8pm.getTime()) return today8pm
+  // Already past 8 PM → tomorrow 2 PM Dhaka (8 PM + 18h).
+  return new Date(today8pm.getTime() + 18 * 60 * 60 * 1000)
+}
+
 /** Approve every proposed task for the date (not stale payload.taskIds). */
 export async function approveAllProposedTasksForDate(
   date: string,
@@ -253,6 +268,18 @@ export async function approveAllProposedTasksForDate(
   const result = await db.agentStaffTask.updateMany({
     where: { proposedFor: new Date(date), status: 'proposed', ...buildBusinessClause(businessId) },
     data: { status: 'approved' },
+  })
+  // Give any task without an explicit deadline a sensible default so the
+  // supervisor can actually track it (its overdue branch was dead while dueAt
+  // stayed null on every task).
+  await db.agentStaffTask.updateMany({
+    where: {
+      proposedFor: new Date(date),
+      status: 'approved',
+      dueAt: null,
+      ...buildBusinessClause(businessId),
+    },
+    data: { dueAt: defaultStaffDeadline() },
   })
   return result.count as number
 }

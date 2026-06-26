@@ -45,6 +45,7 @@ import {
   requestUpdate,
 } from '@/agent/lib/office-actions'
 import { raiseProposal } from '@/agent/lib/office-proposals'
+import { getOfficeSupervisorSettings } from '@/agent/lib/office-supervisor-settings'
 import {
   classifyStrategy,
   verifyFbLive,
@@ -272,6 +273,9 @@ type TaskRow = {
 
 const ACTIVE_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof'] as const
 
+/** Per-tick budget + owner-tunable behaviour flags, threaded through verification. */
+type TickBudget = { llm: number; autoAcceptNonCritical: boolean }
+
 // ── 90/10 criticality gate ───────────────────────────────────────────────────
 // Only the truly-critical ~10% of tasks should reach the owner when the agent
 // can't fully confirm them. Everything else the supervisor resolves itself.
@@ -295,13 +299,21 @@ function assessCriticality(task: TaskRow): { critical: boolean; reason: string }
 }
 
 /**
- * Gate for the "couldn't verify, but staff submitted work" case. Critical →
- * owner; non-critical low-stakes → accept as done (clearly logged). Returns the
- * outcome label for the tick counters.
+ * Gate for the "couldn't verify, but staff submitted work" case after the agent
+ * has exhausted its auto-redo attempts. Critical tasks ALWAYS go to the owner.
+ * For non-critical tasks the owner-tunable `autoAcceptNonCritical` flag decides:
+ *   - false (default): escalate to the owner too — honours the owner's rule that
+ *     anything the agent can't verify after 1-2 tries needs his approval.
+ *   - true: silently accept the low-stakes task as done (old 90/10 behaviour).
+ * Returns the outcome label for the tick counters.
  */
-async function handoffSubmitted(task: TaskRow, reason: string): Promise<'escalated' | 'accepted'> {
+async function handoffSubmitted(
+  task: TaskRow,
+  reason: string,
+  autoAcceptNonCritical: boolean,
+): Promise<'escalated' | 'accepted'> {
   const crit = assessCriticality(task)
-  if (crit.critical) {
+  if (crit.critical || !autoAcceptNonCritical) {
     await escalateToOwner(task.id, task.businessId, reason)
     return 'escalated'
   }
@@ -374,27 +386,27 @@ function taskLite(task: TaskRow): TaskLite {
  * `fail` requests a redo (or hands off after MAX_AUTO_REDO), `unsure` lets the
  * 90/10 gate decide. The redo/fail message goes to the staff in the office group.
  */
-async function applyToolVerdict(task: TaskRow, v: ToolVerdict): Promise<'verified' | 'accepted' | 'redo' | 'escalated'> {
+async function applyToolVerdict(task: TaskRow, v: ToolVerdict, budget: TickBudget): Promise<'verified' | 'accepted' | 'redo' | 'escalated'> {
   if (v.verdict === 'pass') {
     await agentAutoVerify(task.id, task.businessId, { evidence: v.note, method: v.method })
     return 'verified'
   }
   if (v.verdict === 'fail') {
     if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
-      return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${v.note}`.trim())
+      return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${v.note}`.trim(), budget.autoAcceptNonCritical)
     }
     await postGroupMessage({ authorType: 'agent', body: v.note, taskRef: task.id, businessId: task.businessId })
     await agentRequestRedo(task.id, task.businessId, v.note)
     return 'redo'
   }
   // unsure
-  return handoffSubmitted(task, v.note)
+  return handoffSubmitted(task, v.note, budget.autoAcceptNonCritical)
 }
 
 /** Verify a task whose proof the staff has already submitted. Returns the action taken. */
 async function verifySubmittedProof(
   task: TaskRow,
-  budget: { llm: number },
+  budget: TickBudget,
 ): Promise<'verified' | 'accepted' | 'redo' | 'escalated' | 'skipped'> {
   const data = asRecord(task.proofData)
   const imageUrl = proofImageUrl(data)
@@ -405,14 +417,14 @@ async function verifySubmittedProof(
 
   // customer_reply: the agent checks the live inbox/comments itself — no proof needed.
   if (decision.strategy === 'customer_reply') {
-    return applyToolVerdict(task, await verifyCustomerReply(taskLite(task)))
+    return applyToolVerdict(task, await verifyCustomerReply(taskLite(task)), budget)
   }
 
   // fb_live: need a Facebook link in the proof; verify it's genuinely live on our page.
   if (decision.strategy === 'fb_live') {
     const link = extractFbLink(text) ?? extractFbLink(imageUrl ?? '')
     if (link) {
-      return applyToolVerdict(task, await verifyFbLive(taskLite(task), link))
+      return applyToolVerdict(task, await verifyFbLive(taskLite(task), link), budget)
     }
     // No link supplied: an image-only "proof" can't be machine-verified for FB.
     // Ask once for the link instead of guessing from a screenshot.
@@ -421,7 +433,7 @@ async function verifySubmittedProof(
       await agentRequestRedo(task.id, task.businessId, decision.proofSpecBn)
       return 'redo'
     }
-    return handoffSubmitted(task, 'পোস্টের যাচাইযোগ্য লিংক পাওয়া যায়নি')
+    return handoffSubmitted(task, 'পোস্টের যাচাইযোগ্য লিংক পাওয়া যায়নি', budget.autoAcceptNonCritical)
   }
 
   // Image proof → existing Claude vision assessor.
@@ -429,8 +441,8 @@ async function verifySubmittedProof(
     budget.llm--
     const verdict = await assessImageProof(task, imageUrl)
     if (!verdict) {
-      // Couldn't assess → critical to owner, low-stakes accepted (90/10 gate).
-      return handoffSubmitted(task, 'ছবি যাচাই করা যায়নি')
+      // Couldn't assess → critical to owner; non-critical per autoAccept flag.
+      return handoffSubmitted(task, 'ছবি যাচাই করা যায়নি', budget.autoAcceptNonCritical)
     }
     if (verdict.matches && verdict.confidence === 'high') {
       await agentAutoVerify(task.id, task.businessId, { evidence: verdict.note || 'ছবি যাচাই হয়েছে', method: 'vision' })
@@ -438,13 +450,13 @@ async function verifySubmittedProof(
     }
     if (!verdict.matches && verdict.confidence === 'high') {
       if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
-        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${verdict.note || ''}`.trim())
+        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${verdict.note || ''}`.trim(), budget.autoAcceptNonCritical)
       }
       await agentRequestRedo(task.id, task.businessId, verdict.note || 'কাজটি কাজের সাথে মিলছে না — আবার পাঠান')
       return 'redo'
     }
     // Unsure.
-    return handoffSubmitted(task, verdict.note || 'এজেন্ট নিশ্চিত হতে পারেনি')
+    return handoffSubmitted(task, verdict.note || 'এজেন্ট নিশ্চিত হতে পারেনি', budget.autoAcceptNonCritical)
   }
 
   // Text / link proof → DeepSeek judgment.
@@ -458,7 +470,7 @@ async function verifySubmittedProof(
       `supervisor_verify:${task.id}:${task.redoCount}`,
     )
     if (!judged) {
-      return handoffSubmitted(task, 'প্রমাণ যাচাই করা যায়নি')
+      return handoffSubmitted(task, 'প্রমাণ যাচাই করা যায়নি', budget.autoAcceptNonCritical)
     }
     if (judged.verdict === 'pass') {
       await agentAutoVerify(task.id, task.businessId, { evidence: judged.reason || 'প্রমাণ যাচাই হয়েছে', method: 'text' })
@@ -466,17 +478,17 @@ async function verifySubmittedProof(
     }
     if (judged.verdict === 'fail') {
       if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
-        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${judged.reason || ''}`.trim())
+        return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${judged.reason || ''}`.trim(), budget.autoAcceptNonCritical)
       }
       await agentRequestRedo(task.id, task.businessId, judged.reason || 'প্রমাণ যথেষ্ট নয় — আবার পাঠান')
       return 'redo'
     }
-    return handoffSubmitted(task, judged.reason || 'এজেন্ট নিশ্চিত হতে পারেনি')
+    return handoffSubmitted(task, judged.reason || 'এজেন্ট নিশ্চিত হতে পারেনি', budget.autoAcceptNonCritical)
   }
 
   // No usable proof, or LLM budget exhausted → gate decides owner vs. accept.
   if (!imageUrl && !text) {
-    return handoffSubmitted(task, 'প্রমাণ পাওয়া যায়নি')
+    return handoffSubmitted(task, 'প্রমাণ পাওয়া যায়নি', budget.autoAcceptNonCritical)
   }
   return 'skipped'
 }
@@ -494,7 +506,7 @@ async function verifySubmittedProof(
 async function triageUnderstanding(
   task: TaskRow,
   now: Date,
-  budget: { llm: number },
+  budget: TickBudget,
 ): Promise<'understood' | 'clarified' | 'escalated' | 'deferred' | 'skipped'> {
   const decision = classifyStrategy(taskLite(task))
 
@@ -541,7 +553,7 @@ async function triageUnderstanding(
   // get on with it (it'll verify the proof when submitted).
   if ((task.supervisorClarifyCount ?? 0) >= MAX_CLARIFY) {
     const crit = assessCriticality(task)
-    if (crit.critical) {
+    if (crit.critical || !budget.autoAcceptNonCritical) {
       await escalateToOwner(task.id, task.businessId, 'এজেন্ট কাজটি বুঝতে পারেনি — Boss যাচাই করবেন')
       return 'escalated'
     }
@@ -676,7 +688,11 @@ export async function runSupervisorTick(
   })
 
   base.considered = rows.length
-  const budget = { llm: MAX_LLM_CALLS_PER_TICK }
+  const supervisorSettings = await getOfficeSupervisorSettings()
+  const budget: TickBudget = {
+    llm: MAX_LLM_CALLS_PER_TICK,
+    autoAcceptNonCritical: supervisorSettings.autoAcceptNonCritical,
+  }
 
   // Latest staff group message — used to decide if a clarify warrants a re-ask.
   const latestStaffMsg = await prisma.officeGroupMessage.findFirst({

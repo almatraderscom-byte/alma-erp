@@ -4,7 +4,7 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/conf
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
-import { buildOwnerActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
+import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
@@ -694,7 +694,7 @@ export async function* runAgentTurn(
   }
 
   // Load pinned memories, relevant memories, and tool selection in parallel
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
@@ -718,6 +718,10 @@ export async function* runAgentTurn(
     }),
     personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch((err) => {
       console.warn('[core] ownerActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
+      return ''
+    }),
+    personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch((err) => {
+      console.warn('[core] staffActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
       return ''
     }),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
@@ -780,6 +784,7 @@ export async function* runAgentTurn(
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
+    staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     outcomeLearnings,
     ownerDecisions,
     conflictSignals,
