@@ -21,6 +21,7 @@ export default function NotificationSettingsPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [users, setUsers] = useState<UserOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
   const [form, setForm] = useState({
     title: '',
     message: '',
@@ -52,19 +53,25 @@ export default function NotificationSettingsPage() {
   }, [])
 
   async function send() {
-    const res = await fetch('/api/notifications/broadcast', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    const json = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      toast.error(json.error || 'Could not send broadcast')
-      return
+    if (sending) return
+    setSending(true)
+    try {
+      const res = await fetch('/api/notifications/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json.error || 'Could not send broadcast')
+        return
+      }
+      toast.success(`Broadcast sent to ${json.recipients} recipient(s)`)
+      setForm(f => ({ ...f, title: '', message: '' }))
+      await load()
+    } finally {
+      setSending(false)
     }
-    toast.success(`Broadcast sent to ${json.recipients} recipient(s)`)
-    setForm(f => ({ ...f, title: '', message: '' }))
-    await load()
   }
 
   return (
@@ -113,8 +120,8 @@ export default function NotificationSettingsPage() {
               <input type="checkbox" checked={form.pinned} onChange={e => setForm({ ...form, pinned: e.target.checked })} />
               Pin this notification
             </label>
-            <Button variant="gold" onClick={() => void send()} disabled={!form.title.trim() || !form.message.trim() || (form.target === 'USER' && !form.targetUserId)}>
-              Send broadcast
+            <Button variant="gold" onClick={() => void send()} disabled={sending || !form.title.trim() || !form.message.trim() || (form.target === 'USER' && !form.targetUserId)}>
+              {sending ? 'Sending…' : 'Send broadcast'}
             </Button>
           </Card>
 

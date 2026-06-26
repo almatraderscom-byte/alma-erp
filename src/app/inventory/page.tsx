@@ -186,14 +186,24 @@ export default function InventoryPage() {
   const adjustStock = useCallback(async (sku: string, current: number, buyingPrice?: number) => {
     const next = window.prompt('New stock quantity', String(current))
     if (next == null) return
+    const qty = Number(next.trim())
+    if (!Number.isFinite(qty) || qty < 0) {
+      toast.error('Enter a valid stock quantity (0 or more)')
+      return
+    }
     const reason = window.prompt('Adjustment reason: damaged, lost, manual correction, supplier update, return restock', 'manual correction') || 'manual correction'
-    await mutateInventory({ action: 'adjust', sku, new_stock: Number(next), buying_price: buyingPrice, reason })
+    await mutateInventory({ action: 'adjust', sku, new_stock: qty, buying_price: buyingPrice, reason })
   }, [mutateInventory])
 
   const updateBuyingPrice = useCallback(async (sku: string, current?: number) => {
     const next = window.prompt('New buying price', String(current || 0))
     if (next == null) return
-    await mutateInventory({ action: 'edit', sku, data: { buyingPrice: Number(next) } })
+    const price = Number(next.trim())
+    if (!Number.isFinite(price) || price < 0) {
+      toast.error('Enter a valid buying price (0 or more)')
+      return
+    }
+    await mutateInventory({ action: 'edit', sku, data: { buyingPrice: price } })
   }, [mutateInventory])
 
   return (

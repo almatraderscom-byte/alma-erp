@@ -43,12 +43,24 @@ export default function SmsSettingsPage() {
   const [balance, setBalance] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
   const [savingTypes, setSavingTypes] = useState(false)
+  const [savingEnabled, setSavingEnabled] = useState(false)
   const [testPhone, setTestPhone] = useState('')
   const [testing, setTesting] = useState(false)
   const [enabledTypes, setEnabledTypes] = useState<SmsType[]>([...DEFAULT_SMS_ENABLED_TYPES])
 
   const balanceText = useMemo(() => {
     if (!balance) return '—'
+    // The provider returns an object like { balance: "123.45", currency: "BDT" };
+    // surface the balance value, not the raw JSON blob.
+    if (typeof balance === 'object') {
+      const b = balance as Record<string, unknown>
+      const val = b.balance ?? b.amount ?? b.credits ?? b.sms_balance
+      if (val != null) {
+        const cur = b.currency ?? b.unit
+        return cur ? `${val} ${cur}` : String(val)
+      }
+    }
+    if (typeof balance === 'string' || typeof balance === 'number') return String(balance)
     const text = JSON.stringify(balance)
     return text.length > 80 ? `${text.slice(0, 80)}...` : text
   }, [balance])
@@ -107,9 +119,15 @@ export default function SmsSettingsPage() {
   }
 
   async function saveEnabled(enabled: boolean) {
-    const ok = await patchSetting({ enabled })
-    if (!ok) return
-    toast.success(enabled ? 'SMS enabled for this business' : 'SMS disabled')
+    if (savingEnabled) return
+    setSavingEnabled(true)
+    try {
+      const ok = await patchSetting({ enabled })
+      if (!ok) return
+      toast.success(enabled ? 'SMS enabled for this business' : 'SMS disabled')
+    } finally {
+      setSavingEnabled(false)
+    }
   }
 
   async function saveTypes() {
@@ -215,8 +233,8 @@ export default function SmsSettingsPage() {
                 <p className="text-sm font-semibold text-cream">Business & master switch</p>
                 <Select value={businessId} onChange={v => setBusinessId(v as BusinessId)} options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))} />
                 <div className="flex gap-2">
-                  <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(true)}>Enable SMS</Button>
-                  <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} onClick={() => void saveEnabled(false)}>Disable SMS</Button>
+                  <Button variant={data?.setting.enabled ? 'gold' : 'secondary'} disabled={savingEnabled} onClick={() => void saveEnabled(true)}>Enable SMS</Button>
+                  <Button variant={!data?.setting.enabled ? 'gold' : 'secondary'} disabled={savingEnabled} onClick={() => void saveEnabled(false)}>Disable SMS</Button>
                 </div>
                 <p className="rounded-xl border border-white/[0.08] bg-white/[0.04] p-3 text-[11px] text-muted-hi">
                   Balance: <span className="font-mono text-gold-lt">{balanceText}</span>

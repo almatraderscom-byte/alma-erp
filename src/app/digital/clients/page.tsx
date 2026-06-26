@@ -25,9 +25,7 @@ export default function DigitalClientsPage() {
       name: form.name.trim(),
       business_id: 'CREATIVE_DIGITAL_IT' as const,
     }
-    console.log('[CDIT Client] create payload:', payload)
     const r = await create(payload)
-    console.log('[CDIT Client] create response:', r, 'mutation error:', saveError)
     if (r?.ok) {
       toast.success(`Client ${r.client_id || r.client?.id || ''} saved`)
       setShowForm(false)

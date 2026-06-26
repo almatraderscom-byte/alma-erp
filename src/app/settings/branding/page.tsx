@@ -165,7 +165,7 @@ export default function BrandingSettingsPage() {
   const draftUrlsRef = useRef<string[]>([])
   const [form, setForm] = useState({
     company_name: '', tagline: '', phone: '', email: '', website: '', address: '', facebook: '',
-    color_primary: '#E07A5F', color_secondary: '#C45A3C', color_accent: '#F4A28C',
+    color_primary: '#E07A5F', color_secondary: '#C45A3C', color_accent: '#F0D080',
     invoice_footer_thanks: '', invoice_footer_policy: '', invoice_footer_note: '',
     invoice_prefix: '',
     invoice_watermark_enabled: true,

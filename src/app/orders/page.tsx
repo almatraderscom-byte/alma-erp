@@ -134,6 +134,16 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   async function submitOrderEdit(e: React.FormEvent) {
     e.preventDefault()
     if (editBusy) return
+    const qtyNum = Number(editForm.qty)
+    const priceNum = Number(editForm.unit_price)
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      toast.error('Quantity must be a positive number')
+      return
+    }
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      toast.error('Unit price must be a valid number')
+      return
+    }
     setEditBusy(true)
     try {
       const result = await safeFetchJson<{ ok?: boolean; error?: { message?: string }; failed?: Array<{ field: string; error?: string }> }>(
@@ -149,8 +159,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               phone: editForm.phone,
               address: editForm.address,
               product: editForm.product,
-              qty: Number(editForm.qty),
-              unit_price: Number(editForm.unit_price),
+              qty: qtyNum,
+              unit_price: priceNum,
               payment: editForm.payment,
               notes: editForm.notes,
             },
@@ -981,7 +991,7 @@ function OrdersPageContent() {
                 </button>
               ))
           }
-          {!loading && orders.length === 0 && (
+          {!tableLoading && orders.length === 0 && (
             <Empty
               icon="◫"
               title="No orders found for selected period"

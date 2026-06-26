@@ -177,7 +177,8 @@ export default function EmployeesPage() {
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const fd = new FormData(e.currentTarget)
+    const formEl = e.currentTarget // capture before any await — React nulls currentTarget afterwards
+    const fd = new FormData(formEl)
     const payload = {
       emp_id: String(fd.get('emp_id') || '').trim(),
       name: String(fd.get('name') || ''),
@@ -209,7 +210,7 @@ export default function EmployeesPage() {
       setSelectedUserId('')
       refetch()
       void loadUsers()
-      e.currentTarget.reset()
+      formEl.reset()
     } else {
       toast.error('Employee save failed')
     }
