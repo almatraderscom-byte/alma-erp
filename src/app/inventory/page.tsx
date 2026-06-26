@@ -207,7 +207,7 @@ export default function InventoryPage() {
   }, [mutateInventory])
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="Inventory"
         subtitle={<>{summary?.total_skus ?? 0} SKUs · <BdtText value={fmt(totalValue)} /> stock value</>}

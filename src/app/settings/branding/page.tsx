@@ -276,7 +276,7 @@ export default function BrandingSettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="Settings · Branding"
         subtitle={`Permanent brand assets for ${business.name}`}

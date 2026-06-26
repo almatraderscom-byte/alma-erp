@@ -46,7 +46,7 @@ export default function PublicInvoiceSharePage() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-black text-muted p-8">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-black text-muted p-8">
         {error}
       </div>
     )
@@ -54,7 +54,7 @@ export default function PublicInvoiceSharePage() {
 
   if (!baseModel) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-black p-8">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-black p-8">
         <Skeleton className="h-12 w-48" />
       </div>
     )

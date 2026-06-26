@@ -254,7 +254,7 @@ export default function BusinessArchiveControlPage() {
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="Business Archive Control"
         subtitle="Soft archive only — data stays in the database. Hide from active workspace; restore anytime."

@@ -412,7 +412,10 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
         transition={{ type: 'spring', damping: 26, stiffness: 300 }}
       >
 
-        <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 py-4 z-10">
+        <div
+          className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 pb-4 z-10"
+          style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
+        >
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[11px] text-gold font-bold mb-1">{order.id}</p>

@@ -89,7 +89,7 @@ export default function AnalyticsPage() {
   const isEmpty = !loading && kpis.total_orders === 0
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader title="Analytics" subtitle="Revenue · expenses · payroll context — synced to filters" />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-6 px-3 py-4 pb-24 sm:px-6 md:pb-6">

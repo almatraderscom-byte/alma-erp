@@ -233,7 +233,7 @@ function TelegramOpsSettingsPageInner() {
   const queueStats = Object.fromEntries((dashboard?.queue?.stats7d || []).map(s => [s.status, s.count]))
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="Telegram Ops"
         subtitle="Production health · owner routing · async delivery queue"

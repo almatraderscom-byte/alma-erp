@@ -164,7 +164,7 @@ export default function TaskSpotlightAdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="Task Spotlight"
         subtitle="Operations → assign premium operational instructions to employees. Shown fullscreen after Start Work."

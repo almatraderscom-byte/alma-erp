@@ -202,7 +202,7 @@ function ApprovalsPageInner() {
   const actionsGloballyDisabled = hasProcessing
 
   return (
-    <main className="min-h-screen bg-transparent space-y-5 pb-24 md:pb-6">
+    <main className="min-h-[100dvh] bg-transparent space-y-5 pb-24 md:pb-6">
       <PageHeader
         title="Approvals"
         subtitle="Persistent authorization requests. Reading notifications never clears this queue."
