@@ -99,3 +99,34 @@ describe('updateOrderFieldInPostgres — qty edits keep stock + items in sync', 
     expect(res.error).toMatch(/insufficient stock/i)
   })
 })
+
+describe('updateOrderFieldInPostgres — unit price edits keep line items in sync', () => {
+  it('single-item: updates the line item price/subtotal and header money (no stock move)', async () => {
+    singleItemOrder()
+    db.items[0].qty = 2
+    db.order.qty = 2
+    const res = await updateOrderFieldInPostgres({ id: 'AL-0100', field: 'UNIT_PRICE', value: 500 })
+    expect(res).toEqual({ ok: true })
+    expect(db.writes.stock).toHaveLength(0) // price change never moves stock
+    expect(db.writes.item[0]).toMatchObject({ unitPrice: 500, sellPrice: 500, subtotal: 1000 }) // 500 * 2
+    expect(db.writes.order[0]).toMatchObject({ unitPrice: 500 })
+  })
+
+  it('refuses to change unit price on a multi-item order', async () => {
+    singleItemOrder()
+    db.items = [
+      { id: 'it1', sku: '133-KIDS', stockSku: '133-KIDS', size: '20', qty: 1, sellPrice: 930, cogs: 300 },
+      { id: 'it2', sku: '133-ADULT', stockSku: '133-ADULT', size: '42', qty: 1, sellPrice: 930, cogs: 300 },
+    ]
+    const res = await updateOrderFieldInPostgres({ id: 'AL-0100', field: 'UNIT_PRICE', value: 500 }) as any
+    expect(res.error).toMatch(/multiple items/i)
+    expect(db.writes.item).toHaveLength(0)
+  })
+
+  it('no-op when unit price is unchanged (other-field edits stay safe)', async () => {
+    singleItemOrder()
+    const res = await updateOrderFieldInPostgres({ id: 'AL-0100', field: 'UNIT_PRICE', value: 930 })
+    expect(res).toEqual({ ok: true })
+    expect(db.writes.order).toHaveLength(0)
+  })
+})

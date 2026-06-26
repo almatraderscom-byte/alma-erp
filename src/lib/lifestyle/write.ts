@@ -188,18 +188,18 @@ async function deductStockForItems(items: OrderItemInput[], db: DbClient = prism
   }
 }
 
-async function restoreStockForOrder(orderId: string, reason: string) {
-  const order = await prisma.lifestyleOrder.findUnique({ where: { id: orderId } })
+async function restoreStockForOrder(orderId: string, reason: string, db: DbClient = prisma) {
+  const order = await db.lifestyleOrder.findUnique({ where: { id: orderId } })
   if (!order || order.stockRestored) return
-  const items = await prisma.lifestyleOrderItem.findMany({ where: { orderId } })
+  const items = await db.lifestyleOrderItem.findMany({ where: { orderId } })
   for (const item of items) {
     const sku = item.stockSku || item.sku
-    const stock = await findStockBySku(sku, item.size)
+    const stock = await findStockBySku(sku, item.size, db)
     if (!stock) continue
     const next = stock.currentStock + item.qty
     const available = Math.max(0, next - stock.reserved)
     const buying = stock.buyingPrice ?? 0
-    await prisma.lifestyleStockItem.update({
+    await db.lifestyleStockItem.update({
       where: { id: stock.id },
       data: {
         currentStock: next,
@@ -211,16 +211,16 @@ async function restoreStockForOrder(orderId: string, reason: string) {
       },
     })
   }
-  await prisma.lifestyleOrder.update({
+  await db.lifestyleOrder.update({
     where: { id: orderId },
     data: { stockRestored: true, stockRestoredAt: new Date(), stockRestoreReason: reason },
   })
 }
 
-async function reapplyStockDeduction(orderId: string) {
-  const order = await prisma.lifestyleOrder.findUnique({ where: { id: orderId } })
+async function reapplyStockDeduction(orderId: string, db: DbClient = prisma) {
+  const order = await db.lifestyleOrder.findUnique({ where: { id: orderId } })
   if (!order?.stockRestored) return
-  const items = await prisma.lifestyleOrderItem.findMany({ where: { orderId } })
+  const items = await db.lifestyleOrderItem.findMany({ where: { orderId } })
   await deductStockForItems(items.map((it, i) => ({
     line_no: it.lineNo || i + 1,
     product_code: it.productCode,
@@ -239,8 +239,8 @@ async function reapplyStockDeduction(orderId: string) {
     collection_type: it.collectionType,
     size_group: it.sizeGroup,
     variant_group: it.variantGroup,
-  })))
-  await prisma.lifestyleOrder.update({
+  })), db)
+  await db.lifestyleOrder.update({
     where: { id: orderId },
     data: { stockRestored: false, stockRestoredAt: null, stockRestoreReason: null },
   })
@@ -375,10 +375,6 @@ export async function updateOrderStatusInPostgres(body: Record<string, unknown>)
   const oldKey = normalizeStatus(oldStatus)
   const reason = String(body.reason ?? '').slice(0, 500)
 
-  if (TERMINAL_RESTORE.has(oldKey) && !TERMINAL_RESTORE.has(status) && order.stockRestored) {
-    await reapplyStockDeduction(id)
-  }
-
   const patch: Prisma.LifestyleOrderUpdateInput = { status }
   const now = todayDate()
   if (status === 'Shipped' && !order.actualDelivery) patch.estDelivery = now
@@ -395,8 +391,16 @@ export async function updateOrderStatusInPostgres(body: Record<string, unknown>)
     if (reason) patch.returnReason = reason
   }
 
-  await prisma.lifestyleOrder.update({ where: { id }, data: patch })
-  if (TERMINAL_RESTORE.has(status)) await restoreStockForOrder(id, status)
+  // Status change + stock restore/reapply must be atomic: a crash between the status
+  // write and the multi-row stock move would otherwise leave stockRestored out of sync
+  // and let a retry double-restore (or double-deduct) inventory.
+  await prisma.$transaction(async (tx) => {
+    if (TERMINAL_RESTORE.has(oldKey) && !TERMINAL_RESTORE.has(status) && order.stockRestored) {
+      await reapplyStockDeduction(id, tx)
+    }
+    await tx.lifestyleOrder.update({ where: { id }, data: patch })
+    if (TERMINAL_RESTORE.has(status)) await restoreStockForOrder(id, status, tx)
+  })
 
   return { ok: true, order_id: id, old_status: oldStatus, new_status: status }
 }
@@ -447,6 +451,12 @@ export async function updateOrderFieldInPostgres(body: Record<string, unknown>) 
   if (prismaField === 'qty') {
     return applyOrderQtyChange(order, num(body.value))
   }
+  // Unit-price edits must update the line item too, else the header sellPrice/profit
+  // disagree with the stored item rows. For multi-item orders a single header price
+  // can't be attributed to one line, so refuse rather than corrupt the money record.
+  if (prismaField === 'unitPrice') {
+    return applyOrderUnitPriceChange(order, num(body.value))
+  }
 
   const patch: Prisma.LifestyleOrderUpdateInput = {}
   if (['qty', 'unitPrice', 'discount', 'addDiscount', 'cogs', 'courierCharge', 'otherCosts', 'advCost', 'shippingFee'].includes(prismaField as string)) {
@@ -457,7 +467,7 @@ export async function updateOrderFieldInPostgres(body: Record<string, unknown>) 
 
   const merged = {
     qty: order.qty, // qty changes are handled earlier by applyOrderQtyChange
-    unitPrice: prismaField === 'unitPrice' ? num(body.value) : order.unitPrice,
+    unitPrice: order.unitPrice, // unit-price changes are handled by applyOrderUnitPriceChange
     discount: prismaField === 'discount' ? num(body.value) : order.discount,
     addDiscount: prismaField === 'addDiscount' ? num(body.value) : order.addDiscount,
     cogs: prismaField === 'cogs' ? num(body.value) : order.cogs,
@@ -568,6 +578,53 @@ async function applyOrderQtyChange(order: LifestyleOrder, newQty: number) {
   } catch (e) {
     return { error: (e as Error).message }
   }
+  return { ok: true }
+}
+
+// Changing the per-unit price has to update the line item alongside the header, or
+// the header sellPrice/profit will disagree with the stored line. No stock moves.
+// A single header price can't be mapped onto a multi-line order, so refuse those.
+async function applyOrderUnitPriceChange(order: LifestyleOrder, newUnitPrice: number) {
+  if (!Number.isFinite(newUnitPrice) || newUnitPrice < 0) return { error: 'unit price must be 0 or more' }
+  if (newUnitPrice === order.unitPrice) return { ok: true } // no change
+
+  const items = await prisma.lifestyleOrderItem.findMany({
+    where: { orderId: order.id },
+    orderBy: { lineNo: 'asc' },
+  })
+
+  if (items.length > 1) {
+    return { error: 'This order has multiple items — unit price can only be changed by cancelling and recreating the order.' }
+  }
+
+  const money = recalcOrderMoney({
+    qty: order.qty,
+    unitPrice: newUnitPrice,
+    discount: order.discount,
+    addDiscount: order.addDiscount,
+    cogs: order.cogs,
+    courierCharge: order.courierCharge,
+    otherCosts: order.otherCosts,
+    advCost: order.advCost,
+  })
+
+  const item = items[0]
+  await prisma.$transaction(async (tx) => {
+    if (item) {
+      await tx.lifestyleOrderItem.update({
+        where: { id: item.id },
+        data: {
+          unitPrice: newUnitPrice,
+          sellPrice: newUnitPrice,
+          subtotal: roundMoney(newUnitPrice * item.qty),
+        },
+      })
+    }
+    await tx.lifestyleOrder.update({
+      where: { id: order.id },
+      data: { unitPrice: newUnitPrice, sellPrice: money.sellPrice, profit: money.profit },
+    })
+  })
   return { ok: true }
 }
 
