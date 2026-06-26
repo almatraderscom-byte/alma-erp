@@ -10,8 +10,10 @@
  *      learning tasks via a deliverable; visual content via the vision assessor.
  *   2. Up front it tells the staff EXACTLY what verifiable proof to submit for
  *      that task type — it does NOT ask the vague "how did you do it?".
- *   3. Asks the staff for an update in the office group when a task is taking
- *      longer than normal (overdue vs. its deadline, or idle too long).
+ *   3. Asks the staff for an update IN THE TASK'S OWN THREAD (office_comments,
+ *      not a flat group chat) when a task is taking longer than normal (overdue
+ *      vs. its deadline, or idle too long), and reads the staff's thread replies
+ *      back on the next tick.
  *
  * Phase-3 90/10 gate: whenever the agent can't confirm or understand a task it
  * does NOT bother the owner by default. It weighs the task's criticality
@@ -36,8 +38,8 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { resilientFetch } from '@/agent/lib/fetch-retry'
-import { postGroupMessage } from '@/agent/lib/office-chat'
 import {
+  addComment,
   agentAutoVerify,
   agentAcceptUnverified,
   agentRequestRedo,
@@ -201,6 +203,31 @@ function proofText(data: Record<string, unknown> | null): string {
     if (typeof v === 'string' && v.trim()) return v.trim()
   }
   return ''
+}
+
+/**
+ * Read the staff's own words from the task thread (office_comments), newest first.
+ * The supervisor uses this so its verdict reflects what the staff actually wrote
+ * in the thread — not just the structured proofData blob. Best-effort: any DB
+ * error degrades to an empty string so verification still proceeds.
+ */
+async function staffThreadText(taskId: string, businessId: string, limit = 3): Promise<string> {
+  try {
+    const rows = await prisma.officeComment.findMany({
+      where: { taskId, businessId, authorType: 'staff' },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { body: true },
+    })
+    return rows
+      .map((r) => r.body?.trim())
+      .filter((b): b is string => Boolean(b))
+      .reverse() // oldest-first reads naturally
+      .join('\n')
+      .slice(0, 1500)
+  } catch {
+    return ''
+  }
 }
 
 function appBaseUrl(): string {
@@ -395,7 +422,7 @@ async function applyToolVerdict(task: TaskRow, v: ToolVerdict, budget: TickBudge
     if ((task.redoCount ?? 0) >= MAX_AUTO_REDO) {
       return handoffSubmitted(task, `বারবার যাচাই ব্যর্থ — ${v.note}`.trim(), budget.autoAcceptNonCritical)
     }
-    await postGroupMessage({ authorType: 'agent', body: v.note, taskRef: task.id, businessId: task.businessId })
+    // agentRequestRedo posts the revision note into the task thread + pings staff.
     await agentRequestRedo(task.id, task.businessId, v.note)
     return 'redo'
   }
@@ -410,7 +437,11 @@ async function verifySubmittedProof(
 ): Promise<'verified' | 'accepted' | 'redo' | 'escalated' | 'skipped'> {
   const data = asRecord(task.proofData)
   const imageUrl = proofImageUrl(data)
-  const text = proofText(data)
+  // Combine the structured proof box with what the staff wrote in the task thread,
+  // so a staff explanation/link left as a thread reply is verified too (R3 fix).
+  const proofBoxText = proofText(data)
+  const threadText = await staffThreadText(task.id, task.businessId)
+  const text = [proofBoxText, threadText].filter(Boolean).join('\n').trim()
 
   // ── Tool-based verification first (real ground truth, no LLM needed) ──
   const decision = classifyStrategy(taskLite(task))
@@ -429,7 +460,7 @@ async function verifySubmittedProof(
     // No link supplied: an image-only "proof" can't be machine-verified for FB.
     // Ask once for the link instead of guessing from a screenshot.
     if ((task.redoCount ?? 0) < MAX_AUTO_REDO) {
-      await postGroupMessage({ authorType: 'agent', body: decision.proofSpecBn, taskRef: task.id, businessId: task.businessId })
+      // agentRequestRedo writes the proof-spec ask into the task thread + pings.
       await agentRequestRedo(task.id, task.businessId, decision.proofSpecBn)
       return 'redo'
     }
@@ -515,11 +546,11 @@ async function triageUnderstanding(
   // proof gets machine-/vision-verified when it arrives.
   if (decision.strategy !== 'text') {
     if (!task.supervisorLastTickAt) {
-      await postGroupMessage({
-        authorType: 'agent',
+      // First contact: tell the staff the exact proof to submit — in the task's
+      // own thread so the eventual reply is tied to this task.
+      await addComment(task.id, task.businessId, {
         body: `${task.staff.name} ভাই, "${task.title}" — ${decision.proofSpecBn}`,
-        taskRef: task.id,
-        businessId: task.businessId,
+        authorType: 'agent',
       })
       await prisma.agentStaffTask.update({ where: { id: task.id }, data: { supervisorLastTickAt: now } })
       return 'clarified'
@@ -565,7 +596,7 @@ async function triageUnderstanding(
   }
 
   const question = (judged.question ?? '').trim() || `${task.staff.name} ভাই, "${task.title}" কাজটির প্রমাণ হিসেবে আমাকে ঠিক কী দিতে পারবেন?`
-  await postGroupMessage({ authorType: 'agent', body: question, taskRef: task.id, businessId: task.businessId })
+  // requestUpdate posts the question into the task thread + pings the staff.
   await requestUpdate(task.id, task.businessId, { note: question, by: 'agent' })
   await prisma.agentStaffTask.update({
     where: { id: task.id },
@@ -580,7 +611,7 @@ async function askForUpdate(task: TaskRow, now: Date): Promise<void> {
   const body = overdue
     ? `${task.staff.name} ভাই, "${task.title}" কাজটির সময় পেরিয়ে যাচ্ছে — কী অবস্থা একটু জানান তো? 🙏`
     : `${task.staff.name} ভাই, "${task.title}" কাজটির কী অবস্থা? একটু আপডেট দিন 🙏`
-  await postGroupMessage({ authorType: 'agent', body, taskRef: task.id, businessId: task.businessId })
+  // requestUpdate posts the nudge into the task thread + pings the staff.
   await requestUpdate(task.id, task.businessId, { note: body, by: 'agent' })
 }
 
@@ -694,9 +725,11 @@ export async function runSupervisorTick(
     autoAcceptNonCritical: supervisorSettings.autoAcceptNonCritical,
   }
 
-  // Latest staff group message — used to decide if a clarify warrants a re-ask.
-  const latestStaffMsg = await prisma.officeGroupMessage.findFirst({
-    where: { businessId, authorType: 'staff', status: 'posted' },
+  // Latest staff reply in any task thread — used to decide if a mid-clarify task
+  // warrants a re-ask. Read from the per-task thread (office_comments), since that
+  // is where staff now reply (no flat group chat).
+  const latestStaffMsg = await prisma.officeComment.findFirst({
+    where: { businessId, authorType: 'staff' },
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true },
   })

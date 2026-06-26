@@ -214,6 +214,14 @@ export async function requestUpdate(
         escalatedAt: null,
       },
     })
+    // The question/nudge lives in the task's own thread (not a flat group chat),
+    // so the staff reply lands against the right task and the supervisor can read
+    // it back on its next tick.
+    if (note) {
+      await tx.officeComment.create({
+        data: { taskId, authorType: by, kind: 'comment', body: note, businessId },
+      })
+    }
     await logEvent(tx, {
       taskId,
       kind: 'update_requested',
