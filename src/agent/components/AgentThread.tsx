@@ -91,14 +91,20 @@ interface AgentThreadProps {
   onPlanDriveOpen?: (conversationId: string) => void
 }
 
-function detectArtifact(text: string): { type: 'code' | 'markdown'; content: string; title: string } | null {
-  const codeBlockRe = /```(?:\w+)?\n([\s\S]*?)```/g
+function detectArtifact(text: string): { type: 'code' | 'markdown' | 'html' | 'svg'; content: string; title: string } | null {
+  const codeBlockRe = /```([\w-]*)[ \t]*\n([\s\S]*?)```/g
   let match: RegExpExecArray | null
   while ((match = codeBlockRe.exec(text)) !== null) {
-    const lines = match[1].split('\n').length
+    const lang = (match[1] || '').trim().toLowerCase()
+    const content = match[2]
+    const lines = content.split('\n').length
     if (lines >= 15) {
-      const lang = text.slice(match.index + 3, match.index + 3 + 30).split('\n')[0].trim()
-      return { type: 'code', content: match[1], title: lang ? `${lang} কোড` : 'কোড' }
+      // html / svg fences (or html-looking content) become LIVE-renderable artifacts.
+      const looksSvg = lang === 'svg' || /^\s*<svg[\s>]/i.test(content)
+      const looksHtml = lang === 'html' || /^\s*(<!doctype html|<html[\s>])/i.test(content)
+      if (looksSvg) return { type: 'svg', content, title: 'SVG ছবি' }
+      if (looksHtml) return { type: 'html', content, title: 'HTML প্রিভিউ' }
+      return { type: 'code', content, title: lang ? `${lang} কোড` : 'কোড' }
     }
   }
   if (text.length >= 800 && (text.includes('##') || text.includes('**'))) {
