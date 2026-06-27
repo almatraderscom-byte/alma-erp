@@ -136,7 +136,13 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
   }, [thinking, live, open])
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
-  const label = live ? 'Thinking…' : seconds != null ? `Thought for ${seconds}s` : 'Thought'
+  const base = live ? 'Thinking…' : seconds != null ? `Thought for ${seconds}s` : 'Thought'
+  // Rough thinking-token estimate from the streamed reasoning (~4 chars/token).
+  // The "~" makes clear it's an estimate — the API folds thinking into total
+  // output tokens, so a per-thought exact count isn't separately reported.
+  const trimmed = thinking.trim()
+  const tokenEst = trimmed ? Math.max(1, Math.round(trimmed.length / 4)) : 0
+  const label = tokenEst > 0 ? `${base} · ~${fmtTok(tokenEst)} tokens` : base
 
   return (
     <div className="mb-3">
@@ -507,36 +513,71 @@ function CollapsibleMessage({
   )
 }
 
-function ToolActivityChip({ name, done, success, stopped, input }: { name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown }) {
+/**
+ * Vertical "steps" checklist — the Claude-app TASKS card the owner asked for.
+ * Renders each tool the agent runs as its own row, in execution order, and
+ * auto-marks them one by one: a spinner while running, then a green check that
+ * draws itself in the moment the tool finishes (red ✗ on failure, a stop square
+ * if the owner halted the turn). It's the SAME live `toolActivity` data the chip
+ * row used — just laid out serially so the owner watches the plan tick off.
+ */
+function TaskStepRow({ name, done, success, stopped, input, index }: {
+  name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; index: number
+}) {
   const d = toolDisplay(name)
   const detail = toolDetail(name, input)
-  // When the owner hits Stop mid-flight, the chip is frozen (done=true, stopped=true)
-  // so the spinner halts — "stop hole animation taw stop e thake".
   const spinning = !done && !stopped
+  const failed = done && success === false
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
-      stopped
-        ? 'border-border bg-white/[0.02] text-muted opacity-60'
-        : done
-          ? success !== false
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-red-200 bg-red-50 text-red-600'
-          : 'border-border bg-white/[0.02] text-muted'
-    }`}>
-      {spinning && (
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-      )}
-      {stopped && (
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-      )}
-      {!stopped && done && success !== false && (
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
-      )}
-      {!stopped && done && success === false && (
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      )}
-      <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
-    </span>
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.4) }}
+      className="flex items-center gap-2.5 py-1"
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+        {spinning && (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E07A5F" strokeWidth="2.6" strokeLinecap="round" className="animate-spin" aria-hidden><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+        )}
+        {stopped && (
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-muted" aria-hidden><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+        )}
+        {!stopped && done && !failed && (
+          <motion.svg
+            width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669"
+            strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+          >
+            <motion.path d="M20 6L9 17l-5-5" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.3 }} />
+          </motion.svg>
+        )}
+        {!stopped && failed && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="3" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12"/></svg>
+        )}
+      </span>
+      <span className={`text-[13px] leading-snug ${
+        stopped ? 'text-muted opacity-60' : failed ? 'text-red-600' : done ? 'text-cream' : 'text-muted'
+      }`}>
+        {d.label}
+        {detail && <span className="font-normal opacity-60"> · {detail}</span>}
+      </span>
+    </motion.div>
+  )
+}
+
+function TaskChecklist({ items }: { items: NonNullable<ChatMessage['toolActivity']> }) {
+  const steps = dedupeToolActivity(items)
+  if (steps.length === 0) return null
+  return (
+    <div className="mb-3 rounded-xl border border-border-subtle bg-white/[0.03] px-3.5 py-2.5">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted/70">
+        কাজের ধাপ
+      </div>
+      <div>
+        {steps.map((t, i) => (
+          <TaskStepRow key={t.name} name={t.name} done={t.done} success={t.success} stopped={t.stopped} input={t.input} index={i} />
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -804,16 +845,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   )}
 
                   {msg.toolActivity && msg.toolActivity.length > 0 && (
-                    <div className="mb-3">
-                      <div className="mb-1 text-[10px] font-medium text-muted">
-                        🔧 {msg.toolActivity.length} tool ব্যবহার
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {dedupeToolActivity(msg.toolActivity).map((t) => (
-                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} stopped={t.stopped} input={t.input} />
-                        ))}
-                      </div>
-                    </div>
+                    <TaskChecklist items={msg.toolActivity} />
                   )}
 
                   {msg.delegations && msg.delegations.length > 0 && (
