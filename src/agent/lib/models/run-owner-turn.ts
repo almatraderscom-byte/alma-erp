@@ -24,6 +24,7 @@ import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
+import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -450,6 +451,7 @@ async function* runAlternateProviderTurn(
           name: call.name,
           success: result.success,
           error: result.error,
+          resultPreview: toolResultPreview(result),
         }
 
         if (result.success && !personalMode) {

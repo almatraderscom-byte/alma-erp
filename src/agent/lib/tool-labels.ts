@@ -55,6 +55,34 @@ function truncate(s: string, max = 28): string {
 }
 
 /**
+ * Build a compact, safe preview of a tool's RESULT for the expandable "Result"
+ * card (Claude-app style: click a tool to see what it returned). We never dump an
+ * unbounded payload into the stream — the JSON is pretty-printed and hard-capped
+ * so a huge query result can't bloat the SSE turn or the message row. `result` is
+ * the `{ success, data?, error? }` shape every tool executor returns.
+ */
+export function toolResultPreview(result: unknown, maxChars = 2000): string | undefined {
+  if (result == null) return undefined
+  let payload: unknown = result
+  if (typeof result === 'object') {
+    const r = result as Record<string, unknown>
+    // Prefer the meaningful body: data on success, error message on failure.
+    if ('data' in r && r.data !== undefined) payload = r.data
+    else if ('error' in r && r.error) payload = r.error
+    else payload = r
+  }
+  let text: string
+  try {
+    text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+  } catch {
+    text = String(payload)
+  }
+  if (!text || !text.trim()) return undefined
+  if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n… (আরও ${text.length - maxChars} অক্ষর কাটা হয়েছে)`
+  return text
+}
+
+/**
  * A short, safe "target" pulled from a tool's input so chips read like Claude —
  * e.g. searching "winter jackets", order #1234. Returns null when there's
  * nothing meaningful/short to show. Never dumps the full input.

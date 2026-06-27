@@ -30,7 +30,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string }>
-  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown }>
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
     id: string
@@ -439,7 +439,15 @@ function dedupeToolActivity(
   const byName = new Map<string, NonNullable<ChatMessage['toolActivity']>[number]>()
   for (const t of items) {
     const prev = byName.get(t.name)
-    byName.set(t.name, prev ? { ...t, done: t.done || prev.done, stopped: t.stopped || prev.stopped } : t)
+    byName.set(t.name, prev ? {
+      ...t,
+      done: t.done || prev.done,
+      stopped: t.stopped || prev.stopped,
+      // Keep whichever copy actually carries an input/result so the expandable
+      // Result card survives the self-verification re-run collapse.
+      input: t.input ?? prev.input,
+      result: t.result ?? prev.result,
+    } : t)
   }
   return [...byName.values()]
 }
@@ -507,22 +515,47 @@ function CollapsibleMessage({
   )
 }
 
-function ToolActivityChip({ name, done, success, stopped, input }: { name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown }) {
+/** Pretty-print a tool input object for the expandable "ইনপুট" panel. */
+function formatToolInput(input: unknown): string | null {
+  if (input == null) return null
+  if (typeof input === 'string') return input.trim() || null
+  if (typeof input !== 'object') return String(input)
+  try {
+    const s = JSON.stringify(input, null, 2)
+    return s && s !== '{}' ? s : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Claude-app-style tool card: a compact status pill that the owner can CLICK to
+ * expand and see exactly what the tool was called with (ইনপুট) and what it
+ * returned (ফলাফল / Result) — the "Execute SQL → Result" pattern the owner asked
+ * to clone. Collapses by default so the thread stays clean; only expandable when
+ * there's an input or a result to show.
+ */
+function ToolActivityChip({ name, done, success, stopped, input, result }: { name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string }) {
+  const [open, setOpen] = useState(false)
   const d = toolDisplay(name)
   const detail = toolDetail(name, input)
+  const inputStr = formatToolInput(input)
+  const resultStr = result && result.trim() ? result : null
+  const expandable = Boolean(inputStr || resultStr)
   // When the owner hits Stop mid-flight, the chip is frozen (done=true, stopped=true)
   // so the spinner halts — "stop hole animation taw stop e thake".
   const spinning = !done && !stopped
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${
-      stopped
-        ? 'border-border bg-white/[0.02] text-muted opacity-60'
-        : done
-          ? success !== false
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-red-200 bg-red-50 text-red-600'
-          : 'border-border bg-white/[0.02] text-muted'
-    }`}>
+
+  const pillTone = stopped
+    ? 'border-border bg-white/[0.02] text-muted opacity-60'
+    : done
+      ? success !== false
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-red-200 bg-red-50 text-red-600'
+      : 'border-border bg-white/[0.02] text-muted'
+
+  const StatusIcon = () => (
+    <>
       {spinning && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
       )}
@@ -535,8 +568,69 @@ function ToolActivityChip({ name, done, success, stopped, input }: { name: strin
       {!stopped && done && success === false && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       )}
-      <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
-    </span>
+    </>
+  )
+
+  const label = (
+    <span>{d.label}{detail && <span className="font-normal opacity-60"> · {detail}</span>}</span>
+  )
+
+  if (!expandable) {
+    return (
+      <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all ${pillTone}`}>
+        <StatusIcon />
+        {label}
+      </span>
+    )
+  }
+
+  return (
+    <div className="w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`group inline-flex w-full items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[11px] font-medium transition-all hover:brightness-105 ${pillTone}`}
+      >
+        <StatusIcon />
+        {label}
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`ml-auto shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="mt-1.5 space-y-2 rounded-lg border border-border bg-black/20 p-2.5">
+              {inputStr && (
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট</div>
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-black/30 p-2 text-[11px] leading-relaxed text-cream/80 [overflow-wrap:anywhere]">{inputStr}</pre>
+                </div>
+              )}
+              {resultStr && (
+                <div>
+                  <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+                    <span>ফলাফল</span>
+                    <span className="font-normal lowercase opacity-50">· Result</span>
+                  </div>
+                  <pre className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-black/30 p-2 text-[11px] leading-relaxed [overflow-wrap:anywhere] ${success === false ? 'text-red-300/90' : 'text-cream/80'}`}>{resultStr}</pre>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   )
 }
 
@@ -808,9 +902,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       <div className="mb-1 text-[10px] font-medium text-muted">
                         🔧 {msg.toolActivity.length} tool ব্যবহার
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className="flex flex-col items-start gap-1.5">
                         {dedupeToolActivity(msg.toolActivity).map((t) => (
-                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} stopped={t.stopped} input={t.input} />
+                          <ToolActivityChip key={t.name} name={t.name} done={t.done} success={t.success} stopped={t.stopped} input={t.input} result={t.result} />
                         ))}
                       </div>
                     </div>

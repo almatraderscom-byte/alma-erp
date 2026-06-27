@@ -722,7 +722,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? {
                   ...m,
                   toolActivity: (m.toolActivity ?? []).map((t) =>
-                    t.id === evt.id ? { ...t, done: true, success: evt.success as boolean } : t
+                    t.id === evt.id
+                      ? {
+                          ...t,
+                          done: true,
+                          success: evt.success as boolean,
+                          result: typeof evt.resultPreview === 'string' ? evt.resultPreview : t.result,
+                        }
+                      : t
                   ),
                 }
               : m
