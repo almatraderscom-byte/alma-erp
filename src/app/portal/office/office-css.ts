@@ -199,6 +199,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .ssub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .ohub .stask{background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;transition:.16s}
 .ohub .stask:hover{border-color:var(--border-strong);transform:translateY(-1px)}
+.ohub .stask.carry{border-color:rgba(139,92,246,.4);background:linear-gradient(180deg,rgba(139,92,246,.06),var(--bg-1))}
 .ohub .stask .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ohub .stask h4{font-size:14.5px;font-weight:600;line-height:1.35}
 .ohub .stask .d{font-size:12.5px;color:var(--muted);margin-top:7px}

@@ -442,14 +442,16 @@ function StaskCard({ t, onOpen }: { t: StaffTaskCard; onOpen: () => void }) {
         : 'এখনো জমা দেননি'
   const overdue = Boolean(t.dueAt) && t.status !== 'done' && new Date(t.dueAt!).getTime() < Date.now()
   return (
-    <div className="stask" onClick={onOpen}>
+    <div className={`stask${t.carriedOver ? ' carry' : ''}`} onClick={onOpen}>
       <div className="top">
         <h4>{t.title}</h4>
+        {t.carriedOver && <span className="badge b-carry">↩ আগের কাজ</span>}
         <span className={`badge ${badge.cls}`}>{badge.label}</span>
         {overdue && <span className="badge b-overdue">⏰ সময় শেষ</span>}
       </div>
       <div className="d">
         📦 {t.type} · {statusText}
+        {t.carriedOver && <span style={{ color: '#c4b5fd' }}> · আগের দিনের অসম্পূর্ণ কাজ — শেষ করুন</span>}
       </div>
       {t.dueAt && (
         <div className={`due-staff${overdue ? ' over' : ''}`}>

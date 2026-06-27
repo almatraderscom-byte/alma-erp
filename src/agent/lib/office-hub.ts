@@ -582,6 +582,9 @@ export type StaffTaskCard = HubTaskCard & {
   updateSecondsLeft: number
   proofImageUrl: string | null
   friendlyDetail: string
+  /** True when this is an unfinished task carried over from a previous day
+   *  (so it stays visible to the staff instead of vanishing at the day boundary). */
+  carriedOver: boolean
 }
 
 export type StaffOfficeData = {
@@ -610,6 +613,8 @@ function pickImage(data: Record<string, unknown> | null): string | null {
 }
 
 const VISIBLE_STAFF_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof', 'done'] as const
+/** Active (still-open) statuses — used to carry unfinished work across day boundaries. */
+const ACTIVE_NOT_DONE_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof'] as const
 
 export async function getStaffOfficeData(
   staff: { id: string; name: string; businessId: string; userId?: string | null },
@@ -618,10 +623,25 @@ export async function getStaffOfficeData(
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
 
-  const [rows, proposalRows, awardRow, openLunch, attendanceRow] = await Promise.all([
+  const [rows, carryRows, proposalRows, awardRow, openLunch, attendanceRow] = await Promise.all([
     prisma.agentStaffTask.findMany({
       where: { staffId: staff.id, proposedFor: todayDate, status: { in: [...VISIBLE_STAFF_STATUSES] } },
       orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
+      select: { ...CARD_SELECT, updateRequestedAt: true, updateRequestNote: true, lastStaffUpdateAt: true },
+    }),
+    // Carry-over: unfinished tasks from PREVIOUS days that are still open. Without
+    // this, a task dispatched yesterday silently disappears at the Dhaka day
+    // boundary (the board is `proposedFor: today` only) — so the staff "loses"
+    // the task and any update the supervisor asked for on it. We surface them so
+    // old work and its pending update-requests stay visible until actually done.
+    prisma.agentStaffTask.findMany({
+      where: {
+        staffId: staff.id,
+        status: { in: [...ACTIVE_NOT_DONE_STATUSES] },
+        proposedFor: { lt: todayDate },
+      },
+      orderBy: [{ updateRequestedAt: 'asc' }, { dueAt: 'asc' }, { createdAt: 'asc' }],
+      take: 25,
       select: { ...CARD_SELECT, updateRequestedAt: true, updateRequestNote: true, lastStaffUpdateAt: true },
     }),
     prisma.agentStaffTask.findMany({
@@ -649,7 +669,7 @@ export async function getStaffOfficeData(
       : Promise.resolve(null),
   ])
 
-  const toStaffCard = (t: (typeof rows)[number]): StaffTaskCard => {
+  const toStaffCard = (t: (typeof rows)[number], carriedOver = false): StaffTaskCard => {
     const base = toCard(t)
     const reqAt = t.updateRequestedAt
     const answered = reqAt && t.lastStaffUpdateAt && t.lastStaffUpdateAt.getTime() >= reqAt.getTime()
@@ -667,12 +687,28 @@ export async function getStaffOfficeData(
         productRef: t.productRef,
         detail: t.detail,
       }),
+      carriedOver,
     }
   }
 
-  const cards = rows.map(toStaffCard)
-  const active = cards.filter((c) => c.status !== 'done')
-  const done = cards.filter((c) => c.status === 'done')
+  const todayCards = rows.map((t) => toStaffCard(t))
+  const carryCards = carryRows.map((t) => toStaffCard(t, true))
+  const done = todayCards.filter((c) => c.status === 'done')
+
+  // Tracked-first ordering so the things the supervisor is chasing surface at the
+  // TOP of the staff board: pending update-request → overdue deadline → redo
+  // requested → carried-over (old unfinished) → everything else. Within a bucket
+  // the original (createdAt) order is preserved (V8 sort is stable).
+  const trackRank = (c: StaffTaskCard): number => {
+    if (c.needsUpdate) return 0
+    if (c.dueAt && new Date(c.dueAt).getTime() < now) return 1
+    if (c.verificationStatus === 'redo_requested') return 2
+    if (c.carriedOver) return 3
+    return 4
+  }
+  const active = [...todayCards.filter((c) => c.status !== 'done'), ...carryCards].sort(
+    (a, b) => trackRank(a) - trackRank(b),
+  )
 
   let award: HubAward = null
   if (awardRow) {
@@ -695,7 +731,7 @@ export async function getStaffOfficeData(
     today,
     active,
     done,
-    proposals: proposalRows.map(toStaffCard),
+    proposals: proposalRows.map((t) => toStaffCard(t)),
     isWinner: Boolean(awardRow && awardRow.staffId === staff.id),
     award,
     lunch: { active: Boolean(openLunch), startedAt: openLunch?.startedAt.toISOString() ?? null },
