@@ -2,35 +2,38 @@ import { describe, it, expect } from 'vitest'
 import { decideTailFold, estimateMessagesTokens, TAIL_COMPACT_DEFAULTS } from '@/agent/lib/tail-compact'
 import { buildSystemPromptBlocks } from '@/agent/lib/system-prompt'
 
-const cfg = TAIL_COMPACT_DEFAULTS // triggerTurns 30, triggerTokens 80k, keepTurns 20
+const cfg = TAIL_COMPACT_DEFAULTS
+// Derive message counts from the live defaults so these stay correct across tuning.
+const keepMsgs = cfg.keepTurns * 2
+const overTriggerMsgs = (cfg.triggerTurns + 5) * 2 // comfortably past the turn trigger
 
 describe('decideTailFold', () => {
   it('does not fold a short conversation under both triggers', () => {
-    const { shouldFold } = decideTailFold({ total: 20, compactedCount: 0, unfoldedTokens: 1000, cfg })
+    const { shouldFold } = decideTailFold({ total: keepMsgs, compactedCount: 0, unfoldedTokens: 1000, cfg })
     expect(shouldFold).toBe(false)
   })
 
   it('folds once the turn-count trigger trips, leaving keepTurns verbatim', () => {
-    // 70 messages = 35 turns > triggerTurns(30). keepMsgs = 40 → foldUpTo = 30.
-    const { shouldFold, foldUpTo } = decideTailFold({ total: 70, compactedCount: 0, unfoldedTokens: 1000, cfg })
+    const { shouldFold, foldUpTo } = decideTailFold({ total: overTriggerMsgs, compactedCount: 0, unfoldedTokens: 1000, cfg })
     expect(shouldFold).toBe(true)
-    expect(foldUpTo).toBe(70 - cfg.keepTurns * 2)
+    expect(foldUpTo).toBe(overTriggerMsgs - keepMsgs)
   })
 
   it('folds on the token trigger even when turn count is low', () => {
-    const { shouldFold } = decideTailFold({ total: 50, compactedCount: 0, unfoldedTokens: 90_000, cfg })
+    const { shouldFold } = decideTailFold({ total: keepMsgs + 2, compactedCount: 0, unfoldedTokens: cfg.triggerTokens + 10_000, cfg })
     expect(shouldFold).toBe(true)
   })
 
   it('respects hysteresis: does not re-fold when only the keep window remains unfolded', () => {
-    // Already folded up to 30; 40 messages remain (= keepMsgs), nothing older to fold.
-    const { shouldFold } = decideTailFold({ total: 70, compactedCount: 30, unfoldedTokens: 1000, cfg })
+    // Already folded up to (total - keepMsgs); exactly keepMsgs remain, nothing older to fold.
+    const { shouldFold } = decideTailFold({ total: overTriggerMsgs, compactedCount: overTriggerMsgs - keepMsgs, unfoldedTokens: 1000, cfg })
     expect(shouldFold).toBe(false)
   })
 
   it('never returns a watermark behind the current one', () => {
-    const { foldUpTo } = decideTailFold({ total: 35, compactedCount: 30, unfoldedTokens: 1000, cfg })
-    expect(foldUpTo).toBeGreaterThanOrEqual(30)
+    const watermark = overTriggerMsgs - keepMsgs
+    const { foldUpTo } = decideTailFold({ total: watermark + 5, compactedCount: watermark, unfoldedTokens: 1000, cfg })
+    expect(foldUpTo).toBeGreaterThanOrEqual(watermark)
   })
 })
 

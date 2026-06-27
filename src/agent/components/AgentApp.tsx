@@ -258,6 +258,66 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])
 
+  // Unified persistent session: on load, resume the conversation the owner was
+  // last in (the same thread shared with Telegram), so a refresh stays put
+  // instead of dropping to a blank chat. Runs once; skips if the owner is mid-
+  // stream or already deep-linked into a specific conversation.
+  const didResumeRef = useRef(false)
+  useEffect(() => {
+    if (didResumeRef.current) return
+    didResumeRef.current = true
+    void (async () => {
+      try {
+        const res = await fetch('/api/assistant/active-conversation')
+        if (!res.ok) return
+        const data = (await res.json()) as {
+          conversationId: string | null
+          projectId: string | null
+          modelId: string | null
+        }
+        if (!data.conversationId) return
+        if (streamingRef.current || activeConvIdRef.current) return
+        await loadConversation({
+          id: data.conversationId,
+          title: null,
+          projectId: data.projectId,
+          modelId: data.modelId ?? undefined,
+          archived: false,
+          updatedAt: '',
+        })
+      } catch { /* offline / transient — start blank */ }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Keep the active main thread live: poll its messages on a slow cadence so
+  // agent task-replies and Telegram-side turns appear in the app chat without a
+  // manual refresh. Office day-shift threads have their own faster poll, and we
+  // never poll while a local stream is in flight (the stream is authoritative).
+  useEffect(() => {
+    if (!activeConvId) return
+    if (dayShift?.active && activeConvId === dayShift.conversationId) return
+    let stopped = false
+    const poll = async () => {
+      if (stopped || streamingRef.current) return
+      try {
+        const res = await fetch(`/api/assistant/conversations/${activeConvId}/messages`)
+        if (!res.ok) return
+        const rows: MessageRow[] = await res.json()
+        if (!stopped && !streamingRef.current) {
+          setMessages((prev) => {
+            const next = mapMessageRows(rows)
+            // Avoid clobbering an optimistic in-flight render: only replace when
+            // the server has at least as many rows as we're showing.
+            return next.length >= prev.length ? next : prev
+          })
+        }
+      } catch { /* transient */ }
+    }
+    const iv = setInterval(() => void poll(), 12_000)
+    return () => { stopped = true; clearInterval(iv) }
+  }, [activeConvId, dayShift?.active, dayShift?.conversationId])
+
   useEffect(() => {
     void fetch('/api/assistant/health')
       .then(async (res) => (res.ok ? res.json() as Promise<{ db?: boolean; anthropic?: boolean }> : null))
@@ -389,6 +449,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       setConvLoadError(err instanceof Error ? err.message : 'লোড ব্যর্থ')
     } finally {
       setConvLoading(false)
+    }
+
+    // Unified session: aim the shared pointer at this thread so Telegram follows
+    // the owner's app selection. Skip the office day-shift thread — it has its own
+    // lifecycle and must not hijack the main/personal pointer.
+    if (conv.id !== dayShift?.conversationId) {
+      const personalMode = !!personalProjectId && conv.projectId === personalProjectId
+      void fetch('/api/assistant/active-conversation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: conv.id, personalMode }),
+      }).catch(() => {})
     }
   }
 
