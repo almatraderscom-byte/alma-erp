@@ -775,7 +775,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         {msg.files.map((f, i) => (
                           f.mediaType.startsWith('image/') ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img key={i} src={f.previewUrl} alt="" className="h-20 w-20 rounded-2xl object-cover border border-border-subtle" />
+                            <img key={i} src={f.previewUrl} alt="" decoding="async" loading="lazy" className="h-20 w-20 rounded-2xl object-cover border border-border-subtle" />
                           ) : (
                             <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>

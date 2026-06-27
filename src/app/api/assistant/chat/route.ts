@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { runAgentTurn } from '@/agent/lib/core'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
-import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
+import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId, isAnthropicModel } from '@/agent/lib/models/registry'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { getOwnerSessionPointer, setOwnerSessionConversation } from '@/agent/lib/owner-session'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
@@ -422,14 +422,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Vision guard: an uploaded image/PDF only reaches the model through the
+  // Anthropic path (loadHistory → base64 image block). The OpenRouter/Gemini
+  // neutral adapter drops attachments to a bare path string, and cheap text models
+  // (e.g. DeepSeek V4 Flash) can't see images at all — so on those the agent
+  // honestly says "ছবিটা পড়া গেল না". Force the vision-capable Claude head for any
+  // turn that carries a visual attachment, whatever the owner's text-model pick is.
+  // Per-turn only: the conversation's pinned model is untouched, so the next
+  // text-only turn returns to the chosen (cheaper) model.
+  const hasVisualAttachment = files.some(
+    (f) => f.mediaType.startsWith('image/') || f.mediaType === 'application/pdf',
+  )
+  let effectiveModelId = isInternalCall
+    ? DEFAULT_MODEL_ID
+    : (resumeModelId ?? conversationModelId)
+  if (!isInternalCall && hasVisualAttachment && !isAnthropicModel(effectiveModelId)) {
+    effectiveModelId = DEFAULT_MODEL_ID
+  }
+
   const turnOptions = {
     projectSystemInstructions,
     personalMode,
     telegramFastPath,
     businessId,
-    modelId: isInternalCall
-      ? DEFAULT_MODEL_ID
-      : (resumeModelId ?? conversationModelId),
+    modelId: effectiveModelId,
     signal: turnAbort.signal,
     turnId,
     approveModelSwitch: resume?.approve === true,

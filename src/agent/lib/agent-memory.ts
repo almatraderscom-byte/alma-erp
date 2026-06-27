@@ -15,6 +15,29 @@ function resolveImportance(content: string, explicit?: number | null): number {
   return HIGH_IMPORTANCE.test(content) ? 4 : 2
 }
 
+/**
+ * Builds the scope/business WHERE fragment for owner-facing memory retrieval.
+ *
+ * Personal mode → personal memories only (a personal chat must not pull business
+ * facts). Business mode → business/staff memories scoped to the active business,
+ * PLUS all personal memories. The owner is the same person across every chat, so
+ * a personal fact ("স্যারের স্ত্রীর নাম: Mim, নম্বর …") must still surface when
+ * asked inside a business thread. Previously business mode used `scope != 'personal'`,
+ * which hard-excluded personal memories — so the agent truthfully said it couldn't
+ * find a number that was actually saved. Personal memories are cross-business and
+ * only ever reach the owner-facing head, so including them leaks nothing to staff.
+ * Semantic threshold + rerank still gate them, so irrelevant personal facts don't
+ * pollute a business turn.
+ */
+function buildMemoryAccessClause(personalMode: boolean, businessId: AgentBusinessId): string {
+  if (personalMode) return `AND scope = 'personal'`
+  const businessFilter =
+    businessId === 'ALMA_TRADING'
+      ? `metadata->>'businessId' = 'ALMA_TRADING'`
+      : `(metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+  return `AND (scope = 'personal' OR (scope != 'personal' AND ${businessFilter}))`
+}
+
 export async function attachMemoryEmbedding(
   memoryId: string,
   content: string,
@@ -105,21 +128,14 @@ export async function retrieveRelevantMemories(
   businessId: AgentBusinessId,
 ): Promise<RelevantMemory[]> {
   try {
+    const accessClause = buildMemoryAccessClause(personalMode, businessId)
     const embedResult = await embed(userMessage)
     if (!embedResult.success) {
       // ILIKE fallback when embedding is unavailable
-      const scopeClauseFb = personalMode
-        ? `AND scope = 'personal'`
-        : `AND scope != 'personal'`
-      const businessClauseFb = personalMode
-        ? ''
-        : businessId === 'ALMA_TRADING'
-          ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
-          : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const fbRows: Array<{ id: string; content: string; scope: string }> = await (prisma as any).$queryRawUnsafe(
         `SELECT id, content, scope FROM agent_memory
-         WHERE pinned = false AND content ILIKE $1 ${scopeClauseFb} ${businessClauseFb}
+         WHERE pinned = false AND content ILIKE $1 ${accessClause}
          ORDER BY "createdAt" DESC LIMIT 6`,
         `%${userMessage.slice(0, 100)}%`,
       )
@@ -127,14 +143,6 @@ export async function retrieveRelevantMemories(
     }
 
     const vec = vectorLiteral(embedResult.data)
-    const scopeClause = personalMode
-      ? `AND scope = 'personal'`
-      : `AND scope != 'personal'`
-    const businessClause = personalMode
-      ? ''
-      : businessId === 'ALMA_TRADING'
-        ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
-        : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
 
     const rows: Array<{
       id: string
@@ -150,7 +158,7 @@ export async function retrieveRelevantMemories(
         `SELECT id, content, scope, importance, "createdAt", last_used_at,
                 1 - (embedding <=> $1::vector) AS score
          FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false ${scopeClause} ${businessClause}
+         WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
          ORDER BY embedding <=> $1::vector
          LIMIT ${VECTOR_FETCH_LIMIT}`,
         vec,

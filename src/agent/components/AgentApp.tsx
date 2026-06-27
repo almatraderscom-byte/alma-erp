@@ -525,15 +525,26 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
     }
 
-    const fileRefs: Array<{ bucket: string; path: string; mediaType: string }> = []
-    for (const pf of pendingFiles) {
+    // Uploads run in PARALLEL with a per-file timeout. Sequentially awaiting each
+    // upload (and with no timeout) used to freeze the composer for seconds on big
+    // iPhone screenshots, and a single stalled request left the UI stuck in the
+    // "streaming" state forever. Promise.all keeps it snappy; AbortSignal.timeout
+    // guarantees a hung upload fails fast and the catch resets the UI.
+    let fileRefs: Array<{ bucket: string; path: string; mediaType: string }> = []
+    if (pendingFiles.length > 0) {
       try {
-        const fd = new FormData()
-        fd.append('file', pf.file)
-        if (convIdForUpload) fd.append('conversationId', convIdForUpload)
-        const res = await fetch('/api/assistant/upload', { method: 'POST', body: fd })
-        if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
-        fileRefs.push(await res.json())
+        fileRefs = await Promise.all(pendingFiles.map(async (pf) => {
+          const fd = new FormData()
+          fd.append('file', pf.file)
+          if (convIdForUpload) fd.append('conversationId', convIdForUpload)
+          const res = await fetch('/api/assistant/upload', {
+            method: 'POST',
+            body: fd,
+            signal: AbortSignal.timeout(60_000),
+          })
+          if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+          return res.json() as Promise<{ bucket: string; path: string; mediaType: string }>
+        }))
       } catch (err) {
         toast.error(`ফাইল আপলোড ব্যর্থ: ${err instanceof Error ? err.message : String(err)}`)
         setStreaming(false)
