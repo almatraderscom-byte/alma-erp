@@ -322,6 +322,20 @@ async function* runAlternateProviderTurn(
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined
+  // Ordered, DISPLAY-ONLY activity timeline (reasoning ↔ tool, in execution order)
+  // so the UI renders ONE unified Claude-style stream that survives reload. Stored
+  // in usage.timeline; never replayed to the model, so it adds zero token cost.
+  type TimelineEntry =
+    | { t: 'think'; text: string }
+    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+  const timeline: TimelineEntry[] = []
+  const compactTimelineInput = (input: unknown): unknown => {
+    try {
+      const json = JSON.stringify(input)
+      if (json && json.length > 800) return { _truncated: `${json.slice(0, 800)}…` }
+    } catch { return undefined }
+    return input
+  }
 
   // ── HARD tool-round budget (Qwen marketing head) ───────────────────────────
   // Only the EXPENSIVE Qwen marketing head is capped here — the cheap DeepSeek
@@ -343,6 +357,9 @@ async function* runAlternateProviderTurn(
       const calls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
       const toolNames = new Map<string, string>()
       let iterationText = ''
+      // Reasoning produced in THIS round only — one timeline segment before this
+      // round's tool calls, keeping cross-round order faithful.
+      let iterThinking = ''
 
       // Over budget → strip ALL tools so the marketing head physically cannot
       // spree more; it must finish the marketing job itself and answer now.
@@ -374,6 +391,7 @@ async function* runAlternateProviderTurn(
           // the native Claude head produces — the UI (AgentApp) already handles this.
           if (!thinkingStartedAt) thinkingStartedAt = Date.now()
           thinkingText += ev.text
+          iterThinking += ev.text
           yield { type: 'thinking_delta', delta: ev.text }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
@@ -387,6 +405,9 @@ async function* runAlternateProviderTurn(
           totalCacheReadTokens += ev.cacheRead ?? 0
         }
       }
+
+      // Record this round's reasoning as a timeline segment BEFORE its tool calls.
+      if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
 
       if (calls.length === 0 || signal?.aborted) {
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
@@ -453,6 +474,12 @@ async function* runAlternateProviderTurn(
           status: result.success ? 'success' : 'error',
           durationMs,
           error: result.error ?? null,
+        })
+
+        timeline.push({
+          t: 'tool', name: call.name, ok: result.success,
+          input: compactTimelineInput(call.input),
+          result: toolResultPreview(result),
         })
 
         yield {
@@ -547,7 +574,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])

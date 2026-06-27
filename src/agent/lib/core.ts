@@ -846,6 +846,21 @@ export async function* runAgentTurn(
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined
+  // Ordered, DISPLAY-ONLY activity timeline: thinking segments interleaved with tool
+  // calls in true execution order, so the UI can render ONE unified Claude-style
+  // stream (reasoning → tool → reasoning → tool → answer) that survives reload.
+  // Stored in usage.timeline; NEVER replayed to the model, so it costs zero tokens.
+  type TimelineEntry =
+    | { t: 'think'; text: string }
+    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+  const timeline: TimelineEntry[] = []
+  const compactTimelineInput = (input: unknown): unknown => {
+    try {
+      const json = JSON.stringify(input)
+      if (json && json.length > 800) return { _truncated: `${json.slice(0, 800)}…` }
+    } catch { /* non-serialisable → drop */ return undefined }
+    return input
+  }
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -890,6 +905,9 @@ export async function* runAgentTurn(
       let activeBlockId = ''
       let activeBlockName = ''
       let activeBlockInputJson = ''
+      // Thinking produced in THIS round only — pushed as one timeline segment
+      // before this round's tool calls, so order across rounds stays faithful.
+      let iterThinking = ''
 
       for await (const event of stream) {
         if (signal?.aborted) break
@@ -932,6 +950,7 @@ export async function* runAgentTurn(
             // (replay-safe: dbRowsToNeutral keeps only text/file_ref for history).
             if (!thinkingStartedAt) thinkingStartedAt = Date.now()
             thinkingText += delta.thinking
+            iterThinking += delta.thinking
             yield { type: 'thinking_delta', delta: delta.thinking }
           } else if (delta.type === 'input_json_delta') {
             activeBlockInputJson += delta.partial_json
@@ -948,6 +967,9 @@ export async function* runAgentTurn(
       }
 
       assistantTurns.push(currentBlocks)
+
+      // Record this round's reasoning as a timeline segment BEFORE its tool calls.
+      if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
 
       const toolUseBlocks = currentBlocks.filter(
         (b): b is Extract<CollectedBlock, { type: 'tool_use' }> => b.type === 'tool_use',
@@ -1146,6 +1168,12 @@ export async function* runAgentTurn(
           durationMs, error: result.error ?? null,
         })
 
+        timeline.push({
+          t: 'tool', name: tb.name, ok: result.success,
+          input: compactTimelineInput(tb.input),
+          result: toolResultPreview(result),
+        })
+
         if (isDelegate) {
           const d = (result.data ?? {}) as Record<string, unknown>
           const role = String((tb.input as Record<string, unknown>).role ?? '')
@@ -1301,7 +1329,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
 

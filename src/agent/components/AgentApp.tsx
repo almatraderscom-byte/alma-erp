@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
-import AgentThread, { type ChatMessage } from './AgentThread'
+import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import { notifyTodosChanged } from './AgentTodoContext'
@@ -73,6 +73,7 @@ type MessageRow = {
   costUsd: string | null
   thinking?: string
   thinkingMs?: number
+  timeline?: TimelineEntry[]
 }
 
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
@@ -96,6 +97,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       text: textBlocks.map((b) => b.text ?? '').join(''),
       thinking: r.thinking,
       thinkingMs: r.thinkingMs,
+      timeline: Array.isArray(r.timeline) && r.timeline.length > 0 ? r.timeline : undefined,
       toolActivity: toolActivity.length > 0 ? toolActivity : undefined,
       files: fileBlocks.map((b) => ({
         previewUrl: '',
@@ -119,6 +121,52 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
         : undefined,
     }
   })
+}
+
+// ── Live activity-timeline builders ─────────────────────────────────────────
+// Build the unified ordered timeline (reasoning ↔ tool) on the client as SSE
+// events arrive, mirroring what the server persists in usage.timeline so the live
+// stream and the reloaded view render the SAME single Claude-style card.
+function appendThinkToTimeline(tl: TimelineEntry[] | undefined, chunk: string): TimelineEntry[] {
+  const next = tl ? tl.slice() : []
+  const last = next[next.length - 1]
+  if (last && last.t === 'think') {
+    next[next.length - 1] = { t: 'think', text: last.text + chunk }
+  } else {
+    next.push({ t: 'think', text: chunk })
+  }
+  return next
+}
+
+function pushOrUpdateTool(
+  tl: TimelineEntry[] | undefined,
+  id: string,
+  name: string,
+  input: unknown,
+): TimelineEntry[] {
+  const next = tl ? tl.slice() : []
+  const idx = next.findIndex((e) => e.t === 'tool' && e.id === id)
+  if (idx >= 0) {
+    const cur = next[idx] as Extract<TimelineEntry, { t: 'tool' }>
+    next[idx] = { ...cur, input: input ?? cur.input }
+  } else {
+    next.push({ t: 'tool', id, name, ok: true, live: true, input })
+  }
+  return next
+}
+
+function finalizeTool(
+  tl: TimelineEntry[] | undefined,
+  id: string,
+  ok: boolean,
+  result?: string,
+): TimelineEntry[] | undefined {
+  if (!tl) return tl
+  return tl.map((e) =>
+    e.t === 'tool' && e.id === id
+      ? { ...e, ok, live: false, result: result ?? e.result }
+      : e,
+  )
 }
 
 function parseSseChunks(buf: string): { remaining: string; events: Array<Record<string, unknown>> } {
@@ -660,7 +708,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         buf.pending = ''
         buf.flushScheduled = false
         setMessages((prev) => prev.map((m) =>
-          m.id === buf.msgId ? { ...m, thinking: (m.thinking ?? '') + chunk } : m,
+          m.id === buf.msgId
+            ? { ...m, thinking: (m.thinking ?? '') + chunk, timeline: appendThinkToTimeline(m.timeline, chunk) }
+            : m,
         ))
       }
 
@@ -727,14 +777,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // the parsed input) — merge so the chip gains its real target, no dupes.
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
+            const timeline = pushOrUpdateTool(m.timeline, evt.id as string, evt.name as string, evt.input)
             const existing = m.toolActivity ?? []
             const idx = existing.findIndex((t) => t.id === evt.id)
             if (idx >= 0) {
               const next = existing.slice()
               next[idx] = { ...next[idx], input: evt.input ?? next[idx].input }
-              return { ...m, toolActivity: next }
+              return { ...m, toolActivity: next, timeline }
             }
-            return { ...m, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }] }
+            return { ...m, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }], timeline }
           }))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
@@ -753,6 +804,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                           result: typeof evt.resultPreview === 'string' ? evt.resultPreview : t.result,
                         }
                       : t
+                  ),
+                  timeline: finalizeTool(
+                    m.timeline,
+                    evt.id as string,
+                    evt.success as boolean,
+                    typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
                   ),
                 }
               : m
