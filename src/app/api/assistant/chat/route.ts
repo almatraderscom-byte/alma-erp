@@ -8,6 +8,7 @@ import { runAgentTurn } from '@/agent/lib/core'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
+import { describeAttachments, hasVisualAttachment, buildVisionNoteBlock } from '@/agent/lib/attachment-vision'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { getOwnerSessionPointer, setOwnerSessionConversation } from '@/agent/lib/owner-session'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
@@ -323,6 +324,18 @@ export async function POST(req: NextRequest) {
         },
       ]
 
+      // Vision pre-read: an image/PDF is transcribed ONCE by Gemini Flash (cheap) and
+      // stored as a text block, so the owner's chosen head model — even a text-only one
+      // like DeepSeek — answers about it without switching models or paying Claude's
+      // vision price. Failure degrades to an honest note instead of a silent blank.
+      if (hasVisualAttachment(files)) {
+        const visionText = await describeAttachments(files).catch((err) => {
+          console.warn('[assistant/chat] attachment vision failed:', err instanceof Error ? err.message : err)
+          return null
+        })
+        userContent.push(buildVisionNoteBlock(visionText))
+      }
+
       const savedUserMsg = await prisma.agentMessage.create({
         data: {
           conversationId,
@@ -422,6 +435,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The owner's chosen head model is kept as-is for image/PDF turns. The attachment
+  // was already transcribed by Gemini Flash above and stored as a text block, so a
+  // text-only model (DeepSeek) reads it from that description — no model switch, no
+  // Claude vision cost.
   const turnOptions = {
     projectSystemInstructions,
     personalMode,

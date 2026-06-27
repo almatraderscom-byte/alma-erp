@@ -21,6 +21,7 @@ import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
+import { VISION_NOTE_PREFIX } from '@/agent/lib/attachment-vision'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
@@ -227,10 +228,19 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
       continue
     }
 
+    // When the message already carries a Gemini vision transcription (added at
+    // persist time), the attachment has been read cheaply — do NOT re-embed the raw
+    // base64 image into a Claude turn, which would pay for vision a second time. The
+    // path text still goes through (for tools); the model reads the image from the
+    // transcription text block. Older messages (no note) keep the native-image path.
+    const hasVisionNote = stored.some(
+      (b) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(VISION_NOTE_PREFIX),
+    )
+
     const apiBlocks: Anthropic.Messages.ContentBlockParam[] = []
     for (const block of stored) {
       if (block.type === 'file_ref') {
-        if (recentFileSet.has(i)) {
+        if (recentFileSet.has(i) && !hasVisionNote) {
           apiBlocks.push({
             type: 'text',
             text: `[Uploaded file path for tools: ${block.path}]`,
@@ -251,6 +261,13 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
                 'ছবি দেখতে পেয়েছ ভান কোরো না।]',
             })
           }
+        } else if (hasVisionNote) {
+          // Transcribed by Gemini already — keep the path (so vision tools can still
+          // re-open the file if needed) but don't embed the raw image.
+          apiBlocks.push({
+            type: 'text',
+            text: `[Uploaded file path for tools: ${block.path}]`,
+          })
         } else {
           apiBlocks.push({
             type: 'text',
@@ -842,7 +859,9 @@ export async function* runAgentTurn(
   let budgetNudgeSent = false
   let canceled = false
   // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
-  // "Thought for Ns" block instead of vanishing when the live stream ends.
+  // "Thought for Ns" block instead of vanishing when the live stream ends. Stored in
+  // the message's `usage` metadata — NEVER in `content` — so it is display-only and
+  // can never be replayed into an API request as a (signature-less) thinking block.
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined
@@ -946,8 +965,8 @@ export async function* runAgentTurn(
           } else if (delta.type === 'thinking_delta') {
             // Surface the model's extended-thinking stream so the UI can show a
             // live "Thought for Ns" block — how the agent is reasoning about the
-            // owner's message before it answers. Persisted as a thinking block
-            // (replay-safe: dbRowsToNeutral keeps only text/file_ref for history).
+            // owner's message before it answers. Captured (display-only, in usage
+            // metadata) so the block survives a reload; never replayed to the API.
             if (!thinkingStartedAt) thinkingStartedAt = Date.now()
             thinkingText += delta.thinking
             iterThinking += delta.thinking

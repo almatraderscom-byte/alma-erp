@@ -201,12 +201,20 @@ const search_memory: AgentTool = {
      * Untagged legacy memories default to ALMA_LIFESTYLE — included only when
      * the current context is ALMA_LIFESTYLE.
      */
+    const businessFilter =
+      businessId === 'ALMA_TRADING'
+        ? `metadata->>'businessId' = 'ALMA_TRADING'`
+        : `(metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+    // scope='personal' → no business filter (personal memories are cross-business).
+    // explicit business/staff scope → business filter only. scope omitted → match
+    // business memories for THIS business OR any personal memory, so an owner asking
+    // a personal question inside a business thread still finds saved personal facts.
     const businessFilterClause =
       scope === 'personal'
         ? ''
-        : businessId === 'ALMA_TRADING'
-          ? `AND (metadata->>'businessId' = 'ALMA_TRADING')`
-          : `AND (metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+        : scope
+          ? `AND ${businessFilter}`
+          : `AND (scope = 'personal' OR ${businessFilter})`
 
     try {
       const embedResult = await embed(query)

@@ -68,6 +68,7 @@ export async function GET(
     select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   })
+
   const statusById = new Map<string, string>()
   for (const a of allActions) statusById.set(a.id, a.status)
 

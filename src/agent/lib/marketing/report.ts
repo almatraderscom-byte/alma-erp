@@ -187,7 +187,11 @@ export async function buildMarketingReportText(days = 7): Promise<{
     }
   }
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  // maxRetries:0 is the real timeout fix. The SDK retries twice by default, so a
+  // 35s per-attempt timeout silently became 35s×3 ≈ 105s — past the worker's fetch
+  // budget, which surfaced to the owner as "operation aborted due to timeout". With
+  // no retries the call fails once and we ship the deterministic fallback instead.
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 })
   let report: string
   try {
     const res = await client.messages.create({
@@ -198,7 +202,7 @@ export async function buildMarketingReportText(days = 7): Promise<{
         role: 'user',
         content: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
       }],
-    }, { timeout: 35_000 })
+    }, { timeout: 30_000, maxRetries: 0 })
     const block = res.content.find((b) => b.type === 'text')
     report = block && block.type === 'text' ? block.text.trim() : formatMarketingReportFallback(data)
     void logCost({

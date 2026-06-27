@@ -318,7 +318,8 @@ async function* runAlternateProviderTurn(
   let delegationAwaiting = false
   let delegationRoleLabel = ''
   // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
-  // "Thought for Ns" block instead of vanishing when the live stream ends.
+  // "Thought for Ns" block instead of vanishing when the live stream ends. Stored in
+  // usage metadata (display-only) so it survives reload on the cheap-head path too.
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined

@@ -23,8 +23,32 @@ const PAGE_LABELS: Record<string, string> = {
   '827260860637393': 'Alma Online Shop',
 }
 
+/** The real page ids we actually hold a token for — the only ids the Graph client accepts. */
+const KNOWN_PAGE_IDS = new Set(Object.values(PAGE_NAMES))
+
+/**
+ * Resolve an agent-supplied `page` to a real Facebook page id.
+ *
+ * Accepts the keywords ("lifestyle"/"onlineshop"), a known page id verbatim, or
+ * brand text ("Alma Lifestyle"). ANYTHING else — notably a garbled/invented
+ * numeric id from the model — now throws a clear, self-correcting error instead
+ * of being passed straight through to the token lookup. That pass-through is what
+ * produced the confusing "No FB_PAGE_TOKEN configured for page <garbled-id>": the
+ * owner's token was set correctly, but the model had sent a wrong page id, so the
+ * map missed. Failing loudly here makes the agent retry with a valid keyword, and
+ * never lets a wrong id reach a WRITE path (createPagePost) and post to the wrong
+ * page.
+ */
 export function resolvePageId(page: string): string {
-  return PAGE_NAMES[page.toLowerCase()] ?? page
+  const raw = String(page ?? '').trim()
+  const key = raw.toLowerCase()
+  if (PAGE_NAMES[key]) return PAGE_NAMES[key]
+  if (KNOWN_PAGE_IDS.has(raw)) return raw
+  if (/life\s*style|লাইফস্টাইল/.test(key)) return PAGE_NAMES.lifestyle
+  if (/online\s*shop|\bshop\b|অনলাইন|শপ/.test(key)) return PAGE_NAMES.onlineshop
+  throw new Error(
+    `Unknown Facebook page "${raw}". Call again with page="lifestyle" or page="onlineshop" (do not pass a raw page id).`,
+  )
 }
 
 export function pageLabel(pageId: string): string {
