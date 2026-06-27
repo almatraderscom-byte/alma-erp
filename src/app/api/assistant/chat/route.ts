@@ -124,7 +124,15 @@ export async function POST(req: NextRequest) {
       : null
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
-  if (!message && !resume) return Response.json({ error: 'message_required' }, { status: 400 })
+  // Attached files (image/PDF) make a caption-less turn valid — Claude.ai lets you
+  // send an image with no text. Parse them up-front so the guard allows an
+  // image-only message instead of rejecting it as `message_required`.
+  const files: FileRef[] = Array.isArray(body.files)
+    ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
+    : []
+  if (!message && !resume && files.length === 0) {
+    return Response.json({ error: 'message_required' }, { status: 400 })
+  }
 
   // Telegram reply-threading anchor (internal/worker calls only). Capped to keep
   // the quoted context small; injected into the stored user turn below so the
@@ -164,10 +172,6 @@ export async function POST(req: NextRequest) {
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
     )
   }
-
-  const files: FileRef[] = Array.isArray(body.files)
-    ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
-    : []
 
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
   let convSource: string | null = null

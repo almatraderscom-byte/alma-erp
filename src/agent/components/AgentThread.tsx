@@ -138,18 +138,27 @@ function ChatImage({ previewUrl, path }: { previewUrl?: string; path?: string })
   const [src, setSrc] = useState<string | null>(previewUrl || null)
   const [failed, setFailed] = useState(false)
   const [zoom, setZoom] = useState(false)
+  // A local blob preview is instant but dies when the composer revokes it; the
+  // durable fallback is a signed URL from `path`. Resolve it lazily — on mount
+  // when there's no blob, or via the <img> onError when a blob goes stale — and
+  // only once, so a genuinely missing object settles on the placeholder.
+  const triedPath = useRef(false)
+
+  const resolveFromPath = useCallback(() => {
+    if (!path || triedPath.current) { setFailed(true); return }
+    triedPath.current = true
+    fetch(`/api/assistant/files?path=${encodeURIComponent(path)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: { url?: string }) => {
+        if (j.url) { setSrc(j.url); setFailed(false) } else setFailed(true)
+      })
+      .catch(() => setFailed(true))
+  }, [path])
 
   useEffect(() => {
     if (previewUrl) { setSrc(previewUrl); return }
-    if (!path) { setFailed(true); return }
-    let active = true
-    setFailed(false)
-    fetch(`/api/assistant/files?path=${encodeURIComponent(path)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j: { url?: string }) => { if (active && j.url) setSrc(j.url) })
-      .catch(() => { if (active) setFailed(true) })
-    return () => { active = false }
-  }, [previewUrl, path])
+    resolveFromPath()
+  }, [previewUrl, resolveFromPath])
 
   if (failed) {
     return (
@@ -168,6 +177,7 @@ function ChatImage({ previewUrl, path }: { previewUrl?: string; path?: string })
       <img
         src={src} alt="" decoding="async" loading="lazy"
         onClick={() => setZoom(true)}
+        onError={() => { setSrc(null); resolveFromPath() }}
         className="h-20 w-20 cursor-zoom-in rounded-2xl border border-border-subtle object-cover transition-opacity hover:opacity-90"
       />
       <AnimatePresence>

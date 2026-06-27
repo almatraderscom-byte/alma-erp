@@ -640,7 +640,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         id: userMsgId,
         role: 'user',
         text,
-        files: pendingFiles.map((pf) => ({ previewUrl: pf.previewUrl, mediaType: pf.file.type })),
+        // Carry the uploaded storage `path` (same order as the upload results) so the
+        // live image can recover via a signed URL if its local blob is revoked before
+        // the background poll swaps in the persisted message.
+        files: pendingFiles.map((pf, idx) => ({
+          previewUrl: pf.previewUrl,
+          mediaType: pf.file.type,
+          path: fileRefs[idx]?.path,
+        })),
       }
       setMessages((prev) => [
         ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),

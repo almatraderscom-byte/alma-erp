@@ -94,7 +94,8 @@ export default function AgentComposer({
     onSend(text, files)
     setText('')
     setFiles([])
-    files.forEach((f) => URL.revokeObjectURL(f.previewUrl))
+    // NOTE: don't revoke the blob previews here — the live optimistic message still
+    // renders them. AgentApp owns their lifecycle and revokes once the turn settles.
   }, [text, files, disabled, streaming, onSend])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -151,22 +152,6 @@ export default function AgentComposer({
   return (
     <>
     <div className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
-      {files.length > 0 && (
-        <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-          {files.map((f, i) => (
-            <div key={i} className="relative shrink-0">
-              {f.file.type.startsWith('image/') ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={f.previewUrl} alt="" className="h-14 w-14 rounded-xl border border-border-subtle object-cover" />
-              ) : (
-                <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">PDF</div>
-              )}
-              <button type="button" onClick={() => removeFile(i)} className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white/15 text-cream text-[8px]">×</button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Floating frosted composer — Claude anatomy: text on top, then
           [ + · model pill ··· mic · voice · coral-send ] (FOUND-1B). */}
       <div
@@ -185,6 +170,29 @@ export default function AgentComposer({
           />
         ) : (
         <>
+        {/* Row 0 — attached-file previews, INSIDE the composer box (Claude anatomy:
+            thumbnails sit attached to the input, not floating above it). */}
+        {files.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto px-1 pt-1 pb-0.5">
+            {files.map((f, i) => (
+              <div key={i} className="group relative shrink-0">
+                {f.file.type.startsWith('image/') ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={f.previewUrl} alt="" className="h-16 w-16 rounded-xl border border-border-subtle object-cover" />
+                ) : (
+                  <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">PDF</div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeFile(i)}
+                  aria-label="সরান"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-cream text-[11px] leading-none shadow-md ring-1 ring-white/20 transition-transform hover:scale-110"
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Row 1 — text (≥16px so iOS never auto-zooms; grows with content) */}
         <textarea
           ref={textareaRef}
