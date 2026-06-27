@@ -72,11 +72,14 @@ export async function runApprovalTracker({ supabase, bot }) {
   // as empty. Lifecycle cards (dispatch_staff_tasks) survive and still remind.
   const expired = pendingRaw.filter((p) => isPendingActionExpired(p.createdAt, p.type))
   if (expired.length) {
-    await supabase
+    // supabase-js query builders are thenable but have no `.catch` — calling
+    // `.in(...).catch(fn)` throws "catch is not a function". Await and check the
+    // returned error instead.
+    const { error: sweepErr } = await supabase
       .from('agent_pending_actions')
       .update({ status: 'expired', resolvedAt: new Date().toISOString() })
       .in('id', expired.map((p) => p.id))
-      .catch((err) => console.warn('[approval-tracker] transient expire sweep failed:', err.message))
+    if (sweepErr) console.warn('[approval-tracker] transient expire sweep failed:', sweepErr.message)
   }
   const pending = pendingRaw.filter((p) => !isPendingActionExpired(p.createdAt, p.type))
   if (!pending.length) return

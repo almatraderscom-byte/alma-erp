@@ -14,9 +14,13 @@ export async function runMarketingWeekly({ bot }) {
   }
 
   try {
+    // The report gathers several external sources (each self-capped) then runs an
+    // LLM call (up to 35s). Worst-case internal budget is ~55s; the route allows
+    // maxDuration=120s. A 30s abort here fired mid-report ("operation aborted due
+    // to timeout"). Wait 90s — above the report's budget, below the route cap.
     const res = await fetch(`${APP_URL()}/api/assistant/internal/marketing-report?days=7`, {
       headers: { Authorization: `Bearer ${INT()}` },
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(90_000),
     })
     if (!res.ok) {
       console.warn('[marketing-weekly] API failed:', res.status)
