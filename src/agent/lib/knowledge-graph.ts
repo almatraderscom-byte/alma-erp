@@ -10,7 +10,7 @@ import type { AgentBusinessId } from '@/lib/agent-api/business-context'
  * learned cross-entity knowledge, NOT a mirror of ERP tables.
  */
 
-export type GraphEntityType = 'customer' | 'order' | 'staff' | 'product' | 'topic' | (string & {})
+export type GraphEntityType = 'customer' | 'order' | 'staff' | 'product' | 'topic' | (string & NonNullable<unknown>)
 
 /** Stable lookup id from a free-text label so the same entity dedupes across edges. */
 export function normalizeEntityId(label: string): string {
