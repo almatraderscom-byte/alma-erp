@@ -21,6 +21,7 @@ import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { agentStorageDownload } from '@/agent/lib/storage'
+import { VISION_NOTE_PREFIX } from '@/agent/lib/attachment-vision'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
@@ -226,10 +227,19 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
       continue
     }
 
+    // When the message already carries a Gemini vision transcription (added at
+    // persist time), the attachment has been read cheaply — do NOT re-embed the raw
+    // base64 image into a Claude turn, which would pay for vision a second time. The
+    // path text still goes through (for tools); the model reads the image from the
+    // transcription text block. Older messages (no note) keep the native-image path.
+    const hasVisionNote = stored.some(
+      (b) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(VISION_NOTE_PREFIX),
+    )
+
     const apiBlocks: Anthropic.Messages.ContentBlockParam[] = []
     for (const block of stored) {
       if (block.type === 'file_ref') {
-        if (recentFileSet.has(i)) {
+        if (recentFileSet.has(i) && !hasVisionNote) {
           apiBlocks.push({
             type: 'text',
             text: `[Uploaded file path for tools: ${block.path}]`,
@@ -250,6 +260,13 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
                 'ছবি দেখতে পেয়েছ ভান কোরো না।]',
             })
           }
+        } else if (hasVisionNote) {
+          // Transcribed by Gemini already — keep the path (so vision tools can still
+          // re-open the file if needed) but don't embed the raw image.
+          apiBlocks.push({
+            type: 'text',
+            text: `[Uploaded file path for tools: ${block.path}]`,
+          })
         } else {
           apiBlocks.push({
             type: 'text',
