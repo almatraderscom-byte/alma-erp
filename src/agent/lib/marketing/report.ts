@@ -18,6 +18,29 @@ import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/**
+ * Race a promise against a deadline and fall back instead of hanging. The weekly
+ * report is pulled by the VPS scheduler over HTTP; a slow Meta/insights call used
+ * to block the whole report past the caller's timeout ("operation aborted due to
+ * timeout"). Each external source now degrades to thin-data on its own budget.
+ */
+const EMPTY_CS_SUMMARY: Awaited<ReturnType<typeof getCsAnalyticsSummary>> = {
+  conversations: 0, agentReplies: 0, commentCaptures: 0, draftsCreated: 0, draftsConfirmed: 0,
+  conversionChatToDraft: 0, conversionDraftToConfirmed: 0, followupsSent: 0, followupsExpired: 0,
+  followupRecoveries: 0, topAskedProducts: [], lostSaleReasons: {}, csCostUsd: 0,
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const guard = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[marketing-report] ${label} exceeded ${ms}ms — using fallback`)
+      resolve(fallback)
+    }, ms)
+  })
+  return Promise.race([p.finally(() => clearTimeout(timer)), guard])
+}
+
 export type MarketingReportData = {
   periodDays: number
   generatedAt: string
@@ -50,20 +73,29 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     marketingIntel,
     staffTasks,
   ] = await Promise.all([
-    fetchActiveCampaignMetrics().catch((err) => {
-      console.warn('[marketing-report] campaign metrics fetch failed:', err instanceof Error ? err.message : String(err))
-      return []
-    }),
-    getTopCreativeAngles(5),
-    getCsAnalyticsSummary(days),
-    getAgentOrdersSummary('week').catch((err) => {
-      console.warn('[marketing-report] orders summary fetch failed:', err instanceof Error ? err.message : String(err))
-      return null
-    }),
-    buildMarketingIntel().catch((err) => {
-      console.warn('[marketing-report] marketing intel failed:', err instanceof Error ? err.message : String(err))
-      return null
-    }),
+    withTimeout(
+      fetchActiveCampaignMetrics().catch((err) => {
+        console.warn('[marketing-report] campaign metrics fetch failed:', err instanceof Error ? err.message : String(err))
+        return []
+      }),
+      20_000, [], 'campaign metrics',
+    ),
+    withTimeout(getTopCreativeAngles(5).catch(() => []), 8_000, [], 'creative angles'),
+    withTimeout(getCsAnalyticsSummary(days), 12_000, EMPTY_CS_SUMMARY, 'cs analytics'),
+    withTimeout(
+      getAgentOrdersSummary('week').catch((err) => {
+        console.warn('[marketing-report] orders summary fetch failed:', err instanceof Error ? err.message : String(err))
+        return null
+      }),
+      12_000, null, 'orders summary',
+    ),
+    withTimeout(
+      buildMarketingIntel().catch((err) => {
+        console.warn('[marketing-report] marketing intel failed:', err instanceof Error ? err.message : String(err))
+        return null
+      }),
+      12_000, null, 'marketing intel',
+    ),
     db.agentStaffTask.findMany({
       where: {
         createdAt: { gte: new Date(Date.now() - days * 86400000) },
@@ -156,26 +188,31 @@ export async function buildMarketingReportText(days = 7): Promise<{
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 2000,
-    system: REPORT_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
-    }],
-  })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const report = block && block.type === 'text' ? block.text.trim() : formatMarketingReportFallback(data)
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: { purpose: 'marketing_report', days },
-    costUsd: calcAnthropicChatCostUsd(res.usage),
-    dedupKey: `marketing_report:${todayYmdDhaka()}:${days}`,
-  })
+  let report: string
+  try {
+    const res = await client.messages.create({
+      model: AGENT_MODEL || 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: REPORT_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
+      }],
+    }, { timeout: 35_000 })
+    const block = res.content.find((b) => b.type === 'text')
+    report = block && block.type === 'text' ? block.text.trim() : formatMarketingReportFallback(data)
+    void logCost({
+      provider: 'anthropic',
+      kind: 'chat',
+      units: { purpose: 'marketing_report', days },
+      costUsd: calcAnthropicChatCostUsd(res.usage),
+      dedupKey: `marketing_report:${todayYmdDhaka()}:${days}`,
+    })
+  } catch (err) {
+    // A slow/failed LLM must not blow the caller's timeout — ship the deterministic report.
+    console.warn('[marketing-report] LLM call failed/timed out — using fallback:', err instanceof Error ? err.message : String(err))
+    return { report: formatMarketingReportFallback(data), data, recommendations: [] }
+  }
 
   const recMatch = report.match(/## ✅[^\n]*\n([\s\S]*?)(?=## |$)/)
   const recommendations = recMatch
