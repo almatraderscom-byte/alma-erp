@@ -147,6 +147,7 @@ export async function GET(
       // Persisted reasoning trace + reconstructed tool steps so the "Thought for
       // Ns" block and the steps checklist stay visible after a reload.
       thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
+      thinkingMs: typeof u.reasoningMs === 'number' ? u.reasoningMs : undefined,
       toolActivity: toolActivityByMsg.get(m.id),
     }
   })

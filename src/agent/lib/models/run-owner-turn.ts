@@ -317,6 +317,8 @@ async function* runAlternateProviderTurn(
   // Accumulated reasoning trace (display-only, stored in usage metadata) so the
   // "Thought for Ns" block survives a reload on the cheap-head path too.
   let finalReasoning = ''
+  let thinkingStartMs: number | null = null
+  let thinkingDurationMs: number | null = null
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
@@ -360,12 +362,16 @@ async function* runAlternateProviderTurn(
         signal,
       })) {
         if (ev.type === 'text_delta') {
+          if (thinkingStartMs != null && thinkingDurationMs == null) {
+            thinkingDurationMs = Date.now() - thinkingStartMs
+          }
           iterationText += ev.text
           finalText += ev.text
           yield { type: 'text_delta', delta: ev.text }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
+          if (thinkingStartMs == null) thinkingStartMs = Date.now()
           finalReasoning += ev.text
           yield { type: 'thinking_delta', delta: ev.text }
         } else if (ev.type === 'tool_start') {
@@ -536,7 +542,7 @@ async function* runAlternateProviderTurn(
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: finalReasoning.trim() ? finalReasoning.trim().slice(0, 12000) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: finalReasoning.trim() ? finalReasoning.trim().slice(0, 12000) : undefined, reasoningMs: thinkingDurationMs ?? undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])

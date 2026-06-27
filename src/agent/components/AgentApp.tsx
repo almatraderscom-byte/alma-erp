@@ -65,6 +65,8 @@ type MessageRow = {
   costUsd: string | null
   /** Persisted reasoning trace — restores the "Thought for Ns" block after reload. */
   thinking?: string
+  /** Reasoning wall-clock (ms) — restores the "Thought for Ns" duration after reload. */
+  thinkingMs?: number
   /** Reconstructed tool steps (কাজের ধাপ) — restores the checklist after reload. */
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; input?: unknown }>
 }
@@ -88,6 +90,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
       thinking: r.thinking,
+      thinkingMs: r.thinkingMs,
       toolActivity: r.toolActivity,
       pendingAction: confirmBlock?.pendingActionId
         ? {

@@ -863,6 +863,11 @@ export async function* runAgentTurn(
   // `usage` metadata — NEVER in `content` — so it is display-only and can never be
   // replayed into an API request as a (signature-less) thinking block.
   let finalThinking = ''
+  // Wall-clock the reasoning the same way the live UI does — from the first
+  // thinking token to the first reply token — so the "Thought for Ns" duration is
+  // restored after a reload, not just the token estimate.
+  let thinkingStartMs: number | null = null
+  let thinkingDurationMs: number | null = null
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -937,6 +942,9 @@ export async function* runAgentTurn(
         } else if (event.type === 'content_block_delta') {
           const delta = event.delta
           if (delta.type === 'text_delta') {
+            if (thinkingStartMs != null && thinkingDurationMs == null) {
+              thinkingDurationMs = Date.now() - thinkingStartMs
+            }
             activeBlockText += delta.text
             yield { type: 'text_delta', delta: delta.text }
           } else if (delta.type === 'thinking_delta') {
@@ -944,6 +952,7 @@ export async function* runAgentTurn(
             // live "Thought for Ns" block — how the agent is reasoning about the
             // owner's message before it answers. Captured (display-only, in usage
             // metadata) so the block survives a reload; never replayed to the API.
+            if (thinkingStartMs == null) thinkingStartMs = Date.now()
             finalThinking += delta.thinking
             yield { type: 'thinking_delta', delta: delta.thinking }
           } else if (delta.type === 'input_json_delta') {
@@ -1311,7 +1320,7 @@ export async function* runAgentTurn(
       data: {
         conversationId, role: 'assistant', content: storedContent,
         tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: finalThinking.trim() ? finalThinking.trim().slice(0, 12000) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: finalThinking.trim() ? finalThinking.trim().slice(0, 12000) : undefined, reasoningMs: thinkingDurationMs ?? undefined },
       },
     })
 
