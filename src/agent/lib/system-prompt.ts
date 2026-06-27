@@ -318,7 +318,17 @@ export const STOCK_FORECASTING_RULE = ''
 export const CUSTOMER_WIN_BACK_RULE = ''
 export const RETURNS_PRICING_INSIGHT_RULE = ''
 export const OUTCOME_LEARNING_RULE = ''
-export const KNOWLEDGE_GRAPH_RULE = ''
+// Graph-memory (Task B): entity-centric recall via a triple store, on top of
+// flat vector memory. Bounded so it never replaces save_memory/search_memory and
+// never adds a tool loop — only fires on genuine entity-relationship signals.
+// Stable/cached block.
+export const KNOWLEDGE_GRAPH_RULE = `
+## সম্পর্ক মনে রাখা ও খুঁজে বের করা (graph-memory)
+তোমার দুই ধরনের স্মৃতি: (১) **save_memory** — একক fact/preference; (২) **graph-memory** — দুটো জিনিসের মধ্যে **সম্পর্ক** (কে কার সাথে জড়িত)। entity = customer / order / staff / product / topic।
+- **graph_remember:** যখন বোঝো দুটো entity জড়িত — "এই কাস্টমার এই অর্ডার দিয়েছে", "এই অর্ডার এই স্টাফ হ্যান্ডেল করছে", "এই কাস্টমার এই product পছন্দ করে", "এই product বারবার return হয়" — তখন একটা সম্পর্ক লিখে রাখো (subject → predicate → object)। শুধুই সম্পর্কের জন্য; একক fact হলে save_memory।
+- **graph_recall:** "X সম্পর্কে কী জানো", "এই অর্ডার/কাস্টমারের সাথে কী কী জড়িত" — এমন প্রশ্নে graph_recall দিয়ে ওই entity-র চারপাশের সব সম্পর্ক টেনে আনো। বড় "X এর সব বলো" প্রশ্নে graph_recall + search_memory দুটোই মিলিয়ে উত্তর দাও।
+- অতিরিক্ত নয়: প্রতিটা টার্নে নয় — শুধু আসল সম্পর্ক-signal এলে লেখো, আর entity-কেন্দ্রিক প্রশ্নেই recall করো। injected Pinned Facts / এই কথোপকথনে যা আছে তা আবার টেনো না।
+`
 export const WEEKLY_SELF_REVIEW_RULE = ''
 export const MARKETING_CONTENT_INTELLIGENCE_RULE = ''
 export const FINANCIAL_INTELLIGENCE_RULE = ''
@@ -455,6 +465,7 @@ const LIFESTYLE_PROMPT_HEAD =
   + RESPONSE_STYLE_RULE
   + TASK_COMPLETION_RULE
   + CHECK_SOURCES_RULE
+  + KNOWLEDGE_GRAPH_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
 ## কাজ করার ধরন — এক কথায় উত্তর নাকি ধাপে ধাপে (model-agnostic)
@@ -536,6 +547,7 @@ const TRADING_STATIC_PROMPT =
   + VERIFY_BEFORE_REPLY_RULE
   + RESPONSE_STYLE_RULE
   + TASK_COMPLETION_RULE
+  + KNOWLEDGE_GRAPH_RULE
   + `\n${ADVISOR_ROLE_PROMPT}\n`
   + `\n${OWNER_TODO_ROLE_PROMPT}\n`
   + `\n${WORK_TODO_PROMPT}\n`

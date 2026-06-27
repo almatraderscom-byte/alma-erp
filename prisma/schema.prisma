@@ -1855,6 +1855,33 @@ model AgentMemory {
   @@map("agent_memory")
 }
 
+/// Graph-memory (Task B): directed relationship edges between business entities
+/// (customer/order/staff/product/topic). Layered over semantic memory to enable
+/// entity-centric recall via traversal. Learned knowledge only — not a mirror of
+/// ERP tables. Business-scoped; one triple per business is a single weighted row.
+model AgentKnowledgeEdge {
+  id           String    @id @default(uuid())
+  subjectType  String    @map("subject_type")
+  subjectId    String    @map("subject_id")
+  subjectLabel String?   @map("subject_label")
+  predicate    String
+  objectType   String    @map("object_type")
+  objectId     String    @map("object_id")
+  objectLabel  String?   @map("object_label")
+  weight       Int       @default(1)
+  note         String?
+  businessId   String    @default("ALMA_LIFESTYLE") @map("business_id")
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastSeenAt   DateTime? @map("last_seen_at")
+
+  @@unique([businessId, subjectType, subjectId, predicate, objectType, objectId], name: "edge_triple")
+  @@index([businessId, subjectType, subjectId])
+  @@index([businessId, objectType, objectId])
+  @@map("agent_knowledge_edge")
+}
+
 /// Execution record for every tool the agent invokes.
 model AgentToolCall {
   id         String        @id @default(uuid())
