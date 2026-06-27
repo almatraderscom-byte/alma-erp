@@ -10,6 +10,7 @@ export { Money, BdtText } from '@/components/ui/Currency'
 export { SearchableSelect, type SearchableSelectOption } from '@/components/ui/SearchableSelect'
 import { STATUS_COLORS, SEG_COLORS, RISK_COLORS, PAYMENT_COLORS, orderStatusLabel } from '@/lib/utils'
 import { PageActionBar } from '@/components/layout/PageActionBar'
+import { PageBackButton } from '@/components/layout/PageBackButton'
 import { AgentLauncherButton } from '@/components/layout/AgentAccess'
 import { AlertsActionButton } from '@/components/notifications/AlertsActionButton'
 import { usePathname } from 'next/navigation'
@@ -197,11 +198,14 @@ export function PageHeader({
       style={{ zIndex: PLATFORM_Z.stickyBanner, paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
     >
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-4">
-        <div className="min-w-0">
-          <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>
-          {subtitle != null && subtitle !== '' && (
-            <p className="mt-0.5 truncate text-[11px] text-muted">{subtitle}</p>
-          )}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <PageBackButton />
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>
+            {subtitle != null && subtitle !== '' && (
+              <p className="mt-0.5 truncate text-[11px] text-muted">{subtitle}</p>
+            )}
+          </div>
         </div>
         {hasActions && (
           <PageActionBar className="xl:justify-end">

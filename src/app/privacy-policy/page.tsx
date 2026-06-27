@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { PageBackButton } from '@/components/layout/PageBackButton'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy',
@@ -12,8 +13,12 @@ const EFFECTIVE_DATE = '12 June 2026'
 export default function PrivacyPolicyPage() {
   return (
     <main className="min-h-[100dvh] bg-white/[0.04] text-cream">
-      <div className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
+      <div
+        className="mx-auto max-w-3xl px-6 pb-12 sm:pb-16"
+        style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top) + 1.5rem))' }}
+      >
         <header className="mb-10 border-b border-border pb-8">
+          <PageBackButton force fallbackHref="/" className="mb-5" />
           <p className="text-sm font-medium uppercase tracking-wide text-muted">
             ALMA Lifestyle &amp; ALMA Online Shop
           </p>
