@@ -34,7 +34,7 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
-  files?: Array<{ previewUrl: string; mediaType: string }>
+  files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
@@ -124,6 +124,72 @@ function detectArtifact(text: string): { type: 'code' | 'markdown' | 'html' | 's
     return { type: 'markdown', content: text, title: firstHeading }
   }
   return null
+}
+
+/**
+ * Chat image thumbnail that ALWAYS resolves a real source — Claude.ai-style.
+ * Live sends pass a local blob `previewUrl`; persisted/reloaded messages carry only
+ * the storage `path`, so we fetch a short-lived signed URL on mount (the old code
+ * left `src=""`, so reloaded images — and live ones once the poll replaced the
+ * optimistic message — went blank). Click opens a full-size lightbox; shows a
+ * shimmer while loading and a placeholder if the image can't be fetched.
+ */
+function ChatImage({ previewUrl, path }: { previewUrl?: string; path?: string }) {
+  const [src, setSrc] = useState<string | null>(previewUrl || null)
+  const [failed, setFailed] = useState(false)
+  const [zoom, setZoom] = useState(false)
+
+  useEffect(() => {
+    if (previewUrl) { setSrc(previewUrl); return }
+    if (!path) { setFailed(true); return }
+    let active = true
+    setFailed(false)
+    fetch(`/api/assistant/files?path=${encodeURIComponent(path)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: { url?: string }) => { if (active && j.url) setSrc(j.url) })
+      .catch(() => { if (active) setFailed(true) })
+    return () => { active = false }
+  }, [previewUrl, path])
+
+  if (failed) {
+    return (
+      <div className="flex h-20 w-20 flex-col items-center justify-center rounded-2xl border border-border-subtle bg-white/[0.04] text-[9px] text-muted">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+        <span className="mt-0.5">ছবি নেই</span>
+      </div>
+    )
+  }
+  if (!src) {
+    return <div className="h-20 w-20 animate-pulse rounded-2xl border border-border-subtle bg-white/[0.06]" aria-hidden />
+  }
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src} alt="" decoding="async" loading="lazy"
+        onClick={() => setZoom(true)}
+        className="h-20 w-20 cursor-zoom-in rounded-2xl border border-border-subtle object-cover transition-opacity hover:opacity-90"
+      />
+      <AnimatePresence>
+        {zoom && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={() => setZoom(false)}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <motion.img
+              src={src} alt=""
+              initial={{ scale: 0.94 }} animate={{ scale: 1 }} exit={{ scale: 0.94 }}
+              transition={{ duration: 0.15 }}
+              className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
 }
 
 /** Strip lightweight markdown markers so a headline reads as plain prose. */
@@ -964,8 +1030,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       <div className="mb-2 flex flex-wrap gap-2 justify-end">
                         {msg.files.map((f, i) => (
                           f.mediaType.startsWith('image/') ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img key={i} src={f.previewUrl} alt="" decoding="async" loading="lazy" className="h-20 w-20 rounded-2xl object-cover border border-border-subtle" />
+                            <ChatImage key={i} previewUrl={f.previewUrl} path={f.path} />
                           ) : (
                             <div key={i} className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>

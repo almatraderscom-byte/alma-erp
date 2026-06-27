@@ -103,8 +103,11 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       timeline: Array.isArray(r.timeline) && r.timeline.length > 0 ? r.timeline : undefined,
       toolActivity: toolActivity.length > 0 ? toolActivity : undefined,
       files: fileBlocks.map((b) => ({
+        // Persisted file_ref blocks carry no local blob — the thumbnail resolves a
+        // short-lived signed URL from `path` at render time (see ChatImage).
         previewUrl: '',
         mediaType: b.mediaType ?? 'image/jpeg',
+        path: b.path,
       })),
       tokensIn: r.tokensIn ?? undefined,
       tokensOut: r.tokensOut ?? undefined,
