@@ -439,6 +439,29 @@ a,
   }
 }
 
+/* Claude-style streamed-text reveal (their `cds-reveal-in`). Claude eases each
+   new token in with a fade + slight upward slide instead of snapping. Markdown
+   re-renders the whole tree on every delta, so we can't key per-token mounts;
+   instead a soft bottom-edge mask makes the trailing (newest) line emerge — the
+   same "text rising into view" feel, and it survives full re-renders. Applied
+   only while a turn streams; removed the instant it settles. */
+.alma-stream-reveal {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%, #000 72%, rgba(0, 0, 0, 0.45) 92%, rgba(0, 0, 0, 0.15) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%, #000 72%, rgba(0, 0, 0, 0.45) 92%, rgba(0, 0, 0, 0.15) 100%
+  );
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-stream-reveal {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
 /* Agent chat — always allow text selection for copy */
 .agent-chat-root .prose-agent,
 .agent-chat-root .prose-agent p,
