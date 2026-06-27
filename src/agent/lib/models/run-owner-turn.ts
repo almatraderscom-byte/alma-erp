@@ -314,6 +314,9 @@ async function* runAlternateProviderTurn(
   let verifyRetries = 0
   let memoryNudgeSent = false
   let finalText = ''
+  // Accumulated reasoning trace (display-only, stored in usage metadata) so the
+  // "Thought for Ns" block survives a reload on the cheap-head path too.
+  let finalReasoning = ''
   let delegationAwaiting = false
   let delegationRoleLabel = ''
 
@@ -363,6 +366,7 @@ async function* runAlternateProviderTurn(
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
+          finalReasoning += ev.text
           yield { type: 'thinking_delta', delta: ev.text }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
@@ -532,7 +536,7 @@ async function* runAlternateProviderTurn(
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: finalReasoning.trim() ? finalReasoning.trim().slice(0, 12000) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])

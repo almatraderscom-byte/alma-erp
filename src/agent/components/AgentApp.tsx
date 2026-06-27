@@ -63,6 +63,10 @@ type MessageRow = {
   cacheCreation: number | null
   cacheRead: number | null
   costUsd: string | null
+  /** Persisted reasoning trace — restores the "Thought for Ns" block after reload. */
+  thinking?: string
+  /** Reconstructed tool steps (কাজের ধাপ) — restores the checklist after reload. */
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; input?: unknown }>
 }
 
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
@@ -83,6 +87,8 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheCreation: r.cacheCreation ?? undefined,
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+      thinking: r.thinking,
+      toolActivity: r.toolActivity,
       pendingAction: confirmBlock?.pendingActionId
         ? {
             id: confirmBlock.pendingActionId,

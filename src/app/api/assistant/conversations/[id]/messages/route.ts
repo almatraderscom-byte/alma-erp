@@ -67,6 +67,28 @@ export async function GET(
     select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   })
+
+  // Reconstruct the per-message "কাজের ধাপ" (tool steps) from the durable
+  // agent_tool_calls table so the checklist survives a reload — it used to live
+  // only in ephemeral stream state and vanished a moment after the reply.
+  const toolCallRows = await prisma.agentToolCall.findMany({
+    where: { messageId: { in: messages.map((m) => m.id) } },
+    select: { messageId: true, toolName: true, input: true, status: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  const toolActivityByMsg = new Map<string, Array<Record<string, unknown>>>()
+  for (const tc of toolCallRows) {
+    if (!tc.messageId) continue
+    const list = toolActivityByMsg.get(tc.messageId) ?? []
+    list.push({
+      id: `${tc.messageId}:${list.length}`,
+      name: tc.toolName,
+      done: true,
+      success: tc.status !== 'error',
+      input: tc.input ?? undefined,
+    })
+    toolActivityByMsg.set(tc.messageId, list)
+  }
   const statusById = new Map<string, string>()
   for (const a of allActions) statusById.set(a.id, a.status)
 
@@ -122,6 +144,10 @@ export async function GET(
       content,
       cacheCreation: num(u.cache_creation_input_tokens),
       cacheRead: num(u.cache_read_input_tokens),
+      // Persisted reasoning trace + reconstructed tool steps so the "Thought for
+      // Ns" block and the steps checklist stay visible after a reload.
+      thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
+      toolActivity: toolActivityByMsg.get(m.id),
     }
   })
 

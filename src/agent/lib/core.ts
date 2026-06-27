@@ -857,6 +857,12 @@ export async function* runAgentTurn(
   let headToolRounds = 0
   let budgetNudgeSent = false
   let canceled = false
+  // Accumulate the extended-thinking stream across the whole turn so the "Thought
+  // for Ns" block can be restored after a reload (owner wants it to persist like
+  // the Claude app, not vanish a moment after the reply). Stored in the message's
+  // `usage` metadata — NEVER in `content` — so it is display-only and can never be
+  // replayed into an API request as a (signature-less) thinking block.
+  let finalThinking = ''
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -936,7 +942,9 @@ export async function* runAgentTurn(
           } else if (delta.type === 'thinking_delta') {
             // Surface the model's extended-thinking stream so the UI can show a
             // live "Thought for Ns" block — how the agent is reasoning about the
-            // owner's message before it answers. Not persisted to history here.
+            // owner's message before it answers. Captured (display-only, in usage
+            // metadata) so the block survives a reload; never replayed to the API.
+            finalThinking += delta.thinking
             yield { type: 'thinking_delta', delta: delta.thinking }
           } else if (delta.type === 'input_json_delta') {
             activeBlockInputJson += delta.partial_json
@@ -1303,7 +1311,7 @@ export async function* runAgentTurn(
       data: {
         conversationId, role: 'assistant', content: storedContent,
         tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: finalThinking.trim() ? finalThinking.trim().slice(0, 12000) : undefined },
       },
     })
 

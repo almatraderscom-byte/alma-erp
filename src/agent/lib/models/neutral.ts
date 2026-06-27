@@ -2,7 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentTool } from '@/agent/tools/registry'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 
-type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string }
+type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string }
 
 export function toolsToNeutral(tools: AgentTool[]): NeutralTool[] {
   return tools.map((t) => ({
@@ -43,10 +43,23 @@ export function dbRowsToNeutral(
       .join('\n')
     const fileParts = blocks
       .filter((b) => b.type === 'file_ref')
-      .map((b) => `[Uploaded file path for tools: ${(b as { path?: string }).path ?? 'unknown'}]`)
+      .map((b) => `[Uploaded file path for tools: ${b.path ?? 'unknown'}]`)
+      .join('\n')
+    // Confirm-card breadcrumbs (call/finance approval cards). The native Claude
+    // path keeps these as a short note so the head remembers WHAT was approved;
+    // the cheap-head path used to DROP them, so a model switched into mid-thread
+    // (e.g. DeepSeek) lost the approval context and got confused about whether a
+    // call/action ever happened. Mirror the Claude path here, and add the resolved
+    // status when present so the new head also knows the outcome.
+    const cardParts = blocks
+      .filter((b) => b.type === 'confirm_card')
+      .map((b) => {
+        const status = b.status && b.status !== 'pending' ? ` — ${b.status}` : ''
+        return `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${b.summary ?? ''}${status}]`
+      })
       .join('\n')
 
-    const combined = [fileParts, textParts].filter(Boolean).join('\n').trim()
+    const combined = [fileParts, textParts, cardParts].filter(Boolean).join('\n').trim()
     if (combined) {
       out.push({ role: row.role as 'user' | 'assistant', content: combined })
     }
