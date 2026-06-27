@@ -114,13 +114,65 @@ function detectArtifact(text: string): { type: 'code' | 'markdown' | 'html' | 's
   return null
 }
 
+/** Strip lightweight markdown markers so a headline reads as plain prose. */
+function stripThoughtMd(s: string): string {
+  return s
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '')
+    .replace(/`/g, '')
+    .replace(/^[-*•]\s+/, '')
+    .trim()
+}
+
+type ThoughtStep = { headline: string; detail: string }
+
 /**
- * Cursor-style "Thought for Ns" block. While the agent is still reasoning (no reply
- * text yet) it stays expanded and streams the thinking live; once the reply begins it
- * collapses to a one-line summary that the owner can tap to re-expand.
+ * Parse Claude's extended-thinking trace into a sequence of collapsible steps,
+ * mirroring Claude.ai's "thinking" timeline (a vertical list of short headlines,
+ * each expandable to its full detail). Heuristic: prefer markdown headers / bold
+ * leads as step boundaries, otherwise fall back to blank-line paragraphs, then to
+ * single lines so a header-less blob still breaks into a few readable steps.
+ */
+function parseThoughtSteps(thinking: string): ThoughtStep[] {
+  const text = thinking.trim()
+  if (!text) return []
+
+  let blocks = text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean)
+  // One long paragraph with no blank lines → split on single newlines instead.
+  if (blocks.length <= 1) {
+    const byLine = text.split(/\n/).map((b) => b.trim()).filter(Boolean)
+    if (byLine.length > 1) blocks = byLine
+  }
+
+  return blocks.map((block) => {
+    const headerMatch = block.match(/^#{1,6}\s+(.+)/)
+    if (headerMatch) {
+      const rest = block.slice(headerMatch[0].length).trim()
+      return { headline: stripThoughtMd(headerMatch[1]), detail: rest }
+    }
+    const boldMatch = block.match(/^\*\*(.+?)\*\*[:.।]?\s*([\s\S]*)$/)
+    if (boldMatch) {
+      return { headline: stripThoughtMd(boldMatch[1]), detail: (boldMatch[2] ?? '').trim() }
+    }
+    // First sentence (Bangla danda ।, or . ! ?) becomes the headline.
+    const firstSentence = block.match(/^[\s\S]*?[।.!?](\s|$)/)?.[0]?.trim() ?? block
+    const headline = firstSentence.length > 96 ? `${firstSentence.slice(0, 94).trimEnd()}…` : firstSentence
+    const detail = block.length > headline.length ? block : ''
+    return { headline: stripThoughtMd(headline), detail }
+  })
+}
+
+/**
+ * Claude.ai-style "thinking" timeline. While the agent is still reasoning (no reply
+ * text yet) it stays expanded and streams the steps live; once the reply begins it
+ * collapses to a one-line summary the owner can tap to re-expand. Inside, the trace
+ * is broken into a vertical list of step headlines — each one its own click-to-expand
+ * row with a connector line and node dot, exactly like Claude's thinking panel.
  */
 function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinkingMs?: number; live: boolean }) {
   const [open, setOpen] = useState(live)
+  const [openSteps, setOpenSteps] = useState<Record<number, boolean>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
 
   // Keep expanded while thinking is live; collapse once the reply starts.
@@ -128,7 +180,9 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
     setOpen(live)
   }, [live])
 
-  // Autoscroll the thinking body as new text streams in.
+  const steps = useMemo(() => parseThoughtSteps(thinking), [thinking])
+
+  // Autoscroll the thinking body as new steps stream in.
   useEffect(() => {
     if (live && open && bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
@@ -136,14 +190,14 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
   }, [thinking, live, open])
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
-  const label = live ? 'Thinking…' : seconds != null ? `Thought for ${seconds}s` : 'Thought'
+  const label = live ? 'চিন্তা করছে…' : seconds != null ? `${seconds} সেকেন্ড ধরে ভেবেছে` : 'চিন্তা প্রক্রিয়া'
 
   return (
     <div className="mb-3">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-muted"
+        className="flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-muted-hi"
       >
         {live ? (
           <motion.span
@@ -159,6 +213,11 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
           </svg>
         )}
         <span>{label}</span>
+        {steps.length > 0 && (
+          <span className="rounded-full bg-white/[0.06] px-1.5 py-px text-[10px] tabular-nums text-muted">
+            {steps.length} ধাপ
+          </span>
+        )}
         <svg
           width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           strokeLinecap="round" strokeLinejoin="round"
@@ -177,11 +236,69 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div
-              ref={bodyRef}
-              className="mt-2 max-h-[240px] overflow-y-auto border-l-2 border-white/[0.07] pl-3 text-[13px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-            >
-              {thinking}
+            <div ref={bodyRef} className="mt-2 max-h-[340px] overflow-y-auto pr-1">
+              <div className="flex flex-col">
+                {steps.map((step, i) => {
+                  const isOpen = openSteps[i] ?? false
+                  const isLast = i === steps.length - 1
+                  const stepLive = live && isLast
+                  const hasDetail = step.detail.trim().length > 0
+                  return (
+                    <div key={i} className="relative pl-5">
+                      {/* connector line down to the next node */}
+                      {!isLast && (
+                        <span className="absolute left-[5px] top-[16px] bottom-0 w-px bg-white/[0.08]" aria-hidden />
+                      )}
+                      {/* node dot (spinner on the live/last step) */}
+                      <span className="absolute left-0 top-[5px] flex h-[11px] w-[11px] items-center justify-center" aria-hidden>
+                        {stepLive ? (
+                          <motion.span
+                            className="h-[9px] w-[9px] rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                          />
+                        ) : (
+                          <span className="h-[7px] w-[7px] rounded-full bg-white/25" />
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => hasDetail && setOpenSteps((s) => ({ ...s, [i]: !s[i] }))}
+                        className={`flex w-full items-start gap-1.5 py-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'} group`}
+                      >
+                        <span className="min-w-0 flex-1 text-[12.5px] leading-snug text-muted-hi break-words [overflow-wrap:anywhere] group-hover:text-cream">
+                          {step.headline}
+                        </span>
+                        {hasDetail && (
+                          <svg
+                            width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                            strokeLinecap="round" strokeLinejoin="round"
+                            className={`mt-[3px] shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                            aria-hidden
+                          >
+                            <path d="M9 6l6 6-6 6" />
+                          </svg>
+                        )}
+                      </button>
+                      <AnimatePresence initial={false}>
+                        {isOpen && hasDetail && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.18 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="pb-2 pr-1 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                              {step.detail}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </motion.div>
         )}

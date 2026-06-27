@@ -172,7 +172,6 @@ type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }
-  | { type: 'thinking'; text: string; durationMs?: number }
   | FileRefBlock
 
 // ── History loading with file reconstruction ───────────────────────────────
@@ -264,10 +263,6 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
         // must never be sent verbatim to the model — collapse it to a short note.
         const cc = block as Extract<StoredContentBlock, { type: 'confirm_card' }>
         apiBlocks.push({ type: 'text', text: `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${cc.summary}]` })
-      } else if (block.type === 'thinking') {
-        // UI-only "Thought for Ns" breadcrumb — drop it from replayed history. Its
-        // shape isn't a valid Anthropic thinking block, so it must never be sent.
-        continue
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }
@@ -846,8 +841,8 @@ export async function* runAgentTurn(
   let headToolRounds = 0
   let budgetNudgeSent = false
   let canceled = false
-  // Accumulate the extended-thinking trace so it persists as a "Thought for Ns" block
-  // (Claude-style) instead of vanishing when the live stream ends.
+  // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
+  // "Thought for Ns" block instead of vanishing when the live stream ends.
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined
@@ -1286,12 +1281,6 @@ export async function* runAgentTurn(
     const storedContent: StoredContentBlock[] = joinedText
       ? [{ type: 'text', text: joinedText }]
       : [{ type: 'text', text: '' }]
-    // Prepend the extended-thinking trace as a UI-only breadcrumb so the
-    // "Thought for Ns" block survives a page reload (the history loader skips it,
-    // and RAG embedding below stays text-only so reasoning never pollutes recall).
-    if (thinkingText.trim()) {
-      storedContent.unshift({ type: 'thinking', text: thinkingText, durationMs: thinkingMs })
-    }
     // Append confirm-card breadcrumbs so the approval card (and its eventual
     // approved/rejected outcome) survives a page reload — issue: cards vanished
     // on refresh because only text blocks were persisted.
@@ -1309,11 +1298,14 @@ export async function* runAgentTurn(
       data: {
         conversationId, role: 'assistant', content: storedContent,
         tokensIn: totalInputTokens, tokensOut: totalOutputTokens, costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens },
+        // Persist the reasoning trace in usage metadata (display-only) so the
+        // "Thought for Ns" block survives reload; the GET route surfaces it as
+        // `thinking`/`thinkingMs` and history replay never sees it.
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined },
       },
     })
 
-    embedMessageInBackground(savedMsg.id, storedContent.filter((b) => b.type !== 'thinking'))
+    embedMessageInBackground(savedMsg.id, storedContent)
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

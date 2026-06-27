@@ -317,8 +317,8 @@ async function* runAlternateProviderTurn(
   let finalText = ''
   let delegationAwaiting = false
   let delegationRoleLabel = ''
-  // Accumulate the extended-thinking trace so it persists as a "Thought for Ns" block
-  // (Claude-style) instead of vanishing when the live stream ends.
+  // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
+  // "Thought for Ns" block instead of vanishing when the live stream ends.
   let thinkingText = ''
   let thinkingStartedAt = 0
   let thinkingMs: number | undefined
@@ -536,23 +536,18 @@ async function* runAlternateProviderTurn(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
-    // dbRowsToNeutral keeps only text/file_ref blocks for history, so a thinking
-    // block here is replay-safe — it is reconstructed by the UI but ignored by the model.
-    const savedContent: Array<Record<string, unknown>> = []
-    if (thinkingText.trim()) {
-      savedContent.push({ type: 'thinking', text: thinkingText, durationMs: thinkingMs })
-    }
-    savedContent.push({ type: 'text', text: finalText })
-
     const savedMsg = await db.agentMessage.create({
       data: {
         conversationId,
         role: 'assistant',
-        content: savedContent,
+        content: [{ type: 'text', text: finalText }],
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider },
+        // Persist the reasoning trace in usage metadata (display-only) so the
+        // "Thought for Ns" block survives reload. The GET messages route surfaces
+        // it as `thinking`/`thinkingMs`; history replay never sees it.
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])

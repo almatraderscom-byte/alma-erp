@@ -143,6 +143,10 @@ export async function GET(
       toolCalls: toolsByMsg.get(m.id) ?? [],
       cacheCreation: num(u.cache_creation_input_tokens),
       cacheRead: num(u.cache_read_input_tokens),
+      // Surface the extended-thinking trace (persisted in usage metadata) so the
+      // "Thought for Ns" block survives reload, not just the live stream.
+      thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
+      thinkingMs: typeof u.reasoningMs === 'number' ? u.reasoningMs : undefined,
     }
   })
 
