@@ -60,4 +60,9 @@ describe('createProductInPostgres', () => {
     await createProductInPostgres({ name: 'Test', sku: 'TP-1', initial_stock: 10, sync_to_stock: true })
     expect(db.calls.stockCreate).toHaveLength(0)
   })
+
+  it('persists the variants array (sent by the modal) into variantsJson', async () => {
+    await createProductInPostgres({ name: 'Shirt', sku: 'SH-1', variants: ['S', 'M', 'L'], sync_to_stock: false })
+    expect(db.calls.productUpsert[0].create).toMatchObject({ variantsJson: JSON.stringify(['S', 'M', 'L']) })
+  })
 })

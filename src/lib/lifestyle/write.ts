@@ -736,7 +736,13 @@ export async function createProductInPostgres(body: Record<string, unknown>) {
       supplier: String(body.supplier ?? 'manual'),
       supplierProductId: body.supplier_product_id ? String(body.supplier_product_id) : null,
       description: body.description ? String(body.description) : null,
-      variantsJson: typeof body.variants_json === 'string' ? body.variants_json : null,
+      // The manual Add-Product modal sends `variants` (an array); only the supplier
+      // import sends `variants_json`. Accept either so entered variants aren't dropped.
+      variantsJson: typeof body.variants_json === 'string'
+        ? body.variants_json
+        : Array.isArray(body.variants) && body.variants.length
+          ? JSON.stringify(body.variants)
+          : null,
     },
     update: {
       name,
@@ -795,6 +801,20 @@ export async function updateProductInPostgres(body: Record<string, unknown>) {
       notes: body.notes != null ? String(body.notes) : undefined,
     },
   })
+
+  // The Inventory list renders STOCK rows, not catalog rows — keep them in sync so a
+  // product rename/recategorise/cost change doesn't leave the inventory display stale.
+  const stock = await findStockBySku(sku)
+  if (stock) {
+    await prisma.lifestyleStockItem.update({
+      where: { id: stock.id },
+      data: {
+        product: body.name != null ? String(body.name) : undefined,
+        category: body.category != null ? String(body.category) : undefined,
+        buyingPrice: body.default_cogs != null || body.cogs != null ? num(body.default_cogs ?? body.cogs) : undefined,
+      },
+    })
+  }
   return { ok: true, product_id: sku }
 }
 
@@ -962,6 +982,19 @@ export async function inventoryActionInPostgres(body: Record<string, unknown>) {
         buyingPrice: data.buyingPrice != null ? num(data.buyingPrice) : undefined,
       },
     })
+    // Mirror name/category/cost back to the catalog product (if one exists) so the
+    // product master and the inventory row don't drift apart.
+    const product = await prisma.lifestyleProduct.findUnique({ where: { sku } })
+    if (product) {
+      await prisma.lifestyleProduct.update({
+        where: { sku },
+        data: {
+          name: data.product != null ? String(data.product) : undefined,
+          category: data.category != null ? String(data.category) : undefined,
+          defaultCogs: data.buyingPrice != null ? num(data.buyingPrice) : undefined,
+        },
+      })
+    }
     return { ok: true, sku }
   }
   if (action === 'consolidate_lifestyle') {
