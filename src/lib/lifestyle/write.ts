@@ -662,6 +662,64 @@ export async function updateOrderTrackingInPostgres(body: Record<string, unknown
 export async function createProductInPostgres(body: Record<string, unknown>) {
   const name = String(body.name ?? '').trim()
   if (!name) return { error: 'name required' }
+
+  // Collection / multi-pool inventory: the form sends one bulk_row per pool
+  // (MEN → KIDS/ADULT, WOMEN → ORNA/TWO PIECE/THREE PIECE, etc.). Create a real
+  // stock row for each, with its collection code and the entered quantity — this
+  // was previously ignored, so collection products silently saved nothing.
+  const bulkRows = Array.isArray(body.bulk_rows) ? (body.bulk_rows as Array<Record<string, unknown>>) : []
+  if (String(body.inventory_mode ?? '') === 'collection' && bulkRows.length) {
+    const collectionCode = String(body.collection_code ?? '').trim().toUpperCase()
+    const reorder = num(body.reorder_level) || 5
+    let saved = 0
+    for (const r of bulkRows) {
+      const rowSku = String(r.sku ?? '').trim()
+      if (!rowSku) continue
+      const size = String(r.sizeValue ?? r.variantGroup ?? '').trim()
+      const qty = num(r.stockQty)
+      const buying = num(r.buyingPrice)
+      const meta = {
+        product: String(r.product ?? name),
+        category: String(r.category ?? body.category ?? ''),
+        collectionCode: collectionCode || (r.collectionCode ? String(r.collectionCode) : null),
+        collectionType: r.collectionType ? String(r.collectionType) : (body.collection_type ? String(body.collection_type) : null),
+        sizeGroup: r.sizeCategory ? String(r.sizeCategory) : (r.sizeValue ? String(r.sizeValue) : null),
+        variantGroup: r.variantGroup ? String(r.variantGroup) : null,
+        buyingPrice: buying,
+        barcode: r.barcode ? String(r.barcode) : '',
+        imageUrl: body.image_url ? String(body.image_url) : null,
+        active: true,
+        archived: false,
+      }
+      await prisma.lifestyleStockItem.upsert({
+        where: { sku_size: { sku: rowSku, size } },
+        create: {
+          sku: rowSku,
+          size,
+          ...meta,
+          opening: qty,
+          currentStock: qty,
+          available: qty,
+          reorderLevel: reorder,
+          status: computeStockStatus(qty, reorder),
+          stockValue: buying * qty,
+        },
+        // Re-adding an existing pool refreshes metadata and un-archives it, but keeps
+        // the on-hand stock (so a re-save can't silently wipe inventory).
+        update: meta,
+      })
+      saved++
+    }
+    if (collectionCode) {
+      await prisma.lifestyleProduct.upsert({
+        where: { sku: collectionCode },
+        create: { sku: collectionCode, name, category: String(body.category ?? ''), defaultCogs: 0, defaultPrice: 0, active: true, notes: '' },
+        update: { name, category: String(body.category ?? '') },
+      })
+    }
+    return { ok: true, product_id: collectionCode || name, rows: saved }
+  }
+
   let sku = String(body.sku ?? '').trim()
   if (!sku) sku = `SKU-${Date.now()}`
   await prisma.lifestyleProduct.upsert({
@@ -692,17 +750,26 @@ export async function createProductInPostgres(body: Record<string, unknown>) {
   if (body.sync_to_stock !== false) {
     const existing = await findStockBySku(sku)
     if (!existing) {
+      // Honour the opening quantity the user entered (was hardcoded to 0, so every
+      // new product showed up out-of-stock).
+      const initial = num(body.initial_stock)
+      const reorder = num(body.reorder_level) || 5
+      const buying = num(body.default_cogs ?? body.cogs)
       await prisma.lifestyleStockItem.create({
         data: {
           sku,
           product: name,
           category: String(body.category ?? ''),
-          opening: 0,
-          currentStock: 0,
-          available: 0,
-          reorderLevel: 5,
-          status: 'OUT OF STOCK',
-          buyingPrice: num(body.default_cogs ?? body.cogs),
+          color: String(body.color ?? ''),
+          size: String(body.size ?? ''),
+          opening: initial,
+          currentStock: initial,
+          available: initial,
+          reorderLevel: reorder,
+          status: computeStockStatus(initial, reorder),
+          buyingPrice: buying,
+          stockValue: buying * initial,
+          imageUrl: body.image_url ? String(body.image_url) : null,
         },
       })
     }
