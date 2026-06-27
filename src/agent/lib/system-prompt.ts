@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { RecalledTurn } from '@/agent/lib/message-recall'
+import { OWNER_TASK_REMINDER_RULES, STAFF_TASK_AWARENESS_RULES } from '@/agent/lib/owner-active-tasks-context'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
@@ -750,6 +751,13 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
         stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
       }
     }
+
+    // Owner-todo + staff-task behavioural rules are CONSTANT prose. They belong in
+    // the cached stable prefix, not the per-turn volatile block where they were
+    // re-billed fresh every turn. Only the live task LISTS stay volatile (they
+    // change); the rules that govern how to use them never do.
+    stableParts.push(OWNER_TASK_REMINDER_RULES)
+    stableParts.push(STAFF_TASK_AWARENESS_RULES)
 
     if (businessId === 'ALMA_TRADING') {
       stableParts.push(

@@ -49,7 +49,7 @@ export async function buildOwnerActiveTasksContextBlock(
   })
 
   if (rows.length === 0) {
-    return `${OWNER_TASK_REMINDER_RULES}\n\n## Boss-এর active tasks\n(আজ/কাল — কোনো open owner todo নেই)`
+    return `## Boss-এর active tasks\n(আজ/কাল — কোনো open owner todo নেই)`
   }
 
   const lines = rows.map((r) => {
@@ -60,7 +60,7 @@ export async function buildOwnerActiveTasksContextBlock(
     return `- [${r.status}] ${r.title} (${dueLabel}${r.priority !== 'normal' ? ` · ${r.priority}` : ''})`
   })
 
-  return `${OWNER_TASK_REMINDER_RULES}\n\n## Boss-এর active tasks (${rows.length})\n${lines.join('\n')}`
+  return `## Boss-এর active tasks (${rows.length})\n${lines.join('\n')}`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ export async function buildStaffActiveTasksContextBlock(
   })
 
   if (rows.length === 0) {
-    return `${STAFF_TASK_AWARENESS_RULES}\n\n(এখন কোনো active staff কাজ নেই)`
+    return `(এখন কোনো active staff কাজ নেই)`
   }
 
   // Group by staff name, preserving the dueAt/createdAt ordering within each group.
@@ -152,5 +152,5 @@ export async function buildStaffActiveTasksContextBlock(
     ([name, lines]) => `### ${name} (${lines.length})\n${lines.join('\n')}`,
   )
 
-  return `${STAFF_TASK_AWARENESS_RULES}\n\n## অফিসের active staff কাজ (${rows.length})\n${sections.join('\n\n')}`
+  return `## অফিসের active staff কাজ (${rows.length})\n${sections.join('\n\n')}`
 }
