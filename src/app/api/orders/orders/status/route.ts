@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireRoles } from '@/lib/api-guards'
+import { apiFailure } from '@/lib/safe-api-response'
 import { fetchOrderById } from '@/lib/lifestyle/read'
 import { dispatchUpdateOrderStatus } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
@@ -15,6 +17,8 @@ const VALID_STATUSES = new Set([
 const DESTRUCTIVE_STATUSES = new Set(['CANCELLED', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID'])
 
 export async function POST(req: NextRequest) {
+  const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
+  if (denied) return denied
   try {
     const { id, status, reason } = await req.json()
     if (!id || !status) return NextResponse.json({ error: 'id and status required' }, { status: 400 })
@@ -98,7 +102,10 @@ export async function POST(req: NextRequest) {
       commission,
     })
     return NextResponse.json({ ...(result as Record<string, unknown>), commission })
-  } catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }) }
+  } catch (e) {
+    logEvent('error', 'orders.status_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'Could not update order status.', { status: 500 })
+  }
 }
 
 function normalizeRequestedStatus(status: string) {

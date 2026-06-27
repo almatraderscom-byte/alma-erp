@@ -470,7 +470,8 @@ export default function EmployeeDetailPage() {
   async function submitSalary(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!employee) return
-    const fd = new FormData(e.currentTarget)
+    const formEl = e.currentTarget // capture before any await — React nulls currentTarget afterwards
+    const fd = new FormData(formEl)
     const newSalary = roundMoney(Number(fd.get('new_salary') || 0))
     const effectiveDate = String(fd.get('effective_date') || todayIso)
     const reason = String(fd.get('reason') || '').trim()
@@ -508,7 +509,7 @@ export default function EmployeeDetailPage() {
       toast.success(`Salary updated to ${formatMoneyBDT(Number(j.new_salary ?? newSalary))}`)
       setOpenSalary(false)
       refetchEmployees()
-      e.currentTarget.reset()
+      formEl.reset()
     } catch (err) {
       toast.error((err as Error).message || 'Failed to update salary')
     } finally {

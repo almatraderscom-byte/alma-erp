@@ -154,9 +154,21 @@ export function matchCollectionStock(
       || matches.find(({ stock }) => String(stock.size).trim() === String(selected.size || '').trim())?.stock
   }
 
-  if (collection.collectionType === 'CUSTOM' || collection.collectionType === 'SINGLE') {
+  if (collection.collectionType === 'SINGLE') {
+    // A single product has exactly one stock row and no size/variant pools, so it
+    // resolves by collection code alone. If a target is given, prefer an exact match
+    // but still fall back to the sole row so the SKU always connects to inventory.
     const target = String(selected.variant || selected.size || '').trim().toUpperCase()
-    if (!target) return undefined
+    const byTarget = target
+      ? (activeMatches.find(({ stock }) => String(stock.size || stock.variantGroup || '').trim().toUpperCase() === target)?.stock
+        || matches.find(({ stock }) => String(stock.size || stock.variantGroup || '').trim().toUpperCase() === target)?.stock)
+      : undefined
+    return byTarget || activeMatches[0]?.stock || matches[0]?.stock
+  }
+
+  if (collection.collectionType === 'CUSTOM') {
+    const target = String(selected.variant || selected.size || '').trim().toUpperCase()
+    if (!target) return activeMatches.length === 1 ? activeMatches[0].stock : undefined
     return activeMatches.find(({ meta, stock }) =>
       String(meta.variantGroup || '').trim().toUpperCase() === target
       || String(stock.size || '').trim().toUpperCase() === target

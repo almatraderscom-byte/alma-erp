@@ -61,7 +61,8 @@ export default function ExpensesPage() {
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const fd = new FormData(e.currentTarget)
+    const formEl = e.currentTarget // capture before any await — React nulls currentTarget afterwards
+    const fd = new FormData(formEl)
     const payload = {
       title: String(fd.get('title') || ''),
       category: String(fd.get('category') || ''),
@@ -84,7 +85,9 @@ export default function ExpensesPage() {
       setOpen(false)
       setReceipt(null)
       refetch()
-      e.currentTarget.reset()
+      formEl.reset()
+    } else {
+      toast.error('Could not record expense. Please try again.')
     }
   }
 

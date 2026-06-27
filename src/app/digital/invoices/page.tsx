@@ -75,7 +75,17 @@ export default function DigitalInvoicesPage() {
       status: 'Sent',
       invoice_type: form.invoice_type as 'one-time' | 'recurring',
     })
-    if (r?.ok) { toast.success('Invoice created'); setShowForm(false); refetch() }
+    if (r?.ok) {
+      toast.success('Invoice created')
+      setShowForm(false)
+      setForm({
+        client_name: '', client_id: '', project_id: '', amount: '', invoice_type: 'one-time',
+        due_date: '', recurring_interval: '', notes: '',
+      })
+      refetch()
+    } else {
+      toast.error('Could not create invoice. Please try again.')
+    }
   }
 
   async function handlePartialPay(inv: { id: string; client_id: string; client_name: string }) {

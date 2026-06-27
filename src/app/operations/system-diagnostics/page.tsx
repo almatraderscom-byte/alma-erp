@@ -146,7 +146,7 @@ export default function SystemDiagnosticsPage() {
   const s = data?.selfieStorage
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="System Diagnostics"
         subtitle="Read-only observability for Telegram queue and photo storage health. SUPER_ADMIN only."

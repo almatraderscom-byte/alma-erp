@@ -6,9 +6,15 @@ import { notifyRole } from '@/lib/notifications'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { enqueueLowStockAlertSms } from '@/services/sms/events'
 import { logEvent } from '@/lib/logger'
+import { getJwt } from '@/lib/api-guards'
+import { normalizeAlmaRole } from '@/lib/roles'
+import { redactStockCost } from '@/lib/lifestyle/redact-cost'
+import { apiFailure } from '@/lib/safe-api-response'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const token = await getJwt(req)
+    const role = normalizeAlmaRole(token?.role as string)
     const data = await getLifestyleStock()
     const low = Number(data.summary?.low_stock || 0)
     const out = Number(data.summary?.out_of_stock || 0)
@@ -32,11 +38,12 @@ export async function GET() {
         ]).catch(error => logEvent('warn', 'stock.low_stock_dispatch_failed', { error: (error as Error).message }))
       }
     }
-    return NextResponse.json(data, {
+    return NextResponse.json(redactStockCost(data, role), {
       headers: { 'Cache-Control': 'private, max-age=30, stale-while-revalidate=60' },
     })
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+    logEvent('error', 'stock.read_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'Could not load inventory.', { status: 500 })
   }
 }
 

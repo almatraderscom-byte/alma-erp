@@ -134,6 +134,16 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
   async function submitOrderEdit(e: React.FormEvent) {
     e.preventDefault()
     if (editBusy) return
+    const qtyNum = Number(editForm.qty)
+    const priceNum = Number(editForm.unit_price)
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      toast.error('Quantity must be a positive number')
+      return
+    }
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      toast.error('Unit price must be a valid number')
+      return
+    }
     setEditBusy(true)
     try {
       const result = await safeFetchJson<{ ok?: boolean; error?: { message?: string }; failed?: Array<{ field: string; error?: string }> }>(
@@ -149,8 +159,8 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               phone: editForm.phone,
               address: editForm.address,
               product: editForm.product,
-              qty: Number(editForm.qty),
-              unit_price: Number(editForm.unit_price),
+              qty: qtyNum,
+              unit_price: priceNum,
               payment: editForm.payment,
               notes: editForm.notes,
             },
@@ -159,7 +169,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
       )
       if (!result.ok) throw new Error(result.error.message)
       if (result.data?.failed?.length) {
-        toast.error(`Some fields failed: ${result.data.failed.map(f => f.field).join(', ')}`)
+        toast.error(result.data.failed.map(f => f.error || f.field).join('; '))
       } else {
         toast.success('Order updated')
       }
@@ -402,7 +412,10 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
         transition={{ type: 'spring', damping: 26, stiffness: 300 }}
       >
 
-        <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 py-4 z-10">
+        <div
+          className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 pb-4 z-10"
+          style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
+        >
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[11px] text-gold font-bold mb-1">{order.id}</p>
@@ -981,7 +994,7 @@ function OrdersPageContent() {
                 </button>
               ))
           }
-          {!loading && orders.length === 0 && (
+          {!tableLoading && orders.length === 0 && (
             <Empty
               icon="◫"
               title="No orders found for selected period"

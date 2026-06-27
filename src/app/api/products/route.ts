@@ -3,16 +3,23 @@ import { getLifestyleProducts } from '@/lib/lifestyle/read'
 import { dispatchCreateProduct } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { errorMeta, logEvent } from '@/lib/logger'
+import { getJwt } from '@/lib/api-guards'
+import { normalizeAlmaRole } from '@/lib/roles'
+import { redactProductCost } from '@/lib/lifestyle/redact-cost'
+import { apiFailure } from '@/lib/safe-api-response'
 
 /** No CDN stale reads — inventory and product forms need fresh PRODUCT MASTER after writes. */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const token = await getJwt(req)
+    const role = normalizeAlmaRole(token?.role as string)
     const data = await getLifestyleProducts()
-    return NextResponse.json(data, {
+    return NextResponse.json(redactProductCost(data, role), {
       headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=120' },
     })
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 })
+    logEvent('error', 'products.read_failed', errorMeta(e))
+    return apiFailure('server_error', 'Could not load products.', { status: 500 })
   }
 }
 

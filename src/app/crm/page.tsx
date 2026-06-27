@@ -90,7 +90,7 @@ export default function CrmPage() {
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader
         title="CRM"
         subtitle={<>{summary?.total ?? 0} customers · <BdtText value={fmt(summary?.total_revenue ?? 0)} /> lifetime revenue</>}

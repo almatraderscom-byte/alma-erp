@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { api, APIError } from '@/lib/api'
+import { roundMoney } from '@/lib/money'
 import { EMPTY_NEW_ORDER_FORM, newOrderItem } from './empty-form'
 import type { FormErrors, NewOrderForm, NewOrderItemForm } from './types'
 import { validateNewOrderForm } from './validate'
@@ -266,8 +267,8 @@ export function useNewOrderForm(onSuccess?: () => void) {
         category: firstItem.category,
         size: firstItem.size || firstItem.variant,
         qty: totalQty || 1,
-        unit_price: totalQty > 0 ? subtotal / totalQty : subtotal,
-        sell_price: Math.max(0, subtotal - discount),
+        unit_price: roundMoney(totalQty > 0 ? subtotal / totalQty : subtotal),
+        sell_price: roundMoney(Math.max(0, subtotal - discount)),
         payment_method: form.payment,
         source: form.source,
         status: form.status,
@@ -275,14 +276,14 @@ export function useNewOrderForm(onSuccess?: () => void) {
         notes: form.notes.trim(),
         sku: firstItem.sku.trim(),
         cogs: totalCogs,
-        courier_charge: Number(form.courier_charge) || 0,
+        courier_charge: totalsSnapshot.courierCost,
         shipping_fee: shipping,
         discount,
         paid_amount: paidAmount,
-        due_amount: Math.max(0, payable - paidAmount),
+        due_amount: totalsSnapshot.due,
         estimated_profit: estimatedProfit,
         inventory_cost: totalCogs,
-        courier_cost: Number(form.courier_charge) || 0,
+        courier_cost: totalsSnapshot.courierCost,
         items: form.items.map((item, index) => ({
           line_no: index + 1,
           product_code: item.product_code.trim() || item.sku.trim(),

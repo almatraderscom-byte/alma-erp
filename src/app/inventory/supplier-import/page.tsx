@@ -165,7 +165,12 @@ export default function SupplierImportPage() {
     } else {
       setRetryItems(null)
     }
-    toast.success(`Imported ${res.created?.length ?? 0} products`)
+    const createdN = res.created?.length ?? 0
+    if (createdN > 0) {
+      toast.success(`Imported ${createdN} products${errN ? `, ${errN} failed` : ''}`)
+    } else {
+      toast.error(errN ? `Import failed: ${errN} error${errN > 1 ? 's' : ''}` : 'No products were imported')
+    }
     void refetchCatalog()
   }
 

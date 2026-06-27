@@ -252,7 +252,7 @@ export default function InvoicePage() {
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       <PageHeader title="Invoices" subtitle={`${invoices.length} issued · ${pendingOrders.length} pending`} />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="p-4 md:p-6 pb-24 md:pb-6 space-y-5">

@@ -87,13 +87,15 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
   if (pathname.startsWith('/api/customers') && isWrite) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (pathname.startsWith('/api/supplier-import') && isWrite) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (pathname.startsWith('/api/invoice') && isWrite) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
-  if (pathname.startsWith('/api/digital') && isWrite) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  // CDIT (digital) and Finance data — including reads — are owner/admin only
+  // (owner decision 2026-06): low-privilege roles must not see financial ledgers.
+  if (pathname.startsWith('/api/digital')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (
     pathname.startsWith('/api/orders/orders/status')
     || pathname.startsWith('/api/orders/orders/field')
     || pathname.startsWith('/api/orders/orders/tracking')
   ) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
-  if (pathname.startsWith('/api/finance') && isWrite) return !['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role)
+  if (pathname.startsWith('/api/finance')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
 
   return false
 }

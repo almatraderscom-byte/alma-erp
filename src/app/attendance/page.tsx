@@ -686,8 +686,8 @@ function AttendancePageInner() {
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex justify-end gap-2">
                 <Button size="xs" variant="secondary" onClick={() => setReview(null)}>Cancel</Button>
-                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} onClick={() => void submitReview()}>
-                  {review.action === 'APPROVE' ? 'Approve' : 'Reject'}
+                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} disabled={reviewBusy} onClick={() => void submitReview()}>
+                  {reviewBusy ? 'Processing…' : review.action === 'APPROVE' ? 'Approve' : 'Reject'}
                 </Button>
               </div>
             </div>

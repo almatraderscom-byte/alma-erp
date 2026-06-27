@@ -733,8 +733,8 @@ export default function PayrollPage() {
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex justify-end gap-2">
                 <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>Cancel</Button>
-                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" onClick={() => void submitReview()}>
-                  {review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
+                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" disabled={reviewBusy} onClick={() => void submitReview()}>
+                  {reviewBusy ? 'Processing…' : review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
                 </Button>
               </div>
             </div>

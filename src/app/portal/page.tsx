@@ -283,7 +283,7 @@ export default function EmployeePortalPage() {
   const ordersHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/projects' : '/orders/new'
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-[100dvh] bg-transparent">
       {!systemOwner && empId && (
         <>
           <OperationalTaskHero
