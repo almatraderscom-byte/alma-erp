@@ -56,6 +56,42 @@ html.agent-route .overflow-y-auto {
   overscroll-behavior-x: none;
 }
 
+/* PERMANENT iOS FIX (part 3) — the actual recurring "zoom-out after chatting" bug.
+ *
+ * Part 2 intentionally leaves `.overflow-x-auto` strips (wide markdown/cost tables,
+ * code blocks, the live HTML dashboard) horizontally scrollable. But a strip with a
+ * `min-w-[640px]` child is itself wider than the phone unless it is clamped — so the
+ * strip widened the whole page and WKWebView ran shrink-to-fit, zooming the entire
+ * UI out and pushing text off-screen. The fix is to clamp every horizontal strip to
+ * its container: the wide child then scrolls INSIDE the strip and can never widen
+ * the page. This covers every current AND future wide block generically (tables,
+ * <pre>, dashboards) — the reason past one-off fixes kept regressing.
+ *
+ * `min-width` beats `max-width` per spec, so the inner table keeps its 640px and
+ * stays scrollable; only the strip (and the page) are pinned to the device width. */
+html.agent-route .overflow-x-auto {
+  max-width: 100%;
+}
+
+/* Hard ceiling so nothing — wide child, animated re-measure, long unbroken URL —
+ * can ever make the scroll root or layout box exceed the viewport; residual
+ * overflow is clipped, never rendered off-screen (which is what iOS zooms to fit). */
+html.agent-route .agent-chat-root,
+html.agent-route .agent-main-height {
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
+/* Long unbroken tokens (URLs, hashes, IDs) in normal message text must wrap, not
+ * stretch the bubble past the screen. Code stays in its own scrollable <pre>. */
+html.agent-route .agent-chat-root p,
+html.agent-route .agent-chat-root li,
+html.agent-route .agent-chat-root h1,
+html.agent-route .agent-chat-root h2,
+html.agent-route .agent-chat-root h3 {
+  overflow-wrap: anywhere;
+}
+
 /* Calmer aura on agent routes (owner request: "aura ektu halka koro jate chat
  * clear dekha jay"). The aurora is shared app-wide and vivid; on /agent/* we just
  * dim it so message text keeps strong contrast. Scoped to .agent-route, so the ERP
