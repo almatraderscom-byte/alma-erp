@@ -3064,6 +3064,27 @@ model LifestyleStockItem {
   @@map("lifestyle_stock_items")
 }
 
+/// Audit trail for manual stock adjustments (damaged / lost / correction / restock).
+/// The reason the user types on an inventory "Adjust" was previously discarded;
+/// this records who changed what, by how much, and why.
+model LifestyleStockAdjustment {
+  id            String   @id @default(cuid())
+  businessId    String   @default("ALMA_LIFESTYLE") @map("business_id")
+  sku           String
+  size          String   @default("")
+  previousStock Int      @map("previous_stock")
+  newStock      Int      @map("new_stock")
+  delta         Int
+  reason        String   @default("")
+  actor         String   @default("")
+  actorUserId   String?  @map("actor_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([sku])
+  @@index([businessId, createdAt])
+  @@map("lifestyle_stock_adjustments")
+}
+
 model LifestyleCustomer {
   id           String    @id
   businessId   String    @default("ALMA_LIFESTYLE") @map("business_id")

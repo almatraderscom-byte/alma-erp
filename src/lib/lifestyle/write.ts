@@ -896,7 +896,9 @@ export async function upsertPromoInPostgres(body: Record<string, unknown>, opts?
   return { ok: true, id, code }
 }
 
-async function applyStockLevel(sku: string, newStock: number, buyingPrice?: number) {
+type StockAdjustAudit = { reason?: string; actor?: string; actorUserId?: string; businessId?: string }
+
+async function applyStockLevel(sku: string, newStock: number, buyingPrice?: number, audit?: StockAdjustAudit) {
   const stock = await findStockBySku(sku)
   if (!stock) return { error: `Inventory item not found: ${sku}` }
   const prev = stock.currentStock
@@ -913,18 +915,39 @@ async function applyStockLevel(sku: string, newStock: number, buyingPrice?: numb
       stockValue: buying * next,
     },
   })
+  // Record the adjustment (with the reason the user typed) so there is an audit trail.
+  if (audit && next !== prev) {
+    await prisma.lifestyleStockAdjustment.create({
+      data: {
+        businessId: audit.businessId || 'ALMA_LIFESTYLE',
+        sku: stock.sku,
+        size: stock.size,
+        previousStock: prev,
+        newStock: next,
+        delta: next - prev,
+        reason: String(audit.reason ?? ''),
+        actor: String(audit.actor ?? ''),
+        actorUserId: audit.actorUserId ? String(audit.actorUserId) : null,
+      },
+    })
+  }
   return { ok: true, sku, previous_stock: prev, new_stock: next, adjustment: next - prev }
 }
 
 export async function inventoryActionInPostgres(body: Record<string, unknown>) {
   const action = String(body.action ?? '')
+  const audit: StockAdjustAudit = {
+    actor: body.actor != null ? String(body.actor) : '',
+    actorUserId: body.actor_user_id != null ? String(body.actor_user_id) : undefined,
+    businessId: String(body.business_id ?? 'ALMA_LIFESTYLE'),
+  }
   if (action === 'adjust') {
     if (Array.isArray(body.adjustments)) {
       const results = []
       for (const adj of body.adjustments as Array<{ sku: string; delta: number; reason?: string }>) {
         const stock = await findStockBySku(adj.sku)
         if (!stock) return { error: `Inventory item not found: ${adj.sku}` }
-        results.push(await applyStockLevel(adj.sku, stock.currentStock + num(adj.delta)))
+        results.push(await applyStockLevel(adj.sku, stock.currentStock + num(adj.delta), undefined, { ...audit, reason: adj.reason }))
       }
       return { ok: true, results }
     }
@@ -936,7 +959,7 @@ export async function inventoryActionInPostgres(body: Record<string, unknown>) {
       if (!stock) return { error: `Inventory item not found: ${sku}` }
       newStock = stock.currentStock + num(body.delta)
     }
-    return applyStockLevel(sku, num(newStock), body.buying_price != null ? num(body.buying_price) : undefined)
+    return applyStockLevel(sku, num(newStock), body.buying_price != null ? num(body.buying_price) : undefined, { ...audit, reason: body.reason != null ? String(body.reason) : '' })
   }
   if (action === 'bulk_update') {
     const items = (body.items ?? []) as Array<{ sku: string; new_stock: number; buying_price?: number }>
