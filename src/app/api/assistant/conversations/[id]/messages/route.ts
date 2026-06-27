@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { toolResultPreview } from '@/agent/lib/tool-labels'
 
 export async function GET(
   req: NextRequest,
@@ -95,6 +96,25 @@ export async function GET(
     syntheticByMsg.set(target.id, list)
   }
 
+  // Reconstruct the per-message tool activity (Claude-style expandable cards) from
+  // the durable agent_tool_calls rows, so the cards survive the background message
+  // poll / page reload instead of only existing during the live stream.
+  const toolCallRows = await prisma.agentToolCall.findMany({
+    where: { messageId: { in: messages.map((m) => m.id) } },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, messageId: true, toolName: true, input: true, output: true, status: true, error: true },
+  })
+  const toolsByMsg = new Map<string, Array<Record<string, unknown>>>()
+  for (const t of toolCallRows) {
+    if (!t.messageId) continue
+    const out = (t.output ?? null) as { data?: unknown } | null
+    const success = t.status === 'success'
+    const resultPreview = toolResultPreview({ success, data: out?.data, error: t.error ?? undefined })
+    const list = toolsByMsg.get(t.messageId) ?? []
+    list.push({ id: t.id, name: t.toolName, success, input: t.input ?? undefined, result: resultPreview })
+    toolsByMsg.set(t.messageId, list)
+  }
+
   // Surface cache tokens (hidden inside the usage JSON) so the UI can show the
   // real per-message token count, not just the tiny non-cached input_tokens.
   const withCache = messages.map((m) => {
@@ -120,6 +140,7 @@ export async function GET(
     return {
       ...m,
       content,
+      toolCalls: toolsByMsg.get(m.id) ?? [],
       cacheCreation: num(u.cache_creation_input_tokens),
       cacheRead: num(u.cache_read_input_tokens),
     }

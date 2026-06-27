@@ -172,6 +172,7 @@ type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }
+  | { type: 'thinking'; text: string; durationMs?: number }
   | FileRefBlock
 
 // ── History loading with file reconstruction ───────────────────────────────
@@ -263,6 +264,10 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
         // must never be sent verbatim to the model — collapse it to a short note.
         const cc = block as Extract<StoredContentBlock, { type: 'confirm_card' }>
         apiBlocks.push({ type: 'text', text: `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${cc.summary}]` })
+      } else if (block.type === 'thinking') {
+        // UI-only "Thought for Ns" breadcrumb — drop it from replayed history. Its
+        // shape isn't a valid Anthropic thinking block, so it must never be sent.
+        continue
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }
@@ -841,6 +846,11 @@ export async function* runAgentTurn(
   let headToolRounds = 0
   let budgetNudgeSent = false
   let canceled = false
+  // Accumulate the extended-thinking trace so it persists as a "Thought for Ns" block
+  // (Claude-style) instead of vanishing when the live stream ends.
+  let thinkingText = ''
+  let thinkingStartedAt = 0
+  let thinkingMs: number | undefined
 
   try {
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -915,12 +925,18 @@ export async function* runAgentTurn(
         } else if (event.type === 'content_block_delta') {
           const delta = event.delta
           if (delta.type === 'text_delta') {
+            if (thinkingText && thinkingMs == null && thinkingStartedAt) {
+              thinkingMs = Date.now() - thinkingStartedAt
+            }
             activeBlockText += delta.text
             yield { type: 'text_delta', delta: delta.text }
           } else if (delta.type === 'thinking_delta') {
             // Surface the model's extended-thinking stream so the UI can show a
             // live "Thought for Ns" block — how the agent is reasoning about the
-            // owner's message before it answers. Not persisted to history here.
+            // owner's message before it answers. Persisted as a thinking block
+            // (replay-safe: dbRowsToNeutral keeps only text/file_ref for history).
+            if (!thinkingStartedAt) thinkingStartedAt = Date.now()
+            thinkingText += delta.thinking
             yield { type: 'thinking_delta', delta: delta.thinking }
           } else if (delta.type === 'input_json_delta') {
             activeBlockInputJson += delta.partial_json
@@ -1270,6 +1286,12 @@ export async function* runAgentTurn(
     const storedContent: StoredContentBlock[] = joinedText
       ? [{ type: 'text', text: joinedText }]
       : [{ type: 'text', text: '' }]
+    // Prepend the extended-thinking trace as a UI-only breadcrumb so the
+    // "Thought for Ns" block survives a page reload (the history loader skips it,
+    // and RAG embedding below stays text-only so reasoning never pollutes recall).
+    if (thinkingText.trim()) {
+      storedContent.unshift({ type: 'thinking', text: thinkingText, durationMs: thinkingMs })
+    }
     // Append confirm-card breadcrumbs so the approval card (and its eventual
     // approved/rejected outcome) survives a page reload — issue: cards vanished
     // on refresh because only text blocks were persisted.
@@ -1291,7 +1313,7 @@ export async function* runAgentTurn(
       },
     })
 
-    embedMessageInBackground(savedMsg.id, storedContent)
+    embedMessageInBackground(savedMsg.id, storedContent.filter((b) => b.type !== 'thinking'))
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

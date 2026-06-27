@@ -317,6 +317,11 @@ async function* runAlternateProviderTurn(
   let finalText = ''
   let delegationAwaiting = false
   let delegationRoleLabel = ''
+  // Accumulate the extended-thinking trace so it persists as a "Thought for Ns" block
+  // (Claude-style) instead of vanishing when the live stream ends.
+  let thinkingText = ''
+  let thinkingStartedAt = 0
+  let thinkingMs: number | undefined
 
   // ── HARD tool-round budget (Qwen marketing head) ───────────────────────────
   // Only the EXPENSIVE Qwen marketing head is capped here — the cheap DeepSeek
@@ -358,12 +363,17 @@ async function* runAlternateProviderTurn(
         signal,
       })) {
         if (ev.type === 'text_delta') {
+          if (thinkingText && thinkingMs == null && thinkingStartedAt) {
+            thinkingMs = Date.now() - thinkingStartedAt
+          }
           iterationText += ev.text
           finalText += ev.text
           yield { type: 'text_delta', delta: ev.text }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
+          if (!thinkingStartedAt) thinkingStartedAt = Date.now()
+          thinkingText += ev.text
           yield { type: 'thinking_delta', delta: ev.text }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
@@ -526,11 +536,19 @@ async function* runAlternateProviderTurn(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
+    // dbRowsToNeutral keeps only text/file_ref blocks for history, so a thinking
+    // block here is replay-safe — it is reconstructed by the UI but ignored by the model.
+    const savedContent: Array<Record<string, unknown>> = []
+    if (thinkingText.trim()) {
+      savedContent.push({ type: 'thinking', text: thinkingText, durationMs: thinkingMs })
+    }
+    savedContent.push({ type: 'text', text: finalText })
+
     const savedMsg = await db.agentMessage.create({
       data: {
         conversationId,
         role: 'assistant',
-        content: [{ type: 'text', text: finalText }],
+        content: savedContent,
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,

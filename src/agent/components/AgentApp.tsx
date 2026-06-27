@@ -57,6 +57,14 @@ type MessageRow = {
     actionType?: string
     costEstimate?: number
     status?: string
+    durationMs?: number
+  }>
+  toolCalls?: Array<{
+    id: string
+    name: string
+    success?: boolean
+    input?: unknown
+    result?: string
   }>
   tokensIn: number | null
   tokensOut: number | null
@@ -70,10 +78,24 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
     const confirmBlock = r.content.find((b) => b.type === 'confirm_card' && b.pendingActionId)
+    // Persisted extended-thinking trace + tool cards (Claude-style), reconstructed
+    // so they survive the message poll / reload instead of only living in the stream.
+    const thinkingBlock = r.content.find((b) => b.type === 'thinking' && b.text)
+    const toolActivity = (r.toolCalls ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      done: true,
+      success: t.success,
+      input: t.input,
+      result: t.result,
+    }))
     return {
       id: r.id,
       role: r.role as 'user' | 'assistant',
       text: textBlocks.map((b) => b.text ?? '').join(''),
+      thinking: thinkingBlock?.text,
+      thinkingMs: thinkingBlock?.durationMs,
+      toolActivity: toolActivity.length > 0 ? toolActivity : undefined,
       files: fileBlocks.map((b) => ({
         previewUrl: '',
         mediaType: b.mediaType ?? 'image/jpeg',
