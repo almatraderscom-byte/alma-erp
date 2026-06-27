@@ -294,6 +294,7 @@ type TaskRow = {
   supervisorClarifyCount: number
   supervisorLastTickAt: Date | null
   supervisorAlwaysEscalate: boolean
+  nextFollowUpAt: Date | null
   businessId: string
   staff: StaffLite
 }
@@ -388,6 +389,26 @@ async function maybeRaiseProposals(task: TaskRow, outcome: string, now: Date): P
   }
 }
 
+/**
+ * When should the supervisor next check in on this task? Deadline-aware:
+ *   - If a deadline is still ahead, check in BY the deadline (a human manager
+ *     follows up as the deadline approaches), but never sooner than the cooldown.
+ *   - Otherwise (overdue or no deadline) schedule the next nudge after the normal
+ *     idle gap, again respecting the cooldown.
+ * The result is stored in `nextFollowUpAt` so the schedule is durable across
+ * ticks, restarts, and day boundaries.
+ */
+function scheduleNextFollowUp(task: TaskRow, now: Date): Date {
+  const nowMs = now.getTime()
+  const cooldownEnd = nowMs + FOLLOWUP_COOLDOWN_MS
+  let candidate = nowMs + NORMAL_IDLE_MS
+  if (task.dueAt) {
+    const due = task.dueAt.getTime()
+    if (due > nowMs) candidate = Math.min(candidate, due)
+  }
+  return new Date(Math.max(candidate, cooldownEnd))
+}
+
 /** Does this task need a "how's it going?" nudge right now? */
 function needsFollowUp(task: TaskRow, now: Date): boolean {
   if (task.status === 'done') return false
@@ -398,6 +419,9 @@ function needsFollowUp(task: TaskRow, now: Date): boolean {
   if (reqAt && (!lastUpd || lastUpd < reqAt)) return false
   // Respect the cooldown after the last request.
   if (reqAt && nowMs - reqAt < FOLLOWUP_COOLDOWN_MS) return false
+  // Durable schedule wins once set: only nudge when the scheduled time arrives.
+  if (task.nextFollowUpAt) return nowMs >= task.nextFollowUpAt.getTime()
+  // Unscheduled task → seed the first nudge from its deadline / idle gap.
   const overdue = task.dueAt ? nowMs > task.dueAt.getTime() : false
   const baseline = lastUpd ?? task.createdAt.getTime()
   const idleTooLong = nowMs - baseline > NORMAL_IDLE_MS
@@ -613,6 +637,12 @@ async function askForUpdate(task: TaskRow, now: Date): Promise<void> {
     : `${task.staff.name} ভাই, "${task.title}" কাজটির কী অবস্থা? একটু আপডেট দিন 🙏`
   // requestUpdate posts the nudge into the task thread + pings the staff.
   await requestUpdate(task.id, task.businessId, { note: body, by: 'agent' })
+  // Record the next durable check-in so the follow-up survives restarts / day
+  // boundaries and isn't recomputed from a flat idle timer each tick.
+  await prisma.agentStaffTask.update({
+    where: { id: task.id },
+    data: { nextFollowUpAt: scheduleNextFollowUp(task, now) },
+  })
 }
 
 // ── Attendance / leave presence gate (read-only) ─────────────────────────────
@@ -713,6 +743,7 @@ export async function runSupervisorTick(
       supervisorClarifyCount: true,
       supervisorLastTickAt: true,
       supervisorAlwaysEscalate: true,
+      nextFollowUpAt: true,
       businessId: true,
       staff: { select: { id: true, name: true, telegramChatId: true, ntfyTopic: true, userId: true } },
     },

@@ -2106,6 +2106,10 @@ model AgentStaffTask {
   supervisorAlwaysEscalate Boolean                  @default(false) @map("supervisor_always_escalate")
   /// Last criticality the supervisor computed ('critical' | 'normal'). Audit only.
   supervisorCriticality  String?                    @map("supervisor_criticality")
+  // ── Phase-D durable follow-up schedule. ──
+  /// When the supervisor should next check in on this task (deadline-aware).
+  /// Durable so a follow-up survives restarts / day boundaries (not recomputed).
+  nextFollowUpAt     DateTime?                      @map("next_follow_up_at")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt          DateTime                       @default(now()) @map("created_at")
@@ -2119,6 +2123,7 @@ model AgentStaffTask {
   @@index([businessId, proposedFor, status])
   @@index([businessId, dueAt])
   @@index([businessId, status, supervisorNeedsOwner])
+  @@index([businessId, status, nextFollowUpAt])
   @@map("staff_tasks")
 }
 
