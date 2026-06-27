@@ -88,6 +88,51 @@ export async function addProductImage(input: {
   return { ok: true, code: first.code, total: first.total, isPrimary: first.isPrimary }
 }
 
+/**
+ * Add an image for a BRAND-NEW product code that does not (yet) exist in ERP
+ * inventory — for products the owner is adding ahead of inventory sync. Unlike
+ * addProductImage this skips the inventory resolve / invalid_code check and just
+ * writes to the productImage store (no ERP inventory mutation). The new code then
+ * surfaces in the catalog grid via listCatalogForImages (custom-code merge).
+ */
+export async function addCustomProductImage(input: {
+  productCode: string
+  business?: string
+  imageBuffer: Buffer
+  uploadedByChatId?: string
+  contentType?: string
+}): Promise<{ ok: true; code: string; total: number; isPrimary: boolean } | { ok: false; reason: string }> {
+  const business = input.business ?? DEFAULT_CATALOG_BUSINESS
+  const code = normalizeProductCode(input.productCode)
+  if (!code) return { ok: false, reason: 'empty_code' }
+
+  const existing = await db.productImage.count({ where: { productCode: code, business } })
+  const index = existing + 1
+  const slug = businessStorageSlug(business)
+  const storagePath = `product-images/${slug}/${code}/${index}.jpg`
+
+  await agentStorageUpload(storagePath, input.imageBuffer, input.contentType ?? 'image/jpeg')
+  let url: string | null = null
+  try {
+    url = await agentStorageSignedUrl(storagePath, 86400 * 7)
+  } catch {
+    url = null
+  }
+
+  const isPrimary = existing === 0
+  await db.productImage.create({
+    data: {
+      productCode: code,
+      business,
+      storagePath,
+      url,
+      isPrimary,
+      uploadedByChatId: input.uploadedByChatId ?? null,
+    },
+  })
+  return { ok: true, code, total: index, isPrimary }
+}
+
 export type ProductImageEntry = {
   id: string
   url: string | null
@@ -247,6 +292,25 @@ export async function listCatalogForImages(business = DEFAULT_CATALOG_BUSINESS):
       primaryImageUrl: withImage ? await getPrimaryImageUrl(withImage, business).catch(() => null) : null,
     })
   }
+  // Surface CUSTOM products: codes with uploaded images that aren't in ERP
+  // inventory (added ahead of inventory sync via the "নতুন প্রোডাক্ট" button).
+  const coveredCodes = new Set<string>()
+  for (const g of out) for (const m of g.members) coveredCodes.add(m)
+  for (const [code, count] of countByCode) {
+    if (count > 0 && !coveredCodes.has(code)) {
+      out.push({
+        code,
+        name: code,
+        category: 'কাস্টম',
+        kind: 'sku',
+        members: [code],
+        imageCount: count,
+        hasImages: true,
+        primaryImageUrl: await getPrimaryImageUrl(code, business).catch(() => null),
+      })
+    }
+  }
+
   out.sort((a, b) => Number(a.hasImages) - Number(b.hasImages) || a.code.localeCompare(b.code))
 
   return {

@@ -5,6 +5,7 @@ import { canManageCatalogImages, isSystemOwner } from '@/lib/roles'
 import {
   listProductImages,
   addProductImage,
+  addCustomProductImage,
   deleteImageFromGroup,
 } from '@/agent/lib/catalog/product-images'
 import { DEFAULT_CATALOG_BUSINESS, resolveProductInput } from '@/agent/lib/catalog/inventory-lookup'
@@ -88,6 +89,9 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   }
 
   const business = formData.get('business')?.toString() || DEFAULT_CATALOG_BUSINESS
+  // Owner adding a brand-new product code not yet in ERP inventory → skip the
+  // invalid_code check and write a custom catalog entry (productImage only).
+  const allowNew = formData.get('allowNew')?.toString() === '1'
   const files = formData.getAll('file').filter((f): f is File => f instanceof File)
   if (!files.length) return Response.json({ error: 'file_required' }, { status: 400 })
 
@@ -123,13 +127,9 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       }
     }
 
-    const result = await addProductImage({
-      productCode: code,
-      business,
-      imageBuffer: buffer,
-      uploadedByChatId,
-      contentType,
-    })
+    const result = allowNew
+      ? await addCustomProductImage({ productCode: code, business, imageBuffer: buffer, uploadedByChatId, contentType })
+      : await addProductImage({ productCode: code, business, imageBuffer: buffer, uploadedByChatId, contentType })
     if (!result.ok) {
       // invalid_code etc. — stop and report (with suggestions when present).
       return Response.json(result, { status: 400 })
