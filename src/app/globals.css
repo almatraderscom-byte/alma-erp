@@ -122,6 +122,46 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ── Native-app polish (app-wide, additive) ────────────────────────────────
+   One central guard so NO single page can leak horizontally, overlap text, or
+   bounce. `overflow-x: clip` stops accidental sideways page-scroll WITHOUT
+   creating a scroll container (so the sticky PageHeader keeps working — unlike
+   `hidden`). Long unbroken tokens (URLs, IDs, order numbers) wrap instead of
+   pushing the layout wide. Media never exceeds its column. Tables/code that
+   genuinely need to scroll sideways opt in via `.table-scroll` and are
+   exempted below. */
+html {
+  overflow-x: clip;
+}
+
+h1, h2, h3, h4, h5, h6,
+p, li, dd, dt,
+figcaption, blockquote {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+img, video, canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Horizontal scrollers keep their own width — never force-wrap their rows. */
+.table-scroll *,
+.scrollbar-hide.overflow-x-auto *,
+pre, code {
+  word-break: normal;
+}
+
+/* Smooth, momentum scrolling everywhere a region scrolls (iOS native feel). */
+@media (hover: none) and (pointer: coarse) {
+  .overflow-y-auto,
+  .overflow-auto,
+  main {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* ALMA neon wordmark — multi-color gradient flowing inside the letters
    (white → blue → purple → magenta). Reused by the app loader so the brand
    text reads as part of the aurora instead of a flat accent color. */
