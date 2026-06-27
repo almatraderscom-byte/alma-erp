@@ -63,7 +63,7 @@ import {
   showCatalogPanel,
 } from './command-defaults.mjs'
 import { ownerState, isOwnerTurnInFlight, markOwnerTurnStart, releaseOwnerTurn } from './owner-state.mjs'
-import { persistOwnerStateToKv } from './owner-state-persist.mjs'
+import { persistOwnerStateToKv, loadOwnerStateFromKv } from './owner-state-persist.mjs'
 import { callAgentApi as sendToAgent } from './agent-turn.mjs'
 import { getOwnerChatId, isOwnerChatId } from './owner-id.mjs'
 
@@ -178,6 +178,11 @@ async function handleOwnerText(ctx, text) {
 
   // Persist prayer confirmations immediately (before agent turn / scheduler race)
   await autoMarkSalahFromText(text)
+
+  // Unified session: refresh the pointer from KV first so a conversation the
+  // owner switched to (or started) in the web app becomes the SAME thread here,
+  // instead of Telegram staying on its own stale conversation id.
+  await loadOwnerStateFromKv(supabase)
 
   // Use current conversation or get/create daily one
   const { getTelegramPersonalMode } = await import('./personal-mode.mjs')

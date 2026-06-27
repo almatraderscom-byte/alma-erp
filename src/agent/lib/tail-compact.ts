@@ -29,9 +29,14 @@ export type TailCompactConfig = {
 }
 
 export const TAIL_COMPACT_DEFAULTS: TailCompactConfig = {
-  triggerTurns: 30,
-  triggerTokens: 80_000,
-  keepTurns: 20,
+  // Now that the owner lives in ONE long-lived unified thread (web + Telegram),
+  // the verbatim tail is the dominant per-turn input cost. A tighter window folds
+  // older turns into the cached summary sooner, roughly halving the worst-case
+  // history shipped each turn while B2 recall keeps the older facts retrievable.
+  // Hysteresis invariant preserved: keepTurns < triggerTurns.
+  triggerTurns: 16,
+  triggerTokens: 32_000,
+  keepTurns: 10,
 }
 
 const KEYS = {
