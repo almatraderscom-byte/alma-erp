@@ -841,7 +841,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {(!msg.streaming || msg.text) && (
                     <div className="text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
-                        <div className="relative">
+                        <div className="relative alma-stream-reveal">
                           <AgentMarkdown content={msg.text} />
                           <motion.span
                             className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
