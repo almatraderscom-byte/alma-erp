@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import toast from 'react-hot-toast'
 import { captureFaceFromFile, mapCheckInError } from '@/lib/attendance-face-client'
-import { requireHighAccuracyLocation } from '@/lib/attendance-gps'
+import { acquireAttendanceLocation, type AttendanceGpsReason } from '@/lib/attendance-gps'
 import { logAttendanceClientFailure, logAttendanceClientSuccess } from '@/lib/attendance-client'
 import { logAttendanceMobileSubmitFailed } from '@/lib/mobile-runtime-log'
 import { logEvent } from '@/lib/logger'
@@ -194,7 +194,7 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
         const metadata = await attendanceMetadata()
         setLocationStatus(metadata.location ? 'done' : 'failed')
         if (!metadata.location?.latitude || !metadata.location?.longitude) {
-          const message = 'Location access required — please enable GPS in your phone settings.'
+          const message = gpsFailureMessage(metadata.locationReason)
           setGpsError(message)
           throw new Error(message)
         }
@@ -570,7 +570,23 @@ export function FaceVerificationCheckIn({ businessId, open, onClose, onSuccess }
   )
 }
 
+function gpsFailureMessage(reason: AttendanceGpsReason): string {
+  switch (reason) {
+    case 'denied':
+      // The only case that is actually a settings/permission problem.
+      return 'Location permission is off. Allow location for this app, then tap Retry. — লোকেশন পারমিশন বন্ধ। অ্যাপে লোকেশন চালু করে আবার চেষ্টা করুন।'
+    case 'unsupported':
+      return 'This device cannot share location for check-in. Use the office app. — এই ডিভাইসে লোকেশন পাওয়া যাচ্ছে না।'
+    case 'timeout':
+    case 'unavailable':
+    default:
+      // GPS is ON but no fix yet — signal issue, not a settings issue.
+      return 'Could not get a GPS fix. Move near a window or door, wait a moment, then tap Retry. — GPS সিগন্যাল পাওয়া যায়নি। জানালা/দরজার কাছে গিয়ে আবার চেষ্টা করুন।'
+  }
+}
+
 async function attendanceMetadata() {
+  const gps = await acquireAttendanceLocation()
   const sessionId = stableSessionId()
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } }
   const screenText = typeof screen !== 'undefined' ? `${screen.width}x${screen.height}x${screen.colorDepth}` : ''
@@ -588,7 +604,8 @@ async function attendanceMetadata() {
     language: navigator.language,
     platform: nav.userAgentData?.platform || navigator.platform,
     screen: screenText,
-    location: await requireHighAccuracyLocation(),
+    location: gps.coords,
+    locationReason: gps.reason,
   }
 }
 
