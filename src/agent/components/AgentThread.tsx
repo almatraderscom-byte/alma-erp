@@ -190,7 +190,13 @@ function ThoughtBlock({ thinking, thinkingMs, live }: { thinking: string; thinki
   }, [thinking, live, open])
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
-  const label = live ? 'চিন্তা করছে…' : seconds != null ? `${seconds} সেকেন্ড ধরে ভেবেছে` : 'চিন্তা প্রক্রিয়া'
+  const base = live ? 'চিন্তা করছে…' : seconds != null ? `${seconds} সেকেন্ড ধরে ভেবেছে` : 'চিন্তা প্রক্রিয়া'
+  // Rough thinking-token estimate from the streamed reasoning (~4 chars/token).
+  // The API folds thinking into total output tokens, so a per-thought exact
+  // count isn't separately reported — the "~" marks it as an estimate.
+  const trimmed = thinking.trim()
+  const tokenEst = trimmed ? Math.max(1, Math.round(trimmed.length / 4)) : 0
+  const label = tokenEst > 0 ? `${base} · ~${fmtTok(tokenEst)} টোকেন` : base
 
   return (
     <div className="mb-3">
