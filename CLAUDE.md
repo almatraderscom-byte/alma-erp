@@ -16,6 +16,7 @@
 1. No secrets in git. `.env.example` placeholders only.
 1. Database changes: additive migrations only unless the phase prompt explicitly says otherwise. Use the project's existing migration system — never introduce a new one.
 1. Before each phase: create branch `agent-phase-N` + tag `pre-agent-phase-N`. Never merge to main or deploy to production yourself — push the branch for a Vercel preview; the owner tests and approves merge.
+1. **BROWSER PROOF BEFORE "DONE" (mandatory, never skip):** after fixing ANY issue or adding ANY feature, Claude must FIRST exercise it live himself in the owner's Chrome browser (Chrome MCP) on the Vercel preview link and capture a screenshot as proof — BEFORE telling the owner it's ready. Build/typecheck passing is NOT proof. If login is required, navigate to the login page and ask the owner to log in (the owner enters credentials — Claude never types them); once logged in, Claude enters the preview link himself and brings back the screenshot. No screenshot of the working feature = not done. Everyone working in this repo must follow this.
 
 ## ERP Conventions (must follow)
 
@@ -42,6 +43,7 @@
 - Architectural fixes > patches. Confirm before any costly/destructive action.
 - Pre-flight checks before code in each phase; if any check fails, STOP and report.
 - Verify builds/lint/typecheck pass and run `git diff --stat` scope check before declaring a phase done.
+- **Browser proof before presenting:** see Hard Rule above — never declare an issue/feature done without a live Chrome-MCP screenshot from the Vercel preview. Build/typecheck passing is not proof.
 - Final report per phase: files created, migrations added, verification checklist PASS/FAIL, ambiguities + decisions made.
 
 ## Communication
