@@ -195,8 +195,8 @@ function renewalBadge(dateStr: string) {
   const today = new Date()
   const renewal = new Date(dateStr + 'T00:00:00')
   const days = Math.ceil((renewal.getTime() - today.getTime()) / 86400000)
-  if (days < 0) return { label: 'মেয়াদোত্তীর্ণ', cls: 'bg-red-50 border border-red-200 text-red-600 shadow-sm' }
-  if (days <= 3) return { label: `${days} দিন`, cls: 'bg-amber-50 border border-amber-200 text-amber-700 shadow-sm' }
+  if (days < 0) return { label: 'মেয়াদোত্তীর্ণ', cls: 'tone-red border shadow-sm' }
+  if (days <= 3) return { label: `${days} দিন`, cls: 'tone-amber border shadow-sm' }
   if (days <= 14) return { label: `${days} দিন`, cls: 'bg-[#E07A5F]/10 border border-[#E07A5F]/20 text-[#E07A5F]' }
   return { label: `${days} দিন`, cls: 'bg-transparent border border-border-subtle text-muted' }
 }
@@ -266,11 +266,11 @@ function fmtTokens(inTok: number | null, outTok: number | null) {
 }
 
 function balanceColor(row: BalanceProviderRow): string {
-  if (row.free) return 'text-emerald-600'
+  if (row.free) return 'txt-pos'
   if (row.balanceUsd == null) return 'text-muted'
-  if (row.balanceUsd < 1) return 'text-red-500'
-  if (row.balanceUsd < 5) return 'text-amber-600'
-  return 'text-emerald-600'
+  if (row.balanceUsd < 1) return 'txt-neg'
+  if (row.balanceUsd < 5) return 'text-amber-400'
+  return 'txt-pos'
 }
 
 const staggerContainer = {
@@ -691,7 +691,7 @@ export default function AgentCostsDashboard() {
                     <td className={cn('py-2.5 pr-3 font-medium', balanceColor(row))}>
                       {fmtBalanceCell(row)}
                       {row.free && (
-                        <span className="ml-1.5 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-600">
+                        <span className="ml-1.5 inline-flex items-center rounded-md border tone-green px-1.5 py-0.5 text-[9px]">
                           Free
                         </span>
                       )}
