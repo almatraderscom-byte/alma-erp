@@ -13,12 +13,11 @@ import { timingSafeEqual } from 'crypto'
 import { isAgentEnabled } from '@/agent/config'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { sendOwnerDigest } from '@/agent/lib/office-digest'
+import { SUPERVISED_BUSINESSES } from '@/agent/lib/constants'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
-
-const DEFAULT_BUSINESS = 'ALMA_LIFESTYLE'
 
 function authorized(req: NextRequest): boolean {
   const auth = req.headers.get('authorization') ?? ''
@@ -38,14 +37,22 @@ async function handle(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!isAgentEnabled()) return NextResponse.json({ ok: false, disabled: true })
 
-  const businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
-  try {
-    const result = await sendOwnerDigest(businessId)
-    return NextResponse.json({ ok: true, ...result })
-  } catch (err) {
-    await captureAgentError(err, 'office_digest', { route: 'office-digest' })
-    return NextResponse.json({ ok: false, error: 'digest_failed' }, { status: 500 })
-  }
+  // A bare cron fire (no ?businessId) sends a digest per supervised business; an
+  // explicit ?businessId targets just one (manual re-run). sendOwnerDigest no-ops on
+  // an empty day, so sweeping every business never spams the owner. Businesses run in
+  // parallel so a slow Lifestyle digest never starves the Trading (money) digest.
+  const param = req.nextUrl.searchParams.get('businessId')?.trim()
+  const businesses = param ? [param] : [...SUPERVISED_BUSINESSES]
+
+  const settled = await Promise.allSettled(businesses.map((businessId) => sendOwnerDigest(businessId)))
+  const results = await Promise.all(
+    settled.map(async (s, i) => {
+      if (s.status === 'fulfilled') return { businessId: businesses[i], ...s.value }
+      await captureAgentError(s.reason, 'office_digest', { route: `office-digest:${businesses[i]}` })
+      return { businessId: businesses[i], pushed: false, error: 'digest_failed' }
+    }),
+  )
+  return NextResponse.json({ ok: true, businesses: results })
 }
 
 export async function GET(req: NextRequest) {

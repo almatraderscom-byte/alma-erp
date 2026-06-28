@@ -13,12 +13,11 @@ import { timingSafeEqual } from 'crypto'
 import { isAgentEnabled } from '@/agent/config'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { runSupervisorTick } from '@/agent/lib/office-supervisor'
+import { SUPERVISED_BUSINESSES } from '@/agent/lib/constants'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
-
-const DEFAULT_BUSINESS = 'ALMA_LIFESTYLE'
 
 function authorized(req: NextRequest): boolean {
   const auth = req.headers.get('authorization') ?? ''
@@ -38,14 +37,23 @@ async function handle(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!isAgentEnabled()) return NextResponse.json({ ok: false, disabled: true })
 
-  const businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
-  try {
-    const result = await runSupervisorTick({ businessId })
-    return NextResponse.json({ ok: true, ...result })
-  } catch (err) {
-    await captureAgentError(err, 'office_supervisor_tick', { route: 'office-supervisor' })
-    return NextResponse.json({ ok: false, error: 'tick_failed' }, { status: 500 })
-  }
+  // A bare cron fire (no ?businessId) sweeps every supervised business; an explicit
+  // ?businessId targets just one (manual re-run). Businesses run in parallel so a
+  // slow Lifestyle tick never starves the Trading (money) tick within the budget.
+  const param = req.nextUrl.searchParams.get('businessId')?.trim()
+  const businesses = param ? [param] : [...SUPERVISED_BUSINESSES]
+
+  const settled = await Promise.allSettled(businesses.map((businessId) => runSupervisorTick({ businessId })))
+  const results = await Promise.all(
+    settled.map(async (s, i) => {
+      if (s.status === 'fulfilled') return s.value
+      await captureAgentError(s.reason, 'office_supervisor_tick', {
+        route: `office-supervisor:${businesses[i]}`,
+      })
+      return { businessId: businesses[i], ran: false, error: 'tick_failed' }
+    }),
+  )
+  return NextResponse.json({ ok: true, businesses: results })
 }
 
 export async function GET(req: NextRequest) {
