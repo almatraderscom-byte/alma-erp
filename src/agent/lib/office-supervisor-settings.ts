@@ -6,12 +6,12 @@
  * `autoAcceptNonCritical` — when the supervisor exhausts its redo/clarify
  * attempts (MAX_AUTO_REDO / MAX_CLARIFY) and STILL can't verify or understand a
  * task:
- *   - false (DEFAULT): escalate the task to the owner for approval — even
- *     low-stakes ones. This matches the owner's rule "1-2 চেষ্টায় না পারলে
- *     আমার কাছে পাঠাবে; আমি approve করলেই Accepted".
- *   - true: the old 90/10 behaviour — silently accept low-stakes unverifiable
- *     tasks as done, only escalate the critical (money/customer) ~10%. Use this
- *     if owner escalations become too noisy.
+ *   - false: escalate the task to the owner for approval — even low-stakes
+ *     ones. Matches the stricter rule "1-2 চেষ্টায় না পারলে আমার কাছে পাঠাবে;
+ *     আমি approve করলেই Accepted". Set this if owner wants to see everything.
+ *   - true (DEFAULT): 90/10 autonomy — silently accept low-stakes unverifiable
+ *     tasks as done, only escalate the critical (money/customer) ~10%. This is
+ *     the default so the office manager runs autonomously without constant pings.
  */
 import { prisma } from '@/lib/prisma'
 
@@ -22,7 +22,12 @@ export type OfficeSupervisorSettings = {
 }
 
 const DEFAULTS: OfficeSupervisorSettings = {
-  autoAcceptNonCritical: false,
+  // 90/10 autonomy (owner decision, 2026-06): the supervisor self-resolves
+  // low-stakes tasks it can't fully verify and only escalates the truly-critical
+  // ~10% (money / customer-facing, via assessCriticality). Reduces the constant
+  // owner pings that made the office manager feel non-autonomous. Owner-tunable
+  // back to false via setAutoAcceptNonCritical if escalations are wanted again.
+  autoAcceptNonCritical: true,
 }
 
 export async function getOfficeSupervisorSettings(): Promise<OfficeSupervisorSettings> {

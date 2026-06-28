@@ -91,6 +91,47 @@ function getLearningTaskForStaff(staffName: string, dayIndex: number) {
   return null
 }
 
+// ── Rotating variants for recurring duties ───────────────────────────────────
+// These tasks used to be one hardcoded string emitted verbatim every single day
+// (the "robotic / same task daily" complaint). Now a seed derived from the date
+// + live business state + staff name picks a variant, so the same weekday no
+// longer yields identical wording, and per-staff text differs.
+const PAGE_MGMT_VARIANTS: Array<{ title: string; detail: string }> = [
+  { title: 'পেজ আপডেট — কভার ও পিন পোস্ট রিফ্রেশ করুন', detail: 'FB + Insta কভার ঠিক আছে কিনা, সেরা অফারটি পিন করা আছে কিনা দেখুন।' },
+  { title: 'স্টোরি দিন — আজকের ফোকাস পণ্য FB + Insta স্টোরিতে', detail: 'আজকের বেস্টসেলার বা নতুন পণ্য দিয়ে ১-২টা স্টোরি দিন।' },
+  { title: 'পেজ হেলথ চেক — পুরোনো/আউটডেটেড পোস্ট খুঁজে আপডেট করুন', detail: 'ভুল দাম বা আউট-অফ-স্টক পণ্যের পুরোনো পোস্ট খুঁজে ঠিক করুন।' },
+  { title: 'হাইলাইট সাজান — Insta হাইলাইট ও পিন পোস্ট গুছিয়ে দিন', detail: 'নতুন কালেকশন বা চলতি অফার হাইলাইটে যোগ করুন।' },
+]
+const OFFICE_TASK_VARIANTS: Array<{ title: string; detail: string }> = [
+  { title: 'শোরুম গুছানো — নতুন স্টক সাজান, বেস্টসেলার সামনে রাখুন', detail: 'ধুলো পরিষ্কার করুন, পুরোনো পণ্য পেছনে সরান।' },
+  { title: 'গোডাউন স্টক মিলিয়ে দেখুন — যা শেষ হয়ে আসছে নোট করুন', detail: 'কম স্টকের তালিকা owner-কে জানান।' },
+  { title: 'প্যাকেজিং স্টক চেক — ব্যাগ/বক্স/টেপ যথেষ্ট আছে কিনা', detail: 'কম থাকলে আগেই জানান যাতে ডেলিভারি না আটকায়।' },
+]
+const CONTENT_SUPPORT_VARIANTS: Array<{ title: string; detail: string }> = [
+  { title: 'শুট সাপোর্ট — Eyafi ভাইকে প্রোডাক্ট সাজাতে সাহায্য করুন', detail: 'লাইটিং, ব্যাকগ্রাউন্ড ও প্রোডাক্ট প্রস্তুত করুন।' },
+  { title: 'ছবি অর্গানাইজ — আজকের তোলা ছবি ফোল্ডারে সাজান', detail: 'প্রোডাক্ট অনুযায়ী আলাদা করুন, owner-কে শেয়ার করুন।' },
+  { title: 'কনটেন্ট আইডিয়া — আগামীকালের ২টা পোস্ট আইডিয়া দিন', detail: 'কোন পণ্য, কী ক্যাপশন — সংক্ষেপে লিখে দিন।' },
+]
+
+function pickVariant<T>(arr: T[], seed: number): T {
+  return arr[(((seed % arr.length) + arr.length) % arr.length)]
+}
+
+/** Stable per-staff offset so two staff don't get identical rotated wording. */
+function staffSeedOffset(name: string): number {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+/** Live business signals that make daily tasks vary instead of repeating. */
+type TaskGenContext = {
+  unreadCount: number
+  pendingOrders: number
+  lowStockItems: Array<{ name: string; stock: number }>
+  variantSeed: number
+}
+
 let _profileCache: Record<string, StaffProfile> | null = null
 
 export function _resetProfileCache() { _profileCache = null }
@@ -194,11 +235,15 @@ function buildTasksForStaff(
   staff: { id: string; name: string; role: string },
   picks: ScoredProduct[],
   carryForward: Array<{ staffId: string; title: string; detail: string | null; type: string; productRef: string | null }>,
-  pendingOrders: number,
+  ctx: TaskGenContext,
   profile: StaffProfile | null,
 ) {
   const tasks: Omit<ProposedTaskInput, 'staffName'>[] = []
   const targetCount = profile?.dailyTargetTasks ?? 5
+  const pendingOrders = ctx.pendingOrders
+  // Seed mixes date + live state + staff identity → no two days (or two staff)
+  // get the same rotated wording.
+  const seed = ctx.variantSeed + staffSeedOffset(staff.name)
 
   // Carry-forward tasks first
   for (const carried of carryForward.filter((t) => t.staffId === staff.id)) {
@@ -251,25 +296,38 @@ function buildTasksForStaff(
         source: 'rotation',
       })
     }
-    // Page management task
+    // Page management task — rotated, never the same string two days running
     if (staffHasSkill(profile, 'page_management')) {
+      const pm = pickVariant(PAGE_MGMT_VARIANTS, seed)
       tasks.push({
         staffId: staff.id,
-        title: 'পেজ ম্যানেজমেন্ট — কভার/পিন পোস্ট/স্টোরি আপডেট',
-        detail: 'FB + Insta story, pinned post চেক ও আপডেট করুন',
+        title: pm.title,
+        detail: pm.detail,
         type: 'page_management',
         source: 'agent',
       })
     }
-    // Customer reply task
+    // Customer reply task — only when there is actually something unread; the
+    // title carries the live count so it changes day to day. When the inbox is
+    // clean, flip to proactive re-engagement instead of a hollow "check" task.
     if (staffHasSkill(profile, 'customer_reply')) {
-      tasks.push({
-        staffId: staff.id,
-        title: 'কাস্টমার মেসেজ/কমেন্ট রিপ্লাই — সব পেজ চেক',
-        detail: 'Messenger + FB comment — আনরিড মেসেজ রিপ্লাই দিন',
-        type: 'customer_reply',
-        source: 'agent',
-      })
+      if (ctx.unreadCount > 0) {
+        tasks.push({
+          staffId: staff.id,
+          title: `${ctx.unreadCount}টি আনরিড মেসেজ/কমেন্ট রিপ্লাই দিন — সব পেজ`,
+          detail: 'Messenger + FB comment — আজই সব আনরিড ক্লিয়ার করুন।',
+          type: 'customer_reply',
+          source: 'pattern',
+        })
+      } else {
+        tasks.push({
+          staffId: staff.id,
+          title: 'পুরোনো কাস্টমারদের ৩ জনকে নক করুন — নতুন অফার জানান',
+          detail: 'ইনবক্স ক্লিয়ার — গত মাসে কেনা কাস্টমার বেছে রি-অর্ডারের জন্য মেসেজ দিন।',
+          type: 'customer_reply',
+          source: 'agent',
+        })
+      }
     }
   } else {
     // Non-content staff: use profile skills, skip stock_check/COD if not in profile
@@ -310,28 +368,34 @@ function buildTasksForStaff(
       }
     }
     if (staffHasSkill(profile, 'page_management')) {
+      const pm = pickVariant(PAGE_MGMT_VARIANTS, seed + 1)
       tasks.push({
         staffId: staff.id,
-        title: 'পেজ সাপোর্ট — কমেন্ট রিপ্লাই ও পোস্ট শিডিউল চেক',
-        detail: 'FB/Insta পেজে আনরিড কমেন্ট রিপ্লাই দিন',
+        title: pm.title,
+        detail: pm.detail,
         type: 'page_management',
         source: 'agent',
       })
     }
     if (staffHasSkill(profile, 'content_support')) {
+      const cs = pickVariant(CONTENT_SUPPORT_VARIANTS, seed)
       tasks.push({
         staffId: staff.id,
-        title: 'কন্টেন্ট সাপোর্ট — Eyafi ভাইকে শুটে সাহায্য',
-        detail: 'প্রোডাক্ট সাজানো, লাইটিং সেটআপ, ব্যাকগ্রাউন্ড প্রস্তুত',
+        title: cs.title,
+        detail: cs.detail,
         type: 'content_support',
         source: 'agent',
       })
     }
     if (staffHasSkill(profile, 'office_task')) {
+      const ot = pickVariant(OFFICE_TASK_VARIANTS, seed)
+      const lowLine = ctx.lowStockItems.length
+        ? ` কম স্টক: ${ctx.lowStockItems.slice(0, 3).map((i) => `${i.name} (${i.stock})`).join(', ')}।`
+        : ''
       tasks.push({
         staffId: staff.id,
-        title: 'অফিস ক্লিন-আপ ও প্রোডাক্ট অর্গানাইজ',
-        detail: 'শোরুম/গোডাউন গুছিয়ে রাখুন, নতুন স্টক সাজান',
+        title: ot.title,
+        detail: `${ot.detail}${lowLine}`,
         type: 'office_task',
         source: 'agent',
       })
@@ -671,10 +735,29 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   const websiteTask = await detectWebsiteMarketingPattern(dateYmd, staffList).catch(() => null)
   const profiles = await getStaffProfiles()
 
+  // Live signals that make the day's tasks state-aware (not a fixed template):
+  // real unread-message count, low-stock items, and a seed that mixes the date
+  // with today's pending-order + carry-forward volume so the same weekday never
+  // produces identical wording.
+  const unreadCount: number = await db.agentMessengerAlert
+    .count({ where: { resolved: false } })
+    .catch(() => 0)
+  const lowStockItems = inv.items
+    .filter((i) => i.currentStock > 0 && i.currentStock <= 5)
+    .slice(0, 5)
+    .map((i) => ({ name: i.name, stock: i.currentStock }))
+  const dayIndexSeed = Math.floor(new Date(`${dateYmd}T00:00:00+06:00`).getTime() / 86_400_000)
+  const ctx: TaskGenContext = {
+    unreadCount,
+    pendingOrders,
+    lowStockItems,
+    variantSeed: dayIndexSeed + pendingOrders + carryRows.length,
+  }
+
   const allTasks: ProposedTaskInput[] = []
   for (const staff of staffList) {
     const profile = getProfileForStaff(profiles, staff.name)
-    allTasks.push(...buildTasksForStaff(staff, picks, carryRows, pendingOrders, profile))
+    allTasks.push(...buildTasksForStaff(staff, picks, carryRows, ctx, profile))
   }
   for (const pt of patterns.staleProductTasks) {
     if (!allTasks.some((t) => t.productRef === pt.productRef && t.type === pt.type)) {
@@ -727,6 +810,6 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
     })),
     fbRecent,
     summaryBangla,
-    note: 'ডেটা: ইনভেন্টরি + ৩০ দিনের অর্ডার + FB পোস্ট + গতকালের carry-forward',
+    note: `ডেটা: ইনভেন্টরি + ৩০ দিনের অর্ডার + FB পোস্ট + গতকালের carry-forward + ${unreadCount}টি আনরিড মেসেজ + ${lowStockItems.length}টি কম-স্টক পণ্য (state-aware)`,
   }
 }
