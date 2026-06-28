@@ -4,6 +4,8 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { createTurn } from '@/agent/lib/turn-status'
+import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
@@ -62,7 +64,7 @@ async function appendConversationNote(
   })
 }
 
-export async function POST(
+async function runApprove(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
@@ -1189,4 +1191,83 @@ export async function POST(
   }
 
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
+}
+
+/**
+ * Public route handler. Runs the approval (runApprove) UNCHANGED, then — only on a
+ * successful approval — resumes the agent so it continues its task on its own
+ * instead of going silent until Sir messages again (owner request, issue #3).
+ *
+ * Why a wrapper: the approval body has many per-action-type branches (incl. sensitive
+ * finance), each returning its own response — there is no single tail to hook. The
+ * wrapper keeps that logic 100% untouched and bolts the continuation on the outside.
+ * It is fully isolated: a failure here never affects the approval response, and it
+ * no-ops gracefully when the worker queue (Redis) isn't configured or the owner has
+ * flipped the kill switch off. The continuation runs through the SAME headless turn
+ * path the VPS worker / Telegram already use, so it works whether Sir approved from
+ * the app OR Telegram.
+ */
+export async function POST(
+  req: NextRequest,
+  ctx: { params: { id: string } },
+) {
+  const res = await runApprove(req, ctx)
+  try {
+    if (res.status >= 200 && res.status < 300) {
+      await enqueueApprovalContinuation(ctx.params.id)
+    }
+  } catch (err) {
+    // The approval already succeeded and was returned to the caller; a continuation
+    // hiccup must never surface as an approval failure.
+    console.warn('[approve] continuation enqueue failed (approval unaffected):', err instanceof Error ? err.message : err)
+  }
+  return res
+}
+
+/** Owner kill switch for auto-continue-after-approval. Default ON (owner asked for it);
+ * set agent_kv_settings key `auto_continue_after_approval` = off to disable, no redeploy. */
+async function autoContinueEnabled(): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'auto_continue_after_approval' } })
+    const v = (row?.value ?? '').toString().trim().toLowerCase()
+    return v !== 'off' && v !== 'false' && v !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Enqueue one continuation turn for the conversation the just-approved action belongs
+ * to. Reuses the tested buildTurnJobData → enqueueTurnJob path; the VPS worker drains
+ * it, runs the turn through the chat route (which persists the reply for the app poll
+ * AND notifies Telegram), so both surfaces resume. No infinite loop: a continuation
+ * only ever fires from a human approval, and the turn is told not to redo the action.
+ */
+async function enqueueApprovalContinuation(actionId: string): Promise<void> {
+  if (!isTurnHandoffConfigured()) return        // no worker queue → silently skip
+  if (!(await autoContinueEnabled())) return    // owner disabled it
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: actionId },
+    select: { conversationId: true, status: true, summary: true },
+  })
+  const conversationId: string | null = action?.conversationId ?? null
+  if (!conversationId) return
+  // Only continue once the action genuinely resolved (guards against a 2xx that
+  // wasn't an approval, e.g. an idempotent no-op).
+  if (action.status !== 'approved' && action.status !== 'executed') return
+
+  const summary = (action.summary ?? '').toString().slice(0, 200)
+  const message =
+    '[সিস্টেম নোট — Sir approve করেছেন] একটা pending কাজ Sir approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
+    (summary ? `: "${summary}"` : '') +
+    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ' +
+    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
+
+  const turnId = await createTurn(conversationId)
+  const jobData = buildTurnJobData(turnId, conversationId, { message })
+  if (jobData) await enqueueTurnJob(jobData)
 }
