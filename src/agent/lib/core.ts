@@ -107,6 +107,7 @@ export const MUTATING_TOOLS = new Set([
   'run_health_scan', 'web_research', 'generate_image', 'generate_on_model_image', 'generate_on_model_batch',
   'make_ad_creatives', 'make_product_reel',
   'make_plan', 'execute_plan',
+  'track_open_task', 'resolve_open_task',
 ])
 
 // One-time message injected when the expensive head exhausts its tool-round

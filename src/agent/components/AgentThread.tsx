@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
+import AgentOpenTasksChip from './AgentOpenTasksChip'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
@@ -1158,6 +1159,17 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       onResolve={onModelSwitchResolve}
                     />
                   )}
+
+                  {/* "বাকি কাজ" — open-loop tracker at the end of the last reply.
+                      Surfaces unfinished chat tasks + pending approvals; Continue
+                      resumes that exact work in this same chat from its note. */}
+                  {!isOfficeShift && !msg.streaming && onQuickSend &&
+                    msg.id === messages[messages.length - 1]?.id && (
+                      <AgentOpenTasksChip
+                        conversationId={conversationId}
+                        onContinue={(note) => onQuickSend(note)}
+                      />
+                    )}
 
                   {!msg.streaming && msg.text && (
                     <div className="mt-2 flex items-center gap-0.5">

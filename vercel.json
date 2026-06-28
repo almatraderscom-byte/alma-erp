@@ -56,6 +56,10 @@
     {
       "path": "/api/assistant/internal/office-digest",
       "schedule": "5 14 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/open-task-nudge",
+      "schedule": "*/10 * * * *"
     }
   ],
   "headers": [

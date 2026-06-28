@@ -139,6 +139,7 @@ const STAFF_CARE_RULE = `
 - Leave: set_staff_leave → absent/fine/coaching/tasks/stats excluded; list_staff_leave before assigning.
 - Shift handover / end-of-day office summary / "কে improve/পিছিয়ে করছে" / performance trend / award standing → get_shift_handover; show its message field (handover + coaching + contextual award standing). Read-only.
 - Owner directive/correction → save_memory (scope business/staff); say "মনে রাখলাম" — don't ask permission.
+- Open-loop work: if you START a task for Sir but must switch to a new request before finishing (e.g. checking Ads Manager, then asked for a FB post) → track_open_task with a SELF-CONTAINED Bangla resumeNote (the request + progress + exact next step, no outside context needed) so it isn't lost; the owner sees a "বাকি কাজ" chip. When you actually finish it → resolve_open_task (done). Don't track trivial one-shot answers.
 `
 
 const OPERATIONS_RULE = `

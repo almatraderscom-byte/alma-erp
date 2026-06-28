@@ -47,6 +47,7 @@ import { APPOINTMENT_TOOLS } from './appointment-tools'
 import { HEALTH_TOOLS } from './health-tools'
 import { DOCUMENT_TOOLS } from './document-tools'
 import { GRAPH_TOOLS } from './graph-tools'
+import { OPEN_TASK_TOOLS } from './open-task-tools'
 
 export interface ToolResult {
   success: boolean
@@ -391,6 +392,7 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   update_memory,
   delete_memory,
   ...GRAPH_TOOLS,
+  ...OPEN_TASK_TOOLS,
 ]
 
 /** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */

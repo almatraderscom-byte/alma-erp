@@ -3218,6 +3218,38 @@ model AgentTodo {
   @@map("agent_todos")
 }
 
+/// Open-loop / pending-work tracker for the chat agent. When a turn ends with
+/// something unfinished — an approval still waiting, or the owner's request not
+/// fully done — a row here keeps it alive so a new task never erases the old one.
+/// `resumeNote` is a SELF-CONTAINED instruction: the agent can resume the work
+/// from that note alone, no system-prompt reload or tool-search needed.
+model AgentOpenTask {
+  id              String    @id @default(uuid())
+  businessId      String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Chat this open task belongs to (so the inline chip is conversation-scoped).
+  conversationId  String?   @map("conversation_id")
+  title           String
+  /// chat_followup = owner's request left unfinished · approval_pending = a
+  /// confirm card still awaiting the owner's decision.
+  kind            String    @default("chat_followup")
+  /// open | running | done | cancelled
+  status          String    @default("open")
+  /// Self-contained Bangla brief the agent reads to pick the work back up.
+  resumeNote      String    @db.Text @map("resume_note")
+  /// Links to the AgentPendingAction when kind = approval_pending.
+  pendingActionId String?   @map("pending_action_id")
+  /// When the next "still pending?" nudge is due (30/60 min escalation).
+  nudgeDueAt      DateTime? @map("nudge_due_at")
+  nudgedCount     Int       @default(0) @map("nudged_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  completedAt     DateTime? @map("completed_at")
+
+  @@index([conversationId, status])
+  @@index([businessId, status, nudgeDueAt])
+  @@map("agent_open_tasks")
+}
+
 model AgentToolEvent {
   id             String   @id @default(uuid())
   ts             DateTime @default(now())
