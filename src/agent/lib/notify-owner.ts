@@ -4,6 +4,7 @@
  */
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { isOwnerAppActive } from '@/agent/lib/owner-presence'
+import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
 async function sendNtfy(topic: 'general' | 'critical', title: string, message: string, category?: string) {
   const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
@@ -72,6 +73,19 @@ export async function notifyOwner(opts: {
       statuses.ntfy_critical = 'sent'
     } catch (err) {
       statuses.ntfy_critical = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  // Reliability fallback: a tier ≥2 alert (worker down, quota, staff send-failure)
+  // must reach the owner even when ntfy is unreachable. If no ntfy channel landed,
+  // push the same alert to the owner's Telegram — an independent transport.
+  if (opts.tier >= 2 && !Object.values(statuses).includes('sent')) {
+    channels.push('telegram_owner')
+    try {
+      const tg = await sendOwnerText(`🚨 ${opts.title}\n\n${opts.message}`)
+      statuses.telegram_owner = tg.ok ? 'sent' : `error: ${tg.error ?? 'unknown'}`
+    } catch (err) {
+      statuses.telegram_owner = `error: ${err instanceof Error ? err.message : String(err)}`
     }
   }
 
