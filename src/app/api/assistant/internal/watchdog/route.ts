@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 import { captureAgentEvent } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { scanStaffSendFailures } from '@/agent/lib/notif-failure-scan'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -70,11 +71,25 @@ export async function GET(req: NextRequest) {
     await captureAgentEvent('warn', 'agent.watchdog.stale', { stale, status })
   }
 
+  // Staff send-failure detection: alert the owner when queued staff messages
+  // exhaust every retry. Isolated so a queue/DB error never breaks the heartbeat check.
+  let staffFailures: { failed: number; alerted: boolean } = { failed: 0, alerted: false }
+  try {
+    const scan = await scanStaffSendFailures()
+    staffFailures = { failed: scan.failed, alerted: scan.alerted }
+    if (scan.alerted) {
+      await captureAgentEvent('warn', 'agent.watchdog.staff_send_failures', { failed: scan.failed })
+    }
+  } catch (err) {
+    await captureAgentEvent('error', 'agent.watchdog.failure_scan_failed', { error: String(err) })
+  }
+
   return NextResponse.json({
-    ok: stale.length === 0,
+    ok: stale.length === 0 && staffFailures.failed === 0,
     checkedAt: new Date().toISOString(),
     stale,
     status,
+    staffFailures,
   })
 }
 
