@@ -96,7 +96,7 @@ export const MUTATING_TOOLS = new Set([
   'manage_model_library', 'manage_work_todos', 'mark_salah', 'merge_into_proposal',
   'outbound_phone_call', 'pause_campaign', 'pause_content_engine', 'post_to_facebook',
   'publish_product', 'reject_playbook', 'resume_content_engine', 'retire_playbook',
-  'run_content_post', 'save_brand_asset', 'save_memory', 'send_customer_message',
+  'run_content_post', 'save_brand_asset', 'save_memory', 'send_customer_message', 'reply_to_comment',
   'send_dispatch_correction_notice', 'send_product_image', 'send_staff_announcement',
   'send_urgent_alert', 'set_api_credit', 'set_product_featured', 'set_qc_level',
   'set_reminder', 'set_salah_override', 'set_salah_time', 'set_staff_leave',

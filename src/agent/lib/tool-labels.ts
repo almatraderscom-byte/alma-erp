@@ -3,6 +3,8 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   confirm_oxylabs_spend: { label: 'Oxylabs খরচ অনুমোদন চাইছি', icon: '🔍', color: '#f59e0b' },
   web_research: { label: 'ওয়েব রিসার্চ করছি', icon: '🌐', color: '#3b82f6' },
   get_fb_messenger_inbox: { label: 'Messenger ইনবক্স দেখছি', icon: '💬', color: '#0084ff' },
+  get_unanswered_comments: { label: 'রিপ্লাই-বাকি কমেন্ট দেখছি', icon: '💬', color: '#0084ff' },
+  reply_to_comment: { label: 'কমেন্ট রিপ্লাই তৈরি করছি', icon: '↩️', color: '#0084ff' },
   get_marketing_history: { label: 'মার্কেটিং হিস্ট্রি দেখছি', icon: '📣', color: '#e1306c' },
   get_marketing_intel: { label: 'মার্কেটিং ইনটেল চেক করছি', icon: '🎯', color: '#e1306c' },
   get_orders: { label: 'ERP অর্ডার চেক করছি', icon: '📦', color: '#16a34a' },
@@ -28,6 +30,7 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   generate_owner_briefing: { label: 'ব্রিফিং ডেটা সংগ্রহ করছি', icon: '☀️', color: '#eab308' },
   get_salah_status: { label: 'নামাজের স্ট্যাটাস দেখছি', icon: '🕌', color: '#0ea5e9' },
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
+  send_whatsapp: { label: 'WhatsApp মেসেজ পাঠাচ্ছি', icon: '💬', color: '#25D366' },
 }
 
 /**

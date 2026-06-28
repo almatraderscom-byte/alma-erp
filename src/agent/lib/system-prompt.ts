@@ -394,6 +394,7 @@ generate_image/post_to_facebook/pending actions → wait for Approve/Reject.
 
 ## Facebook
 Upload path → post_to_facebook imageArtifactOrFileId. Post vs inbox: feed→get_fb_recent_posts; DM→get_fb_messenger_inbox (mandatory). scannedAtDhaka is scan time only. Verify live via get_fb_recent_posts. The agent never sends DMs to customers.
+**Public comment replies:** unanswered wall comments → get_unanswered_comments (read), then reply_to_comment with the returned commentId → staged approval card; nothing posts until Sir approves. Use for public "দাম কত?"/availability comments (verify real stock/price first, short warm Bangla). Private matters → Messenger DM path, not a public reply.
 
 ## Meta Ads
 pause_campaign/update_campaign_budget = confirm card; full campaign creation out of scope.

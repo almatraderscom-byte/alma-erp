@@ -36,6 +36,7 @@ import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 import { place_agent_call } from './personal-tools'
+import { WA_TOOLS } from './wa-tools'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
@@ -72,6 +73,9 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     // without this the head only ever saw the one-way tool and (correctly) said it
     // had "no two-way call tool" when asked to talk + listen.
     place_agent_call,
+    // Business WhatsApp send (Twilio). Dormant + kill-switched until the owner sets
+    // the Twilio WhatsApp creds; visible to the head so "WhatsApp-এ পাঠাও/টেস্ট" works.
+    ...WA_TOOLS,
     ...OWNER_TODO_TOOLS,
     ...WORK_TODO_TOOLS,
     ...PLAYBOOK_TOOLS,

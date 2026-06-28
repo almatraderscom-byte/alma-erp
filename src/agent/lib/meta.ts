@@ -669,6 +669,36 @@ export async function getUnansweredComments(opts: {
   return out
 }
 
+/**
+ * Publish a public reply to a customer's comment (POST /{comment-id}/comments).
+ * Uses the page token (same scope already used for createPagePost). Returns the
+ * new reply comment id. This is the WRITE counterpart to getUnansweredComments —
+ * it is only ever called from an owner-approved pending action, never directly.
+ */
+export async function replyToComment(opts: {
+  pageId: string
+  commentId: string
+  message: string
+}): Promise<{ replyId: string }> {
+  const token = tokenFor(opts.pageId)
+  const message = opts.message.trim()
+  if (!message) throw new Error('Empty reply message')
+  const res = await resilientFetch(`${GRAPH_BASE}/${opts.commentId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, access_token: token }),
+    timeoutMs: 30_000,
+    retries: 1,
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph API error ${res.status}: ${err}`)
+  }
+  const data = (await res.json()) as { id?: string }
+  if (!data.id) throw new Error('Graph API returned no reply id')
+  return { replyId: data.id }
+}
+
 export interface CustomerReplyStatus {
   ok: boolean
   messengerUnanswered: number

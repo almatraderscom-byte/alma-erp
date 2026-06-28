@@ -5,6 +5,7 @@ import { logToolEvent } from '@/agent/lib/tool-telemetry'
 import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
+import { WA_TOOLS } from './wa-tools'
 import { STAFF_TOOLS } from './staff-tools'
 import { SETTINGS_TOOLS } from './settings-tools'
 import { SALAH_TOOLS } from './salah-tools'
@@ -431,6 +432,7 @@ export const TOOLS: AgentTool[] = [
   ...CORE_AGENT_TOOLS,
   ...ERP_TOOLS,
   ...CONFIRM_TOOLS,
+  ...WA_TOOLS,
   ...STAFF_TOOLS,
   ...SETTINGS_TOOLS,
   ...SALAH_TOOLS,
