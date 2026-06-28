@@ -63,13 +63,14 @@ const resolve_open_task: AgentTool = {
   name: 'resolve_open_task',
   description:
     'Mark a previously tracked open task as finished (done) or dropped (cancelled). ' +
-    'Call this once you actually complete the work you tracked, so the "বাকি কাজ" chip clears. ' +
-    'Pass the openTaskId from track_open_task, or omit it to resolve the single open task in this chat.',
+    'Call this the moment you complete the tracked work, OR when Sir says to drop / defer it ("বাদ দাও", "পরে করব") — so the "বাকি কাজ" chip clears immediately. ' +
+    'You usually do NOT need an id: omit openTaskId and it resolves the task Sir is currently working on (the one just continued), or the only open task. ' +
+    'If several are open and it cannot tell which, it returns the list so you can call again with the right openTaskId.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      openTaskId: { type: 'string', description: 'The id returned by track_open_task. Optional if there is only one open task.' },
-      status: { type: 'string', enum: ['done', 'cancelled'], description: 'done = finished · cancelled = dropped' },
+      openTaskId: { type: 'string', description: 'The id returned by track_open_task. Optional — omit to auto-pick the task being worked on / the only open one.' },
+      status: { type: 'string', enum: ['done', 'cancelled'], description: 'done = finished · cancelled = dropped/deferred' },
       conversationId: { type: 'string' },
     },
     required: ['status'],
@@ -84,9 +85,21 @@ const resolve_open_task: AgentTool = {
       if (!id && conversationId) {
         const open = await listOpenTasks(conversationId, businessId)
         const followups = open.filter((t) => t.kind === 'chat_followup')
-        if (followups.length === 1) id = followups[0].id
-        else if (followups.length === 0) return { success: false, error: 'no open chat task to resolve' }
-        else return { success: false, error: 'multiple open tasks — pass openTaskId' }
+        if (followups.length === 0) return { success: false, error: 'no open chat task to resolve' }
+        // A task the owner clicked "Continue" on is uniquely marked 'running' — that
+        // is the one being actively worked on, so prefer it when no id is supplied.
+        const running = followups.filter((t) => t.status === 'running')
+        if (running.length === 1) id = running[0].id
+        else if (followups.length === 1) id = followups[0].id
+        else {
+          // Genuinely ambiguous — hand the list back so the head retries with an id
+          // (never dead-end and tell Sir to dismiss manually).
+          return {
+            success: false,
+            error: 'multiple open tasks — call again with openTaskId',
+            data: { openTasks: followups.map((t) => ({ openTaskId: t.id, title: t.title, status: t.status })) },
+          }
+        }
       }
       if (!id) return { success: false, error: 'openTaskId is required' }
 
