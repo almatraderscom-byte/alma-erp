@@ -83,7 +83,11 @@ export function isTurnHandoffConfigured(): boolean {
 
 /**
  * Add the turn to the `long-agent-task` queue. Uses a deterministic jobId
- * (`turn:<turnId>`) so a double-submit can't enqueue the same turn twice.
+ * (`turn-<turnId>`) so a double-submit can't enqueue the same turn twice.
+ * NOTE: BullMQ forbids ':' in a custom job id ("Custom Id cannot contain :"), so
+ * the separator is '-', not ':' — the old ':' silently failed EVERY enqueue
+ * (the handoff fallback rarely fired, so it went unnoticed until the
+ * approval-continuation path started relying on it).
  * Returns the job id, or null if no queue is configured / the add failed.
  */
 export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> {
@@ -95,7 +99,7 @@ export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> 
       connection: { url },
       defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10_000 } },
     })
-    const job = await queue.add('turn', data, { jobId: `turn:${data.turnId}` })
+    const job = await queue.add('turn', data, { jobId: `turn-${data.turnId}` })
     await queue.close()
     return job.id ?? null
   } catch (err) {
