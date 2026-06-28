@@ -28,6 +28,7 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   generate_owner_briefing: { label: 'ব্রিফিং ডেটা সংগ্রহ করছি', icon: '☀️', color: '#eab308' },
   get_salah_status: { label: 'নামাজের স্ট্যাটাস দেখছি', icon: '🕌', color: '#0ea5e9' },
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
+  send_whatsapp: { label: 'WhatsApp মেসেজ পাঠাচ্ছি', icon: '💬', color: '#25D366' },
 }
 
 /**
