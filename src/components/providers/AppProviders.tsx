@@ -96,7 +96,11 @@ function ErpChrome({ children }: { children: ReactNode }) {
               // nothing legitimately needs page-level horizontal scroll on mobile.
               // Desktop (md+) keeps overflow-x-auto. overscroll-x-none stops any
               // residual horizontal rubber-band on desktop too.
-              'flex-1 min-w-0 scrollbar-hide overscroll-y-contain overscroll-x-none',
+              // [-webkit-overflow-scrolling:touch] gives this main scroller iOS
+              // momentum scrolling — without it the WKWebView scroll feels stuck
+              // and stutters after the first drag. Harmless for the agent branch
+              // (it's overflow-hidden there; the inner wrappers do the scrolling).
+              'flex-1 min-w-0 scrollbar-hide overscroll-y-contain overscroll-x-none [-webkit-overflow-scrolling:touch]',
               isAgent
                 ? 'overflow-hidden'
                 : 'overflow-x-hidden overflow-y-auto md:overflow-x-auto',

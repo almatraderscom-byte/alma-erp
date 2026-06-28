@@ -329,7 +329,7 @@ function AttendancePageInner() {
             </p>
           )}
           {data.integrity.issueCount > 0 && (
-            <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto text-[11px] text-muted-hi">
+            <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto [-webkit-overflow-scrolling:touch] overscroll-contain text-[11px] text-muted-hi">
               {data.integrity.issues.map((row, i) => (
                 <li key={`${row.kind}-${i}`}>
                   {row.kind.replace(/_/g, ' ')}
@@ -565,7 +565,7 @@ function AttendancePageInner() {
           {loading ? <Skeleton className="h-40" /> : !(data?.ranking ?? []).length ? (
             <p className="text-[11px] text-muted">No linked employees for this business.</p>
           ) : (
-            <div className="space-y-2 max-h-[420px] overflow-y-auto">
+            <div className="space-y-2 max-h-[420px] overflow-y-auto [-webkit-overflow-scrolling:touch] overscroll-contain">
               {data!.ranking.slice(0, 20).map((r, i) => (
                 <div key={`${r.employeeId}-${i}`} className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-3 text-[11px] hover:bg-white/[0.04] transition-colors">
                   <div className="flex justify-between gap-2 items-center">

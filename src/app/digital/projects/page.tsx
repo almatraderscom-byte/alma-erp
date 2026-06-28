@@ -73,8 +73,8 @@ export default function DigitalProjectsPage() {
         {listLoading ? <div className="p-4"><Skeleton className="h-32" /></div> : projects.length === 0 ? (
           <div className="p-8"><Empty icon="◰" title="No projects" desc="Start tracking client work here" /></div>
         ) : (
-          <div className="overflow-x-auto min-w-0 max-w-full">
-          <div className="min-w-[640px] divide-y divide-border">
+          <div className="table-scroll min-w-0 max-w-full">
+          <div className="min-w-0 md:min-w-[640px] divide-y divide-border">
             {projects.map(p => (
               <div key={p.id} className="px-5 py-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">

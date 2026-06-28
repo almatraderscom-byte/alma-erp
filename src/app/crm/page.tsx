@@ -252,7 +252,7 @@ export default function CrmPage() {
         {selected && (
           <motion.div className="fixed inset-0 z-50 flex justify-end" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}>
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSelected(null)} />
-            <motion.div className="relative w-full max-w-md bg-surface border-l border-border h-full overflow-y-auto scrollbar-gold"
+            <motion.div className="relative w-full max-w-md bg-surface border-l border-border h-full overflow-y-auto scrollbar-gold [-webkit-overflow-scrolling:touch] overscroll-contain"
               initial={{ x:'100%' }} animate={{ x:0 }} exit={{ x:'100%' }} transition={{ type:'spring', damping:26, stiffness:300 }}>
               <div className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 py-4 flex items-center gap-3 z-10">
                 <Avatar name={selected.name} size="md" vip={selected.segment === 'VIP'} />

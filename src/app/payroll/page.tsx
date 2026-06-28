@@ -623,7 +623,8 @@ export default function PayrollPage() {
               <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
             </div>
           ) : (
-            <div className="overflow-x-auto min-w-0 max-w-full max-h-[420px] mt-4">
+            <>
+            <div className="hidden overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px] mt-4 md:block">
               <table className="w-full min-w-[720px] text-left text-[11px]">
                 <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
                   <tr>
@@ -684,6 +685,66 @@ export default function PayrollPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile cards */}
+            <motion.div
+              className="space-y-3 mt-4 md:hidden"
+              variants={_stagger} initial="hidden" animate="show"
+            >
+              {mealRows.map(row => (
+                <motion.div key={row.userId} variants={_fadeUp}>
+                  <Card className="p-4 text-[11px]">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-cream">{row.name}</p>
+                        <p className="font-mono text-muted text-[10px]">{row.employeeId || '—'}</p>
+                        <p className="text-muted text-[10px] mt-0.5">{row.phone || '—'}</p>
+                      </div>
+                      <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted">
+                        Enable
+                        <input
+                          type="checkbox"
+                          checked={row.enabled}
+                          onChange={e =>
+                            setMealRows(prev =>
+                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex items-end justify-between gap-3">
+                      <label className="flex-1">
+                        <span className="block text-[10px] text-muted mb-1">Amount (BDT)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          disabled={!row.enabled}
+                          value={row.amountBdt}
+                          onChange={e =>
+                            setMealRows(prev =>
+                              prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
+                            )
+                          }
+                          className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                        />
+                      </label>
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
+                        onClick={() => void saveMealProfile(row)}
+                      >
+                        {row.saving ? 'Saving…' : 'Save'}
+                      </Button>
+                    </div>
+                  </Card>
+                </motion.div>
+              ))}
+            </motion.div>
+            </>
           )}
         </Card>
       )}

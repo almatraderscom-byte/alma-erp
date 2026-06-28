@@ -358,7 +358,7 @@ function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResp
         <p className="text-sm font-bold text-cream">Account Performance & Health</p>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : !rows.length ? <Empty icon="◇" title="No account performance yet" /> : (
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <div className="min-w-[1080px] divide-y divide-white/[0.06]">
             <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
               <span>Account</span><span>Balance</span><span>Daily P/L</span><span>Weekly P/L</span><span>ROI</span><span>Expense</span><span>Fees</span><span>Progress</span><span>Staff</span><span>Health</span>
