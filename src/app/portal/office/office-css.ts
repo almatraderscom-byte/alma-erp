@@ -26,8 +26,12 @@ body:has(.ohub){overflow:hidden;height:100%}
      single source of truth for the sticky topbar height so nothing overlaps it. */
   --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
   --topbar-h:calc(60px + var(--safe-top));
-  position:fixed; inset:0; z-index:70; overflow-y:auto; overflow-x:hidden;
-  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+  /* The fixed shell is a flex COLUMN that itself NEVER scrolls (overflow:hidden).
+     A normal in-flow child (.wrap) is the only momentum scroller — a position:fixed
+     element that is also the scroller is the iOS WKWebView combo that locks up and
+     can't scroll back to the top. This split is the reliable native fix. */
+  position:fixed; inset:0; z-index:70; display:flex; flex-direction:column;
+  overflow:hidden; overscroll-behavior:none;
   font-family:var(--font); background:var(--bg-0); color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.5;
   background-image:
@@ -40,7 +44,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .num{font-variant-numeric:tabular-nums}
 
 /* ── top perspective switcher ── */
-.ohub .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;flex-wrap:nowrap;
+.ohub .topbar{flex:none;position:relative;z-index:40;display:flex;align-items:center;gap:14px;flex-wrap:nowrap;
   padding:14px 22px;padding-top:max(14px,var(--safe-top));min-height:var(--topbar-h);
   background:rgba(18,18,22,0.82);backdrop-filter:blur(18px) saturate(1.1);
   border-bottom:1px solid var(--border-subtle)}
@@ -55,8 +59,11 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .bell{position:relative;flex-shrink:0;width:40px;height:40px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:17px;background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--ink);cursor:pointer}
 .ohub .bell .bdot{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:10px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;display:grid;place-items:center;padding:0 5px;border:2px solid var(--bg-0)}
 
-.ohub .wrap{max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
-.ohub .perspective{display:none}
+/* the ONLY scroller: an in-flow flex child, momentum + contained so iOS never
+   chains to the body or locks up. Content centering/padding lives on .perspective. */
+.ohub .wrap{flex:1;min-height:0;width:100%;overflow-y:auto;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.ohub .perspective{display:none;width:100%;max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
 .ohub .perspective.show{display:block;animation:oh-fade .26s ease}
 @keyframes oh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
@@ -331,7 +338,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-chatpanel .cp-head .gav{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-size:17px;background:linear-gradient(135deg,#10b981,#059669);color:#fff}
 .ohub-chatpanel .cp-head .ttl{flex:1;min-width:0} .ohub-chatpanel .cp-head .ttl b{font-size:14.5px;font-weight:700} .ohub-chatpanel .cp-head .ttl span{display:block;font-size:11.5px;color:#22c55e}
 .ohub-chatpanel .cp-head .x{background:none;border:0;color:#AEB2C0;font-size:20px;cursor:pointer;padding:2px 6px}
-.ohub-chatpanel .cp-body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:13px}
+.ohub-chatpanel .cp-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:smooth;padding:14px;display:flex;flex-direction:column;gap:13px}
 .ohub-chatpanel .gm{display:flex;gap:9px;max-width:90%}
 .ohub-chatpanel .gm .av{width:27px;height:27px;font-size:11px;margin-top:2px;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0;background:#3f3f46}
 .ohub-chatpanel .gm .av.e{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
@@ -365,7 +372,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-notif .nh{display:flex;align-items:center;justify-content:space-between;padding:12px 15px;border-bottom:1px solid rgba(255,255,255,0.07)}
 .ohub-notif .nh b{font-size:14px;font-weight:700}
 .ohub-notif .nh button{background:none;border:0;color:#7dd3fc;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-.ohub-notif .nlist{max-height:60vh;overflow-y:auto}
+.ohub-notif .nlist{max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .ohub-notif .ni{display:flex;gap:10px;width:100%;text-align:left;padding:11px 15px;border:0;border-bottom:1px solid rgba(255,255,255,0.05);background:transparent;color:inherit;cursor:pointer;font-family:inherit}
 .ohub-notif .ni.unread{background:rgba(56,189,248,.06)}
 .ohub-notif .ni .ic{font-size:16px;margin-top:1px}
@@ -394,7 +401,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-drawer .dh .ttl b{display:block;font-size:13px;font-weight:800;letter-spacing:.04em;color:#F4A28C}
 .ohub-drawer .dh .ttl span{display:block;font-size:10.5px;color:#AEB2C0;margin-top:1px}
 .ohub-drawer .dh .x{background:none;border:0;color:#AEB2C0;font-size:22px;cursor:pointer;padding:0 4px;line-height:1}
-.ohub-drawer .dnav{flex:1;overflow-y:auto;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.ohub-drawer .dnav{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
 .ohub-drawer .dnav::-webkit-scrollbar{width:7px}
 .ohub-drawer .dnav::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:7px}
 .ohub-drawer .dl{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:12px;text-decoration:none;color:#D0D4E0;
@@ -407,7 +414,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 
 /* ════ day-end history archive ════ */
 .ohub-hist-ov{position:fixed;inset:0;z-index:92;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);
-  display:flex;justify-content:center;align-items:flex-start;padding:max(34px,var(--safe-top)) 16px calc(60px + var(--safe-bottom));overflow-y:auto;animation:oh-fade .2s ease;
+  display:flex;justify-content:center;align-items:flex-start;padding:max(34px,var(--safe-top)) 16px calc(60px + var(--safe-bottom));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;animation:oh-fade .2s ease;
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC}
 .ohub-hist{width:100%;max-width:900px;background:#1A1A20;border:1px solid rgba(255,255,255,0.08);border-radius:22px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}
 .ohub-hist .hh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027;position:sticky;top:0;z-index:2}
@@ -444,7 +451,6 @@ body:has(.ohub){overflow:hidden;height:100%}
 
 /* ════ responsive polish for staff phone view on real devices ════ */
 @media(max-width:680px){
-  .ohub .topbar{position:sticky}
   .ohub .grid2{gap:14px}
   .ohub .appr{padding:13px;gap:11px}
   .ohub .thumb{width:54px;height:54px}
@@ -506,7 +512,7 @@ body:has(.ohub){overflow:hidden;height:100%}
   background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:grid;place-items:center}
 
 /* ════ staff sticky performer + motivation hero (req 3 & 4) ════ */
-.ohub .staff-hero{position:sticky;top:var(--topbar-h);z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
+.ohub .staff-hero{position:sticky;top:0;z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
 .ohub .staff-hero .award-mini{flex:1 1 300px;margin-bottom:0}
 .ohub .staff-hero .award-mini.hero .inner{align-items:center}
 .ohub .staff-hero .award-mini.hero .photo{width:60px;height:60px}
