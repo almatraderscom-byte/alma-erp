@@ -1,7 +1,7 @@
 'use client'
 
-import { motion, type HTMLMotionProps, type Variants } from 'framer-motion'
-import type { ReactNode } from 'react'
+import { motion, useInView, useReducedMotion, useSpring, type HTMLMotionProps, type Variants } from 'framer-motion'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -56,4 +56,90 @@ export function Lift({ children, className, ...props }: { children: ReactNode; c
       {children}
     </motion.div>
   )
+}
+
+/**
+ * Press — tactile tap feedback for buttons/chips/icon controls. Dips slightly on
+ * press, no hover lift (use <Lift> for cards). Reduced-motion safe via MotionConfig.
+ */
+export function Press({ children, className, ...props }: { children: ReactNode; className?: string } & HTMLMotionProps<'button'>) {
+  return (
+    <motion.button
+      className={cn('will-change-transform', className)}
+      whileTap={{ scale: 0.96 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      {...props}
+    >
+      {children}
+    </motion.button>
+  )
+}
+
+/**
+ * AppearOnScroll — fades + springs its child up the first time it scrolls into
+ * view. No-op (renders statically) under reduced motion. Wrap any below-the-fold
+ * section/card to give the page a living, native feel as the owner scrolls.
+ */
+export function AppearOnScroll({
+  children,
+  className,
+  delay = 0,
+  y = 16,
+  ...props
+}: { children: ReactNode; className?: string; delay?: number; y?: number } & HTMLMotionProps<'div'>) {
+  const ref = useRef<HTMLDivElement>(null)
+  const inView = useInView(ref, { once: true, margin: '0px 0px -10% 0px' })
+  const reduce = useReducedMotion()
+  if (reduce) {
+    return (
+      <div ref={ref} className={className}>
+        {children}
+      </div>
+    )
+  }
+  return (
+    <motion.div
+      ref={ref}
+      className={className}
+      initial={{ opacity: 0, y }}
+      animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y }}
+      transition={{ type: 'spring', stiffness: 260, damping: 28, mass: 0.7, delay }}
+      {...props}
+    >
+      {children}
+    </motion.div>
+  )
+}
+
+/**
+ * CountUp — animates a whole number from 0 → value with a spring, then renders
+ * the formatted result. Whole-integer only (money/counts); never fractional taka.
+ * Under reduced motion it shows the final value immediately.
+ */
+export function CountUp({
+  value,
+  format,
+  className,
+}: {
+  value: number
+  /** Optional formatter (e.g. thousands separator). Defaults to locale string. */
+  format?: (n: number) => string
+  className?: string
+}) {
+  const reduce = useReducedMotion()
+  const fmt = format ?? ((n: number) => Math.round(n).toLocaleString('en-US'))
+  const spring = useSpring(reduce ? value : 0, { stiffness: 90, damping: 20, mass: 0.8 })
+  const [display, setDisplay] = useState(reduce ? value : 0)
+
+  useEffect(() => {
+    if (reduce) {
+      setDisplay(value)
+      return
+    }
+    spring.set(value)
+    const unsub = spring.on('change', v => setDisplay(Math.round(v)))
+    return () => unsub()
+  }, [value, reduce, spring])
+
+  return <span className={cn('tabular-nums', className)}>{fmt(display)}</span>
 }

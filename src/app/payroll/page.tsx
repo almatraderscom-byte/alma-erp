@@ -365,7 +365,7 @@ export default function PayrollPage() {
     >
       <PageEnter className="min-w-0 max-w-full space-y-5">
       {walletError && showApprovals && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border tone-red px-4 py-3 text-sm">
           <span>{walletError}</span>
           <Button variant="ghost" size="xs" onClick={() => void loadWallets(true)}>Retry</Button>
         </div>
@@ -406,7 +406,7 @@ export default function PayrollPage() {
             <Button size="xs" variant="gold" type="submit" loading={compBusy}>Post</Button>
           </form>
           {orphanLedgerCount > 0 && (
-            <p className="mt-3 text-[11px] text-amber-700 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="mt-3 text-[11px] tone-amber rounded-xl border px-3 py-2">
               {orphanLedgerCount} orphan ledger {orphanLedgerCount === 1 ? 'entry' : 'entries'} (not on roster / no linked user).{' '}
               <button
                 type="button"
@@ -443,7 +443,7 @@ export default function PayrollPage() {
           <div className="grid md:grid-cols-3 gap-3 mt-4">
             <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
               <p className="text-[9px] uppercase tracking-wider text-muted font-bold">Monthly preview</p>
-              <p className="font-mono text-emerald-600 text-lg font-bold mt-1">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</p>
+              <p className="font-mono txt-pos text-lg font-bold mt-1">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</p>
               <p className="text-[10px] text-muted">{preview?.employees.length ?? 0} linked employees · {preview?.alreadyAccruedCount ?? 0} already accrued</p>
             </div>
             <div className="md:col-span-2 rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
@@ -453,7 +453,7 @@ export default function PayrollPage() {
                   {history.slice(0, 6).map(run => (
                     <div key={run.id} className="flex justify-between gap-2 border-b border-white/[0.04] pb-1">
                       <span className="font-mono text-muted">{run.periodYm}</span>
-                      <span className={run.status === 'SUCCESS' ? 'text-emerald-600 font-medium' : run.status === 'RUNNING' ? 'text-amber-600 font-medium' : 'text-red-600 font-medium'}>{run.status}</span>
+                      <span className={run.status === 'SUCCESS' ? 'txt-pos font-medium' : run.status === 'RUNNING' ? 'text-amber-500 font-medium' : 'txt-neg font-medium'}>{run.status}</span>
                       <span className="text-muted">{run.trigger}</span>
                       <span className="font-mono text-[#E07A5F]">+{run.createdCount} / skip {run.skippedCount}</span>
                     </div>
@@ -554,11 +554,11 @@ export default function PayrollPage() {
                   <tr key={`${w.businessId}:${w.employeeId}`} className="transition-colors hover:bg-white/[0.04]/80">
                     <td className="py-3 pr-3"><span className="text-cream font-medium">{w.name}</span><span className="block text-muted font-mono text-[10px]">{w.employeeId}</span></td>
                     <td className="py-3 pr-3 font-mono text-right text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-emerald-600">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
+                    <td className="py-3 pr-3 font-mono text-right txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-[#E07A5F]">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-red-600">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
+                    <td className="py-3 pr-3 font-mono text-right txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-emerald-600 font-medium">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
+                    <td className="py-3 pr-3 font-mono text-right txt-pos font-medium">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">{w.summary.totalAccrued ? `${Math.round(((w.summary.totalCommissions + w.summary.totalBonuses) / w.summary.totalAccrued) * 100)}% variable` : '—'}</td>
                     <td className="py-3"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-[#E07A5F] hover:text-[#c56a52] font-medium">Ledger</Link></td>
                   </tr>
@@ -589,17 +589,17 @@ export default function PayrollPage() {
                       <p className="text-[10px] text-muted">Earned</p>
                       <p className="font-mono font-bold text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</p>
                     </div>
-                    <div className="rounded-xl border border-white/[0.06] bg-emerald-50/50 px-3 py-2">
+                    <div className="rounded-xl border border-white/[0.06] bg-emerald-500/10 px-3 py-2">
                       <p className="text-[10px] text-muted">Held balance</p>
-                      <p className="font-mono font-bold text-emerald-600">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
+                      <p className="font-mono font-bold txt-pos">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
                     </div>
                     <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2">
                       <p className="text-[10px] text-muted">Commission</p>
-                      <p className="font-mono text-emerald-600">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
+                      <p className="font-mono txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
                     </div>
-                    <div className="rounded-xl border border-white/[0.06] bg-red-50/30 px-3 py-2">
+                    <div className="rounded-xl border border-white/[0.06] bg-red-500/10 px-3 py-2">
                       <p className="text-[10px] text-muted">Deductions</p>
-                      <p className="font-mono text-red-600">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
+                      <p className="font-mono txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
                     </div>
                   </div>
                 </Card>

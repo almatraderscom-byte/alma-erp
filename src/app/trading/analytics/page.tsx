@@ -138,11 +138,11 @@ export default function TradingAnalyticsPage() {
 
       {loading ? <Skeleton className="h-52" /> : data?.alerts.length ? (
         <motion.div variants={fadeUp}>
-        <Card className="rounded-2xl border-red-200 bg-red-50 p-4">
-          <p className="mb-3 text-sm font-bold text-red-600">Analytics Alerts</p>
+        <Card className="rounded-2xl border tone-red p-4">
+          <p className="mb-3 text-sm font-bold">Analytics Alerts</p>
           <div className="grid gap-2 md:grid-cols-2">
             {data.alerts.map(alert => (
-              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-200 bg-card/85 p-3">
+              <div key={`${alert.type}-${alert.accountId}`} className="rounded-xl border border-red-500/30 bg-card/85 p-3">
                 <p className="text-xs font-bold text-cream">{alert.type} · {alert.accountTitle}</p>
                 <p className="mt-1 text-[11px] text-red-500">{alert.message}</p>
               </div>

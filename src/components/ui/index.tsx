@@ -1,5 +1,6 @@
 'use client'
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion, useSpring } from 'framer-motion'
+import { useEffect, useState } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { BdtText, Money } from '@/components/ui/Currency'
@@ -19,6 +20,28 @@ import { PLATFORM_Z } from '@/lib/platform-z-index'
 // ── Skeleton ─────────────────────────────────────────────────────────────
 export function Skeleton({ className }: { className?: string }) {
   return <div className={cn('skeleton rounded-lg', className)} />
+}
+
+/**
+ * Springs a number from 0 → target the first time it mounts, so KPI values
+ * "count up" for a premium, alive dashboard feel. Returns the target instantly
+ * under reduced motion or when disabled — never animates fractional taka mid-flight
+ * because callers round/format the integer it returns. Internal to KpiCard.
+ */
+function useCountUp(target: number, enabled: boolean): number {
+  const reduce = useReducedMotion()
+  const spring = useSpring(0, { stiffness: 80, damping: 22, mass: 0.9 })
+  const [n, setN] = useState(enabled && !reduce ? 0 : target)
+  useEffect(() => {
+    if (!enabled || reduce) {
+      setN(target)
+      return
+    }
+    spring.set(target)
+    const unsub = spring.on('change', v => setN(Math.round(v)))
+    return () => unsub()
+  }, [target, enabled, reduce, spring])
+  return n
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
@@ -53,7 +76,7 @@ export const KPI_AUTO_GRID =
   'grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,9.75rem),1fr))]'
 
 // ── KPI Card ──────────────────────────────────────────────────────────────
-export function KpiCard({ label, value, sub, delta, color, loading, valueKind }: {
+export function KpiCard({ label, value, sub, delta, color, loading, valueKind, animate }: {
   label: string
   value: string | number
   sub?: string
@@ -62,8 +85,13 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
   loading?: boolean
   /** Responsive compact/full formatting for numeric KPI values. */
   valueKind?: KpiValueKind | 'plain'
+  /** Count-up the numeric value on mount (premium dashboard feel). */
+  animate?: boolean
 }) {
   const valueColor = color ?? 'text-cream'
+  // Animated integer for numeric values; no-op (returns value) for string values.
+  const animatedValue = useCountUp(typeof value === 'number' ? value : 0, !!animate && typeof value === 'number')
+  const numeric = typeof value === 'number' ? (animate ? animatedValue : value) : value
 
   return (
     <Card className="kpi-card min-w-0 border-l-[3px] border-l-gold/40 p-3.5 sm:p-4 md:p-5">
@@ -78,11 +106,11 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
             {typeof value === 'number' ? (
               valueKind === 'plain' ? (
                 <p className={cn('min-w-0 max-w-full font-bold tabular-nums leading-tight tracking-tight text-[clamp(0.8125rem,0.55rem+1.1vw,1.375rem)]', valueColor)}>
-                  {fmtNum(value)}
+                  {fmtNum(numeric as number)}
                 </p>
               ) : (
                 <ResponsiveKpiValue
-                  amount={value}
+                  amount={numeric as number}
                   kind={valueKind === 'number' ? 'number' : valueKind === 'usdt' ? 'usdt' : 'currency'}
                   className={valueColor}
                 />
@@ -108,7 +136,7 @@ export function KpiCard({ label, value, sub, delta, color, loading, valueKind }:
           </div>
           {sub && <p className="mt-0.5 text-[11px] leading-snug text-muted">{sub}</p>}
           {delta !== undefined && (
-            <p className={cn('text-[11px] font-semibold', delta > 0 ? 'text-emerald-600' : 'text-red-500')}>
+            <p className={cn('text-[11px] font-semibold', delta > 0 ? 'txt-pos' : 'txt-neg')}>
               {delta > 0 ? '▲' : '▼'} {Math.abs(delta)}% vs last month
             </p>
           )}

@@ -10,18 +10,22 @@ export function pct(n: number): string {
   return Math.round(n) + '%'
 }
 
+// Theme-aware semantic tone classes (defined in globals.css). The single tone
+// class on `text` carries fg + bg + border-color for BOTH light and dark; bg /
+// border are kept empty so the badge's own `border` width utility still applies.
+// `dot` uses `.tone-dot`, which reads the inherited --tone-dot channel.
 export const STATUS_COLORS: Record<OrderStatus, { text: string; bg: string; border: string; dot: string }> = {
-  Pending:   { text:'text-amber-700',  bg:'bg-amber-50',  border:'border-amber-200',  dot:'bg-amber-500'  },
-  Confirmed: { text:'text-purple-700', bg:'bg-purple-50', border:'border-purple-200', dot:'bg-purple-500' },
-  Packed:    { text:'text-cyan-700',   bg:'bg-cyan-50',   border:'border-cyan-200',   dot:'bg-cyan-500'   },
-  Shipped:   { text:'text-blue-700',   bg:'bg-blue-50',   border:'border-blue-200',   dot:'bg-blue-500'   },
-  Delivered: { text:'text-green-700',  bg:'bg-green-50',  border:'border-green-200',  dot:'bg-green-500'  },
-  Returned:  { text:'text-red-700',    bg:'bg-red-50',    border:'border-red-200',    dot:'bg-red-500'    },
-  Cancelled: { text:'text-slate-600',  bg:'bg-slate-50',  border:'border-slate-200',  dot:'bg-slate-400'  },
-  RETURNED:  { text:'text-red-700',    bg:'bg-red-50',    border:'border-red-200',    dot:'bg-red-500'    },
-  RETURNED_PAID: { text:'text-amber-700', bg:'bg-amber-50', border:'border-amber-200', dot:'bg-amber-500' },
-  RETURNED_UNPAID: { text:'text-red-700', bg:'bg-red-50', border:'border-red-200', dot:'bg-red-500' },
-  CANCELLED: { text:'text-slate-600',  bg:'bg-slate-50',  border:'border-slate-200',  dot:'bg-slate-400'  },
+  Pending:   { text:'tone-amber',  bg:'', border:'', dot:'tone-dot' },
+  Confirmed: { text:'tone-purple', bg:'', border:'', dot:'tone-dot' },
+  Packed:    { text:'tone-cyan',   bg:'', border:'', dot:'tone-dot' },
+  Shipped:   { text:'tone-blue',   bg:'', border:'', dot:'tone-dot' },
+  Delivered: { text:'tone-green',  bg:'', border:'', dot:'tone-dot' },
+  Returned:  { text:'tone-red',    bg:'', border:'', dot:'tone-dot' },
+  Cancelled: { text:'tone-slate',  bg:'', border:'', dot:'tone-dot' },
+  RETURNED:  { text:'tone-red',    bg:'', border:'', dot:'tone-dot' },
+  RETURNED_PAID: { text:'tone-amber', bg:'', border:'', dot:'tone-dot' },
+  RETURNED_UNPAID: { text:'tone-red', bg:'', border:'', dot:'tone-dot' },
+  CANCELLED: { text:'tone-slate',  bg:'', border:'', dot:'tone-dot' },
 }
 
 /** Human-readable order status for badges and lists. */
@@ -35,25 +39,25 @@ export function orderStatusLabel(status: OrderStatus | string): string {
 }
 
 export const SEG_COLORS: Record<CustomerSegment, { text: string; bg: string; border: string }> = {
-  VIP:       { text:'text-gold-dim',   bg:'bg-gold/10',       border:'border-gold/30'         },
-  REGULAR:   { text:'text-green-700',  bg:'bg-green-50',      border:'border-green-200'       },
-  NEW:       { text:'text-blue-700',   bg:'bg-blue-50',       border:'border-blue-200'        },
-  RISKY:     { text:'text-amber-700',  bg:'bg-amber-50',      border:'border-amber-200'       },
-  BLACKLIST: { text:'text-red-700',    bg:'bg-red-50',        border:'border-red-200'         },
-  COLD:      { text:'text-slate-600',  bg:'bg-slate-50',      border:'border-slate-200'       },
+  VIP:       { text:'tone-gold',  bg:'', border:'' },
+  REGULAR:   { text:'tone-green', bg:'', border:'' },
+  NEW:       { text:'tone-blue',  bg:'', border:'' },
+  RISKY:     { text:'tone-amber', bg:'', border:'' },
+  BLACKLIST: { text:'tone-red',   bg:'', border:'' },
+  COLD:      { text:'tone-slate', bg:'', border:'' },
 }
 
 export const RISK_COLORS: Record<RiskLevel, { text: string; bg: string }> = {
-  LOW:    { text:'text-green-700', bg:'bg-green-50' },
-  MEDIUM: { text:'text-amber-700', bg:'bg-amber-50' },
-  HIGH:   { text:'text-red-700',   bg:'bg-red-50'   },
+  LOW:    { text:'tone-green', bg:'' },
+  MEDIUM: { text:'tone-amber', bg:'' },
+  HIGH:   { text:'tone-red',   bg:'' },
 }
 
 export const PAYMENT_COLORS: Record<string, string> = {
-  bKash: 'text-pink-700 bg-pink-50 border-pink-200',
-  Nagad: 'text-orange-700 bg-orange-50 border-orange-200',
-  COD:   'text-amber-700 bg-amber-50 border-amber-200',
-  'Bank Transfer': 'text-blue-700 bg-blue-50 border-blue-200',
+  bKash: 'tone-pink',
+  Nagad: 'tone-orange',
+  COD:   'tone-amber',
+  'Bank Transfer': 'tone-blue',
 }
 
 export const COURIER_STEPS: Partial<Record<OrderStatus, Array<{ label: string; done: boolean; active: boolean }>>> = {

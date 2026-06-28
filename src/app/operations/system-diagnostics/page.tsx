@@ -66,8 +66,8 @@ function ConfigBadge({ ok, label }: { ok: boolean; label: string }) {
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
         ok
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border-red-200 bg-red-50 text-red-700'
+          ? 'tone-green'
+          : 'tone-red'
       }`}
     >
       <span className={`inline-block h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
@@ -78,10 +78,10 @@ function ConfigBadge({ ok, label }: { ok: boolean; label: string }) {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    QUEUED: 'border-amber-200 bg-amber-50 text-amber-700',
-    SENDING: 'border-blue-200 bg-blue-50 text-blue-700',
-    SENT: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    FAILED: 'border-red-200 bg-red-50 text-red-700',
+    QUEUED: 'tone-amber',
+    SENDING: 'tone-blue',
+    SENT: 'tone-green',
+    FAILED: 'tone-red',
     SKIPPED: 'border-border bg-white/[0.04] text-muted-hi',
   }
   return (

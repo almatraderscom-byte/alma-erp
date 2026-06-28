@@ -259,7 +259,7 @@ function TelegramOpsSettingsPageInner() {
             onChange={v => setBusinessId(v as BusinessId)}
             options={BUSINESS_LIST.map(b => ({ label: b.name, value: b.id }))}
           />
-          <p className="mt-2 text-[11px] text-amber-700 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="mt-2 text-[11px] rounded-xl border tone-amber px-3 py-2">
             Showing config for:{' '}
             <span className="font-semibold text-cream">
               {BUSINESS_LIST.find(b => b.id === businessId)?.name ?? businessId}
@@ -455,14 +455,14 @@ function TelegramOpsSettingsPageInner() {
 
                   <h3 className="pt-3 text-sm font-bold text-cream">Queue (7 days)</h3>
                   <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-emerald-700 font-medium">SENT: {queueStats.SENT ?? 0}</span>
-                    <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-amber-700 font-medium">QUEUED: {queueStats.QUEUED ?? 0}</span>
-                    <span className="rounded-full bg-red-50 border border-red-200 px-2.5 py-1 text-red-700 font-medium">FAILED: {queueStats.FAILED ?? 0}</span>
-                    <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-blue-700 font-medium">SENDING: {queueStats.SENDING ?? 0}</span>
+                    <span className="rounded-full tone-green border px-2.5 py-1 font-medium">SENT: {queueStats.SENT ?? 0}</span>
+                    <span className="rounded-full tone-amber border px-2.5 py-1 font-medium">QUEUED: {queueStats.QUEUED ?? 0}</span>
+                    <span className="rounded-full tone-red border px-2.5 py-1 font-medium">FAILED: {queueStats.FAILED ?? 0}</span>
+                    <span className="rounded-full tone-blue border px-2.5 py-1 font-medium">SENDING: {queueStats.SENDING ?? 0}</span>
                   </div>
 
                   {dashboard?.delivery?.lastFailed && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">
+                    <div className="rounded-xl border tone-red p-3 text-[11px]">
                       <p className="font-bold">Last failure</p>
                       <p className="mt-1">{dashboard.delivery.lastFailed.eventType}</p>
                       <p className="mt-1 break-words">{dashboard.delivery.lastFailed.errorMessage}</p>

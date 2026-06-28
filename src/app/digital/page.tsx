@@ -28,17 +28,17 @@ export default function DigitalDashboardPage() {
   return (
     <CditPageShell title="Agency Dashboard" subtitle="Creative Digital IT · Billing & receivables">
       <motion.div {...fade(0)} className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <KpiCard label="Total receivable" value={loading ? '—' : fmt(kpis?.total_receivable ?? 0)} color="text-amber-400" loading={loading} />
-        <KpiCard label="Collected (month)" value={loading ? '—' : fmt(kpis?.collected_this_month ?? 0)} color="text-emerald-400" loading={loading} />
+        <KpiCard label="Total receivable" value={loading ? '—' : fmt(kpis?.total_receivable ?? 0)} color="txt-warn" loading={loading} />
+        <KpiCard label="Collected (month)" value={loading ? '—' : fmt(kpis?.collected_this_month ?? 0)} color="txt-pos" loading={loading} />
         <KpiCard label="Unpaid invoices" value={loading ? '—' : fmtNum(kpis?.unpaid_invoices ?? 0)} loading={loading} />
-        <KpiCard label="Partial projects" value={loading ? '—' : fmtNum(kpis?.partially_paid_projects ?? 0)} color="text-amber-400" loading={loading} />
+        <KpiCard label="Partial projects" value={loading ? '—' : fmtNum(kpis?.partially_paid_projects ?? 0)} color="txt-warn" loading={loading} />
         <KpiCard label="Recurring revenue" value={loading ? '—' : fmt(kpis?.recurring_revenue ?? kpis?.mrr ?? 0)} color="text-gold-lt" loading={loading} />
       </motion.div>
       <motion.div {...fade(1)} className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Clients" value={loading ? '—' : fmtNum(kpis?.total_clients ?? 0)} loading={loading} />
-        <KpiCard label="Active Projects" value={loading ? '—' : fmtNum(kpis?.active_projects ?? 0)} color="text-blue-400" loading={loading} />
+        <KpiCard label="Active Projects" value={loading ? '—' : fmtNum(kpis?.active_projects ?? 0)} color="txt-info" loading={loading} />
         <KpiCard label="Revenue" value={loading ? '—' : fmt(kpis?.total_revenue ?? 0)} loading={loading} />
-        <KpiCard label="Net Profit" value={loading ? '—' : fmt(kpis?.net_profit ?? 0)} color="text-green-400" loading={loading} />
+        <KpiCard label="Net Profit" value={loading ? '—' : fmt(kpis?.net_profit ?? 0)} color="txt-pos" loading={loading} />
       </motion.div>
       <motion.div {...fade(2)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="p-5">

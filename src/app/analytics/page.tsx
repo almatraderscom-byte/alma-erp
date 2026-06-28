@@ -111,9 +111,9 @@ export default function AnalyticsPage() {
 
         {returnKpis && (
           <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <KpiCard label="Return Loss" value={loading ? '—' : fmt(returnKpis.total_returns_loss ?? 0)} color="text-red-400" loading={loading} />
+            <KpiCard label="Return Loss" value={loading ? '—' : fmt(returnKpis.total_returns_loss ?? 0)} color="txt-neg" loading={loading} />
             <KpiCard label="Return Rate" value={loading ? '—' : pct(returnKpis.return_rate)} sub={`${returnKpis.return_rate_paid ?? 0}% paid · ${returnKpis.return_rate_refused ?? 0}% refused`} loading={loading} />
-            <KpiCard label="Refused Returns" value={loading ? '—' : fmtNum(returnKpis.returned_unpaid_count ?? 0)} color="text-red-300" loading={loading} />
+            <KpiCard label="Refused Returns" value={loading ? '—' : fmtNum(returnKpis.returned_unpaid_count ?? 0)} color="txt-neg" loading={loading} />
           </motion.div>
         )}
 

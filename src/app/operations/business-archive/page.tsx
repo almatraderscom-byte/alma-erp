@@ -263,7 +263,7 @@ export default function BusinessArchiveControlPage() {
       <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5 px-3 py-4 pb-24 sm:px-6 md:pb-6">
         {loadWarning && (
           <motion.div variants={fadeUp}>
-            <Card className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 flex flex-wrap items-center justify-between gap-3">
+            <Card className="rounded-2xl border tone-amber p-4 text-sm flex flex-wrap items-center justify-between gap-3">
               <p>{loadWarning}</p>
               <Button size="xs" variant="secondary" onClick={() => void load()}>Retry</Button>
             </Card>
@@ -272,7 +272,7 @@ export default function BusinessArchiveControlPage() {
 
         {!schemaReady && (
           <motion.div variants={fadeUp}>
-            <Card className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <Card className="rounded-2xl border tone-red p-4 text-sm">
               <p className="font-bold">Database migration required</p>
               <p className="mt-1 text-xs">
                 {migrationHint || 'Business Archive tables are not on this database yet.'} ERP continues
@@ -283,11 +283,11 @@ export default function BusinessArchiveControlPage() {
         )}
 
         <motion.div variants={fadeUp}>
-          <Card className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-sm text-amber-800">
+          <Card className="rounded-2xl border tone-amber p-4 text-sm">
             <p className="font-bold">Safety mode</p>
-            <p className="mt-1 text-xs text-amber-700">
+            <p className="mt-1 text-xs">
               This never permanently deletes records. Archived items are hidden from default views. Use
-              <code className="mx-1 rounded bg-amber-100 px-1 text-amber-900">archive_visibility=archived</code> on APIs or Show Archived in UI.
+              <code className="mx-1 rounded bg-amber-500/15 px-1">archive_visibility=archived</code> on APIs or Show Archived in UI.
             </p>
           </Card>
         </motion.div>
@@ -378,18 +378,18 @@ export default function BusinessArchiveControlPage() {
 
             {preview && (
               <motion.div variants={fadeUp}>
-                <Card className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 space-y-3">
-                  <p className="text-sm font-bold text-amber-800">
+                <Card className="rounded-2xl border tone-amber p-5 space-y-3">
+                  <p className="text-sm font-bold">
                     Dry run · {previewTotal.toLocaleString()} records would be archived
                   </p>
                   <ul className="space-y-2 text-[11px]">
                     {preview.map(p => (
-                      <li key={p.moduleKey} className="flex justify-between gap-4 border-b border-amber-200/50 py-2">
+                      <li key={p.moduleKey} className="flex justify-between gap-4 border-b border-amber-500/20 py-2">
                         <span className="text-cream">
                           {p.label}{' '}
                           <span className="text-muted">({p.storage})</span>
                         </span>
-                        <span className="font-mono font-bold text-amber-700">{p.count}</span>
+                        <span className="font-mono font-bold text-amber-600">{p.count}</span>
                       </li>
                     ))}
                   </ul>
@@ -398,9 +398,9 @@ export default function BusinessArchiveControlPage() {
                     value={batchName}
                     onChange={e => setBatchName(e.target.value)}
                   />
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-3">
-                    <p className="text-[10px] font-bold text-red-700">Step 5 · Type to confirm</p>
-                    <p className="mt-1 font-mono text-xs text-red-800 break-all">{expectedPhrase}</p>
+                  <div className="rounded-xl border tone-red p-3">
+                    <p className="text-[10px] font-bold">Step 5 · Type to confirm</p>
+                    <p className="mt-1 font-mono text-xs break-all opacity-90">{expectedPhrase}</p>
                     <Input
                       className="mt-3"
                       placeholder="Type confirmation phrase exactly"

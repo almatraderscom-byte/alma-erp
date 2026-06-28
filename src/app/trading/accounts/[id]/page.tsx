@@ -147,9 +147,9 @@ export default function TradingAccountDetailPage() {
 
           {summary.currentBalance < 0 && (
             <motion.div variants={fadeUp}>
-            <Card className="rounded-2xl border-red-200 bg-red-50 p-4">
-              <p className="text-sm font-bold text-red-600">Risk warning: account balance is negative.</p>
-              <p className="mt-1 text-[11px] text-red-500">Super Admin notification is created when the balance crosses below zero.</p>
+            <Card className="rounded-2xl border tone-red p-4">
+              <p className="text-sm font-bold">Risk warning: account balance is negative.</p>
+              <p className="mt-1 text-[11px] opacity-80">Super Admin notification is created when the balance crosses below zero.</p>
             </Card>
             </motion.div>
           )}
@@ -176,8 +176,8 @@ export default function TradingAccountDetailPage() {
                 <StatRow label="Net ROI" value={`${summary.roiPct.toFixed(2)}%`} valueClass={signedClass(summary.roiPct)} />
               </div>
               {role === 'SUPER_ADMIN' && data?.balanceDebug && (
-                <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs">
-                  <p className="font-bold text-blue-600">Balance debug</p>
+                <div className="mt-5 rounded-2xl border tone-blue p-3 text-xs">
+                  <p className="font-bold">Balance debug</p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     <span className="text-muted">Calculated: ৳{data.balanceDebug.rawCalculatedBalance.toLocaleString('en-BD')}</span>
                     <span className="text-muted">Ledger total: ৳{data.balanceDebug.ledgerTotal.toLocaleString('en-BD')}</span>
@@ -311,10 +311,10 @@ function tradeStatus(trade: TradingTrade): 'ACTIVE' | 'EDITED' | 'DELETE_PENDING
 }
 
 function tradeStatusClass(status: ReturnType<typeof tradeStatus>) {
-  if (status === 'DELETED') return 'border-red-200 bg-red-50 text-red-600'
-  if (status === 'DELETE_PENDING') return 'border-amber-200 bg-amber-50 text-amber-600'
-  if (status === 'EDITED') return 'border-blue-200 bg-blue-50 text-blue-600'
-  return 'border-green-200 bg-green-50 text-green-600'
+  if (status === 'DELETED') return 'tone-red'
+  if (status === 'DELETE_PENDING') return 'tone-amber'
+  if (status === 'EDITED') return 'tone-blue'
+  return 'tone-green'
 }
 
 function TodayCell({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
@@ -432,14 +432,14 @@ function TradeActionModal({ action, onClose, onSaved }: { action: { mode: TradeA
               </>
             )}
             {mode === 'approve_delete' && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+              <div className="rounded-2xl border tone-amber p-3 text-xs">
                 Approving will soft-delete this trade and immediately recalculate account P/L and daily snapshots. Reason: {trade.deleteReason || 'No reason recorded'}
               </div>
             )}
             {mode !== 'approve_delete' && (
               <textarea value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} className="min-h-20 w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream outline-none focus:border-gold/30" placeholder={mode === 'edit' ? 'Edit reason (required)' : mode === 'request_delete' ? 'Delete reason (required)' : 'Rejection reason (required)'} />
             )}
-            {mutation.error && <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{mutation.error}</p>}
+            {mutation.error && <p className="rounded-xl border tone-red px-3 py-2 text-xs">{mutation.error}</p>}
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
               <Button type="button" variant={mode === 'request_delete' || mode === 'approve_delete' ? 'danger' : 'gold'} className="w-full justify-center" disabled={mutation.loading} onClick={() => tradeActionFormRef.current?.requestSubmit()}>
@@ -595,7 +595,7 @@ function DailySummaryPanel({ accountId, rows, onCreated }: { accountId: string; 
           <label className="text-xs font-bold text-muted">Total Profit (BDT)<input type="number" min="0" step="0.01" value={totalProfitBdt} onChange={e => setTotalProfitBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" /></label>
           <label className="text-xs font-bold text-muted">Total Loss (BDT)<input type="number" min="0" step="0.01" value={totalLossBdt} onChange={e => setTotalLossBdt(e.target.value)} className="mt-1 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" /></label>
           <label className="text-xs font-bold text-muted">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className="mt-1 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-cream" /></label>
-          <div className={`rounded-2xl border p-3 text-sm font-bold ${signedClass(netResult)} ${netResult >= 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>Net Result: ৳{netResult.toLocaleString('en-BD')}</div>
+          <div className={`rounded-2xl border p-3 text-sm font-bold ${netResult >= 0 ? 'tone-green' : 'tone-red'}`}>Net Result: ৳{netResult.toLocaleString('en-BD')}</div>
           <Button variant="gold" onClick={submit} disabled={mutation.loading}>Save Bkash Summary</Button>
           {mutation.error && <p className="text-xs text-red-500">{mutation.error}</p>}
         </div>

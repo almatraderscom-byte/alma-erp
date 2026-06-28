@@ -268,7 +268,7 @@ function ApprovalsPageInner() {
 
       {showIntegrity && (
         <motion.div variants={fadeUp}>
-        <Card className="border-amber-200 bg-amber-50 p-4">
+        <Card className="border-amber-500/35 bg-amber-500/10 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-black text-cream">Integrity Monitor</p>

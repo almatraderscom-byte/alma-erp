@@ -285,7 +285,7 @@ export default function CrmPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold"><Money amount={selected.total_spent} /></p><p className="text-[10px] text-muted">Lifetime Spend</p></div>
-                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-green-400"><Money amount={selected.total_profit} /></p><p className="text-[10px] text-muted">Lifetime Profit</p></div>
+                  <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold txt-pos"><Money amount={selected.total_profit} /></p><p className="text-[10px] text-muted">Lifetime Profit</p></div>
                   <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-cream">{selected.delivered}/{selected.total_orders}</p><p className="text-[10px] text-muted">Delivered</p></div>
                   <div className="bg-card rounded-xl p-3 text-center"><p className="text-base font-bold text-gold">{selected.loyalty_pts} pts</p><p className="text-[10px] text-muted">Loyalty</p></div>
                 </div>
@@ -293,20 +293,20 @@ export default function CrmPage() {
                 <div>
                   <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-muted mb-3">Risk Intelligence</p>
                   <div className="bg-card rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between text-xs mb-1"><span className="text-muted">Risk Score</span><span className={`font-bold ${selected.risk_score > 60 ? 'text-red-400' : selected.risk_score > 30 ? 'text-amber-400' : 'text-green-400'}`}>{selected.risk_score}/100</span></div>
+                    <div className="flex items-center justify-between text-xs mb-1"><span className="text-muted">Risk Score</span><span className={`font-bold ${selected.risk_score > 60 ? 'txt-neg' : selected.risk_score > 30 ? 'text-amber-400' : 'txt-pos'}`}>{selected.risk_score}/100</span></div>
                     <Progress value={selected.risk_score} color={selected.risk_score > 60 ? 'bg-red-400' : selected.risk_score > 30 ? 'bg-amber-400' : 'bg-green-400'} />
-                    <StatRow label="COD Fail Rate" value={pct(selected.cod_fail_pct * 100)} valueClass={selected.cod_fail_pct > 0.5 ? 'text-red-400' : 'text-green-400'} />
+                    <StatRow label="COD Fail Rate" value={pct(selected.cod_fail_pct * 100)} valueClass={selected.cod_fail_pct > 0.5 ? 'txt-neg' : 'txt-pos'} />
                     <StatRow
                       label="Return Rate (sheet)"
                       value={pct(selected.return_rate * 100)}
-                      valueClass={selected.return_rate > 0.3 ? 'text-red-400' : 'text-green-400'}
+                      valueClass={selected.return_rate > 0.3 ? 'txt-neg' : 'txt-pos'}
                     />
                     {ordersEnabled && (() => {
                       const ins = insightsForCustomer(selected)
                       return (
                         <>
-                          <StatRow label="Return Rate (orders)" value={`${ins.returnRatePct}%`} valueClass={ins.returnRatePct > 30 ? 'text-red-400' : 'text-cream'} />
-                          <StatRow label="Return Loss (orders)" value={fmt(ins.totalReturnLoss)} valueClass={ins.totalReturnLoss > 0 ? 'text-red-400' : 'text-green-400'} />
+                          <StatRow label="Return Rate (orders)" value={`${ins.returnRatePct}%`} valueClass={ins.returnRatePct > 30 ? 'txt-neg' : 'text-cream'} />
+                          <StatRow label="Return Loss (orders)" value={fmt(ins.totalReturnLoss)} valueClass={ins.totalReturnLoss > 0 ? 'txt-neg' : 'txt-pos'} />
                         </>
                       )
                     })()}
@@ -330,7 +330,7 @@ export default function CrmPage() {
                             <div className="text-right shrink-0">
                               <StatusBadge status={o.status as OrderStatus} />
                               {o.isReturn && o.returnLoss > 0 && (
-                                <p className="text-[10px] text-red-400 mt-0.5">−<Money amount={o.returnLoss} /></p>
+                                <p className="text-[10px] txt-neg mt-0.5">−<Money amount={o.returnLoss} /></p>
                               )}
                             </div>
                           </div>

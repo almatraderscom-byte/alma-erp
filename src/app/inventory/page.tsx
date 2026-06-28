@@ -247,15 +247,16 @@ export default function InventoryPage() {
         </Card>
 
         <div className={KPI_AUTO_GRID}>
-          <KpiCard label="Total SKUs" value={summary?.total_skus ?? 0} valueKind="plain" loading={loading} />
-          <KpiCard label="Stock Value" value={totalValue} valueKind="currency" color="text-gold-lt" loading={loading} />
-          <KpiCard label="Potential Profit" value={potentialProfit} valueKind="currency" color="text-green-400" loading={loading} />
+          <KpiCard label="Total SKUs" value={summary?.total_skus ?? 0} valueKind="plain" loading={loading} animate />
+          <KpiCard label="Stock Value" value={totalValue} valueKind="currency" color="text-gold-lt" loading={loading} animate />
+          <KpiCard label="Potential Profit" value={potentialProfit} valueKind="currency" color="txt-pos" loading={loading} animate />
           <KpiCard
             label="Low Stock"
             value={summary?.low_stock ?? 0}
             valueKind="plain"
-            color={summary?.low_stock ? 'text-amber-400' : 'text-cream'}
+            color={summary?.low_stock ? 'txt-warn' : 'text-cream'}
             loading={loading}
+            animate
           />
         </div>
 

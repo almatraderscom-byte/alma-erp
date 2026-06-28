@@ -308,21 +308,21 @@ function AttendancePageInner() {
     >
       <PageEnter className="min-w-0 max-w-full space-y-5">
       {!loading && !data && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border tone-red px-4 py-3 text-sm">
           <span>Could not load attendance dashboard</span>
           <Button variant="ghost" size="xs" onClick={() => void load()}>Retry</Button>
         </div>
       )}
 
       {showIntegrity && data?.integrity && (
-        <Card className="p-5 border-amber-200 bg-amber-50/50">
+        <Card className="p-5 border-amber-500/35 bg-amber-500/10">
           <p className="text-sm font-bold text-cream">Attendance Integrity Monitor</p>
           <p className="mt-1 text-xs text-muted">
             {data.scopeAllBusinesses ? 'Viewing all businesses' : `Scoped to ${business.name}`}
             {' · '}{data.integrity.issueCount} issue(s)
           </p>
           {(data.integrity.crossBusinessHint ?? []).length > 0 && !viewAllBusinesses && (
-            <p className="mt-2 text-xs font-bold text-amber-700">
+            <p className="mt-2 text-xs font-bold text-amber-600">
               Activity today in other businesses:{' '}
               {data.integrity.crossBusinessHint!.map(h => `${h.businessId} (${h.todayCount})`).join(', ')}
               {' — '}use <strong>All businesses</strong> to view.
@@ -350,17 +350,17 @@ function AttendancePageInner() {
           variants={_stagger} initial="hidden" animate="show"
         >
           <motion.div variants={_fadeUp}>
-            <Card className="p-4 text-center border-emerald-100">
-              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-emerald-50 mb-2">
+            <Card className="p-4 text-center border-emerald-500/25">
+              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-emerald-500/10 mb-2">
                 <svg className="w-5 h-5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
               </div>
-              <p className="text-2xl font-bold text-emerald-700">{k.todayAttendance}</p>
+              <p className="text-2xl font-bold text-emerald-600">{k.todayAttendance}</p>
               <p className="text-xs text-muted mt-1">Present</p>
             </Card>
           </motion.div>
           <motion.div variants={_fadeUp}>
-            <Card className="p-4 text-center border-red-100">
-              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-red-50 mb-2">
+            <Card className="p-4 text-center border-red-500/25">
+              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-red-500/10 mb-2">
                 <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
               </div>
               <p className="text-2xl font-bold text-red-600">{k.absentEmployees}</p>
@@ -368,11 +368,11 @@ function AttendancePageInner() {
             </Card>
           </motion.div>
           <motion.div variants={_fadeUp}>
-            <Card className="p-4 text-center border-amber-100">
-              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-amber-50 mb-2">
+            <Card className="p-4 text-center border-amber-500/25">
+              <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-amber-500/10 mb-2">
                 <svg className="w-5 h-5 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" /></svg>
               </div>
-              <p className="text-2xl font-bold text-amber-700">{k.lateEmployees}</p>
+              <p className="text-2xl font-bold text-amber-600">{k.lateEmployees}</p>
               <p className="text-xs text-muted mt-1">Late</p>
             </Card>
           </motion.div>
@@ -487,7 +487,7 @@ function AttendancePageInner() {
                       <td className={`py-3 pr-3 text-right font-mono font-medium ${r.lateMinutes ? 'text-red-600' : 'text-emerald-600'}`}>{duration(r.lateMinutes)}</td>
                       <td className="py-3 text-right font-mono text-red-600">{money(r.penaltyAmount)}</td>
                       <td className="py-3 text-right">
-                        <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.trustStatus === 'TRUSTED' ? 'bg-emerald-50 text-emerald-700' : r.trustStatus === 'WARNING' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`} title={r.suspiciousReasons.join(', ')}>
+                        <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.trustStatus === 'TRUSTED' ? 'tone-green' : r.trustStatus === 'WARNING' ? 'tone-amber' : 'tone-red'}`} title={r.suspiciousReasons.join(', ')}>
                           {r.trustStatus.replace(/_/g, ' ')}
                         </span>
                       </td>
@@ -530,7 +530,7 @@ function AttendancePageInner() {
                           <p className="font-mono text-muted text-[10px]">{r.employeeId}</p>
                         </div>
                       </div>
-                      <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.trustStatus === 'TRUSTED' ? 'bg-emerald-50 text-emerald-700' : r.trustStatus === 'WARNING' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                      <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.trustStatus === 'TRUSTED' ? 'tone-green' : r.trustStatus === 'WARNING' ? 'tone-amber' : 'tone-red'}`}>
                         {r.trustStatus.replace(/_/g, ' ')}
                       </span>
                     </div>
@@ -543,7 +543,7 @@ function AttendancePageInner() {
                         <p className="font-mono text-cream font-medium">{r.checkOutAt ? time(r.checkOutAt) : '--'}</p>
                         <p className="text-[10px] text-muted">Out</p>
                       </div>
-                      <div className={`rounded-xl py-2 px-1 ${r.lateMinutes ? 'bg-red-50' : 'bg-emerald-50'}`}>
+                      <div className={`rounded-xl py-2 px-1 ${r.lateMinutes ? 'bg-red-500/10' : 'bg-emerald-500/10'}`}>
                         <p className={`font-mono font-medium ${r.lateMinutes ? 'text-red-600' : 'text-emerald-600'}`}>{duration(r.lateMinutes)}</p>
                         <p className="text-[10px] text-muted">Late</p>
                       </div>
@@ -590,7 +590,7 @@ function AttendancePageInner() {
         ) : (
           <div className="flex flex-wrap gap-2">
             {data!.absentEmployees.map(e => (
-              <span key={`${e.employeeId}-${e.name}`} className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] text-red-700 font-medium">
+              <span key={`${e.employeeId}-${e.name}`} className="inline-flex items-center gap-2 rounded-full border tone-red px-3 py-1.5 text-[11px] font-medium">
                 <EmployeeAvatar userId={e.id} name={e.name} imageUrl={e.profileImageUrl} size="xs" />
                 {e.name} · {e.employeeId || 'unlinked'}
               </span>
@@ -606,7 +606,7 @@ function AttendancePageInner() {
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {pendingSelfieReviews.map(log => (
-              <div key={log.id} className="rounded-2xl border border-amber-200 bg-amber-50/30 p-3 text-[11px]">
+              <div key={log.id} className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <VerificationPhoto
                   src={log.imageUrl || log.imageDataUrl}
@@ -618,7 +618,7 @@ function AttendancePageInner() {
                   <span className="text-muted">{new Date(log.capturedAt).toLocaleString()}</span>
                 </div>
                 {data?.scopeAllBusinesses && (
-                  <p className="mt-1 text-[10px] text-amber-700">{log.businessId.replace(/_/g, ' ')}</p>
+                  <p className="mt-1 text-[10px] text-amber-600">{log.businessId.replace(/_/g, ' ')}</p>
                 )}
                 {role === 'SUPER_ADMIN' && (
                   <div className="mt-3 flex gap-2">
@@ -713,7 +713,7 @@ function VerificationPhoto({
     missing || broken || !src || (!src.startsWith('http') && !src.startsWith('data:image/'))
   if (showFallback) {
     return (
-      <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 text-center text-[10px] text-amber-700">
+      <div className="flex h-36 flex-col items-center justify-center gap-2 rounded-xl border tone-amber px-3 text-center text-[10px]">
         <span className="font-black uppercase tracking-wide">Photo unavailable</span>
         <span className="text-muted">Storage ref missing or expired for {employeeId}. Ask employee to re-verify if needed.</span>
       </div>

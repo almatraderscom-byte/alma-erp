@@ -42,7 +42,7 @@ export default function FinanceHubPage() {
       <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="Revenue (range)" value={rLd ? '—' : fmt(pl?.revenue ?? 0)} loading={rLd} />
         <KpiCard label="Expenses" value={rLd ? '—' : fmt(pl?.expenses ?? k?.total_expenses ?? 0)} loading={rLd} />
-        <KpiCard label="Net profit" value={rLd ? '—' : fmt(pl?.net_profit ?? k?.net_business_profit_hint ?? 0)} color="text-green-400" loading={rLd} />
+        <KpiCard label="Net profit" value={rLd ? '—' : fmt(pl?.net_profit ?? k?.net_business_profit_hint ?? 0)} color="txt-pos" loading={rLd} />
         <KpiCard label="Margin" value={rLd ? '—' : pct(pl?.margin_pct ?? 0)} loading={rLd} />
       </motion.div>
 
