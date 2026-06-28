@@ -672,7 +672,7 @@ export default function AgentCostsDashboard() {
         {!balances?.providers?.length ? (
           <p className="py-4 text-center text-[11px] text-muted">ব্যালেন্স লোড হচ্ছে…</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
             <table className="w-full min-w-[520px] text-left text-[11px]">
               <thead>
                 <tr className="border-b border-border-subtle">
@@ -960,7 +960,7 @@ export default function AgentCostsDashboard() {
         <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
           <p className="text-xs font-semibold text-[#E07A5F] mb-1">🤖 মডেল অনুযায়ী খরচ (প্রতিটি API key আলাদা)</p>
           <p className="text-[10px] text-muted mb-3">কোন মডেল কত খরচ করল — আজ ও এই মাসে, এবং কোন দিন কত (নিচের চার্ট)</p>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
             <table className="w-full min-w-[420px] text-left text-[11px]">
               <thead>
                 <tr className="border-b border-border-subtle">
@@ -1098,7 +1098,7 @@ export default function AgentCostsDashboard() {
         {!logs || logs.length === 0 ? (
           <p className="py-6 text-center text-[11px] text-muted">{logsLoading ? 'লোড হচ্ছে…' : 'এখনো কোনো খরচ লগ নেই'}</p>
         ) : (
-          <div className="max-h-[28rem] overflow-y-auto overflow-x-auto">
+          <div className="max-h-[28rem] overflow-y-auto overflow-x-auto min-w-0 max-w-full table-scroll">
             <table className="w-full min-w-[640px] text-left text-[11px]">
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b border-border-subtle">

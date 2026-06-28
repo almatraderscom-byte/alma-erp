@@ -469,7 +469,7 @@ function TelegramOpsSettingsPageInner() {
                     </div>
                   )}
 
-                  <ul className="max-h-56 space-y-2 overflow-y-auto text-[11px] text-muted-hi">
+                  <ul className="max-h-56 space-y-2 overflow-y-auto [-webkit-overflow-scrolling:touch] overscroll-contain text-[11px] text-muted-hi">
                     {data.recentQueue.map(row => (
                       <li key={row.id} className="rounded-xl border border-white/[0.06] bg-card/85 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">

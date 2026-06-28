@@ -156,15 +156,15 @@ export default function DigitalInvoicesPage() {
             {filteredInvoices.map(inv => (
               <div key={inv.id} className="px-5 py-4 space-y-2">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <span className="font-mono text-[11px] text-gold font-bold w-24">{inv.id}</span>
+                  <span className="font-mono text-[11px] text-gold font-bold w-16 shrink-0 truncate md:w-24">{inv.id}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-cream">{inv.client_name}</p>
-                    <p className="text-[10px] text-muted">{inv.invoice_type} · Due {inv.due_date || '—'}</p>
+                    <p className="text-sm font-semibold text-cream truncate">{inv.client_name}</p>
+                    <p className="text-[10px] text-muted truncate">{inv.invoice_type} · Due {inv.due_date || '—'}</p>
                   </div>
                   <PaymentStatusBadge status={inv.payment_status} />
                   <span className="text-sm font-bold text-cream"><Money amount={inv.amount} /></span>
-                  <span className="text-[10px] text-emerald-400">Paid <Money amount={inv.total_paid} /></span>
-                  <span className="text-[10px] text-amber-400">Due <Money amount={inv.due_amount} /></span>
+                  <span className="text-[10px] text-emerald-400 whitespace-nowrap">Paid <Money amount={inv.total_paid} /></span>
+                  <span className="text-[10px] text-amber-400 whitespace-nowrap">Due <Money amount={inv.due_amount} /></span>
                   <Button variant="gold" size="xs" onClick={() => openPreview(inv)}>Preview PDF</Button>
                   {mayAdmin && inv.due_amount > 0 && (
                     <Button variant="ghost" size="xs" onClick={() => setPayId(payId === inv.id ? null : inv.id)}>
@@ -173,7 +173,7 @@ export default function DigitalInvoicesPage() {
                   )}
                 </div>
                 {mayAdmin && payId === inv.id && (
-                  <div className="flex gap-2 flex-wrap items-center pl-28">
+                  <div className="flex gap-2 flex-wrap items-center pl-0 md:pl-28">
                     <input type="number" placeholder="Amount" className="bg-card border border-border rounded-lg px-2 py-1 text-xs text-cream w-28" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
                     <select className="bg-card border border-border rounded-lg px-2 py-1 text-xs text-cream" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
                       {CDIT_PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
