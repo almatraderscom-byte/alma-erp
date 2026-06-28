@@ -643,6 +643,118 @@ async function detectWebsiteMarketingPattern(
   return null
 }
 
+// ── P2: leave-aware assignment + multi-day follow-up + per-staff messages ─────
+
+/**
+ * Staff on approved leave for `dateYmd` (Dhaka). Read-only; failures degrade to
+ * an empty set so the proposal still runs (never block the day on a leave query).
+ */
+async function loadStaffOnLeave(dateYmd: string, businessId: string): Promise<Set<string>> {
+  try {
+    const rows = await db.staffLeave.findMany({
+      where: {
+        businessId,
+        status: 'approved',
+        startDate: { lte: dateYmd },
+        endDate: { gte: dateYmd },
+      },
+      select: { staffId: true },
+    })
+    return new Set(rows.map((r: { staffId: string }) => r.staffId))
+  } catch {
+    return new Set()
+  }
+}
+
+export type AgingFollowUp = { staffId: string; count: number; oldestDays: number; titles: string[] }
+
+/**
+ * Tasks dispatched on an EARLIER day that are still not done (status=sent) — i.e.
+ * genuinely outstanding work, not today's fresh load. Grouped per staff with the
+ * age of the oldest. Drives the escalation line ("X দিন ধরে বাকি") in the staff
+ * message + owner summary. Only looks back `lookbackDays` so ancient noise is
+ * ignored. Read-only; degrades to empty on failure.
+ */
+async function loadAgingFollowUps(
+  dateYmd: string,
+  businessId: string,
+  lookbackDays = 5,
+): Promise<Map<string, AgingFollowUp>> {
+  const map = new Map<string, AgingFollowUp>()
+  try {
+    const from = new Date(`${addDaysYmd(dateYmd, -lookbackDays)}T00:00:00+06:00`)
+    const before = new Date(`${dateYmd}T00:00:00+06:00`)
+    const rows = await db.agentStaffTask.findMany({
+      where: {
+        proposedFor: { gte: from, lt: before },
+        status: 'sent',
+        businessId,
+      },
+      select: { staffId: true, title: true, proposedFor: true },
+      orderBy: { proposedFor: 'asc' },
+    })
+    for (const r of rows as Array<{ staffId: string; title: string; proposedFor: Date }>) {
+      const ageDays = Math.max(
+        1,
+        Math.round((before.getTime() - new Date(r.proposedFor).getTime()) / 86_400_000),
+      )
+      const cur = map.get(r.staffId) ?? { staffId: r.staffId, count: 0, oldestDays: 0, titles: [] }
+      cur.count += 1
+      cur.oldestDays = Math.max(cur.oldestDays, ageDays)
+      if (cur.titles.length < 3) cur.titles.push(r.title)
+      map.set(r.staffId, cur)
+    }
+  } catch {
+    /* degrade to empty */
+  }
+  return map
+}
+
+const STAFF_GREETINGS: Array<(n: string) => string> = [
+  (n) => `আসসালামু আলাইকুম ${n} ভাই।`,
+  (n) => `${n} ভাই, শুভ সকাল।`,
+  (n) => `${n} ভাই, আশা করি ভালো আছেন।`,
+  (n) => `${n} ভাই, আজকের কাজ গুছিয়ে নিন।`,
+]
+const STAFF_MOTIVATION: string[] = [
+  'একটা একটা করে শেষ করুন — তাড়াহুড়া নয়, মান ঠিক রাখুন।',
+  'কাজ শেষে Done চাপুন আর proof পাঠাতে ভুলবেন না।',
+  'কোনো কিছু বুঝতে অসুবিধা হলে আমাকে জানাবেন।',
+  'আজকের লক্ষ্য — সব কাজ সময়মতো শেষ। পারবেন ইনশাআল্লাহ।',
+]
+
+/**
+ * One short, warm, personalized Bangla message per staff — composed from live
+ * state (leave, aging backlog, today's load) with seed-rotated greeting/closing
+ * so it never reads like the same robotic line every day. This is what actually
+ * rides to the staff member; the owner sees it in the proposal for transparency.
+ */
+function buildStaffMessage(args: {
+  name: string
+  taskCount: number
+  onLeave: boolean
+  aging?: AgingFollowUp
+  seed: number
+}): string {
+  const { name, taskCount, onLeave, aging, seed } = args
+  if (onLeave) {
+    return `আসসালামু আলাইকুম ${name} ভাই। আজ আপনি ছুটিতে — ভালো করে বিশ্রাম নিন। 🌿 ফিরে এসে কাজ বুঝে নেবেন, আজকের জন্য কোনো টাস্ক দেওয়া হয়নি।`
+  }
+  const lines: string[] = [pickVariant(STAFF_GREETINGS, seed)(name)]
+  if (aging && aging.count > 0) {
+    lines.push(
+      `🔴 আগের ${aging.count}টি কাজ এখনো বাকি (সবচেয়ে পুরোনোটা ${aging.oldestDays} দিন ধরে) — আজ সবার আগে ওগুলো শেষ করার চেষ্টা করুন।`,
+    )
+  }
+  lines.push(
+    taskCount > 0
+      ? `আজ আপনার জন্য ${taskCount}টি কাজ আছে।`
+      : 'আজ নতুন বড় কাজ নেই — আগের বাকি কাজ আর পেজ/অফিস গুছিয়ে রাখুন।',
+  )
+  lines.push(pickVariant(STAFF_MOTIVATION, seed + 1))
+  return lines.join(' ')
+}
+
 export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   // Lifestyle staff only — Trading staff are handled by buildTradingTaskProposal.
   const staffList = await db.agentStaff.findMany({
@@ -754,21 +866,77 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
     variantSeed: dayIndexSeed + pendingOrders + carryRows.length,
   }
 
+  // P2: who is off today, and who has multi-day-old unfinished work.
+  const [onLeaveSet, agingMap] = await Promise.all([
+    loadStaffOnLeave(dateYmd, 'ALMA_LIFESTYLE'),
+    loadAgingFollowUps(dateYmd, 'ALMA_LIFESTYLE'),
+  ])
+
   const allTasks: ProposedTaskInput[] = []
+  const onLeaveStaff: string[] = []
+  const staffMessages: Array<{ staffId: string; name: string; onLeave: boolean; message: string }> = []
   for (const staff of staffList) {
+    const seed = ctx.variantSeed + staffSeedOffset(staff.name)
+    const onLeave = onLeaveSet.has(staff.id)
+    if (onLeave) {
+      // Don't pile a full task load on someone who is on approved leave today —
+      // just acknowledge it. Their unfinished work still surfaces via aging.
+      onLeaveStaff.push(staff.name)
+      staffMessages.push({
+        staffId: staff.id,
+        name: staff.name,
+        onLeave: true,
+        message: buildStaffMessage({ name: staff.name, taskCount: 0, onLeave: true, seed }),
+      })
+      continue
+    }
     const profile = getProfileForStaff(profiles, staff.name)
-    allTasks.push(...buildTasksForStaff(staff, picks, carryRows, ctx, profile))
+    const staffTasks = buildTasksForStaff(staff, picks, carryRows, ctx, profile)
+    allTasks.push(...staffTasks)
+    staffMessages.push({
+      staffId: staff.id,
+      name: staff.name,
+      onLeave: false,
+      message: buildStaffMessage({
+        name: staff.name,
+        taskCount: staffTasks.length,
+        onLeave: false,
+        aging: agingMap.get(staff.id),
+        seed,
+      }),
+    })
   }
+  // Never route pattern/website tasks to someone on leave today.
+  const onLeaveIds = new Set(staffList.filter((s: { id: string }) => onLeaveSet.has(s.id)).map((s: { id: string }) => s.id))
   for (const pt of patterns.staleProductTasks) {
+    if (onLeaveIds.has(pt.staffId)) continue
     if (!allTasks.some((t) => t.productRef === pt.productRef && t.type === pt.type)) {
       allTasks.push(pt)
     }
   }
-  if (websiteTask && !allTasks.some((t) => t.productRef === websiteTask.productRef && t.type === websiteTask.type)) {
+  if (
+    websiteTask
+    && !onLeaveIds.has(websiteTask.staffId)
+    && !allTasks.some((t) => t.productRef === websiteTask.productRef && t.type === websiteTask.type)
+  ) {
     allTasks.push(websiteTask)
   }
 
   let summaryBangla = formatSummary(dateYmd, staffList, allTasks, picks, carryRows.length, pendingOrders)
+  // P2: surface multi-day unfinished work prominently so the owner re-pushes it.
+  const agingLines = [...agingMap.values()]
+    .filter((a) => !onLeaveIds.has(a.staffId))
+    .map((a) => {
+      const name = staffList.find((s: { id: string; name: string }) => s.id === a.staffId)?.name ?? 'স্টাফ'
+      return `🔴 *${name}*: ${a.count}টি কাজ ${a.oldestDays} দিন ধরে বাকি — আজ আগে শেষ করতে বলুন।`
+    })
+  if (agingLines.length > 0) {
+    summaryBangla += `\n\n*বকেয়া কাজ (ফলো-আপ দরকার):*\n${agingLines.join('\n')}`
+  }
+  // P2: leave-aware — show who is off so the load looks right to the owner.
+  if (onLeaveStaff.length > 0) {
+    summaryBangla += `\n\n🏖 আজ ছুটিতে: ${onLeaveStaff.join(', ')} — এদের টাস্ক দেওয়া হয়নি।`
+  }
   if (patterns.lateTypeFlags.length > 0) {
     summaryBangla += `\n\n*প্যাটার্ন সতর্কতা:*\n${patterns.lateTypeFlags.join('\n')}`
   }
@@ -809,7 +977,10 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
       revenue: p.revenue,
     })),
     fbRecent,
+    onLeaveStaff,
+    staffMessages,
+    agingFollowUps: [...agingMap.values()].filter((a) => !onLeaveIds.has(a.staffId)),
     summaryBangla,
-    note: `ডেটা: ইনভেন্টরি + ৩০ দিনের অর্ডার + FB পোস্ট + গতকালের carry-forward + ${unreadCount}টি আনরিড মেসেজ + ${lowStockItems.length}টি কম-স্টক পণ্য (state-aware)`,
+    note: `ডেটা: ইনভেন্টরি + ৩০ দিনের অর্ডার + FB পোস্ট + গতকালের carry-forward + ${unreadCount}টি আনরিড মেসেজ + ${lowStockItems.length}টি কম-স্টক পণ্য + ছুটি/বকেয়া-অ্যাওয়্যার (state-aware)`,
   }
 }

@@ -288,10 +288,16 @@ const prepare_staff_task_proposal: AgentTool = {
           topProducts: proposal.topProducts,
           carryForwardCount: proposal.carryForwardCount,
           pendingOrders: proposal.pendingOrders,
+          onLeaveStaff: proposal.onLeaveStaff,
+          agingFollowUps: proposal.agingFollowUps,
+          staffMessages: proposal.staffMessages,
           summaryBangla: proposal.summaryBangla,
           pendingActionId,
           message:
-            'প্রস্তাব তৈরি হয়েছে। মালিককে summaryBangla দেখান এবং Approve করতে বলুন — তারপর স্টাফকে Telegram-এ যাবে।',
+            'প্রস্তাব তৈরি হয়েছে। মালিককে summaryBangla দেখান এবং Approve করতে বলুন — তারপর স্টাফকে Telegram-এ যাবে। ' +
+            (proposal.onLeaveStaff.length ? `আজ ছুটিতে: ${proposal.onLeaveStaff.join(', ')} (টাস্ক দেওয়া হয়নি)। ` : '') +
+            (proposal.agingFollowUps.length ? `${proposal.agingFollowUps.length} জন স্টাফের বকেয়া কাজ আছে — ফলো-আপ দরকার। ` : '') +
+            'staffMessages-এ প্রতিটি স্টাফের জন্য আলাদা ব্যক্তিগত বার্তা আছে — dispatch/announce করার সময় ওটাই ব্যবহার করুন।',
         },
       }
     } catch (err) {
