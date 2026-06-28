@@ -122,6 +122,33 @@ describe('planner', () => {
     expect(check.completedCount).toBe(2)
   })
 
+  it('countRepairSteps counts only auto-repair steps', async () => {
+    const { countRepairSteps, AUTOREPAIR_TOOL } = await import('@/agent/lib/planner')
+
+    const plan = {
+      steps: [
+        { id: 's1', action: 'Original', toolName: undefined, dependsOn: [], status: 'done' as const },
+        { id: 's2', action: 'সংশোধন: x', toolName: AUTOREPAIR_TOOL, dependsOn: [], status: 'done' as const },
+        { id: 's3', action: 'সংশোধন: y', toolName: AUTOREPAIR_TOOL, dependsOn: [], status: 'pending' as const },
+      ],
+    }
+
+    expect(countRepairSteps(plan)).toBe(2)
+  })
+
+  it('countRepairSteps returns 0 when no corrective steps', async () => {
+    const { countRepairSteps } = await import('@/agent/lib/planner')
+
+    const plan = {
+      steps: [
+        { id: 's1', action: 'A', toolName: 'make_ad_creatives', dependsOn: [], status: 'done' as const },
+        { id: 's2', action: 'B', toolName: undefined, dependsOn: [], status: 'pending' as const },
+      ],
+    }
+
+    expect(countRepairSteps(plan)).toBe(0)
+  })
+
   it('hasFailed returns true when any step failed', async () => {
     const { hasFailed } = await import('@/agent/lib/planner')
 

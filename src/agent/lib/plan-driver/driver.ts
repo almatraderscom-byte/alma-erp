@@ -32,6 +32,8 @@ import {
   updatePlanStatus,
   setAutodriveState,
   recordDriveTick,
+  countRepairSteps,
+  appendCorrectiveStep,
 } from '@/agent/lib/planner'
 import { type AutodriveConfig, usdToTaka, getPlanCapOverrideTaka } from '@/agent/lib/autodrive-config'
 import { executeStep } from '@/agent/lib/plan-driver/executor'
@@ -49,7 +51,17 @@ export type DriveOutcome =
   | 'escalated-attempts'
   | 'escalated-stuck'
   | 'escalated-gate'
+  | 'repair-queued'
   | 'no-op'
+
+/**
+ * Phase C auto-repair ceiling: how many corrective steps the driver may append to a
+ * single plan before it gives up and escalates. Bounds the repair loop independently
+ * of maxAttempts (a successful corrective step resets the stall counter, so without
+ * this cap a plan that keeps half-fixing itself could loop indefinitely under the
+ * cost cap). Small on purpose — two self-corrections, then a human looks.
+ */
+const MAX_AUTOREPAIR_STEPS = 2
 
 export interface DriveResult {
   planId: string
@@ -179,8 +191,18 @@ export async function drivePlan(plan: Plan, config: AutodriveConfig): Promise<Dr
         }).catch(() => {})
         return { planId: plan.id, goal: plan.goal, outcome: 'plan-done', detail: verdict.reason, costTaka: gateTaka }
       }
-      // Steps ran but the goal is not truly met and we have no auto-repair yet
-      // (Phase C generalises dynamic re-planning) → escalate to the owner.
+      // Steps ran but the goal is not truly met. Two paths:
+      //  - auto-repair ON and under the repair ceiling → append ONE corrective step
+      //    (the gate's reason becomes the new step's action) and keep driving. The
+      //    frozen 'done' steps would re-fail the gate forever, so we must add NEW
+      //    work for the next tick to act on, not just re-run the gate.
+      //  - otherwise → escalate to the owner, as before.
+      if (config.autoRepair && countRepairSteps(plan) < MAX_AUTOREPAIR_STEPS) {
+        await appendCorrectiveStep(plan.id, `সংশোধন: ${verdict.reason}`)
+        await setAutodriveState(plan.id, 'driving', { nextTickAt: backoffNextTick(config, now, 'retry') })
+        await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'increment', now })
+        return { planId: plan.id, goal: plan.goal, outcome: 'repair-queued', detail: verdict.reason, costTaka: gateTaka }
+      }
       await recordDriveTick(plan.id, { addCostTaka: gateTaka, attempt: 'increment', now })
       return await escalate(plan, 'escalated-gate', `যাচাই: ${verdict.reason}`)
     }
