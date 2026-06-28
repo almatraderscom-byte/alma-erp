@@ -59,6 +59,16 @@ function bizFrom(input: Record<string, unknown> | undefined): BusinessId {
   return raw === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
 }
 
+/**
+ * Conversation id from the server context (executeTool spreads it into input).
+ * Passed to syncPendingDispatchAction so the dispatch approve/reject card is
+ * reload-durable — the messages API reconstructs cards by conversationId.
+ */
+function convId(input: Record<string, unknown> | undefined): string | undefined {
+  const raw = input?.conversationId
+  return typeof raw === 'string' && raw ? raw : undefined
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function dhakaToday(): string {
@@ -212,7 +222,7 @@ const prepare_staff_task_proposal: AgentTool = {
             where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
             data: { status: 'superseded', resolvedAt: new Date() },
           })
-          pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId)) ?? undefined
+          pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId, convId(input))) ?? undefined
         }
 
         return {
@@ -264,7 +274,7 @@ const prepare_staff_task_proposal: AgentTool = {
           where: { type: 'dispatch_staff_tasks', status: 'pending', businessId },
           data: { status: 'superseded', resolvedAt: new Date() },
         })
-        pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId)) ?? undefined
+        pendingActionId = (await syncPendingDispatchAction(date, undefined, businessId, convId(input))) ?? undefined
       }
 
       return {
@@ -473,7 +483,7 @@ const propose_staff_tasks: AgentTool = {
         })),
       })
 
-      const pendingActionId = await syncPendingDispatchAction(date, undefined, businessId)
+      const pendingActionId = await syncPendingDispatchAction(date, undefined, businessId, convId(input))
 
       return {
         success: true,
@@ -645,6 +655,7 @@ const merge_into_proposal: AgentTool = {
         date,
         { changedStaff: staff.name, newTaskIds },
         businessId,
+        convId(input),
       )
 
       return {

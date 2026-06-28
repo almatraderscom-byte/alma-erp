@@ -190,11 +190,21 @@ export async function getActiveDispatchTaskIdsForDate(
   return match ? ((match.payload as DispatchPayload).taskIds ?? null) : null
 }
 
-/** Rebuild pending action payload + summary from current proposed tasks in DB. */
+/**
+ * Rebuild pending action payload + summary from current proposed tasks in DB.
+ *
+ * `conversationId` — when the proposal is created from a chat turn, link the
+ * pending-action row to that conversation. The conversation messages API
+ * (ROBUST RECONSTRUCTION) re-hydrates the approve/reject card on reload ONLY for
+ * actions that carry a conversationId; without it the staff-dispatch card showed
+ * during the live stream but vanished on refresh. The evening-proposal worker
+ * (a cron, no chat) legitimately omits it — that card surfaces via Telegram.
+ */
 export async function syncPendingDispatchAction(
   date: string,
   richOpts?: RichDispatchOpts,
   businessId?: BusinessFilter,
+  conversationId?: string | null,
 ): Promise<string | null> {
   const proposed = await loadProposedTasksForDate(date, businessId)
   if (!proposed.length) return null
@@ -227,7 +237,14 @@ export async function syncPendingDispatchAction(
     // 21:05 evening-proposal timestamp.
     await db.agentPendingAction.update({
       where: { id: existing.id },
-      data: { payload, summary: summaryText, createdAt: new Date() },
+      data: {
+        payload,
+        summary: summaryText,
+        createdAt: new Date(),
+        // Link/refresh the conversation so a card first created by the worker
+        // (no chat) becomes reload-durable once the owner edits it in chat.
+        ...(conversationId ? { conversationId } : {}),
+      },
     })
     return existing.id as string
   }
@@ -240,6 +257,7 @@ export async function syncPendingDispatchAction(
       costEstimate: 0,
       status: 'pending',
       ...(businessId ? { businessId } : {}),
+      ...(conversationId ? { conversationId } : {}),
     },
   })
   return action.id as string
