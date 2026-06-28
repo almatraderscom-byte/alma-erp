@@ -8,11 +8,14 @@
  * are prefixed `oh-` to avoid collisions with ERP animations.
  */
 export const OFFICE_CSS = `
-/* While the office overlay is mounted it is the ONLY scroller: lock the page
-   behind it and kill the browser's native pull-to-refresh, so scrolling back
-   up inside the office never reloads the page. */
+/* While the office overlay is mounted it is the ONLY scroller. We FULLY pin the
+   document so the iOS WKWebView (Capacitor shell) can never rubber-band or
+   pull-to-refresh: <body> is itself position:fixed + unscrollable, leaving
+   .wrap as the single momentum scroller. This is the reliable native fix for
+   "scroll down → can't scroll back up → whole app reloads". */
 html,body{overscroll-behavior-y:none}
-body:has(.ohub){overflow:hidden;height:100%}
+html:has(.ohub){overflow:hidden}
+body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;overscroll-behavior:none}
 .ohub{
   --accent:#E07A5F; --accent-lt:#F4A28C; --accent-dim:#C45A3C;
   --bg-0:#121216; --bg-1:#1A1A20; --bg-2:#202027; --bg-3:#26262e;
@@ -61,8 +64,8 @@ body:has(.ohub){overflow:hidden;height:100%}
 
 /* the ONLY scroller: an in-flow flex child, momentum + contained so iOS never
    chains to the body or locks up. Content centering/padding lives on .perspective. */
-.ohub .wrap{flex:1;min-height:0;width:100%;overflow-y:auto;overflow-x:hidden;
-  -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.ohub .wrap{flex:1;min-height:0;width:100%;max-width:100%;overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:none}
 .ohub .perspective{display:none;width:100%;max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
 .ohub .perspective.show{display:block;animation:oh-fade .26s ease}
 @keyframes oh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -251,19 +254,61 @@ body:has(.ohub){overflow:hidden;height:100%}
   .ohub .grid2.oh-paged.tab-team .pane-work{display:none}
 }
 @media(max-width:680px){
-  .ohub .wrap{padding:18px 14px calc(100px + var(--safe-bottom))}
-  .ohub .topbar{padding:11px 14px;padding-top:max(11px,var(--safe-top));gap:10px}
+  /* Padding lives ONLY on .perspective (was also on .wrap → double inset + a
+     ~200px dead zone at the bottom). One source = tighter sides + a snug,
+     premium tail instead of an endless empty scroll. */
+  .ohub .wrap{padding:0}
+  .ohub .perspective{padding:14px 13px calc(78px + var(--safe-bottom))}
+  .ohub .topbar{padding:10px 13px;padding-top:max(10px,var(--safe-top));gap:10px}
   .ohub .brand small{display:none}
+  .ohub .brand .logo{width:28px;height:28px;font-size:15px}
+  .ohub .brand>span{font-size:15px}
   .ohub .seg button{padding:7px 12px;font-size:12.5px}
-  .ohub .phead h1{font-size:21px}
-  .ohub .kpi{padding:14px} .ohub .kpi .v{font-size:24px}
+  /* compact vertical rhythm — same hierarchy, less scrolling */
+  .ohub .phead{margin-bottom:14px} .ohub .phead h1{font-size:19px}
+  .ohub .phead .kicker{font-size:11px}
+  .ohub .kpis{gap:9px;margin-bottom:14px}
+  .ohub .kpi{padding:13px;border-radius:var(--r-md)} .ohub .kpi .v{font-size:21px} .ohub .kpi .ic{font-size:18px}
+  .ohub .kpi .l{font-size:12px}
+  .ohub .hero-row{gap:12px;margin-bottom:14px}
+  .ohub .track,.ohub .props{margin-bottom:14px}
+  .ohub .section-h{margin-bottom:10px} .ohub .section-h h2{font-size:15px}
   .ohub .stage{gap:22px}
   .ohub .phone{width:100%;max-width:420px;height:auto;min-height:560px;border-radius:34px}
   .ohub .pscreen{padding:24px 14px 30px}
   .ohub .pnav{display:none}
-  .ohub .award{padding:18px} .ohub .award .inner{gap:16px} .ohub h2.aw{font-size:21px}
-  .ohub .photo{width:78px;height:78px;font-size:28px}
-  .ohub .award .stats{gap:14px}
+  /* performer hero — trimmed so it doesn't eat half the first screen */
+  .ohub .award{padding:16px} .ohub .award .inner{gap:14px} .ohub h2.aw{font-size:19px}
+  .ohub .photo{width:64px;height:64px;font-size:24px}
+  .ohub .crown{font-size:24px}
+  .ohub .award .sub{font-size:12.5px}
+  .ohub .award .stats{gap:14px} .ohub .award .stats .s b{font-size:17px}
+  .ohub .motiv{padding:16px} .ohub .motiv-quote{font-size:15px}
+}
+
+/* ════ horizontal-overflow guards ════
+   On a phone the dense rows (leaderboard, performance table, auto-select footer)
+   were wider than the viewport; .wrap clips overflow-x, so the right edge was
+   simply HIDDEN (scores, buttons, the last columns). These shrink-guards make
+   every row FIT the screen instead of being cut off. */
+.ohub .lead .info{min-width:0}
+.ohub .lead .nm{min-width:0}
+.ohub .lead .pick,.ohub .lead .score,.ohub .lead .rank,.ohub .lead .av{flex-shrink:0}
+@media(max-width:680px){
+  .ohub .lead{gap:10px;padding:12px 13px}
+  .ohub .lead .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* performance scorecard: shrinkable cells + tighter type so all 5 columns fit */
+  .ohub .perf-head,.ohub .perf-row{padding:9px 11px;gap:5px}
+  .ohub .perf-head{font-size:10px}
+  .ohub .perf-row{font-size:12.5px}
+  .ohub .perf-head span,.ohub .perf-row>span,.ohub .perf-row .who{min-width:0}
+  .ohub .perf-row .who{gap:7px}
+  .ohub .perf-row .who .av{width:26px;height:26px;font-size:11px;flex-shrink:0}
+  .ohub .perf-row .who .nm{font-size:12.5px}
+  /* auto-select footer (✋ আমি নির্বাচন করব) — let the caption shrink so the button stays on-screen */
+  .ohub .pick-foot{flex-wrap:wrap;gap:8px}
+  .ohub .pick-foot .cap{min-width:0;flex:1 1 100%}
+  .ohub .pick-foot .btn{flex-shrink:0}
 }
 
 /* ════ update tracking (no-response) ════ */

@@ -489,6 +489,7 @@ export default function OwnerHub({
               <LeadRow key={r.staffId} r={r} rank={i + 1} top={i === 0} winnerId={award?.staffId} />
             ))}
             <div
+              className="pick-foot"
               style={{
                 padding: '12px 16px',
                 borderTop: '1px solid var(--border-subtle)',
@@ -497,7 +498,7 @@ export default function OwnerHub({
                 gap: 10,
               }}
             >
-              <span style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
+              <span className="cap" style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
                 প্রতি শুক্রবার auto-নির্বাচন · আপনি চাইলে বদলাতে পারবেন
               </span>
               <button className="btn sm" onClick={() => setAwardOpen(true)}>
