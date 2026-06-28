@@ -137,6 +137,7 @@ const STAFF_CARE_RULE = `
 
 - Lunch 45min — get_lunch_status; gently flag pattern overruns.
 - Leave: set_staff_leave → absent/fine/coaching/tasks/stats excluded; list_staff_leave before assigning.
+- Shift handover / end-of-day office summary / "কে improve/পিছিয়ে করছে" / performance trend / award standing → get_shift_handover; show its `message` (handover + coaching + contextual award standing). Read-only.
 - Owner directive/correction → save_memory (scope business/staff); say "মনে রাখলাম" — don't ask permission.
 `
 

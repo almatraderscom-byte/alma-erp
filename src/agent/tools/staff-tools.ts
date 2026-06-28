@@ -33,6 +33,8 @@ import {
   getStaffDispatchCorrectionContext,
 } from '@/agent/lib/dispatch-correction-notice'
 import { setTaskDue } from '@/agent/lib/office-actions'
+import { buildShiftHandover, computeStaffTrend } from '@/agent/lib/office-coaching'
+import { computeContextualScores } from '@/agent/lib/office-award'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1959,6 +1961,71 @@ const explain_staff_task_bangla: AgentTool = {
   },
 }
 
+/**
+ * P3 — Shift handover + performance-trend coaching + contextual award standings.
+ * One read-only tool the head calls at end-of-day (or when the owner asks "আজকের
+ * হ্যান্ডওভার / কে কেমন করছে"). Rule-based, no extra LLM call. Returns ready-to-show
+ * Bangla so the head can present it directly.
+ */
+const get_shift_handover: AgentTool = {
+  name: 'get_shift_handover',
+  description:
+    'End-of-day shift handover for the office: what closed today, what is still open, what carries over to tomorrow, who needs a follow-up nudge, plus per-staff week-over-week performance-trend coaching lines and the contextual award standings (momentum / clean-week / punctuality bonuses). Read-only, no money. Call when the owner asks for a shift handover, end-of-day office summary, staff performance trend, or "who is improving / slipping". Optional `date` (YYYY-MM-DD, Dhaka) defaults to today.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'Dhaka date YYYY-MM-DD. Defaults to today.' },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const businessId = bizFrom(input)
+      const date = typeof input?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : undefined
+
+      const [handover, trends, standings] = await Promise.all([
+        date ? buildShiftHandover(businessId, date) : buildShiftHandover(businessId),
+        computeStaffTrend(businessId),
+        computeContextualScores(businessId),
+      ])
+
+      // ── Compose the owner-facing Bangla ──
+      const parts: string[] = [handover.summaryBangla]
+
+      const coach = trends.filter((t) => t.thisWeek.done > 0 || t.lastWeek.done > 0)
+      if (coach.length) {
+        parts.push('')
+        parts.push('🎯 *পারফরম্যান্স কোচিং (এ সপ্তাহ vs গত সপ্তাহ):*')
+        for (const t of coach.slice(0, 8)) parts.push(t.coachLine)
+      }
+
+      const ranked = standings.filter((s) => s.score > 0)
+      if (ranked.length) {
+        parts.push('')
+        parts.push('🏆 *সাপ্তাহিক অ্যাওয়ার্ড স্ট্যান্ডিং (contextual):*')
+        ranked.slice(0, 5).forEach((s, i) => {
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`
+          const bonusNote = s.bonus > 0 ? ` (+${s.bonus} বোনাস)` : ''
+          parts.push(`${medal} ${s.staffName} — ${s.score}${bonusNote}`)
+          for (const r of s.reasons) parts.push(`   ${r}`)
+        })
+      }
+
+      return {
+        success: true,
+        data: {
+          handover,
+          trends,
+          standings,
+          message: parts.join('\n'),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -1982,4 +2049,5 @@ export const STAFF_TOOLS: AgentTool[] = [
   get_marketing_history,
   update_staff_task_profile,
   explain_staff_task_bangla,
+  get_shift_handover,
 ]

@@ -68,8 +68,92 @@ export async function computeWeeklyScores(businessId: string, weekStart = curren
   return [...map.values()].sort((a, b) => b.score - a.score || b.lastDoneAt - a.lastDoneAt)
 }
 
+// ── P3: contextual award scoring ────────────────────────────────────────────
+//
+// The flat weekly score above rewards raw volume. Contextual scoring layers
+// *context* bonuses on top so the award reflects more than "who did the most":
+//   • momentum  — finishing more than last week (improvement is rewarded)
+//   • clean     — a real week of work with zero rework (quality)
+//   • punctual  — every deadline met (reliability)
+// These are additive and never go negative, so they can only lift a deserving
+// staffer — they never punish. The winner is picked on base + context bonus.
+
+const IMPROVE_BONUS = 5
+const CLEAN_BONUS = 6
+const PUNCTUAL_BONUS = 5
+
+export type ContextualScore = StaffScore & {
+  /** The flat volume score (same as computeWeeklyScores). */
+  baseScore: number
+  /** Sum of the context bonuses applied. */
+  bonus: number
+  /** Bangla reasons for each bonus, for the owner-facing standings. */
+  reasons: string[]
+}
+
+/**
+ * Weekly scores with context bonuses layered on. `score` is base + bonus (so it
+ * stays a drop-in for award selection); `baseScore` keeps the flat volume value.
+ */
+export async function computeContextualScores(
+  businessId: string,
+  weekStart = currentWeekStart(),
+): Promise<ContextualScore[]> {
+  const prevStart = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000)
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+  const [base, prevBase, rows] = await Promise.all([
+    computeWeeklyScores(businessId, weekStart),
+    computeWeeklyScores(businessId, prevStart),
+    prisma.agentStaffTask.findMany({
+      where: { businessId, proposedFor: { gte: weekStart, lt: weekEnd } },
+      select: { staffId: true, status: true, redoCount: true, dueAt: true, completedAt: true },
+    }),
+  ])
+
+  const prevDone = new Map(prevBase.map((s) => [s.staffId, s.done]))
+
+  // Per-staff this-week context: total redo, and on-time vs late among tasks
+  // that actually had a deadline.
+  type Ctx = { redo: number; onTime: number; withDue: number }
+  const ctx = new Map<string, Ctx>()
+  for (const t of rows) {
+    const c = ctx.get(t.staffId) ?? { redo: 0, onTime: 0, withDue: 0 }
+    c.redo += t.redoCount ?? 0
+    if (t.status === 'done' && t.dueAt && t.completedAt) {
+      c.withDue += 1
+      if (t.completedAt.getTime() <= t.dueAt.getTime()) c.onTime += 1
+    }
+    ctx.set(t.staffId, c)
+  }
+
+  return base
+    .map((s) => {
+      const c = ctx.get(s.staffId) ?? { redo: 0, onTime: 0, withDue: 0 }
+      const reasons: string[] = []
+      let bonus = 0
+
+      const prev = prevDone.get(s.staffId) ?? 0
+      if (s.done > prev && s.done > 0) {
+        bonus += IMPROVE_BONUS
+        reasons.push(`📈 গত সপ্তাহের চেয়ে বেশি কাজ (+${IMPROVE_BONUS})`)
+      }
+      if (c.redo === 0 && s.done >= 3) {
+        bonus += CLEAN_BONUS
+        reasons.push(`✨ একবারও redo ছাড়া পরিষ্কার সপ্তাহ (+${CLEAN_BONUS})`)
+      }
+      if (c.withDue >= 2 && c.onTime === c.withDue) {
+        bonus += PUNCTUAL_BONUS
+        reasons.push(`⏰ সব deadline সময়মতো (+${PUNCTUAL_BONUS})`)
+      }
+
+      return { ...s, baseScore: s.score, bonus, reasons, score: s.score + bonus }
+    })
+    .sort((a, b) => b.score - a.score || b.lastDoneAt - a.lastDoneAt)
+}
+
 /** Recompute and store the auto winner for the current week (skips if owner-pinned). */
-export async function recomputeWeeklyAward(businessId: string): Promise<{ winner: StaffScore | null; pinned: boolean }> {
+export async function recomputeWeeklyAward(businessId: string): Promise<{ winner: ContextualScore | null; pinned: boolean }> {
   const weekStart = currentWeekStart()
   const existing = await prisma.officeWeeklyAward.findUnique({
     where: { businessId_weekStart: { businessId, weekStart } },
@@ -79,7 +163,7 @@ export async function recomputeWeeklyAward(businessId: string): Promise<{ winner
     return { winner: null, pinned: true }
   }
 
-  const scores = await computeWeeklyScores(businessId, weekStart)
+  const scores = await computeContextualScores(businessId, weekStart)
   const winner = scores.find((s) => s.score > 0) ?? null
   if (!winner) return { winner: null, pinned: false }
 
