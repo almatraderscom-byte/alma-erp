@@ -231,6 +231,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   const [voiceOpen, setVoiceOpen] = useState(false)
   const [planDrive, setPlanDrive] = useState<PlanDrivePanelData | null>(null)
+  const [composerSeed, setComposerSeed] = useState('')
+
+  // Staff-hub (and other) deep-links land here as ?draft=<command>. Seed the
+  // composer once, then strip the param so a refresh doesn't re-seed it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const draft = params.get('draft')
+    if (!draft) return
+    setComposerSeed(draft)
+    params.delete('draft')
+    const qs = params.toString()
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
+  }, [])
 
   const abortRef = useRef<AbortController | null>(null)
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
@@ -1519,6 +1532,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
           onVoiceStart={() => setVoiceOpen(true)}
+          seedText={composerSeed}
         />
       </div>
 

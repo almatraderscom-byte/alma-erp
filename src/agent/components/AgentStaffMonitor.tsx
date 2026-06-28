@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { isAutoFixEligible } from '@/lib/diagnostic/auto-fix-eligibility'
@@ -14,6 +15,7 @@ import { DUTY_TO_JOB, AGENT_CAPABILITIES } from '@/agent/lib/staff-monitor-types
 import {
   MonitorKPIStrip,
   MonitorStaffCards,
+  MonitorStaffHub,
   MonitorDutyTimeline,
   MonitorAlertPanel,
   MonitorTrustEngine,
@@ -221,6 +223,7 @@ interface StaffCap { staffId: string; staffName: string; overallCompletionRate: 
 /* ───────── Main Component ───────── */
 
 export default function AgentStaffMonitor() {
+  const router = useRouter()
   const [liveData, setLiveData] = useState<StaffMonitorData | null>(null)
   const [historyData, setHistoryData] = useState<StaffMonitorData | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -256,6 +259,12 @@ export default function AgentStaffMonitor() {
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 4500)
+  }
+
+  /** Deep-link a staff quick-action into the chat composer (pre-filled, not
+   *  auto-sent) so the action runs through the agent + confirm-card flow. */
+  function runStaffAction(command: string) {
+    router.push(`/agent?draft=${encodeURIComponent(command)}`)
   }
 
   /* ── Data Loaders ── */
@@ -752,30 +761,13 @@ export default function AgentStaffMonitor() {
 
             {/* ── STAFF tab: full staff cards, capabilities, geo + productivity ── */}
             {monitorTab === 'staff' && (
-              <>
-                <MonitorStaffCards staffSummaries={displayData.staffSummaries} />
-                {isLive && staffCaps.length > 0 && (
-                  <motion.div variants={fadeIn}>
-                    <SectionCard title="স্টাফ সক্ষমতা" icon="📊" accent="emerald">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        {staffCaps.map(sc => (
-                          <div key={sc.staffId} className="rounded-lg border border-border-subtle bg-transparent px-3 py-2.5">
-                            <div className="flex items-center justify-between">
-                              <p className="text-[12px] font-bold text-cream/80">{sc.staffName}</p>
-                              <span className={cn('text-xs font-black tabular-nums',
-                                sc.overallCompletionRate >= 80 ? 'text-emerald-600' : sc.overallCompletionRate >= 50 ? 'text-amber-600' : 'text-red-600')}>
-                                {sc.overallCompletionRate}%
-                              </span>
-                            </div>
-                            {sc.strongTypes.length > 0 && <p className="mt-1 text-[10px] text-emerald-600/70">💪 {sc.strongTypes.join(', ')}</p>}
-                            {sc.weakTypes.length > 0 && <p className="mt-0.5 text-[10px] text-red-500/70">📈 {sc.weakTypes.join(', ')}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </SectionCard>
-                  </motion.div>
-                )}
-              </>
+              <MonitorStaffHub
+                staffSummaries={displayData.staffSummaries}
+                staffCaps={isLive ? staffCaps : undefined}
+                geoStatus={isLive ? displayData.geoStatus : undefined}
+                productivityAlerts={isLive ? displayData.productivityAlerts : undefined}
+                onAction={runStaffAction}
+              />
             )}
 
             {/* ── Live Surveillance (Geo + Productivity) — STAFF tab only ── */}
