@@ -28,27 +28,31 @@ export async function logCost(input: LogCostInput): Promise<{ id: string } | nul
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   try {
+    const data = {
+      provider: input.provider,
+      kind: input.kind,
+      units: input.units,
+      costUsd: input.costUsd,
+      conversationId: input.conversationId ?? null,
+      jobId: input.jobId ?? null,
+      dedupKey: input.dedupKey ?? null,
+      occurredAt: input.occurredAt ?? new Date(),
+    }
     if (input.dedupKey) {
-      const existing = await db.agentCostEvent.findUnique({
+      // Atomic upsert on the unique dedupKey — idempotent WITHOUT raising a P2002.
+      // The old findUnique-then-create still raced and logged a scary prisma:error
+      // `Unique constraint failed` on every legitimate duplicate. `update: {}` means
+      // "already logged, leave the existing row untouched".
+      const row = await db.agentCostEvent.upsert({
         where: { dedupKey: input.dedupKey },
+        create: data,
+        update: {},
         select: { id: true },
       })
-      if (existing) return { id: existing.id as string }
+      return { id: row.id as string }
     }
 
-    const row = await db.agentCostEvent.create({
-      data: {
-        provider: input.provider,
-        kind: input.kind,
-        units: input.units,
-        costUsd: input.costUsd,
-        conversationId: input.conversationId ?? null,
-        jobId: input.jobId ?? null,
-        dedupKey: input.dedupKey ?? null,
-        occurredAt: input.occurredAt ?? new Date(),
-      },
-      select: { id: true },
-    })
+    const row = await db.agentCostEvent.create({ data, select: { id: true } })
     return { id: row.id as string }
   } catch (err) {
     // Unique violation on dedup_key — idempotent

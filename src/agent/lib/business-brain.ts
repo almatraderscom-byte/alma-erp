@@ -79,12 +79,16 @@ async function getStaffReality(): Promise<string> {
 
 async function getRecentTaskPerformance(): Promise<string> {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
+    // Pass a Date (not an ISO string): a string param binds as `text`, so Postgres
+    // throws `operator does not exist: timestamp without time zone >= text` (42883)
+    // and this whole block silently fell back to "no data". A Date binds as a real
+    // timestamp; the `::timestamptz` cast is belt-and-suspenders against driver drift.
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000)
     const tasks: Array<{ type: string; status: string; cnt: bigint | number }> =
       await db.$queryRawUnsafe(`
         SELECT type, status, COUNT(*) as cnt
         FROM staff_tasks
-        WHERE created_at >= $1
+        WHERE created_at >= $1::timestamptz
         GROUP BY type, status
         ORDER BY cnt DESC
         LIMIT 20
