@@ -90,8 +90,11 @@ async function sendOneSignal(
     headings: { en: title },
     contents: { en: message },
     subtitle: meta.businessId ? { en: meta.businessId.replace(/_/g, ' ') } : undefined,
+    // web_url drives browser push-subscribers (open a tab — correct on web).
+    // We deliberately DO NOT set app_url: on native apps OneSignal would punt
+    // that URL to the system browser. Native taps are routed in-app instead via
+    // the click listener in native-push.ts using data.actionUrl below.
     web_url: url,
-    app_url: url,
     priority: priority === 'LOW' ? 5 : 10,
     // Android 8+: sound comes from alma_alerts channel (res/raw/alma_alert). android_sound API is deprecated.
     ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || { existing_android_channel_id: 'alma_alerts' }),

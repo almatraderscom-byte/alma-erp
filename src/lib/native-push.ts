@@ -75,6 +75,45 @@ export async function registerNativePushSubscription(input: NativePushRegisterIn
   return res.ok
 }
 
+/**
+ * Native (Capacitor) notification TAP handler.
+ *
+ * Without this, OneSignal falls back to its default launch-URL behaviour and
+ * punts the URL to the system browser — so tapping an alert opened the web
+ * site instead of the installed app. We strip `app_url` from the native push
+ * payload (see src/lib/notifications.ts) and instead route the tap ourselves,
+ * INSIDE the webview, using the `actionUrl` we ship in the notification data.
+ * `allowNavigation` (capacitor.config.ts) keeps the production host in-shell.
+ */
+export async function listenForNativeNotificationClicks(): Promise<void> {
+  if (!isCapacitorNative()) return
+  try {
+    const OneSignal = await getOneSignal()
+    const notifications = OneSignal.Notifications as unknown as {
+      addEventListener?: (
+        event: 'click',
+        listener: (event: { notification?: { additionalData?: unknown; launchURL?: string } }) => void,
+      ) => void
+    }
+    notifications?.addEventListener?.('click', event => {
+      const data = (event?.notification?.additionalData ?? {}) as { actionUrl?: string }
+      const target = data.actionUrl || event?.notification?.launchURL
+      if (!target) return
+      try {
+        // Resolve against the current origin so a relative path still works,
+        // then navigate within the webview (full href keeps the production host
+        // in-shell even during a cold start from the local bootstrap page).
+        const url = new URL(target, window.location.origin)
+        window.location.assign(url.href)
+      } catch {
+        // Malformed URL — ignore rather than crash the tap.
+      }
+    })
+  } catch {
+    // Non-critical: a failed listener must never break push registration.
+  }
+}
+
 /** Re-register whenever OneSignal detects a push token change (FCM rotation). */
 export async function listenForTokenChanges(input: NativePushRegisterInput): Promise<void> {
   if (!nativePushAvailable(input.appId)) return
