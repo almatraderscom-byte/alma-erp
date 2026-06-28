@@ -572,6 +572,46 @@ async function runApprove(
     }
   }
 
+  if (action.type === 'reply_to_comment') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+
+      const { pageId, commentId, message, customerName } = payload as {
+        pageId: string; commentId: string; message: string; customerName?: string | null
+      }
+
+      const { replyToComment } = await import('@/agent/lib/meta')
+      const { replyId } = await replyToComment({ pageId, commentId, message })
+
+      const result = { replyId, pageId, commentId, customerName: customerName ?? null }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result },
+      })
+
+      await appendConversationNote(
+        db,
+        action,
+        `✅ ${customerName ?? 'কাস্টমার'}-এর কমেন্টে পাবলিক রিপ্লাই পোস্ট হয়েছে।`,
+      )
+
+      return Response.json({ success: true, ...result })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'add_staff_task_now') {
     const { staffId, staffName, title, type, detail, date } = payload as {
       staffId: string; staffName?: string; title: string; type: string; detail?: string; date: string

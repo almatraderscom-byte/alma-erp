@@ -1,6 +1,6 @@
 // Tools that create pending actions (confirm-card flow) rather than executing directly.
 import { prisma } from '@/lib/prisma'
-import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel } from '@/agent/lib/meta'
+import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, getUnansweredComments } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
@@ -380,10 +380,128 @@ const send_customer_message: AgentTool = {
   },
 }
 
+// ── Public comment reply (Facebook wall comments, not Messenger) ─────────────
+
+const get_unanswered_comments: AgentTool = {
+  name: 'get_unanswered_comments',
+  description:
+    'Reads PUBLIC customer comments on recent Facebook page posts that the page has NOT yet replied to ' +
+    '(read-only, no confirmation). Use when the owner asks about unanswered comments, "কমেন্টের রিপ্লাই বাকি", ' +
+    'or before drafting comment replies. Returns each comment\'s id, author name, text and post permalink. ' +
+    'page: "lifestyle" | "onlineshop". postLimit: 1–25 recent posts to scan (default 12). ' +
+    'To actually reply, pass a returned commentId to reply_to_comment.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'] },
+      postLimit: { type: 'number' },
+    },
+    required: ['page'],
+  },
+  handler: async (input) => {
+    try {
+      const pageId = resolvePageId(String(input.page))
+      const comments = await getUnansweredComments({
+        pageId,
+        postLimit: Number(input.postLimit ?? 12),
+      })
+      const scannedNow = new Date()
+      return {
+        success: true,
+        data: {
+          page: input.page,
+          pageId,
+          pageName: pageLabel(pageId),
+          scannedAtDhaka: formatDateTimeDhaka(scannedNow),
+          timezone: 'Asia/Dhaka (UTC+6)',
+          unansweredCount: comments.length,
+          comments,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const reply_to_comment: AgentTool = {
+  name: 'reply_to_comment',
+  description:
+    'Publishes a PUBLIC reply to a customer comment on a Facebook page post. ' +
+    'Creates a PENDING ACTION — owner must approve before the reply is posted publicly. ' +
+    'Get the commentId from get_unanswered_comments first. ' +
+    'page: "lifestyle" | "onlineshop". Keep the reply short, warm Bangla, address the customer politely. ' +
+    'For price/order questions, give the real answer (verify stock/price first); never invent details. ' +
+    'Do NOT post a public reply for anything private — use send_customer_message (Messenger DM) instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      commentId: { type: 'string', description: 'Facebook comment id from get_unanswered_comments' },
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Facebook page the comment is on' },
+      message: { type: 'string', description: 'Reply text to post publicly (max 1000 chars)' },
+      customerName: { type: 'string', description: 'Comment author name (for the approval card summary)' },
+      commentText: { type: 'string', description: 'The original comment text (for the approval card summary)' },
+      conversationId: { type: 'string' },
+    },
+    required: ['commentId', 'page', 'message'],
+  },
+  handler: async (input) => {
+    try {
+      const commentId = String(input.commentId).trim()
+      const page = String(input.page)
+      const message = String(input.message).slice(0, 1000)
+      const pageId = resolvePageId(page)
+      const pageName = pageLabel(pageId)
+
+      if (!commentId) {
+        return { success: false, error: 'commentId দরকার — আগে get_unanswered_comments দিয়ে কমেন্ট আনুন।' }
+      }
+      if (!message.trim()) {
+        return { success: false, error: 'রিপ্লাই টেক্সট খালি।' }
+      }
+
+      const who = input.customerName ? String(input.customerName) : 'কাস্টমার'
+      const original = input.commentText ? String(input.commentText).slice(0, 200) : null
+      const summary =
+        `💬 কমেন্ট রিপ্লাই → ${who} (${pageName})\n` +
+        (original ? `\nকমেন্ট: "${original}${String(input.commentText).length > 200 ? '…' : ''}"\n` : '') +
+        `\nরিপ্লাই: "${message.slice(0, 300)}${message.length > 300 ? '…' : ''}"\n\n` +
+        `⚠️ Approve করলে রিপ্লাই পাবলিকভাবে পোস্ট হবে।`
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'reply_to_comment',
+          payload: { pageId, page, commentId, message, customerName: input.customerName ?? null },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          summary,
+          costEstimate: 0,
+          message: `${who}-এর কমেন্টে রিপ্লাই তৈরি। মালিকের Approve করলে পাবলিকভাবে পোস্ট হবে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const CONFIRM_TOOLS: AgentTool[] = [
   generate_image,
   post_to_facebook,
   send_customer_message,
   get_fb_recent_posts,
   get_fb_messenger_inbox,
+  get_unanswered_comments,
+  reply_to_comment,
 ]
