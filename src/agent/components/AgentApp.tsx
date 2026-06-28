@@ -1243,32 +1243,59 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   function startResultPolling(convId: string) {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
     let attempts = 0
-    const initialCount = messages.length
+    let sawRunning = false
+    const loaderId = nextId('streaming')
+    const loader = { id: loaderId, role: 'assistant' as const, text: '', streaming: true }
 
-    async function fetchAndUpdate() {
+    // Show the working animation the INSTANT the owner approves, so it's visually
+    // obvious the agent picked the task back up. The continuation runs server-side
+    // (on the worker), so there's no client stream to drive the usual indicator —
+    // we pin a streaming placeholder at the bottom and keep it until the turn ends.
+    setStreamMode('thinking')
+    setStreamVariant('claude')
+    setMessages((prev) => [...prev.filter((m) => !m.streaming), loader])
+
+    async function poll() {
+      let running = false
+      try {
+        const sres = await fetch(`/api/assistant/conversations/${convId}/turn-status`)
+        if (sres.ok) running = ((await sres.json()) as { status?: string }).status === 'running'
+      } catch {
+        running = sawRunning // transient status error → keep the loader as-is
+      }
+      if (running) sawRunning = true
+
       try {
         const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
-        if (!res.ok) return
-        const rows: MessageRow[] = await res.json()
-
-        if (rows.length > initialCount) {
-          setMessages(mapMessageRows(rows))
-          clearInterval(pollTimerRef.current!)
-          pollTimerRef.current = null
+        if (res.ok) {
+          const mapped = mapMessageRows(await res.json())
+          // Keep the loader pinned below whatever messages have arrived until the
+          // continuation turn has been SEEN running and then finished — so the
+          // approval note shows while the agent is still working, then the spinner
+          // drops as the continuation reply lands. (!sawRunning guards the brief
+          // race before the freshly-created turn registers as running.)
+          setMessages(running || !sawRunning ? [...mapped, loader] : mapped)
         }
-      } catch { /* ignore */ }
-    }
+      } catch { /* ignore a transient fetch error */ }
 
-    void fetchAndUpdate()
-    pollTimerRef.current = setInterval(() => {
-      attempts++
-      if (attempts >= 12) {
+      if (sawRunning && !running) {
         clearInterval(pollTimerRef.current!)
         pollTimerRef.current = null
+      }
+    }
+
+    void poll()
+    pollTimerRef.current = setInterval(() => {
+      attempts++
+      if (attempts >= 30) {
+        // ~2 min safety cap — stop the spinner even if the worker never picked it up.
+        clearInterval(pollTimerRef.current!)
+        pollTimerRef.current = null
+        setMessages((prev) => prev.filter((m) => !m.streaming))
         return
       }
-      void fetchAndUpdate()
-    }, 8000)
+      void poll()
+    }, 4000)
   }
 
   async function saveArtifact(art: Omit<Artifact, 'id' | 'createdAt'>) {
