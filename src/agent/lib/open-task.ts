@@ -37,6 +37,11 @@ function nudgeAt(fromMs: number, minutes: number): Date {
   return new Date(fromMs + minutes * 60 * 1000)
 }
 
+/** Loose title key for de-duping re-tracked follow-ups (case/space-insensitive). */
+function titleKey(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 /**
  * Record a piece of unfinished work. If `pendingActionId` is given and an open
  * row already exists for it, the existing row is returned (no duplicates) so an
@@ -58,6 +63,32 @@ export async function createOpenTask(input: {
       where: { pendingActionId: input.pendingActionId, status: { in: ['open', 'running'] } },
     })
     if (existing) return toView(existing)
+  }
+
+  // De-dupe re-tracked follow-ups: when the head continues a task and tracks it
+  // again (e.g. after a "চালিয়ে যাও" resume), don't open a second chip row for
+  // the same work — refresh the existing open/running row's note in place. This
+  // keeps the "বাকি কাজ" count accurate (a continued-then-dropped task fully
+  // clears instead of leaving a stale duplicate).
+  if (kind === 'chat_followup' && input.conversationId) {
+    const key = titleKey(input.title)
+    const siblings = await prisma.agentOpenTask.findMany({
+      where: {
+        conversationId: input.conversationId,
+        businessId,
+        kind: 'chat_followup',
+        status: { in: ['open', 'running'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    const dup = siblings.find((s) => titleKey(s.title) === key)
+    if (dup) {
+      const updated = await prisma.agentOpenTask.update({
+        where: { id: dup.id },
+        data: { resumeNote: input.resumeNote.trim() },
+      })
+      return toView(updated)
+    }
   }
 
   const now = Date.now()
